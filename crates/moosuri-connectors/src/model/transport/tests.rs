@@ -16,6 +16,12 @@ use tokio::{sync::Mutex, task::JoinHandle};
 
 enum Reply {
     Stream(Vec<Vec<u8>>),
+    HeldTail {
+        prefix: Vec<u8>,
+        tail: Vec<u8>,
+        waiting: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    },
     Status(u16),
     Redirect(String),
     Idle,
@@ -72,6 +78,45 @@ async fn fixture(reply: Reply) -> Fixture {
                         Response::builder()
                             .header("content-type", "text/event-stream; charset=utf-8")
                             .body(Body::from_stream(futures_util::stream::iter(items)))
+                            .unwrap()
+                    }
+                    Reply::HeldTail {
+                        prefix,
+                        tail,
+                        waiting,
+                        release,
+                    } => {
+                        let prefix = prefix.clone();
+                        let tail = tail.clone();
+                        let waiting = waiting.clone();
+                        let release = release.clone();
+                        let body = futures_util::stream::unfold(
+                            (0, prefix, tail, waiting, release),
+                            |(stage, prefix, tail, waiting, release)| async move {
+                                match stage {
+                                    0 => Some((
+                                        Ok::<_, std::io::Error>(Bytes::copy_from_slice(&prefix)),
+                                        (1, prefix, tail, waiting, release),
+                                    )),
+                                    1 => {
+                                        waiting.notify_one();
+                                        release.notified().await;
+                                        if tail.is_empty() {
+                                            None
+                                        } else {
+                                            Some((
+                                                Ok(Bytes::copy_from_slice(&tail)),
+                                                (2, prefix, tail, waiting, release),
+                                            ))
+                                        }
+                                    }
+                                    _ => None,
+                                }
+                            },
+                        );
+                        Response::builder()
+                            .header("content-type", "text/event-stream")
+                            .body(Body::from_stream(body))
                             .unwrap()
                     }
                     Reply::Status(code) => Response::builder()
@@ -677,4 +722,291 @@ async fn model_catalog_uses_registered_base_and_scoped_key_with_bounded_response
         Err(TransportError::Cancelled)
     ));
     task.abort();
+}
+
+fn tool_definitions() -> Vec<super::super::protocol::tools::FunctionDefinition> {
+    vec![super::super::protocol::tools::FunctionDefinition {
+        name: "knowledge_search".into(),
+        description: "Search synthetic data".into(),
+        parameters: serde_json::json!({"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}),
+    }]
+}
+fn tool_chat_stream() -> String {
+    concat!(
+      "data: {\"id\":\"tool-response\",\"model\":\"fixture-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"검색합니다\",\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"knowledge_search\",\"arguments\":\"{\\\"q\\\":\"}}]},\"finish_reason\":null}]}\n\n",
+      "data: {\"id\":\"tool-response\",\"model\":\"fixture-model\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"홍차\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+      "data: {\"id\":\"tool-response\",\"model\":\"fixture-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+      "data: [DONE]\n\n",
+    ).into()
+}
+async fn run_tools(
+    client: &ModelClient,
+    cancellation: &CancellationToken,
+) -> (
+    Result<super::super::protocol::tools::ToolRound, TransportError>,
+    Vec<ModelEvent>,
+) {
+    use super::super::protocol::tools::{ToolCapabilities, ToolRequest};
+    let request = request();
+    let tools = tool_definitions();
+    let (tx, mut rx) = mpsc::channel(2);
+    tokio::join!(
+        async {
+            let result = client
+                .stream_tool_round(
+                    &ToolRequest {
+                        text: &request,
+                        tools: &tools,
+                        continuation: None,
+                        results: &[],
+                    },
+                    &ToolCapabilities {
+                        function_tools: true,
+                    },
+                    &tx,
+                    cancellation,
+                )
+                .await;
+            drop(tx);
+            result
+        },
+        async {
+            let mut events = vec![];
+            while let Some(e) = rx.recv().await {
+                events.push(e);
+            }
+            events
+        }
+    )
+}
+#[tokio::test]
+async fn tool_round_real_transport_returns_calls_only_after_complete_stream() {
+    let stream = tool_chat_stream();
+    let f = fixture(Reply::Stream(
+        stream.as_bytes().chunks(3).map(|s| s.to_vec()).collect(),
+    ))
+    .await;
+    let (result, events) = run_tools(&local(&f), &CancellationToken::new()).await;
+    let round = result.unwrap();
+    assert_eq!(round.calls.len(), 1);
+    assert_eq!(round.calls[0].arguments(), "{\"q\":\"홍차\"}");
+    assert_eq!(round.outcome, FinishOutcome::ContinuationRequired);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::TextDelta { .. }))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::Finished { .. }))
+    );
+    let captures = f.captures.lock().await;
+    assert_eq!(captures[0].body["tools"][0]["function"]["strict"], true);
+    assert_eq!(captures[0].body["parallel_tool_calls"], false);
+}
+#[tokio::test]
+async fn tool_transport_prefix_error_cancellation_and_limit_never_return_calls() {
+    let mut stream = tool_chat_stream();
+    stream.push_str("data: {\"error\":{\"message\":\"synthetic private failure\"}}\n\n");
+    let f = fixture(Reply::Stream(vec![stream.into_bytes()])).await;
+    let (result, events) = run_tools(&local(&f), &CancellationToken::new()).await;
+    assert!(result.is_err());
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::TextDelta { .. }))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::Finished { .. }))
+    );
+    let f = fixture(Reply::Stream(vec![tool_chat_stream().into_bytes()])).await;
+    let client = local(&f)
+        .with_limits(TransportLimits {
+            response_bytes: 32,
+            ..TransportLimits::default()
+        })
+        .unwrap();
+    let (result, _) = run_tools(&client, &CancellationToken::new()).await;
+    assert!(matches!(result, Err(TransportError::LimitExceeded)));
+    let f = fixture(Reply::Idle).await;
+    let client = local(&f);
+    let cancellation = CancellationToken::new();
+    let cancel = cancellation.clone();
+    let trigger = async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cancel.cancel();
+    };
+    let ((result, _), ()) = tokio::join!(run_tools(&client, &cancellation), trigger);
+    assert!(matches!(result, Err(TransportError::Cancelled)));
+}
+#[tokio::test]
+async fn tool_transport_opt_in_validation_precedes_network_and_preserves_destination_policy() {
+    use super::super::protocol::tools::{ToolCapabilities, ToolRequest};
+    let f = fixture(Reply::Stream(vec![tool_chat_stream().into_bytes()])).await;
+    let client = local(&f);
+    let text = request();
+    let tools = tool_definitions();
+    let req = ToolRequest {
+        text: &text,
+        tools: &tools,
+        continuation: None,
+        results: &[],
+    };
+    let (tx, _rx) = mpsc::channel(2);
+    let result = client
+        .stream_tool_round(
+            &req,
+            &ToolCapabilities::default(),
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(TransportError::Protocol(
+            ProtocolError::UnsupportedCapability
+        ))
+    ));
+    assert_eq!(f.count.load(Ordering::SeqCst), 0);
+    let denied = ModelClient::compatible(
+        &f.base,
+        NetworkPolicy::PublicHttps,
+        None,
+        TextCapabilities::default(),
+    );
+    assert!(matches!(denied, Err(TransportError::DestinationDenied)));
+}
+
+#[tokio::test]
+async fn completed_tool_round_waits_for_clean_eof_and_rejects_later_chunk_suffixes() {
+    use super::super::protocol::tools::{ToolCapabilities, ToolRequest};
+    // The server cannot produce its tail until the client has consumed previews
+    // and the test explicitly releases it. These are separate HTTP body deliveries,
+    // not just different Vec entries that Hyper could coalesce into one chunk.
+    for tail in [
+        b"data: {\"error\":{\"message\":\"synthetic private tail\"}}\n\n".to_vec(),
+        b"data: [DONE]\n\n".to_vec(),
+        Vec::new(),
+    ] {
+        let expected_success = tail.is_empty();
+        let waiting = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let f = fixture(Reply::HeldTail {
+            prefix: tool_chat_stream().into_bytes(),
+            tail,
+            waiting: waiting.clone(),
+            release: release.clone(),
+        })
+        .await;
+        let client = local(&f);
+        let text = request();
+        let tools = tool_definitions();
+        let req = ToolRequest {
+            text: &text,
+            tools: &tools,
+            continuation: None,
+            results: &[],
+        };
+        let (tx, mut rx) = mpsc::channel(16);
+        let cancel = CancellationToken::new();
+        let capabilities = ToolCapabilities {
+            function_tools: true,
+        };
+        let operation = client.stream_tool_round(&req, &capabilities, &tx, &cancel);
+        tokio::pin!(operation);
+        loop {
+            tokio::select! {biased;result=&mut operation=>panic!("tool round returned before EOF: {}",result.is_ok()),event=rx.recv()=>if matches!(event,Some(ModelEvent::TextDelta{..})){break;}}
+        }
+        tokio::select! {biased;result=&mut operation=>panic!("tool round returned before held tail: {}",result.is_ok()),_=waiting.notified()=>{}}
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut operation)
+                .await
+                .is_err()
+        );
+        release.notify_one();
+        let result = operation.await;
+        if expected_success {
+            let round = result.unwrap();
+            assert_eq!(round.calls.len(), 1);
+            assert_eq!(round.calls[0].call_id(), "call-1");
+        } else {
+            assert!(matches!(result, Err(TransportError::Protocol(_))));
+        }
+    }
+}
+
+#[tokio::test]
+async fn tool_round_held_after_terminal_is_still_cancellable_and_timed_out() {
+    use super::super::protocol::tools::{ToolCapabilities, ToolRequest};
+    for should_cancel in [true, false] {
+        let waiting = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let f = fixture(Reply::HeldTail {
+            prefix: tool_chat_stream().into_bytes(),
+            tail: Vec::new(),
+            waiting: waiting.clone(),
+            release,
+        })
+        .await;
+        let client = local(&f)
+            .with_limits(TransportLimits {
+                connect: Duration::from_millis(200),
+                idle: Duration::from_millis(200),
+                total: Duration::from_millis(200),
+                ..TransportLimits::default()
+            })
+            .unwrap();
+        let text = request();
+        let tools = tool_definitions();
+        let req = ToolRequest {
+            text: &text,
+            tools: &tools,
+            continuation: None,
+            results: &[],
+        };
+        let (tx, mut rx) = mpsc::channel(16);
+        let cancel = CancellationToken::new();
+        let capabilities = ToolCapabilities {
+            function_tools: true,
+        };
+        let operation = client.stream_tool_round(&req, &capabilities, &tx, &cancel);
+        tokio::pin!(operation);
+        loop {
+            tokio::select! {biased;result=&mut operation=>panic!("tool round returned before held EOF: {}",result.is_ok()),event=rx.recv()=>if matches!(event,Some(ModelEvent::TextDelta{..})){break;}}
+        }
+        tokio::select! {biased;result=&mut operation=>panic!("tool round returned before held EOF: {}",result.is_ok()),_=waiting.notified()=>{}}
+        if should_cancel {
+            cancel.cancel();
+        }
+        let result = operation.await;
+        if should_cancel {
+            assert!(matches!(result, Err(TransportError::Cancelled)));
+        } else {
+            assert!(matches!(result, Err(TransportError::Timeout)));
+        }
+    }
+}
+
+#[tokio::test]
+async fn existing_text_stream_keeps_terminal_marker_completion_without_waiting_for_eof() {
+    let f = fixture(Reply::HeldTail {
+        prefix: chat_stream().into_bytes(),
+        tail: Vec::new(),
+        waiting: Arc::new(tokio::sync::Notify::new()),
+        release: Arc::new(tokio::sync::Notify::new()),
+    })
+    .await;
+    let client = local(&f);
+    let (tx, _rx) = mpsc::channel(16);
+    let req = request();
+    let cancellation = CancellationToken::new();
+    let result = tokio::time::timeout(
+        Duration::from_millis(200),
+        client.stream_text(&req, &tx, &cancellation),
+    )
+    .await;
+    assert!(matches!(result, Ok(Ok(()))));
 }

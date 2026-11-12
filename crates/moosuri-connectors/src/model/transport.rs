@@ -1,3 +1,6 @@
+use super::protocol::tools::{
+    ToolCapabilities, ToolRequest, ToolRound, ToolRoundDecoder, encode_tool_request,
+};
 use super::protocol::{
     ModelEvent, Protocol, ProtocolError, StreamDecoder, TextCapabilities, TextRequest,
     encode_request,
@@ -379,7 +382,41 @@ impl ModelClient {
         request: &TextRequest,
         events: &mpsc::Sender<ModelEvent>,
     ) -> Result<(), TransportError> {
-        let mut body = encode_request(self.protocol, request, &self.capabilities)?;
+        let body = encode_request(self.protocol, request, &self.capabilities)?;
+        self.stream_encoded(body, StreamDecoder::new(self.protocol), events)
+            .await
+    }
+
+    /// Complete calls are returned only after a successful validated round. Event
+    /// previews remain partial observations and never authorize tool execution.
+    pub async fn stream_tool_round(
+        &self,
+        request: &ToolRequest<'_>,
+        capabilities: &ToolCapabilities,
+        events: &mpsc::Sender<ModelEvent>,
+        cancellation: &CancellationToken,
+    ) -> Result<ToolRound, TransportError> {
+        if cancellation.is_cancelled() || events.is_closed() {
+            return Err(TransportError::Cancelled);
+        }
+        let body = encode_tool_request(self.protocol, request, &self.capabilities, capabilities)?;
+        let decoder =
+            ToolRoundDecoder::new(self.protocol, request, &self.capabilities, capabilities)?;
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(TransportError::Cancelled),
+            _ = events.closed() => Err(TransportError::Cancelled),
+            result = tokio::time::timeout(self.limits.total, self.stream_encoded(body, decoder, events)) =>
+                result.map_err(|_| TransportError::Timeout)?,
+        }
+    }
+
+    async fn stream_encoded<D: WireDecoder>(
+        &self,
+        mut body: serde_json::Value,
+        mut decoder: D,
+        events: &mpsc::Sender<ModelEvent>,
+    ) -> Result<D::Output, TransportError> {
         if let Some(policy) = &self.router {
             body["provider"] = serde_json::json!({
                 "only": policy.providers,
@@ -412,7 +449,6 @@ impl ModelClient {
         if !content_type.is_some_and(|s| s.eq_ignore_ascii_case("text/event-stream")) {
             return Err(TransportError::ContentType);
         }
-        let mut decoder = StreamDecoder::new(self.protocol);
         let mut received = 0usize;
         while let Some(chunk) = response.chunk().await.map_err(map_network_error)? {
             received = received
@@ -435,13 +471,48 @@ impl ModelClient {
                     return Err(TransportError::Protocol(error));
                 }
             }
-            if decoder.is_terminal() {
-                decoder.finish()?;
-                return Ok(());
+            // Text previews retain their existing terminal-marker behavior.
+            // Executable tool rounds must also observe clean HTTP EOF: otherwise
+            // an error/duplicate terminal in a later chunk could be missed.
+            if decoder.is_terminal() && !D::REQUIRE_CLEAN_EOF {
+                return decoder.finish().map_err(TransportError::Protocol);
             }
         }
-        decoder.finish()?;
-        Ok(())
+        decoder.finish().map_err(TransportError::Protocol)
+    }
+}
+
+trait WireDecoder {
+    type Output;
+    const REQUIRE_CLEAN_EOF: bool;
+    fn push(&mut self, bytes: &[u8]) -> super::protocol::DecodeBatch;
+    fn is_terminal(&self) -> bool;
+    fn finish(self) -> Result<Self::Output, ProtocolError>;
+}
+impl WireDecoder for StreamDecoder {
+    type Output = ();
+    const REQUIRE_CLEAN_EOF: bool = false;
+    fn push(&mut self, bytes: &[u8]) -> super::protocol::DecodeBatch {
+        StreamDecoder::push(self, bytes)
+    }
+    fn is_terminal(&self) -> bool {
+        StreamDecoder::is_terminal(self)
+    }
+    fn finish(mut self) -> Result<(), ProtocolError> {
+        StreamDecoder::finish(&mut self)
+    }
+}
+impl WireDecoder for ToolRoundDecoder {
+    type Output = ToolRound;
+    const REQUIRE_CLEAN_EOF: bool = true;
+    fn push(&mut self, bytes: &[u8]) -> super::protocol::DecodeBatch {
+        ToolRoundDecoder::push(self, bytes)
+    }
+    fn is_terminal(&self) -> bool {
+        ToolRoundDecoder::is_terminal(self)
+    }
+    fn finish(self) -> Result<ToolRound, ProtocolError> {
+        ToolRoundDecoder::finish(self)
     }
 }
 

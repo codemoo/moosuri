@@ -1,8 +1,9 @@
 # Model transport foundation
 
-This Rust library is the next implementation unit after accounts. It is not yet
-wired to the web composer, provider settings, a durable run or a credential store.
-No live API key, subscription or local model is connected by these tests.
+This Rust library supplies provider verification and durable text chat. A separate
+[typed tool-round API](model-tools.md) is available for the upcoming agent runtime;
+it is not yet exposed by chat. Tests use synthetic loopback services without live
+API keys or subscriptions.
 
 ## Contract
 
@@ -58,6 +59,8 @@ ceiling. The text encoder caps requests at 512 KiB; transport also rejects final
 bodies over 1 MiB. SSE lines/events are capped at 64/256 KiB and accumulated
 answer/refusal text at 1 MiB. The total deadline also bounds a
 blocked consumer. No background retry, model fallback or continuation is started.
+Tool rounds additionally require clean HTTP EOF before returning completed calls;
+a terminal marker followed by a later error cannot authorize execution.
 Dropping local transport does not prove remote processing stopped or final usage
 is zero; delivered output/usage remain partial observations.
 

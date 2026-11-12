@@ -3,6 +3,8 @@
 //! This module performs no IO, retry, model selection or provider fallback.
 //! A terminal event is evidence of the provider's declared outcome, not evidence
 //! that an incomplete/refused/continuation result satisfied the user's request.
+pub mod tools;
+
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
@@ -280,6 +282,7 @@ struct ResponseItem {
 /// Any error poisons this decoder: it cannot later manufacture a success event.
 pub struct StreamDecoder {
     protocol: Protocol,
+    tools: Option<tools::RoundState>,
     line: Vec<u8>,
     after_cr: bool,
     first_line: bool,
@@ -305,6 +308,7 @@ impl StreamDecoder {
     pub fn new(protocol: Protocol) -> Self {
         Self {
             protocol,
+            tools: None,
             line: Vec::new(),
             after_cr: false,
             first_line: true,
@@ -483,6 +487,11 @@ impl StreamDecoder {
         }
         if value.get("error").is_some_and(|value| !value.is_null()) {
             return Err(ProtocolError::Provider);
+        }
+        if let Some(mut state) = self.tools.take() {
+            let result = state.dispatch(self, name, &value, events);
+            self.tools = Some(state);
+            return result;
         }
         match self.protocol {
             Protocol::Responses => self.responses(name, &value, events),

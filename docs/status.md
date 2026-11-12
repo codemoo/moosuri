@@ -116,6 +116,28 @@ OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 
 사용법과 삭제 범위는 [private knowledge](knowledge.md)에 있다. 어휘 검색·수동 관리
 기반이며 의미 검색 품질이나 P3 전체 완료로 표시하지 않는다.
 
+## 여섯 번째 단위: 검증된 모델 도구 호출 전송
+
+네 가지 기존 protocol에 typed function request·완료 call·private continuation을
+추가했다. 이 단위는 library이며 웹 채팅은 여전히 text path를 사용한다.
+
+- 도구 지원은 명시적으로 켜야 하며 기본은 off다. text 검증·catalog를 도구 지원으로
+  간주하지 않는다. 원래 사용자 권한·typed argument·작업 영수증은 다음 runtime의 책임이다.
+- Responses reasoning/phase, Anthropic thinking/signature/redaction, OpenRouter
+  reasoning details와 call/result ID를 보존한다. private capsule은 dialect/model/effort에
+  고정하고 브라우저 DTO·일반 Debug 출력에 내보내지 않는다.
+- preview에서는 실행 가능한 call이나 Finished를 내보내지 않는다. 완성된 terminal·
+  identity·JSON 검증과 clean HTTP EOF 뒤에만 완료 call을 반환한다. 조각 경계에 따라
+  후속 오류를 놓치던 결함을 독립 검토에서 발견해 수정·재검토했다.
+- **Rust125개 테스트가 macOS와 Linux x86_64에서 통과**했다. Connector는59개이며,
+  별도 HTTP 조각의 오류/중복 종료·held EOF 취소/timeout과 기존 text 동작을 검사한다.
+  fmt·workspace/all-target clippy도 통과했다.
+- 웹/DTO/DB와 Cargo/npm lock은 변경하지 않았다. 직전 React65개 검증을 유지하며
+  새 웹 여정으로 표시하지 않는다. 실모델 호출이나 미션 성공률 평가는 아직 아니다.
+
+상세 계약·공식 참고 자료는 [model tools](model-tools.md)에 있다. 다음 단계에서
+호출별 저장·누적 예산·자료 의존성/철회와 실제 검색 도구를 연결한다. CI는 꺼져 있다.
+
 ## 아직 구현하지 않은 범위
 
 구독 인증·개인 provider 연결, 도구를 사용하는 에이전트 하네스·자동 기억 추출·문서/목표·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.

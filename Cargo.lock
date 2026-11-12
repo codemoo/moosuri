@@ -955,6 +955,7 @@ dependencies = [
  "axum",
  "clap",
  "libc",
+ "moosuri-agent",
  "moosuri-core",
  "moosuri-server",
  "moosuri-store",
@@ -964,6 +965,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "moosuri-agent"
+version = "0.1.0-dev.1"
+dependencies = [
+ "axum",
+ "futures-util",
+ "moosuri-connectors",
+ "moosuri-core",
+ "moosuri-store",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -994,7 +1010,9 @@ name = "moosuri-server"
 version = "0.1.0-dev.1"
 dependencies = [
  "axum",
+ "futures-util",
  "http-body-util",
+ "moosuri-agent",
  "moosuri-connectors",
  "moosuri-core",
  "moosuri-store",
@@ -1019,6 +1037,7 @@ dependencies = [
  "moosuri-core",
  "rand 0.8.8",
  "rusqlite",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

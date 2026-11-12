@@ -2,13 +2,10 @@
 //! API credential crosses this boundary in a response, trace or error.
 use super::*;
 use moosuri_connectors::model::{
-    CancellationToken, ModelClient, NetworkPolicy, RouterPolicy, Secret, TransportError,
-    TransportLimits,
-    protocol::{
-        FinishOutcome, ModelEvent, Protocol, TextCapabilities, TextMessage, TextRequest, TextRole,
-    },
+    CancellationToken, ModelClient, Secret, TransportError, TransportLimits,
+    protocol::{FinishOutcome, ModelEvent, TextCapabilities, TextMessage, TextRequest, TextRole},
 };
-use moosuri_core::{ModelCatalog, ModelCatalogEntry, ModelSelection, ProviderConfig, ProviderKind};
+use moosuri_core::{ModelCatalog, ModelCatalogEntry, ModelSelection, ProviderConfig};
 use moosuri_store::{CredentialChange, ProviderBinding, ProviderChange};
 use zeroize::Zeroizing;
 
@@ -76,69 +73,12 @@ pub(super) struct CatalogInput {
     revision: i64,
 }
 
-fn client(
-    config: &ProviderConfig,
-    credential: Option<Secret>,
-    capabilities: TextCapabilities,
-) -> Result<ModelClient, TransportError> {
-    if config.kind == ProviderKind::Compatible {
-        if !config.router_providers.is_empty() || config.zero_data_retention {
-            return Err(TransportError::InvalidConfiguration);
-        }
-        let network = if config.allowed_ips.is_empty() {
-            NetworkPolicy::PublicHttps
-        } else {
-            NetworkPolicy::LocalExact(
-                config
-                    .allowed_ips
-                    .iter()
-                    .map(|v| {
-                        v.parse::<IpAddr>()
-                            .map_err(|_| TransportError::InvalidConfiguration)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            )
-        };
-        return ModelClient::compatible(
-            config
-                .base_url
-                .as_deref()
-                .ok_or(TransportError::InvalidConfiguration)?,
-            network,
-            credential,
-            capabilities,
-        );
-    }
-    if config.base_url.is_some()
-        || !config.allowed_ips.is_empty()
-        || (config.kind != ProviderKind::OpenRouter
-            && (!config.router_providers.is_empty() || config.zero_data_retention))
-    {
-        return Err(TransportError::InvalidConfiguration);
-    }
-    let protocol = match config.kind {
-        ProviderKind::OpenAi => Protocol::Responses,
-        ProviderKind::Anthropic => Protocol::AnthropicMessages,
-        ProviderKind::OpenRouter => Protocol::OpenRouterChat,
-        ProviderKind::Compatible => unreachable!(),
-    };
-    ModelClient::hosted(
-        protocol,
-        credential.ok_or(TransportError::InvalidConfiguration)?,
-        capabilities,
-        (config.kind == ProviderKind::OpenRouter).then(|| RouterPolicy {
-            providers: config.router_providers.clone(),
-            zero_data_retention: config.zero_data_retention,
-        }),
-    )
-}
-
 fn validate_config(config: &ProviderConfig) -> Result<(), HttpError> {
     // A fixed synthetic value is used ONLY for constructing/validating configuration.
     // This client is immediately dropped and never calls a network operation.
     let dummy = Secret::new("configuration-validation-only".into())
         .map_err(|_| HttpError(StoreError::InvalidInput))?;
-    client(config, Some(dummy), TextCapabilities::default())
+    moosuri_agent::model_client(config, Some(dummy), TextCapabilities::default())
         .map(|_| ())
         .map_err(|_| StoreError::InvalidInput.into())
 }
@@ -149,7 +89,7 @@ fn bound_client(binding: &ProviderBinding) -> Result<ModelClient, TransportError
         .as_ref()
         .map(|v| Secret::new(v.to_string()))
         .transpose()?;
-    client(
+    moosuri_agent::model_client(
         &binding.config,
         secret,
         TextCapabilities {

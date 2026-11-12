@@ -16,3 +16,24 @@ export type ProvidersResponse = { providers: Array<ProviderSummary>, default_sel
 export type ModelSettings = { selection: ModelSelection | null, effective: ModelChoice | null, choices: Array<ModelChoice>, };
 export type ModelCatalogEntry = { id: string, name: string, };
 export type ModelCatalog = { models: Array<ModelCatalogEntry>, truncated: boolean, };
+export type RunState = "queued" | "running" | "completed" | "failed" | "cancelled" | "incomplete" | "refused" | "outcome_unknown";
+export type MessagePhase = "commentary" | "final_answer";
+export type RunUsage = { input_tokens: number | null, output_tokens: number | null, cache_read_tokens: number | null, cache_write_tokens: number | null, };
+export type AssistantMessage = { id: string, text: string, phase: MessagePhase | null, refusal: boolean, };
+export type RunView = { id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
+/**
+ * Fixed application error category, never provider text.
+ */
+error: string | null, usage: RunUsage, can_retry: boolean, can_cancel: boolean, created_at: number, };
+export type ChatTurn = { sequence: number, user_text: string, assistant: Array<AssistantMessage>, run: RunView, };
+export type ChatPage = { thread_id: string,
+/**
+ * Cursor of the committed event log at the same snapshot as these turns.
+ */
+cursor: number, turns: Array<ChatTurn>, next_before: number | null, };
+export type ChatChange = { "kind": "turn", turn: ChatTurn, } | { "kind": "delta", run_id: string, attempt: number, message_id: string, text: string, phase: MessagePhase | null, refusal: boolean, } | { "kind": "phase", run_id: string, attempt: number, message_id: string, phase: MessagePhase | null, } | { "kind": "state", run: RunView, };
+export type ChatEvent = { sequence: number, change: ChatChange, };
+export type ChatEvents = { events: Array<ChatEvent>, reset: boolean, cursor: number, };
+export type UsageSummary = { dispatched_calls: number, unreported_calls: number, reported_input_tokens: number, reported_output_tokens: number, reported_cache_read_tokens: number, reported_cache_write_tokens: number, };
+export type AccountUsage = { account_id: string, name: string, email: string, usage: UsageSummary, };
+export type AccountUsageResponse = { accounts: Array<AccountUsage>, };

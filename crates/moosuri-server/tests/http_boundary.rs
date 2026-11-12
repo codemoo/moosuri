@@ -503,3 +503,6 @@ async fn stale_tab_account_assertion_cannot_act_with_new_shared_cookie() {
 
 #[path = "cases/provider_settings.rs"]
 mod provider_settings;
+
+#[path = "cases/chat.rs"]
+mod chat;

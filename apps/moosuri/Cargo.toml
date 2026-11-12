@@ -11,6 +11,7 @@ build = "build.rs"
 moosuri-core = { path = "../../crates/moosuri-core" }
 moosuri-store = { path = "../../crates/moosuri-store" }
 moosuri-server = { path = "../../crates/moosuri-server" }
+moosuri-agent = { path = "../../crates/moosuri-agent" }
 axum = "0.8"
 tokio.workspace = true
 clap = { version = "4.5", features = ["derive"] }

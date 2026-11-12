@@ -280,7 +280,8 @@ export function PersonalModelSettings({ accountId, onExpired }: Props) {
         </button>
       </section>
       <p className="settings-footnote">
-        모델 설정과 별개로, 이 버전에서는 아직 채팅 메시지를 전송할 수 없습니다.
+        모델 선택은 다음 메시지부터 적용됩니다. 다시 시도는 기존 실행의 모델
+        설정을 사용합니다.
       </p>
     </main>
   );
@@ -650,8 +651,8 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
         </section>
       )}
       <p className="settings-footnote">
-        확인은 짧은 실제 추론 요청을 보냅니다. 채팅 메시지 전송 기능은 아직 준비
-        중입니다.
+        확인은 짧은 실제 추론 요청을 보냅니다. 확인한 모델은 대화에서 선택해
+        사용할 수 있습니다.
       </p>
     </main>
   );

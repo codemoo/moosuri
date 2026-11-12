@@ -1,18 +1,16 @@
-import {
-  createContext,
-  useContext,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-} from "react";
+import { createContext, useContext, useLayoutEffect, useMemo } from "react";
 import { RequestScope } from "./api";
+import type { StreamFrame } from "./event-stream";
 
 export const ScopeRegistry = createContext<Set<RequestScope> | null>(null);
 
 /** Shared with auth invalidation so another tab fences every private request. */
-export function useScope(expectedAccountId?: string) {
+export function useScope(expectedAccountId?: string, lifetime?: string | null) {
   const registry = useContext(ScopeRegistry);
-  const ref = useRef<RequestScope | null>(null);
+  const ref = useMemo<{ current: RequestScope | null }>(
+    () => ({ current: null }),
+    [expectedAccountId, lifetime],
+  );
   useLayoutEffect(() => {
     const scope = new RequestScope(expectedAccountId);
     ref.current = scope;
@@ -21,12 +19,22 @@ export function useScope(expectedAccountId?: string) {
       scope.close();
       registry?.delete(scope);
     };
-  }, [expectedAccountId, registry]);
+  }, [expectedAccountId, registry, ref]);
   return useMemo(
     () => ({
-      request: <T>(path: string, method?: string, body?: unknown) =>
-        ref.current!.request<T>(path, method, body),
+      request: <T>(
+        path: string,
+        method?: string,
+        body?: unknown,
+        signal?: AbortSignal,
+      ) => ref.current!.request<T>(path, method, body, signal),
+      stream: (
+        path: string,
+        receive: (frame: StreamFrame) => void,
+        signal?: AbortSignal,
+        opened?: () => void,
+      ) => ref.current!.stream(path, receive, signal, opened),
     }),
-    [],
+    [ref],
   );
 }

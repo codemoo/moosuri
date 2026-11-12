@@ -175,7 +175,17 @@ fn cli_init_embedded_app_http_session_and_restart_work_together() {
         .output()
         .unwrap();
     assert!(!busy.status.success());
+    // Hyper has accepted this request and is awaiting the promised JSON body.
+    // A disconnected/stalled client must not keep SIGTERM draining forever.
+    let mut held = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    held.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    write!(held, "POST /api/v1/auth/login HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: 1024\r\nExpect: 100-continue\r\n\r\n").unwrap();
+    let mut accepted = [0u8; 25];
+    held.read_exact(&mut accepted).unwrap();
+    assert_eq!(&accepted, b"HTTP/1.1 100 Continue\r\n\r\n");
+    held.write_all(b"{\"email\":").unwrap();
     service.stop();
+    drop(held);
     drop(service);
     let mut service = start(&data, port);
     let restored = request(port, "GET", "/api/v1/threads", &session, None);

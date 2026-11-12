@@ -1,5 +1,7 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
+mod chat;
+pub use chat::{ClaimedRun, ContextMessage, ContextRole, OutputPatch, RunFailure, RunLease};
 mod files;
 mod journal;
 mod providers;
@@ -253,13 +255,19 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if version != 1 && version != 2 {
+        } else if !matches!(version, 1..=3) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {
             conn.execute_batch(&format!(
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0002_providers.sql")
+            ))?;
+        }
+        if version < 3 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0003_chat.sql")
             ))?;
         }
         let provider_key = providers::open_key(&conn, &dir)?;
@@ -275,6 +283,7 @@ impl Store {
             provider_key,
         };
         database.replay_journal()?;
+        chat::restart(&mut database.conn)?;
         let dummy_hash = DUMMY_HASH.to_owned();
         let (sender, mut receiver) = mpsc::channel::<Command>(64);
         let worker = std::thread::Builder::new()

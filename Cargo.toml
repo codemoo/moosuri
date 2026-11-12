@@ -1,5 +1,5 @@
 [workspace]
-members = ["tools/xtask", "crates/moosuri-core", "crates/moosuri-store", "crates/moosuri-server", "crates/moosuri-connectors", "apps/moosuri"]
+members = ["tools/xtask", "crates/moosuri-core", "crates/moosuri-store", "crates/moosuri-server", "crates/moosuri-connectors", "crates/moosuri-agent", "apps/moosuri"]
 resolver = "3"
 
 [workspace.package]

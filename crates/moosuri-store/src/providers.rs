@@ -591,3 +591,29 @@ impl Store {
 }
 #[cfg(test)]
 mod tests;
+
+/// Exact current verified binding for durable dispatch; never resolves a fallback.
+pub(super) fn binding_for_choice(
+    conn: &Connection,
+    key: &[u8; 32],
+    choice: &ModelChoice,
+) -> Result<ProviderBinding> {
+    let selection = ModelSelection {
+        provider_id: choice.provider_id.clone(),
+        provider_revision: choice.provider_revision,
+        model: choice.model.clone(),
+        effort: choice.effort.clone(),
+    };
+    verified(conn, &selection)?;
+    binding(
+        key,
+        require_binding(conn, &choice.provider_id, choice.provider_revision)?,
+        choice.model.clone(),
+        choice.effort.clone(),
+    )
+}
+pub(super) fn selected_choice(conn: &Connection, user: &UserContext) -> Result<ModelChoice> {
+    settings(conn, user)?
+        .effective
+        .ok_or(StoreError::Unavailable)
+}

@@ -1,4 +1,5 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
+mod chat;
 mod providers;
 use axum::{
     Json, Router,
@@ -90,14 +91,29 @@ struct AppState {
     config: ServerConfig,
     logins: Arc<Mutex<LoginBuckets>>,
     probes: Arc<tokio::sync::Semaphore>,
+    runtime: moosuri_agent::Runtime,
+    delivery: Arc<tokio::sync::RwLock<()>>,
+    streams: Arc<Mutex<HashMap<String, usize>>>,
 }
 
 pub fn router(store: Store, config: ServerConfig) -> Router {
+    let runtime = moosuri_agent::Runtime::start(store.clone());
+    router_with_runtime(store, config, runtime)
+}
+
+pub fn router_with_runtime(
+    store: Store,
+    config: ServerConfig,
+    runtime: moosuri_agent::Runtime,
+) -> Router {
     let state = AppState {
         store,
         config,
         logins: Arc::new(Mutex::new(HashMap::new())),
         probes: Arc::new(tokio::sync::Semaphore::new(2)),
+        runtime,
+        delivery: Arc::new(tokio::sync::RwLock::new(())),
+        streams: Arc::new(Mutex::new(HashMap::new())),
     };
     Router::new()
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
@@ -131,6 +147,19 @@ pub fn router(store: Store, config: ServerConfig) -> Router {
         )
         .route("/api/v1/threads", get(threads).post(create_thread))
         .route("/api/v1/threads/{id}", delete(delete_thread))
+        .route(
+            "/api/v1/threads/{id}/messages",
+            get(chat::messages)
+                .post(chat::submit)
+                // One UTF-8 byte may occupy six JSON bytes as a Unicode escape.
+                // Store still enforces the decoded 8,192-byte prompt limit.
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route("/api/v1/threads/{id}/events", get(chat::events))
+        .route("/api/v1/runs/{id}/cancel", post(chat::cancel))
+        .route("/api/v1/runs/{id}/retry", post(chat::retry))
+        .route("/api/v1/usage", get(chat::usage))
+        .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), boundary))
@@ -287,7 +316,7 @@ async fn system(State(state): State<AppState>) -> HttpResult {
     Ok(Json(SystemStatus {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         initialized: state.store.initialized().await?,
-        stage: "account-foundation".to_owned(),
+        stage: "durable-text-chat".to_owned(),
     })
     .into_response())
 }
@@ -392,6 +421,7 @@ async fn change_password(
     headers: HeaderMap,
     Json(input): Json<PasswordRequest>,
 ) -> HttpResult {
+    let _delivery = state.delivery.write().await;
     let user = current(&state, &headers).await?;
     let result = state.store.change_password(&user, input.password).await?;
     Ok(session_response(
@@ -401,6 +431,7 @@ async fn change_password(
     ))
 }
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let _delivery = state.delivery.write().await;
     // Revoke the supplied session, but never send Set-Cookie: a late logout
     // response from another tab must not erase a more recent login cookie.
     match cookie_token(&headers) {
@@ -483,7 +514,9 @@ async fn delete_thread(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> HttpResult {
+    let _delivery = state.delivery.write().await;
     let user = current(&state, &headers).await?;
     state.store.delete_thread(&user, id).await?;
+    state.runtime.wake();
     Ok(StatusCode::NO_CONTENT.into_response())
 }

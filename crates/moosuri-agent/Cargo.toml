@@ -1,0 +1,21 @@
+[package]
+name = "moosuri-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+moosuri-core = { path = "../moosuri-core" }
+moosuri-store = { path = "../moosuri-store" }
+moosuri-connectors = { path = "../moosuri-connectors" }
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+axum = { version = "0.8", features = ["http1", "tokio"] }
+serde_json.workspace = true
+tempfile.workspace = true
+uuid.workspace = true
+futures-util = "0.3"

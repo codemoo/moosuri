@@ -70,6 +70,25 @@ function server(
           current ? response(current) : response({ code: "unauthorized" }, 401),
         );
       }
+      if (path === "/settings/model")
+        return Promise.resolve(
+          response({ selection: null, effective: null, choices: [] }),
+        );
+      if (/^\/threads\/[^/]+\/messages/.test(path))
+        return Promise.resolve(
+          response({
+            thread_id: path.split("/")[2],
+            cursor: 0,
+            turns: [],
+            next_before: null,
+          }),
+        );
+      if (/^\/threads\/[^/]+\/events/.test(path))
+        return Promise.resolve(
+          new Response(new ReadableStream<Uint8Array>(), {
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        );
       return Promise.resolve(
         route?.(path, init) ??
           (path === "/threads"
@@ -157,8 +176,8 @@ describe("account and session boundaries", () => {
     expect(
       await screen.findByRole("heading", { name: "Hello, Alice." }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Message" })).toBeDisabled();
-    expect(screen.getByText(/Nothing is sent to a model/)).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "메시지" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "메시지 전송" })).toBeDisabled();
     expect(calls.every((call) => call.init.credentials === "same-origin")).toBe(
       true,
     );
@@ -554,6 +573,9 @@ describe("shared-cookie account changes", () => {
       </StrictMode>,
     );
     await screen.findByRole("heading", { name: "Hello, Alice." });
+    await waitFor(() =>
+      expect(calls.some((call) => call.path === "/threads")).toBe(true),
+    );
     const oldRequests = calls.filter((call) => call.path === "/threads");
     expect(oldRequests.length).toBeGreaterThan(0);
     expect(

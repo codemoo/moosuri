@@ -8,9 +8,11 @@ use moosuri_store::Store;
 use rand::{Rng, distributions::Alphanumeric};
 use std::{
     fs::OpenOptions,
+    future::IntoFuture,
     io::{Read, Write},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
@@ -38,7 +40,7 @@ enum Command {
         #[arg(long)]
         password_file: Option<PathBuf>,
     },
-    /// Serve the built React app and account API behind an HTTPS reverse proxy.
+    /// Serve the built React app, private chat API and runtime behind an HTTPS proxy.
     Serve {
         #[arg(long, default_value = "127.0.0.1:3210")]
         bind: SocketAddr,
@@ -155,7 +157,9 @@ async fn run(cli: Cli) -> Result<(), String> {
                 );
             }
             let store = Store::open(&data).map_err(|e| e.to_string())?;
-            let app = moosuri_server::router(store, config).fallback(static_asset);
+            let runtime = moosuri_agent::Runtime::start(store.clone());
+            let app = moosuri_server::router_with_runtime(store, config, runtime.clone())
+                .fallback(static_asset);
             let listener = tokio::net::TcpListener::bind(bind)
                 .await
                 .map_err(|_| "listen_failed")?;
@@ -164,13 +168,34 @@ async fn run(cli: Cli) -> Result<(), String> {
                 env!("CARGO_PKG_VERSION"),
                 listener.local_addr().map_err(|_| "listen_failed")?
             );
-            axum::serve(
+            let (drain, stopping) = tokio::sync::oneshot::channel::<()>();
+            let server = axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<SocketAddr>(),
             )
-            .with_graceful_shutdown(shutdown())
-            .await
-            .map_err(|_| "server_failed")?;
+            .with_graceful_shutdown(async {
+                let _ = stopping.await;
+            })
+            .into_future();
+            tokio::pin!(server);
+            let result = tokio::select! {
+                result = &mut server => result.map_err(|_| "server_failed"),
+                _ = shutdown_signal() => {
+                    // Stop accepting first, interrupt model work, and bound HTTP
+                    // draining even if a peer never finishes its body or reads SSE.
+                    runtime.stop();
+                    let _ = drain.send(());
+                    let (http, ()) = tokio::join!(
+                        tokio::time::timeout(Duration::from_secs(3), &mut server),
+                        runtime.shutdown(),
+                    );
+                    match http { Ok(Err(_)) => Err("server_failed"), _ => Ok(()) }
+                }
+            };
+            if !runtime.is_stopping() {
+                runtime.shutdown().await;
+            }
+            result?;
         }
         Command::Doctor => {
             if !data.join("assistant.sqlite").is_file() {
@@ -179,7 +204,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             let store = Store::open(&data).map_err(|e| e.to_string())?;
             let ready = store.initialized().await.map_err(|e| e.to_string())?;
             println!(
-                "SQLite: ready\nPrivate writer lock: acquired\nAdministrator initialized: {ready}\nModel execution: not implemented\nBackup/restore: not implemented"
+                "SQLite: ready\nPrivate writer lock: acquired\nAdministrator initialized: {ready}\nText chat: available with a verified connection\nBackup/restore: not implemented"
             );
         }
         Command::ExportTypes => unreachable!(),
@@ -222,7 +247,7 @@ fn read_password_file(path: &Path) -> Result<String, String> {
     }
     Ok(password)
 }
-async fn shutdown() {
+async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };
@@ -237,9 +262,8 @@ async fn shutdown() {
 }
 async fn static_asset(uri: Uri) -> Response {
     let path = match uri.path() {
-        "/" | "/app" | "/admin" | "/admin/providers" | "/settings/model" | "/login" => {
-            "/index.html"
-        }
+        "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/settings/model"
+        | "/settings/usage" | "/login" => "/index.html",
         other => other,
     };
     let Some((_, bytes)) = ASSETS.iter().find(|(name, _)| *name == path) else {

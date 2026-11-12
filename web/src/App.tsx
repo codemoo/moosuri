@@ -17,6 +17,8 @@ import type {
 } from "../shared/api-types";
 import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
+import { ChatPanel, type ChatMemory } from "./ChatPanel";
+import { UsageView } from "./UsageView";
 import {
   AdminProviderSettings,
   PersonalModelSettings,
@@ -647,6 +649,15 @@ function Workspace({
   const scope = useScope(session.user.id);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [chatMemory, setChatMemory] = useState<ChatMemory>({
+    drafts: {},
+    pending: {},
+  });
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  const listController = useRef<AbortController | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -656,7 +667,10 @@ function Workspace({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const historyOpener = useRef<HTMLButtonElement>(null);
   const deleteOpener = useRef<HTMLButtonElement | null>(null);
-  const admin = path === "/admin" || path === "/admin/providers";
+  const admin =
+    path === "/admin" || path === "/admin/providers" || path === "/admin/usage";
+  const adminUsage = path === "/admin/usage";
+  const personalUsage = path === "/settings/usage";
   const providerAdmin = path === "/admin/providers";
   const personalModel = path === "/settings/model";
   const allowedAdmin = session.user.role === "admin";
@@ -666,10 +680,12 @@ function Workspace({
     else setError(errorText(e));
   }
   useEffect(() => {
+    const controller = new AbortController();
+    listController.current = controller;
     setLoading(true);
     setError("");
     void scope
-      .request<ThreadsResponse>("/threads")
+      .request<ThreadsResponse>("/threads", "GET", undefined, controller.signal)
       .then((result) => {
         setThreads(result.threads);
         setSelected((current) =>
@@ -685,6 +701,7 @@ function Workspace({
           setLoading(false);
         }
       });
+    return () => controller.abort();
     // The lifetime-scoped transport fences late account responses.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, retry]);
@@ -705,6 +722,42 @@ function Workspace({
       setCreating(false);
     }
   }
+  async function createForChat(): Promise<string> {
+    setCreating(true);
+    listController.current?.abort();
+    try {
+      const thread = await scope.request<ThreadSummary>("/threads", "POST", {
+        title: "New conversation",
+      });
+      setThreads((current) => [
+        thread,
+        ...current.filter((item) => item.id !== thread.id),
+      ]);
+      if (
+        selectedRef.current === null &&
+        (pathRef.current === "/app" || pathRef.current === "/")
+      )
+        setSelected(thread.id);
+      setRetry((value) => value + 1);
+      return thread.id;
+    } finally {
+      setCreating(false);
+    }
+  }
+  function removeMemory(id: string) {
+    setChatMemory((current) => {
+      const drafts = { ...current.drafts };
+      const pending = { ...current.pending };
+      delete drafts[id];
+      delete pending[id];
+      return { drafts, pending };
+    });
+  }
+  function threadMissing(id: string) {
+    setThreads((current) => current.filter((thread) => thread.id !== id));
+    setSelected((current) => (current === id ? null : current));
+    removeMemory(id);
+  }
   async function removeThread() {
     if (!deleting) return;
     setDeleteBusy(true);
@@ -718,6 +771,7 @@ function Workspace({
       const remaining = threads.filter((t) => t.id !== deleting.id);
       setThreads(remaining);
       if (selected === deleting.id) setSelected(remaining[0]?.id ?? null);
+      removeMemory(deleting.id);
       setDeleting(null);
     } catch (e) {
       fail(e);
@@ -763,7 +817,7 @@ function Workspace({
         ) : (
           threads.map((thread) => (
             <div
-              className={`thread-row ${thread.id === selected && !admin && !personalModel ? "active" : ""}`}
+              className={`thread-row ${thread.id === selected && !admin && !personalModel && !personalUsage ? "active" : ""}`}
               key={thread.id}
             >
               <button
@@ -774,7 +828,10 @@ function Workspace({
                   setDrawer(false);
                 }}
                 aria-current={
-                  thread.id === selected && !admin && !personalModel
+                  thread.id === selected &&
+                  !admin &&
+                  !personalModel &&
+                  !personalUsage
                     ? "page"
                     : undefined
                 }
@@ -816,6 +873,16 @@ function Workspace({
           }}
         >
           {personalModel ? "← 대화로 돌아가기" : "내 모델"}
+          <span aria-hidden="true">↗</span>
+        </button>
+        <button
+          className={`nav-link ${personalUsage ? "chosen" : ""}`}
+          onClick={() => {
+            navigate(personalUsage ? "/app" : "/settings/usage");
+            setDrawer(false);
+          }}
+        >
+          {personalUsage ? "← 대화로 돌아가기" : "사용량"}
           <span aria-hidden="true">↗</span>
         </button>
         {allowedAdmin && (
@@ -873,17 +940,17 @@ function Workspace({
             </span>
             <h1>
               {admin
-                ? providerAdmin
-                  ? "모델 연결"
-                  : "People & access"
-                : personalModel
-                  ? "내 모델"
-                  : (current?.title ?? "A new beginning")}
+                ? adminUsage
+                  ? "계정별 사용량"
+                  : providerAdmin
+                    ? "모델 연결"
+                    : "People & access"
+                : personalUsage
+                  ? "내 사용량"
+                  : personalModel
+                    ? "내 모델"
+                    : (current?.title ?? "A new beginning")}
             </h1>
-          </div>
-          <div className="connection-status">
-            <span />
-            Message sending unavailable
           </div>
           <button
             className="icon-button mobile-only"
@@ -908,7 +975,7 @@ function Workspace({
         {admin && allowedAdmin && (
           <nav className="settings-tabs" aria-label="설치 관리">
             <button
-              aria-current={!providerAdmin ? "page" : undefined}
+              aria-current={!providerAdmin && !adminUsage ? "page" : undefined}
               onClick={() => navigate("/admin")}
             >
               사용자
@@ -919,16 +986,30 @@ function Workspace({
             >
               모델 연결
             </button>
+            <button
+              aria-current={adminUsage ? "page" : undefined}
+              onClick={() => navigate("/admin/usage")}
+            >
+              사용량
+            </button>
           </nav>
         )}
-        {personalModel ? (
+        {personalUsage ? (
+          <UsageView accountId={session.user.id} onExpired={onExpired} />
+        ) : personalModel ? (
           <PersonalModelSettings
             accountId={session.user.id}
             onExpired={onExpired}
           />
         ) : admin ? (
           allowedAdmin ? (
-            providerAdmin ? (
+            adminUsage ? (
+              <UsageView
+                accountId={session.user.id}
+                admin
+                onExpired={onExpired}
+              />
+            ) : providerAdmin ? (
               <AdminProviderSettings
                 accountId={session.user.id}
                 onExpired={onExpired}
@@ -946,72 +1027,74 @@ function Workspace({
             </div>
           )
         ) : (
-          <>
-            <main className="conversation-scroll">
-              <div className="empty-state">
-                <div className="empty-mark">
-                  <Mark large />
-                </div>
-                <p className="eyebrow">ROOM FOR YOUR NEXT THOUGHT</p>
-                <h2>
-                  {current
-                    ? "Your conversation is ready."
-                    : `Hello, ${session.user.name.split(" ")[0]}.`}
-                </h2>
-                <p>
-                  {current
-                    ? "This conversation has no messages yet."
-                    : "Start with a fresh conversation. A place to think things through, one step at a time."}
-                </p>
-                <div className="availability">
-                  <span className="availability-icon" aria-hidden="true">
-                    ⌁
-                  </span>
-                  <div>
-                    <strong>A connection comes next</strong>
-                    <p>
-                      Model connections can be managed in settings. Message
-                      sending is not available in this build.
-                    </p>
-                  </div>
-                </div>
-                {!current && (
-                  <button
-                    className="text-button"
-                    onClick={createThread}
-                    disabled={creating || loading}
-                  >
-                    {creating ? "Creating…" : "Create a conversation"}{" "}
-                    <span aria-hidden="true">↗</span>
-                  </button>
-                )}
-              </div>
-            </main>
-            <footer className="composer-area">
-              <div className="composer">
-                <label className="sr-only" htmlFor="message">
-                  Message
-                </label>
-                <textarea
-                  id="message"
-                  placeholder="Your next thought goes here…"
-                  disabled
-                  aria-describedby="composer-status"
-                  rows={2}
-                />
-                <div className="composer-bottom">
-                  <span>Message sending is not available yet</span>
-                  <button disabled aria-label="Send message unavailable">
-                    ↑
-                  </button>
-                </div>
-              </div>
-              <p id="composer-status" className="composer-caption">
-                Message sending is not available yet. Nothing is sent to a
-                model.
-              </p>
-            </footer>
-          </>
+          <ChatPanel
+            accountId={session.user.id}
+            name={session.user.name}
+            threadId={selected}
+            memory={chatMemory}
+            onDraft={(slot, text) =>
+              setChatMemory((current) => ({
+                ...current,
+                drafts: { ...current.drafts, [slot]: text },
+              }))
+            }
+            onPending={(slot, value, expected) =>
+              setChatMemory((current) => {
+                if (expected && current.pending[slot]?.request_id !== expected)
+                  return current;
+                const pending = { ...current.pending };
+                if (value) pending[slot] = value;
+                else delete pending[slot];
+                return { ...current, pending };
+              })
+            }
+            onRestoreDraft={(slot, text) =>
+              setChatMemory((current) => ({
+                ...current,
+                drafts: {
+                  ...current.drafts,
+                  [slot]:
+                    text +
+                    (current.drafts[slot] ? "\n\n" + current.drafts[slot] : ""),
+                },
+              }))
+            }
+            onCreated={(id, requestId) =>
+              setChatMemory((current) => {
+                if (current.pending.new?.request_id !== requestId)
+                  return current;
+                const pending = {
+                  ...current.pending,
+                  [id]: current.pending.new,
+                };
+                delete pending.new;
+                const drafts = {
+                  ...current.drafts,
+                  [id]: current.drafts.new ?? "",
+                };
+                delete drafts.new;
+                return { pending, drafts };
+              })
+            }
+            onSuspend={() =>
+              setChatMemory((current) => ({
+                ...current,
+                pending: Object.fromEntries(
+                  Object.entries(current.pending).map(([id, pending]) => [
+                    id,
+                    pending.status === "sending"
+                      ? { ...pending, status: "uncertain" as const }
+                      : pending,
+                  ]),
+                ),
+              }))
+            }
+            createThread={createForChat}
+            onExpired={onExpired}
+            onThreadMissing={threadMissing}
+            onThreadUpdated={() => setRetry((value) => value + 1)}
+            openSettings={() => navigate("/settings/model")}
+          />
         )}
       </section>
       {drawer && (

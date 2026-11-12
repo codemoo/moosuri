@@ -2,7 +2,7 @@
 
 2026-11-12. 실제 구현·검증과 다음 작업은 이 문서가 정본이다. 기능 계약은 [features](features.md), 상세 단계는 [plan](plan.md)을 따른다.
 
-공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델 설정을 구현한 개발 프리뷰이며, 아직 대답하거나 일을 수행하는 비서는 아니다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
+공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델 설정과 텍스트 대화를 구현한 개발 프리뷰다. 개인 자료·기억을 활용하거나 외부 일을 수행하는 기능은 아직 구현 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
 
 ## 구현된 첫 단위
 
@@ -17,7 +17,7 @@
 | 탭 전환 | 이전 계정 요청 중단/결과 폐기, expected-account 검사, 탭 간 갱신, 늦은 로그아웃의 쿠키 덮어쓰기 방지 |
 | 저장 | private 파일·경로 검증, 프로세스 writer lock, bounded queue/KDF, auth epoch journal의 중단·잘림 탐지 |
 
-설치·빌드·프록시·로컬 검증 명령은 [development](development.md)에 있다. 초대 이메일은 발송하지 않으며 대화는 아직 빈 컨테이너다. 모델이 연결되거나 메시지가 전송된 것처럼 표시하지 않는다.
+설치·빌드·프록시·로컬 검증 명령은 [development](development.md)에 있다. 초대 이메일은 아직 발송하지 않는다. 아래 네 번째 단위에서 이 계정 기반에 실제 텍스트 대화를 연결했다.
 
 ## 검증한 범위
 
@@ -37,7 +37,7 @@
 - 새 connector43개(프로토콜32·HTTP11), 기존 계정17개를 합쳐 **Rust60개 테스트가 macOS와 Linux x86_64에서 통과**했다. fmt·workspace/all-target clippy도 통과했다.
 - 전송/프로토콜을 독립 검토하고 메타데이터 주소·수신 중단·오류 전 부분 출력·최종 본문 대조 문제를 수정해 재검토했다.
 - 현재 lock의 registry224개 OSV 조회에서 알려진 취약점 응답 없음. CI는 계속 비활성이다.
-- 웹 composer/provider 설정·실계정 모델·구독 인증에는 아직 연결하지 않았다. 모델 성능이나 미션 수행 성적으로 표현하지 않는다.
+- 이 두 번째 단위 자체는 웹 composer/provider 설정·실계정 모델·구독 인증을 연결하지 않았다. 모델 성능이나 미션 수행 성적으로 표현하지 않는다.
 
 [상세 계약](model-transport.md)과 [검증 기록](reviews/2026-11-12-model-transport.md)을 따른다.
 
@@ -64,12 +64,36 @@ OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 
   유료 모델 호출은 사용하지 않았고 CI는 계속 비활성이다.
 
 사용 방법은 [provider settings](provider-settings.md), 검증과 한계는
-[검증 기록](reviews/2026-11-12-provider-settings.md)에 둔다. 구독 인증·실제 채팅
-실행이나 전체 P0/P1/P2 완료로 표시하지 않는다.
+[검증 기록](reviews/2026-11-12-provider-settings.md)에 둔다. 구독 인증이나 전체 P0/P1/P2 완료로 표시하지 않는다. 실제 채팅 실행은 아래 네 번째 단위에서 연결했다.
+
+## 네 번째 단위: 저장되는 텍스트 대화
+
+검증된 모델 연결로 실제 텍스트 질문을 보내고, 스트리밍·기록·재접속·취소·재시도를
+사용할 수 있다. 첫 질문으로 대화 이름을 붙이고 사용자별 문맥과 초안을 분리한다.
+
+- 요청 UUID로 중복 접수를 합치고, 재시도는 같은 질문의 새 attempt로 이어 간다.
+  브라우저를 닫아도 실행은 저장된다. 실행 중 서버 재시작은 결과 불명으로 남기고
+  모델 호출을 자동 재생하지 않는다. 재시도 때문에 입력 초안을 바꾸지 않는다.
+- 취소·삭제·세션/연결 철회가 늦은 출력을 막는다. 삭제 후 본문 없는 호출 영수증은
+  사용량 관측을 위해 남는다. 관리자는 사용자별 카운터만 보고 개인 대화를 읽지 않는다.
+- 대화 SSE는 저장된 cursor와 연결되고, 늦은 ACK/이전 attempt/phase 변경을 구별한다.
+  긴 대화는 최신 성공한 완전한 turn의 연속 구간만 사용하며 생략을 명시한다.
+- **Rust93개 테스트가 macOS와 Linux x86_64에서 통과**했다. 새 검증은 저장8개,
+  runtime12개, HTTP3개이며 기존 CLI 시험에 느린 요청의 종료 검증도 추가했다.
+- React48개 행동 테스트·타입 검사·production build를 통과했다. 실제 Chromium 검증과 상세 결과는 [검증 기록](reviews/2026-11-12-durable-text-chat.md)에 둔다.
+  모바일 viewport 확인은 실제 모바일 기기 검증과 구별한다.
+- Store·runtime·HTTP/SSE·React를 독립 검토했다. 끊긴 실행의 종료 상태 불일치,
+  오래된 문맥의 잘못된 복원, 임시 writer 압력의 권한 철회 오판, 무한 HTTP drain,
+  JSON escape 크기, 늦은 ACK의 본문 중복, phase 해제 처리를 수정·재검토했다.
+- registry232개 dependency는 이전 검증과 동일하다. 실서비스 모델 키·운영 데이터는
+  사용하지 않았고 CI는 계속 비활성이다. 사용량은 보고된 값이며 가격/지출 상한이 아니다.
+
+사용법과 경계는 [text chat](chat.md)에 있다. 전체 비서·기억·미션 수행 완료나 실모델
+품질/속도 평가로 표현하지 않는다.
 
 ## 아직 구현하지 않은 범위
 
-구독 인증·개인 provider 연결, 메시지 저장·스트림·재시도·취소, 에이전트 하네스·도구·기억·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.
+구독 인증·개인 provider 연결, 도구를 사용하는 에이전트 하네스·기억·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.
 
 현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 이를 해제할 operator 복구 경로와 백업/복원은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. `doctor`는 중지된 설치에만 사용한다.
 
@@ -77,7 +101,7 @@ OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 
 
 1. P0의 남은 provider capability·baseline/fixture adapter·crypto/broker 위험 검증과 독립 복구 입력을 확인한다.
 2. P1의 run/effect·dispatch·revision·사용량·복원 계약을 작은 저장 단위로 구현한다. 현재 계정 기반이 P1 전체 완료를 뜻하지 않는다.
-3. 완성한 provider 설정에 두 사용자의 실제 텍스트 대화·스트림·취소·재시도·재접속 흐름을 잇는다.
+3. 검증된 대화 기반 다음으로 개인 자료 입력·검색·기억 수정/망각을 구현하고, 이후 검색 도구·자동 추출을 채팅에 연결한다.
 4. [migration](migration.md)의 순서에 따라 자료·기억→도구·스킬→예약·연결→미디어·볼트→이전·출시로 진행한다. P0/P1/P2와 미구현 OpenSpec change를 완료 처리하지 않는다.
 
 모든 공개 소스는 새 이력과 합성 자료만 사용한다. 원본 운영 저장소·서비스·수집기·cron·DB는 보존한다. 개인 AGENTS/CLAUDE 및 editor 지침은 Git에서 제외하고 CONTRIBUTING·OpenSpec·제품 community SKILL은 공유한다.

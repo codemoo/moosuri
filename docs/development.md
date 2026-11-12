@@ -1,10 +1,11 @@
 # Run the development preview
 
 This is a development preview, not the finished assistant. It supports real
-local accounts, session persistence, empty conversation management and an
+local accounts, session persistence, durable text conversations and an
 administrator user list/invitation flow. Shared provider setup, model discovery,
-synthetic verification and personal model/effort selection are available. Messages,
-memories, schedules, media, vault, external actions and backup/restore remain pending.
+synthetic verification and personal model/effort selection are available. Streaming,
+cancel/retry, saved history and observed usage are connected. Memories, schedules,
+media, vault, external actions and backup/restore remain pending.
 
 Use Rust 1.89+ and Node.js 22.22+. Node is needed to build React, not to run the
 resulting server. SQLite is bundled. Build from a clean public checkout:
@@ -36,10 +37,11 @@ is accepted as a command argument. Only the administrator is created initially.
 Open `http://127.0.0.1:3210/app`. An administrator can use `/admin` to create
 additional members with one-time local invitation credentials. No invitation
 email is sent. Each member must change their temporary password before using
-personal or admin APIs. Conversations are empty containers in this unit; the
-composer accurately shows that message execution is unavailable. Open
+personal or admin APIs. Open
 `/admin/providers` for [shared connections](provider-settings.md) and
-`/settings/model` to choose a verified model/effort for your account.
+`/settings/model` to choose a verified model/effort for your account. Send a question
+in `/app`; [text chat](chat.md) explains streaming, retry/cancel and recovery.
+`/settings/usage` shows observed usage; `/admin/usage` shows account counters.
 
 ## HTTPS reverse proxy
 

@@ -2,8 +2,8 @@
 
 The administrator manages installation API/local connections at `/admin/providers`.
 Each member chooses a verified model and effort at `/settings/model`, or explicitly
-uses the installation default. This unit provides setup and synthetic verification;
-it does not yet connect a conversation runner or subscription login.
+uses the installation default. Verified choices are connected to saved conversations. Subscription login remains
+a separate implementation.
 
 1. Add an OpenAI API, Anthropic API, OpenRouter, or compatible/local connection.
 2. Enter its API key. Compatible servers may omit a key; hosted providers require one.
@@ -16,6 +16,13 @@ it does not yet connect a conversation runner or subscription login.
 6. Choose a successfully verified combination as the installation default or your
    personal selection. Unsupported effort is rejected; compatible text currently
    supports provider-default effort only.
+
+For private source/memory retrieval, use **도구 연결 확인** beside a verified choice.
+This additional two-round proof checks a fixed function call and a fresh challenge
+returned through its result, including complete transport and exact model identity.
+It is pinned to the provider revision, model and effort. Text proof alone never enables
+tools; failed or revoked proof leaves capability off. New runs can use a verified
+capability; old runs keep their original setting. See [knowledge agent](knowledge-agent.md).
 
 Model discovery returns at most 512 entries from a single page and 1 MiB. A truncated
 list is labeled; users can still enter an exact ID. Discovery is not a claim that a

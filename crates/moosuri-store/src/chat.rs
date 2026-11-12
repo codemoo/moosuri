@@ -42,6 +42,8 @@ pub enum RunFailure {
     ServerRestarted,
     ContinuationUnsupported,
     Interrupted,
+    KnowledgeInvalidated,
+    BudgetExhausted,
 }
 impl RunFailure {
     fn code(self) -> &'static str {
@@ -59,17 +61,19 @@ impl RunFailure {
             Self::ServerRestarted => "server_restarted",
             Self::ContinuationUnsupported => "continuation_unsupported",
             Self::Interrupted => "interrupted",
+            Self::KnowledgeInvalidated => "knowledge_invalidated",
+            Self::BudgetExhausted => "budget_exhausted",
         }
     }
 }
 /// Unforgeable outside Store. Receipt nonce authorizes usage after content deletion.
 #[derive(Clone)]
 pub struct RunLease {
-    tenant: String,
-    run: String,
-    attempt: i32,
-    nonce: [u8; 32],
-    epoch: i64,
+    pub(super) tenant: String,
+    pub(super) run: String,
+    pub(super) attempt: i32,
+    pub(super) nonce: [u8; 32],
+    pub(super) epoch: i64,
 }
 impl RunLease {
     pub fn run_id(&self) -> &str {
@@ -85,22 +89,22 @@ pub struct ClaimedRun {
     pub messages: Vec<ContextMessage>,
 }
 #[derive(Clone)]
-struct Run {
-    tenant: String,
-    id: String,
-    account: String,
-    thread: String,
-    request: String,
-    sequence: i64,
-    text: String,
-    model: ModelChoice,
-    session: [u8; 32],
-    epoch: i64,
-    attempt: i32,
-    state: RunState,
-    version: i64,
-    error: Option<String>,
-    created: i64,
+pub(super) struct Run {
+    pub(super) tenant: String,
+    pub(super) id: String,
+    pub(super) account: String,
+    pub(super) thread: String,
+    pub(super) request: String,
+    pub(super) sequence: i64,
+    pub(super) text: String,
+    pub(super) model: ModelChoice,
+    pub(super) session: [u8; 32],
+    pub(super) epoch: i64,
+    pub(super) attempt: i32,
+    pub(super) state: RunState,
+    pub(super) version: i64,
+    pub(super) error: Option<String>,
+    pub(super) created: i64,
 }
 fn json<T: serde::Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|_| StoreError::Corrupt)
@@ -165,7 +169,7 @@ fn run_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunRow> {
         r.get(14)?,
     ))
 }
-fn load_run(conn: &Connection, tenant: &str, id: &str) -> Result<Run> {
+pub(super) fn load_run(conn: &Connection, tenant: &str, id: &str) -> Result<Run> {
     let r=conn.query_row("SELECT tenant_id,id,account_id,thread_id,request_id,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,error,created_at FROM chat_runs WHERE tenant_id=?1 AND id=?2",params![tenant,id],run_row).optional()?.ok_or(StoreError::NotFound)?;
     Ok(Run {
         tenant: r.0,
@@ -186,22 +190,38 @@ fn load_run(conn: &Connection, tenant: &str, id: &str) -> Result<Run> {
     })
 }
 fn run_usage(conn: &Connection, run: &Run) -> Result<RunUsage> {
-    let value: Option<String> = conn
-        .query_row(
-            "SELECT usage FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND attempt=?3",
-            params![run.tenant, run.id, run.attempt],
-            |r| r.get(0),
-        )
-        .optional()?;
-    value
-        .map(|s| parse(&s))
-        .transpose()
-        .map(|v| v.unwrap_or_default())
+    let all_attempts = agent_execution::is_agent(conn, &run.tenant, &run.id)?;
+    let values = conn.prepare("SELECT usage FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND (?4 OR attempt=?3)")?
+      .query_map(params![run.tenant,run.id,run.attempt,all_attempts], |r| r.get::<_,String>(0))?
+      .collect::<std::result::Result<Vec<_>,_>>()?;
+    let values = values
+        .iter()
+        .map(|v| parse::<RunUsage>(v))
+        .collect::<Result<Vec<_>>>()?;
+    fn sum(values: &[RunUsage], field: fn(&RunUsage) -> Option<u64>) -> Result<Option<u64>> {
+        if values.is_empty() || values.iter().any(|v| field(v).is_none()) {
+            return Ok(None);
+        }
+        let mut total = 0u64;
+        for v in values {
+            total = total
+                .checked_add(field(v).ok_or(StoreError::Corrupt)?)
+                .ok_or(StoreError::Corrupt)?;
+        }
+        Ok(Some(total))
+    }
+    Ok(RunUsage {
+        input_tokens: sum(&values, |v| v.input_tokens)?,
+        output_tokens: sum(&values, |v| v.output_tokens)?,
+        cache_read_tokens: sum(&values, |v| v.cache_read_tokens)?,
+        cache_write_tokens: sum(&values, |v| v.cache_write_tokens)?,
+    })
 }
+
 fn is_latest(conn: &Connection, run: &Run) -> Result<bool> {
     Ok(!conn.query_row("SELECT EXISTS(SELECT 1 FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND sequence>?3)",params![run.tenant,run.thread,run.sequence],|r|r.get::<_,bool>(0))?)
 }
-fn view(conn: &Connection, run: &Run) -> Result<RunView> {
+pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
     Ok(RunView {
         id: run.id.clone(),
         request_id: run.request.clone(),
@@ -212,15 +232,17 @@ fn view(conn: &Connection, run: &Run) -> Result<RunView> {
         model: run.model.clone(),
         error: run.error.clone(),
         usage: run_usage(conn, run)?,
+        evidence: agent_execution::evidence(conn, &run.tenant, &run.id)?,
         can_retry: !run.state.active()
             && run.state != RunState::Completed
             && run.attempt < 32
+            && agent_execution::retry_allowed(conn, &run.tenant, &run.id)?
             && is_latest(conn, run)?,
         can_cancel: run.state.active(),
         created_at: run.created,
     })
 }
-fn turn(conn: &Connection, run: &Run) -> Result<ChatTurn> {
+pub(super) fn turn(conn: &Connection, run: &Run) -> Result<ChatTurn> {
     let mut statement=conn.prepare("SELECT id,text,phase,refusal FROM chat_output WHERE tenant_id=?1 AND run_id=?2 ORDER BY ordinal")?;
     let rows = statement.query_map(params![run.tenant, run.id], |r| {
         Ok((
@@ -248,7 +270,7 @@ fn turn(conn: &Connection, run: &Run) -> Result<ChatTurn> {
         run: view(conn, run)?,
     })
 }
-fn emit(conn: &Connection, run: &Run, change: ChatChange) -> Result<()> {
+pub(super) fn emit(conn: &Connection, run: &Run, change: ChatChange) -> Result<()> {
     conn.execute("UPDATE threads SET chat_event_seq=chat_event_seq+1,updated_at=?1 WHERE tenant_id=?2 AND id=?3",params![now()?,run.tenant,run.thread])?;
     let sequence: i64 = conn.query_row(
         "SELECT chat_event_seq FROM threads WHERE tenant_id=?1 AND id=?2",
@@ -265,7 +287,7 @@ fn emit(conn: &Connection, run: &Run, change: ChatChange) -> Result<()> {
     )?;
     Ok(())
 }
-fn transition(
+pub(super) fn transition(
     conn: &Connection,
     run: &Run,
     state: RunState,
@@ -289,7 +311,7 @@ fn transition(
         },
     )
 }
-fn authority(conn: &Connection, run: &Run) -> Result<UserContext> {
+pub(super) fn authority(conn: &Connection, run: &Run) -> Result<UserContext> {
     let user = load_context(conn, run.session, false)?;
     if user.epoch != run.epoch
         || user.restricted
@@ -300,7 +322,7 @@ fn authority(conn: &Connection, run: &Run) -> Result<UserContext> {
     }
     Ok(user)
 }
-fn queue_capacity(conn: &Connection, tenant: &str) -> Result<()> {
+pub(super) fn queue_capacity(conn: &Connection, tenant: &str) -> Result<()> {
     let (personal,global):(i64,i64)=conn.query_row("SELECT sum(CASE WHEN tenant_id=?1 THEN 1 ELSE 0 END),count(*) FROM chat_runs WHERE state='queued'",[tenant],|r|Ok((r.get::<_,Option<i64>>(0)?.unwrap_or(0),r.get(1)?)))?;
     if personal >= 8 || global >= 64 {
         return Err(StoreError::Busy);
@@ -318,21 +340,24 @@ fn next_order(conn: &Connection) -> Result<i64> {
         |r| r.get(0),
     )?)
 }
-fn receipt_valid(conn: &Connection, lease: &RunLease) -> Result<()> {
+pub(super) fn receipt_valid(conn: &Connection, lease: &RunLease) -> Result<()> {
     let nonce: Option<Vec<u8>> = conn
         .query_row(
-            "SELECT nonce FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND attempt=?3",
+            "SELECT nonce FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND attempt=?3 AND step=0",
             params![lease.tenant, lease.run, lease.attempt],
             |r| r.get(0),
         )
         .optional()?;
     if nonce.as_deref() != Some(lease.nonce.as_slice()) {
-        return Err(StoreError::Unauthorized);
+        let agent: Option<Vec<u8>> = conn.query_row("SELECT nonce FROM agent_run_leases WHERE tenant_id=?1 AND run_id=?2 AND attempt=?3",params![lease.tenant,lease.run,lease.attempt],|r|r.get(0)).optional()?;
+        if agent.as_deref() != Some(lease.nonce.as_slice()) {
+            return Err(StoreError::Unauthorized);
+        }
     }
     Ok(())
 }
 // Caller commits even when this returns an error: authority revocation is a durable state change.
-fn guard(conn: &Connection, key: &[u8; 32], lease: &RunLease) -> Result<Run> {
+pub(super) fn guard(conn: &Connection, key: &[u8; 32], lease: &RunLease) -> Result<Run> {
     receipt_valid(conn, lease)?;
     let run = load_run(conn, &lease.tenant, &lease.run)?;
     if run.attempt != lease.attempt || run.state != RunState::Running || run.epoch != lease.epoch {
@@ -356,6 +381,7 @@ fn guard(conn: &Connection, key: &[u8; 32], lease: &RunLease) -> Result<Run> {
         )?;
         return Err(StoreError::Conflict);
     }
+    agent_execution::guard_execution(conn, &run)?;
     Ok(run)
 }
 impl Store {
@@ -452,6 +478,9 @@ impl Store {
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
             match guard(&tx, &db.provider_key, &lease) {
                 Ok(run) => {
+                    if agent_execution::is_agent(&tx, &run.tenant, &run.id)? {
+                        return Err(StoreError::Conflict);
+                    }
                     transition(&tx, &run, state, error)?;
                     tx.commit()?;
                     Ok(())
@@ -480,6 +509,9 @@ impl Store {
                     return Err(error);
                 }
             };
+            if agent_execution::is_agent(&tx, &run.tenant, &run.id)? {
+                return Err(StoreError::Conflict);
+            }
             apply_patches(&tx, &run, patches)?;
             tx.commit()?;
             Ok(())
@@ -504,7 +536,7 @@ impl Store {
         self.call(move |db| account_usage_inner(db, user)).await
     }
 }
-fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage>> {
+pub(super) fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage>> {
     let ids=conn.prepare("SELECT id FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND sequence<?3 AND state='completed' ORDER BY sequence DESC LIMIT 128")?.query_map(params![run.tenant,run.thread,run.sequence],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let mut turns = Vec::new();
     let mut count = 1usize;
@@ -512,6 +544,7 @@ fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage>> {
     let mut omitted = false;
     for id in ids {
         let prior = load_run(conn, &run.tenant, &id)?;
+        let prior_id = prior.id.clone();
         let prior = turn(conn, &prior)?;
         let output = prior
             .assistant
@@ -542,6 +575,7 @@ fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage>> {
             text: m.text,
             phase: m.phase,
         }));
+        agent_execution::inherit_dependencies(conn, &run.tenant, &run.id, &prior_id)?;
         count += messages.len();
         bytes += turn_bytes;
         turns.push(messages);
@@ -564,7 +598,7 @@ fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage>> {
     });
     Ok(result)
 }
-fn apply_patches(conn: &Connection, run: &Run, patches: Vec<OutputPatch>) -> Result<()> {
+pub(super) fn apply_patches(conn: &Connection, run: &Run, patches: Vec<OutputPatch>) -> Result<()> {
     let mut bytes:i64=conn.query_row("SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM chat_output WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
     let mut items: i64 = conn.query_row(
         "SELECT count(*) FROM chat_output WHERE tenant_id=?1 AND run_id=?2",
@@ -681,6 +715,10 @@ fn usage(conn: &Connection, tenant: &str) -> Result<UsageSummary> {
 }
 pub(super) fn restart(conn: &mut Connection) -> Result<()> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "UPDATE agent_steps SET state='unknown' WHERE state='dispatched'",
+        [],
+    )?;
     let rows = tx
         .prepare("SELECT tenant_id,id FROM chat_runs WHERE state='running'")?
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
@@ -824,7 +862,12 @@ fn chat_events_inner(
         params![user.tenant.0, thread_id],
         |r| r.get(0),
     )?;
-    if after < 0 || after > head || after < head.saturating_sub(512) {
+    let floor: i64 = tx.query_row(
+        "SELECT chat_reset_floor FROM threads WHERE tenant_id=?1 AND id=?2",
+        params![user.tenant.0, thread_id],
+        |r| r.get(0),
+    )?;
+    if after < 0 || after > head || after < head.saturating_sub(512) || after < floor {
         return Ok(ChatEvents {
             events: vec![],
             reset: true,
@@ -887,6 +930,7 @@ fn retry_run_inner(
         || run.state.active()
         || run.state == RunState::Completed
         || run.attempt >= 32
+        || !agent_execution::retry_allowed(&tx, &run.tenant, &run.id)?
         || !is_latest(&tx, &run)?
     {
         return Err(StoreError::Conflict);
@@ -898,6 +942,7 @@ fn retry_run_inner(
         "DELETE FROM chat_output WHERE tenant_id=?1 AND run_id=?2",
         params![run.tenant, run.id],
     )?;
+    agent_execution::reset_attempt(&tx, &run.tenant, &run.id)?;
     tx.execute("UPDATE chat_runs SET attempt=attempt+1,state='queued',version=version+1,error=NULL,session_digest=?1,auth_epoch=?2,admitted_order=?3 WHERE tenant_id=?4 AND id=?5",params![user.digest.as_slice(),user.epoch,order,run.tenant,run.id])?;
     let current = load_run(&tx, &run.tenant, &run.id)?;
     let result = turn(&tx, &current)?;
@@ -923,7 +968,7 @@ fn claim_run_inner(db: &mut Database) -> Result<Option<ClaimedRun>> {
     if running >= 2 {
         return Ok(None);
     }
-    let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND tenant_id NOT IN (SELECT tenant_id FROM chat_runs WHERE state='running') ORDER BY admitted_order LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=chat_runs.tenant_id AND a.run_id=chat_runs.id AND a.agent=1) AND tenant_id NOT IN (SELECT tenant_id FROM chat_runs WHERE state='running') ORDER BY admitted_order LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for (tenant, id) in queued {
         let run = load_run(&tx, &tenant, &id)?;
         if authority(&tx, &run).is_err() {
@@ -975,9 +1020,12 @@ fn update_run_usage_inner(db: &mut Database, lease: RunLease, usage: RunUsage) -
     let tx = db
         .conn
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    receipt_valid(&tx, &lease)?;
+    let nonce: Option<Vec<u8>> = tx.query_row("SELECT nonce FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND attempt=?3 AND step=0",params![lease.tenant,lease.run,lease.attempt],|r|r.get(0)).optional()?;
+    if nonce.as_deref() != Some(lease.nonce.as_slice()) {
+        return Err(StoreError::Unauthorized);
+    }
     let encoded: String = tx.query_row(
-        "SELECT usage FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND attempt=?3",
+        "SELECT usage FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND attempt=?3 AND step=0",
         params![lease.tenant, lease.run, lease.attempt],
         |r| r.get(0),
     )?;
@@ -990,7 +1038,7 @@ fn update_run_usage_inner(db: &mut Database, lease: RunLease, usage: RunUsage) -
         cache_write_tokens: usage.cache_write_tokens.or(old.cache_write_tokens),
     };
     if old != merged {
-        tx.execute("UPDATE model_call_receipts SET usage=?1 WHERE tenant_id=?2 AND run_id=?3 AND attempt=?4",params![json(&merged)?,lease.tenant,lease.run,lease.attempt])?;
+        tx.execute("UPDATE model_call_receipts SET usage=?1 WHERE tenant_id=?2 AND run_id=?3 AND attempt=?4 AND step=0",params![json(&merged)?,lease.tenant,lease.run,lease.attempt])?;
         if let Ok(run) = load_run(&tx, &lease.tenant, &lease.run)
             && run.attempt == lease.attempt
         {

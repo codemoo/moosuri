@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type {
+  ChatEvidence,
   EvidenceRef,
   KnowledgeCollection,
   KnowledgeHit,
@@ -42,12 +43,16 @@ export function KnowledgeView({
   drafts,
   updateDrafts,
   onExpired,
+  target,
+  onTargetConsumed,
 }: {
   accountId: string;
   mode: Mode;
   drafts: KnowledgeDrafts;
   updateDrafts: DraftSetter;
   onExpired: () => void;
+  target?: ChatEvidence | null;
+  onTargetConsumed?: () => void;
 }) {
   const scope = useScope(accountId, `knowledge:${mode}`);
   const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
@@ -110,6 +115,12 @@ export function KnowledgeView({
       searchController.current?.abort();
     };
   }, [mode]);
+  useEffect(() => {
+    if (!target || target.kind !== mode) return;
+    if (target.kind === "source") setSource({id: target.id, revision: target.revision});
+    else setMemory({id: target.id, revision: target.revision});
+    onTargetConsumed?.();
+  }, [target, mode]);
   useEffect(() => {
     if (mode !== "source") return;
     const controller = new AbortController();
@@ -490,8 +501,8 @@ export function KnowledgeView({
       {!drafts.noticeHidden && (
         <div className="knowledge-stage">
           <p>
-            이곳에 저장한 자료와 기억은 아직 채팅 답변에 자동으로 사용되지
-            않습니다.
+            도구 사용이 확인된 모델에서는 채팅 중 필요한 자료와 기억을 찾아볼 수
+            있습니다. 자동 기억 저장은 아직 지원하지 않습니다.
           </p>
           <button
             className="text-button"
@@ -1334,6 +1345,9 @@ function KnowledgeConfirm({
             ? "이 원문과 그 원문에 의존하는 기억·수정 이력을 삭제합니다. 이 원문을 근거로 한 작성 중 기억도 지워집니다. 독립적으로 기록한 기억은 유지됩니다."
             : "이 기억과 수정 이력을 지웁니다. 원문 자료는 삭제하지 않습니다."}
         </p>
+      )}
+      {(danger.kind !== "collection" || retained || mode === "delete") && (
+        <p>이 자료나 기억을 참고한 채팅 답변도 지워집니다. 내가 보낸 질문은 유지됩니다.</p>
       )}
       {error && (
         <p className="notice" role="alert">

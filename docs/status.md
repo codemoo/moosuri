@@ -2,7 +2,7 @@
 
 2026-11-12. 실제 구현·검증과 다음 작업은 이 문서가 정본이다. 기능 계약은 [features](features.md), 상세 단계는 [plan](plan.md)을 따른다.
 
-공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델 설정·텍스트 대화와 개인 자료·기억 관리 기능을 구현한 개발 프리뷰다. 채팅의 자료 활용·자동 기억 추출·외부 작업은 아직 구현 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
+공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델 설정·저장되는 대화·개인 자료/기억 관리와 채팅의 자료 검색·조회 기능을 구현한 개발 프리뷰다. 자동 기억 추출·대화로 기억 변경·외부 작업은 아직 구현 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
 
 ## 구현된 첫 단위
 
@@ -119,7 +119,7 @@ OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 
 ## 여섯 번째 단위: 검증된 모델 도구 호출 전송
 
 네 가지 기존 protocol에 typed function request·완료 call·private continuation을
-추가했다. 이 단위는 library이며 웹 채팅은 여전히 text path를 사용한다.
+추가했다. 이 단위 자체는 library다. 아래 일곱 번째 단위에서 웹 채팅 runtime에 연결했다.
 
 - 도구 지원은 명시적으로 켜야 하며 기본은 off다. text 검증·catalog를 도구 지원으로
   간주하지 않는다. 원래 사용자 권한·typed argument·작업 영수증은 다음 runtime의 책임이다.
@@ -138,9 +138,39 @@ OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 
 상세 계약·공식 참고 자료는 [model tools](model-tools.md)에 있다. 다음 단계에서
 호출별 저장·누적 예산·자료 의존성/철회와 실제 검색 도구를 연결한다. CI는 꺼져 있다.
 
+## 일곱 번째 단위: 자료를 읽는 저장형 에이전트
+
+도구 지원을 확인한 모델이 개인 자료·기억을 검색하고 정확한 revision의 원문을 읽은
+뒤 답변을 이어 간다. 채팅에는 서버가 기록한 실제 참조를 표시하고, 원문/기억의
+해당 버전을 열 수 있다. 본문 없는 출처 버튼이나 모델이 지어낸 ID는 표시하지 않는다.
+
+- 관리자 도구 확인은 고정 함수 호출→새 challenge 결과의 정확한 반환을 두 번의
+  합성 호출로 검사한다. 기존 text proof·catalog만으로 활성화하지 않으며 provider
+  revision/model/effort와 현재 권한을 확인한다. 이전 run의 기능 설정은 바꾸지 않는다.
+- SQLite migration5에 단계별 dispatch 영수증·private continuation·typed tool slot과
+  결과·의존성을 추가했다. 완성된 모델 호출을 저장한 뒤 도구를 실행하며, 재시작이나
+  결과 불명 호출을 자동 재생하지 않는다. 명시적 retry도6 model/12 tool/120초 예산을
+  초기화하지 않는다. 모델별 단계의 관측 사용량은 삭제·취소 후에도 기록할 수 있다.
+- 실제 반환된 근거와 성공한 이전 문맥의 의존성을 연결한다. 자료 수정/삭제·기억
+  수정/망각은 관련 답변과 내부 capsule/slot을 철회한다. 질문과 사용량은 유지한다.
+  진행 중인 자료 의존 run은 관련 없는 자료 변경에도 보수적으로 중단될 수 있다.
+- SSE reset뿐 아니라 모든 전체 새로고침에서 예전 페이지를 교체한다. 오프라인 동안
+  reset을 놓치거나 늦은 재시도 응답이 와도 삭제된 답변을 되살리지 않고 초안은 유지한다.
+- macOS·Linux x86_64에서 **Rust154개**(Store57·runtime18·connector59·HTTP19·CLI1),
+  fmt·all-target clippy를 통과했다. React70개, 타입/production build·생성 DTO 일치도
+  확인했다. 실제 Chromium 여정과390×844 화면을 검증했으며 실제 모바일 기기 시험은 아니다.
+- Store·runtime/HTTP·React를 독립 검토했다. 누락된 reset 후 과거 페이지 보존,
+  예산 초과의 권한 오류 오표시, 큰 인자로 인한 불필요한 전체 실패를 수정·재검토했다.
+  합성 runtime 회귀6개와 HTTP/SSE 회귀1개가 실제 모델 loopback과 file DB를 사용한다.
+
+상세 동작·한계는 [knowledge agent](knowledge-agent.md), 실제 브라우저/플랫폼 수락은
+[검증 기록](reviews/2026-11-12-knowledge-agent.md)에 둔다. 자동 기억 저장·외부 작업·
+전체 미션 능력은 구현 완료로 표시하지 않는다. registry dependency는 이전232개와
+동일하며 운영 데이터·실모델 키는 쓰지 않았다. CI는 계속 비활성이다.
+
 ## 아직 구현하지 않은 범위
 
-구독 인증·개인 provider 연결, 도구를 사용하는 에이전트 하네스·자동 기억 추출·문서/목표·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.
+구독 인증·개인 provider 연결, 읽기 도구를 넘어서는 에이전트 하네스·대화로 기억 변경·자동 기억 추출·문서/목표·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.
 
 현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 이를 해제할 operator 복구 경로와 백업/복원은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. `doctor`는 중지된 설치에만 사용한다.
 
@@ -148,7 +178,7 @@ OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 
 
 1. P0의 남은 provider capability·baseline/fixture adapter·crypto/broker 위험 검증과 독립 복구 입력을 확인한다.
 2. P1의 run/effect·dispatch·revision·사용량·복원 계약을 작은 저장 단위로 구현한다. 현재 계정 기반이 P1 전체 완료를 뜻하지 않는다.
-3. 구현한 개인 자료 입력·검색·기억 수정/망각을 바탕으로, 저장되는 모델 단계·도구 영수증·근거 철회 계약을 추가하고 검색 도구와 명시적 기억 저장을 채팅에 연결한다. 자동 추출은 그다음이다.
+3. 채팅 검색·원문 조회와 저장되는 모델 단계/도구 영수증·근거 철회 계약은 구현했다. 다음은 사용자 요청에서 봉인한 기억 변경 의도·원자적 변경 영수증·망각 억제 계약을 추가하고 대화로 기억 저장/수정/망각과 제한된 자동 추출을 연결한다.
 4. [migration](migration.md)의 순서에 따라 자료·기억→도구·스킬→예약·연결→미디어·볼트→이전·출시로 진행한다. P0/P1/P2와 미구현 OpenSpec change를 완료 처리하지 않는다.
 
 모든 공개 소스는 새 이력과 합성 자료만 사용한다. 원본 운영 저장소·서비스·수집기·cron·DB는 보존한다. 개인 AGENTS/CLAUDE 및 editor 지침은 Git에서 제외하고 CONTRIBUTING·OpenSpec·제품 community SKILL은 공유한다.

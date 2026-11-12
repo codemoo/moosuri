@@ -3,9 +3,9 @@ use super::*;
 use moosuri_core::*;
 use serde::{Serialize, de::DeserializeOwned};
 mod destructive;
-mod memories;
-mod search;
-mod sources;
+pub(super) mod memories;
+pub(super) mod search;
+pub(super) mod sources;
 #[cfg(test)]
 mod tests;
 pub(super) fn replay(db: &mut Database) -> Result<()> {
@@ -50,7 +50,7 @@ fn speaker(value: &Option<String>) -> Result<()> {
     }
     Ok(())
 }
-fn generation(conn: &Connection, tenant: &str) -> Result<i64> {
+pub(super) fn generation(conn: &Connection, tenant: &str) -> Result<i64> {
     Ok(conn
         .query_row(
             "SELECT generation FROM knowledge_state WHERE tenant_id=?1",

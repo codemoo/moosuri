@@ -509,3 +509,6 @@ mod chat;
 
 #[path = "cases/knowledge.rs"]
 mod knowledge;
+
+#[path = "cases/knowledge_agent.rs"]
+mod knowledge_agent;

@@ -11,11 +11,12 @@ moosuri-core = { path = "../moosuri-core" }
 moosuri-store = { path = "../moosuri-store" }
 moosuri-connectors = { path = "../moosuri-connectors" }
 tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 axum = { version = "0.8", features = ["http1", "tokio"] }
-serde_json.workspace = true
 tempfile.workspace = true
-uuid.workspace = true
 futures-util = "0.3"

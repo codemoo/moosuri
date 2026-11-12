@@ -47,6 +47,7 @@ async fn upstream() -> ModelFixture {
         state.calls.fetch_add(1,Ordering::SeqCst);
         assert!(headers["authorization"]=="Bearer synthetic-provider-key");
         assert_eq!(body["model"],"fixture-model");
+        if body.get("tools").is_some() {return tool_upstream(&state,&body).await;}
         assert_eq!(body["messages"][0]["content"],"Reply with the single word OK.");
         assert!(body.get("reasoning").is_none());
         let mode=state.mode.load(Ordering::SeqCst);
@@ -180,6 +181,7 @@ async fn administrator_connects_catalog_probes_defaults_and_member_keeps_own_sel
             connection(&upstream.base),
         ),
         ("POST", path(&profile, "/probe"), probe(&profile)),
+        ("POST", path(&profile, "/tool-probe"), probe(&profile)),
         (
             "POST",
             path(&profile, "/models"),
@@ -364,4 +366,282 @@ async fn disabling_during_held_probe_prevents_late_activation_and_stops_local_wa
     .await;
     assert!(settings["choices"].as_array().unwrap().is_empty());
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
+}
+
+async fn tool_upstream(state: &ModelState, body: &Value) -> axum::response::Response {
+    let mode = state.mode.load(Ordering::SeqCst);
+    assert_eq!(
+        body["tools"][0]["function"]["name"],
+        "moosuri_verification_ping"
+    );
+    assert_eq!(
+        body["tools"][0]["function"]["parameters"]["properties"],
+        json!({})
+    );
+    assert_eq!(body["max_tokens"], 2048);
+    let result = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["role"] == "tool");
+    if result.is_none() {
+        assert!(!body.to_string().contains("moosuri-tool-proof-"));
+    }
+    if mode == 17 && result.is_some() {
+        state.entered.notify_one();
+        state.release.notified().await;
+    }
+    let response_model = if mode == 16 && result.is_some() {
+        "substituted-model"
+    } else {
+        "fixture-model"
+    };
+    let delta = if let Some(result) = result {
+        let challenge = result["content"].as_str().unwrap();
+        assert!(challenge.starts_with("moosuri-tool-proof-"));
+        assert_eq!(result["tool_call_id"], "verification-call");
+        if mode == 15 {
+            json!({"tool_calls":[{"index":0,"id":"second-call","type":"function","function":{"name":"moosuri_verification_ping","arguments":"{}"}}]})
+        } else {
+            json!({"content":if mode==14{"false claim".into()}else if mode==22{format!(" {challenge}")}else{challenge.to_owned()}})
+        }
+    } else if mode == 11 || mode == 19 {
+        json!({"content":"I claim tools work"})
+    } else {
+        let call = json!({"index":0,"id":"verification-call","type":"function","function":{"name":if mode==20{"unregistered_ping"}else{"moosuri_verification_ping"},"arguments":if mode==12{json!({"unexpected":true}).to_string()}else{"{}".to_owned()}}});
+        if mode == 21 {
+            let mut second = call.clone();
+            second["index"] = json!(1);
+            second["id"] = json!("extra-call");
+            json!({"tool_calls":[call,second]})
+        } else {
+            json!({"tool_calls":[call]})
+        }
+    };
+    let stop = if mode == 19 {
+        "content_filter"
+    } else if delta.get("tool_calls").is_some() {
+        "tool_calls"
+    } else {
+        "stop"
+    };
+    let prefix = json!({"id":if result.is_some(){"tool-second"}else{"tool-first"},"model":response_model,"choices":[{"index":0,"delta":delta,"finish_reason":null}]});
+    let finish = json!({"id":if result.is_some(){"tool-second"}else{"tool-first"},"model":response_model,"choices":[{"index":0,"delta":{},"finish_reason":stop}]});
+    let wire = if (mode == 13 && result.is_none()) || (mode == 18 && result.is_some()) {
+        format!("data: {prefix}\n\n")
+    } else {
+        format!("data: {prefix}\n\ndata: {finish}\n\ndata: [DONE]\n\n")
+    };
+    ([("content-type", "text/event-stream")], wire).into_response()
+}
+
+#[tokio::test]
+async fn tool_probe_requires_text_proof_then_validates_unseen_challenge_roundtrip() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_tmp, _store, app) = fixture(false).await;
+    let admin = login(&app, "admin@example.test", PASSWORD).await;
+    let upstream = upstream().await;
+    let profile = add(&app, &admin, &upstream).await;
+    let catalog = send(
+        &app,
+        "POST",
+        &path(&profile, "/models"),
+        Some(&admin),
+        json!({"revision":profile["revision"]}),
+    )
+    .await;
+    assert_eq!(catalog.status(), StatusCode::OK);
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path(&profile, "/tool-probe"),
+            Some(&admin),
+            probe(&profile)
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 0);
+    let response = send(
+        &app,
+        "POST",
+        &path(&profile, "/probe"),
+        Some(&admin),
+        probe(&profile),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(value(response).await["function_tools"], false);
+    upstream.mode.store(10, Ordering::SeqCst);
+    let response = send(
+        &app,
+        "POST",
+        &path(&profile, "/tool-probe"),
+        Some(&admin),
+        probe(&profile),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = value(response).await;
+    assert_eq!(body["function_tools"], true);
+    assert!(!body.to_string().contains("moosuri-tool-proof-"));
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 3);
+    let settings = value(
+        send(
+            &app,
+            "GET",
+            "/api/v1/settings/model",
+            Some(&admin),
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(settings["choices"][0]["function_tools"], true);
+    let mut forged = probe(&profile);
+    forged["function_tools"] = json!(true);
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path(&profile, "/tool-probe"),
+            Some(&admin),
+            forged
+        )
+        .await
+        .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn false_tool_claims_wrong_calls_nonce_identity_and_loss_do_not_activate_capability() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_tmp, _store, app) = fixture(false).await;
+    let admin = login(&app, "admin@example.test", PASSWORD).await;
+    let upstream = upstream().await;
+    let profile = add(&app, &admin, &upstream).await;
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path(&profile, "/probe"),
+            Some(&admin),
+            probe(&profile)
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    for mode in [11, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22] {
+        upstream.mode.store(mode, Ordering::SeqCst);
+        let before = upstream.calls.load(Ordering::SeqCst);
+        let response = send(
+            &app,
+            "POST",
+            &path(&profile, "/tool-probe"),
+            Some(&admin),
+            probe(&profile),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY, "mode {mode}");
+        let text = value(response).await.to_string();
+        assert!(!text.contains("synthetic-provider-key"));
+        assert!(!text.contains("moosuri-tool-proof-"));
+        let expected = if [14, 15, 16, 18, 22].contains(&mode) {
+            2
+        } else {
+            1
+        };
+        assert_eq!(
+            upstream.calls.load(Ordering::SeqCst) - before,
+            expected,
+            "mode {mode} did not retry/fallback"
+        );
+        let settings = value(
+            send(
+                &app,
+                "GET",
+                "/api/v1/settings/model",
+                Some(&admin),
+                Value::Null,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(settings["choices"][0]["function_tools"], false);
+    }
+}
+
+#[tokio::test]
+async fn revocation_during_second_tool_probe_round_blocks_late_capability_record() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_tmp, _store, app) = fixture(false).await;
+    let admin = login(&app, "admin@example.test", PASSWORD).await;
+    let upstream = upstream().await;
+    let profile = add(&app, &admin, &upstream).await;
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path(&profile, "/probe"),
+            Some(&admin),
+            probe(&profile)
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    upstream.mode.store(17, Ordering::SeqCst);
+    let copy = app.clone();
+    let cookie = admin.clone();
+    let target = profile.clone();
+    let pending = tokio::spawn(async move {
+        send(
+            &copy,
+            "POST",
+            &path(&target, "/tool-probe"),
+            Some(&cookie),
+            probe(&target),
+        )
+        .await
+    });
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        upstream.entered.notified(),
+    )
+    .await
+    .unwrap();
+    let mut edited = connection(&upstream.base);
+    edited["expected_revision"] = profile["revision"].clone();
+    edited["enabled"] = json!(false);
+    edited["credential"] = json!({"action":"keep"});
+    assert_eq!(
+        send(&app, "PUT", &path(&profile, ""), Some(&admin), edited)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), pending)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    upstream.release.notify_one();
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 3);
+    let settings = value(
+        send(
+            &app,
+            "GET",
+            "/api/v1/settings/model",
+            Some(&admin),
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert!(settings["choices"].as_array().unwrap().is_empty());
 }

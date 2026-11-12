@@ -6,6 +6,7 @@ import {
   type FormEvent,
 } from "react";
 import type {
+  ChatEvidence,
   ChatEvent,
   ChatPage,
   ChatTurn,
@@ -55,6 +56,7 @@ type Props = {
   onThreadMissing: (id: string) => void;
   onThreadUpdated: () => void;
   openSettings: () => void;
+  onOpenEvidence?: (reference: ChatEvidence) => void;
 };
 const labels: Record<RunView["state"], string> = {
   queued: "대기 중",
@@ -67,6 +69,10 @@ const labels: Record<RunView["state"], string> = {
   outcome_unknown: "결과 확인 필요",
 };
 function runExplanation(run: RunView) {
+  if (run.error === "knowledge_invalidated")
+    return "참고한 자료가 변경되거나 삭제되어 관련 답변을 지웠습니다. 현재 자료로 다시 질문해 주세요.";
+  if (run.error === "budget_exhausted")
+    return "이번 요청의 실행 한도에 도달했습니다. 범위를 줄여 새로 요청해 주세요.";
   if (run.state === "outcome_unknown")
     return "이전 요청의 결과를 확인할 수 없습니다. 서버가 다시 시작되었을 수 있으며, 제공업체에서 사용량이 청구될 수 있습니다. 자동으로 다시 전송하지 않습니다.";
   if (run.state === "cancelled")
@@ -120,6 +126,7 @@ export function ChatPanel(props: Props) {
   pendingRef.current = memory.pending;
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const turnsRef = useRef<ChatTurn[]>([]);
+  const historyEpoch = useRef(0);
   const [loading, setLoading] = useState(!!threadId);
   const [historyReady, setHistoryReady] = useState(!threadId);
   const displayedThread = useRef<string | null | undefined>(undefined);
@@ -271,6 +278,7 @@ export function ChatPanel(props: Props) {
     const changed = displayedThread.current !== thread;
     displayedThread.current = thread;
     if (changed) {
+      historyEpoch.current++;
       nearBottom.current = true;
       anchor.current = null;
       setUnseen(false);
@@ -332,6 +340,17 @@ export function ChatPanel(props: Props) {
     }
     async function snapshot() {
       if (!thread) return false;
+      // A reconnect can miss the reset event while offline. A fresh cursor may
+      // already be beyond that reset, so no older cached page can be retained.
+      historyEpoch.current++;
+      olderController.current?.abort();
+      cancelFrame();
+      queue = [];
+      queuedBytes = 0;
+      turnsRef.current = [];
+      setTurns([]);
+      setNextBefore(null);
+      setHistoryReady(false);
       try {
         const page = parsePage(
           await readScope.request<unknown>(
@@ -346,19 +365,9 @@ export function ChatPanel(props: Props) {
         cancelFrame();
         queue = [];
         cursor = page.cursor;
-        const old =
-          !changed && page.turns.length
-            ? turnsRef.current.filter(
-                (turn) =>
-                  turn.sequence <
-                  Math.min(...page.turns.map((turn) => turn.sequence)),
-              )
-            : [];
-        turnsRef.current = [...old, ...page.turns].sort(
-          (a, b) => a.sequence - b.sequence,
-        );
+        turnsRef.current = page.turns;
         setTurns(turnsRef.current);
-        if (changed || !old.length) setNextBefore(page.next_before);
+        setNextBefore(page.next_before);
         setLoading(false);
         setHistoryReady(true);
         settle(page);
@@ -416,6 +425,15 @@ export function ChatPanel(props: Props) {
                 throw new StreamFailure();
               }
               if (incoming.event === "reset") {
+                historyEpoch.current++;
+                olderController.current?.abort();
+                cancelFrame();
+                queue = [];
+                queuedBytes = 0;
+                turnsRef.current = [];
+                setTurns([]);
+                setNextBefore(null);
+                setHistoryReady(false);
                 needsSnapshot = true;
                 throw new StreamFailure();
               }
@@ -522,6 +540,7 @@ export function ChatPanel(props: Props) {
     olderPending.current = true;
     setOlderBusy(true);
     const thread = threadId;
+    const epoch = historyEpoch.current;
     const controller = new AbortController();
     olderController.current = controller;
     const element = scroll.current;
@@ -550,6 +569,7 @@ export function ChatPanel(props: Props) {
         ),
         thread,
       );
+      if (epoch !== historyEpoch.current || controller.signal.aborted) return;
       flushRef.current();
       const existing = new Map(
         turnsRef.current.map((turn) => [turn.run.id, turn]),
@@ -715,6 +735,7 @@ export function ChatPanel(props: Props) {
     )
       return;
     actionLock.current = true;
+    const epoch = historyEpoch.current;
     setActionBusy(run.id);
     setError("");
     try {
@@ -729,6 +750,10 @@ export function ChatPanel(props: Props) {
         result.run.thread_id !== currentThread.current
       )
         throw new StreamFailure();
+      if (epoch !== historyEpoch.current) {
+        void refreshSnapshot();
+        return;
+      }
       flushRef.current();
       turnsRef.current = acknowledge(turnsRef.current, result);
       setTurns(turnsRef.current);
@@ -895,6 +920,20 @@ export function ChatPanel(props: Props) {
                 </div>
                 {runExplanation(turn.run) && (
                   <p className="run-explanation">{runExplanation(turn.run)}</p>
+                )}
+                {turn.assistant.some((message) => message.text) && turn.run.evidence.length > 0 && (
+                  <div className="chat-evidence" aria-label="답변에 제공한 자료">
+                    <span>확인한 자료</span>
+                    {turn.run.evidence.map((reference) => (
+                      <button
+                        className="text-button"
+                        key={`${reference.kind}:${reference.id}:${reference.revision}`}
+                        onClick={() => props.onOpenEvidence?.(reference)}
+                      >
+                        {reference.title} ↗
+                      </button>
+                    ))}
+                  </div>
                 )}
                 <details className="run-model">
                   <summary>실행 정보</summary>

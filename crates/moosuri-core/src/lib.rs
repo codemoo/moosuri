@@ -80,6 +80,7 @@ pub fn typescript_contract() -> String {
         MessagePhase::decl(),
         RunUsage::decl(),
         AssistantMessage::decl(),
+        ChatEvidence::decl(),
         RunView::decl(),
         ChatTurn::decl(),
         ChatPage::decl(),

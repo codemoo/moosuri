@@ -88,7 +88,8 @@ async fn create_collection(
     Json(input): Json<CollectionInput>,
 ) -> HttpResult {
     let user = current(&state, &headers).await?;
-    Ok((
+    let _delivery = state.delivery.write().await;
+    let response = Ok((
         StatusCode::CREATED,
         Json(
             state
@@ -97,7 +98,9 @@ async fn create_collection(
                 .await?,
         ),
     )
-        .into_response())
+        .into_response());
+    state.runtime.wake();
+    response
 }
 async fn disconnect(
     State(state): State<AppState>,
@@ -106,13 +109,16 @@ async fn disconnect(
     Json(input): Json<DisconnectInput>,
 ) -> HttpResult {
     let user = current(&state, &headers).await?;
-    Ok(Json(
+    let _delivery = state.delivery.write().await;
+    let response = Ok(Json(
         state
             .store
             .disconnect_collection(&user, id, input.expected_revision, input.mode)
             .await?,
     )
-    .into_response())
+    .into_response());
+    state.runtime.wake();
+    response
 }
 async fn sources(
     State(state): State<AppState>,
@@ -130,11 +136,14 @@ async fn ingest(
     Json(input): Json<IngestBatch>,
 ) -> HttpResult {
     let user = current(&state, &headers).await?;
-    Ok((
+    let _delivery = state.delivery.write().await;
+    let response = Ok((
         StatusCode::CREATED,
         Json(state.store.ingest_text(&user, id, input).await?),
     )
-        .into_response())
+        .into_response());
+    state.runtime.wake();
+    response
 }
 async fn source(
     State(state): State<AppState>,
@@ -152,10 +161,12 @@ async fn delete_source(
     Json(input): Json<RevisionInput>,
 ) -> HttpResult {
     let user = current(&state, &headers).await?;
+    let _delivery = state.delivery.write().await;
     state
         .store
         .delete_source(&user, id, input.expected_revision)
         .await?;
+    state.runtime.wake();
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 async fn search(
@@ -198,7 +209,8 @@ async fn create_memory(
     Json(input): Json<NewMemory>,
 ) -> HttpResult {
     let user = current(&state, &headers).await?;
-    Ok((
+    let _delivery = state.delivery.write().await;
+    let response = Ok((
         StatusCode::CREATED,
         Json(
             state
@@ -207,7 +219,9 @@ async fn create_memory(
                 .await?,
         ),
     )
-        .into_response())
+        .into_response());
+    state.runtime.wake();
+    response
 }
 async fn correct_memory(
     State(state): State<AppState>,
@@ -216,7 +230,8 @@ async fn correct_memory(
     Json(input): Json<MemoryCorrection>,
 ) -> HttpResult {
     let user = current(&state, &headers).await?;
-    Ok(Json(
+    let _delivery = state.delivery.write().await;
+    let response = Ok(Json(
         state
             .store
             .correct_memory(
@@ -228,7 +243,9 @@ async fn correct_memory(
             )
             .await?,
     )
-    .into_response())
+    .into_response());
+    state.runtime.wake();
+    response
 }
 async fn forget_memory(
     State(state): State<AppState>,
@@ -237,9 +254,11 @@ async fn forget_memory(
     Json(input): Json<RevisionInput>,
 ) -> HttpResult {
     let user = current(&state, &headers).await?;
+    let _delivery = state.delivery.write().await;
     state
         .store
         .forget_memory(&user, id, input.expected_revision)
         .await?;
+    state.runtime.wake();
     Ok(StatusCode::NO_CONTENT.into_response())
 }

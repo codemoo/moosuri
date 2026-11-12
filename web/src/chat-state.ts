@@ -52,6 +52,7 @@ export function validChoice(value: unknown): value is ModelChoice {
     ["open_ai", "anthropic", "open_router", "compatible"].includes(
       String(value.kind),
     ) &&
+    typeof value.function_tools === "boolean" &&
     integer(value.verified_at)
   );
 }
@@ -68,6 +69,11 @@ export function validRun(value: unknown): value is RunView {
     (value.error === null ||
       (typeof value.error === "string" && value.error.length <= 128)) &&
     validUsage(value.usage) &&
+    Array.isArray(value.evidence) && value.evidence.length <= 12 &&
+    value.evidence.every((reference) => object(reference) &&
+      (reference.kind === "source" || reference.kind === "memory") &&
+      id(reference.id) && integer(reference.revision, 1) &&
+      typeof reference.title === "string" && reference.title.length <= 512) &&
     typeof value.can_retry === "boolean" &&
     typeof value.can_cancel === "boolean" &&
     integer(value.created_at)

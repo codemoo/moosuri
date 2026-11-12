@@ -298,7 +298,7 @@ fn binding(
     })
 }
 fn choices(conn: &Connection, id: Option<&str>) -> Result<Vec<ModelChoice>> {
-    let mut stmt=conn.prepare("SELECT r.provider_id,r.revision,r.name,r.config,m.model,m.effort,m.verified_at FROM providers p JOIN provider_revisions r ON r.provider_id=p.id AND r.revision=p.current_revision JOIN provider_model_probes m ON m.provider_id=r.provider_id AND m.revision=r.revision WHERE r.enabled=1 AND (?1 IS NULL OR p.id=?1) ORDER BY r.name,m.model,m.effort")?;
+    let mut stmt=conn.prepare("SELECT r.provider_id,r.revision,r.name,r.config,m.model,m.effort,m.verified_at,m.function_tools FROM providers p JOIN provider_revisions r ON r.provider_id=p.id AND r.revision=p.current_revision JOIN provider_model_probes m ON m.provider_id=r.provider_id AND m.revision=r.revision WHERE r.enabled=1 AND (?1 IS NULL OR p.id=?1) ORDER BY r.name,m.model,m.effort")?;
     let rows = stmt.query_map([id], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -308,11 +308,20 @@ fn choices(conn: &Connection, id: Option<&str>) -> Result<Vec<ModelChoice>> {
             r.get::<_, String>(4)?,
             r.get::<_, String>(5)?,
             r.get::<_, i64>(6)?,
+            r.get::<_, bool>(7)?,
         ))
     })?;
     rows.map(|row| {
-        let (provider_id, provider_revision, provider_name, config, model, effort, verified_at) =
-            row?;
+        let (
+            provider_id,
+            provider_revision,
+            provider_name,
+            config,
+            model,
+            effort,
+            verified_at,
+            function_tools,
+        ) = row?;
         let config: ProviderConfig =
             serde_json::from_str(&config).map_err(|_| StoreError::Corrupt)?;
         Ok(ModelChoice {
@@ -327,6 +336,7 @@ fn choices(conn: &Connection, id: Option<&str>) -> Result<Vec<ModelChoice>> {
                 Some(effort)
             },
             verified_at,
+            function_tools,
         })
     })
     .collect()
@@ -535,6 +545,56 @@ impl Store {
         })
         .await
     }
+    /// Private synthetic probe material. Catalog access or a text-only binding
+    /// cannot assert tool support. The challenge must not enter the first prompt.
+    pub async fn tool_probe_binding(
+        &self,
+        user: &UserContext,
+        id: String,
+        revision: i64,
+        model: String,
+        effort: Option<String>,
+    ) -> Result<(ProviderBinding, String)> {
+        let user = user.clone();
+        self.call(move |db| {
+            validate(&db.conn, &user, true, true)?;
+            let row = require_binding(&db.conn, &id, revision)?;
+            verified(
+                &db.conn,
+                &ModelSelection {
+                    provider_id: id,
+                    provider_revision: revision,
+                    model: model.clone(),
+                    effort: effort.clone(),
+                },
+            )?;
+            let binding = binding(&db.provider_key, row, model, effort)?;
+            Ok((binding, format!("moosuri-tool-proof-{}", random_token()?)))
+        })
+        .await
+    }
+    /// Only the successful server round-trip verifier may call this. HTTP must
+    /// never accept a client-supplied capability assertion as proof.
+    pub async fn record_tool_probe(
+        &self,
+        user: &UserContext,
+        id: String,
+        revision: i64,
+        model: String,
+        effort: Option<String>,
+    ) -> Result<ModelChoice> {
+        let user = user.clone();
+        self.call(move|db|{
+            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            validate(&tx,&user,true,true)?;
+            require_binding(&tx,&id,revision)?;
+            let selection=ModelSelection{provider_id:id.clone(),provider_revision:revision,model:model.clone(),effort:effort.clone()};
+            verified(&tx,&selection)?;
+            let changed=tx.execute("UPDATE provider_model_probes SET function_tools=1 WHERE provider_id=?1 AND revision=?2 AND model=?3 AND effort=?4",params![id,revision,model,effort.unwrap_or_default()])?;
+            if changed!=1{return Err(StoreError::Conflict);}
+            let result=verified(&tx,&selection)?;tx.commit()?;Ok(result)
+        }).await
+    }
     pub async fn validate_provider_binding(
         &self,
         user: &UserContext,
@@ -566,7 +626,7 @@ impl Store {
             if !exists && db.conn.query_row("SELECT count(*) FROM provider_model_probes WHERE provider_id=?1 AND revision=?2",params![id,revision],|r|r.get::<_,i64>(0))? >= 128 { return Err(StoreError::Conflict); }
             let time=now()?;
             db.conn.execute("INSERT INTO provider_model_probes(provider_id,revision,model,effort,verified_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(provider_id,revision,model,effort) DO UPDATE SET verified_at=excluded.verified_at",params![id,revision,model,effort.clone().unwrap_or_default(),time])?;
-            Ok(ModelChoice{provider_id:id,provider_revision:revision,provider_name:row.name,kind:row.config.kind,model,effort,verified_at:time})
+            verified(&db.conn,&ModelSelection{provider_id:id,provider_revision:revision,model,effort})
         }).await
     }
     pub async fn resolve_model(&self, user: &UserContext) -> Result<ProviderBinding> {

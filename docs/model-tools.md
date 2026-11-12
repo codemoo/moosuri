@@ -1,9 +1,9 @@
 # Typed model tool rounds
 
 `moosuri-connectors::model::protocol::tools` implements the wire contract for
-client function calls. Chat still runs the text-only path. The tool registry,
-durable per-step receipts, knowledge retrieval and memory writes are subsequent
-implementation units.
+client function calls. The [knowledge runtime](knowledge-agent.md) now uses this
+transport for three account-scoped read tools, durable per-step receipts and
+revocable retrieval. A general tool registry and memory writes are subsequent units.
 
 ## API and authority
 

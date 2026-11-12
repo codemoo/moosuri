@@ -11,6 +11,7 @@ fn forget(conn: &Connection, tenant: &str, object: &str) -> Result<()> {
     if status == "forgotten" {
         return Ok(());
     }
+    agent_execution::invalidate_object(conn, tenant, "memory", object, None)?;
     conn.execute("INSERT OR IGNORE INTO knowledge_suppressions SELECT tenant_id,source_id,quote_hash FROM knowledge_evidence WHERE tenant_id=?1 AND memory_id=?2",params![tenant,object])?;
     conn.execute(
         "DELETE FROM knowledge_memory_versions WHERE tenant_id=?1 AND memory_id=?2",
@@ -35,6 +36,7 @@ fn delete_source(conn: &Connection, tenant: &str, object: &str) -> Result<()> {
     if deleted {
         return Ok(());
     }
+    agent_execution::invalidate_source(conn, tenant, object)?;
     let dependent = conn
         .prepare(
             "SELECT DISTINCT memory_id FROM knowledge_evidence WHERE tenant_id=?1 AND source_id=?2",

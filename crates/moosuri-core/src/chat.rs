@@ -1,5 +1,5 @@
 //! Durable text conversation DTOs. Credentials and execution leases stay private.
-use crate::ModelChoice;
+use crate::{KnowledgeKind, ModelChoice};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -49,7 +49,18 @@ pub struct AssistantMessage {
     pub refusal: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+/// Backend-recorded input provenance, not a claim that every consulted item
+/// proves the generated answer. Titles are private user content.
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct ChatEvidence {
+    pub kind: KnowledgeKind,
+    pub id: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    pub title: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct RunView {
     pub id: String,
     pub request_id: String,
@@ -62,6 +73,8 @@ pub struct RunView {
     /// Fixed application error category, never provider text.
     pub error: Option<String>,
     pub usage: RunUsage,
+    #[serde(default)]
+    pub evidence: Vec<ChatEvidence>,
     pub can_retry: bool,
     pub can_cancel: bool,
     #[ts(type = "number")]

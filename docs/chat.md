@@ -31,14 +31,17 @@ are not guessed. Commentary/answer phase is preserved when supplied by the provi
 One active run per thread and one dispatched call per account; at most two calls
 run globally. Admission allows eight queued turns per account and64 globally.
 A question is limited to8,192 UTF-8 bytes, with a64 KiB JSON envelope to accommodate
-escaping. A call requests at most4,096 output tokens, has a180-second deadline,
-and stores at most256 KiB across128 output items. Explicit attempts are capped at32.
+escaping. A call requests at most4,096 output tokens. A run has a120-second cumulative deadline,
+at most6 model dispatches and12 local tools across retries, and at most256 KiB output.
+Each step also bounds output items. Explicit attempts are capped at32; they do not reset
+the smaller dispatch/tool/time budgets.
 These are engineering limits, not monetary budgets or price estimates.
 
 Context contains the latest whole successful turns that fit the message/byte caps.
 It stops at an oversized turn, without bringing back even older context past that
 gap. An omission note is explicit. Failed partial text is excluded. These are chat
-history rules, not persistent personal memory.
+history rules. Tool-verified models can additionally search/read the current account's
+saved sources and memories; see [knowledge agent](knowledge-agent.md).
 
 ## API and storage
 
@@ -60,18 +63,23 @@ fresh snapshot when the cursor is too old or ahead of the log; `closed` contains
 fixed error code. Each thread retains512 events. Streams use bounded queues, four
 per account/64 globally, and revalidate authority before delivery. Already-sent
 network bytes cannot be recalled; the UI rejects stale attempts and terminal deltas.
+Knowledge withdrawal purges affected derived answers and advances the reset floor.
+Every full browser snapshot replaces cached pages, including after a missed offline
+reset, while retaining composer drafts and fencing late action/older-page responses.
 
-SQLite migration3 adds turn/run/output/event and receipt tables. Claims transactionally
-record dispatch intent before network IO. Opaque leases bind tenant, attempt, nonce
-and authority epoch. All text writes repeat current lease checks. Supervisor exit
+SQLite migration3 adds turn/run/output/event and receipt tables; migration5 adds
+per-step execution, private continuations, tool slots and knowledge dependencies.
+Each step transactionally records dispatch intent before network IO. Opaque leases
+bind tenant, attempt, step, nonce and authority epoch. All text writes repeat current lease checks. Supervisor exit
 settlement cannot replay a model call. Process shutdown stops new calls and bounds
 HTTP draining to3 seconds while the runtime drains within5 seconds.
 
 Usage snapshots replace cumulative values rather than adding duplicates. Missing
 provider counters remain unknown. Admin/user screens label totals as reported usage;
 cancellation does not claim a refund. Cost accounting and configurable budgets remain
-future work. Tools, source ingestion, persistent memory, media and subscriptions are
-not available in this unit.
+future work. The current runtime adds three bounded private knowledge read tools;
+manual source ingestion and explicit memory management are available. Conversational
+memory writes, automatic extraction, external tools, media and subscriptions remain pending.
 
 See [verification](reviews/2026-11-12-durable-text-chat.md) for actual acceptance and
 [status](status.md) for the remaining assistant implementation.

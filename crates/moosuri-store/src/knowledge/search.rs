@@ -1,10 +1,18 @@
 use super::*;
-fn search(
-    db: &mut Database,
+pub(super) fn search(
+    conn: &Connection,
+    user: UserContext,
+    query: KnowledgeQuery,
+) -> Result<KnowledgeSearch> {
+    search_limit(conn, user, query, 20)
+}
+pub(crate) fn search_limit(
+    conn: &Connection,
     user: UserContext,
     mut query: KnowledgeQuery,
+    limit: usize,
 ) -> Result<KnowledgeSearch> {
-    let user = validate(&db.conn, &user, true, false)?;
+    let user = validate(conn, &user, true, false)?;
     label(&query.text, 128)?;
     speaker(&query.speaker)?;
     if let Some(subject) = &query.subject {
@@ -12,7 +20,7 @@ fn search(
     }
     if let Some(collection) = &mut query.collection_id {
         *collection = id(collection)?;
-        let group = super::collection(&db.conn, &user.tenant.0, collection)?;
+        let group = super::collection(conn, &user.tenant.0, collection)?;
         if group.deleted {
             return Err(StoreError::NotFound);
         }
@@ -32,7 +40,7 @@ fn search(
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
     );
-    let generation_value = generation(&db.conn, &user.tenant.0)?;
+    let generation_value = generation(conn, &user.tenant.0)?;
     let (offset, time) = match uncurs(&user.tenant.0, &scope, generation_value, incoming)? {
         Some(position) => {
             serde_json::from_str::<(i64, i64)>(&position).map_err(|_| StoreError::InvalidInput)?
@@ -76,7 +84,7 @@ fn search(
     } else {
         // Materialize only IDs, never a thousand full documents. Short substring
         // searches inspect at most 1,000 eligible records and disclose that boundary.
-        let count: i64 = db.conn.query_row(
+        let count: i64 = conn.query_row(
             &format!("SELECT count(*) FROM (SELECT id FROM ({base}) ORDER BY id LIMIT 1001)"),
             params![
                 user.tenant.0,
@@ -94,7 +102,7 @@ fn search(
             count > 1000,
         )
     };
-    let mut statement = db.conn.prepare(&sql)?;
+    let mut statement = conn.prepare(&sql)?;
     let mut hits = statement
         .query_map(
             params![
@@ -108,7 +116,7 @@ fn search(
                 key,
                 kind,
                 offset,
-                21
+                limit as i64 + 1
             ],
             |r| {
                 Ok(KnowledgeHit {
@@ -125,14 +133,14 @@ fn search(
             },
         )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let more = hits.len() > 20;
-    hits.truncate(20);
+    let more = hits.len() > limit;
+    hits.truncate(limit);
     let next_cursor = if more {
         Some(cursor(
             &user.tenant.0,
             &scope,
             generation_value,
-            &encode(&(offset + 20, time))?,
+            &encode(&(offset + limit as i64, time))?,
         )?)
     } else {
         None
@@ -151,6 +159,6 @@ impl Store {
         query: KnowledgeQuery,
     ) -> Result<KnowledgeSearch> {
         let user = user.clone();
-        self.call(move |db| search(db, user, query)).await
+        self.call(move |db| search(&db.conn, user, query)).await
     }
 }

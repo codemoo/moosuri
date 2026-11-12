@@ -42,6 +42,9 @@ pub struct ModelChoice {
     pub effort: Option<String>,
     #[ts(type = "number")]
     pub verified_at: i64,
+    /// Successful bounded tool round trip for this exact binding, separate from text.
+    #[serde(default)]
+    pub function_tools: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

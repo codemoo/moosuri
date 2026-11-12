@@ -5,8 +5,9 @@ local accounts, session persistence, durable text conversations and an
 administrator user list/invitation flow. Shared provider setup, model discovery,
 synthetic verification and personal model/effort selection are available. Streaming,
 cancel/retry, saved history and observed usage are connected. Private text sources,
-lexical search and explicit memory editing are available separately. Chat retrieval,
-automatic extraction, schedules, media, vault, external actions and backup/restore
+lexical search and explicit memory editing are available. Tool-verified models can
+search/read that private knowledge in chat. Automatic extraction, schedules, media,
+vault, external actions and backup/restore
 remain pending.
 
 Use Rust 1.89+ and Node.js 22.22+. Node is needed to build React, not to run the
@@ -47,6 +48,8 @@ in `/app`; [text chat](chat.md) explains streaming, retry/cancel and recovery.
 Use `/app/knowledge` to create a named collection and paste text. `/app/memory`
 supports direct assertions, exact source evidence, correction/history and forgetting.
 [Private knowledge](knowledge.md) explains search and the different deletion scopes.
+[The knowledge agent](knowledge-agent.md) explains tool verification, run limits and
+revocation of answers derived from withdrawn evidence.
 
 ## HTTPS reverse proxy
 

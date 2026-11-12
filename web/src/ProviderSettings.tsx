@@ -74,6 +74,8 @@ function settingsError(error: unknown) {
     return "요청이 많습니다. 잠시 뒤 다시 시도해 주세요.";
   if (error.code === "model_identity_unverified")
     return "응답 모델을 확인하지 못했습니다. 모델 목록의 정확한 버전 ID로 다시 확인해 주세요.";
+  if (error.code === "model_tool_probe_incomplete")
+    return "도구 호출과 결과 연결을 확인하지 못했습니다. 일반 텍스트 대화는 계속 사용할 수 있습니다.";
   if (error.code === "model_probe_incomplete")
     return "완료된 답변을 확인하지 못했습니다. 모델 ID와 추론 강도를 확인한 뒤 다시 시도해 주세요.";
   if (error.code === "model_credentials_rejected")
@@ -380,11 +382,12 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
     provider: ProviderSummary,
     model: string,
     effort: string | null,
+    tools = false,
   ) {
     return mutation(
       () =>
         scope.request<ModelChoice>(
-          `/admin/providers/${encodeURIComponent(provider.id)}/probe`,
+          `/admin/providers/${encodeURIComponent(provider.id)}/${tools ? "tool-probe" : "probe"}`,
           "POST",
           { revision: provider.revision, model, effort },
         ),
@@ -402,6 +405,10 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
           setError(
             "응답 모델을 확인하지 못했습니다. 모델 목록의 정확한 버전 ID로 다시 확인해 주세요.",
           );
+          return;
+        }
+        if (tools && choice.function_tools !== true) {
+          setError("도구 지원을 확인하지 못했습니다. 기존 모델 선택은 유지됩니다.");
           return;
         }
         setData((current) =>
@@ -428,7 +435,8 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
             : current,
         );
         setNotice(
-          "모델과 추론 강도를 확인했습니다. 이제 기본 모델로 선택할 수 있습니다.",
+          tools ? "도구 호출과 결과 연결을 확인했습니다. 이 모델에서 개인 자료 검색을 사용할 수 있습니다."
+            : "모델과 추론 강도를 확인했습니다. 이제 기본 모델로 선택할 수 있습니다.",
         );
       },
     );
@@ -582,8 +590,14 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
                   <span className="verified-dot" aria-hidden="true" />
                   <span>
                     <strong>{choice.model}</strong>
-                    <small>{choice.effort ?? "기본 강도"} · 확인됨</small>
+                    <small>{choice.effort ?? "기본 강도"} · {choice.function_tools ? "도구 사용 가능" : "대화 확인됨"}</small>
                   </span>
+                  {!choice.function_tools && (
+                    <button className="text-button" disabled={busy || !!editor}
+                      onClick={() => probe(provider, choice.model, choice.effort, true)}>
+                      도구 연결 확인
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

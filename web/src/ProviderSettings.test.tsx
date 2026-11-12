@@ -55,6 +55,7 @@ const high: ModelChoice = {
   kind: "open_ai",
   model: "synthetic-text",
   effort: "high",
+  function_tools: false,
   verified_at: 100,
 };
 const low: ModelChoice = { ...high, effort: "low" };
@@ -611,4 +612,23 @@ it("discards a late administrator save and clears its key before another account
   expect(
     screen.queryByRole("button", { name: /연결 추가/ }),
   ).not.toBeInTheDocument();
+});
+
+
+it("requires an actual tool-capability response before enabling a verified text model",async()=>{
+  const user=userEvent.setup();let confirmed=false;
+  const test=server(call=>call.path===`/admin/providers/${provider.id}/tool-probe`
+    ? response({...high,function_tools:confirmed}) : undefined,
+    admin,{providers:[{...provider,choices:[high]}],default_selection:null});
+  open("/admin/providers");
+  await user.click(await screen.findByRole("button",{name:"도구 연결 확인"}));
+  expect(await screen.findByText(/도구 지원을 확인하지 못했습니다/)).toBeInTheDocument();
+  expect(screen.queryByText(/도구 사용 가능/)).not.toBeInTheDocument();
+  confirmed=true;
+  await user.click(screen.getByRole("button",{name:"도구 연결 확인"}));
+  expect(await screen.findByText(/도구 사용 가능/)).toBeInTheDocument();
+  expect(screen.queryByRole("button",{name:"도구 연결 확인"})).not.toBeInTheDocument();
+  const calls=test.calls.filter(call=>call.path.endsWith("/tool-probe"));
+  expect(calls).toHaveLength(2);
+  expect(calls[0].body).toEqual({revision:1,model:high.model,effort:"high"});
 });

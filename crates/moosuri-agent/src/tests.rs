@@ -423,7 +423,7 @@ async fn exited_worker_without_terminal_checkpoint_is_settled_without_replay() {
     let f = fixture().await;
     let (_dir, store, user, thread) = configured(&f.base).await;
     submit(&store, &user, &thread).await;
-    let claimed = store.claim_run().await.unwrap().unwrap();
+    let claimed = store.claim_agent_run().await.unwrap().unwrap();
     let (changes, _) = watch::channel(0);
     let signals = Signals {
         stop: CancellationToken::new(),
@@ -451,6 +451,8 @@ async fn exited_worker_without_terminal_checkpoint_is_settled_without_replay() {
     assert_eq!(done.run.state, RunState::OutcomeUnknown);
     assert_eq!(done.run.error.as_deref(), Some("interrupted"));
     submit(&store, &user, &thread).await;
-    assert!(store.claim_run().await.unwrap().is_some());
+    assert!(store.claim_agent_run().await.unwrap().is_some());
     assert_eq!(f.state.calls.load(Ordering::SeqCst), 0);
 }
+
+mod knowledge;

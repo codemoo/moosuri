@@ -1,8 +1,14 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
+mod agent_execution;
 mod chat;
 mod knowledge;
 mod knowledge_journal;
+pub use agent_execution::{
+    AgentClaim, AgentContext, AgentStepStatus, AgentToolSlot, KnowledgeToolInput,
+    KnowledgeToolResult, PendingKnowledgeCall, PrivateCheckpoint, SourceExcerpt, StepLease,
+    TOOL_INPUT_LIMIT, ToolReadError,
+};
 pub use chat::{ClaimedRun, ContextMessage, ContextRole, OutputPatch, RunFailure, RunLease};
 mod files;
 mod journal;
@@ -36,6 +42,8 @@ pub enum StoreError {
     Forbidden,
     #[error("already exists")]
     Conflict,
+    #[error("execution budget exhausted")]
+    BudgetExhausted,
     #[error("not found")]
     NotFound,
     #[error("store busy")]
@@ -258,7 +266,7 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if !matches!(version, 1..=4) {
+        } else if !matches!(version, 1..=5) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {
@@ -294,6 +302,12 @@ impl Store {
             conn.execute_batch(&format!(
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0004_knowledge.sql")
+            ))?;
+        }
+        if version < 5 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0005_agent_execution.sql")
             ))?;
         }
         let provider_key = providers::open_key(&conn, &dir)?;

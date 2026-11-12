@@ -1,5 +1,5 @@
 use super::*;
-pub(super) fn document(
+pub(crate) fn document(
     conn: &Connection,
     tenant: &str,
     object: &str,
@@ -103,6 +103,7 @@ fn write(
         if expected != previous.revision {
             return Err(StoreError::Conflict);
         }
+        agent_execution::invalidate_object(&tx, &user.tenant.0, "memory", &object, None)?;
         let revision = expected.checked_add(1).ok_or(StoreError::Corrupt)?;
         if revision > 128 {
             return Err(StoreError::Conflict);

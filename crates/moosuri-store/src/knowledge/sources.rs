@@ -1,5 +1,5 @@
 use super::*;
-pub(super) fn document(
+pub(crate) fn document(
     conn: &Connection,
     tenant: &str,
     object: &str,
@@ -62,6 +62,7 @@ fn content_hash(value: &SourceInput) -> Result<[u8; 32]> {
     ))
 }
 fn invalidate(conn: &Connection, tenant: &str, source: &str) -> Result<()> {
+    agent_execution::invalidate_source(conn, tenant, source)?;
     let objects = conn
         .prepare(
             "SELECT DISTINCT memory_id FROM knowledge_evidence WHERE tenant_id=?1 AND source_id=?2",

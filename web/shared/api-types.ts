@@ -10,7 +10,11 @@ export type ApiError = { code: string, };
 export type ProviderKind = "open_ai" | "anthropic" | "open_router" | "compatible";
 export type ProviderConfig = { kind: ProviderKind, base_url: string | null, allowed_ips: Array<string>, router_providers: Array<string>, zero_data_retention: boolean, };
 export type ModelSelection = { provider_id: string, provider_revision: number, model: string, effort: string | null, };
-export type ModelChoice = { provider_id: string, provider_revision: number, provider_name: string, kind: ProviderKind, model: string, effort: string | null, verified_at: number, };
+export type ModelChoice = { provider_id: string, provider_revision: number, provider_name: string, kind: ProviderKind, model: string, effort: string | null, verified_at: number,
+/**
+ * Successful bounded tool round trip for this exact binding, separate from text.
+ */
+function_tools: boolean, };
 export type ProviderSummary = { id: string, name: string, revision: number, config: ProviderConfig, enabled: boolean, has_credential: boolean, choices: Array<ModelChoice>, is_default: boolean, };
 export type ProvidersResponse = { providers: Array<ProviderSummary>, default_selection: ModelSelection | null, };
 export type ModelSettings = { selection: ModelSelection | null, effective: ModelChoice | null, choices: Array<ModelChoice>, };
@@ -20,11 +24,12 @@ export type RunState = "queued" | "running" | "completed" | "failed" | "cancelle
 export type MessagePhase = "commentary" | "final_answer";
 export type RunUsage = { input_tokens: number | null, output_tokens: number | null, cache_read_tokens: number | null, cache_write_tokens: number | null, };
 export type AssistantMessage = { id: string, text: string, phase: MessagePhase | null, refusal: boolean, };
+export type ChatEvidence = { kind: KnowledgeKind, id: string, revision: number, title: string, };
 export type RunView = { id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**
  * Fixed application error category, never provider text.
  */
-error: string | null, usage: RunUsage, can_retry: boolean, can_cancel: boolean, created_at: number, };
+error: string | null, usage: RunUsage, evidence: Array<ChatEvidence>, can_retry: boolean, can_cancel: boolean, created_at: number, };
 export type ChatTurn = { sequence: number, user_text: string, assistant: Array<AssistantMessage>, run: RunView, };
 export type ChatPage = { thread_id: string,
 /**

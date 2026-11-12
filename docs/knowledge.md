@@ -1,8 +1,9 @@
 # Private sources and explicit memories
 
 The knowledge screens let each account manage text sources and editable facts.
-They are a manual management foundation. Chat retrieval, automatic extraction,
-external collectors and document/goal editing are separate upcoming features.
+They are a manual management foundation. Tool-verified models can search and read
+them in chat; see [knowledge agent](knowledge-agent.md). Automatic extraction,
+external collectors and document/goal editing remain upcoming features.
 
 ## Sources
 
@@ -55,6 +56,10 @@ stale item replay. Evidence suppression hashes are retained for the upcoming aut
 extraction path; manual saving does not consume them as a semantic denylist. This does
 not prevent a user from explicitly saving a new assertion.
 
+Answers and private tool continuations that depend on withdrawn sources/memories are
+also purged; user questions and content-free accounting remain. The same dependency
+follows selected prior successful context into later answers.
+
 Destructive actions append and fsync an opaque journal before applying SQLite changes.
 A crash gap is replayed before private reads become ready. A damaged, truncated or
 missing required journal fails closed. This mechanism is not yet a supported backup
@@ -64,7 +69,8 @@ restore workflow or forensic erasure of old WAL pages/filesystem snapshots.
 
 Search is lexical. Whitespace-insensitive Unicode lowercase normalization, FTS5
 trigrams and a bounded substring fallback support Korean words and mixed Unicode.
-There is no semantic similarity/embedding service or external transmission. Tenant,
+The search engine runs locally without an embedding service. When used by the chat
+agent, retrieved results are sent to the configured model for the answer. Tenant,
 collection, speaker, subject and time filters constrain candidates before results.
 Search pages are bound to the account, query and visibility generation; stale pages
 must refresh after a mutation. Snippets are plain text, at most 512 characters.

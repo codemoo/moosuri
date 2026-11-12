@@ -518,7 +518,7 @@ async fn version_one_migrates_without_losing_accounts_or_threads() {
             assert_eq!(
                 db.conn
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                4
+                5
             );
             Ok(())
         })
@@ -531,4 +531,227 @@ async fn version_one_migrates_without_losing_accounts_or_threads() {
         .await
         .unwrap();
     assert_eq!(store.list_threads(&user.user).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn tool_capability_requires_exact_text_proof_and_current_admin_binding() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let admin = admin(&store).await;
+    let member = member(&store, &admin.user, "tool-member@example.test").await;
+    let profile = store
+        .create_provider(&admin.user, change("synthetic-tool-key"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .record_tool_probe(
+                &admin.user,
+                profile.id.clone(),
+                1,
+                "tool-model".into(),
+                None
+            )
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
+        store
+            .tool_probe_binding(
+                &admin.user,
+                profile.id.clone(),
+                1,
+                "tool-model".into(),
+                None
+            )
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let plain = store
+        .record_model_probe(
+            &admin.user,
+            profile.id.clone(),
+            1,
+            "tool-model".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!plain.function_tools);
+    let high = store
+        .record_model_probe(
+            &admin.user,
+            profile.id.clone(),
+            1,
+            "tool-model".into(),
+            Some("high".into()),
+        )
+        .await
+        .unwrap();
+    assert!(!high.function_tools);
+    for (model, effort) in [("other-model", None), ("tool-model", Some("low".into()))] {
+        assert!(matches!(
+            store
+                .record_tool_probe(&admin.user, profile.id.clone(), 1, model.into(), effort)
+                .await,
+            Err(StoreError::Conflict)
+        ));
+    }
+    assert!(matches!(
+        store
+            .record_tool_probe(
+                &member.user,
+                profile.id.clone(),
+                1,
+                "tool-model".into(),
+                None
+            )
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    let (binding, challenge) = store
+        .tool_probe_binding(
+            &admin.user,
+            profile.id.clone(),
+            1,
+            "tool-model".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    let (_, next_challenge) = store
+        .tool_probe_binding(
+            &admin.user,
+            profile.id.clone(),
+            1,
+            "tool-model".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(binding.revision, 1);
+    assert_ne!(challenge, next_challenge);
+    assert!(challenge.starts_with("moosuri-tool-proof-"));
+    let proven = store
+        .record_tool_probe(
+            &admin.user,
+            profile.id.clone(),
+            1,
+            "tool-model".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(proven.function_tools);
+    let mut legacy = serde_json::to_value(&proven).unwrap();
+    legacy.as_object_mut().unwrap().remove("function_tools");
+    assert!(
+        !serde_json::from_value::<ModelChoice>(legacy)
+            .unwrap()
+            .function_tools
+    );
+    assert!(
+        store
+            .record_model_probe(
+                &admin.user,
+                profile.id.clone(),
+                1,
+                "tool-model".into(),
+                None
+            )
+            .await
+            .unwrap()
+            .function_tools
+    );
+    let choices = store
+        .list_providers(&admin.user)
+        .await
+        .unwrap()
+        .providers
+        .remove(0)
+        .choices;
+    assert!(
+        choices
+            .iter()
+            .find(|c| c.effort.is_none())
+            .unwrap()
+            .function_tools
+    );
+    assert!(
+        !choices
+            .iter()
+            .find(|c| c.effort.is_some())
+            .unwrap()
+            .function_tools
+    );
+    store
+        .set_default_model(&admin.user, Some(selection(&profile.id, "tool-model")))
+        .await
+        .unwrap();
+    assert!(
+        store
+            .model_settings(&member.user)
+            .await
+            .unwrap()
+            .effective
+            .unwrap()
+            .function_tools
+    );
+    drop(store);
+    let store = Store::open(dir.path()).unwrap();
+    assert!(
+        store.list_providers(&admin.user).await.unwrap().providers[0]
+            .choices
+            .iter()
+            .any(|c| c.function_tools)
+    );
+    let changed = store
+        .update_provider(
+            &admin.user,
+            profile.id.clone(),
+            1,
+            ProviderChange {
+                name: "Changed binding".into(),
+                config: config(),
+                enabled: true,
+                credential: CredentialChange::Keep,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.revision, 2);
+    assert!(changed.choices.is_empty());
+    assert!(matches!(
+        store
+            .record_tool_probe(
+                &admin.user,
+                profile.id.clone(),
+                1,
+                "tool-model".into(),
+                None
+            )
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(
+        !store
+            .record_model_probe(
+                &admin.user,
+                profile.id.clone(),
+                2,
+                "tool-model".into(),
+                None
+            )
+            .await
+            .unwrap()
+            .function_tools
+    );
+    store.logout(&admin.user).await.unwrap();
+    assert!(matches!(
+        store
+            .record_tool_probe(&admin.user, profile.id, 2, "tool-model".into(), None)
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
 }

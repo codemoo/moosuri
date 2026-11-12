@@ -139,6 +139,10 @@ pub fn router_with_runtime(
         )
         .route("/api/v1/admin/providers/{id}/probe", post(providers::probe))
         .route(
+            "/api/v1/admin/providers/{id}/tool-probe",
+            post(providers::tool_probe),
+        )
+        .route(
             "/api/v1/admin/providers/{id}/models",
             post(providers::catalog),
         )
@@ -230,6 +234,7 @@ impl IntoResponse for HttpError {
             StoreError::Conflict | StoreError::AlreadyInitialized => {
                 (StatusCode::CONFLICT, "conflict")
             }
+            StoreError::BudgetExhausted => (StatusCode::CONFLICT, "budget_exhausted"),
             StoreError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             StoreError::Busy => (StatusCode::SERVICE_UNAVAILABLE, "busy"),
             StoreError::Unavailable | StoreError::Corrupt => {

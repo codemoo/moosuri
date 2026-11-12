@@ -9,6 +9,7 @@ import {
 } from "react";
 import type {
   AccountSummary,
+  ChatEvidence,
   SessionView,
   SystemStatus,
   ThreadSummary,
@@ -654,6 +655,7 @@ function Workspace({
   const [knowledgeDrafts, setKnowledgeDrafts] = useState(
     initialKnowledgeDrafts,
   );
+  const [knowledgeTarget, setKnowledgeTarget] = useState<ChatEvidence | null>(null);
   const [chatMemory, setChatMemory] = useState<ChatMemory>({
     drafts: {},
     pending: {},
@@ -1033,6 +1035,8 @@ function Workspace({
           <KnowledgeView
             accountId={session.user.id}
             mode={memoryPage ? "memory" : "source"}
+            target={knowledgeTarget}
+            onTargetConsumed={() => setKnowledgeTarget(null)}
             drafts={knowledgeDrafts}
             updateDrafts={setKnowledgeDrafts}
             onExpired={onExpired}
@@ -1137,6 +1141,10 @@ function Workspace({
             onThreadMissing={threadMissing}
             onThreadUpdated={() => setRetry((value) => value + 1)}
             openSettings={() => navigate("/settings/model")}
+            onOpenEvidence={(reference) => {
+              setKnowledgeTarget(reference);
+              navigate(reference.kind === "source" ? "/app/knowledge" : "/app/memory");
+            }}
           />
         )}
       </section>

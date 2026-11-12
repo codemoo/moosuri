@@ -1,6 +1,10 @@
+use crate::knowledge_tools::{self, Invocation};
 use crate::{Signals, model_client};
+use moosuri_connectors::model::protocol::tools::{
+    Continuation, ToolCapabilities, ToolRequest, ToolResult, ToolRound, encode_tool_request,
+};
 use moosuri_connectors::model::{
-    CancellationToken, Secret, TransportError,
+    CancellationToken, ModelClient, Secret, TransportError,
     protocol::{
         AssistantPhase, FinishOutcome, ModelEvent, Protocol, ProtocolError, TextCapabilities,
         TextMessage, TextRequest, TextRole, Usage, encode_request,
@@ -8,7 +12,8 @@ use moosuri_connectors::model::{
 };
 use moosuri_core::{MessagePhase, ProviderKind, RunState, RunUsage};
 use moosuri_store::{
-    ClaimedRun, ContextMessage, ContextRole, OutputPatch, RunFailure, RunLease, Store, StoreError,
+    AgentClaim, ContextMessage, ContextRole, KnowledgeToolInput, KnowledgeToolResult, OutputPatch,
+    PendingKnowledgeCall, PrivateCheckpoint, RunFailure, RunLease, StepLease, Store, StoreError,
 };
 use std::{collections::BTreeMap, time::Duration};
 
@@ -82,6 +87,7 @@ struct Item {
 }
 #[derive(Default)]
 struct Pending {
+    prefix: String,
     patches: Vec<OutputPatch>,
     bytes: usize,
     total_bytes: usize,
@@ -100,7 +106,7 @@ impl Pending {
         let next = self.items.len();
         let phase = self.phases.get(&key).copied().flatten();
         Ok(self.items.entry((key, refusal)).or_insert_with(|| Item {
-            key: format!("assistant-{next}"),
+            key: format!("{}assistant-{next}", self.prefix),
             phase,
             emitted: false,
         }))
@@ -137,7 +143,7 @@ fn fenced(error: &StoreError) -> bool {
 }
 struct Checkpoint<'a> {
     store: &'a Store,
-    lease: &'a RunLease,
+    lease: &'a StepLease,
     signals: &'a Signals,
     expected_model: &'a str,
 }
@@ -182,7 +188,7 @@ async fn write_usage(checkpoint: &Checkpoint<'_>, usage: &RunUsage) -> Result<()
     for retry in 0..5 {
         match checkpoint
             .store
-            .update_run_usage(checkpoint.lease, usage.clone())
+            .update_agent_step_usage(checkpoint.lease, usage.clone())
             .await
         {
             Err(StoreError::Busy) if retry < 4 => {
@@ -200,7 +206,7 @@ async fn write_output(
     for retry in 0..5 {
         match checkpoint
             .store
-            .append_output(checkpoint.lease, copy_patches(patches))
+            .append_agent_output(checkpoint.lease, copy_patches(patches))
             .await
         {
             Err(StoreError::Busy) if retry < 4 => {
@@ -228,7 +234,7 @@ async fn flush(checkpoint: &Checkpoint<'_>, pending: &mut Pending) -> Result<(),
         let result = write_output(checkpoint, &patches).await;
         signals.changed();
         if let Err(error) = result {
-            if !fenced(&error) {
+            if !fenced(&error) && error != StoreError::BudgetExhausted {
                 pending.patches = patches;
                 pending.bytes = pending
                     .patches
@@ -239,11 +245,7 @@ async fn flush(checkpoint: &Checkpoint<'_>, pending: &mut Pending) -> Result<(),
                     })
                     .sum();
             }
-            return Err(if fenced(&error) {
-                RunFailure::AuthorityRevoked
-            } else {
-                RunFailure::ConnectionFailed
-            });
+            return Err(store_failure(&error).1);
         }
     }
     Ok(())
@@ -388,7 +390,9 @@ fn transport_failure(error: TransportError) -> (RunState, RunFailure) {
 }
 fn local_failure(failure: RunFailure) -> RunState {
     match failure {
-        RunFailure::OutputLimit | RunFailure::ContinuationUnsupported => RunState::Incomplete,
+        RunFailure::OutputLimit
+        | RunFailure::ContinuationUnsupported
+        | RunFailure::BudgetExhausted => RunState::Incomplete,
         RunFailure::Interrupted | RunFailure::ConnectionFailed => RunState::OutcomeUnknown,
         _ => RunState::Failed,
     }
@@ -396,12 +400,16 @@ fn local_failure(failure: RunFailure) -> RunState {
 async fn finish(
     store: &Store,
     lease: &RunLease,
+    step: Option<&StepLease>,
     state: RunState,
     error: Option<RunFailure>,
     signals: &Signals,
 ) {
     for retry in 0..5 {
-        let result = store.finish_run(lease, state, error).await;
+        let result = match step {
+            Some(step) => store.finish_agent_run(step, state, error).await,
+            None => store.finish_agent_execution(lease, state, error).await,
+        };
         signals.changed();
         if matches!(result, Err(StoreError::Busy)) && retry < 4 {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -410,18 +418,188 @@ async fn finish(
         }
     }
 }
-pub(crate) async fn execute(store: Store, claimed: ClaimedRun, signals: Signals) {
-    let ClaimedRun {
+async fn retry_local<T, F, Fut>(mut operation: F) -> Result<T, StoreError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, StoreError>>,
+{
+    for retry in 0..5 {
+        match operation().await {
+            Err(StoreError::Busy) if retry < 4 => {
+                tokio::time::sleep(Duration::from_millis(20)).await
+            }
+            result => return result,
+        }
+    }
+    unreachable!()
+}
+fn typed_input(
+    call: &moosuri_connectors::model::protocol::tools::CompletedToolCall,
+) -> KnowledgeToolInput {
+    let input = match knowledge_tools::parse(call.name(), call.arguments()) {
+        Invocation::Search(query) => KnowledgeToolInput::Search { query },
+        Invocation::ReadSource(v) => KnowledgeToolInput::ReadSource {
+            id: v.id,
+            revision: v.revision,
+            start_byte: v.start_byte,
+            max_bytes: v.max_bytes,
+        },
+        Invocation::ReadMemory(v) => KnowledgeToolInput::ReadMemory {
+            id: v.id,
+            revision: v.revision,
+        },
+        Invocation::InvalidArguments => KnowledgeToolInput::InvalidArguments,
+    };
+    // Even well-formed JSON can exceed the private slot bound. Record a small
+    // repairable error slot instead of failing the entire completed model round.
+    if serde_json::to_vec(&input).is_ok_and(|v| v.len() <= moosuri_store::TOOL_INPUT_LIMIT) {
+        input
+    } else {
+        KnowledgeToolInput::InvalidArguments
+    }
+}
+fn store_failure(error: &StoreError) -> (RunState, RunFailure) {
+    if *error == StoreError::BudgetExhausted {
+        return (RunState::Incomplete, RunFailure::BudgetExhausted);
+    }
+    let reason = if fenced(error) {
+        RunFailure::AuthorityRevoked
+    } else if matches!(error, StoreError::InvalidInput) {
+        RunFailure::ProtocolFailed
+    } else {
+        RunFailure::ConnectionFailed
+    };
+    (local_failure(reason), reason)
+}
+struct Observation {
+    round: Option<ToolRound>,
+    pending: Pending,
+}
+async fn stream_round(
+    client: &ModelClient,
+    request: &TextRequest,
+    tools: Option<&ToolRequest<'_>>,
+    checkpoint: &Checkpoint<'_>,
+    run: &RunLease,
+    prior_bytes: usize,
+) -> Result<Observation, (RunState, RunFailure)> {
+    let cancellation = CancellationToken::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let capability = ToolCapabilities {
+        function_tools: true,
+    };
+    let operation = async {
+        match tools {
+            Some(tools) => client
+                .stream_tool_round(tools, &capability, &tx, &cancellation)
+                .await
+                .map(Some),
+            None => client
+                .stream_text(request, &tx, &cancellation)
+                .await
+                .map(|()| None),
+        }
+    };
+    tokio::pin!(operation);
+    let mut authority = tokio::time::interval(Duration::from_millis(250));
+    let mut batch = tokio::time::interval(Duration::from_millis(32));
+    authority.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    batch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut pending = Pending {
+        prefix: format!("step-{}-", checkpoint.lease.step()),
+        total_bytes: prior_bytes,
+        ..Pending::default()
+    };
+    let mut failure = None;
+    let mut authority_fenced = false;
+    let result = loop {
+        tokio::select! {
+            biased;
+            _ = checkpoint.signals.stopping().cancelled(), if failure.is_none() => {
+                failure=Some(RunFailure::Interrupted); cancellation.cancel();
+            }
+            _ = authority.tick(), if !authority_fenced => {
+                if let Err(error) = retry_authority(|| checkpoint.store.check_run(run)).await {
+                    checkpoint.signals.changed();
+                    authority_fenced=fenced(&error) || error == StoreError::BudgetExhausted;
+                    if authority_fenced { pending.patches.clear();pending.bytes=0; }
+                    failure=Some(store_failure(&error).1);
+                    cancellation.cancel();
+                }
+            }
+            _ = batch.tick(), if !pending.patches.is_empty() || pending.usage.is_some() => {
+                if let Err(error)=flush(checkpoint,&mut pending).await {
+                    authority_fenced=matches!(error,RunFailure::AuthorityRevoked|RunFailure::BudgetExhausted);
+                    failure=Some(error);cancellation.cancel();
+                }
+            }
+            Some(value) = rx.recv() => {
+                if let Err(error)=observe(value,failure.is_none(),checkpoint,&mut pending).await {
+                    authority_fenced=matches!(error,RunFailure::AuthorityRevoked|RunFailure::BudgetExhausted);
+                    failure=Some(error);cancellation.cancel();
+                }
+            }
+            result = &mut operation => break result,
+        }
+    };
+    while let Ok(value) = rx.try_recv() {
+        if let Err(error) = observe(value, failure.is_none(), checkpoint, &mut pending).await {
+            authority_fenced = matches!(
+                error,
+                RunFailure::AuthorityRevoked | RunFailure::BudgetExhausted
+            );
+            failure = Some(error);
+        }
+    }
+    if let Ok(Some(round)) = &result {
+        pending.usage = Some(usage(round.usage));
+    }
+    if authority_fenced {
+        pending.patches.clear();
+        pending.bytes = 0;
+    }
+    if let Err(error) = flush(checkpoint, &mut pending).await {
+        failure = Some(error);
+    }
+    if let Some(error) = failure {
+        return Err((local_failure(error), error));
+    }
+    let round = result.map_err(transport_failure)?;
+    if !pending.identity {
+        return Err((RunState::Failed, RunFailure::IdentityUnverified));
+    }
+    Ok(Observation { round, pending })
+}
+
+pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals) {
+    let AgentClaim {
         lease,
         mut binding,
+        model,
         messages,
+        mut context,
     } = claimed;
     if signals.stopping().is_cancelled() {
         finish(
             &store,
             &lease,
+            None,
             RunState::OutcomeUnknown,
             Some(RunFailure::Interrupted),
+            &signals,
+        )
+        .await;
+        return;
+    }
+    // Explicit retry starts a new attempt. Unknown remote work is never resumed
+    // merely because a private checkpoint exists in a previous attempt.
+    if context.checkpoint.is_some() || !context.calls.is_empty() {
+        finish(
+            &store,
+            &lease,
+            None,
+            RunState::Failed,
+            Some(RunFailure::ProtocolFailed),
             &signals,
         )
         .await;
@@ -431,123 +609,263 @@ pub(crate) async fn execute(store: Store, claimed: ClaimedRun, signals: Signals)
     let capabilities = TextCapabilities {
         efforts: binding.effort.iter().cloned().collect(),
     };
+    let mut messages = project(messages, protocol == Protocol::Responses);
+    if model.function_tools {
+        messages[0].text = knowledge_tools::SYSTEM.into();
+    }
     let request = TextRequest {
         model: binding.model.clone(),
         effort: binding.effort.clone(),
-        messages: project(messages, protocol == Protocol::Responses),
+        messages,
         max_output_tokens: 4096,
     };
-    if encode_request(protocol, &request, &capabilities).is_err() {
-        finish(
-            &store,
-            &lease,
-            RunState::Failed,
-            Some(RunFailure::ContextLimit),
-            &signals,
-        )
-        .await;
-        return;
-    }
     let credential = binding
         .credential
         .take()
         .map(|v| Secret::new(v.to_string()))
         .transpose();
-    let client = match credential
-        .and_then(|credential| model_client(&binding.config, credential, capabilities))
-    {
+    let client = match credential.and_then(|credential| {
+        model_client(
+            &binding.config,
+            credential,
+            TextCapabilities {
+                efforts: capabilities.efforts.clone(),
+            },
+        )
+    }) {
         Ok(client) => client,
         Err(error) => {
             let (state, error) = transport_failure(error);
-            finish(&store, &lease, state, Some(error), &signals).await;
+            finish(&store, &lease, None, state, Some(error), &signals).await;
             return;
         }
     };
-    let cancellation = CancellationToken::new();
-    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-    let operation = client.stream_text(&request, &tx, &cancellation);
-    tokio::pin!(operation);
-    let mut authority = tokio::time::interval(Duration::from_millis(250));
-    let mut batch = tokio::time::interval(Duration::from_millis(32));
-    authority.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    batch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let checkpoint = Checkpoint {
-        store: &store,
-        lease: &lease,
-        signals: &signals,
-        expected_model: &request.model,
+    let definitions = knowledge_tools::definitions();
+    let tool_capability = ToolCapabilities {
+        function_tools: true,
     };
-    let mut pending = Pending::default();
-    let mut failure = None;
-    let mut authority_fenced = false;
-    let result = loop {
-        tokio::select! {
-            biased;
-            _ = signals.stopping().cancelled(), if failure.is_none() => {
-                failure=Some(RunFailure::Interrupted); cancellation.cancel();
-            }
-            _ = authority.tick(), if !authority_fenced => {
-                if let Err(error) = retry_authority(|| store.check_run(&lease)).await {
-                    signals.changed();
-                    authority_fenced=fenced(&error);
-                    if authority_fenced { pending.patches.clear();pending.bytes=0; }
-                    failure=Some(if authority_fenced { RunFailure::AuthorityRevoked }
-                        else { RunFailure::ConnectionFailed });
-                    cancellation.cancel();
-                }
-            }
-            _ = batch.tick(), if !pending.patches.is_empty() || pending.usage.is_some() => {
-                if let Err(error)=flush(&checkpoint,&mut pending).await {
-                    authority_fenced=matches!(error,RunFailure::AuthorityRevoked);
-                    failure=Some(error);cancellation.cancel();
-                }
-            }
-            Some(value) = rx.recv() => {
-                if let Err(error)=observe(value,failure.is_none(),&checkpoint,&mut pending).await {
-                    authority_fenced=matches!(error,RunFailure::AuthorityRevoked);
-                    failure=Some(error);cancellation.cancel();
-                }
-            }
-            result = &mut operation => break result,
-        }
-    };
-    // A producer can enqueue valid prefix events immediately before returning an
-    // error. Drain them before classifying the terminal result, even after EOF.
-    while let Ok(value) = rx.try_recv() {
-        if let Err(error) = observe(value, failure.is_none(), &checkpoint, &mut pending).await {
-            authority_fenced = matches!(error, RunFailure::AuthorityRevoked);
-            failure = Some(error);
-        }
-    }
-    if authority_fenced {
-        pending.patches.clear();
-        pending.bytes = 0;
-    }
-    if let Err(error) = flush(&checkpoint, &mut pending).await {
-        failure = Some(error);
-    }
-    let (state, error) = if let Some(error) = failure {
-        (local_failure(error), Some(error))
-    } else if let Err(error) = result {
-        let (state, error) = transport_failure(error);
-        (state, Some(error))
-    } else if !pending.identity {
-        (RunState::Failed, Some(RunFailure::IdentityUnverified))
-    } else {
-        match pending.terminal {
-            Some(FinishOutcome::Completed) if pending.has_text => (RunState::Completed, None),
-            Some(FinishOutcome::Incomplete) => {
-                (RunState::Incomplete, Some(RunFailure::OutputLimit))
-            }
-            Some(FinishOutcome::Refused) => (RunState::Refused, None),
-            Some(FinishOutcome::ContinuationRequired) => (
+    let mut continuation: Option<Continuation> = None;
+    let mut results = Vec::<ToolResult>::new();
+    let mut total_bytes = 0;
+    for _ in 0..6 {
+        let tool_request = ToolRequest {
+            text: &request,
+            tools: &definitions,
+            continuation: continuation.as_ref(),
+            results: &results,
+        };
+        let valid = if model.function_tools {
+            encode_tool_request(protocol, &tool_request, &capabilities, &tool_capability)
+        } else {
+            encode_request(protocol, &request, &capabilities)
+        };
+        if valid.is_err() {
+            finish(
+                &store,
+                &lease,
+                None,
                 RunState::Incomplete,
-                Some(RunFailure::ContinuationUnsupported),
-            ),
-            _ => (RunState::Failed, Some(RunFailure::ProtocolFailed)),
+                Some(RunFailure::ContextLimit),
+                &signals,
+            )
+            .await;
+            return;
         }
-    };
-    finish(&store, &lease, state, error, &signals).await;
+        // Dispatch admission is the actor transaction's linearization point. A
+        // failed/unknown acknowledgement never authorizes a provider request.
+        let step = match store.begin_agent_step(&lease, context.checkpoint_seq).await {
+            Ok(step) => step,
+            Err(error) => {
+                let (state, error) = store_failure(&error);
+                finish(&store, &lease, None, state, Some(error), &signals).await;
+                return;
+            }
+        };
+        let checkpoint = Checkpoint {
+            store: &store,
+            lease: &step,
+            signals: &signals,
+            expected_model: &request.model,
+        };
+        let observed = match stream_round(
+            &client,
+            &request,
+            model.function_tools.then_some(&tool_request),
+            &checkpoint,
+            &lease,
+            total_bytes,
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err((state, error)) => {
+                finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
+                return;
+            }
+        };
+        total_bytes = observed.pending.total_bytes;
+        let (outcome, calls, bytes) = match &observed.round {
+            Some(round) => {
+                let bytes = match round.continuation.to_private_checkpoint() {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        finish(
+                            &store,
+                            &lease,
+                            Some(&step),
+                            RunState::Failed,
+                            Some(RunFailure::ProtocolFailed),
+                            &signals,
+                        )
+                        .await;
+                        return;
+                    }
+                };
+                let calls = round
+                    .calls
+                    .iter()
+                    .map(|call| PendingKnowledgeCall {
+                        call_id: call.call_id().into(),
+                        input: typed_input(call),
+                    })
+                    .collect::<Vec<_>>();
+                (round.outcome, calls, bytes)
+            }
+            None => match observed.pending.terminal {
+                Some(outcome) => (
+                    outcome,
+                    vec![],
+                    br#"{"v":1,"kind":"text_terminal"}"#.to_vec(),
+                ),
+                None => {
+                    finish(
+                        &store,
+                        &lease,
+                        Some(&step),
+                        RunState::Failed,
+                        Some(RunFailure::ProtocolFailed),
+                        &signals,
+                    )
+                    .await;
+                    return;
+                }
+            },
+        };
+        context = match retry_local(|| {
+            store.commit_agent_step(
+                &step,
+                PrivateCheckpoint {
+                    bytes: bytes.clone(),
+                },
+                calls.clone(),
+            )
+        })
+        .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                let (state, error) = store_failure(&error);
+                finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
+                return;
+            }
+        };
+        signals.changed();
+        if outcome != FinishOutcome::ContinuationRequired || calls.is_empty() {
+            let (state, error) = match outcome {
+                FinishOutcome::Completed if observed.pending.has_text && calls.is_empty() => {
+                    (RunState::Completed, None)
+                }
+                FinishOutcome::Incomplete => (RunState::Incomplete, Some(RunFailure::OutputLimit)),
+                FinishOutcome::Refused => (RunState::Refused, None),
+                _ => (RunState::Failed, Some(RunFailure::ProtocolFailed)),
+            };
+            finish(&store, &lease, Some(&step), state, error, &signals).await;
+            return;
+        }
+        let Some(saved) = context.checkpoint.as_ref() else {
+            finish(
+                &store,
+                &lease,
+                Some(&step),
+                RunState::Failed,
+                Some(RunFailure::ProtocolFailed),
+                &signals,
+            )
+            .await;
+            return;
+        };
+        continuation = match Continuation::from_private_checkpoint(
+            &saved.bytes,
+            protocol,
+            &request.model,
+            request.effort.as_deref(),
+        ) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                finish(
+                    &store,
+                    &lease,
+                    Some(&step),
+                    RunState::Failed,
+                    Some(RunFailure::ProtocolFailed),
+                    &signals,
+                )
+                .await;
+                return;
+            }
+        };
+        results.clear();
+        for call in &calls {
+            let value =
+                match retry_local(|| store.execute_knowledge_tool(&step, call.call_id.clone()))
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let (state, error) = store_failure(&error);
+                        finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
+                        return;
+                    }
+                };
+            let output = match serde_json::to_string(&value) {
+                Ok(output) => output,
+                Err(_) => {
+                    finish(
+                        &store,
+                        &lease,
+                        Some(&step),
+                        RunState::Failed,
+                        Some(RunFailure::ProtocolFailed),
+                        &signals,
+                    )
+                    .await;
+                    return;
+                }
+            };
+            results.push(ToolResult {
+                call_id: call.call_id.clone(),
+                output,
+                is_error: matches!(value, KnowledgeToolResult::Error(_)),
+            });
+        }
+        context = match retry_local(|| store.agent_context(&lease)).await {
+            Ok(value) => value,
+            Err(error) => {
+                let (state, error) = store_failure(&error);
+                finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
+                return;
+            }
+        };
+    }
+    finish(
+        &store,
+        &lease,
+        None,
+        RunState::Incomplete,
+        Some(RunFailure::BudgetExhausted),
+        &signals,
+    )
+    .await;
 }
 
 #[cfg(test)]

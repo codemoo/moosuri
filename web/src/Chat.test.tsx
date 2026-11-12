@@ -56,6 +56,7 @@ const choice: ModelChoice = {
   kind: "compatible",
   model: "synthetic-text",
   effort: null,
+  function_tools: false,
   verified_at: 1,
 };
 const usage = {
@@ -82,6 +83,7 @@ function turn(
       model: choice,
       error: null,
       usage,
+      evidence: [],
       can_cancel: true,
       can_retry: false,
       created_at: 1,
@@ -124,6 +126,7 @@ function fixture(
     action?: (call: Call) => Promise<Response> | Response;
     before?: ChatPage;
     history?: (call: Call) => Promise<Response> | Response | undefined;
+    extra?: (call: Call) => Promise<Response> | Response | undefined;
   } = {},
 ) {
   const state = {
@@ -150,6 +153,8 @@ function fixture(
         init,
       };
       calls.push(call);
+      const extra = options.extra?.(call);
+      if (extra) return Promise.resolve(extra);
       if (path === "/system")
         return Promise.resolve(
           response({ initialized: true, version: "0.1", stage: "text-chat" }),
@@ -1148,4 +1153,95 @@ it("marks a quiet authenticated SSE connection ready before the first message ev
   await ready(test.streams);
   await waitFor(()=>expect(screen.queryByText("연결 중…")).not.toBeInTheDocument());
   expect(screen.getByLabelText("메시지")).toBeEnabled();
+});
+
+
+it("drops previously loaded older evidence immediately on reset even while the fresh snapshot is held", async () => {
+  const user = userEvent.setup();
+  const latest = {...turn({state:"completed",can_cancel:false}),sequence:2};
+  const old = turn({id:"old-run",request_id:"old-request",state:"completed",can_cancel:false,
+    evidence:[{kind:"source",id:"source-a",revision:1,title:"철회할 원문"}]},"이전 질문");
+  old.assistant=[{id:"old-answer",text:"철회할 과거 답변",phase:null,refusal:false}];
+  const held=deferred<Response>();
+  let resetting=false;
+  const test=fixture({turns:[latest],cursor:2,
+    before:{thread_id:thread.id,cursor:2,turns:[old],next_before:null},
+    history:(call)=>resetting && !call.path.includes("?before=") ? held.promise : undefined});
+  open();await ready(test.streams);
+  await user.click(screen.getByRole("button",{name:"이전 대화 보기"}));
+  expect(await screen.findByText("철회할 과거 답변")).toBeInTheDocument();
+  await user.type(screen.getByLabelText("메시지"),"보존할 초안");
+  resetting=true;
+  await act(async()=>{test.streams.at(-1)!.controller.enqueue(new TextEncoder().encode("event: reset\ndata: {}\n\n"));});
+  await waitFor(()=>expect(screen.queryByText("철회할 과거 답변")).not.toBeInTheDocument());
+  expect(screen.queryByRole("button",{name:"철회할 원문 ↗"})).not.toBeInTheDocument();
+  expect(screen.getByLabelText("메시지")).toHaveValue("보존할 초안");
+  await act(async()=>{held.resolve(response({...test.state.page,cursor:9,next_before:2}));});
+  await waitFor(()=>expect(screen.getByText("Synthetic question")).toBeInTheDocument());
+  expect(screen.queryByText("철회할 과거 답변")).not.toBeInTheDocument();
+});
+
+it("does not restore old output from a retry response that arrives after a knowledge reset",async()=>{
+  const user=userEvent.setup();const held=deferred<Response>();
+  const initial=turn({state:"failed",can_cancel:false,can_retry:true});
+  initial.assistant=[{id:"partial",text:"철회할 부분 답변",phase:null,refusal:false}];
+  const test=fixture({turns:[initial],cursor:1,action:()=>held.promise});
+  open();await ready(test.streams);
+  await user.click(screen.getByRole("button",{name:"같은 설정으로 다시 시도"}));
+  const invalidated={...initial,assistant:[],run:{...initial.run,state:"incomplete" as const,error:"knowledge_invalidated",version:8,can_retry:false}};
+  test.state.page={...test.state.page,cursor:8,turns:[invalidated]};
+  await act(async()=>{test.streams.at(-1)!.controller.enqueue(new TextEncoder().encode("event: reset\ndata: {}\n\n"));});
+  await waitFor(()=>expect(screen.queryByText("철회할 부분 답변")).not.toBeInTheDocument());
+  await act(async()=>{held.resolve(response({...initial,run:{...initial.run,state:"running",attempt:2,version:3}}));});
+  expect(await screen.findByText(/참고한 자료가 변경되거나 삭제되어/)).toBeInTheDocument();
+  expect(screen.queryByText("철회할 부분 답변")).not.toBeInTheDocument();
+});
+
+it("replaces cached older evidence after a missed reset and fences an old retry acknowledgement", async () => {
+  const user = userEvent.setup();
+  const latest = { ...turn({ state: "completed", can_cancel: false }), sequence: 2 };
+  const old = turn({ id: "old-run", request_id: "old-request", state: "failed",
+    can_cancel: false, can_retry: true,
+    evidence: [{ kind: "source", id: "source-a", revision: 1, title: "오프라인 중 삭제한 원문" }] }, "이전 질문");
+  old.assistant = [{ id: "old-answer", text: "오프라인 중 철회된 답변", phase: null, refusal: false }];
+  const ack = deferred<Response>();
+  const fresh = deferred<Response>();
+  let refreshing = false;
+  const test = fixture({ turns: [latest], cursor: 2,
+    before: { thread_id: thread.id, cursor: 2, turns: [old], next_before: null },
+    history: (call) => refreshing && !call.path.includes("?before=") ? fresh.promise.then((value) => value.clone()) : undefined,
+    action: () => ack.promise });
+  open();
+  await ready(test.streams);
+  await user.click(screen.getByRole("button", { name: "이전 대화 보기" }));
+  expect(await screen.findByText("오프라인 중 철회된 답변")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "같은 설정으로 다시 시도" }));
+  await user.type(screen.getByLabelText("메시지"), "유지할 초안");
+  refreshing = true;
+  // No reset event arrives: the browser learns only the newer page and cursor.
+  await act(async () => { window.dispatchEvent(new Event("online")); });
+  await waitFor(() => expect(screen.queryByText("오프라인 중 철회된 답변")).not.toBeInTheDocument());
+  await act(async () => { fresh.resolve(response({ ...test.state.page, cursor: 9, next_before: 2 })); });
+  await waitFor(() => expect(test.streams.at(-1)?.path).toContain("after=9"));
+  await act(async () => { ack.resolve(response({ ...old,
+    run: { ...old.run, state: "running", attempt: 2, version: 3 } })); });
+  expect(screen.queryByText("오프라인 중 철회된 답변")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "오프라인 중 삭제한 원문 ↗" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("메시지")).toHaveValue("유지할 초안");
+  expect(screen.getByRole("button", { name: "이전 대화 보기" })).toBeInTheDocument();
+});
+
+it("opens only the exact backend evidence revision from a chat reference",async()=>{
+  const user=userEvent.setup();const id="11111111-1111-4111-8111-111111111111";
+  const value=turn({state:"completed",can_cancel:false,evidence:[{kind:"source",id,revision:7,title:"회의 메모"}]});
+  value.assistant=[{id:"answer",text:"회의 자료를 확인했습니다.",phase:"final_answer",refusal:false}];
+  const test=fixture({turns:[value],cursor:1,extra:(call)=>{
+    if(call.path==="/knowledge/collections")return response({collections:[]});
+    if(call.path===`/knowledge/sources/${id}?revision=7`)return response({source:{id,collection_id:"collection-a",external_id:"source-a",version:"7",revision:7,title:"회의 메모",speaker:null,observed_at:1,valid_from:null,valid_until:null},text:"확인한 원문의 정확한 버전입니다."});
+  }});
+  open();await ready(test.streams);
+  await user.click(screen.getByRole("button",{name:"회의 메모 ↗"}));
+  expect(await screen.findByLabelText("원문 텍스트")).toHaveValue("확인한 원문의 정확한 버전입니다.");
+  expect(test.calls.some(call=>call.path===`/knowledge/sources/${id}?revision=7`)).toBe(true);
+  expect(window.location.pathname).toBe("/app/knowledge");
 });

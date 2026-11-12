@@ -340,3 +340,241 @@ pub(super) async fn catalog(
     })
     .into_response())
 }
+
+const TOOL_PROBE_NAME: &str = "moosuri_verification_ping";
+const TOOL_PROBE_PROMPT: &str = "Call moosuri_verification_ping exactly once with an empty argument object. After receiving the tool result, reply with exactly its text, with no extra words or whitespace.";
+
+// Fixed synthetic protocol proof. No knowledge access, arbitrary tool registry or
+// client-supplied result can enter this verifier.
+pub(super) async fn tool_probe(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<ProbeInput>,
+) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    let (binding, challenge) = state
+        .store
+        .tool_probe_binding(
+            &user,
+            id.clone(),
+            input.revision,
+            input.model.clone(),
+            input.effort.clone(),
+        )
+        .await?;
+    let _permit = state
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| HttpError(StoreError::Busy))?;
+    let client = match bound_client(&binding) {
+        Ok(client) => client,
+        Err(error) => return Ok(transport_failure(error)),
+    };
+    let cancellation = CancellationToken::new();
+    let proof = verify_tool_probe(&state, &user, &binding, &client, &challenge, &cancellation);
+    let result = tokio::time::timeout(Duration::from_secs(120), proof).await;
+    cancellation.cancel();
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(ToolProbeError::Store(error))) => return Err(error.into()),
+        Ok(Err(ToolProbeError::Transport(error))) => return Ok(transport_failure(error)),
+        Ok(Err(ToolProbeError::Incomplete)) => {
+            return Ok(failure(
+                StatusCode::BAD_GATEWAY,
+                "model_tool_probe_incomplete",
+            ));
+        }
+        Err(_) => return Ok(failure(StatusCode::GATEWAY_TIMEOUT, "model_timeout")),
+    }
+    Ok(Json(
+        state
+            .store
+            .record_tool_probe(&user, id, input.revision, input.model, input.effort)
+            .await?,
+    )
+    .into_response())
+}
+
+enum ToolProbeError {
+    Store(StoreError),
+    Transport(TransportError),
+    Incomplete,
+}
+
+#[derive(Default)]
+struct ProbeObservation {
+    reported_model: Option<String>,
+    items: Vec<(
+        String,
+        Option<moosuri_connectors::model::protocol::AssistantPhase>,
+        String,
+    )>,
+    refusal: bool,
+    bytes: usize,
+}
+impl ProbeObservation {
+    fn observe(&mut self, event: ModelEvent) -> Result<(), ToolProbeError> {
+        let (key, phase, text) = match event {
+            ModelEvent::Started { model, .. } => {
+                self.reported_model = model;
+                return Ok(());
+            }
+            ModelEvent::RefusalDelta { .. } => {
+                self.refusal = true;
+                return Ok(());
+            }
+            ModelEvent::MessageMetadata { item_id, phase } => (item_id, phase, String::new()),
+            ModelEvent::TextDelta {
+                text,
+                item_id,
+                phase,
+            } => (
+                item_id.unwrap_or_else(|| "unidentified-message".into()),
+                phase,
+                text,
+            ),
+            _ => return Ok(()),
+        };
+        self.bytes = self.bytes.saturating_add(text.len());
+        if self.bytes > 16 * 1024 || self.items.len() >= 128 {
+            return Err(ToolProbeError::Incomplete);
+        }
+        if let Some(item) = self.items.iter_mut().find(|item| item.0 == key) {
+            if phase.is_some() {
+                item.1 = phase;
+            }
+            item.2.push_str(&text);
+        } else {
+            self.items.push((key, phase, text));
+        }
+        // Explicit commentary can never establish a final answer. Unknown phase
+        // remains eligible for dialects/models without native phase metadata.
+        Ok(())
+    }
+    fn final_text(&self) -> String {
+        self.items
+            .iter()
+            .filter(|item| {
+                item.1 != Some(moosuri_connectors::model::protocol::AssistantPhase::Commentary)
+            })
+            .map(|item| item.2.as_str())
+            .collect()
+    }
+}
+
+async fn tool_probe_round(
+    state: &AppState,
+    user: &UserContext,
+    binding: &ProviderBinding,
+    client: &ModelClient,
+    request: &moosuri_connectors::model::protocol::tools::ToolRequest<'_>,
+    cancellation: &CancellationToken,
+) -> Result<
+    (
+        moosuri_connectors::model::protocol::tools::ToolRound,
+        ProbeObservation,
+    ),
+    ToolProbeError,
+> {
+    use moosuri_connectors::model::protocol::tools::ToolCapabilities;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let capabilities = ToolCapabilities {
+        function_tools: true,
+    };
+    let operation = client.stream_tool_round(request, &capabilities, &tx, cancellation);
+    tokio::pin!(operation);
+    let mut tick = tokio::time::interval(Duration::from_millis(500));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut observed = ProbeObservation::default();
+    loop {
+        tokio::select! {
+            biased;
+            _=tick.tick()=>{state.store.validate_provider_binding(user,binding.id.clone(),binding.revision).await.map_err(ToolProbeError::Store)?;},
+            event=rx.recv()=>if let Some(event)=event{observed.observe(event)?;},
+            result=&mut operation=>{
+                let round=result.map_err(ToolProbeError::Transport)?;
+                while let Ok(event)=rx.try_recv(){observed.observe(event)?;}
+                state.store.validate_provider_binding(user,binding.id.clone(),binding.revision).await.map_err(ToolProbeError::Store)?;
+                if observed.reported_model.as_deref()!=Some(binding.model.as_str()) || observed.refusal{return Err(ToolProbeError::Incomplete);}
+                return Ok((round,observed));
+            }
+        }
+    }
+}
+
+async fn verify_tool_probe(
+    state: &AppState,
+    user: &UserContext,
+    binding: &ProviderBinding,
+    client: &ModelClient,
+    challenge: &str,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolProbeError> {
+    use moosuri_connectors::model::protocol::tools::{FunctionDefinition, ToolRequest, ToolResult};
+    let definitions = [FunctionDefinition {
+        name: TOOL_PROBE_NAME.into(),
+        description: "Return a synthetic verification challenge. No external operation.".into(),
+        parameters: serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+    }];
+    let text = TextRequest {
+        model: binding.model.clone(),
+        effort: binding.effort.clone(),
+        messages: vec![TextMessage {
+            role: TextRole::User,
+            text: TOOL_PROBE_PROMPT.into(),
+            phase: None,
+        }],
+        max_output_tokens: 2048,
+    };
+    let (first, _) = tool_probe_round(
+        state,
+        user,
+        binding,
+        client,
+        &ToolRequest {
+            text: &text,
+            tools: &definitions,
+            continuation: None,
+            results: &[],
+        },
+        cancellation,
+    )
+    .await?;
+    if first.outcome != FinishOutcome::ContinuationRequired || first.calls.len() != 1 {
+        return Err(ToolProbeError::Incomplete);
+    }
+    let call = &first.calls[0];
+    let args: serde_json::Value =
+        serde_json::from_str(call.arguments()).map_err(|_| ToolProbeError::Incomplete)?;
+    if call.name() != TOOL_PROBE_NAME || args != serde_json::json!({}) {
+        return Err(ToolProbeError::Incomplete);
+    }
+    let results = [ToolResult {
+        call_id: call.call_id().into(),
+        output: challenge.into(),
+        is_error: false,
+    }];
+    let (second, observed) = tool_probe_round(
+        state,
+        user,
+        binding,
+        client,
+        &ToolRequest {
+            text: &text,
+            tools: &definitions,
+            continuation: Some(&first.continuation),
+            results: &results,
+        },
+        cancellation,
+    )
+    .await?;
+    if second.outcome != FinishOutcome::Completed
+        || !second.calls.is_empty()
+        || observed.final_text() != challenge
+    {
+        return Err(ToolProbeError::Incomplete);
+    }
+    Ok(())
+}

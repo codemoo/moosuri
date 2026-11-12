@@ -1,5 +1,6 @@
 //! Supervised, bounded plain-text execution. No browser owns a model task.
 //! Watch notifications contain only a monotonic counter, never private identifiers.
+mod knowledge_tools;
 mod runner;
 
 use moosuri_connectors::model::{
@@ -188,7 +189,7 @@ async fn settle_retired(retired: &mut Vec<RunLease>, store: &Store, signals: &Si
         // commit. Already-terminal/deleted/fenced attempts reject this transition.
         // Transient storage pressure is retried by the supervisor, never by HTTP.
         match store
-            .finish_run(
+            .finish_agent_execution(
                 &lease,
                 RunState::OutcomeUnknown,
                 Some(RunFailure::Interrupted),
@@ -222,7 +223,7 @@ async fn supervise(store: Store, signals: Signals, done: watch::Sender<bool>) {
         }
         settle_retired(&mut retired, &store, &signals).await;
         while tasks.len() + retired.len() < 2 && !signals.stop.is_cancelled() {
-            match store.claim_run().await {
+            match store.claim_agent_run().await {
                 Ok(Some(claimed)) => {
                     signals.changed();
                     let lease = claimed.lease.clone();

@@ -1,4 +1,4 @@
-# Supervised text runtime
+# Supervised knowledge runtime
 
 `Runtime::start(Store)` owns a supervisor and at most two model tasks, independent
 of HTTP and SSE clients. Store claims enforce one active call per user, queue
@@ -21,8 +21,9 @@ deletion through the original receipt. No refund or remote cancellation is impli
 
 Canonical Responses phase is preserved. Other protocols omit commentary only in
 the wire projection and strip final phase metadata without changing stored history.
-Unknown phase is not inferred to be final. Tools, memory and attachments remain
-unavailable. Exact reported model identity and a successful transport terminal are
+Unknown phase is not inferred to be final. Verified tool-capable models can search/read
+account-scoped sources and explicit memories. Memory writes, external actions and
+attachments remain unavailable. Exact reported model identity and a successful transport terminal are
 required for completion. There is no automatic retry, model change or fallback.
 
 `model_client` provides the same validated hosted/local constructor to the runtime
@@ -34,6 +35,11 @@ identity states, cancel/delete/logout fences, shutdown/drop, reopen without repl
 UTF-8 patch bounds, timeout/truncation/connection failure, transient store pressure,
 exited-worker settlement and wire/late phase behavior. These are implementation tests,
 not live-model quality or full agent evaluations.
+
+The [knowledge-agent contract](../../docs/knowledge-agent.md) describes persisted
+per-step continuations and typed slots,6-model/12-tool/120-second cumulative limits,
+actual/inherited evidence dependencies and revocation. Tests also cover multi-round
+retrieval, argument repair, tenant denial, inherited purge and retry/tool exhaustion.
 
 ```sh
 cargo test --locked -p moosuri-agent

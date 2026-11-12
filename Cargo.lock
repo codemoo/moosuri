@@ -976,6 +976,7 @@ dependencies = [
  "moosuri-connectors",
  "moosuri-core",
  "moosuri-store",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

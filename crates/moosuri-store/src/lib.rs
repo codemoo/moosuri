@@ -4,12 +4,16 @@ mod agent_execution;
 mod chat;
 mod knowledge;
 mod knowledge_journal;
+mod memory_commands;
 pub use agent_execution::{
     AgentClaim, AgentContext, AgentStepStatus, AgentToolSlot, KnowledgeToolInput,
     KnowledgeToolResult, PendingKnowledgeCall, PrivateCheckpoint, SourceExcerpt, StepLease,
     TOOL_INPUT_LIMIT, ToolReadError,
 };
 pub use chat::{ClaimedRun, ContextMessage, ContextRole, OutputPatch, RunFailure, RunLease};
+pub use memory_commands::{
+    MemoryCommandClarification, MemoryCommandOutcome, PreparedMemoryCommand,
+};
 mod files;
 mod journal;
 mod providers;
@@ -266,7 +270,7 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if !matches!(version, 1..=5) {
+        } else if !matches!(version, 1..=6) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {
@@ -308,6 +312,12 @@ impl Store {
             conn.execute_batch(&format!(
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0005_agent_execution.sql")
+            ))?;
+        }
+        if version < 6 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0006_memory_commands.sql")
             ))?;
         }
         let provider_key = providers::open_key(&conn, &dir)?;

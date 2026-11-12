@@ -12,6 +12,7 @@ const QUERY: &str = "제주여행";
 #[derive(Clone, Copy)]
 enum Scenario {
     Chain,
+    Browse,
     Repair,
     DeleteWhileHeld,
     Loop,
@@ -101,6 +102,50 @@ async fn scripted_response(
     let mut calls = vec![];
     let mut answer = None;
     match state.scenario {
+        Scenario::Browse => match step {
+            1 => calls.push(tool_call(
+                0,
+                "browse-first".into(),
+                "knowledge_search",
+                json!({"kind":"memory","text":"","collection_id":null,"subject":null,
+                    "speaker":null,"valid_at":null,"cursor":null}),
+            )),
+            2 => {
+                let result = prior.last().unwrap();
+                assert_eq!(result["kind"], "search");
+                assert_eq!(result["value"]["hits"].as_array().unwrap().len(), 5);
+                assert_eq!(result["value"]["truncated"], false);
+                assert!(result["value"]["next_cursor"].is_string());
+                calls.push(tool_call(
+                    0,
+                    "browse-next".into(),
+                    "knowledge_search",
+                    json!({"kind":"memory","text":"","collection_id":null,"subject":null,
+                        "speaker":null,"valid_at":null,"cursor":result["value"]["next_cursor"]}),
+                ));
+            }
+            3 => {
+                let result = prior.last().unwrap();
+                let hits = result["value"]["hits"].as_array().unwrap();
+                assert_eq!(hits.len(), 1);
+                assert!(result["value"]["next_cursor"].is_null());
+                calls.push(tool_call(
+                    0,
+                    "browse-read".into(),
+                    "knowledge_read_memory",
+                    json!({"id":hits[0]["id"],"revision":hits[0]["revision"]}),
+                ));
+            }
+            4 => {
+                let result = prior.last().unwrap();
+                assert_eq!(result["kind"], "memory");
+                answer = Some(format!(
+                    "저장된 선호: {}",
+                    result["value"]["draft"]["text"].as_str().unwrap()
+                ));
+            }
+            _ => panic!("unexpected extra browse continuation"),
+        },
         Scenario::Loop | Scenario::RetryBudget => {
             assert!(step <= 6, "runtime exceeded persisted model budget");
             for i in 0..2 {
@@ -718,4 +763,163 @@ async fn oversized_next_tool_batch_is_atomic_and_reports_budget_exhaustion() {
         stopped.run.can_retry
     );
     assert_eq!(stopped.run.error.as_deref(), Some("budget_exhausted"));
+}
+
+#[test]
+fn memory_browse_query_mapping_preserves_invalid_argument_boundaries() {
+    use crate::knowledge_tools::{Invocation, parse};
+    let args = |kind: &str, text: &str| {
+        json!({"kind":kind,"text":text,
+        "collection_id":null,"subject":null,"speaker":null,"valid_at":null})
+    };
+    for (kind, text) in [
+        ("source", ""),
+        ("memory", " "),
+        ("memory", "\n"),
+        ("source", " "),
+    ] {
+        assert!(matches!(
+            parse("knowledge_search", &args(kind, text).to_string()),
+            Invocation::InvalidArguments
+        ));
+    }
+    let mut browse = args("memory", "");
+    browse["cursor"] = json!("returned-scoped-cursor");
+    match parse("knowledge_search", &browse.to_string()) {
+        Invocation::Search(query) => {
+            assert_eq!(query.kind, KnowledgeKind::Memory);
+            assert_eq!(query.text, "");
+            assert_eq!(query.cursor.as_deref(), Some("returned-scoped-cursor"));
+        }
+        _ => panic!("valid read-only browse rejected"),
+    }
+    browse["cursor"] = json!(42);
+    assert!(matches!(
+        parse("knowledge_search", &browse.to_string()),
+        Invocation::InvalidArguments
+    ));
+    let mut unknown = args("memory", "");
+    unknown["tenant_id"] = json!("untrusted");
+    assert!(matches!(
+        parse("knowledge_search", &unknown.to_string()),
+        Invocation::InvalidArguments
+    ));
+}
+
+#[tokio::test]
+async fn broad_personal_recall_browses_scoped_pages_and_forget_revokes_grounded_answer() {
+    let _guard = TEST_LOCK.lock().await;
+    let fixture = script_fixture(Scenario::Browse).await;
+    let (_dir, store, user, thread) = tool_configured(&fixture.base).await;
+    let mut memories = vec![];
+    for i in 0..6 {
+        memories.push(
+            store
+                .create_memory(
+                    &user,
+                    uuid::Uuid::new_v4().to_string(),
+                    moosuri_core::MemoryDraft {
+                        text: format!("합성 별도 사실 {i}"),
+                        subject: "합성 항목".into(),
+                        speaker: None,
+                        valid_from: None,
+                        valid_until: None,
+                        evidence: vec![],
+                    },
+                )
+                .await
+                .unwrap(),
+        );
+    }
+    memories.sort_by(|a, b| a.id.cmp(&b.id));
+    let target = memories.last().unwrap();
+    let fact = "나는 홍차를 좋아해.";
+    store
+        .correct_memory(
+            &user,
+            target.id.clone(),
+            1,
+            uuid::Uuid::new_v4().to_string(),
+            moosuri_core::MemoryDraft {
+                text: fact.into(),
+                subject: "홍차 선호".into(),
+                speaker: None,
+                valid_from: None,
+                valid_until: None,
+                evidence: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let runtime = Runtime::start(store.clone());
+    store
+        .submit_turn(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "내가 좋아하는 음료는 무엇이야?".into(),
+        )
+        .await
+        .unwrap();
+    runtime.wake();
+    let done = wait_for(&store, &user, &thread, |turn| !turn.run.state.active()).await;
+    assert_eq!(done.run.state, RunState::Completed);
+    assert_eq!(fixture.state.calls.load(Ordering::SeqCst), 4);
+    assert!(text(&done).contains(fact));
+    assert!(
+        done.run
+            .evidence
+            .iter()
+            .any(|e| e.kind == KnowledgeKind::Memory && e.id == target.id && e.revision == 2)
+    );
+    let before = store
+        .conversation(&user, thread.clone(), None)
+        .await
+        .unwrap()
+        .cursor;
+    store
+        .forget_memory(&user, target.id.clone(), 2)
+        .await
+        .unwrap();
+    let revoked = store
+        .conversation(&user, thread.clone(), None)
+        .await
+        .unwrap()
+        .turns
+        .remove(0);
+    assert!(revoked.assistant.is_empty());
+    assert!(revoked.run.evidence.is_empty());
+    for cursor in [0, before] {
+        let events = store
+            .chat_events(&user, thread.clone(), cursor)
+            .await
+            .unwrap();
+        assert!(events.reset);
+        assert!(!serde_json::to_string(&events).unwrap().contains(fact));
+    }
+    let mut browse = moosuri_core::KnowledgeQuery {
+        kind: KnowledgeKind::Memory,
+        text: "".into(),
+        collection_id: None,
+        subject: None,
+        speaker: None,
+        valid_at: None,
+        cursor: None,
+    };
+    let after = store.search_knowledge(&user, browse.clone()).await.unwrap();
+    assert!(!after.hits.iter().any(|h| h.id == target.id));
+    // The cursor captured from the first five-hit page cannot survive forgetting.
+    let requests = fixture.state.requests.lock().await;
+    browse.cursor = Some(
+        result_values(&requests[1])[0]["value"]["next_cursor"]
+            .as_str()
+            .unwrap()
+            .into(),
+    );
+    assert!(matches!(
+        store.search_knowledge(&user, browse).await,
+        Err(moosuri_store::StoreError::Conflict)
+    ));
+    drop(requests);
+    runtime.shutdown().await;
 }

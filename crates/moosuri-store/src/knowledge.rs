@@ -2,7 +2,7 @@
 use super::*;
 use moosuri_core::*;
 use serde::{Serialize, de::DeserializeOwned};
-mod destructive;
+pub(super) mod destructive;
 pub(super) mod memories;
 pub(super) mod search;
 pub(super) mod sources;

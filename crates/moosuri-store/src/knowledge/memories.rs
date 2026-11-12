@@ -83,37 +83,50 @@ fn write(
     draft: MemoryDraft,
 ) -> Result<MemoryDocument> {
     let user = validate(&db.conn, &user, true, false)?;
+    let tx = db
+        .conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let result = write_in_transaction(&tx, &user.tenant.0, object, request, draft)?;
+    tx.commit()?;
+    Ok(result)
+}
+/// Caller owns the writer transaction and has already validated current authority.
+pub(crate) fn write_in_transaction(
+    conn: &Connection,
+    tenant: &str,
+    object: Option<(String, i64)>,
+    request: String,
+    draft: MemoryDraft,
+) -> Result<MemoryDocument> {
     let request = id(&request)?;
     let object = object.map(|(v, r)| id(&v).map(|v| (v, r))).transpose()?;
     let digest = hash(&(&object, &draft))?;
-    let receipt:Option<(Vec<u8>,String,i64)>=db.conn.query_row("SELECT digest,memory_id,revision FROM knowledge_writes WHERE tenant_id=?1 AND request_id=?2",params![user.tenant.0,request],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    let receipt:Option<(Vec<u8>,String,i64)>=conn.query_row("SELECT digest,memory_id,revision FROM knowledge_writes WHERE tenant_id=?1 AND request_id=?2",params![tenant,request],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     if let Some((old, memory, revision)) = receipt {
         if old != digest {
             return Err(StoreError::Conflict);
         }
-        return document(&db.conn, &user.tenant.0, &memory, Some(revision));
+        return document(conn, tenant, &memory, Some(revision));
     }
-    draft_valid(&db.conn, &user.tenant.0, &draft)?;
-    let tx = db
-        .conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)?;
+    draft_valid(conn, tenant, &draft)?;
+    let tx = conn;
     let time = now()?;
     let (object, revision) = if let Some((object, expected)) = object {
-        let previous = document(&tx, &user.tenant.0, &object, None)?;
+        let previous = document(tx, tenant, &object, None)?;
         if expected != previous.revision {
             return Err(StoreError::Conflict);
         }
-        agent_execution::invalidate_object(&tx, &user.tenant.0, "memory", &object, None)?;
+        agent_execution::invalidate_object(tx, tenant, "memory", &object, None)?;
         let revision = expected.checked_add(1).ok_or(StoreError::Corrupt)?;
         if revision > 128 {
             return Err(StoreError::Conflict);
         }
-        tx.execute("UPDATE knowledge_memories SET revision=?3,status='active',updated_at=?4 WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,object,revision,time])?;
+        tx.execute("UPDATE knowledge_memories SET revision=?3,status='active',updated_at=?4 WHERE tenant_id=?1 AND id=?2",params![tenant,object,revision,time])?;
         (object, revision)
     } else {
         if tx.query_row(
             "SELECT count(*) FROM knowledge_memories WHERE tenant_id=?1",
-            [&user.tenant.0],
+            [tenant],
             |r| r.get::<_, i64>(0),
         )? >= 4096
         {
@@ -122,24 +135,24 @@ fn write(
         let object = Uuid::new_v4().to_string();
         tx.execute(
             "INSERT INTO knowledge_memories VALUES (?1,?2,1,'active',?3,?3)",
-            params![user.tenant.0, object, time],
+            params![tenant, object, time],
         )?;
         (object, 1)
     };
     tx.execute(
         "INSERT INTO knowledge_memory_versions VALUES (?1,?2,?3,?4,'active',?5)",
-        params![user.tenant.0, object, revision, encode(&draft)?, time],
+        params![tenant, object, revision, encode(&draft)?, time],
     )?;
     tx.execute(
         "INSERT INTO knowledge_memory_timeline VALUES (?1,?2,?3,?4)",
-        params![user.tenant.0, object, revision, draft.valid_from],
+        params![tenant, object, revision, draft.valid_from],
     )?;
     for evidence in &draft.evidence {
         let quote_hash: [u8; 32] = Sha256::digest(evidence.quote.as_bytes()).into();
         tx.execute(
             "INSERT INTO knowledge_evidence VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![
-                user.tenant.0,
+                tenant,
                 object,
                 revision,
                 id(&evidence.source_id)?,
@@ -150,14 +163,13 @@ fn write(
             ],
         )?;
     }
-    reindex(&tx, &user.tenant.0, &object)?;
-    bump(&tx, &user.tenant.0)?;
+    reindex(tx, tenant, &object)?;
+    bump(tx, tenant)?;
     tx.execute(
         "INSERT INTO knowledge_writes VALUES (?1,?2,?3,?4,?5)",
-        params![user.tenant.0, request, digest.as_slice(), object, revision],
+        params![tenant, request, digest.as_slice(), object, revision],
     )?;
-    let result = document(&tx, &user.tenant.0, &object, Some(revision))?;
-    tx.commit()?;
+    let result = document(tx, tenant, &object, Some(revision))?;
     Ok(result)
 }
 impl Store {

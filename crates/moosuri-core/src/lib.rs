@@ -1,7 +1,9 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
 mod chat;
 mod knowledge;
+mod memory_command;
 pub use knowledge::*;
+pub use memory_command::*;
 mod providers;
 pub use chat::*;
 pub use providers::*;

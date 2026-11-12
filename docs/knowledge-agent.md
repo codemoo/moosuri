@@ -4,7 +4,8 @@ A model verified for function calls can search the current account's saved sourc
 and memories, read an exact revision, and continue its answer with those results.
 Ordinary chat still works with text-only models. No search is required for ordinary
 conversation. This unit supplies three built-in read-only functions; it does not
-install arbitrary code, write memories or perform external actions.
+install arbitrary code or perform external actions. [Conversational memory](conversational-memory.md)
+adds a separate current-user-only path for explicit terminal memory changes.
 
 ## Enable and use
 
@@ -20,7 +21,9 @@ Save text in `/app/knowledge` or manage explicit memories in `/app/memory`, then
 about it in chat. **확인한 자료** opens the exact source or memory revision returned
 to the model. These buttons are server-derived input references, not a claim that
 every sentence is proven by that reference. A model can still misunderstand evidence.
-No live-model answer-quality benchmark has been completed.
+The scoped [account-backed development evaluation](reviews/2026-11-13-live-chatgpt-quality.md)
+records observed results and failures separately from protocol tests; it is not a
+production-provider or overall-assistant benchmark.
 
 ## Execution and recovery
 
@@ -55,7 +58,12 @@ same ledger and existing text transport.
 ## Retrieval and deletion
 
 `knowledge_search` uses literal words and at most five account-scoped hits. The
-model must narrow truncated searches. `knowledge_read_source` takes an actual ID,
+model must narrow truncated searches. An exactly empty memory query can browse a
+bounded page of current memories when a broad personal question lacks exact stored
+words. Empty source queries remain invalid. The actual returned cursor can continue
+the same query, time and generation within the account and existing run budget.
+An incomplete page is not proof that no relevant memory exists.
+`knowledge_read_source` takes an actual ID,
 revision and UTF-8 byte offset; each excerpt is at most4096 bytes and returns exact
 start/end/next offsets. `knowledge_read_memory` retains assertion/evidence/status
 metadata. Results are capped at16 KiB, typed input slots at4 KiB. Malformed or
@@ -84,8 +92,7 @@ Already delivered browser/network bytes cannot be remotely erased.
 This is lexical retrieval over manually saved text and explicit memories. It does
 not establish semantic-search recall, prompt-injection immunity or mission success.
 Retrieved content is instructed to be data, while the actual tool vocabulary and
-Store enforce read-only account scope. Automatic extraction, conversational memory
-writes, external tools, schedules, skills, attachments and the user-key vault remain
+Store enforce read-only account scope. Automatic extraction, external tools, schedules, skills, attachments and the user-key vault remain
 separate changes. Ordinary knowledge is not an encrypted user-key vault.
 
 See [model protocol and official references](model-tools.md), [private knowledge](knowledge.md),

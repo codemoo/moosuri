@@ -521,11 +521,21 @@ async fn verify_tool_probe(
     let text = TextRequest {
         model: binding.model.clone(),
         effort: binding.effort.clone(),
-        messages: vec![TextMessage {
-            role: TextRole::User,
-            text: TOOL_PROBE_PROMPT.into(),
-            phase: None,
-        }],
+        // Verification is an application protocol, not a user's chat request.
+        // Keep its exact-output contract in the instruction role across both
+        // rounds; the unknown challenge is still supplied only as a tool result.
+        messages: vec![
+            TextMessage {
+                role: TextRole::System,
+                text: TOOL_PROBE_PROMPT.into(),
+                phase: None,
+            },
+            TextMessage {
+                role: TextRole::User,
+                text: "Verify the tool connection.".into(),
+                phase: None,
+            },
+        ],
         max_output_tokens: 2048,
     };
     let (first, _) = tool_probe_round(

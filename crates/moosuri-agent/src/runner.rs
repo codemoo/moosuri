@@ -17,6 +17,8 @@ use moosuri_store::{
 };
 use std::{collections::BTreeMap, time::Duration};
 
+mod memory;
+
 const MAX_OUTPUT: usize = 256 * 1024;
 const MAX_PATCH: usize = 8 * 1024;
 const MAX_ITEMS: usize = 128;
@@ -482,6 +484,7 @@ async fn stream_round(
     checkpoint: &Checkpoint<'_>,
     run: &RunLease,
     prior_bytes: usize,
+    visible_output: bool,
 ) -> Result<Observation, (RunState, RunFailure)> {
     let cancellation = CancellationToken::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
@@ -534,7 +537,7 @@ async fn stream_round(
                 }
             }
             Some(value) = rx.recv() => {
-                if let Err(error)=observe(value,failure.is_none(),checkpoint,&mut pending).await {
+                if let Err(error)=observe(value,failure.is_none() && visible_output,checkpoint,&mut pending).await {
                     authority_fenced=matches!(error,RunFailure::AuthorityRevoked|RunFailure::BudgetExhausted);
                     failure=Some(error);cancellation.cancel();
                 }
@@ -543,7 +546,14 @@ async fn stream_round(
         }
     };
     while let Ok(value) = rx.try_recv() {
-        if let Err(error) = observe(value, failure.is_none(), checkpoint, &mut pending).await {
+        if let Err(error) = observe(
+            value,
+            failure.is_none() && visible_output,
+            checkpoint,
+            &mut pending,
+        )
+        .await
+        {
             authority_fenced = matches!(
                 error,
                 RunFailure::AuthorityRevoked | RunFailure::BudgetExhausted
@@ -640,6 +650,40 @@ pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals)
             return;
         }
     };
+    if model.function_tools {
+        // The final user message is the original current turn. No prior messages
+        // or source results are included in the separate intent request.
+        let Some(current_text) = request
+            .messages
+            .last()
+            .filter(|m| m.role == TextRole::User)
+            .map(|m| m.text.as_str())
+        else {
+            finish(
+                &store,
+                &lease,
+                None,
+                RunState::Failed,
+                Some(RunFailure::ProtocolFailed),
+                &signals,
+            )
+            .await;
+            return;
+        };
+        let planning = memory::PlanningSession {
+            store: &store,
+            lease: &lease,
+            client: &client,
+            request: &request,
+            signals: &signals,
+            protocol,
+            capabilities: &capabilities,
+        };
+        let Some(next) = memory::run(&planning, context, current_text).await else {
+            return;
+        };
+        context = next;
+    }
     let definitions = knowledge_tools::definitions();
     let tool_capability = ToolCapabilities {
         function_tools: true,
@@ -694,6 +738,7 @@ pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals)
             &checkpoint,
             &lease,
             total_bytes,
+            true,
         )
         .await
         {

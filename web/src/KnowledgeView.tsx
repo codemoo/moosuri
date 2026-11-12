@@ -502,7 +502,8 @@ export function KnowledgeView({
         <div className="knowledge-stage">
           <p>
             도구 사용이 확인된 모델에서는 채팅 중 필요한 자료와 기억을 찾아볼 수
-            있습니다. 자동 기억 저장은 아직 지원하지 않습니다.
+            있습니다. “기억해 줘”, “수정해 줘”, “잊어 줘”라고 요청해도 됩니다.
+            요청하지 않은 내용을 자동으로 기억하지는 않습니다.
           </p>
           <button
             className="text-button"

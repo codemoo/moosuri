@@ -2,7 +2,7 @@
 
 A self-hosted assistant for individuals, families and friends.
 
-**Status: early development. The Rust/React app supports isolated accounts, verified model setup, durable chat with private source/memory retrieval and explicit memory management. Automatic extraction and external actions are still being built.**
+**Status: early development. The Rust/React app supports isolated accounts, verified model setup, durable chat with private source/memory retrieval and explicit and conversational memory management. Automatic extraction and external actions are still being built.**
 The existing private deployment remains the behavioral reference; its source history,
 accounts, data, infrastructure settings and experimental runtimes are not copied here.
 
@@ -29,7 +29,9 @@ This repository contains the reviewed plan and source audit, a Rust account/API/
 
 GitHub Actions/CI are disabled during initial development. Contributors run relevant checks locally and commit/push each coherent work unit. Personal coding-agent instructions are ignored; shared contracts live in OpenSpec and CONTRIBUTING.
 
-Build and run the development preview with [the quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate conversations. Administrators can configure shared connections, discover and verify models, and users can select model/effort in [model settings](docs/provider-settings.md). [Text chat](docs/chat.md) supports streaming, cancellation, retry and reconnect. [Private knowledge](docs/knowledge.md) supports text sources, exact evidence, editable memories and scoped deletion. [The knowledge agent](docs/knowledge-agent.md) connects verified read tools and revocable source references to chat. Vault and external work remain unavailable.
+Build and run the development preview with [the quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate conversations. Administrators can configure shared connections, discover and verify models, and users can select model/effort in [model settings](docs/provider-settings.md). [Text chat](docs/chat.md) supports streaming, cancellation, retry and reconnect. [Private knowledge](docs/knowledge.md) supports text sources, exact evidence, editable memories and scoped deletion. [The knowledge agent](docs/knowledge-agent.md) connects verified read tools and revocable source references to chat. [Conversational memory](docs/conversational-memory.md) adds explicit remember/correct/forget requests. Vault and external work remain unavailable.
+
+[Live ChatGPT evaluation](docs/reviews/2026-11-13-live-chatgpt-quality.md) used the existing official login with `gpt-6.1-terra` / `high`. The latest repeated development corpus matched36/36 live intent labels; end-to-end scenarios passed7/10, exposing a remaining memory-target resolution defect. These are limited development results, not a shipped subscription connection or an overall assistant quality score.
 
 Validate planning metadata with Rust 1.89 or newer:
 

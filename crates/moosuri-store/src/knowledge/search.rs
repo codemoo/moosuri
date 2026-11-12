@@ -13,7 +13,12 @@ pub(crate) fn search_limit(
     limit: usize,
 ) -> Result<KnowledgeSearch> {
     let user = validate(conn, &user, true, false)?;
-    label(&query.text, 128)?;
+    // An exact empty string is an explicit read-only memory browse. Whitespace
+    // and empty source searches retain the ordinary query validation.
+    let browse = query.kind == KnowledgeKind::Memory && query.text.is_empty();
+    if !browse {
+        label(&query.text, 128)?;
+    }
     speaker(&query.speaker)?;
     if let Some(subject) = &query.subject {
         label(subject, 200)?;
@@ -52,7 +57,7 @@ pub(crate) fn search_limit(
     }
     validity(Some(time), None)?;
     let normalized = normalize(&query.text);
-    if normalized.is_empty() {
+    if normalized.is_empty() && !browse {
         return Err(StoreError::InvalidInput);
     }
     let kind = if query.kind == KnowledgeKind::Source {
@@ -83,7 +88,8 @@ pub(crate) fn search_limit(
         )
     } else {
         // Materialize only IDs, never a thousand full documents. Short substring
-        // searches inspect at most 1,000 eligible records and disclose that boundary.
+        // searches and memory browsing inspect at most 1,000 eligible records
+        // and disclose that boundary; browsing does not depend on the FTS index.
         let count: i64 = conn.query_row(
             &format!("SELECT count(*) FROM (SELECT id FROM ({base}) ORDER BY id LIMIT 1001)"),
             params![
@@ -95,9 +101,14 @@ pub(crate) fn search_limit(
             ],
             |r| r.get(0),
         )?;
+        let literal_filter = if browse {
+            ""
+        } else {
+            " AND instr((SELECT normalized FROM knowledge_fts WHERE tenant_key=?8 AND kind=?9 AND object_id=b.id AND revision=b.revision LIMIT 1),?6)>0"
+        };
         (
             format!(
-                "WITH candidates AS MATERIALIZED (SELECT id FROM ({base}) ORDER BY id LIMIT 1000) SELECT b.id,b.revision,b.title,substr(b.text,1,512),b.subject,b.speaker,b.valid_from,b.valid_until FROM ({base}) b WHERE b.id IN (SELECT id FROM candidates) AND instr((SELECT normalized FROM knowledge_fts WHERE tenant_key=?8 AND kind=?9 AND object_id=b.id AND revision=b.revision LIMIT 1),?6)>0 ORDER BY b.id LIMIT ?11 OFFSET ?10"
+                "WITH candidates AS MATERIALIZED (SELECT id FROM ({base}) ORDER BY id LIMIT 1000) SELECT b.id,b.revision,b.title,substr(b.text,1,512),b.subject,b.speaker,b.valid_from,b.valid_until FROM ({base}) b WHERE b.id IN (SELECT id FROM candidates){literal_filter} ORDER BY b.id LIMIT ?11 OFFSET ?10"
             ),
             count > 1000,
         )

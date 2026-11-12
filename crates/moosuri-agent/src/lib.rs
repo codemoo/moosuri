@@ -1,6 +1,7 @@
-//! Supervised, bounded plain-text execution. No browser owns a model task.
+//! Supervised, bounded assistant execution. No browser owns a model task.
 //! Watch notifications contain only a monotonic counter, never private identifiers.
 mod knowledge_tools;
+mod memory_intent;
 mod runner;
 
 use moosuri_connectors::model::{
@@ -83,6 +84,7 @@ pub(crate) struct Signals {
     stop: CancellationToken,
     wake: Arc<Notify>,
     changes: watch::Sender<u64>,
+    delivery: Arc<tokio::sync::RwLock<()>>,
 }
 impl Signals {
     pub(crate) fn changed(&self) {
@@ -118,6 +120,7 @@ impl Runtime {
             stop: CancellationToken::new(),
             wake: Arc::new(Notify::new()),
             changes,
+            delivery: Arc::new(tokio::sync::RwLock::new(())),
         };
         let supervisor = tokio::spawn(supervise(store, signals.clone(), done_tx));
         Self {
@@ -141,6 +144,11 @@ impl Runtime {
     }
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.control.signals.changes.subscribe()
+    }
+    /// The same short gate orders HTTP and runtime mutations against SSE delivery.
+    /// Never hold it while waiting for a provider response or a client network write.
+    pub fn delivery_gate(&self) -> Arc<tokio::sync::RwLock<()>> {
+        self.control.signals.delivery.clone()
     }
     pub async fn shutdown(&self) {
         self.stop();

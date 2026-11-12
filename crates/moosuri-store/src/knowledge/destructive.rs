@@ -1,5 +1,5 @@
 use super::*;
-fn forget(conn: &Connection, tenant: &str, object: &str) -> Result<()> {
+pub(crate) fn forget(conn: &Connection, tenant: &str, object: &str) -> Result<()> {
     let (status, revision): (String, i64) = conn
         .query_row(
             "SELECT status,revision FROM knowledge_memories WHERE tenant_id=?1 AND id=?2",
@@ -69,7 +69,7 @@ fn delete_source(conn: &Connection, tenant: &str, object: &str) -> Result<()> {
     )?;
     remove_index(conn, tenant, "source", object)
 }
-fn apply(conn: &Connection, record: &knowledge_journal::Record) -> Result<()> {
+pub(crate) fn apply(conn: &Connection, record: &knowledge_journal::Record) -> Result<()> {
     match record.action {
         1 => forget(conn, &record.tenant, &record.target)?,
         2 => delete_source(conn, &record.tenant, &record.target)?,
@@ -86,9 +86,15 @@ fn apply(conn: &Connection, record: &knowledge_journal::Record) -> Result<()> {
                 conn.execute("UPDATE knowledge_collections SET connected=0,deleted=?3,revision=revision+1 WHERE tenant_id=?1 AND id=?2",params![record.tenant,record.target,record.action==3])?;
             }
         }
+        5 => {
+            bump(conn, &record.tenant)?;
+            memory_commands::apply_journal_forget(conn, &record.tenant, &record.target)?;
+        }
         _ => return Err(StoreError::Corrupt),
     }
-    bump(conn, &record.tenant)?;
+    if record.action != 5 {
+        bump(conn, &record.tenant)?;
+    }
     conn.execute(
         "UPDATE knowledge_journal_meta SET sequence=?1,head=?2 WHERE singleton=1",
         params![record.seq, record.hash.as_slice()],

@@ -1135,3 +1135,123 @@ async fn interrupted_schema_three_upgrade_has_durable_empty_journal_and_can_retr
     let store = Store::open(dir.path()).unwrap();
     assert_eq!(store.memories(&user, None).await.unwrap().items.len(), 1);
 }
+
+#[tokio::test]
+async fn memory_browse_uses_effective_revisions_and_scoped_stable_pages() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let owner = admin(&store).await.user;
+    let other = member(&store, &owner, "browse-other@example.test")
+        .await
+        .user;
+    let time = now().unwrap();
+    let current = new_memory(&store, &owner, "현재의 합성 선호").await;
+    let mut future_revision = draft("미래의 합성 선호");
+    future_revision.valid_from = Some(time + 100);
+    store
+        .correct_memory(
+            &owner,
+            current.id.clone(),
+            1,
+            Uuid::new_v4().to_string(),
+            future_revision,
+        )
+        .await
+        .unwrap();
+    let mut expected = vec![(current.id.clone(), 1)];
+    for index in 0..21 {
+        let memory = new_memory(&store, &owner, &format!("합성 현재 항목 {index}")).await;
+        expected.push((memory.id, 1));
+    }
+    let mut not_yet = draft("아직 시작하지 않은 합성 기억");
+    not_yet.valid_from = Some(time + 100);
+    store
+        .create_memory(&owner, Uuid::new_v4().to_string(), not_yet)
+        .await
+        .unwrap();
+    let expired = new_memory(&store, &owner, "되살리면 안 되는 예전 합성 주장").await;
+    let mut expiry = draft("만료된 최신 합성 주장");
+    expiry.valid_from = Some(time - 100);
+    expiry.valid_until = Some(time - 1);
+    store
+        .correct_memory(&owner, expired.id, 1, Uuid::new_v4().to_string(), expiry)
+        .await
+        .unwrap();
+    let forgotten = new_memory(&store, &owner, "망각된 합성 기억").await;
+    store.forget_memory(&owner, forgotten.id, 1).await.unwrap();
+    new_memory(&store, &other, "다른 사용자의 합성 기억").await;
+    let mut browse = query(KnowledgeKind::Memory, "");
+    browse.valid_at = Some(time);
+    let first = store
+        .search_knowledge(&owner, browse.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.hits.len(), 20);
+    assert!(!first.truncated);
+    let cursor = first.next_cursor.clone().unwrap();
+    let mut next = browse.clone();
+    next.cursor = Some(cursor.clone());
+    let second = store.search_knowledge(&owner, next.clone()).await.unwrap();
+    assert_eq!(second.hits.len(), 2);
+    assert!(second.next_cursor.is_none());
+    let repeated = store.search_knowledge(&owner, next.clone()).await.unwrap();
+    assert_eq!(
+        second.hits.iter().map(|h| &h.id).collect::<Vec<_>>(),
+        repeated.hits.iter().map(|h| &h.id).collect::<Vec<_>>()
+    );
+    let found = first
+        .hits
+        .iter()
+        .chain(&second.hits)
+        .map(|h| (h.id.clone(), h.revision))
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(found, expected);
+    for change in 0..3 {
+        let mut mismatched = next.clone();
+        match change {
+            0 => mismatched.text = "합성".into(),
+            1 => mismatched.subject = Some("다른 주제".into()),
+            _ => mismatched.valid_at = Some(time + 101),
+        }
+        assert!(matches!(
+            store.search_knowledge(&owner, mismatched).await,
+            Err(StoreError::Conflict)
+        ));
+    }
+    assert!(matches!(
+        store.search_knowledge(&other, next.clone()).await,
+        Err(StoreError::Conflict)
+    ));
+    for (kind, text) in [
+        (KnowledgeKind::Source, ""),
+        (KnowledgeKind::Memory, " "),
+        (KnowledgeKind::Memory, "\n"),
+        (KnowledgeKind::Source, " "),
+    ] {
+        assert!(matches!(
+            store.search_knowledge(&owner, query(kind, text)).await,
+            Err(StoreError::InvalidInput)
+        ));
+    }
+    let mut later = browse.clone();
+    later.valid_at = Some(time + 101);
+    later.subject = Some("본인 선호".into());
+    let page = store.search_knowledge(&owner, later.clone()).await.unwrap();
+    let mut later_hits = page.hits;
+    if let Some(cursor) = page.next_cursor {
+        later.cursor = Some(cursor);
+        later_hits.extend(store.search_knowledge(&owner, later).await.unwrap().hits);
+    }
+    assert!(
+        later_hits
+            .iter()
+            .any(|h| h.id == current.id && h.revision == 2)
+    );
+    new_memory(&store, &owner, "새로운 합성 항목").await;
+    assert!(matches!(
+        store.search_knowledge(&owner, next).await,
+        Err(StoreError::Conflict)
+    ));
+}

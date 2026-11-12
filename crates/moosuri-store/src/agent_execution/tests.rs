@@ -394,8 +394,8 @@ async fn tool_read_validation_search_five_hit_limit_and_memory_wire_limit() {
     match result {
         KnowledgeToolResult::Search(v) => {
             assert_eq!(v.hits.len(), 5);
-            assert!(v.truncated);
-            assert!(v.next_cursor.is_none());
+            assert!(!v.truncated);
+            assert!(v.next_cursor.is_some());
         }
         _ => panic!("expected search"),
     }
@@ -1656,4 +1656,144 @@ async fn generation_change_fences_inflight_output_without_affecting_plain_text_l
             .text,
         "Plain response remains valid"
     );
+}
+
+#[tokio::test]
+async fn browse_cursor_query_mistake_persists_typed_error_and_can_be_repaired() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    for index in 0..6 {
+        store
+            .create_memory(
+                &user,
+                Uuid::new_v4().to_string(),
+                draft(&format!("Synthetic memory {index}")),
+            )
+            .await
+            .unwrap();
+    }
+    let thread = store
+        .create_thread(&user, "Cursor repair".into())
+        .await
+        .unwrap();
+    let claim = claimed(&store, &user, &thread.id).await;
+    let mut browse = query("");
+    browse.kind = KnowledgeKind::Memory;
+    let first = tool_step(
+        &store,
+        &claim,
+        PendingKnowledgeCall {
+            call_id: "browse".into(),
+            input: KnowledgeToolInput::Search {
+                query: browse.clone(),
+            },
+        },
+    )
+    .await;
+    let page = match store
+        .execute_knowledge_tool(&first, "browse".into())
+        .await
+        .unwrap()
+    {
+        KnowledgeToolResult::Search(page) => page,
+        _ => panic!("expected browse page"),
+    };
+    assert_eq!(page.hits.len(), 5);
+    browse.cursor = page.next_cursor;
+    assert!(browse.cursor.is_some());
+    let context = store.agent_context(&claim.lease).await.unwrap();
+    let mistaken = store
+        .begin_agent_step(&claim.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    let mut wrong_subject = browse.clone();
+    wrong_subject.subject = Some("Different subject".into());
+    store
+        .commit_agent_step(
+            &mistaken,
+            capsule("mistaken cursor"),
+            vec![PendingKnowledgeCall {
+                call_id: "wrong-subject".into(),
+                input: KnowledgeToolInput::Search {
+                    query: wrong_subject,
+                },
+            }],
+        )
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        assert!(matches!(
+            store
+                .execute_knowledge_tool(&mistaken, "wrong-subject".into())
+                .await
+                .unwrap(),
+            KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+        ));
+    }
+    let persisted = store.agent_context(&claim.lease).await.unwrap();
+    assert!(matches!(
+        persisted.calls.last().unwrap().result,
+        Some(KnowledgeToolResult::Error(ToolReadError::InvalidInput))
+    ));
+    let repaired = store
+        .begin_agent_step(&claim.lease, persisted.checkpoint_seq)
+        .await
+        .unwrap();
+    store
+        .commit_agent_step(
+            &repaired,
+            capsule("corrected cursor"),
+            vec![PendingKnowledgeCall {
+                call_id: "corrected".into(),
+                input: KnowledgeToolInput::Search { query: browse },
+            }],
+        )
+        .await
+        .unwrap();
+    match store
+        .execute_knowledge_tool(&repaired, "corrected".into())
+        .await
+        .unwrap()
+    {
+        KnowledgeToolResult::Search(page) => {
+            assert_eq!(page.hits.len(), 1);
+            assert!(page.next_cursor.is_none());
+        }
+        _ => panic!("corrected cursor did not reach remaining memory"),
+    }
+    store
+        .call(|db| {
+            let used: (i64, i64) = db.conn.query_row(
+                "SELECT tool_calls,remote_calls FROM agent_execution",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!(used, (3, 3));
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let context = store.agent_context(&claim.lease).await.unwrap();
+    let final_step = store
+        .begin_agent_step(&claim.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    store
+        .commit_agent_step(&final_step, capsule("repaired answer"), vec![])
+        .await
+        .unwrap();
+    store
+        .finish_agent_run(&final_step, RunState::Completed, None)
+        .await
+        .unwrap();
+    let completed = store
+        .conversation(&user, thread.id, None)
+        .await
+        .unwrap()
+        .turns
+        .remove(0);
+    assert_eq!(completed.run.state, RunState::Completed);
+    assert!(completed.run.error.is_none());
 }

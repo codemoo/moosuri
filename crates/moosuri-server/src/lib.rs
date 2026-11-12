@@ -112,8 +112,8 @@ pub fn router_with_runtime(
         config,
         logins: Arc::new(Mutex::new(HashMap::new())),
         probes: Arc::new(tokio::sync::Semaphore::new(2)),
+        delivery: runtime.delivery_gate(),
         runtime,
-        delivery: Arc::new(tokio::sync::RwLock::new(())),
         streams: Arc::new(Mutex::new(HashMap::new())),
     };
     Router::new()

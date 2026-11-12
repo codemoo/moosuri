@@ -39,7 +39,7 @@ impl Journal {
             if &bytes[..8] != MAGIC
                 || seq <= 0
                 || seq as u64 != i + 1
-                || !(1..=4).contains(&bytes[48])
+                || !(1..=5).contains(&bytes[48])
                 || bytes[49..56] != [0; 7]
                 || bytes[56..88] != previous
                 || bytes[88..] != hash
@@ -77,7 +77,7 @@ impl Journal {
                 .map_err(|_| StoreError::Corrupt)?
                 .as_bytes(),
         );
-        if !(1..=4).contains(&action) {
+        if !(1..=5).contains(&action) {
             return Err(StoreError::Corrupt);
         }
         bytes[48] = action;

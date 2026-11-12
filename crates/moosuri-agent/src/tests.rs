@@ -426,6 +426,7 @@ async fn exited_worker_without_terminal_checkpoint_is_settled_without_replay() {
     let claimed = store.claim_agent_run().await.unwrap().unwrap();
     let (changes, _) = watch::channel(0);
     let signals = Signals {
+        delivery: Arc::new(tokio::sync::RwLock::new(())),
         stop: CancellationToken::new(),
         wake: Arc::new(Notify::new()),
         changes,
@@ -456,3 +457,6 @@ async fn exited_worker_without_terminal_checkpoint_is_settled_without_replay() {
 }
 
 mod knowledge;
+mod memory;
+
+mod live_memory;

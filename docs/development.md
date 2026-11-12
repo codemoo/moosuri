@@ -6,7 +6,8 @@ administrator user list/invitation flow. Shared provider setup, model discovery,
 synthetic verification and personal model/effort selection are available. Streaming,
 cancel/retry, saved history and observed usage are connected. Private text sources,
 lexical search and explicit memory editing are available. Tool-verified models can
-search/read that private knowledge in chat. Automatic extraction, schedules, media,
+search/read that private knowledge in chat and apply explicit
+[remember/correct/forget requests](conversational-memory.md). Automatic extraction, schedules, media,
 vault, external actions and backup/restore
 remain pending.
 
@@ -127,3 +128,7 @@ with synthetic file-backed SQLite, real loopback HTTP and React fixtures.
 Manual Chromium viewport checks do not establish real iOS/Android behavior or a
 Linux release. Current measured evidence and remaining work are in
 [status](status.md).
+
+The optional [ChatGPT evaluation](reviews/2026-11-13-live-chatgpt-quality.md) is
+explicitly ignored by ordinary tests. It requires separately authorized existing
+Codex login and writes only a private report outside the checkout.

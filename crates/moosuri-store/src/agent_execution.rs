@@ -82,6 +82,9 @@ pub struct AgentToolSlot {
 }
 pub struct AgentContext {
     pub checkpoint_seq: i64,
+    /// True only before any run-wide local tool execution. Retries retain the
+    /// counter, so old retrieved context can never re-enable intent planning.
+    pub memory_planning_allowed: bool,
     pub checkpoint: Option<PrivateCheckpoint>,
     pub current_step_status: Option<AgentStepStatus>,
     pub calls: Vec<AgentToolSlot>,
@@ -97,9 +100,9 @@ pub struct AgentClaim {
 /// even after the user deleted the content. It cannot be constructed by callers.
 #[derive(Clone)]
 pub struct StepLease {
-    run: RunLease,
-    step: i64,
-    nonce: [u8; 32],
+    pub(super) run: RunLease,
+    pub(super) step: i64,
+    pub(super) nonce: [u8; 32],
 }
 impl StepLease {
     pub fn run_id(&self) -> &str {
@@ -262,13 +265,17 @@ pub(super) fn invalidate_source(conn: &Connection, tenant: &str, source: &str) -
     }
     Ok(())
 }
-fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> Result<()> {
+pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> Result<()> {
     let mut threads = BTreeSet::new();
     for id in &ids {
         let run = chat::load_run(conn, tenant, id)?;
         threads.insert(run.thread);
         conn.execute(
             "DELETE FROM chat_output WHERE tenant_id=?1 AND run_id=?2",
+            params![tenant, id],
+        )?;
+        conn.execute(
+            "DELETE FROM memory_command_plans WHERE tenant_id=?1 AND run_id=?2",
             params![tenant, id],
         )?;
         conn.execute(
@@ -303,10 +310,10 @@ fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> Result<()> {
     Ok(())
 }
 fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
-    let seq: i64 = conn.query_row(
-        "SELECT checkpoint_seq FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",
+    let (seq, tool_calls): (i64, i64) = conn.query_row(
+        "SELECT checkpoint_seq,tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",
         params![tenant, run],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     let latest: Option<(i64,String,Option<Vec<u8>>)>=conn.query_row("SELECT step,state,checkpoint FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 ORDER BY step DESC LIMIT 1",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let mut calls = Vec::new();
@@ -344,12 +351,13 @@ fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
     };
     Ok(AgentContext {
         checkpoint_seq: seq,
+        memory_planning_allowed: tool_calls == 0,
         checkpoint,
         current_step_status: status,
         calls,
     })
 }
-fn guard_step(conn: &Connection, key: &[u8; 32], lease: &StepLease) -> Result<Run> {
+pub(super) fn guard_step(conn: &Connection, key: &[u8; 32], lease: &StepLease) -> Result<Run> {
     let run = chat::guard(conn, key, &lease.run)?;
     let row: Option<(Vec<u8>,i32,String)>=conn.query_row("SELECT nonce,attempt,state FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let Some((nonce, attempt, state)) = row else {
@@ -398,17 +406,22 @@ fn read_tool(
         KnowledgeToolInput::InvalidArguments => {
             Ok(KnowledgeToolResult::Error(ToolReadError::InvalidInput))
         }
-        KnowledgeToolInput::Search { query } if query.cursor.is_some() => {
-            Err(StoreError::InvalidInput)
-        }
         KnowledgeToolInput::ReadSource { max_bytes, .. }
             if *max_bytes == 0 || *max_bytes > 4096 =>
         {
             Err(StoreError::InvalidInput)
         }
         KnowledgeToolInput::Search { query } => {
-            knowledge::search::search_limit(conn, chat::authority(conn, run)?, query.clone(), 5)
+            // Authority and outer run-generation fences remain execution errors.
+            // A cursor reused with different search fields is a repairable tool
+            // input mistake, not evidence that the user's authority was revoked.
+            let user = chat::authority(conn, run)?;
+            knowledge::search::search_limit(conn, user, query.clone(), 5)
                 .map(KnowledgeToolResult::Search)
+                .map_err(|error| match error {
+                    StoreError::Conflict if query.cursor.is_some() => StoreError::InvalidInput,
+                    other => other,
+                })
         }
         KnowledgeToolInput::ReadSource {
             id,
@@ -454,10 +467,9 @@ fn read_tool(
         Err(error) => return Err(error),
     };
     if let KnowledgeToolResult::Search(page) = &mut result {
-        // Tool callers narrow the query instead of using UI pagination cursors.
-        if page.next_cursor.take().is_some() {
-            page.truncated = true;
-        }
+        // Search validates each continuation against its tenant, query, time
+        // and generation. Preserve that actual cursor within the existing run
+        // budgets; byte truncation below cannot skip undisclosed hits.
         while encoded(page)?.len() + 64 > TOOL_RESULT_LIMIT && !page.hits.is_empty() {
             page.hits.pop();
             page.truncated = true;
@@ -570,6 +582,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match chat::guard(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
             if !is_agent(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
+            if memory_commands::has_slot(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
             let (seq,remote):(i64,i64)=tx.query_row("SELECT checkpoint_seq,remote_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if seq!=expected_checkpoint_seq {return Err(StoreError::Conflict)}
             if remote>=6 {return Err(StoreError::BudgetExhausted)}
@@ -619,6 +632,7 @@ impl Store {
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
+            if memory_commands::has_slot(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
             let state: String=tx.query_row("SELECT state FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get(0))?;
             if state!="completed" {return Err(StoreError::Conflict)}
             let (input,saved):(String,Option<String>)=tx.query_row("SELECT input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
@@ -652,6 +666,9 @@ impl Store {
                     return Err(e);
                 }
             };
+            if memory_commands::has_slot(&tx, &run.tenant, &run.id)? {
+                return Err(StoreError::Conflict);
+            }
             chat::apply_patches(&tx, &run, patches)?;
             tx.commit()?;
             Ok(())
@@ -688,6 +705,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
             if state==RunState::Completed {
+                if memory_commands::has_slot(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
                 let complete: bool=tx.query_row("SELECT state='completed' AND NOT EXISTS(SELECT 1 FROM agent_tool_slots t WHERE t.tenant_id=agent_steps.tenant_id AND t.run_id=agent_steps.run_id AND t.step=agent_steps.step) FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get(0))?;
                 if !complete {return Err(StoreError::Conflict)}
             }

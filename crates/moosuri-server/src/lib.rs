@@ -1,5 +1,6 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
 mod chat;
+mod knowledge;
 mod providers;
 use axum::{
     Json, Router,
@@ -158,6 +159,7 @@ pub fn router_with_runtime(
         .route("/api/v1/threads/{id}/events", get(chat::events))
         .route("/api/v1/runs/{id}/cancel", post(chat::cancel))
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
+        .nest("/api/v1/knowledge", knowledge::routes())
         .route("/api/v1/usage", get(chat::usage))
         .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })

@@ -2,7 +2,7 @@
 
 2026-11-12. 실제 구현·검증과 다음 작업은 이 문서가 정본이다. 기능 계약은 [features](features.md), 상세 단계는 [plan](plan.md)을 따른다.
 
-공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델 설정과 텍스트 대화를 구현한 개발 프리뷰다. 개인 자료·기억을 활용하거나 외부 일을 수행하는 기능은 아직 구현 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
+공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델 설정·텍스트 대화와 개인 자료·기억 관리 기능을 구현한 개발 프리뷰다. 채팅의 자료 활용·자동 기억 추출·외부 작업은 아직 구현 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
 
 ## 구현된 첫 단위
 
@@ -91,9 +91,34 @@ OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 
 사용법과 경계는 [text chat](chat.md)에 있다. 전체 비서·기억·미션 수행 완료나 실모델
 품질/속도 평가로 표현하지 않는다.
 
+## 다섯 번째 단위: 개인 자료와 명시적 기억
+
+자료 모음에 텍스트를 저장하고 한글을 검색하며, 실제 원문 구간을 근거로 기억을
+만들거나 직접 기록할 수 있다. 기억 수정·이력·망각, 자료 삭제, 모음 보관/삭제를
+계정별 Rust API·SQLite·React 화면에 연결했다. 채팅 검색과 자동 추출은 다음 단위다.
+
+- batch 요청 UUID·digest·cursor CAS로 응답 유실 재시도를 합치고, 자료·색인·영수증·
+  cursor를 한 transaction으로 저장한다. 부분 입력에서 누락된 자료를 지우지 않는다.
+- 근거의 원문 revision과 UTF-8 byte 구간을 검사한다. 원문 변경은 의존 기억을
+  무효화하며, 삭제는 의존 원문/기억 이력을 제거한다. 독립적인 후속 기억은 보존한다.
+- 시간 기준 검색은 시작된 최신 revision을 먼저 정한다. 만료·삭제 때문에 과거 사실이
+  자동 부활하지 않는다. 망각은 원문 삭제와 구별되며 자동 재추출 방지는 후속 범위다.
+- 파괴적 변경은 opaque journal을 fsync한 뒤 적용하고 startup replay한다. schema4
+  설치에서 필요한 journal이 없거나 훼손되면 열지 않는다. 백업/복원 완료 주장은 아니다.
+- **Rust111개 테스트가 macOS와 Linux x86_64에서 통과**했다. Store38·runtime12·
+  connector45·HTTP15·CLI1이며 fmt·workspace/all-target clippy도 통과했다.
+- React65개 행동 테스트, 타입 검사·production build·생성 DTO 일치를 확인했다.
+  저장/삭제/시간 경계·HTTP와 React를 독립 검토하고 네 결함을 수정·재검토했다.
+- 실제 Chromium 여정과 한계는 [검증 기록](reviews/2026-11-12-private-knowledge.md)에
+  둔다. registry232개 dependency는 이전 검증과 동일하며 운영 자료·실모델 호출을
+  사용하지 않았다. CI는 계속 비활성이다.
+
+사용법과 삭제 범위는 [private knowledge](knowledge.md)에 있다. 어휘 검색·수동 관리
+기반이며 의미 검색 품질이나 P3 전체 완료로 표시하지 않는다.
+
 ## 아직 구현하지 않은 범위
 
-구독 인증·개인 provider 연결, 도구를 사용하는 에이전트 하네스·기억·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.
+구독 인증·개인 provider 연결, 도구를 사용하는 에이전트 하네스·자동 기억 추출·문서/목표·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.
 
 현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 이를 해제할 operator 복구 경로와 백업/복원은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. `doctor`는 중지된 설치에만 사용한다.
 
@@ -101,7 +126,7 @@ OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 
 
 1. P0의 남은 provider capability·baseline/fixture adapter·crypto/broker 위험 검증과 독립 복구 입력을 확인한다.
 2. P1의 run/effect·dispatch·revision·사용량·복원 계약을 작은 저장 단위로 구현한다. 현재 계정 기반이 P1 전체 완료를 뜻하지 않는다.
-3. 검증된 대화 기반 다음으로 개인 자료 입력·검색·기억 수정/망각을 구현하고, 이후 검색 도구·자동 추출을 채팅에 연결한다.
+3. 구현한 개인 자료 입력·검색·기억 수정/망각을 바탕으로, 저장되는 모델 단계·도구 영수증·근거 철회 계약을 추가하고 검색 도구와 명시적 기억 저장을 채팅에 연결한다. 자동 추출은 그다음이다.
 4. [migration](migration.md)의 순서에 따라 자료·기억→도구·스킬→예약·연결→미디어·볼트→이전·출시로 진행한다. P0/P1/P2와 미구현 OpenSpec change를 완료 처리하지 않는다.
 
 모든 공개 소스는 새 이력과 합성 자료만 사용한다. 원본 운영 저장소·서비스·수집기·cron·DB는 보존한다. 개인 AGENTS/CLAUDE 및 editor 지침은 Git에서 제외하고 CONTRIBUTING·OpenSpec·제품 community SKILL은 공유한다.

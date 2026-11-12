@@ -19,6 +19,8 @@ import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
 import { UsageView } from "./UsageView";
+import { KnowledgeView } from "./KnowledgeView";
+import { initialKnowledgeDrafts } from "./KnowledgeState";
 import {
   AdminProviderSettings,
   PersonalModelSettings,
@@ -649,6 +651,9 @@ function Workspace({
   const scope = useScope(session.user.id);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [knowledgeDrafts, setKnowledgeDrafts] = useState(
+    initialKnowledgeDrafts,
+  );
   const [chatMemory, setChatMemory] = useState<ChatMemory>({
     drafts: {},
     pending: {},
@@ -671,6 +676,9 @@ function Workspace({
     path === "/admin" || path === "/admin/providers" || path === "/admin/usage";
   const adminUsage = path === "/admin/usage";
   const personalUsage = path === "/settings/usage";
+  const knowledgePage = path === "/app/knowledge";
+  const memoryPage = path === "/app/memory";
+  const knowledgeOpen = knowledgePage || memoryPage;
   const providerAdmin = path === "/admin/providers";
   const personalModel = path === "/settings/model";
   const allowedAdmin = session.user.role === "admin";
@@ -817,7 +825,7 @@ function Workspace({
         ) : (
           threads.map((thread) => (
             <div
-              className={`thread-row ${thread.id === selected && !admin && !personalModel && !personalUsage ? "active" : ""}`}
+              className={`thread-row ${thread.id === selected && !admin && !personalModel && !personalUsage && !knowledgeOpen ? "active" : ""}`}
               key={thread.id}
             >
               <button
@@ -831,7 +839,8 @@ function Workspace({
                   thread.id === selected &&
                   !admin &&
                   !personalModel &&
-                  !personalUsage
+                  !personalUsage &&
+                  !knowledgeOpen
                     ? "page"
                     : undefined
                 }
@@ -865,6 +874,26 @@ function Workspace({
             to your account.
           </span>
         </div>
+        <button
+          className={`nav-link ${knowledgePage ? "chosen" : ""}`}
+          aria-current={knowledgePage ? "page" : undefined}
+          onClick={() => {
+            navigate("/app/knowledge");
+            setDrawer(false);
+          }}
+        >
+          자료<span aria-hidden="true">↗</span>
+        </button>
+        <button
+          className={`nav-link ${memoryPage ? "chosen" : ""}`}
+          aria-current={memoryPage ? "page" : undefined}
+          onClick={() => {
+            navigate("/app/memory");
+            setDrawer(false);
+          }}
+        >
+          기억<span aria-hidden="true">↗</span>
+        </button>
         <button
           className={`nav-link ${personalModel ? "chosen" : ""}`}
           onClick={() => {
@@ -932,24 +961,30 @@ function Workspace({
           </button>
           <div>
             <span className="eyebrow">
-              {admin
-                ? "INSTALLATION"
-                : personalModel
-                  ? "MY SETTINGS"
-                  : "YOUR SPACE"}
+              {knowledgeOpen
+                ? "나의 기록"
+                : admin
+                  ? "INSTALLATION"
+                  : personalModel
+                    ? "MY SETTINGS"
+                    : "YOUR SPACE"}
             </span>
             <h1>
-              {admin
-                ? adminUsage
-                  ? "계정별 사용량"
-                  : providerAdmin
-                    ? "모델 연결"
-                    : "People & access"
-                : personalUsage
-                  ? "내 사용량"
-                  : personalModel
-                    ? "내 모델"
-                    : (current?.title ?? "A new beginning")}
+              {knowledgeOpen
+                ? memoryPage
+                  ? "기억"
+                  : "자료"
+                : admin
+                  ? adminUsage
+                    ? "계정별 사용량"
+                    : providerAdmin
+                      ? "모델 연결"
+                      : "People & access"
+                  : personalUsage
+                    ? "내 사용량"
+                    : personalModel
+                      ? "내 모델"
+                      : (current?.title ?? "A new beginning")}
             </h1>
           </div>
           <button
@@ -994,7 +1029,15 @@ function Workspace({
             </button>
           </nav>
         )}
-        {personalUsage ? (
+        {knowledgeOpen ? (
+          <KnowledgeView
+            accountId={session.user.id}
+            mode={memoryPage ? "memory" : "source"}
+            drafts={knowledgeDrafts}
+            updateDrafts={setKnowledgeDrafts}
+            onExpired={onExpired}
+          />
+        ) : personalUsage ? (
           <UsageView accountId={session.user.id} onExpired={onExpired} />
         ) : personalModel ? (
           <PersonalModelSettings

@@ -4,8 +4,10 @@ This is a development preview, not the finished assistant. It supports real
 local accounts, session persistence, durable text conversations and an
 administrator user list/invitation flow. Shared provider setup, model discovery,
 synthetic verification and personal model/effort selection are available. Streaming,
-cancel/retry, saved history and observed usage are connected. Memories, schedules,
-media, vault, external actions and backup/restore remain pending.
+cancel/retry, saved history and observed usage are connected. Private text sources,
+lexical search and explicit memory editing are available separately. Chat retrieval,
+automatic extraction, schedules, media, vault, external actions and backup/restore
+remain pending.
 
 Use Rust 1.89+ and Node.js 22.22+. Node is needed to build React, not to run the
 resulting server. SQLite is bundled. Build from a clean public checkout:
@@ -42,6 +44,9 @@ personal or admin APIs. Open
 `/settings/model` to choose a verified model/effort for your account. Send a question
 in `/app`; [text chat](chat.md) explains streaming, retry/cancel and recovery.
 `/settings/usage` shows observed usage; `/admin/usage` shows account counters.
+Use `/app/knowledge` to create a named collection and paste text. `/app/memory`
+supports direct assertions, exact source evidence, correction/history and forgetting.
+[Private knowledge](knowledge.md) explains search and the different deletion scopes.
 
 ## HTTPS reverse proxy
 

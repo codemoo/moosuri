@@ -1,6 +1,8 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
 mod chat;
+mod knowledge;
+mod knowledge_journal;
 pub use chat::{ClaimedRun, ContextMessage, ContextRole, OutputPatch, RunFailure, RunLease};
 mod files;
 mod journal;
@@ -115,6 +117,7 @@ struct Database {
     _lock: File,
     poisoned: bool,
     provider_key: Zeroizing<[u8; 32]>,
+    knowledge_journal: knowledge_journal::Journal,
 }
 #[derive(Clone)]
 struct LoginAccount {
@@ -255,7 +258,7 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if !matches!(version, 1..=3) {
+        } else if !matches!(version, 1..=4) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {
@@ -270,6 +273,29 @@ impl Store {
                 include_str!("../../../migrations/assistant/0003_chat.sql")
             ))?;
         }
+        let knowledge_journal_path = dir.join("knowledge-invalidations.journal");
+        // A restored database cannot establish that a missing destructive journal is empty.
+        // Only the first migration into this feature may create its journal.
+        if version >= 4
+            && !knowledge_journal_path
+                .try_exists()
+                .map_err(|_| StoreError::Unavailable)?
+        {
+            return Err(StoreError::Corrupt);
+        }
+        let knowledge_journal = knowledge_journal::Journal::open(&knowledge_journal_path)?;
+        File::open(&dir)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| StoreError::Unavailable)?;
+        // Make the empty journal and its directory entry durable before committing
+        // schema4, whose future opens require this file. A crash before the schema
+        // commit leaves schema3 plus an empty journal and can safely retry migration.
+        if version < 4 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0004_knowledge.sql")
+            ))?;
+        }
         let provider_key = providers::open_key(&conn, &dir)?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
         if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
@@ -281,8 +307,10 @@ impl Store {
             _lock: lock,
             poisoned: false,
             provider_key,
+            knowledge_journal,
         };
         database.replay_journal()?;
+        knowledge::replay(&mut database)?;
         chat::restart(&mut database.conn)?;
         let dummy_hash = DUMMY_HASH.to_owned();
         let (sender, mut receiver) = mpsc::channel::<Command>(64);

@@ -506,3 +506,6 @@ mod provider_settings;
 
 #[path = "cases/chat.rs"]
 mod chat;
+
+#[path = "cases/knowledge.rs"]
+mod knowledge;

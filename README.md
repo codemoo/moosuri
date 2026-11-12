@@ -2,7 +2,7 @@
 
 A self-hosted assistant for individuals, families and friends.
 
-**Status: early development. The Rust/React app supports isolated accounts, verified model setup and durable text chat. Tools and personal memory are still being built.**
+**Status: early development. The Rust/React app supports isolated accounts, verified model setup, durable text chat and private source/memory management. Chat tools and automatic memory extraction are still being built.**
 The existing private deployment remains the behavioral reference; its source history,
 accounts, data, infrastructure settings and experimental runtimes are not copied here.
 
@@ -25,11 +25,11 @@ accounts, data, infrastructure settings and experimental runtimes are not copied
 - [공개 배포](docs/public-release.md): 설치·기여·공개 범위
 - [검토한 공식 자료](docs/references.md)
 
-This repository contains the reviewed plan and source audit, a Rust account/API/CLI foundation, a React interface, shared model settings, durable text chat and a protocol/transport library, pinned OpenSpec tooling and contributor scaffolding. The public development repository is [codemoo/moosuri](https://github.com/codemoo/moosuri). It does not contain a model key or copied production data.
+This repository contains the reviewed plan and source audit, a Rust account/API/CLI foundation, a React interface, shared model settings, durable text chat, private knowledge management and a protocol/transport library, pinned OpenSpec tooling and contributor scaffolding. The public development repository is [codemoo/moosuri](https://github.com/codemoo/moosuri). It does not contain a model key or copied production data.
 
 GitHub Actions/CI are disabled during initial development. Contributors run relevant checks locally and commit/push each coherent work unit. Personal coding-agent instructions are ignored; shared contracts live in OpenSpec and CONTRIBUTING.
 
-Build and run the account foundation with [the development quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate conversations. Administrators can configure shared connections, discover and verify models, and users can select model/effort in [model settings](docs/provider-settings.md). [Text chat](docs/chat.md) supports streaming, cancellation, retry and reconnect. Vault and external work remain unavailable.
+Build and run the development preview with [the quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate conversations. Administrators can configure shared connections, discover and verify models, and users can select model/effort in [model settings](docs/provider-settings.md). [Text chat](docs/chat.md) supports streaming, cancellation, retry and reconnect. [Private knowledge](docs/knowledge.md) supports text sources, exact evidence, editable memories and scoped deletion; chat does not use them yet. Vault and external work remain unavailable.
 
 Validate planning metadata with Rust 1.89 or newer:
 

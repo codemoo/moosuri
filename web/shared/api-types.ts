@@ -37,3 +37,25 @@ export type ChatEvents = { events: Array<ChatEvent>, reset: boolean, cursor: num
 export type UsageSummary = { dispatched_calls: number, unreported_calls: number, reported_input_tokens: number, reported_output_tokens: number, reported_cache_read_tokens: number, reported_cache_write_tokens: number, };
 export type AccountUsage = { account_id: string, name: string, email: string, usage: UsageSummary, };
 export type AccountUsageResponse = { accounts: Array<AccountUsage>, };
+export type DisconnectMode = "keep" | "delete";
+export type KnowledgeKind = "source" | "memory";
+export type MemoryStatus = "active" | "invalidated";
+export type KnowledgeCollection = { id: string, name: string, scope: string, revision: number, cursor: number, connected: boolean, deleted: boolean, };
+export type SourceInput = { external_id: string, version: string, expected_revision: number | null, title: string, text: string, speaker: string | null, observed_at: number, valid_from: number | null, valid_until: number | null, };
+export type IngestBatch = { request_id: string, expected_cursor: number, next_cursor: number, complete_snapshot: boolean, entries: Array<SourceInput>, };
+export type IngestReceipt = { request_id: string, cursor: number, source_ids: Array<string>, };
+export type SourceSummary = { id: string, collection_id: string, external_id: string, version: string, revision: number, title: string, speaker: string | null, observed_at: number, valid_from: number | null, valid_until: number | null, };
+export type SourceDocument = { source: SourceSummary, text: string, };
+export type SourcePage = { items: Array<SourceSummary>, next_after: string | null, generation: number, };
+export type EvidenceRef = { source_id: string, source_revision: number, start_byte: number, end_byte: number, quote: string, };
+export type MemoryDraft = { text: string, subject: string, speaker: string | null, valid_from: number | null, valid_until: number | null,
+/**
+ * Empty means an explicit user assertion; nonempty means source-dependent.
+ */
+evidence: Array<EvidenceRef>, };
+export type MemoryDocument = { id: string, revision: number, status: MemoryStatus, draft: MemoryDraft, created_at: number, updated_at: number, };
+export type MemoryPage = { items: Array<MemoryDocument>, next_after: string | null, generation: number, };
+export type MemoryHistory = { items: Array<MemoryDocument>, next_before: number | null, };
+export type KnowledgeQuery = { kind: KnowledgeKind, text: string, collection_id: string | null, subject: string | null, speaker: string | null, valid_at: number | null, cursor: string | null, };
+export type KnowledgeHit = { kind: KnowledgeKind, id: string, revision: number, title: string, snippet: string, subject: string | null, speaker: string | null, valid_from: number | null, valid_until: number | null, };
+export type KnowledgeSearch = { hits: Array<KnowledgeHit>, next_cursor: string | null, truncated: boolean, generation: number, };

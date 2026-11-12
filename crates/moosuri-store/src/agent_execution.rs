@@ -44,6 +44,9 @@ pub enum KnowledgeToolInput {
     DecimalCalculate {
         calculation: moosuri_core::DecimalCalculation,
     },
+    External {
+        request: moosuri_core::ExternalToolRequest,
+    },
     InvalidArguments,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -69,6 +72,7 @@ pub enum ToolReadError {
     TooLargeNarrowRead,
     Unavailable,
     ArithmeticOverflow,
+    OutcomeUnknown,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -78,6 +82,7 @@ pub enum KnowledgeToolResult {
     Memory(MemoryDocument),
     Skill(moosuri_core::SkillDocument),
     Decimal { exact: String },
+    External(serde_json::Value),
     Error(ToolReadError),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,7 +250,7 @@ pub(super) fn inherit_dependencies(
     prior: &str,
 ) -> Result<()> {
     let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2)",
+        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
         params![tenant, prior],
         |r| r.get(0),
     )?;
@@ -254,6 +259,7 @@ pub(super) fn inherit_dependencies(
     }
     let generation = knowledge::generation(conn, tenant)?;
     conn.execute("INSERT OR IGNORE INTO agent_execution(tenant_id,run_id,agent,generation) VALUES(?1,?2,0,?3)",params![tenant,run,generation])?;
+    conn.execute("INSERT OR IGNORE INTO mail_run_dependencies SELECT tenant_id,?2,connection_id,epoch FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     conn.execute("INSERT OR IGNORE INTO agent_dependencies SELECT tenant_id,?2,kind,object_id,revision FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     Ok(())
 }
@@ -283,6 +289,7 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
     let mut threads = BTreeSet::new();
     for id in &ids {
         let run = chat::load_run(conn, tenant, id)?;
+        crate::mail::purge_run(conn, tenant, id)?;
         threads.insert(run.thread);
         conn.execute(
             "DELETE FROM chat_output WHERE tenant_id=?1 AND run_id=?2",
@@ -371,7 +378,7 @@ fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
         calls,
     })
 }
-pub(super) fn guard_step(conn: &Connection, key: &[u8; 32], lease: &StepLease) -> Result<Run> {
+pub(crate) fn guard_step(conn: &Connection, key: &[u8; 32], lease: &StepLease) -> Result<Run> {
     let run = chat::guard(conn, key, &lease.run)?;
     let row: Option<(Vec<u8>,i32,String)>=conn.query_row("SELECT nonce,attempt,state FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let Some((nonce, attempt, state)) = row else {
@@ -422,7 +429,7 @@ fn read_tool(
             if run
                 .tool_profile
                 .as_ref()
-                .is_none_or(|profile| profile.version != moosuri_core::BUILTIN_TOOLSET_VERSION)
+                .is_none_or(|profile| !matches!(profile.version, 1..=3))
             {
                 Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
             } else {
@@ -431,6 +438,42 @@ fn read_tool(
                     Err(error) => KnowledgeToolResult::Error(error),
                 })
             }
+        }
+        KnowledgeToolInput::External {
+            request:
+                moosuri_core::ExternalToolRequest::Mail(moosuri_core::MailToolRequest::Draft { input }),
+        } => {
+            let user = chat::authority(conn, run)?;
+            let allowed = run
+                .tool_profile
+                .as_ref()
+                .filter(|p| matches!(p.version, 2 | 3))
+                .and_then(|p| {
+                    p.mail_connections
+                        .iter()
+                        .find(|p| p.id == input.connection_id)
+                });
+            if allowed.is_some_and(|p| {
+                crate::mail::connection(conn, &user, &p.id)
+                    .is_ok_and(|c| c.epoch == p.epoch && c.status == "active")
+            }) {
+                let mut input = input.clone();
+                input.origin_thread_id = Some(run.thread.clone());
+                let pin = allowed.ok_or(StoreError::Conflict)?;
+                conn.execute(
+                    "INSERT OR IGNORE INTO mail_run_dependencies VALUES(?1,?2,?3,?4)",
+                    params![run.tenant, run.id, pin.id, pin.epoch],
+                )?;
+                let a = crate::mail::draft(conn, &user, input, Some(&run.id), None)?;
+                Ok(KnowledgeToolResult::External(
+                    serde_json::json!({"action_id":a.id,"state":a.state,"local_draft":true,"review_url":"/settings/mail","requires_user_approval":true}),
+                ))
+            } else {
+                Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
+            }
+        }
+        KnowledgeToolInput::External { .. } => {
+            Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
         }
         KnowledgeToolInput::InvalidArguments => {
             Ok(KnowledgeToolResult::Error(ToolReadError::InvalidInput))
@@ -549,7 +592,8 @@ fn read_tool(
                 }
             }
         }
-        KnowledgeToolResult::Error(_)
+        KnowledgeToolResult::External(_)
+        | KnowledgeToolResult::Error(_)
         | KnowledgeToolResult::Skill(_)
         | KnowledgeToolResult::Decimal { .. } => {}
     }

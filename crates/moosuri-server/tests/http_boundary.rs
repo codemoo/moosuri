@@ -515,3 +515,6 @@ mod knowledge_agent;
 
 #[path = "cases/memory_command.rs"]
 mod memory_command;
+
+#[path = "cases/mail.rs"]
+mod mail;

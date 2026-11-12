@@ -15,12 +15,14 @@ pub(crate) fn profile() -> RunToolProfile {
     RunToolProfile {
         version: BUILTIN_TOOLSET_VERSION,
         skills: BUNDLED_SKILLS.iter().map(pin).collect(),
+        mail_connections: vec![],
+        web: None,
     }
 }
 
 pub(super) fn read(run: &Run, requested: &SkillPin) -> KnowledgeToolResult {
     let available = run.tool_profile.as_ref().is_some_and(|profile| {
-        profile.version == BUILTIN_TOOLSET_VERSION && profile.skills.contains(requested)
+        matches!(profile.version, 1..=3) && profile.skills.contains(requested)
     });
     if available && let Some(skill) = BUNDLED_SKILLS.iter().find(|skill| pin(skill) == *requested) {
         return KnowledgeToolResult::Skill(SkillDocument {

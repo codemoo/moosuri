@@ -1,6 +1,7 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
 mod chat;
 mod knowledge;
+mod mail;
 mod providers;
 use axum::{
     Json, Router,
@@ -26,12 +27,36 @@ const COOKIE: &str = "moosuri_session";
 // allows sliding activity without stale GET responses overwriting a new account cookie.
 const COOKIE_MAX_AGE: u64 = 400 * 24 * 60 * 60;
 
+#[cfg(test)]
+mod web_configuration_tests {
+    use super::*;
+    #[test]
+    fn operator_web_configuration_advertises_only_actual_search_availability_and_redacts_invalid_keys()
+     {
+        let config = ServerConfig::new("https://example.test", false).unwrap();
+        assert!(config.web.is_none());
+        let read = config.clone().with_public_web(None).unwrap();
+        assert!(!read.web.as_ref().unwrap().has_search());
+        let search = config
+            .clone()
+            .with_public_web(Some("synthetic-key".into()))
+            .unwrap();
+        assert!(search.web.as_ref().unwrap().has_search());
+        assert!(matches!(
+            config.with_public_web(Some("sensitive-invalid key".into())),
+            Err("invalid_web_configuration")
+        ));
+    }
+}
+
 #[derive(Clone)]
 pub struct ServerConfig {
     origin: String,
     authority: String,
     secure: bool,
     trusted_proxy: Option<(IpAddr, header::HeaderName)>,
+    google: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+    web: Option<Arc<moosuri_connectors::web::WebClient>>,
 }
 impl ServerConfig {
     pub fn new(origin: &str, allow_http_loopback: bool) -> Result<Self, &'static str> {
@@ -66,7 +91,71 @@ impl ServerConfig {
             authority,
             secure,
             trusted_proxy: None,
+            google: None,
+            web: None,
         })
+    }
+    pub fn with_google_client_json_owned(self, value: String) -> Result<Self, &'static str> {
+        let value = zeroize::Zeroizing::new(value);
+        self.with_google_client_json(&value)
+    }
+    /// Read by the operator from an owner-only file, never from an HTTP body.
+    pub fn with_google_client_json(mut self, bytes: &str) -> Result<Self, &'static str> {
+        #[derive(Deserialize)]
+        struct File {
+            web: Web,
+        }
+        #[derive(Deserialize)]
+        struct Web {
+            client_id: String,
+            client_secret: moosuri_connectors::gmail::SecretString,
+            redirect_uris: Vec<String>,
+        }
+        if bytes.len() > 16384 {
+            return Err("invalid_google_client_file");
+        }
+        let file: File = serde_json::from_str(bytes).map_err(|_| "invalid_google_client_file")?;
+        let redirect = format!("{}/api/v1/mail/oauth/callback", self.origin);
+        if !file.web.redirect_uris.contains(&redirect) {
+            return Err("google_redirect_uri_mismatch");
+        }
+        moosuri_connectors::gmail::GmailClient::authorization_url(
+            &file.web.client_id,
+            &redirect,
+            &"s".repeat(64),
+            &"v".repeat(64),
+        )
+        .map_err(|_| "invalid_google_client_file")?;
+        self.google = Some(Arc::new(moosuri_connectors::gmail::OAuthClient {
+            client_id: file.web.client_id,
+            client_secret: file.web.client_secret,
+            redirect_uri: redirect,
+        }));
+        Ok(self)
+    }
+    /// Configure public HTTP reading and optional fixed-provider search before Store admission.
+    /// This is trusted operator configuration, not an HTTP or model capability switch.
+    pub fn with_public_web(mut self, key: Option<String>) -> Result<Self, &'static str> {
+        let client = moosuri_connectors::web::WebClient::new(moosuri_connectors::web::WebConfig {
+            brave_api_key: key,
+        })
+        .map_err(|_| "invalid_web_configuration")?;
+        self.web = Some(Arc::new(client));
+        Ok(self)
+    }
+    pub fn open_store(&self, path: &std::path::Path) -> Result<Store, StoreError> {
+        let profile = self
+            .web
+            .as_ref()
+            .map(|client| moosuri_core::WebToolProfile {
+                read: true,
+                search: client.has_search(),
+            })
+            .unwrap_or_default();
+        Store::open_with_web(path, profile)
+    }
+    pub fn start_runtime(&self, store: Store) -> moosuri_agent::Runtime {
+        moosuri_agent::Runtime::start_with_tools(store, self.google.clone(), self.web.clone())
     }
     pub fn with_trusted_proxy(
         mut self,
@@ -95,10 +184,11 @@ struct AppState {
     runtime: moosuri_agent::Runtime,
     delivery: Arc<tokio::sync::RwLock<()>>,
     streams: Arc<Mutex<HashMap<String, usize>>>,
+    mail: moosuri_agent::mail::MailService,
 }
 
 pub fn router(store: Store, config: ServerConfig) -> Router {
-    let runtime = moosuri_agent::Runtime::start(store.clone());
+    let runtime = config.start_runtime(store.clone());
     router_with_runtime(store, config, runtime)
 }
 
@@ -107,8 +197,10 @@ pub fn router_with_runtime(
     config: ServerConfig,
     runtime: moosuri_agent::Runtime,
 ) -> Router {
+    let mail = runtime.mail_service();
     let state = AppState {
         store,
+        mail,
         config,
         logins: Arc::new(Mutex::new(HashMap::new())),
         probes: Arc::new(tokio::sync::Semaphore::new(2)),
@@ -164,6 +256,7 @@ pub fn router_with_runtime(
         .route("/api/v1/runs/{id}/cancel", post(chat::cancel))
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
         .nest("/api/v1/knowledge", knowledge::routes())
+        .nest("/api/v1/mail", mail::routes())
         .route("/api/v1/usage", get(chat::usage))
         .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })

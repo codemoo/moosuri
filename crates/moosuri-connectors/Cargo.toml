@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -14,6 +15,15 @@ tokio-util = { version = "0.7", features = ["rt"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "json"] }
 url = "2.5"
 zeroize = "1.8"
+scraper = { version = "=0.29.0", default-features = false }
+
+base64 = "0.23"
+
+sha2 = "0.10"
+
+mail-builder = { version = "=0.4.4", default-features = false }
+
+mail-parser = "=0.11.9"
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["http1", "tokio"] }

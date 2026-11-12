@@ -454,6 +454,7 @@ fn typed_input(
         Invocation::DecimalCalculate(calculation) => {
             KnowledgeToolInput::DecimalCalculate { calculation }
         }
+        Invocation::External(request) => KnowledgeToolInput::External { request },
         Invocation::InvalidArguments => KnowledgeToolInput::InvalidArguments,
     };
     // Even well-formed JSON can exceed the private slot bound. Record a small
@@ -585,7 +586,13 @@ async fn stream_round(
     Ok(Observation { round, pending })
 }
 
-pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals) {
+pub(crate) async fn execute(
+    store: Store,
+    claimed: AgentClaim,
+    signals: Signals,
+    mail: crate::mail::MailService,
+    web: crate::web::Service,
+) {
     let AgentClaim {
         lease,
         mut binding,
@@ -867,9 +874,7 @@ pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals)
         results.clear();
         for call in &calls {
             let value =
-                match retry_local(|| store.execute_knowledge_tool(&step, call.call_id.clone()))
-                    .await
-                {
+                match execute_tool(&store, &step, call, &mail, &web, signals.stopping()).await {
                     Ok(value) => value,
                     Err(error) => {
                         let (state, error) = store_failure(&error);
@@ -916,6 +921,45 @@ pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals)
         &signals,
     )
     .await;
+}
+
+async fn execute_tool(
+    store: &Store,
+    step: &StepLease,
+    call: &PendingKnowledgeCall,
+    mail: &crate::mail::MailService,
+    web: &crate::web::Service,
+    cancel: &CancellationToken,
+) -> Result<KnowledgeToolResult, StoreError> {
+    let external = matches!(&call.input,KnowledgeToolInput::External{request} if !matches!(request,moosuri_core::ExternalToolRequest::Mail(moosuri_core::MailToolRequest::Draft{..})));
+    if !external {
+        return retry_local(|| store.execute_knowledge_tool(step, call.call_id.clone())).await;
+    }
+    match store
+        .prepare_external_tool(step, call.call_id.clone())
+        .await?
+    {
+        moosuri_store::ExternalToolStart::Complete(v) => Ok(v),
+        moosuri_store::ExternalToolStart::Dispatch(permit) => {
+            let operation = async {
+                match permit.request() {
+                    moosuri_core::ExternalToolRequest::Mail(_) => {
+                        mail.external(&permit, cancel).await
+                    }
+                    moosuri_core::ExternalToolRequest::Web(request) => {
+                        web.execute(request, cancel).await
+                    }
+                }
+            };
+            tokio::pin!(operation);
+            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let result = loop {
+                tokio::select! {biased;_=cancel.cancelled()=>return Err(StoreError::Unavailable),_=tick.tick()=>store.check_external_tool(&permit).await?,result=&mut operation=>break result}
+            };
+            retry_local(|| store.complete_external_tool(&permit, result.clone())).await
+        }
+    }
 }
 
 #[cfg(test)]

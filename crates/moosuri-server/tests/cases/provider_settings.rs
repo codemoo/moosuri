@@ -385,7 +385,7 @@ async fn tool_upstream(state: &ModelState, body: &Value) -> axum::response::Resp
         .iter()
         .find(|v| v["role"] == "tool");
     if result.is_none() {
-        assert!(!body.to_string().contains("moosuri-tool-proof-"));
+        assert!(!body.to_string().contains("proof-"));
     }
     if mode == 17 && result.is_some() {
         state.entered.notify_one();
@@ -398,7 +398,7 @@ async fn tool_upstream(state: &ModelState, body: &Value) -> axum::response::Resp
     };
     let delta = if let Some(result) = result {
         let challenge = result["content"].as_str().unwrap();
-        assert!(challenge.starts_with("moosuri-tool-proof-"));
+        assert!(challenge.starts_with("proof-"));
         assert_eq!(result["tool_call_id"], "verification-call");
         if mode == 15 {
             json!({"tool_calls":[{"index":0,"id":"second-call","type":"function","function":{"name":"moosuri_verification_ping","arguments":"{}"}}]})
@@ -486,7 +486,7 @@ async fn tool_probe_requires_text_proof_then_validates_unseen_challenge_roundtri
     assert_eq!(response.status(), StatusCode::OK);
     let body = value(response).await;
     assert_eq!(body["function_tools"], true);
-    assert!(!body.to_string().contains("moosuri-tool-proof-"));
+    assert!(!body.to_string().contains("proof-"));
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 3);
     let settings = value(
         send(
@@ -550,7 +550,7 @@ async fn false_tool_claims_wrong_calls_nonce_identity_and_loss_do_not_activate_c
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY, "mode {mode}");
         let text = value(response).await.to_string();
         assert!(!text.contains("synthetic-provider-key"));
-        assert!(!text.contains("moosuri-tool-proof-"));
+        assert!(!text.contains("proof-"));
         let expected = if [14, 15, 16, 18, 22].contains(&mode) {
             2
         } else {

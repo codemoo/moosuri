@@ -518,7 +518,7 @@ async fn version_one_migrates_without_losing_accounts_or_threads() {
             assert_eq!(
                 db.conn
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                6
+                7
             );
             Ok(())
         })
@@ -632,7 +632,7 @@ async fn tool_capability_requires_exact_text_proof_and_current_admin_binding() {
         .unwrap();
     assert_eq!(binding.revision, 1);
     assert_ne!(challenge, next_challenge);
-    assert!(challenge.starts_with("moosuri-tool-proof-"));
+    assert!(challenge.starts_with("proof-"));
     let proven = store
         .record_tool_probe(
             &admin.user,

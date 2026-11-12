@@ -1,8 +1,12 @@
 //! Supervised, bounded assistant execution. No browser owns a model task.
 //! Watch notifications contain only a monotonic counter, never private identifiers.
 mod knowledge_tools;
+pub mod mail;
+mod mail_tools;
 mod memory_intent;
 mod runner;
+mod web;
+mod web_tools;
 
 use moosuri_connectors::model::{
     CancellationToken, ModelClient, NetworkPolicy, RouterPolicy, Secret, TransportError,
@@ -98,6 +102,7 @@ struct Control {
     signals: Signals,
     supervisor: Mutex<Option<JoinHandle<()>>>,
     done: watch::Receiver<bool>,
+    mail: mail::MailService,
 }
 impl Drop for Control {
     fn drop(&mut self) {
@@ -114,6 +119,26 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn start(store: Store) -> Self {
+        Self::start_with_mail(store, None)
+    }
+    pub fn start_with_mail(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+    ) -> Self {
+        Self::start_with_tools(store, oauth, None)
+    }
+    pub fn start_with_tools(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: Option<Arc<moosuri_connectors::web::WebClient>>,
+    ) -> Self {
+        Self::start_with_web_service(store, oauth, web::Service::new(web))
+    }
+    fn start_with_web_service(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: web::Service,
+    ) -> Self {
         let (changes, _) = watch::channel(0);
         let (done_tx, done) = watch::channel(false);
         let signals = Signals {
@@ -122,14 +147,25 @@ impl Runtime {
             changes,
             delivery: Arc::new(tokio::sync::RwLock::new(())),
         };
-        let supervisor = tokio::spawn(supervise(store, signals.clone(), done_tx));
+        let mail = mail::MailService::new(store.clone(), oauth, signals.clone());
+        let supervisor = tokio::spawn(supervise(
+            store,
+            signals.clone(),
+            done_tx,
+            mail.clone(),
+            web,
+        ));
         Self {
             control: Arc::new(Control {
                 signals,
                 supervisor: Mutex::new(Some(supervisor)),
                 done,
+                mail,
             }),
         }
+    }
+    pub fn mail_service(&self) -> mail::MailService {
+        self.control.mail.clone()
     }
     pub fn wake(&self) {
         self.control.signals.wake.notify_one();
@@ -213,7 +249,14 @@ async fn settle_retired(retired: &mut Vec<RunLease>, store: &Store, signals: &Si
     }
     *retired = unresolved;
 }
-async fn supervise(store: Store, signals: Signals, done: watch::Sender<bool>) {
+async fn supervise(
+    store: Store,
+    signals: Signals,
+    done: watch::Sender<bool>,
+    mail: mail::MailService,
+    web: web::Service,
+) {
+    let mut mail_worker = tokio::spawn(mail.clone().worker(signals.stop.clone()));
     let mut tasks = JoinSet::new();
     let mut leases = HashMap::new();
     let mut retired = Vec::new();
@@ -236,7 +279,13 @@ async fn supervise(store: Store, signals: Signals, done: watch::Sender<bool>) {
                     signals.changed();
                     let lease = claimed.lease.clone();
                     let id = tasks
-                        .spawn(runner::execute(store.clone(), claimed, signals.clone()))
+                        .spawn(runner::execute(
+                            store.clone(),
+                            claimed,
+                            signals.clone(),
+                            mail.clone(),
+                            web.clone(),
+                        ))
                         .id();
                     leases.insert(id, lease);
                 }
@@ -264,6 +313,13 @@ async fn supervise(store: Store, signals: Signals, done: watch::Sender<bool>) {
         while tasks.join_next().await.is_some() {}
         // Uncommitted attempts remain dispatched and recover as unknown, never
         // queued. Do not wait unboundedly on a failed store during shutdown.
+    }
+    if tokio::time::timeout(Duration::from_secs(2), &mut mail_worker)
+        .await
+        .is_err()
+    {
+        mail_worker.abort();
+        let _ = mail_worker.await;
     }
     done.send_replace(true);
 }

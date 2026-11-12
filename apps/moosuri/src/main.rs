@@ -55,6 +55,12 @@ enum Command {
         trusted_proxy: Option<IpAddr>,
         #[arg(long, default_value = "x-real-ip")]
         client_ip_header: String,
+        /// Owner-only Google OAuth web client JSON file; never pass a secret on the CLI.
+        #[arg(long)]
+        google_client_file: Option<PathBuf>,
+        /// Optional owner-only Brave Search key file; public HTTP reading needs no key.
+        #[arg(long)]
+        web_search_key_file: Option<PathBuf>,
     },
     /// Check a stopped installation without printing account or secret data.
     Doctor,
@@ -140,6 +146,8 @@ async fn run(cli: Cli) -> Result<(), String> {
             dev,
             trusted_proxy,
             client_ip_header,
+            google_client_file,
+            web_search_key_file,
         } => {
             if !bind.ip().is_loopback() {
                 return Err("loopback_bind_required_use_a_tls_proxy".into());
@@ -151,13 +159,25 @@ async fn run(cli: Cli) -> Result<(), String> {
                     .with_trusted_proxy(proxy, &client_ip_header)
                     .map_err(str::to_owned)?;
             }
+            if let Some(path) = google_client_file {
+                config = config
+                    .with_google_client_json_owned(read_google_client_file(&path)?)
+                    .map_err(str::to_owned)?;
+            }
+            config = config
+                .with_public_web(
+                    web_search_key_file
+                        .map(|path| read_web_search_key_file(&path))
+                        .transpose()?,
+                )
+                .map_err(str::to_owned)?;
             if !ASSETS.iter().any(|(name, _)| *name == "/index.html") {
                 return Err(
                     "web_assets_missing_run_npm_ci_and_build_in_web_then_rebuild_rust".into(),
                 );
             }
-            let store = Store::open(&data).map_err(|e| e.to_string())?;
-            let runtime = moosuri_agent::Runtime::start(store.clone());
+            let store = config.open_store(&data).map_err(|e| e.to_string())?;
+            let runtime = config.start_runtime(store.clone());
             let app = moosuri_server::router_with_runtime(store, config, runtime.clone())
                 .fallback(static_asset);
             let listener = tokio::net::TcpListener::bind(bind)
@@ -247,6 +267,64 @@ fn read_password_file(path: &Path) -> Result<String, String> {
     }
     Ok(password)
 }
+fn read_google_client_file(path: &Path) -> Result<String, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|_| "google_client_file_unreadable")?;
+    let info = file
+        .metadata()
+        .map_err(|_| "google_client_file_unreadable")?;
+    if !info.is_file()
+        || info.uid() != unsafe { libc::geteuid() }
+        || info.permissions().mode() & 0o077 != 0
+        || info.nlink() != 1
+        || info.len() > 16384
+    {
+        return Err("google_client_file_must_be_owner_only_regular_and_small".into());
+    }
+    let mut bytes = String::new();
+    file.read_to_string(&mut bytes)
+        .map_err(|_| "google_client_file_unreadable")?;
+    Ok(bytes)
+}
+fn read_web_search_key_file(path: &Path) -> Result<String, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|_| "web_search_key_file_unreadable")?;
+    let info = file
+        .metadata()
+        .map_err(|_| "web_search_key_file_unreadable")?;
+    if !info.is_file()
+        || info.uid() != unsafe { libc::geteuid() }
+        || info.permissions().mode() & 0o077 != 0
+        || info.nlink() != 1
+        || info.len() > 8192
+    {
+        return Err("web_search_key_file_must_be_owner_only_regular_and_small".into());
+    }
+    let mut key = String::new();
+    file.take(8193)
+        .read_to_string(&mut key)
+        .map_err(|_| "web_search_key_file_unreadable")?;
+    if key.len() > 8192 {
+        return Err("web_search_key_file_too_large".into());
+    }
+    // One optional terminal newline is a file convention, not part of the key.
+    if key.ends_with('\n') {
+        key.pop();
+        if key.ends_with('\r') {
+            key.pop();
+        }
+    }
+    Ok(key)
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
@@ -263,7 +341,9 @@ async fn shutdown_signal() {
 async fn static_asset(uri: Uri) -> Response {
     let path = match uri.path() {
         "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/settings/model"
-        | "/settings/usage" | "/app/knowledge" | "/app/memory" | "/login" => "/index.html",
+        | "/settings/mail" | "/settings/usage" | "/app/knowledge" | "/app/memory" | "/login" => {
+            "/index.html"
+        }
         other => other,
     };
     let Some((_, bytes)) = ASSETS.iter().find(|(name, _)| *name == path) else {
@@ -287,4 +367,40 @@ async fn static_asset(uri: Uri) -> Response {
     h.insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
     h.insert(header::CONTENT_SECURITY_POLICY, "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap());
     response
+}
+
+#[cfg(test)]
+mod web_key_tests {
+    use super::*;
+    use std::os::unix::{
+        fs::{PermissionsExt, symlink},
+        net::UnixListener,
+    };
+    #[test]
+    fn optional_search_key_file_rejects_symlinks_permissions_hardlinks_and_large_or_special_files()
+    {
+        let dir = tempfile::tempdir_in(std::env::temp_dir()).unwrap();
+        let key = dir.path().join("key");
+        std::fs::write(&key, "synthetic-brave-key\r\n").unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            read_web_search_key_file(&key).unwrap(),
+            "synthetic-brave-key"
+        );
+        let link = dir.path().join("link");
+        symlink(&key, &link).unwrap();
+        assert!(read_web_search_key_file(&link).is_err());
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_web_search_key_file(&key).is_err());
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let hard = dir.path().join("hard");
+        std::fs::hard_link(&key, &hard).unwrap();
+        assert!(read_web_search_key_file(&key).is_err());
+        std::fs::remove_file(hard).unwrap();
+        std::fs::write(&key, "x".repeat(8193)).unwrap();
+        assert!(read_web_search_key_file(&key).is_err());
+        let socket = dir.path().join("socket");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        assert!(read_web_search_key_file(&socket).is_err());
+    }
 }

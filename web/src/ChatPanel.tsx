@@ -1,3 +1,4 @@
+import { WebEvidence } from "./WebEvidence";
 import {
   useEffect,
   useLayoutEffect,
@@ -935,6 +936,7 @@ export function ChatPanel(props: Props) {
                     ))}
                   </div>
                 )}
+                <WebEvidence observations={turn.run.web_evidence}/>
                 <details className="run-model">
                   <summary>실행 정보</summary>
                   <p>

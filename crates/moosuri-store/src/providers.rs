@@ -38,7 +38,7 @@ pub struct ProviderBinding {
 }
 const KEY_AAD: &[u8] = b"moosuri/provider-key-check/v1";
 const KEY_PLAIN: &[u8] = b"moosuri provider encryption key";
-fn encrypt(key: &[u8; 32], plain: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+pub(super) fn encrypt(key: &[u8; 32], plain: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     let mut nonce = [0; 24];
     OsRng
         .try_fill_bytes(&mut nonce)
@@ -51,7 +51,7 @@ fn encrypt(key: &[u8; 32], plain: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     );
     Ok(bytes)
 }
-fn decrypt(key: &[u8; 32], cipher: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+pub(super) fn decrypt(key: &[u8; 32], cipher: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     if cipher.len() < 40 {
         return Err(StoreError::Corrupt);
     }
@@ -569,7 +569,11 @@ impl Store {
                 },
             )?;
             let binding = binding(&db.provider_key, row, model, effort)?;
-            Ok((binding, format!("moosuri-tool-proof-{}", random_token()?)))
+            // This is a public protocol challenge, not an authentication secret.
+            // A fresh 64-bit value proves the result was observed without asking
+            // the model to reproduce a long opaque token. Exact matching remains.
+            let nonce = random_token()?;
+            Ok((binding, format!("proof-{}", &nonce[..16])))
         })
         .await
     }

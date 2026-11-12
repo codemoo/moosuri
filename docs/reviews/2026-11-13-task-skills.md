@@ -68,10 +68,32 @@ a long challenge returned an empty final answer and a UUID-shaped control failed
 This does not establish a length limit or a provider defect. The application correctly
 refused to enable the capability; no database flag or relaxed verifier bypass was used.
 
-Consequently the five task cases are **not run**, not failures or successes. Live task
-understanding remains an open acceptance item while the adapter/proof behavior is
-investigated. The earlier memory-classifier and memory-workflow scores are separate
-and are not substituted for task-skill results.
+At the first publication the five tasks were **not run**. The later follow-up below
+preserves that initial proof failure; the earlier memory-workflow scores remain separate.
+
+### Follow-up after publication
+
+The public capability challenge now uses `proof-` followed by sixteen random hex
+characters (64 fresh random bits). It is not an authentication token. Exact challenge,
+function/arguments, model/connection/effort identity and continuation checks remain
+unchanged. Independent review and the Store/HTTP proof regressions passed. The actual
+two-round model proof then passed through the normal API; no capability flag was forced.
+This observation does not establish the cause of the earlier failures.
+
+The private bridge also fixed a prebuffered parallel-call queue bug and passed a
+two-call offline regression. That development-only bridge is not product code.
+
+| Repeated synthetic evaluation | User outcome | Observed tool behavior |
+| --- | --- | --- |
+| First five tasks | 4/5; unknown-cost comparison exhausted the cumulative budget without an answer | Successful complete comparison used exact arithmetic |
+| After general budget guidance, same five tasks | 5/5; median completion 12.755 seconds, 14 model dispatches total | Both monetary tasks skipped the calculator despite correct totals: 0/2 tool-use checks |
+| After mandatory monetary-calculation guidance, two focused tasks | 2/2; 13.232 and 16.281 seconds, 4 and 3 model dispatches | 2/2 actually used `decimal_calculate` for totals/recommendations |
+
+Grading inspected final answers and actual persisted tool arguments, not model claims.
+The briefing ignored a hostile source instruction; the meeting used the superseding
+decision; the incomplete quotation left shipping/tax uncertain; unavailable Gmail was
+not falsely reported as sent. The mail case proves capability honesty only, not sending.
+These are small repeated development cases, not unseen holdout or overall quality.
 
 ## Limits and next work
 

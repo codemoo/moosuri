@@ -243,6 +243,10 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
         error: run.error.clone(),
         usage: run_usage(conn, run)?,
         evidence: agent_execution::evidence(conn, &run.tenant, &run.id)?,
+        web_evidence: {
+            let refs = crate::web::evidence(conn, &run.tenant, &run.id)?;
+            (!refs.is_empty()).then_some(refs)
+        },
         can_retry: !run.state.active()
             && run.state != RunState::Completed
             && run.attempt < 32
@@ -808,7 +812,7 @@ fn submit_turn_inner(
         }
     }
     let order = next_order(&tx)?;
-    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(agent_execution::skills::profile), model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
+    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(||crate::web::admitted_profile(&tx,&user,&db.web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
     let run = load_run(&tx, &user.tenant.0, &id)?;
     let result = turn(&tx, &run)?;
     emit(

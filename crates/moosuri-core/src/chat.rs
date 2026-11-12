@@ -75,6 +75,9 @@ pub struct RunView {
     pub usage: RunUsage,
     #[serde(default)]
     pub evidence: Vec<ChatEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub web_evidence: Option<Vec<crate::WebEvidence>>,
     pub can_retry: bool,
     pub can_cancel: bool,
     #[ts(type = "number")]

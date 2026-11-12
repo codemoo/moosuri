@@ -16,6 +16,9 @@ pub use memory_commands::{
 };
 mod files;
 mod journal;
+mod mail;
+mod web;
+pub use mail::*;
 mod providers;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use fs2::FileExt;
@@ -130,6 +133,7 @@ struct Database {
     poisoned: bool,
     provider_key: Zeroizing<[u8; 32]>,
     knowledge_journal: knowledge_journal::Journal,
+    web_profile: moosuri_core::WebToolProfile,
 }
 #[derive(Clone)]
 struct LoginAccount {
@@ -237,6 +241,10 @@ async fn verify_password(password: Zeroizing<String>, hash: String) -> Result<bo
 impl Store {
     /// Opens a private local data directory and holds its exclusive writer lock until all clones drop.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_web(path, moosuri_core::WebToolProfile::default())
+    }
+    /// Trusted installation configuration; never accepted from a model or HTTP body.
+    pub fn open_with_web(path: &Path, web_profile: moosuri_core::WebToolProfile) -> Result<Self> {
         // RUSTSEC-2026-0459: reject affected SQLite before opening any DB/WAL pair.
         if rusqlite::version_number() < 3_054_000 {
             return Err(StoreError::Unavailable);
@@ -270,7 +278,7 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if !matches!(version, 1..=6) {
+        } else if !matches!(version, 1..=7) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {
@@ -320,6 +328,13 @@ impl Store {
                 include_str!("../../../migrations/assistant/0006_memory_commands.sql")
             ))?;
         }
+        if version < 7 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0007_gmail.sql")
+            ))?;
+        }
+        conn.execute("UPDATE mail_actions SET version=version+1,state='outcome_unknown',raw=NULL,content=NULL WHERE state='dispatch_committed'",[])?;
         let provider_key = providers::open_key(&conn, &dir)?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
         if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
@@ -332,6 +347,7 @@ impl Store {
             poisoned: false,
             provider_key,
             knowledge_journal,
+            web_profile,
         };
         database.replay_journal()?;
         knowledge::replay(&mut database)?;
@@ -569,6 +585,7 @@ impl Store {
         }
         self.call(move |db| {
             let current = validate(&db.conn, &user, true, false)?;
+            mail::purge_thread(&db.conn, &current.tenant.0, &id)?;
             if db.conn.execute(
                 "DELETE FROM threads WHERE tenant_id=?1 AND id=?2",
                 params![current.tenant.0, id],

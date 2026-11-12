@@ -19,6 +19,7 @@ import type {
 import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
+import { MailConnections } from "./MailConnections";
 import { UsageView } from "./UsageView";
 import { KnowledgeView } from "./KnowledgeView";
 import { initialKnowledgeDrafts } from "./KnowledgeState";
@@ -683,6 +684,7 @@ function Workspace({
   const knowledgeOpen = knowledgePage || memoryPage;
   const providerAdmin = path === "/admin/providers";
   const personalModel = path === "/settings/model";
+  const personalMail = path === "/settings/mail";
   const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -906,6 +908,7 @@ function Workspace({
           {personalModel ? "← 대화로 돌아가기" : "내 모델"}
           <span aria-hidden="true">↗</span>
         </button>
+        <button className={`nav-link ${personalMail ? "chosen" : ""}`} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
         <button
           className={`nav-link ${personalUsage ? "chosen" : ""}`}
           onClick={() => {
@@ -1031,7 +1034,7 @@ function Workspace({
             </button>
           </nav>
         )}
-        {knowledgeOpen ? (
+        {personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected}/> : knowledgeOpen ? (
           <KnowledgeView
             accountId={session.user.id}
             mode={memoryPage ? "memory" : "source"}

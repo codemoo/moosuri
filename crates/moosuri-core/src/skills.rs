@@ -17,6 +17,10 @@ pub struct SkillPin {
 pub struct RunToolProfile {
     pub version: u32,
     pub skills: Vec<SkillPin>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mail_connections: Vec<crate::MailConnectionPin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<crate::WebToolProfile>,
 }
 
 pub struct BundledSkill {

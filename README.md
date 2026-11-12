@@ -2,7 +2,7 @@
 
 A self-hosted assistant for individuals, families and friends.
 
-**Status: early development. The Rust/React account foundation runs; agent/model execution is not implemented yet.**
+**Status: early development. The Rust/React account foundation runs; chat/agent execution is not connected yet.**
 The existing private deployment remains the behavioral reference; its source history,
 accounts, data, infrastructure settings and experimental runtimes are not copied here.
 
@@ -25,11 +25,11 @@ accounts, data, infrastructure settings and experimental runtimes are not copied
 - [공개 배포](docs/public-release.md): 설치·기여·공개 범위
 - [검토한 공식 자료](docs/references.md)
 
-This repository contains the reviewed plan and source audit, a Rust account/API/CLI foundation, a React interface, pinned OpenSpec tooling and contributor scaffolding. The public development repository is [codemoo/moosuri](https://github.com/codemoo/moosuri). It does not contain a model key or copied production data.
+This repository contains the reviewed plan and source audit, a Rust account/API/CLI foundation, a React interface, a model protocol/transport library, pinned OpenSpec tooling and contributor scaffolding. The public development repository is [codemoo/moosuri](https://github.com/codemoo/moosuri). It does not contain a model key or copied production data.
 
 GitHub Actions/CI are disabled during initial development. Contributors run relevant checks locally and commit/push each coherent work unit. Personal coding-agent instructions are ignored; shared contracts live in OpenSpec and CONTRIBUTING.
 
-Build and run the account foundation with [the development quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate empty conversation lists. Model chat, vault and external work are still unavailable.
+Build and run the account foundation with [the development quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate empty conversation lists. Model chat, vault and external work are still unavailable. The [model transport foundation](docs/model-transport.md) is tested separately before durable chat integration.
 
 Validate planning metadata with Rust 1.89 or newer:
 

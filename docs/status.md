@@ -26,9 +26,20 @@
 - React의 **18개 행동 테스트**, TypeScript 검사와 production build 통과. Rust에서 생성한 웹 DTO 일치 확인.
 - Chromium 실제 서버 여정과 두 탭 회귀 검증의 범위는 [계정 기반 검증 기록](reviews/2026-11-12-account-foundation.md)에 기록한다. 모바일 viewport 확인은 실제 iOS/Android 검증과 구별한다.
 - 새 소스의 인증·저장·브라우저 경계를 독립 검토했다. proxy/NAT 로그인 제한 공유, 잘못된 디렉터리 권한 변경, 다른 탭 계정 혼동, 늦은 로그아웃 응답 문제를 수정하고 재검토했다.
-- SQLite advisory에 따라 rusqlite 0.41.1/libsqlite3-sys 0.39.1로 갱신하고 DB open 전에 SQLite 3.54 이상을 확인한다. 최종 Cargo.lock의 registry 패키지 153개 OSV 조회에서 알려진 취약점 응답 없음. 이는 취약점 부재 보증이 아니다.
+- SQLite advisory에 따라 rusqlite 0.41.1/libsqlite3-sys 0.39.1로 갱신하고 DB open 전에 SQLite 3.54 이상을 확인한다. 첫 계정 단위 Cargo.lock의 registry 패키지 153개 OSV 조회에서 알려진 취약점 응답 없음. 이는 취약점 부재 보증이 아니다.
 
 기존 테스트는 복사하지 않았다. 새 테스트도 전체 제품 평가 성적으로 사용하지 않는다. source523·entrypoint108·R28/F69 조사표, 67개 planned 평가 묶음과 과거 검토 기록은 유지한다.
+
+## 두 번째 단위: 모델 전송 기반
+
+`moosuri-connectors`에 Responses·Anthropic Messages·OpenRouter·compatible Chat의 text protocol/HTTP adapter를 구현했다. 종료/사용량/phase를 구별하며 최종 본문을 스트림과 대조한다. 취소·부분 오류·잘림·DNS/credential 경계·timeout·backpressure를 합성 자료와 실제 loopback HTTP로 검증했다.
+
+- 새 connector43개(프로토콜32·HTTP11), 기존 계정17개를 합쳐 **Rust60개 테스트가 macOS와 Linux x86_64에서 통과**했다. fmt·workspace/all-target clippy도 통과했다.
+- 전송/프로토콜을 독립 검토하고 메타데이터 주소·수신 중단·오류 전 부분 출력·최종 본문 대조 문제를 수정해 재검토했다.
+- 현재 lock의 registry224개 OSV 조회에서 알려진 취약점 응답 없음. CI는 계속 비활성이다.
+- 웹 composer/provider 설정·실계정 모델·구독 인증에는 아직 연결하지 않았다. 모델 성능이나 미션 수행 성적으로 표현하지 않는다.
+
+[상세 계약](model-transport.md)과 [검증 기록](reviews/2026-11-12-model-transport.md)을 따른다.
 
 ## 아직 구현하지 않은 범위
 

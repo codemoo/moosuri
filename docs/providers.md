@@ -2,6 +2,8 @@
 
 공용 API/local 연결과 개인 구독 연결을 분리한다. 설치 화면은 연결 방식→인증→실제 model 목록→기능 확인→기본 model/effort 순서다. 관리자가 허용한 범위에서 사용자별 기본값을 고를 수 있다. 모든 행은 구현 대상이며 현재 연결 완료를 뜻하지 않는다. 공식 자료는 [references](references.md)에 있다.
 
+현재 Rust text protocol/HTTP 구현 범위는 [model transport](model-transport.md)에 있다. 합성 fixture/loopback 검증을 실제 계정 연결·capability probe·웹 대화 완료로 표시하지 않는다.
+
 ## 지원 행렬
 
 | 연결 | 인증·공유 | 구현·지원 범위 |

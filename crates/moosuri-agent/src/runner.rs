@@ -941,21 +941,51 @@ async fn execute_tool(
     {
         moosuri_store::ExternalToolStart::Complete(v) => Ok(v),
         moosuri_store::ExternalToolStart::Dispatch(permit) => {
+            let io_cancel = cancel.child_token();
             let operation = async {
                 match permit.request() {
                     moosuri_core::ExternalToolRequest::Mail(_) => {
-                        mail.external(&permit, cancel).await
+                        mail.external(&permit, &io_cancel).await
                     }
                     moosuri_core::ExternalToolRequest::Web(request) => {
-                        web.execute(request, cancel).await
+                        web.execute(
+                            request,
+                            &permit.user().account().id,
+                            permit.browser_pin(),
+                            &io_cancel,
+                        )
+                        .await
                     }
                 }
             };
             tokio::pin!(operation);
             let mut tick = tokio::time::interval(Duration::from_millis(250));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let result = loop {
-                tokio::select! {biased;_=cancel.cancelled()=>return Err(StoreError::Unavailable),_=tick.tick()=>store.check_external_tool(&permit).await?,result=&mut operation=>break result}
+            let outcome = loop {
+                tokio::select! {biased;
+                    _=cancel.cancelled()=>break Err(StoreError::Unavailable),
+                    _=tick.tick()=>if let Err(error)=store.check_external_tool(&permit).await {break Err(error)},
+                    result=&mut operation=>break Ok(result)
+                }
+            };
+            let result = match outcome {
+                Ok(result) => result,
+                Err(error) => {
+                    io_cancel.cancel();
+                    if matches!(
+                        permit.request(),
+                        moosuri_core::ExternalToolRequest::Web(
+                            moosuri_core::WebToolRequest::BrowserRead { .. }
+                        )
+                    ) {
+                        // The capsule owns bounded cleanup independently; await it before
+                        // returning on revoked authority, even with stalled stdout.
+                        let _ = (&mut operation).await;
+                    } else {
+                        let _ = tokio::time::timeout(Duration::from_secs(4), &mut operation).await;
+                    }
+                    return Err(error);
+                }
             };
             retry_local(|| store.complete_external_tool(&permit, result.clone())).await
         }

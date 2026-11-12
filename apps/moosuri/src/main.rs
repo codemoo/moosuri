@@ -61,6 +61,9 @@ enum Command {
         /// Optional owner-only Brave Search key file; public HTTP reading needs no key.
         #[arg(long)]
         web_search_key_file: Option<PathBuf>,
+        /// Owner-only JSON for an already verified isolated Linux browser deployment.
+        #[arg(long)]
+        browser_capsule_file: Option<PathBuf>,
     },
     /// Check a stopped installation without printing account or secret data.
     Doctor,
@@ -148,6 +151,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             client_ip_header,
             google_client_file,
             web_search_key_file,
+            browser_capsule_file,
         } => {
             if !bind.ip().is_loopback() {
                 return Err("loopback_bind_required_use_a_tls_proxy".into());
@@ -171,6 +175,11 @@ async fn run(cli: Cli) -> Result<(), String> {
                         .transpose()?,
                 )
                 .map_err(str::to_owned)?;
+            if let Some(path) = browser_capsule_file {
+                config = config
+                    .with_browser_capsule_json(&read_browser_capsule_file(&path)?)
+                    .map_err(str::to_owned)?;
+            }
             if !ASSETS.iter().any(|(name, _)| *name == "/index.html") {
                 return Err(
                     "web_assets_missing_run_npm_ci_and_build_in_web_then_rebuild_rust".into(),
@@ -290,6 +299,33 @@ fn read_google_client_file(path: &Path) -> Result<String, String> {
         .map_err(|_| "google_client_file_unreadable")?;
     Ok(bytes)
 }
+fn read_browser_capsule_file(path: &Path) -> Result<String, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|_| "browser_capsule_file_unreadable")?;
+    let info = file
+        .metadata()
+        .map_err(|_| "browser_capsule_file_unreadable")?;
+    if !info.is_file()
+        || info.uid() != unsafe { libc::geteuid() }
+        || info.permissions().mode() & 0o077 != 0
+        || info.nlink() != 1
+        || info.len() > 16384
+    {
+        return Err("browser_capsule_file_must_be_owner_only_regular_and_small".into());
+    }
+    let mut bytes = String::new();
+    file.take(16385)
+        .read_to_string(&mut bytes)
+        .map_err(|_| "browser_capsule_file_unreadable")?;
+    if bytes.len() > 16384 {
+        return Err("browser_capsule_file_too_large".into());
+    }
+    Ok(bytes)
+}
 fn read_web_search_key_file(path: &Path) -> Result<String, String> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
     let file = OpenOptions::new()
@@ -376,6 +412,29 @@ mod web_key_tests {
         fs::{PermissionsExt, symlink},
         net::UnixListener,
     };
+    #[test]
+    fn browser_file_is_bounded_owner_only_regular_and_never_follows_links() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir()).unwrap();
+        let file = dir.path().join("browser.json");
+        std::fs::write(&file, "{}").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(read_browser_capsule_file(&file).unwrap(), "{}");
+        let link = dir.path().join("link");
+        symlink(&file, &link).unwrap();
+        assert!(read_browser_capsule_file(&link).is_err());
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(read_browser_capsule_file(&file).is_err());
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let hard = dir.path().join("hard");
+        std::fs::hard_link(&file, &hard).unwrap();
+        assert!(read_browser_capsule_file(&file).is_err());
+        std::fs::remove_file(hard).unwrap();
+        std::fs::write(&file, "x".repeat(16385)).unwrap();
+        assert!(read_browser_capsule_file(&file).is_err());
+        let socket = dir.path().join("socket");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        assert!(read_browser_capsule_file(&socket).is_err());
+    }
     #[test]
     fn optional_search_key_file_rejects_symlinks_permissions_hardlinks_and_large_or_special_files()
     {

@@ -10,6 +10,7 @@ use serde_json::json;
 #[derive(Clone, Default)]
 pub(crate) struct Service {
     client: Option<std::sync::Arc<WebClient>>,
+    browser: Option<std::sync::Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
     #[cfg(test)]
     fixture: Option<std::sync::Arc<Fixture>>,
 }
@@ -24,25 +25,59 @@ impl Service {
     pub(crate) fn new(client: Option<std::sync::Arc<WebClient>>) -> Self {
         Self {
             client,
+            browser: None,
             #[cfg(test)]
             fixture: None,
         }
+    }
+    pub(crate) fn with_browser(
+        mut self,
+        browser: Option<std::sync::Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
+    ) -> Self {
+        self.browser = browser;
+        self
     }
     #[cfg(test)]
     pub(crate) fn fixture(fixture: std::sync::Arc<Fixture>) -> Self {
         Self {
             client: None,
+            browser: None,
             fixture: Some(fixture),
         }
     }
     pub(crate) async fn execute(
         &self,
         request: &WebToolRequest,
+        account: &str,
+        browser_pin: Option<&str>,
         cancel: &CancellationToken,
     ) -> KnowledgeToolResult {
         #[cfg(test)]
         if let Some(fixture) = &self.fixture {
             return fixture(request.clone(), cancel.clone()).await;
+        }
+        if let WebToolRequest::BrowserRead { url } = request {
+            let Some(reader) = self
+                .browser
+                .as_ref()
+                .filter(|reader| Some(reader.deployment_pin()) == browser_pin)
+            else {
+                return KnowledgeToolResult::Error(ToolReadError::Unavailable);
+            };
+            let Ok(account) = uuid::Uuid::parse_str(account) else {
+                return KnowledgeToolResult::Error(ToolReadError::Unavailable);
+            };
+            return match reader.read(account, url, cancel).await {
+                Ok(page) => KnowledgeToolResult::External(json!({"browser_page":page})),
+                Err(
+                    moosuri_connectors::browser::BrowserError::InvalidUrl
+                    | moosuri_connectors::browser::BrowserError::ForbiddenDestination,
+                ) => KnowledgeToolResult::Error(ToolReadError::InvalidInput),
+                Err(moosuri_connectors::browser::BrowserError::OutputTooLarge) => {
+                    KnowledgeToolResult::Error(ToolReadError::TooLargeNarrowRead)
+                }
+                Err(_) => KnowledgeToolResult::Error(ToolReadError::Unavailable),
+            };
         }
         execute(self.client.as_deref(), request, cancel).await
     }
@@ -56,6 +91,9 @@ async fn execute(
         return KnowledgeToolResult::Error(ToolReadError::Unavailable);
     };
     let result = match request {
+        WebToolRequest::BrowserRead { .. } => {
+            return KnowledgeToolResult::Error(ToolReadError::Unavailable);
+        }
         WebToolRequest::Read { url } => client
             .read(url, cancel)
             .await

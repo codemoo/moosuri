@@ -9,7 +9,8 @@ lexical search and explicit memory editing are available. Tool-verified models c
 search/read that private knowledge in chat and apply explicit
 [remember/correct/forget requests](conversational-memory.md). [Public HTTP research](web-research.md)
 and [personal Gmail](mail.md) are connected; every email send requires final human
-approval. Automatic extraction, schedules, media, vault and backup/restore remain pending.
+approval. An optional [Linux Chromium capsule](browser-chat.md) reads rendered
+public pages after the operator verifies its deployment. Automatic extraction, schedules, media, vault and backup/restore remain pending.
 
 Use Rust 1.89+ and Node.js 22.22+. Node is needed to build React, not to run the
 resulting server. SQLite is bundled. Build from a clean public checkout:

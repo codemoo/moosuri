@@ -11,7 +11,7 @@ fn object(properties: Value) -> Value {
     json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
 }
 pub(crate) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefinition> {
-    let Some(p) = profile.filter(|p| matches!(p.version, 2 | 3) && !p.mail_connections.is_empty())
+    let Some(p) = profile.filter(|p| matches!(p.version, 2..=4) && !p.mail_connections.is_empty())
     else {
         return vec![];
     };

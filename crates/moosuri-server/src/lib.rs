@@ -31,6 +31,15 @@ const COOKIE_MAX_AGE: u64 = 400 * 24 * 60 * 60;
 mod web_configuration_tests {
     use super::*;
     #[test]
+    fn browser_is_disabled_by_default_and_configuration_errors_are_static() {
+        let config = ServerConfig::new("https://example.test", false).unwrap();
+        assert!(config.browser.is_none());
+        assert!(matches!(
+            config.with_browser_capsule_json(r#"{"credential":"do-not-echo"}"#),
+            Err("invalid_browser_configuration")
+        ));
+    }
+    #[test]
     fn operator_web_configuration_advertises_only_actual_search_availability_and_redacts_invalid_keys()
      {
         let config = ServerConfig::new("https://example.test", false).unwrap();
@@ -57,6 +66,7 @@ pub struct ServerConfig {
     trusted_proxy: Option<(IpAddr, header::HeaderName)>,
     google: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
     web: Option<Arc<moosuri_connectors::web::WebClient>>,
+    browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
 }
 impl ServerConfig {
     pub fn new(origin: &str, allow_http_loopback: bool) -> Result<Self, &'static str> {
@@ -93,6 +103,7 @@ impl ServerConfig {
             trusted_proxy: None,
             google: None,
             web: None,
+            browser: None,
         })
     }
     pub fn with_google_client_json_owned(self, value: String) -> Result<Self, &'static str> {
@@ -143,19 +154,40 @@ impl ServerConfig {
         self.web = Some(Arc::new(client));
         Ok(self)
     }
+    /// Trusted deployment file only. This does not provision Docker resources.
+    pub fn with_browser_capsule_json(mut self, bytes: &str) -> Result<Self, &'static str> {
+        use moosuri_connectors::browser::capsule::{CapsuleConfig, CapsuleReader};
+        self.browser = Some(Arc::new(
+            CapsuleReader::new(
+                CapsuleConfig::from_json(bytes).map_err(|_| "invalid_browser_configuration")?,
+            )
+            .map_err(|_| "invalid_browser_configuration")?,
+        ));
+        Ok(self)
+    }
     pub fn open_store(&self, path: &std::path::Path) -> Result<Store, StoreError> {
-        let profile = self
+        let mut profile = self
             .web
             .as_ref()
             .map(|client| moosuri_core::WebToolProfile {
                 read: true,
                 search: client.has_search(),
+                browser_pin: None,
             })
             .unwrap_or_default();
+        profile.browser_pin = self
+            .browser
+            .as_ref()
+            .map(|reader| reader.deployment_pin().to_owned());
         Store::open_with_web(path, profile)
     }
     pub fn start_runtime(&self, store: Store) -> moosuri_agent::Runtime {
-        moosuri_agent::Runtime::start_with_tools(store, self.google.clone(), self.web.clone())
+        moosuri_agent::Runtime::start_with_browser_tools(
+            store,
+            self.google.clone(),
+            self.web.clone(),
+            self.browser.clone(),
+        )
     }
     pub fn with_trusted_proxy(
         mut self,

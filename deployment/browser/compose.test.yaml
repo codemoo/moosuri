@@ -1,0 +1,13 @@
+services:
+  proxy:
+    build:
+      target: test
+    user: '0:0'
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE, SETUID, SETGID, SETPCAP]
+    entrypoint: [/usr/bin/tini, --, /capsule/proxy-test.sh]
+    dns: ["${MOOSURI_BROWSER_PROXY_IP:?configure the private IPv4 proxy address}"]
+    environment:
+      MOOSURI_BROWSER_PROXY_IP: ${MOOSURI_BROWSER_PROXY_IP:?configure the private IPv4 proxy address}
+  browser:
+    build:
+      target: test

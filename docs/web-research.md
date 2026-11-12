@@ -15,8 +15,9 @@ is the connector's fixed Brave endpoint. Operator configuration creates a client
 before opening the store; its actual capabilities determine newly admitted run
 profiles. Library `Store::open` and `Runtime::start` retain disabled defaults.
 
-New web-enabled runs pin tool profile version 3, including existing exact recipe
-pins and any Gmail account pins. Legacy profiles 1/2 keep their vocabulary. A
+HTTP-only new runs pin tool profile version 3, including existing exact recipe
+pins and any Gmail account pins. A configured [browser capsule](browser-chat.md)
+admits version 4 with an exact deployment pin. Legacy profiles keep their vocabulary. A
 profile pin does not override the current installation: reopening without web or
 search configuration prevents the corresponding old run from starting web IO.
 No web tool can approve or send mail. Every mail send continues to require final
@@ -43,8 +44,8 @@ including Azure 168.63.129.16 and mapped IPv6 equivalents, are denied. Requests 
 HTTP(S) default ports only, no proxy inheritance, credentials, cookies, automatic
 redirects or retries. Redirects are separately parsed and resolved. HTML extraction
 does not execute scripts or load subresources; visible text marked only
-`aria-hidden` is retained. These HTTP guarantees are not sufficient to sandbox a
-future JavaScript browser, which needs separate Linux containment and egress tests.
+`aria-hidden` is retained. The optional JavaScript browser has its own Linux containment and egress tests;
+these HTTP guarantees alone do not establish browser isolation.
 
 Successful persisted web slots produce a separate optional `RunView.web_evidence`
 list. It contains observed URL/title/retrieval time, page-versus-search-hit kind and

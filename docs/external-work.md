@@ -21,7 +21,9 @@ script/style 등은 본문에서 제외하고 동적 페이지의 한계를 표�
 브라우저 namespace는 승인된 proxy 이외 직접 TCP/UDP·QUIC·대체 DNS 경로를 갖지 않는다.
 Chromium 자체 sandbox를 켜고 host home·앱 DB·Docker socket을 노출하지 않는다.
 
-첫 브라우저 범위는 공개 페이지 열기·관측·스크린샷·닫기다. 페이지 handle은 사용자,
+브라우저 worker는 공개 페이지 열기·관측·스크린샷·닫기를 지원한다. 채팅에 노출한 첫 도구는
+URL 하나를 받는 `browser_read`이며 스크린샷·handle·임의 명령은 모델에 노출하지 않는다.
+배포·실행 범위는 [browser-chat](browser-chat.md), 실제 검증은 [status](status.md)를 따른다. 페이지 handle은 사용자,
 worker/context/target/frame/navigation generation에 묶는다. “마지막 탭”이나 임의 CDP
 명령을 도구로 제공하지 않는다. stale handle·재시작은 관측을 새로 요구하고 알려지지 않은
 쓰기 작업을 재생하지 않는다. 일반 읽기마다 사용자 승인을 요구하지 않는다.

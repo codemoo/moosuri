@@ -28,6 +28,44 @@ impl Default for Upstream {
     }
 }
 static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test(start_paused = true)]
+async fn concurrent_shutdown_waits_for_cleanup_past_the_old_five_second_cutoff() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    let (changes, _) = watch::channel(0);
+    let (done_tx, done) = watch::channel(false);
+    let signals = Signals {
+        stop: CancellationToken::new(),
+        wake: Arc::new(Notify::new()),
+        changes,
+        delivery: Arc::new(tokio::sync::RwLock::new(())),
+    };
+    let stop = signals.stop.clone();
+    let cleaned = Arc::new(AtomicUsize::new(0));
+    let completion = cleaned.clone();
+    let supervisor = tokio::spawn(async move {
+        stop.cancelled().await;
+        // A slow daemon can consume more than five seconds of bounded cleanup.
+        tokio::time::sleep(Duration::from_millis(5800)).await;
+        completion.store(1, Ordering::SeqCst);
+        done_tx.send_replace(true);
+    });
+    let runtime = Runtime {
+        control: Arc::new(Control {
+            mail: crate::mail::MailService::new(store, None, signals.clone()),
+            signals,
+            supervisor: Mutex::new(Some(supervisor)),
+            done,
+        }),
+    };
+    let started = tokio::time::Instant::now();
+    tokio::join!(runtime.shutdown(), runtime.shutdown());
+    assert_eq!(cleaned.load(Ordering::SeqCst), 1);
+    assert!(*runtime.control.done.borrow());
+    assert!(started.elapsed() >= Duration::from_millis(5800));
+}
+
 struct Fixture {
     state: Arc<Upstream>,
     base: String,

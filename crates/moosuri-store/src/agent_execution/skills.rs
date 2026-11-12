@@ -22,7 +22,7 @@ pub(crate) fn profile() -> RunToolProfile {
 
 pub(super) fn read(run: &Run, requested: &SkillPin) -> KnowledgeToolResult {
     let available = run.tool_profile.as_ref().is_some_and(|profile| {
-        matches!(profile.version, 1..=3) && profile.skills.contains(requested)
+        matches!(profile.version, 1..=4) && profile.skills.contains(requested)
     });
     if available && let Some(skill) = BUNDLED_SKILLS.iter().find(|skill| pin(skill) == *requested) {
         return KnowledgeToolResult::Skill(SkillDocument {

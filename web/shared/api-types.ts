@@ -32,7 +32,7 @@ export type MessagePhase = "commentary" | "final_answer";
 export type RunUsage = { input_tokens: number | null, output_tokens: number | null, cache_read_tokens: number | null, cache_write_tokens: number | null, };
 export type AssistantMessage = { id: string, text: string, phase: MessagePhase | null, refusal: boolean, };
 export type ChatEvidence = { kind: KnowledgeKind, id: string, revision: number, title: string, };
-export type WebEvidenceKind = "page" | "search_hit";
+export type WebEvidenceKind = "page" | "search_hit" | "browser_page";
 export type WebEvidence = { url: string, title: string, retrieved_at_unix_ms: number, kind: WebEvidenceKind, truncated: boolean, };
 export type RunView = { id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**

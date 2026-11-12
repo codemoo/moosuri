@@ -1,0 +1,62 @@
+services:
+  proxy:
+    build:
+      context: ../..
+      dockerfile: deployment/browser/Dockerfile
+      target: runtime
+    entrypoint: [/usr/bin/tini, --, /usr/local/bin/browser-proxy]
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks:
+      browser:
+        ipv4_address: ${MOOSURI_BROWSER_PROXY_IP:?configure the private IPv4 proxy address}
+      public: {}
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 1
+    labels:
+      io.moosuri.browser.owner: ${MOOSURI_BROWSER_OWNER:-operator}
+    restart: 'no'
+  browser:
+    build:
+      context: ../..
+      dockerfile: deployment/browser/Dockerfile
+      target: runtime
+    stdin_open: true
+    read_only: true
+    cap_drop: [ALL]
+    # Entrypoint installs firewall, then drops all capabilities before Chromium.
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp.json
+    networks:
+      browser: {}
+    environment:
+      MOOSURI_BROWSER_PROXY_IP: ${MOOSURI_BROWSER_PROXY_IP:?configure the private IPv4 proxy address}
+      MOOSURI_BROWSER_TENANT: ${MOOSURI_BROWSER_TENANT:?supply an opaque tenant UUID}
+      MOOSURI_BROWSER_JAVASCRIPT: ${MOOSURI_BROWSER_JAVASCRIPT:-disabled}
+    tmpfs:
+      - /profiles:rw,noexec,nosuid,size=128m,uid=10001,gid=10001,mode=0700
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /run:rw,noexec,nosuid,size=1m,mode=0755
+    shm_size: 256m
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: 1
+    labels:
+      io.moosuri.browser.owner: ${MOOSURI_BROWSER_OWNER:-operator}
+    restart: 'no'
+networks:
+  browser:
+    labels:
+      io.moosuri.browser.owner: ${MOOSURI_BROWSER_OWNER:-operator}
+    internal: true
+    ipam:
+      config:
+        - subnet: ${MOOSURI_BROWSER_SUBNET:?configure a non-overlapping RFC1918 subnet}
+  public:
+    labels:
+      io.moosuri.browser.owner: ${MOOSURI_BROWSER_OWNER:-operator}

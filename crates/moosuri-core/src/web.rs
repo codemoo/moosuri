@@ -7,6 +7,7 @@ use ts_rs::TS;
 pub enum WebToolRequest {
     Read { url: String },
     Search { query: String },
+    BrowserRead { url: String },
 }
 
 /// Capabilities are admitted by the installation, never by model arguments.
@@ -15,6 +16,8 @@ pub enum WebToolRequest {
 pub struct WebToolProfile {
     pub read: bool,
     pub search: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_pin: Option<String>,
 }
 
 /// An observed page or search hit, not a claim that its content proves the answer.
@@ -33,4 +36,5 @@ pub struct WebEvidence {
 pub enum WebEvidenceKind {
     Page,
     SearchHit,
+    BrowserPage,
 }

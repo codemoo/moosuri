@@ -2,7 +2,7 @@
 
 2026-11-13. 실제 구현·검증과 다음 작업은 이 문서가 정본이다. 기능 계약은 [features](features.md), 상세 단계는 [plan](plan.md)을 따른다.
 
-공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델·저장되는 대화·개인 자료/기억·업무 스킬에 공개 HTTP 조사와 개인 Gmail을 연결한 개발 프리뷰다. 메일은 최종 내용을 사용자가 승인한 뒤에만 발송한다. 자동 기억 추출·예약·격리 브라우저 통합은 개발 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
+공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델·저장되는 대화·개인 자료/기억·업무 스킬에 공개 HTTP·격리 Chromium 조사와 개인 Gmail을 연결한 개발 프리뷰다. 메일은 최종 내용을 사용자가 승인한 뒤에만 발송한다. 자동 기억 추출·예약·인증된 브라우저 작업은 개발 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
 
 ## 구현된 첫 단위
 
@@ -269,13 +269,38 @@ Linux로 복사하지 않았다. 일반 사용자를 위한 구독 로그인 기
 connector credential이며 사용자 키 볼트와 같은 보호를 주장하지 않는다. Gmail 첨부·HTML·
 발신 별칭·라벨 변경·Gmail 초안함과 자동 보낸편지함 대조는 아직 지원하지 않는다.
 
+## 열한 번째 단위: 실제 Chromium으로 공개 페이지 읽기
+
+채팅의 `browser_read`를 별도 Linux Chromium capsule과 연결했다. 공개 URL 하나를
+받아 실제 렌더링된 본문·제목·링크·조회시각을 반환하고, 대화에 HTTP와 구별한
+브라우저 출처를 표시한다. 검증한 배포에서만 활성화하며 기존 실행의 권한은 늘리지 않는다.
+
+- fresh capsule·공개 목적지 proxy·Chromium sandbox·namespace firewall·계정 readiness와
+  정확한 image/network/proxy pin을 사용한다. 모델은 Docker·임의 CDP·credential·클릭·폼
+  권한을 갖지 않는다. 일반 페이지 읽기에 사용자 승인 화면을 추가하지 않았다.
+- 기존 durable 도구 슬롯·철회·누적 예산·취소를 유지한다. 자동 container 제거와 강제 제거의
+  경합으로 정상 읽기가 실패하던 결함을 실제 Linux 시험에서 찾아 수정했다. 실패한 제거는
+  같은 불변 ID의 부재를 재확인하며 daemon 오류나 불명을 성공으로 바꾸지 않는다.
+- macOS/Linux x86_64 **Rust270개**, React79개·타입·production build·DTO·fmt·clippy를 통과했다.
+  독립 검토, 실제 JS/PNG/private-resource/egress/rebinding 격리 시험과 종료 후 자원 부재를
+  확인했다. 직접 실행한 실제 공개 페이지 읽기는 수정 후5/5이며1.959–3.425초였다.
+- 실제 `gpt-6.1-terra/high`가 정상 검증된 동일 연결을 통해 채팅→브라우저→출처 있는
+  답변까지2회 호출·8.649초에 완료했다. 새 연결의 proof가 응답 없이 끝나는 실패는
+  별도로 남아 있으며, 해당 제한과 이전 실패를 검증 기록에 보존했다.
+- 새 프로필4는 정확한 배포 digest를 고정한다. 기존1–3과 retry는 새 브라우저 권한을 얻지
+  않는다. 메일 최종 미리보기·명시적 사용자 승인 규칙은 그대로다.
+
+[설정과 사용 범위](browser-chat.md), [Linux 배포](../deployment/browser/README.md),
+[검증·실패·수정 기록](reviews/2026-11-13-browser-chat.md)에 상세 내용을 둔다.
+인증된 사이트 조작·로그인 인계·클릭/폼·채팅 스크린샷은 아직 제공하지 않는다.
+
 ## 아직 구현하지 않은 범위
 
 구독 인증·개인 provider 연결, 자동 기억 추출·문서/목표·평가, 예약·캘린더·알림·푸시,
 첨부·녹음·PWA, 기존 수집 connector, 인증된 브라우저 작업·배송/예약/전화/거래,
 community 설치·업데이트·제안 카드, 독립 볼트·TOTP·credential broker,
 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
-연결 여부만 선택 사항이다. 이번 Gmail/HTTP 구현을 전체 비서 완성으로 표시하지 않는다.
+연결 여부만 선택 사항이다. 이번 웹·브라우저·Gmail 구현을 전체 비서 완성으로 표시하지 않는다.
 
 현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 이를 해제할 operator 복구 경로와 백업/복원은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. `doctor`는 중지된 설치에만 사용한다.
 

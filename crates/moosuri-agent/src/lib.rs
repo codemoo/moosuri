@@ -25,6 +25,12 @@ use tokio::{
     task::{Id, JoinHandle, JoinSet},
 };
 
+const RUN_DRAIN: Duration = Duration::from_secs(6);
+const MAIL_DRAIN: Duration = Duration::from_secs(2);
+// Enclose both sequential supervisor drains, with time to publish completion.
+// In particular, do not abort independently owned browser cleanup at five seconds.
+const SUPERVISOR_WAIT: Duration = Duration::from_secs(9);
+
 /// Constructs a connection without DNS or IO. Hosted secrets cannot be retargeted.
 pub fn model_client(
     config: &ProviderConfig,
@@ -132,7 +138,15 @@ impl Runtime {
         oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
         web: Option<Arc<moosuri_connectors::web::WebClient>>,
     ) -> Self {
-        Self::start_with_web_service(store, oauth, web::Service::new(web))
+        Self::start_with_browser_tools(store, oauth, web, None)
+    }
+    pub fn start_with_browser_tools(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: Option<Arc<moosuri_connectors::web::WebClient>>,
+        browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
+    ) -> Self {
+        Self::start_with_web_service(store, oauth, web::Service::new(web).with_browser(browser))
     }
     fn start_with_web_service(
         store: Store,
@@ -195,7 +209,7 @@ impl Runtime {
             .unwrap_or_else(|p| p.into_inner())
             .take();
         if let Some(mut handle) = handle {
-            if tokio::time::timeout(Duration::from_secs(5), &mut handle)
+            if tokio::time::timeout(SUPERVISOR_WAIT, &mut handle)
                 .await
                 .is_err()
             {
@@ -205,7 +219,7 @@ impl Runtime {
         } else {
             // Concurrent callers also wait for supervision to finish.
             let mut done = self.control.done.clone();
-            let _ = tokio::time::timeout(Duration::from_secs(5), async {
+            let _ = tokio::time::timeout(SUPERVISOR_WAIT, async {
                 while !*done.borrow_and_update() && done.changed().await.is_ok() {}
             })
             .await;
@@ -305,16 +319,13 @@ async fn supervise(
         }
         settle_retired(&mut retired, &store, &signals).await;
     };
-    if tokio::time::timeout(Duration::from_secs(4), drain)
-        .await
-        .is_err()
-    {
+    if tokio::time::timeout(RUN_DRAIN, drain).await.is_err() {
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         // Uncommitted attempts remain dispatched and recover as unknown, never
         // queued. Do not wait unboundedly on a failed store during shutdown.
     }
-    if tokio::time::timeout(Duration::from_secs(2), &mut mail_worker)
+    if tokio::time::timeout(MAIL_DRAIN, &mut mail_worker)
         .await
         .is_err()
     {

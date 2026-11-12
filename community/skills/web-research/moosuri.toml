@@ -1,0 +1,7 @@
+# Proposed bundled-recipe metadata; not a generic installer contract.
+# web_search and browser_read are conditional optional tools; check admitted definitions.
+format_version = 1
+version = "1.0.0"
+mode = "instructions"
+license = "Apache-2.0"
+capabilities = ["web_read", "decimal_calculate"]

@@ -49,6 +49,24 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
         description: "Compare alternatives using saved evidence and exact arithmetic when useful.",
         instructions: include_str!("../../../community/skills/evidence-comparison/SKILL.md"),
     },
+    BundledSkill {
+        id: "web-research",
+        revision: "1.0.0",
+        description: "Research public options with actual sources, date checks and exact supported cost totals.",
+        instructions: include_str!("../../../community/skills/web-research/SKILL.md"),
+    },
+    BundledSkill {
+        id: "inbox-briefing",
+        revision: "1.0.0",
+        description: "Brief bounded personal Gmail results into priorities, deadlines and next actions.",
+        instructions: include_str!("../../../community/skills/inbox-briefing/SKILL.md"),
+    },
+    BundledSkill {
+        id: "mail-reply",
+        revision: "1.0.0",
+        description: "Read the correct Gmail conversation and prepare a real local reply draft for mandatory final human approval.",
+        instructions: include_str!("../../../community/skills/mail-reply/SKILL.md"),
+    },
 ];
 
 #[derive(Clone, Serialize, Deserialize)]

@@ -1,0 +1,25 @@
+schema: spec-driven
+
+context: |
+  Read README.md, docs/status.md and CONTRIBUTING.md. Personal agent instructions are local and ignored.
+  The repository contains plans and a verifier; the assistant runtime is not implemented.
+  Rust backend/agent/CLI, React/TypeScript web, SQLite by default; Linux deployment.
+  Preserve existing services, collectors, cron, databases and unrelated user edits.
+  Use synthetic data; never put credentials, private conversations or vault plaintext in artifacts.
+  Existing test names/counts are historical evidence, not a porting backlog.
+  Community content is shared through GitHub and discovered in existing suggestion/capability cards.
+  Reuse scoped credential bindings automatically; secrets stay out of model context.
+  Do not add repeated approval gates to already-authorized implementation work.
+
+rules:
+  proposal:
+    - Link affected R/F IDs and explain observable behavior, scope and compatibility.
+    - Distinguish planned product capabilities from implemented repository tooling.
+  specs:
+    - Include success, consequential failure and user-isolation scenarios where applicable.
+    - Use SHALL or MUST and observable outcomes, not implementation-only assertions.
+  design:
+    - Record material data, credential, migration and effect-recovery boundaries concisely.
+  tasks:
+    - Every implementation task must name its useful verification evidence.
+    - Do not tick tests or runtime tasks merely because a plan or scaffold exists.

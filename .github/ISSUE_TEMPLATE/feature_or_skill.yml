@@ -1,0 +1,15 @@
+name: Feature or community skill
+description: Propose a useful assistant behavior or shareable recipe.
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What should the user be able to do?
+      description: Give a concrete request and the useful outcome, including a failure or missing-input case.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Existing tools, connections and references
+      description: For skills, include public source/license and synthetic examples. No personal traces or credentials.

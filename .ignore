@@ -1,0 +1,14 @@
+target/
+dist/
+private/
+runtime/
+data/
+logs/
+backups/
+**/node_modules/
+**/playwright-report/
+**/test-results/
+/web/dist/
+
+# Historical evidence remains linked, but is excluded from broad searches.
+/docs/reviews/

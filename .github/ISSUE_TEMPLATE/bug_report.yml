@@ -1,0 +1,20 @@
+name: Bug report
+description: Report a reproducible issue using sanitized or synthetic data.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private messages or vault files. Use SECURITY.md for vulnerabilities.
+  - type: input
+    id: version
+    attributes:
+      label: Version and environment
+      description: Release/commit, operating system and relevant browser/provider type. No keys.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps, expected result and actual result
+      description: Prefer a small synthetic example. Include sanitized error codes and what failed.
+    validations:
+      required: true

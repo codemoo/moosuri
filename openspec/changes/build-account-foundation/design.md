@@ -1,0 +1,15 @@
+## Boundaries
+
+Use a bounded SQLite writer actor and lifetime filesystem lock. All personal repositories require a session-derived context and recheck its current account/session generation at the write/read boundary. An administrator cannot bypass tenant predicates. Argon2 runs outside the writer and async executor under a concurrency bound.
+
+Session tokens are random and only digests are stored. Temporary passwords expire after 24 hours and issue a restricted session; password replacement and session rotation are atomic. An opaque fsynced epoch journal prevents a password-change crash gap from resurrecting prior authority. Unsupported restore/recovery behavior stays unavailable.
+
+The server binds loopback by default. Production requires an exact HTTPS origin and a TLS reverse proxy; explicitly selected loopback HTTP is only for local development. State-changing browser requests require that exact Origin. Session cookies are HttpOnly/SameSite and Secure outside local development. Full sessions have a 30-day server-enforced idle timeout, renewed on authenticated activity; the browser locator cookie has a 400-day upper bound. GET and logout responses never set cookies. Logout revokes the supplied server session; its remaining unusable locator is replaced on the next login. A late read/logout response therefore cannot overwrite a later account login. Temporary sessions still expire with their 24-hour credential. No proxy header silently changes identity. Login attempt buckets combine client IP and normalized email digest, so a shared NAT/proxy cannot lock every account. A configured loopback proxy may supply one parsed IP in an explicitly selected header; missing, chained or untrusted values fail closed. The proxy must overwrite that header, not append client-supplied text.
+
+The React client keeps credentials and personal data out of persistent browser storage, cancels requests and checks account generations on transition. Network errors do not erase valid sessions; 401 clears authenticated state. Private requests also assert the expected account ID; the server compares it with the cookie-derived context and never treats the header as authority. Cross-tab auth notifications invalidate stale workspaces. Login/password/logout actions are serialized within each tab; cross-tab account assertions and cookie-free reads/logout preserve authority across response reordering. Built assets are public shell only; no service worker caches private API data.
+
+## Delivery and limits
+
+The CLI receives passwords through a hidden controlling-terminal prompt or a restricted file, never a password argument. Generated temporary secrets appear once on the controlling terminal. New public code uses MIT OR Apache-2.0. Source audit files remain immutable reference evidence.
+
+This slice has no working LLM, source connector, media processor, notification, vault, durable agent run or restore command. Empty conversation management is real; the composer must show connection unavailability without inventing responses. Google invitation delivery comes later; current invitations are locally handed out credentials.

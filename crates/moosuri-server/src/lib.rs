@@ -1,0 +1,465 @@
+//! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
+use axum::{
+    Json, Router,
+    extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{delete, get, post},
+};
+use moosuri_core::{ApiError, SessionView, SystemStatus, ThreadsResponse, UsersResponse};
+use moosuri_store::{Store, StoreError, UserContext};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{HashMap, VecDeque},
+    net::{IpAddr, SocketAddr},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+const COOKIE: &str = "moosuri_session";
+// Database authorization expires after 30 idle days. The longer-lived locator cookie
+// allows sliding activity without stale GET responses overwriting a new account cookie.
+const COOKIE_MAX_AGE: u64 = 400 * 24 * 60 * 60;
+
+#[derive(Clone)]
+pub struct ServerConfig {
+    origin: String,
+    authority: String,
+    secure: bool,
+    trusted_proxy: Option<(IpAddr, header::HeaderName)>,
+}
+impl ServerConfig {
+    pub fn new(origin: &str, allow_http_loopback: bool) -> Result<Self, &'static str> {
+        let parsed = url::Url::parse(origin).map_err(|_| "invalid_origin")?;
+        if !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || parsed.path() != "/"
+            || parsed.host_str().is_none()
+        {
+            return Err("invalid_origin");
+        }
+        let local = match parsed.host() {
+            Some(url::Host::Domain("localhost")) => true,
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            _ => false,
+        };
+        let secure = parsed.scheme() == "https";
+        if !(secure || parsed.scheme() == "http" && allow_http_loopback && local) {
+            return Err("https_origin_required");
+        }
+        let canonical = parsed.origin().ascii_serialization();
+        let authority = canonical
+            .split_once("://")
+            .ok_or("invalid_origin")?
+            .1
+            .to_owned();
+        Ok(Self {
+            origin: canonical,
+            authority,
+            secure,
+            trusted_proxy: None,
+        })
+    }
+    pub fn with_trusted_proxy(
+        mut self,
+        peer: IpAddr,
+        client_header: &str,
+    ) -> Result<Self, &'static str> {
+        if !peer.is_loopback() || !["x-real-ip", "x-forwarded-for"].contains(&client_header) {
+            return Err("invalid_trusted_proxy");
+        }
+        self.trusted_proxy = Some((
+            peer,
+            header::HeaderName::from_bytes(client_header.as_bytes())
+                .map_err(|_| "invalid_client_ip_header")?,
+        ));
+        Ok(self)
+    }
+}
+
+type LoginBuckets = HashMap<(IpAddr, [u8; 32]), VecDeque<Instant>>;
+#[derive(Clone)]
+struct AppState {
+    store: Store,
+    config: ServerConfig,
+    logins: Arc<Mutex<LoginBuckets>>,
+}
+
+pub fn router(store: Store, config: ServerConfig) -> Router {
+    let state = AppState {
+        store,
+        config,
+        logins: Arc::new(Mutex::new(HashMap::new())),
+    };
+    Router::new()
+        .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
+        .route("/health/ready", get(ready))
+        .route("/api/v1/system", get(system))
+        .route("/api/v1/auth/login", post(login))
+        .route("/api/v1/auth/session", get(session))
+        .route("/api/v1/auth/password", post(change_password))
+        .route("/api/v1/auth/logout", post(logout))
+        .route("/api/v1/admin/users", get(users).post(create_user))
+        .route("/api/v1/threads", get(threads).post(create_thread))
+        .route("/api/v1/threads/{id}", delete(delete_thread))
+        .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })
+        .layer(DefaultBodyLimit::max(16 * 1024))
+        .layer(middleware::from_fn_with_state(state.clone(), boundary))
+        .with_state(state)
+}
+
+async fn boundary(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok());
+    if host != Some(state.config.authority.as_str()) {
+        return failure(StatusCode::MISDIRECTED_REQUEST, "invalid_host");
+    }
+    if !matches!(
+        *request.method(),
+        Method::GET | Method::HEAD | Method::OPTIONS
+    ) {
+        let origin = request
+            .headers()
+            .get(header::ORIGIN)
+            .and_then(|h| h.to_str().ok());
+        if origin != Some(state.config.origin.as_str()) {
+            return failure(StatusCode::FORBIDDEN, "invalid_origin");
+        }
+    }
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+    );
+    response
+}
+
+fn failure(status: StatusCode, code: &str) -> Response {
+    (
+        status,
+        Json(ApiError {
+            code: code.to_owned(),
+        }),
+    )
+        .into_response()
+}
+struct HttpError(StoreError);
+impl From<StoreError> for HttpError {
+    fn from(error: StoreError) -> Self {
+        Self(error)
+    }
+}
+impl IntoResponse for HttpError {
+    fn into_response(self) -> Response {
+        let (status, code) = match self.0 {
+            StoreError::InvalidInput => (StatusCode::BAD_REQUEST, "invalid_input"),
+            StoreError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            StoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            StoreError::Conflict | StoreError::AlreadyInitialized => {
+                (StatusCode::CONFLICT, "conflict")
+            }
+            StoreError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            StoreError::Busy => (StatusCode::SERVICE_UNAVAILABLE, "busy"),
+            StoreError::Unavailable | StoreError::Corrupt => {
+                (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+            }
+        };
+        failure(status, code)
+    }
+}
+
+type HttpResult = Result<Response, HttpError>;
+fn cookie_token(headers: &HeaderMap) -> Result<String, StoreError> {
+    let mut found = None;
+    for value in headers.get_all(header::COOKIE) {
+        let value = value.to_str().map_err(|_| StoreError::Unauthorized)?;
+        for item in value.split(';') {
+            let Some((name, token)) = item.trim().split_once('=') else {
+                continue;
+            };
+            if name != COOKIE {
+                continue;
+            }
+            if found.is_some()
+                || token.len() < 32
+                || token.len() > 128
+                || !token
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            {
+                return Err(StoreError::Unauthorized);
+            }
+            found = Some(token.to_owned());
+        }
+    }
+    found.ok_or(StoreError::Unauthorized)
+}
+async fn current(state: &AppState, headers: &HeaderMap) -> Result<UserContext, HttpError> {
+    let user = state.store.authenticate(cookie_token(headers)?).await?;
+    expected_account(headers, &user)?;
+    Ok(user)
+}
+fn expected_account(headers: &HeaderMap, user: &UserContext) -> Result<(), StoreError> {
+    if headers
+        .get("x-moosuri-account")
+        .and_then(|h| h.to_str().ok())
+        != Some(user.account().id.as_str())
+    {
+        return Err(StoreError::Unauthorized);
+    }
+    Ok(())
+}
+fn session_view(user: &UserContext) -> SessionView {
+    SessionView {
+        user: user.account().clone(),
+        password_change_required: user.password_change_required(),
+    }
+}
+fn session_response(user: &UserContext, token: &str, secure: bool) -> Response {
+    let mut result = Json(session_view(user)).into_response();
+    let max_age = if user.password_change_required() {
+        24 * 60 * 60
+    } else {
+        COOKIE_MAX_AGE
+    };
+    set_cookie(&mut result, token, secure, max_age);
+    result
+}
+fn set_cookie(response: &mut Response, token: &str, secure: bool, max_age: u64) {
+    let suffix = if secure { "; Secure" } else { "" };
+    // Tokens are generated by Store; HeaderValue rejects control characters.
+    let value =
+        format!("{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{suffix}");
+    if let Ok(value) = HeaderValue::from_str(&value) {
+        response.headers_mut().insert(header::SET_COOKIE, value);
+    }
+}
+
+async fn ready(State(state): State<AppState>) -> HttpResult {
+    if state.store.initialized().await? {
+        Ok(StatusCode::NO_CONTENT.into_response())
+    } else {
+        Ok(failure(StatusCode::SERVICE_UNAVAILABLE, "setup_required"))
+    }
+}
+async fn system(State(state): State<AppState>) -> HttpResult {
+    Ok(Json(SystemStatus {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        initialized: state.store.initialized().await?,
+        stage: "account-foundation".to_owned(),
+    })
+    .into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoginRequest {
+    email: String,
+    password: String,
+}
+async fn login(
+    State(state): State<AppState>,
+    peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
+    headers: HeaderMap,
+    Json(input): Json<LoginRequest>,
+) -> HttpResult {
+    let peer = peer.ok().map(|p| p.0.ip());
+    let peer_ip = peer.unwrap_or(IpAddr::from([127, 0, 0, 1]));
+    let ip = if let Some((trusted_peer, client_header)) = &state.config.trusted_proxy {
+        if peer != Some(*trusted_peer) {
+            return Ok(failure(StatusCode::BAD_REQUEST, "untrusted_proxy"));
+        }
+        let values: Vec<_> = headers.get_all(client_header).iter().collect();
+        let parsed = if values.len() == 1 {
+            values[0]
+                .to_str()
+                .ok()
+                .and_then(|v| v.trim().parse::<IpAddr>().ok())
+        } else {
+            None
+        };
+        let Some(ip) = parsed else {
+            return Ok(failure(StatusCode::BAD_REQUEST, "invalid_client_ip"));
+        };
+        ip
+    } else {
+        peer_ip
+    };
+    // A shared NAT/proxy peer cannot lock every account with one small attempt bucket.
+    let email_hash: [u8; 32] =
+        Sha256::digest(input.email.trim().to_ascii_lowercase().as_bytes()).into();
+    let key = (ip, email_hash);
+    let now = Instant::now();
+    let accepted = {
+        let mut limits = state.logins.lock().map_err(|_| StoreError::Unavailable)?;
+        limits.retain(|_, history| {
+            while history
+                .front()
+                .is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(300))
+            {
+                history.pop_front();
+            }
+            !history.is_empty()
+        });
+        if limits.len() >= 4096 && !limits.contains_key(&key) {
+            // Bounded memory without denying every unseen legitimate account.
+            if let Some(oldest) = limits
+                .iter()
+                .min_by_key(|(_, history)| history.back())
+                .map(|(key, _)| *key)
+            {
+                limits.remove(&oldest);
+            }
+        }
+        {
+            let history = limits.entry(key).or_default();
+            if history.len() >= 20 {
+                false
+            } else {
+                history.push_back(now);
+                true
+            }
+        }
+    };
+    if !accepted {
+        let mut response = failure(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from_static("300"));
+        return Ok(response);
+    }
+    let result = state.store.login(input.email, input.password).await?;
+    Ok(session_response(
+        &result.user,
+        &result.token,
+        state.config.secure,
+    ))
+}
+async fn session(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let token = cookie_token(&headers)?;
+    let user = state.store.authenticate(token.clone()).await?;
+    // Read responses never set cookies: a delayed response from A must not replace B's login.
+    Ok(Json(session_view(&user)).into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasswordRequest {
+    password: String,
+}
+async fn change_password(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<PasswordRequest>,
+) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    let result = state.store.change_password(&user, input.password).await?;
+    Ok(session_response(
+        &result.user,
+        &result.token,
+        state.config.secure,
+    ))
+}
+async fn logout(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
+    // Revoke the supplied session, but never send Set-Cookie: a late logout
+    // response from another tab must not erase a more recent login cookie.
+    match cookie_token(&headers) {
+        Ok(token) => match state.store.authenticate(token).await {
+            Ok(user) => {
+                expected_account(&headers, &user)?;
+                state.store.logout(&user).await?;
+            }
+            Err(StoreError::Unauthorized) => (),
+            Err(error) => return Err(error.into()),
+        },
+        Err(StoreError::Unauthorized) => (),
+        Err(error) => return Err(error.into()),
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+async fn users(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    Ok(Json(UsersResponse {
+        users: state.store.list_users(&user).await?,
+    })
+    .into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateUserRequest {
+    name: String,
+    email: String,
+}
+#[derive(Serialize)]
+struct InvitationResponse {
+    user: moosuri_core::AccountSummary,
+    temporary_password: String,
+}
+async fn create_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<CreateUserRequest>,
+) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    let result = state
+        .store
+        .create_user(&user, input.name, input.email)
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(InvitationResponse {
+            user: result.user,
+            temporary_password: result.temporary_password,
+        }),
+    )
+        .into_response())
+}
+async fn threads(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    Ok(Json(ThreadsResponse {
+        threads: state.store.list_threads(&user).await?,
+    })
+    .into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateThreadRequest {
+    title: String,
+}
+async fn create_thread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<CreateThreadRequest>,
+) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(state.store.create_thread(&user, input.title).await?),
+    )
+        .into_response())
+}
+async fn delete_thread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    state.store.delete_thread(&user, id).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}

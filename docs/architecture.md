@@ -1,6 +1,6 @@
 # 구현 설계
 
-Rust 서버·에이전트·CLI, React/TypeScript 웹, SQLite가 최종 결정이다. 아래 구조는 구현 목표다. 사용자 지시의 추적은 [requirements](requirements.md), 개별 동작은 [features](features.md), 근거는 [references](references.md)에 둔다.
+Rust 서버·에이전트·CLI, React/TypeScript 웹, SQLite가 최종 결정이다. 아래 구조는 최종 구현 목표다. 실행 가능한 account/store/server/CLI와 React의 현재 범위는 [개발 안내](development.md)에 둔다. 사용자 지시의 추적은 [requirements](requirements.md), 개별 동작은 [features](features.md), 근거는 [references](references.md)에 둔다.
 
 ## 언어와 배포 경계
 

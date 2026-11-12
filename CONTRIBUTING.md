@@ -1,6 +1,6 @@
 # Contributing to moosuri
 
-Start with [README](README.md) and [current status](docs/status.md). This repository currently contains a plan and its verifier. The assistant, installer, React apps and community skill manager are not implemented yet. Do not report proposed checks as passing product tests.
+Start with [README](README.md) and [current status](docs/status.md). The account/API/CLI and React foundation is implemented; agent/model execution, vault and community skill manager remain planned. See [development](docs/development.md) for the exact runnable boundary. Do not report proposed checks as passing product tests.
 
 ## A small contribution path
 
@@ -41,12 +41,18 @@ Currently runnable:
 
 ```sh
 cargo fmt --all --check
-cargo check --locked --all-targets
+npm ci --ignore-scripts --prefix web
+npm run typecheck --prefix web
+npm test --prefix web
+npm run build --prefix web
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo run --locked -p moosuri -- export-types | cmp - web/shared/api-types.ts
 cargo run --locked -p xtask -- verify-plan
 OPENSPEC_TELEMETRY=0 tools/openspec/node_modules/.bin/openspec validate --all --strict --no-interactive
 ```
 
-Follow [testing](docs/testing.md). State the defect a test would catch, keep the oracle independent, and consolidate duplicate coverage. Existing test counts/source names are evidence, not a porting backlog. Future product and React commands become required only when real implementations exist. A green syntax/plan check is not a product-quality claim.
+Follow [testing](docs/testing.md). State the defect a test would catch, keep the oracle independent, and consolidate duplicate coverage. Existing test counts/source names are evidence, not a porting backlog. Build React before the Rust installation test so its public assets are embedded. Commands for later capabilities become required when their implementations exist. A green syntax/plan check is not a product-quality claim.
 
 GitHub Actions and automatic CI are disabled during initial development at the owner's request. Run the commands above locally and include their results with each work unit. The inactive workflow template is in `tools/ci/check.yml.disabled`; do not enable it or add a live workflow without a later explicit request. Local coding-agent instructions (`AGENTS.md`, `CLAUDE.md` and personal editor directories) are ignored and are not contribution prerequisites. Public OpenSpec and community skill files stay versioned.
 

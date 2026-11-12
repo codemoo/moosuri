@@ -2,7 +2,7 @@ schema: spec-driven
 
 context: |
   Read README.md, docs/status.md and CONTRIBUTING.md. Personal agent instructions are local and ignored.
-  The repository contains plans and a verifier; the assistant runtime is not implemented.
+  The repository contains plans and an executable account/API/CLI/React foundation; model/agent/vault runtime remains unimplemented.
   Rust backend/agent/CLI, React/TypeScript web, SQLite by default; Linux deployment.
   Preserve existing services, collectors, cron, databases and unrelated user edits.
   Use synthetic data; never put credentials, private conversations or vault plaintext in artifacts.

@@ -42,10 +42,10 @@ fn search_args(text: &str) -> Value {
 fn read_args(id: &str, revision: i64) -> Value {
     json!({"id":id,"revision":revision,"start_byte":0,"max_bytes":4096})
 }
-fn tool_call(index: usize, id: String, name: &str, args: Value) -> Value {
+pub(super) fn tool_call(index: usize, id: String, name: &str, args: Value) -> Value {
     json!({"index":index,"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}})
 }
-fn result_values(body: &Value) -> Vec<Value> {
+pub(super) fn result_values(body: &Value) -> Vec<Value> {
     body["messages"]
         .as_array()
         .unwrap()
@@ -94,7 +94,9 @@ async fn scripted_response(
         BTreeSet::from([
             "knowledge_search",
             "knowledge_read_source",
-            "knowledge_read_memory"
+            "knowledge_read_memory",
+            "skill_read",
+            "decimal_calculate"
         ])
     );
     state.requests.lock().await.push(body.clone());
@@ -315,7 +317,7 @@ async fn scripted_response(
         .body(Body::from_stream(stream))
         .unwrap()
 }
-async fn tool_configured(base: &str) -> (tempfile::TempDir, Store, UserContext, String) {
+pub(super) async fn tool_configured(base: &str) -> (tempfile::TempDir, Store, UserContext, String) {
     let value = configured(base).await;
     let provider = value
         .1
@@ -337,7 +339,12 @@ async fn tool_configured(base: &str) -> (tempfile::TempDir, Store, UserContext, 
         .unwrap();
     value
 }
-async fn seed(store: &Store, user: &UserContext, title: &str, texts: Vec<String>) -> Vec<String> {
+pub(super) async fn seed(
+    store: &Store,
+    user: &UserContext,
+    title: &str,
+    texts: Vec<String>,
+) -> Vec<String> {
     let collection = store
         .create_collection(
             user,

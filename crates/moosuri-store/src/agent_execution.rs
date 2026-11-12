@@ -8,6 +8,9 @@ use moosuri_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod arithmetic;
+pub(crate) mod skills;
+
 const CHECKPOINT_LIMIT: usize = 256 * 1024;
 pub const TOOL_INPUT_LIMIT: usize = 4096;
 pub const TOOL_RESULT_LIMIT: usize = 16 * 1024;
@@ -35,6 +38,12 @@ pub enum KnowledgeToolInput {
         id: String,
         revision: i64,
     },
+    SkillRead {
+        pin: moosuri_core::SkillPin,
+    },
+    DecimalCalculate {
+        calculation: moosuri_core::DecimalCalculation,
+    },
     InvalidArguments,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -58,6 +67,8 @@ pub enum ToolReadError {
     NotFound,
     InvalidInput,
     TooLargeNarrowRead,
+    Unavailable,
+    ArithmeticOverflow,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -65,6 +76,8 @@ pub enum KnowledgeToolResult {
     Search(KnowledgeSearch),
     Source(SourceExcerpt),
     Memory(MemoryDocument),
+    Skill(moosuri_core::SkillDocument),
+    Decimal { exact: String },
     Error(ToolReadError),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +108,7 @@ pub struct AgentClaim {
     pub model: moosuri_core::ModelChoice,
     pub messages: Vec<ContextMessage>,
     pub context: AgentContext,
+    pub tool_profile: Option<moosuri_core::RunToolProfile>,
 }
 /// One model dispatch capability. Its receipt nonce also permits late accounting,
 /// even after the user deleted the content. It cannot be constructed by callers.
@@ -403,6 +417,21 @@ fn read_tool(
     input: &KnowledgeToolInput,
 ) -> Result<KnowledgeToolResult> {
     let read = match input {
+        KnowledgeToolInput::SkillRead { pin } => Ok(skills::read(run, pin)),
+        KnowledgeToolInput::DecimalCalculate { calculation } => {
+            if run
+                .tool_profile
+                .as_ref()
+                .is_none_or(|profile| profile.version != moosuri_core::BUILTIN_TOOLSET_VERSION)
+            {
+                Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
+            } else {
+                Ok(match arithmetic::calculate(calculation) {
+                    Ok(exact) => KnowledgeToolResult::Decimal { exact },
+                    Err(error) => KnowledgeToolResult::Error(error),
+                })
+            }
+        }
         KnowledgeToolInput::InvalidArguments => {
             Ok(KnowledgeToolResult::Error(ToolReadError::InvalidInput))
         }
@@ -520,7 +549,9 @@ fn read_tool(
                 }
             }
         }
-        KnowledgeToolResult::Error(_) => {}
+        KnowledgeToolResult::Error(_)
+        | KnowledgeToolResult::Skill(_)
+        | KnowledgeToolResult::Decimal { .. } => {}
     }
     Ok(result)
 }
@@ -554,7 +585,7 @@ impl Store {
                 let lease=RunLease{tenant:tenant.clone(),run:id.clone(),attempt:run.attempt,nonce:n,epoch:run.epoch};
                 let context=context(&tx,&tenant,&id)?;
                 tx.commit()?;
-                return Ok(Some(AgentClaim{lease,binding,model:run.model,messages,context}));
+                return Ok(Some(AgentClaim{lease,binding,model:run.model,messages,context,tool_profile:run.tool_profile}));
             }
             tx.commit()?;Ok(None)
         }).await

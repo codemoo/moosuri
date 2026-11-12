@@ -18,6 +18,9 @@ accounts, data, infrastructure settings and experimental runtimes are not copied
 - [구체적 검증 예제](docs/test-examples.md)와 [시나리오 표](audit/evaluation-scenarios.tsv)
 - [공동 개발](CONTRIBUTING.md)과 [OpenSpec](openspec/README.md)
 - [커뮤니티 스킬](docs/community-skills.md): GitHub 공유와 기존 제안 카드
+- [업무 스킬](docs/task-skills.md): 자료 브리핑·회의 준비·근거 비교와 정확한 계산
+- [개인 비서 업무 사례](docs/research/personal-agent-tasks-2026-11-13.md): Muse 중심의 공개 근거와 구현 범위
+- [웹·이메일 실행 계약](docs/external-work.md): 브라우저 격리·개인 연결·발송 전 최종 승인
 - [credential 자동 사용](docs/credential-use.md): 볼트 연결·재사용·잠금/철회 처리
 - [기능별 이전표](docs/features.md): 유지할 동작과 검증 기준
 - [이전 순서](docs/migration.md): 코드·데이터·운영 전환
@@ -29,7 +32,7 @@ This repository contains the reviewed plan and source audit, a Rust account/API/
 
 GitHub Actions/CI are disabled during initial development. Contributors run relevant checks locally and commit/push each coherent work unit. Personal coding-agent instructions are ignored; shared contracts live in OpenSpec and CONTRIBUTING.
 
-Build and run the development preview with [the quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate conversations. Administrators can configure shared connections, discover and verify models, and users can select model/effort in [model settings](docs/provider-settings.md). [Text chat](docs/chat.md) supports streaming, cancellation, retry and reconnect. [Private knowledge](docs/knowledge.md) supports text sources, exact evidence, editable memories and scoped deletion. [The knowledge agent](docs/knowledge-agent.md) connects verified read tools and revocable source references to chat. [Conversational memory](docs/conversational-memory.md) adds explicit remember/correct/forget requests. Vault and external work remain unavailable.
+Build and run the development preview with [the quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate conversations. Administrators can configure shared connections, discover and verify models, and users can select model/effort in [model settings](docs/provider-settings.md). [Text chat](docs/chat.md) supports streaming, cancellation, retry and reconnect. [Private knowledge](docs/knowledge.md) supports text sources, exact evidence, editable memories and scoped deletion. [The knowledge agent](docs/knowledge-agent.md) connects verified read tools and revocable source references to chat. [Conversational memory](docs/conversational-memory.md) adds explicit remember/correct/forget requests. [Bundled task skills](docs/task-skills.md) add briefing, meeting preparation and comparisons using saved evidence and exact decimal arithmetic. Vault and external work remain unavailable.
 
 [Live ChatGPT evaluation](docs/reviews/2026-11-13-live-chatgpt-quality.md) used the existing official login with `gpt-6.1-terra` / `high`. The latest repeated development corpus matched36/36 live intent labels; end-to-end scenarios passed7/10, exposing a remaining memory-target resolution defect. These are limited development results, not a shipped subscription connection or an overall assistant quality score.
 

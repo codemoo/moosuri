@@ -1,0 +1,15 @@
+{
+  "provenance": "Original synthetic examples; no personal traces.",
+  "examples": [
+    {
+      "kind": "normal",
+      "request": "저장한 합성 프로젝트 노트로 회의 안건과 질문을 준비해 줘.",
+      "expected": "Read actual current-user evidence and deliver the requested grounded result in chat."
+    },
+    {
+      "kind": "missing_capability",
+      "request": "내 실시간 메일과 일정도 확인하고 결과를 보내 줘.",
+      "expected": "Explain unavailable live mail/calendar/send access; do not claim execution. Ask only for essential missing material."
+    }
+  ]
+}

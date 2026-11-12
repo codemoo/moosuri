@@ -450,6 +450,10 @@ fn typed_input(
             id: v.id,
             revision: v.revision,
         },
+        Invocation::SkillRead(pin) => KnowledgeToolInput::SkillRead { pin },
+        Invocation::DecimalCalculate(calculation) => {
+            KnowledgeToolInput::DecimalCalculate { calculation }
+        }
         Invocation::InvalidArguments => KnowledgeToolInput::InvalidArguments,
     };
     // Even well-formed JSON can exceed the private slot bound. Record a small
@@ -588,6 +592,7 @@ pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals)
         model,
         messages,
         mut context,
+        tool_profile,
     } = claimed;
     if signals.stopping().is_cancelled() {
         finish(
@@ -621,7 +626,7 @@ pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals)
     };
     let mut messages = project(messages, protocol == Protocol::Responses);
     if model.function_tools {
-        messages[0].text = knowledge_tools::SYSTEM.into();
+        messages[0].text = knowledge_tools::system(tool_profile.as_ref());
     }
     let request = TextRequest {
         model: binding.model.clone(),
@@ -684,7 +689,7 @@ pub(crate) async fn execute(store: Store, claimed: AgentClaim, signals: Signals)
         };
         context = next;
     }
-    let definitions = knowledge_tools::definitions();
+    let definitions = knowledge_tools::definitions(tool_profile.as_ref());
     let tool_capability = ToolCapabilities {
         function_tools: true,
     };

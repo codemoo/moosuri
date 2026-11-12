@@ -22,8 +22,11 @@ deletion through the original receipt. No refund or remote cancellation is impli
 Canonical Responses phase is preserved. Other protocols omit commentary only in
 the wire projection and strip final phase metadata without changing stored history.
 Unknown phase is not inferred to be final. Verified tool-capable models can search/read
-account-scoped sources and explicit memories. Memory writes, external actions and
-attachments remain unavailable. Exact reported model identity and a successful transport terminal are
+account-scoped sources and explicit memories. Explicit conversational remember/correct/forget
+requests use the separate sealed memory-command path. Bundled task procedures are read on
+demand through `skill_read`; `decimal_calculate` provides checked decimal-string sums,
+differences and products. External actions and attachments remain unavailable.
+Exact reported model identity and a successful transport terminal are
 required for completion. There is no automatic retry, model change or fallback.
 
 `model_client` provides the same validated hosted/local constructor to the runtime
@@ -40,6 +43,11 @@ The [knowledge-agent contract](../../docs/knowledge-agent.md) describes persiste
 per-step continuations and typed slots,6-model/12-tool/120-second cumulative limits,
 actual/inherited evidence dependencies and revocation. Tests also cover multi-round
 retrieval, argument repair, tenant denial, inherited purge and retry/tool exhaustion.
+
+New runs pin the bundled recipe version/digest in private execution state. Older runs keep
+their admitted tool vocabulary. Recipe reads and calculations share the same cumulative
+budget, durable slots, retry rules and dependency purge as knowledge reads. They do not
+add a second task classifier or reset memory-planning budgets. See [task skills](../../docs/task-skills.md).
 
 ```sh
 cargo test --locked -p moosuri-agent

@@ -1,0 +1,6 @@
+# Proposed bundled-recipe metadata; not a generic installer contract.
+format_version = 1
+version = "1.0.0"
+mode = "instructions"
+license = "Apache-2.0"
+capabilities = ["knowledge_search", "knowledge_read_source", "knowledge_read_memory"]

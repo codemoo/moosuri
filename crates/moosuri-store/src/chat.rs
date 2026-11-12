@@ -98,6 +98,7 @@ pub(super) struct Run {
     pub(super) sequence: i64,
     pub(super) text: String,
     pub(super) model: ModelChoice,
+    pub(super) tool_profile: Option<moosuri_core::RunToolProfile>,
     pub(super) session: [u8; 32],
     pub(super) epoch: i64,
     pub(super) attempt: i32,
@@ -105,6 +106,13 @@ pub(super) struct Run {
     pub(super) version: i64,
     pub(super) error: Option<String>,
     pub(super) created: i64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredRunChoice {
+    #[serde(flatten)]
+    model: ModelChoice,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agent_profile: Option<moosuri_core::RunToolProfile>,
 }
 fn json<T: serde::Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|_| StoreError::Corrupt)
@@ -171,6 +179,7 @@ fn run_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunRow> {
 }
 pub(super) fn load_run(conn: &Connection, tenant: &str, id: &str) -> Result<Run> {
     let r=conn.query_row("SELECT tenant_id,id,account_id,thread_id,request_id,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,error,created_at FROM chat_runs WHERE tenant_id=?1 AND id=?2",params![tenant,id],run_row).optional()?.ok_or(StoreError::NotFound)?;
+    let choice: StoredRunChoice = parse(&r.7)?;
     Ok(Run {
         tenant: r.0,
         id: r.1,
@@ -179,7 +188,8 @@ pub(super) fn load_run(conn: &Connection, tenant: &str, id: &str) -> Result<Run>
         request: r.4,
         sequence: r.5,
         text: r.6,
-        model: parse(&r.7)?,
+        model: choice.model,
+        tool_profile: choice.agent_profile,
         session: r.8.try_into().map_err(|_| StoreError::Corrupt)?,
         epoch: r.9,
         attempt: r.10,
@@ -798,7 +808,7 @@ fn submit_turn_inner(
         }
     }
     let order = next_order(&tx)?;
-    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&choice)?,user.digest.as_slice(),user.epoch,now()?,order])?;
+    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(agent_execution::skills::profile), model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
     let run = load_run(&tx, &user.tenant.0, &id)?;
     let result = turn(&tx, &run)?;
     emit(

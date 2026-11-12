@@ -1797,3 +1797,5 @@ async fn browse_cursor_query_mistake_persists_typed_error_and_can_be_repaired() 
     assert_eq!(completed.run.state, RunState::Completed);
     assert!(completed.run.error.is_none());
 }
+
+mod skills;

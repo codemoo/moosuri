@@ -2,8 +2,10 @@
 mod chat;
 mod knowledge;
 mod memory_command;
+mod skills;
 pub use knowledge::*;
 pub use memory_command::*;
+pub use skills::*;
 mod providers;
 pub use chat::*;
 pub use providers::*;

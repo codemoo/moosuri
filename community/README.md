@@ -1,6 +1,8 @@
 # Community recipes
 
-Contributors will submit skills to this repository; end users will find them in the assistant's **제안 / 할 수 있는 일** cards. The installer/catalog runtime is still planned. This folder currently provides authoring guidance only, not an executable package registry.
+Contributors submit skills to this repository; end users will eventually find installable skills in the assistant's **제안 / 할 수 있는 일** cards. The installer/catalog runtime and these cards are still planned. Three original bundled recipes currently run through chat: `source-briefing`, `meeting-preparation` and `evidence-comparison`. They use existing typed knowledge reads and exact decimal arithmetic; this folder is not an executable package registry.
+
+The runtime pins each bundled recipe's revision and content digest when accepting a run. The model sees a short description and reads the full procedure only when relevant. See [task skills](../docs/task-skills.md) for capabilities, limits and acceptance evidence. A manifest cannot install new tools or grant authority.
 
 Use `skills/<slug>/SKILL.md`, a small `moosuri.toml`, synthetic `examples.json`, and a redistribution LICENSE. Optional references/assets must be bounded and properly licensed. A future `moosuri skills init <slug>` command can generate the boilerplate; it is not implemented yet. Until then create the files using the sample shape in [the design](../docs/community-skills.md).
 

@@ -46,7 +46,24 @@ async fn model_round(
 ) -> axum::response::Response {
     let call = state.calls.fetch_add(1, Ordering::SeqCst);
     assert_eq!(input["model"], "knowledge-http-model");
-    assert_eq!(input["tools"].as_array().unwrap().len(), 3);
+    let tools: std::collections::BTreeSet<_> = input["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        tools,
+        [
+            "decimal_calculate",
+            "knowledge_read_memory",
+            "knowledge_read_source",
+            "knowledge_search",
+            "skill_read",
+        ]
+        .into_iter()
+        .collect()
+    );
     let results = input["messages"]
         .as_array()
         .unwrap()

@@ -19,5 +19,9 @@ zeroize = "1.8"
 fs2 = "0.4"
 libc = "0.2"
 
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+serde_json.workspace = true
+url = "2.5"
+
 [dev-dependencies]
 tempfile.workspace = true

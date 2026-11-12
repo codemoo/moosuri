@@ -2,7 +2,7 @@
 
 2026-11-12. 실제 구현·검증과 다음 작업은 이 문서가 정본이다. 기능 계약은 [features](features.md), 상세 단계는 [plan](plan.md)을 따른다.
 
-공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정 기반을 구현한 개발 프리뷰이며, 아직 대답하거나 일을 수행하는 비서는 아니다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
+공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델 설정을 구현한 개발 프리뷰이며, 아직 대답하거나 일을 수행하는 비서는 아니다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
 
 ## 구현된 첫 단위
 
@@ -41,9 +41,35 @@
 
 [상세 계약](model-transport.md)과 [검증 기록](reviews/2026-11-12-model-transport.md)을 따른다.
 
+## 세 번째 단위: 공용 모델 설정
+
+관리자 연결 화면과 사용자별 model/effort 선택을 실제 Rust API·SQLite에 연결했다.
+OpenAI·Anthropic·OpenRouter·로컬 compatible 연결을 등록하고, 모델 목록 조회와
+짧은 합성 응답 검증 후 기본값/개인 선택으로 저장한다. 목록 자체를 기능 검증으로
+취급하지 않으며, 완료·본문·응답 모델 ID까지 확인한다.
+
+- XChaCha20-Poly1305와 별도 private 설치 키로 공용 API credential을 저장한다.
+  반환 DTO에는 key 대신 configured 상태만 있다. 키 파일 유실/교체·암호문 변조는
+  fail-closed이며 설정 변경 시 이전 암호문을 논리 삭제한다. 사용자 키 볼트와 별개다.
+- 설정 revision·기본값·개인 선택을 고정하고 stale edit/probe/선택을 거절한다.
+  해제·수정한 연결을 다른 provider/default로 자동 대체하지 않는다.
+- 새 provider 저장5개·HTTP3개·catalog2개를 포함해 **Rust70개 테스트가 macOS와
+  Linux x86_64에서 통과**했다. fmt·workspace/all-target clippy도 통과했다.
+- React **29개 테스트**, TypeScript 검사·production build·생성 DTO 일치 확인.
+  Chromium에서 실제 Rust 서버의 no-key 로컬 연결→목록→검증→설치 기본값→
+  개인 선택→새로고침을 확인했다. 실제 모바일 기기 시험은 아직 아니다.
+- 저장/암호/권한/전송과 React 계정 경계를 독립 검토했다. 응답 모델 확인 누락과
+  no-key 새 연결의 잘못된 Keep 요청을 수정하고 재검토했다.
+- registry232개 dependency OSV 조회에서 알려진 advisory 응답 없음. 실서비스 키와
+  유료 모델 호출은 사용하지 않았고 CI는 계속 비활성이다.
+
+사용 방법은 [provider settings](provider-settings.md), 검증과 한계는
+[검증 기록](reviews/2026-11-12-provider-settings.md)에 둔다. 구독 인증·실제 채팅
+실행이나 전체 P0/P1/P2 완료로 표시하지 않는다.
+
 ## 아직 구현하지 않은 범위
 
-공용 provider 연결/모델·effort 설정, 메시지 저장·스트림·재시도·취소, 에이전트 하네스·도구·기억·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.
+구독 인증·개인 provider 연결, 메시지 저장·스트림·재시도·취소, 에이전트 하네스·도구·기억·평가, 예약·알림·푸시, 첨부·녹음·PWA, 수집 connector, Google/외부 작업, community 스킬, 독립 볼트·TOTP·credential broker, 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자 연결 여부만 선택 사항이다.
 
 현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 이를 해제할 operator 복구 경로와 백업/복원은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. `doctor`는 중지된 설치에만 사용한다.
 
@@ -51,7 +77,7 @@
 
 1. P0의 남은 provider capability·baseline/fixture adapter·crypto/broker 위험 검증과 독립 복구 입력을 확인한다.
 2. P1의 run/effect·dispatch·revision·사용량·복원 계약을 작은 저장 단위로 구현한다. 현재 계정 기반이 P1 전체 완료를 뜻하지 않는다.
-3. P2의 provider 설정과 두 사용자의 실제 텍스트 대화·스트림·취소·재시도·재접속 흐름을 잇는다.
+3. 완성한 provider 설정에 두 사용자의 실제 텍스트 대화·스트림·취소·재시도·재접속 흐름을 잇는다.
 4. [migration](migration.md)의 순서에 따라 자료·기억→도구·스킬→예약·연결→미디어·볼트→이전·출시로 진행한다. P0/P1/P2와 미구현 OpenSpec change를 완료 처리하지 않는다.
 
 모든 공개 소스는 새 이력과 합성 자료만 사용한다. 원본 운영 저장소·서비스·수집기·cron·DB는 보존한다. 개인 AGENTS/CLAUDE 및 editor 지침은 Git에서 제외하고 CONTRIBUTING·OpenSpec·제품 community SKILL은 공유한다.

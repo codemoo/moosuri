@@ -4,5 +4,6 @@ mod transport;
 
 pub use tokio_util::sync::CancellationToken;
 pub use transport::{
-    ModelClient, NetworkPolicy, RouterPolicy, Secret, TransportError, TransportLimits,
+    Catalog, CatalogModel, ModelClient, NetworkPolicy, RouterPolicy, Secret, TransportError,
+    TransportLimits,
 };

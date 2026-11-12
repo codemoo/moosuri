@@ -1,4 +1,4 @@
-# Account and empty-thread storage foundation
+# Account, thread and model-settings storage
 
 `Store::open(data_dir)` creates a single SQLite writer thread and a bounded
 64-command mailbox. All connections remain private. Mailbox saturation and the
@@ -51,7 +51,7 @@ off-host latest-head/backup service and is not a backup or restore implementatio
 
 ## Explicitly outside this unit
 
-There are no messages, model runs, streams, files, provider bindings, vault,
+There are no messages, model runs, streams, files, user-key vault,
 account disable/delete/reset/role-change APIs, operator recovery, backup/restore,
 independent usage ledger or restore activation. Deleting a thread deletes only
 an empty-thread row. Future personal child objects must use composite tenant
@@ -71,3 +71,25 @@ cargo clippy --locked -p moosuri-store --all-targets -- -D warnings
 The SQLite version floor is checked before opening a DB/WAL pair. This excludes
 versions affected by [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html);
 package lock/advisory lookup does not establish absence of every vulnerability.
+
+## Shared model connections
+
+Schema2 adds immutable provider configuration revisions, verified model/effort
+combinations, a pinned installation default and independent pinned user choices.
+Every operation revalidates the current session; shared settings require admin.
+Selections include an explicit provider revision. Disabled, changed or unverified
+choices fail without falling back to another connection. Lists are bounded to
+64 profiles and 128 verified combinations per current profile revision.
+
+API credentials use XChaCha20-Poly1305 with a fresh nonce and AAD binding profile
+ID, revision and configuration. The separate owner-only `provider-secrets.key`
+is authenticated against a DB marker on every open; a missing, wrong, linked or
+permissive key fails closed. Updates clear superseded ciphertext in the same
+transaction while preserving public revision metadata. This is logical deletion;
+WAL pages or old snapshots may retain encrypted bytes. It is not a secure-erase
+claim and not the user-key vault. See [provider settings](../../docs/provider-settings.md).
+
+Provider methods never perform HTTP. The server probes a synthetic stream and
+only records a verified choice while the admin session and exact revision remain
+valid. Tests cover schema1 migration, persistence, user selection isolation,
+revocation/races, ciphertext swaps/tampering, key loss and key-file restrictions.

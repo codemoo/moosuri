@@ -3,14 +3,14 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
 };
-const PASSWORD: &str = "Synthetic-test-password-2026";
-fn directory() -> tempfile::TempDir {
+pub(super) const PASSWORD: &str = "Synthetic-test-password-2026";
+pub(super) fn directory() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("moosuri-store-")
         .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
         .unwrap()
 }
-async fn admin(store: &Store) -> LoginResult {
+pub(super) async fn admin(store: &Store) -> LoginResult {
     store
         .bootstrap(
             "Synthetic Admin".into(),
@@ -25,7 +25,7 @@ async fn admin(store: &Store) -> LoginResult {
         .await
         .unwrap()
 }
-async fn member(store: &Store, admin: &UserContext, email: &str) -> LoginResult {
+pub(super) async fn member(store: &Store, admin: &UserContext, email: &str) -> LoginResult {
     let invite = store
         .create_user(admin, "Synthetic Member".into(), email.into())
         .await
@@ -41,7 +41,7 @@ async fn member(store: &Store, admin: &UserContext, email: &str) -> LoginResult 
 }
 // The global KDF limit is intentionally exercised by a race within its own test.
 // Serializing fixtures keeps unrelated tests from spending each other's two permits.
-static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(super) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[tokio::test]
 async fn tenant_scope_restriction_revocation_and_durable_reopen() {
     let _guard = TEST_LOCK.lock().await;

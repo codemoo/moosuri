@@ -1,4 +1,5 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
+mod providers;
 use axum::{
     Json, Router,
     extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
@@ -88,6 +89,7 @@ struct AppState {
     store: Store,
     config: ServerConfig,
     logins: Arc<Mutex<LoginBuckets>>,
+    probes: Arc<tokio::sync::Semaphore>,
 }
 
 pub fn router(store: Store, config: ServerConfig) -> Router {
@@ -95,6 +97,7 @@ pub fn router(store: Store, config: ServerConfig) -> Router {
         store,
         config,
         logins: Arc::new(Mutex::new(HashMap::new())),
+        probes: Arc::new(tokio::sync::Semaphore::new(2)),
     };
     Router::new()
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
@@ -105,6 +108,27 @@ pub fn router(store: Store, config: ServerConfig) -> Router {
         .route("/api/v1/auth/password", post(change_password))
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/admin/users", get(users).post(create_user))
+        .route(
+            "/api/v1/admin/providers",
+            get(providers::list).post(providers::create),
+        )
+        .route(
+            "/api/v1/admin/providers/default",
+            post(providers::set_default),
+        )
+        .route(
+            "/api/v1/admin/providers/{id}",
+            axum::routing::put(providers::update),
+        )
+        .route("/api/v1/admin/providers/{id}/probe", post(providers::probe))
+        .route(
+            "/api/v1/admin/providers/{id}/models",
+            post(providers::catalog),
+        )
+        .route(
+            "/api/v1/settings/model",
+            get(providers::settings).put(providers::set_preference),
+        )
         .route("/api/v1/threads", get(threads).post(create_thread))
         .route("/api/v1/threads/{id}", delete(delete_thread))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })

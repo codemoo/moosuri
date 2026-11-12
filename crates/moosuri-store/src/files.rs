@@ -50,6 +50,7 @@ pub(crate) fn prepare_dir(path: &Path) -> Result<PathBuf> {
     }
     // Never turn an unrelated home, source tree or system directory into private app data.
     let unfinished_names = [
+        "provider-secrets.key",
         "writer.lock",
         "assistant.sqlite",
         "auth-epochs.journal",

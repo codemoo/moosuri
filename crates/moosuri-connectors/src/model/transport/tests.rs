@@ -592,3 +592,89 @@ async fn hosted_protocols_send_correct_headers_and_explicit_routing_over_real_ht
         assert_eq!(f.count.load(Ordering::SeqCst), 1);
     }
 }
+
+#[test]
+fn catalogs_preserve_ids_and_bound_first_page_without_claiming_capability() {
+    use serde_json::json;
+    let list = parse_catalog(
+        Protocol::AnthropicMessages,
+        br#"{"data":[{"id":"claude-fixture","display_name":"Fixture"}],"has_more":true}"#,
+    )
+    .unwrap();
+    assert_eq!(list.models[0].id, "claude-fixture");
+    assert_eq!(list.models[0].name, "Fixture");
+    assert!(list.truncated);
+    let data: Vec<_> = (0..513)
+        .map(|n| json!({"id":format!("fixture-{n}")}))
+        .collect();
+    let list = parse_catalog(
+        Protocol::Responses,
+        &serde_json::to_vec(&json!({"data":data})).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(list.models.len(), 512);
+    assert_eq!(list.models[0].name, "fixture-0");
+    assert!(list.truncated);
+    let list = parse_catalog(
+        Protocol::ChatCompletions,
+        br#"{"data":[{"id":"local-fixture"},{"id":"local-fixture"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(list.models.len(), 1);
+    assert!(!list.truncated);
+    for bytes in [
+        b"{}".as_slice(),
+        br#"{"data":[{"id":"a\nb"}]}"#,
+        br#"{"data":[],"has_more":"true"}"#,
+        br#"{"error":"fixture-private-body"}"#,
+    ] {
+        let error = parse_catalog(Protocol::Responses, bytes).err().unwrap();
+        assert!(matches!(error, TransportError::InvalidCatalog));
+        assert!(!error.to_string().contains("fixture-private"));
+    }
+}
+
+#[tokio::test]
+async fn model_catalog_uses_registered_base_and_scoped_key_with_bounded_response() {
+    use axum::routing::get;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = Router::new().route(
+        "/local/v1/models",
+        get(|headers: HeaderMap| async move {
+            assert!(headers["authorization"] == "Bearer synthetic-catalog-key");
+            assert_eq!(headers["accept"], "application/json");
+            (
+                [("content-type", "application/json")],
+                r#"{"data":[{"id":"local-model"}]}"#,
+            )
+        }),
+    );
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = ModelClient::compatible(
+        &format!("http://{address}/local/v1"),
+        NetworkPolicy::LocalExact(vec![address.ip()]),
+        Some(Secret::new("synthetic-catalog-key".into()).unwrap()),
+        TextCapabilities::default(),
+    )
+    .unwrap();
+    let catalog = client.list_models(&CancellationToken::new()).await.unwrap();
+    assert_eq!(catalog.models[0].id, "local-model");
+    let client = client
+        .with_limits(TransportLimits {
+            response_bytes: 4,
+            ..TransportLimits::default()
+        })
+        .unwrap();
+    assert!(matches!(
+        client.list_models(&CancellationToken::new()).await,
+        Err(TransportError::LimitExceeded)
+    ));
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    assert!(matches!(
+        client.list_models(&cancel).await,
+        Err(TransportError::Cancelled)
+    ));
+    task.abort();
+}

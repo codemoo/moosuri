@@ -96,6 +96,8 @@ pub enum TransportError {
     LimitExceeded,
     #[error("unexpected model response content type")]
     ContentType,
+    #[error("invalid model catalog response")]
+    InvalidCatalog,
     #[error("model provider returned HTTP {status}")]
     Http {
         status: u16,
@@ -113,6 +115,15 @@ pub struct ModelClient {
     capabilities: TextCapabilities,
     router: Option<RouterPolicy>,
     limits: TransportLimits,
+}
+
+pub struct CatalogModel {
+    pub id: String,
+    pub name: String,
+}
+pub struct Catalog {
+    pub models: Vec<CatalogModel>,
+    pub truncated: bool,
 }
 
 impl ModelClient {
@@ -222,6 +233,125 @@ impl ModelClient {
         Ok(self)
     }
 
+    /// Discovery is not inference/capability verification. A single bounded page
+    /// avoids unbounded installation-time work and never follows provider URLs.
+    pub async fn list_models(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Catalog, TransportError> {
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(TransportError::Cancelled),
+            result = tokio::time::timeout(self.limits.total, self.catalog_inner()) =>
+                result.map_err(|_| TransportError::Timeout)?,
+        }
+    }
+
+    async fn catalog_inner(&self) -> Result<Catalog, TransportError> {
+        let mut endpoint = self.endpoint.clone();
+        let path = match self.protocol {
+            Protocol::Responses | Protocol::AnthropicMessages => "/v1/models".to_owned(),
+            Protocol::OpenRouterChat => "/api/v1/models/user".to_owned(),
+            Protocol::ChatCompletions => format!(
+                "{}/models",
+                endpoint
+                    .path()
+                    .strip_suffix("/chat/completions")
+                    .ok_or(TransportError::InvalidConfiguration)?
+            ),
+        };
+        endpoint.set_path(&path);
+        match self.protocol {
+            Protocol::AnthropicMessages => endpoint.set_query(Some("limit=512")),
+            Protocol::OpenRouterChat => endpoint.set_query(Some("offset=0&limit=512")),
+            _ => (),
+        }
+        let http = self.http_client(&endpoint).await?;
+        let request = self.authorize(
+            http.get(endpoint)
+                .header(header::ACCEPT, "application/json"),
+        )?;
+        let mut response = request.send().await.map_err(map_network_error)?;
+        check_status(&response)?;
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.split(';').next())
+            .map(str::trim);
+        if !content_type.is_some_and(|s| s.eq_ignore_ascii_case("application/json")) {
+            return Err(TransportError::ContentType);
+        }
+        let limit = self.limits.response_bytes.min(1024 * 1024);
+        if response.content_length().is_some_and(|n| n > limit as u64) {
+            return Err(TransportError::LimitExceeded);
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(map_network_error)? {
+            if bytes.len().saturating_add(chunk.len()) > limit {
+                return Err(TransportError::LimitExceeded);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        parse_catalog(self.protocol, &bytes)
+    }
+
+    async fn http_client(&self, endpoint: &Url) -> Result<Client, TransportError> {
+        let host = endpoint
+            .host_str()
+            .ok_or(TransportError::InvalidConfiguration)?;
+        let port = endpoint
+            .port_or_known_default()
+            .ok_or(TransportError::InvalidConfiguration)?;
+        // Resolve once, inspect every answer, and pin the complete bounded set.
+        let addresses: Vec<_> = tokio::net::lookup_host((host.trim_matches(['[', ']']), port))
+            .await
+            .map_err(|_| TransportError::Transport)?
+            .take(33)
+            .collect();
+        if addresses.is_empty()
+            || addresses.len() > 32
+            || addresses
+                .iter()
+                .any(|addr| !allowed(&self.network, addr.ip()))
+        {
+            return Err(TransportError::DestinationDenied);
+        }
+        Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .connect_timeout(self.limits.connect)
+            .read_timeout(self.limits.idle)
+            .timeout(self.limits.total)
+            .pool_max_idle_per_host(0)
+            .resolve_to_addrs(host, &addresses)
+            .build()
+            .map_err(|_| TransportError::Transport)
+    }
+
+    fn authorize(
+        &self,
+        mut call: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, TransportError> {
+        if let Some(secret) = &self.credential {
+            let (name, value) = if matches!(self.protocol, Protocol::AnthropicMessages) {
+                // Catalog and inference use the same explicit API version.
+                call = call.header("anthropic-version", "2023-06-01");
+                ("x-api-key", header::HeaderValue::from_str(&secret.0))
+            } else {
+                (
+                    "authorization",
+                    header::HeaderValue::from_str(&format!("Bearer {}", secret.0.as_str())),
+                )
+            };
+            let mut value = value.map_err(|_| TransportError::InvalidConfiguration)?;
+            value.set_sensitive(true);
+            call = call.header(name, value);
+        }
+        Ok(call)
+    }
+
     /// The caller owns this future and a bounded event channel. Dropping/cancelling
     /// it drops local HTTP work; it cannot promise remote cancellation or a refund.
     /// Already delivered deltas/usage remain valid partial observations on failure.
@@ -263,72 +393,16 @@ impl ModelClient {
         if body.len() > 1024 * 1024 {
             return Err(TransportError::LimitExceeded);
         }
-        let host = self
-            .endpoint
-            .host_str()
-            .ok_or(TransportError::InvalidConfiguration)?;
-        let port = self
-            .endpoint
-            .port_or_known_default()
-            .ok_or(TransportError::InvalidConfiguration)?;
-        // Resolve once for this invocation, inspect every answer, and pin that
-        // exact set in reqwest. No second DNS lookup or ambient proxy can bypass it.
-        let addresses: Vec<_> = tokio::net::lookup_host((host.trim_matches(['[', ']']), port))
-            .await
-            .map_err(|_| TransportError::Transport)?
-            .take(33)
-            .collect();
-        if addresses.is_empty()
-            || addresses.len() > 32
-            || addresses
-                .iter()
-                .any(|addr| !allowed(&self.network, addr.ip()))
-        {
-            return Err(TransportError::DestinationDenied);
-        }
-        let client = Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .connect_timeout(self.limits.connect)
-            .read_timeout(self.limits.idle)
-            .timeout(self.limits.total)
-            .pool_max_idle_per_host(0)
-            .resolve_to_addrs(host, &addresses)
-            .build()
-            .map_err(|_| TransportError::Transport)?;
-        let mut call = client
-            .post(self.endpoint.clone())
-            .header(header::ACCEPT, "text/event-stream")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(body);
-        if let Some(secret) = &self.credential {
-            let (name, value) = if matches!(self.protocol, Protocol::AnthropicMessages) {
-                call = call.header("anthropic-version", "2023-06-01");
-                ("x-api-key", header::HeaderValue::from_str(&secret.0))
-            } else {
-                (
-                    "authorization",
-                    header::HeaderValue::from_str(&format!("Bearer {}", secret.0.as_str())),
-                )
-            };
-            let mut value = value.map_err(|_| TransportError::InvalidConfiguration)?;
-            value.set_sensitive(true);
-            call = call.header(name, value);
-        }
+        let client = self.http_client(&self.endpoint).await?;
+        let call = self.authorize(
+            client
+                .post(self.endpoint.clone())
+                .header(header::ACCEPT, "text/event-stream")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body),
+        )?;
         let mut response = call.send().await.map_err(map_network_error)?;
-        if response.status().as_u16() != 200 {
-            let retry_after_seconds = response
-                .headers()
-                .get(header::RETRY_AFTER)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|value| *value <= 86_400);
-            return Err(TransportError::Http {
-                status: response.status().as_u16(),
-                retry_after_seconds,
-            });
-        }
+        check_status(&response)?;
         let content_type = response
             .headers()
             .get(header::CONTENT_TYPE)
@@ -369,6 +443,70 @@ impl ModelClient {
         decoder.finish()?;
         Ok(())
     }
+}
+
+fn check_status(response: &reqwest::Response) -> Result<(), TransportError> {
+    if response.status().as_u16() == 200 {
+        return Ok(());
+    }
+    let retry_after_seconds = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|value| *value <= 86_400);
+    Err(TransportError::Http {
+        status: response.status().as_u16(),
+        retry_after_seconds,
+    })
+}
+
+fn parse_catalog(protocol: Protocol, bytes: &[u8]) -> Result<Catalog, TransportError> {
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| TransportError::InvalidCatalog)?;
+    let entries = value
+        .get("data")
+        .and_then(|data| data.as_array())
+        .ok_or(TransportError::InvalidCatalog)?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut models = Vec::new();
+    // A provider's display names are untrusted, bounded plain text in React.
+    for entry in entries.iter().take(512) {
+        let id = entry
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| {
+                !s.is_empty()
+                    && s.len() <= 256
+                    && !s.chars().any(|c| c.is_control() || c.is_whitespace())
+            })
+            .ok_or(TransportError::InvalidCatalog)?;
+        let name = entry
+            .get(if protocol == Protocol::AnthropicMessages {
+                "display_name"
+            } else {
+                "name"
+            })
+            .and_then(|v| v.as_str())
+            .unwrap_or(id);
+        if name.is_empty() || name.len() > 512 || name.chars().any(char::is_control) {
+            return Err(TransportError::InvalidCatalog);
+        }
+        if seen.insert(id.to_owned()) {
+            models.push(CatalogModel {
+                id: id.to_owned(),
+                name: name.to_owned(),
+            });
+        }
+    }
+    let has_more = match value.get("has_more") {
+        None => false,
+        Some(value) => value.as_bool().ok_or(TransportError::InvalidCatalog)?,
+    };
+    let truncated = entries.len() > 512
+        || has_more
+        || (protocol == Protocol::OpenRouterChat && entries.len() == 512);
+    Ok(Catalog { models, truncated })
 }
 
 fn map_network_error(error: reqwest::Error) -> TransportError {

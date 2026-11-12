@@ -1,0 +1,358 @@
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 12px 5%;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  background: #f6f4ed;
+}
+.settings-tabs button {
+  min-height: 42px;
+  padding: 8px 20px;
+  background: none;
+  font-size: 13px;
+  color: #687260;
+}
+.settings-tabs button[aria-current="page"] {
+  color: #264b40;
+  background: #e5eadc;
+  font-weight: 600;
+}
+.settings-tabs button:hover {
+  background: #e9ecdf;
+}
+.model-settings {
+  font-size: 14px;
+}
+.model-settings .admin-intro > p:last-child {
+  max-width: 680px;
+}
+.settings-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 1000px;
+  margin: 0 0 20px;
+}
+.settings-toolbar .primary {
+  gap: 26px;
+}
+.settings-alert,
+.settings-success {
+  max-width: 1000px;
+  margin-bottom: 18px;
+}
+.settings-success {
+  padding: 12px 15px;
+  background: #e7edde;
+  border: 1px solid #d3ddc6;
+  border-radius: 9px;
+  font-size: 13px;
+  color: #375331;
+  line-height: 1.7;
+}
+.model-settings .section-heading p {
+  font-size: 12px;
+  color: #687260;
+}
+.model-settings .section-heading h3 {
+  font-size: 17px;
+  line-height: 1.5;
+}
+.model-settings .section-heading > .secondary {
+  min-height: 40px;
+  padding: 8px 16px;
+}
+.model-settings input,
+.model-settings select {
+  font-size: 14px;
+}
+.model-settings select {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 32px 11px 12px;
+  border: 1px solid #d9dcd0;
+  background: #fffefb;
+  color: #282e29;
+  border-radius: 9px;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-settings select:focus-visible,
+.probe-details summary:focus-visible {
+  outline: 3px solid #aa783e;
+  outline-offset: 3px;
+}
+.model-settings input[type="checkbox"] {
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  accent-color: #264b40;
+  flex: none;
+  margin: 0;
+}
+.model-settings .check-label {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  align-items: center;
+  min-height: 30px;
+  line-height: 1.7;
+  font-size: 13px;
+}
+.provider-form {
+  gap: 18px;
+}
+.settings-field-pair {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 16px;
+}
+.provider-form label {
+  font-size: 13px;
+}
+.provider-form .field-help {
+  margin-top: -10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #687260;
+}
+.provider-form > .fine {
+  font-size: 12px;
+}
+.provider-editor {
+  border-color: #bfceb4;
+  box-shadow: 0 4px 14px #264b4005;
+}
+.provider-editor .section-heading .text-button {
+  padding-top: 0;
+}
+.settings-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.provider-address {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: #687260;
+  overflow-wrap: anywhere;
+  margin-top: -10px;
+  margin-bottom: 16px;
+}
+.settings-hint {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #687260;
+  margin: 8px 0 16px;
+}
+.verified-choices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.verified-choices li {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-top: 1px solid #e5e8dd;
+  padding: 12px 0;
+}
+.verified-choices strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  display: block;
+}
+.verified-choices small {
+  display: block;
+  color: #687260;
+  font-size: 11px;
+  margin-top: 3px;
+}
+.verified-dot {
+  height: 6px;
+  width: 6px;
+  border-radius: 50%;
+  background: #788f62;
+  flex: none;
+}
+.probe-details {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e8dd;
+}
+.probe-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #264b40;
+  min-height: 32px;
+}
+.probe-details > .fine {
+  margin: 8px 0;
+  font-size: 12px;
+  color: #687260;
+}
+.probe-details > .text-button {
+  font-size: 12px;
+}
+.probe-form {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr auto;
+  gap: 13px;
+  align-items: end;
+  margin-top: 8px;
+}
+.probe-form label {
+  font-size: 12px;
+}
+.probe-form .secondary {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.probe-form > label:only-of-type {
+  grid-column: 1/3;
+}
+.probe-form datalist {
+  display: none;
+}
+.model-selection-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+}
+.model-selection-form > label {
+  min-width: 0;
+  font-size: 13px;
+}
+.model-selection-form .primary {
+  white-space: nowrap;
+}
+.effective-model {
+  margin: 24px 0 8px;
+  padding: 20px;
+  background: #eef0e6;
+  border-radius: 10px;
+  border: 1px solid #e1e6d7;
+}
+.effective-model .eyebrow {
+  font-size: 10px;
+  letter-spacing: 1px;
+  display: block;
+  margin-bottom: 10px;
+}
+.effective-model > strong {
+  font-size: 17px;
+  font-weight: 500;
+  display: block;
+  overflow-wrap: anywhere;
+}
+.effective-model > p {
+  font-size: 12px;
+  color: #687260;
+  line-height: 1.8;
+  margin-top: 6px;
+}
+.settings-footnote {
+  font-size: 12px;
+  color: #687260;
+  line-height: 1.8;
+  max-width: 750px;
+  margin-top: 20px;
+}
+.settings-empty > h3 {
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+.settings-empty > p {
+  font-size: 13px;
+  color: #687260;
+  line-height: 1.8;
+}
+@media (max-width: 1100px) {
+  .probe-form {
+    grid-template-columns: 1fr 1fr;
+  }
+  .probe-form > .secondary {
+    grid-column: 1/-1;
+    justify-self: start;
+  }
+  .probe-form > label:only-of-type {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 760px) {
+  .settings-tabs {
+    padding: 10px 18px;
+    gap: 4px;
+  }
+  .settings-tabs button {
+    padding-inline: 18px;
+    min-height: 44px;
+  }
+  .model-settings .admin-intro h2 {
+    font-size: 32px;
+  }
+  .model-settings .admin-intro > p:last-child {
+    font-size: 14px;
+  }
+  .model-settings input,
+  .model-settings select {
+    font-size: 16px;
+  }
+  .model-settings .section-heading {
+    margin-bottom: 20px;
+  }
+  .model-settings .section-heading h3 {
+    font-size: 17px;
+  }
+  .model-settings .section-heading p {
+    font-size: 13px;
+    line-height: 1.8;
+  }
+  .settings-field-pair,
+  .probe-form,
+  .model-selection-form {
+    grid-template-columns: 1fr;
+  }
+  .probe-form > label:only-of-type {
+    grid-column: auto;
+  }
+  .probe-form .secondary,
+  .model-selection-form .primary {
+    width: 100%;
+    justify-self: stretch;
+    grid-column: auto;
+  }
+  .settings-form-actions .primary {
+    width: 100%;
+  }
+  .settings-toolbar {
+    margin-bottom: 18px;
+  }
+  .provider-form .fine,
+  .probe-details > .fine,
+  .settings-hint,
+  .settings-footnote {
+    font-size: 12px;
+  }
+  .verified-choices strong {
+    font-size: 14px;
+  }
+  .verified-choices small {
+    font-size: 12px;
+  }
+  .model-settings .check-label {
+    align-items: flex-start;
+  }
+  .model-settings .check-label input {
+    margin-top: 3px;
+  }
+  .effective-model > strong {
+    font-size: 18px;
+  }
+  .effective-model > p {
+    font-size: 13px;
+  }
+}

@@ -1,9 +1,6 @@
 import {
-  createContext,
-  useContext,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -19,29 +16,12 @@ import type {
   UsersResponse,
 } from "../shared/api-types";
 import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
+import { ScopeRegistry, useScope } from "./account-scope";
+import {
+  AdminProviderSettings,
+  PersonalModelSettings,
+} from "./ProviderSettings";
 
-const ScopeRegistry = createContext<Set<RequestScope> | null>(null);
-
-function useScope(expectedAccountId?: string) {
-  const registry = useContext(ScopeRegistry);
-  const ref = useRef<RequestScope | null>(null);
-  useLayoutEffect(() => {
-    const scope = new RequestScope(expectedAccountId);
-    ref.current = scope;
-    registry?.add(scope);
-    return () => {
-      scope.close();
-      registry?.delete(scope);
-    };
-  }, [expectedAccountId, registry]);
-  return useMemo(
-    () => ({
-      request: <T,>(path: string, method?: string, body?: unknown) =>
-        ref.current!.request<T>(path, method, body),
-    }),
-    [],
-  );
-}
 function Mark({ large = false }: { large?: boolean }) {
   return (
     <span className={`mark ${large ? "mark-large" : ""}`} aria-hidden="true">
@@ -676,7 +656,9 @@ function Workspace({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const historyOpener = useRef<HTMLButtonElement>(null);
   const deleteOpener = useRef<HTMLButtonElement | null>(null);
-  const admin = path === "/admin";
+  const admin = path === "/admin" || path === "/admin/providers";
+  const providerAdmin = path === "/admin/providers";
+  const personalModel = path === "/settings/model";
   const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -781,7 +763,7 @@ function Workspace({
         ) : (
           threads.map((thread) => (
             <div
-              className={`thread-row ${thread.id === selected && !admin ? "active" : ""}`}
+              className={`thread-row ${thread.id === selected && !admin && !personalModel ? "active" : ""}`}
               key={thread.id}
             >
               <button
@@ -792,7 +774,9 @@ function Workspace({
                   setDrawer(false);
                 }}
                 aria-current={
-                  thread.id === selected && !admin ? "page" : undefined
+                  thread.id === selected && !admin && !personalModel
+                    ? "page"
+                    : undefined
                 }
               >
                 <span className="thread-symbol" aria-hidden="true">
@@ -824,6 +808,16 @@ function Workspace({
             to your account.
           </span>
         </div>
+        <button
+          className={`nav-link ${personalModel ? "chosen" : ""}`}
+          onClick={() => {
+            navigate(personalModel ? "/app" : "/settings/model");
+            setDrawer(false);
+          }}
+        >
+          {personalModel ? "← 대화로 돌아가기" : "내 모델"}
+          <span aria-hidden="true">↗</span>
+        </button>
         {allowedAdmin && (
           <button
             className={`nav-link ${admin ? "chosen" : ""}`}
@@ -871,17 +865,25 @@ function Workspace({
           </button>
           <div>
             <span className="eyebrow">
-              {admin ? "INSTALLATION" : "YOUR SPACE"}
+              {admin
+                ? "INSTALLATION"
+                : personalModel
+                  ? "MY SETTINGS"
+                  : "YOUR SPACE"}
             </span>
             <h1>
               {admin
-                ? "People & access"
-                : (current?.title ?? "A new beginning")}
+                ? providerAdmin
+                  ? "모델 연결"
+                  : "People & access"
+                : personalModel
+                  ? "내 모델"
+                  : (current?.title ?? "A new beginning")}
             </h1>
           </div>
           <div className="connection-status">
             <span />
-            Model not connected
+            Message sending unavailable
           </div>
           <button
             className="icon-button mobile-only"
@@ -903,9 +905,37 @@ function Workspace({
             </button>
           </div>
         )}
-        {admin ? (
+        {admin && allowedAdmin && (
+          <nav className="settings-tabs" aria-label="설치 관리">
+            <button
+              aria-current={!providerAdmin ? "page" : undefined}
+              onClick={() => navigate("/admin")}
+            >
+              사용자
+            </button>
+            <button
+              aria-current={providerAdmin ? "page" : undefined}
+              onClick={() => navigate("/admin/providers")}
+            >
+              모델 연결
+            </button>
+          </nav>
+        )}
+        {personalModel ? (
+          <PersonalModelSettings
+            accountId={session.user.id}
+            onExpired={onExpired}
+          />
+        ) : admin ? (
           allowedAdmin ? (
-            <Admin accountId={session.user.id} onExpired={onExpired} />
+            providerAdmin ? (
+              <AdminProviderSettings
+                accountId={session.user.id}
+                onExpired={onExpired}
+              />
+            ) : (
+              <Admin accountId={session.user.id} onExpired={onExpired} />
+            )
           ) : (
             <div className="empty-state">
               <h2>This page is for administrators.</h2>
@@ -940,8 +970,8 @@ function Workspace({
                   <div>
                     <strong>A connection comes next</strong>
                     <p>
-                      Chat is unavailable in this build. Model connections and
-                      message sending are still being implemented.
+                      Model connections can be managed in settings. Message
+                      sending is not available in this build.
                     </p>
                   </div>
                 </div>
@@ -970,7 +1000,7 @@ function Workspace({
                   rows={2}
                 />
                 <div className="composer-bottom">
-                  <span>Waiting for a model connection</span>
+                  <span>Message sending is not available yet</span>
                   <button disabled aria-label="Send message unavailable">
                     ↑
                   </button>

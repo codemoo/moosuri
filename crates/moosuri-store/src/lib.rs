@@ -2,9 +2,11 @@
 //! Authentication capabilities can only be created here and are revalidated on every use.
 mod files;
 mod journal;
+mod providers;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use fs2::FileExt;
 use moosuri_core::{AccountSummary, Role, ThreadSummary};
+pub use providers::{CredentialChange, ProviderBinding, ProviderChange};
 use rand::{RngCore, rngs::OsRng};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
@@ -110,6 +112,7 @@ struct Database {
     journal: journal::Journal,
     _lock: File,
     poisoned: bool,
+    provider_key: Zeroizing<[u8; 32]>,
 }
 #[derive(Clone)]
 struct LoginAccount {
@@ -250,9 +253,16 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if version != 1 {
+        } else if version != 1 && version != 2 {
             return Err(StoreError::Corrupt);
         }
+        if version < 2 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0002_providers.sql")
+            ))?;
+        }
+        let provider_key = providers::open_key(&conn, &dir)?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
         if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
             return Err(StoreError::Corrupt);
@@ -262,6 +272,7 @@ impl Store {
             journal,
             _lock: lock,
             poisoned: false,
+            provider_key,
         };
         database.replay_journal()?;
         let dummy_hash = DUMMY_HASH.to_owned();

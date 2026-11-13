@@ -17,7 +17,7 @@
 
 ## 쉬운 설치의 완료 조건
 
-Linux x86_64/arm64에 signed/checksummed binary와 내장 React assets를 배포한다. 설치 경로는 standalone binary를 우선하고 OCI/Compose는 같은 private volume 설정의 선택지다. 기본 실행에 Python·Node·PostgreSQL·Redis·외부 vector DB가 없어야 한다. 현재 개발판의 `moosuri init/serve/doctor/export-types`는 실행 가능하며 [개발 안내](development.md)에 사용법/한계를 둔다. `backup/restore/update/uninstall`은 미구현이다. signed release/installer가 완성됐다고 안내하지 않는다.
+Linux x86_64/arm64에 signed/checksummed binary와 내장 React assets를 배포한다. 설치 경로는 standalone binary를 우선하고 OCI/Compose는 같은 private volume 설정의 선택지다. 기본 실행에 Python·Node·PostgreSQL·Redis·외부 vector DB가 없어야 한다. 현재 개발판의 `moosuri init/serve/doctor/export-types`는 실행 가능하며 [개발 안내](development.md)에 사용법/한계를 둔다. 중지된 설치의 `backup setup/create`는 [암호화 export](backup.md)를 제공한다. 독립 최신 journal·과거 복원·미디어 복원은 미구현이며 `restore/update/uninstall`도 미구현이다. signed release/installer가 완성됐다고 안내하지 않는다.
 
 init은 admin 하나·password 입력/skip·LLM/API/지원 구독/local·default model/effort·Google sender 선택·접속 mode를 묻는다. 외부 연결을 건너뛰어도 관리 화면은 열리고 추가 계정은 필요할 때만 만든다. 설정/비밀을 stdout/log/URL/argv로 노출하지 않는다. 최초 임시 비밀번호는 인증된 setup UI/controlling TTY에 한 번 표시하는 [설치 계약](onboarding.md)을 따른다. 최소 bootstrap script가 필요하면 release 검증/실행만 하며 제품 비즈니스 로직은 Rust에 둔다. optional gws/Claude CLI는 별도 설치와 지원 범위를 표시한다.
 

@@ -20,6 +20,7 @@ pub use memory_commands::{
     MemoryCommandClarification, MemoryCommandOutcome, MemoryCommandPreparation,
     MemoryTargetCandidate, MemoryTargetCandidates, MemoryTargetChoice, PreparedMemoryCommand,
 };
+pub mod backup;
 mod browser;
 mod files;
 mod journal;
@@ -159,7 +160,7 @@ struct LoginAccount {
     recovery: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -377,6 +378,12 @@ impl Store {
             conn.execute_batch(&format!(
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0012_memory_target_resolution.sql")
+            ))?;
+        }
+        if version < 13 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0013_stopped_backup_exports.sql")
             ))?;
         }
         source_connections::restart(&conn)?;

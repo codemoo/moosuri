@@ -47,6 +47,11 @@ enum Command {
         #[arg(long)]
         password_file: PathBuf,
     },
+    /// Configure or create encrypted exports of a stopped installation.
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommand,
+    },
     /// Create one administrator. Password input is hidden; blank generates a temporary one.
     Init {
         #[arg(long)]
@@ -88,6 +93,27 @@ enum Command {
     ExportTypes,
 }
 
+#[derive(Subcommand)]
+enum BackupCommand {
+    /// Generate a private recovery identity; print only its public age recipient.
+    Keygen {
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Verify an independently held age identity, then retain its public recipient epoch.
+    Setup {
+        #[arg(long)]
+        recipient: String,
+        #[arg(long)]
+        identity_file: PathBuf,
+    },
+    /// Export SQLite and snapshot journals to a new encrypted owner-private file.
+    Create {
+        #[arg(long)]
+        output: PathBuf,
+    },
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(code) = run(Cli::parse()).await {
@@ -96,6 +122,14 @@ async fn main() {
     }
 }
 async fn run(cli: Cli) -> Result<(), String> {
+    if let Command::Backup {
+        command: BackupCommand::Keygen { output },
+    } = &cli.command
+    {
+        let recipient = moosuri_store::backup::keygen(output).map_err(|e| e.to_string())?;
+        println!("{recipient}");
+        return Ok(());
+    }
     if matches!(cli.command, Command::ExportTypes) {
         print!("{}", moosuri_core::typescript_contract());
         return Ok(());
@@ -108,6 +142,28 @@ async fn run(cli: Cli) -> Result<(), String> {
         return Err("data_directory_must_be_absolute".into());
     }
     match cli.command {
+        Command::Backup { command } => match command {
+            BackupCommand::Keygen { .. } => unreachable!("keygen runs without installation state"),
+            BackupCommand::Setup {
+                recipient,
+                identity_file,
+            } => {
+                let configured = moosuri_store::backup::setup(&data, &recipient, &identity_file)
+                    .map_err(|e| e.to_string())?;
+                println!(
+                    "Encrypted export configured at key epoch {}. Retain all required private identities outside the installation and export directory. This is not an off-host restore test.",
+                    configured.active_epoch.unwrap_or(0)
+                );
+            }
+            BackupCommand::Create { output } => {
+                let export =
+                    moosuri_store::backup::create(&data, &output).map_err(|e| e.to_string())?;
+                println!(
+                    "Encrypted export {} complete at key epoch {}. Historical restore and an independently maintained latest journal remain unavailable.",
+                    export.export_id, export.key_epoch
+                );
+            }
+        },
         Command::RecoverAccount {
             account_id,
             role,
@@ -274,7 +330,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             let store = Store::open(&data).map_err(|e| e.to_string())?;
             let ready = store.initialized().await.map_err(|e| e.to_string())?;
             println!(
-                "SQLite: ready\nPrivate writer lock: acquired\nAdministrator initialized: {ready}\nText chat: available with a verified connection\nBackup/restore: not implemented"
+                "SQLite: ready\nPrivate writer lock: acquired\nAdministrator initialized: {ready}\nText chat: available with a verified connection\nStopped encrypted export: available after setup\nHistorical restore: not implemented"
             );
         }
         Command::ExportTypes => unreachable!(),

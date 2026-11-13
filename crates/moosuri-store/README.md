@@ -54,7 +54,7 @@ off-host latest-head/backup service and is not a backup or restore implementatio
 ## Explicitly outside this unit
 
 There are no messages, model runs, streams, files, user-key vault,
-account disable/delete/general-reset/role-change APIs, backup/restore,
+account disable/delete/general-reset/role-change APIs, historical restore,
 independent usage ledger or restore activation. Deleting a thread deletes only
 an empty-thread row. Future personal child objects must use composite tenant
 foreign keys. Rate limits, cookies, CSRF/origin checks and HTTP setup protection
@@ -95,3 +95,13 @@ Provider methods never perform HTTP. The server probes a synthetic stream and
 only records a verified choice while the admin session and exact revision remain
 valid. Tests cover schema1 migration, persistence, user selection isolation,
 revocation/races, ciphertext swaps/tampering, key loss and key-file restrictions.
+
+## Stopped encrypted export
+
+`backup::setup/create` operate on an existing stopped installation using its
+exclusive lock and supported schema, without `Store::open`, migration/replay or
+runtime workers. Public-only installation UUID/recipient history lives in SQLite;
+private operator identities and the server provider key never enter the fixed
+age-encrypted tar payload. SQLite Backup incorporates committed WAL pages. See
+[export setup, key retention and limitations](../../docs/backup.md). This is not
+an independent latest-journal or historical restore implementation.

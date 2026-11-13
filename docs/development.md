@@ -10,7 +10,7 @@ search/read that private knowledge in chat and apply explicit
 [remember/correct/forget requests](conversational-memory.md). [Public HTTP research](web-research.md)
 and [personal Gmail](mail.md) are connected; every email send requires final human
 approval. An optional [Linux Chromium capsule](browser-chat.md) reads rendered
-public pages after the operator verifies its deployment. [Browser workspaces](browser-workspaces.md) add watch, human login/control and same-page conversation continuation to that deployment. Automatic authenticated actions, extraction, schedules, media, vault and backup/restore remain pending.
+public pages after the operator verifies its deployment. [Browser workspaces](browser-workspaces.md) add watch, human login/control and same-page conversation continuation to that deployment. Automatic authenticated actions, extraction, schedules, media, vault and historical restore remain pending. Stopped encrypted [exports](backup.md) are available.
 
 Use Rust 1.89+ and Node.js 22.22+. Node is needed to build React, not to run the
 resulting server. SQLite is bundled. Build from a clean public checkout:
@@ -107,8 +107,9 @@ backup/restore workflow or a production-ready release.
 
 `moosuri doctor` checks a **stopped** installation. A running installation holds
 its writer lock and correctly rejects another writer. Normal shutdown drains the
-writer before releasing the lock. Backup/restore, upgrades and legacy migration
-remain unavailable; copying a live DB is not a supported backup.
+writer before releasing the lock. Stopped encrypted [exports](backup.md) are available after independent recipient
+setup. Historical restore, upgrades and legacy migration remain unavailable;
+copying a live DB is not a supported backup.
 
 ## Recovering a journal-locked account
 
@@ -134,7 +135,7 @@ An interruption after the new journal record but before the SQLite commit locks
 the account again on restart; repeat enrollment with a new credential. If commit
 succeeded but the response was lost, the supplied temporary credential remains
 valid and repeating recovery is rejected with `account_not_recovery_required`.
-Do not clear journal files or flip the recovery flag manually. Encrypted archives,
+Do not clear journal files or flip the recovery flag manually. Historical restore,
 off-host latest journals and restored-installation enrollment remain unavailable.
 
 ## Local verification

@@ -432,7 +432,7 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 
 계정 복구 단위는 macOS·Linux x86_64 Rust340개(실모델 opt-in1개 제외)를 통과했고 독립 검토에서 발견한 초기화 부작용을 수정·재검토했다.
 
-현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 중지한 설치의 로컬 `recover-account`는 계정 UUID·역할·새 비밀번호 파일을 명시해24시간 임시 credential로 재등록하며 최초 변경과 기존 세션 철회를 강제한다. 정상 계정의 임의 재설정이나 백업/복원 기능은 아니다. 암호화 백업·최신 독립 journal·빈 설치 복원은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. [사용법](development.md#recovering-a-journal-locked-account)과 [합성 검증 범위](reviews/2026-11-13-operator-account-recovery.md)를 따르며 `doctor`도 중지된 설치에만 사용한다.
+현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 중지한 설치의 로컬 `recover-account`는 계정 UUID·역할·새 비밀번호 파일을 명시해24시간 임시 credential로 재등록하며 최초 변경과 기존 세션 철회를 강제한다. 정상 계정의 임의 재설정이나 백업/복원 기능은 아니다. [중지된 설치의 암호화 export](backup.md)는 현재 DB·snapshot journal과 별도 운영자 recipient를 지원한다. 최신 독립 journal·과거 삭제를 보존하는 빈 설치 복원·미디어 백업은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. [사용법](development.md#recovering-a-journal-locked-account)과 [합성 검증 범위](reviews/2026-11-13-operator-account-recovery.md)를 따르며 `doctor`도 중지된 설치에만 사용한다.
 
 ## 다음 작업
 
@@ -461,3 +461,9 @@ Rust의 strict package bounds/형식/license/example/capability 검사, interrup
 기존의 정확한 문장 일치에 더해, 표현이 달라 찾지 못한 대상은 현재 기억 후보에서 의미로 선택한다. 행동·새 사실은 현재 사용자 요청에서 먼저 봉인하고 모델은 후보 번호만 고른다. 모호하거나 후보가 한도를 넘으면 확인을 요청하며, 대상·근거·유효 시점이 바뀌면 수정하지 않는다. 망각한 후보는 저장된 선택 계획에서도 즉시 제거하고 재시도에서 다시 보내지 않는다.
 
 macOS의 집중 Store31·agent21·schema/HTTP 검사와 Linux 전체362개(실모델 opt-in1개 제외), fmt/clippy/plan/OpenSpec와 독립 검토를 통과했다. 별도12문항 실모델 평가는 연결 검사의 빈 최종 응답이2회 재현되어 질문 전송0·미실행12다. 이전7/10 결과를 새 성공률로 바꾸지 않는다. [검증·제한](reviews/2026-11-13-memory-target-resolution.md)을 따른다.
+
+## 중지된 설치의 암호화 백업 파일
+
+Rust CLI의 `backup keygen`으로 별도 복구 키를 만들고 `backup setup/create`로 현재 SQLite·snapshot journal을 표준 age 암호화 tar 파일로 내보낸다. 개인 키는 별도0600 파일에만 쓰고 공개 recipient만 출력한다. 설치 UUID·공개 키 이력을 보존하고 WAL을 포함한 일관된 snapshot을 만들며 실행 중인 설치·잘못된 경로·덮어쓰기를 거절한다. 서버 provider key 없이도 export할 수 있다.
+
+macOS 검사와 표준 Go age 복호화, Linux의 영향받는 저장/CLI 검사 및 독립 검토 범위를 [검증 기록](reviews/2026-11-13-stopped-encrypted-export.md)에 남긴다. Linux의 최초 fixture 권한 실패와0700 수정 후 재검증도 포함한다. 과거 백업 복원·서버 밖 최신 삭제 기록·미디어 복구는 후속 작업이다. 이 단위로 전체 백업/복원 계획을 완료 처리하지 않는다.

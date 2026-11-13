@@ -87,7 +87,7 @@ agent/src/musuri_agent/task_tools.py	160	model_tool	-	followups_mute	followups_m
 agent/src/musuri_agent/tool_discovery.py	94	model_tool	-	tools_search	tools_search	crates/moosuri-agent/src/skills/tool_discovery.rs	P4	F24,F25,F26,F58
 agent/src/musuri_agent/tools.py	27	model_tool	-	sources_search	sources_search	crates/moosuri-agent/src/skills/tools.rs	P4	F24,F25,F26,F58
 agent/src/musuri_agent/tools.py	47	model_tool	-	evidence_read	evidence_read	crates/moosuri-agent/src/skills/tools.rs	P4	F24,F25,F26,F58
-agent/src/musuri_agent/tools.py	73	model_tool	-	kakao_thread	kakao_thread	crates/moosuri-agent/src/skills/tools.rs	P4	F24,F25,F26,F58
+agent/src/musuri_agent/tools.py	73	model_tool	-	kakao_thread	kakao_thread	docs/data-connections.md	P4	F22,F38,F70
 agent/src/musuri_agent/workspace_tools.py	141	model_tool	-	artifacts_search	artifacts_search	crates/moosuri-agent/src/workspace/workspace_tools.rs	P3	F15,F21,F28,F58
 agent/src/musuri_agent/workspace_tools.py	146	model_tool	-	artifacts_read	artifacts_read	crates/moosuri-agent/src/workspace/workspace_tools.rs	P3	F15,F21,F28,F58
 agent/src/musuri_agent/workspace_tools.py	151	model_tool	-	goals_search	goals_search	crates/moosuri-agent/src/workspace/workspace_tools.rs	P3	F15,F21,F28,F58

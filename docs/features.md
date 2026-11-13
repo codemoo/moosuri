@@ -32,8 +32,8 @@
 | F19 | 직접 기억·검색·편집 · 기본 | `memory.py`, `memory_tools.py`, `memory_temporal.py` | agent/store/web · P3 | 현재 유효 사실, speaker/subject/source/time, 수정 revision, 검색/filter/editor 복귀, 미래 사실을 현재로 사용하지 않음 |
 | F20 | 자동 기억 추출 · 기본 | `extraction.py`, `source_units.py`, `memory_temporal.py` | agent/data worker · P3 | original 발화/인용 단위, bounded daily call/token, changed/accessed 우선, 불명 화자 제외, 과거 전체 무단 backfill 없음 |
 | F21 | 망각·정정·자료 해제 · 기본 | `journal.py`, `memory.py`, `source_bridge.py`, invalidation tests | store/agent/server · P1/P3 | source keep/delete, memory forget, thread delete 범위 구분; replay/캐시/checkpoint/SSE/산출물 tombstone·epoch |
-| F22 | 원문 검색·근거·페이지 · 기본 | `retrieval.py`, `source_adapters.py`, `tools.py`, `kakao_threads.py` | agent/connectors · P3 | 한국어 동의어·FTS5/부분문자열 비교, 방/화자/시각/파일 범위, 실제 id/version 인용, partial pagination, 동명이인/본인후속답장 |
-| F23 | 수집 원본·cursor·batch · 기본 | `src/musuri/{service,sources,state}.py`, `source_protocol.py` | connectors/store · P1/P3/P6 | batch commit 후 cursor, scope identity, exact replay no-op, lost ACK same receipt, full snapshot만 범위 retire, heartbeat와 자료 변경 구분 |
+| F22 | 원문 검색·근거·페이지 · 기본 | `retrieval.py`, `source_adapters.py`, `tools.py`; thread identity 공통 계약만 참조 | agent/connectors · P3 | 한국어 동의어·FTS5/부분문자열 비교, 방/화자/시각/파일 범위, 실제 id/version 인용, partial pagination, 동명이인/본인후속답장 |
+| F23 | 공식·커스텀 수집 원본·cursor·batch · 기본 | `src/musuri/{service,sources,state}.py`, `source_protocol.py` | connectors/store · P1/P3/P6 | batch commit 후 cursor, scope identity, exact replay no-op, lost ACK same receipt, full snapshot만 범위 retire, heartbeat와 자료 변경 구분 |
 | F24 | 도구 선택·capability · 기본 | `capabilities.py`, `tool_discovery.py`, tools modules | agent/connectors · P4 | 실제 연결/권한/상태 반영, metadata/schema 선택, 저장 discovery 복원, unknown 등록 도구 누락 방지, 호출 상한 |
 | F25 | 일반 절차 catalog · 기본 | `skills.py`, `skill_library/` | agent/resources · P4 | 공개 요구사항으로 재작성, 필요한 본문만 읽기, 입력·한계·실제 도구 명시; private 유래50개 원문 반입0 |
 | F26 | 성공 절차 학습·재사용 · 기본 | `learned_skills.py`, `learned_routes.py`, `learned_usage.py`, migration022 | agent/store · P4 | 9도구/8단계, 실제 linked receipts, 2 distinct inputs, finalization gap, schema drift, owner edit/delete, 실패3회, bounded match |
@@ -48,8 +48,8 @@
 | F35 | Gmail 초안·발송·답장 · 선택 | `google_provider.py`, `provider_service.py`, effects tests | connectors/effects · P6 | draft create/update/delete/send+readback, 명시된 단일 수신인·내용, marker/Message-ID, unknown 조회; reply-all/첨부발송은 현재 미지원 |
 | F36 | 고정 내용 예약 발송 · 선택 | `scheduled_external.py`, `task_contract.py` | agent/effects · P5/P6 | owner-fixed 수신인/본문/시각·occurrence identity,5분 lateness expiry, restore 재승인 없는 재실행0; 미래 생성 내용 자동발송 제외 |
 | F37 | Calendar 읽기·쓰기 · 선택 | `native.py`, `google_provider.py`, calendar tests | connectors/google · P6 | calendar/account/range scope, partial read로 삭제0, ETag/revision, 소유권 확인한 calendar만 writes, 기존 primary 계약 |
-| F38 | Kakao 원문 연결 · 선택 | `src/musuri/collectors/native.py`, `source_adapters.py`, `kakao_threads.py` | connectors feed/compat · P6/P9 | 기존 Linux realtime owner 유지, downstream만, room/participant/message identity, 읽기 feed와 source 상태; 발송/복호화/새 realtime owner 자동 생성0 |
-| F39 | Slack 읽기 · 선택 | `native.py`, `source_adapters.py` | connectors/slack · P6 | 대화·thread pagination/late reply·cursor·rate limit, 허용 범위, bot token/계정 분리; Slack 쓰기 기본 없음 |
+| F38 | 개인 카톡 수집기 · 공개 배포 제외 | `src/musuri/collectors/kakao.py`, `kakao_threads.py`; R29로 범위 변경 | 별도 private producer → F70 custom protocol · P6/P9 | public 코드/이미지/installer/카톡 전용 tool0; 기존 개인 collector/cron/DB 보존; generic scope·thread identity 계약만 재사용 |
+| F39 | 공식 Slack 읽기·수집 · 선택 연결 | `native.py`, `source_adapters.py` | connectors/slack · P6 | 대화·thread pagination/late reply·cursor·rate limit, 허용 범위, bot token/계정 분리; Slack 쓰기 기본 없음 |
 | F40 | 통화 원본·전사 feed · 선택 | `collectors/calls.py`, `native.py`, source units | connectors/calls · P6/P7 | settled file·hash dedup·changed file defer·bounded transcription, transcript receipt, 화자 불명 자동 기억 제외; 전화 발신 없음 |
 | F41 | 작업 세션 수집 · 선택 | `collectors/work_sessions.py`, `source_adapters.py` | connectors/local-session · P6 | opt-in 디렉터리, inode/fingerprint·partial·finished bucket, automation/subagent 제외, 사용자 요청만 evidence; tool 실행0 |
 | F42 | 공개 웹 검색·배송 · 선택 | `public_web.py`, `parcel.py` | connectors/public · P4/P6 | 실제 hosted search receipt/URL·usage, 일본우편 공식 이력/parser errors, 운송장 slot 재사용; 없는 배송사 연결 완료 주장0 |
@@ -99,6 +99,7 @@
 | F67 | 스킬 작성·학습 절차 공유 · 기본 | R26, community-skills | authoring/export · P4/P10 | SKILL.md+최소 sidecar·합성 예제·라이선스, typed route 재구성·private trace/credential/proof 반출0·명시적 Git publish |
 | F68 | 제안/할 수 있는 일의 Git 스킬 · 기본 | R27, 기존 work-cards/agent UI | React cards/catalog · P4/P7 | local ranking·ready/install/connect/unsupported·숨김/mute·설치만으로 외부 실행0·기존 채팅 중심 흐름 |
 | F69 | 볼트 연결·credential 자동 재사용 · v1 선택 설치 | R28, credential-use | trusted-device broker/typed adapter · P0/P6/P8 | 개인 binding 자동 선택·범위/목적지/수신인 검사·model secret0·잠금 대기/재개·기기 local grant·online dispatch commitment/revoke 순서·same effect 복구 |
+| F70 | 공식·커스텀 데이터 연결과 추적 · 기본 | R29, 기존 source_protocol/source_adapters의 공통 계약 | core/store/source connectors/React · P3/P6 | connection/scope/epoch·원문/version/batch/run provenance, ingest 전용 token·revoke, heartbeat/commit/coverage 구분, official≠ready, custom 보고≠provider 증명, DATA01~DATA03/DATA06~DATA08 |
 
 ## 사용자 경험에서 제외하지 않을 세부 조건
 
@@ -106,7 +107,7 @@
 
 ## 현재 미지원 기능을 지원으로 오해시키지 않을 것
 
-Kakao 발송·전화 발신·Slack 쓰기·reply-all·첨부 메일 발송·미래 생성 본문의 자동 발송·자동 구매/웹 예약·임의 shell/code 설치는 현재 기본 계약에 없다. 새 서비스 요청을 재사용 절차로 기록하는 것과 실제 adapter 구현은 다르다. 새로운 adapter는 Rust 코드·합성 fixture·계약 시험·버전 배포로 추가한다. 스킬은 이를 자동으로 만들어진 연결처럼 표시하지 않는다.
+Kakao 발송·전화 발신·Slack 쓰기·reply-all·첨부 메일 발송·미래 생성 본문의 자동 발송·자동 구매/웹 예약·임의 shell/code 설치는 현재 기본 계약에 없다. 새 서비스 요청을 재사용 절차로 기록하는 것과 실제 adapter 구현은 다르다. 공식 adapter는 Rust 코드·합성 fixture·계약 시험·버전 배포로 추가한다. 커스텀 외부 수집기는 [공통 HTTP 수집 계약](data-connections.md)으로 연결하고 서버가 그 코드를 실행하지 않는다. 카톡 수집기는 R29에 따라 공개 구현·패키징 대상에서 제외한다. 스킬은 이를 자동으로 만들어진 연결처럼 표시하지 않는다.
 
 ## 시험 선정 규칙
 

@@ -28,7 +28,7 @@
 - 새 소스의 인증·저장·브라우저 경계를 독립 검토했다. proxy/NAT 로그인 제한 공유, 잘못된 디렉터리 권한 변경, 다른 탭 계정 혼동, 늦은 로그아웃 응답 문제를 수정하고 재검토했다.
 - SQLite advisory에 따라 rusqlite 0.41.1/libsqlite3-sys 0.39.1로 갱신하고 DB open 전에 SQLite 3.54 이상을 확인한다. 첫 계정 단위 Cargo.lock의 registry 패키지 153개 OSV 조회에서 알려진 취약점 응답 없음. 이는 취약점 부재 보증이 아니다.
 
-기존 테스트는 복사하지 않았다. 새 테스트도 전체 제품 평가 성적으로 사용하지 않는다. source523·entrypoint108·R28/F69 조사표, 67개 planned 평가 묶음과 과거 검토 기록은 유지한다.
+기존 테스트는 복사하지 않았다. 새 테스트도 전체 제품 평가 성적으로 사용하지 않는다. source523·entrypoint108과 과거 검토 기록은 유지한다. 현재 계획 추적은 R29/F70·70개 planned 평가 묶음으로 확장했다.
 
 ## 두 번째 단위: 모델 전송 기반
 
@@ -341,10 +341,26 @@ connector credential이며 사용자 키 볼트와 같은 보호를 주장하지
 [수락 기록](reviews/2026-11-13-browser-workspaces.md)에 남긴다. 범용 자동 폼·vault 자동 로그인·
 장기 profile 복구는 후속이며, 메일 최종 미리보기와 명시적인 발송 허락은 유지한다.
 
+## 수집 계획 변경: 공식 지원과 외부 커스텀 연결
+
+R29에 따라 카톡 수집기는 공개 코드·이미지·설치 범위에서 제외했다. 기존 개인 수집기는 별도
+프로젝트/프로세스로 유지하고 F70의 generic custom HTTP protocol로 연결할 계획이다.
+Gmail·Slack은 공식 adapter, 개인 수집기는 custom producer로 분류하며 같은 원문 저장·
+provenance·sync 상태/receipt 계약을 적용한다. F38은 공개 배포 제외로 남겨 과거 요구를 추적한다.
+
+이 변경에서 완료한 것은 [계획](data-connections.md), R/F·source target·새 평가 사례·
+[OpenSpec backlog](../openspec/changes/build-source-connections/tasks.md)와 Rust 계획 검증이다.
+수집 token/ingest endpoint, 자동 Gmail·Slack sync, React 연결 추적 화면은 아직 구현하지 않았다.
+기존 Gmail 대화 조회/승인 발송과 수동 자료 batch API를 자동 수집 완료로 표시하지 않는다.
+
+Rust xtask의 2개 회귀 검사는 잘못된 완료/분류·끊긴 참조·카톡 target 재등장을 거절했다.
+fmt·clippy와 계획 검증(R29/F70·70개 시나리오·4개 연결 범위), OpenSpec strict 22개를
+통과했다. 이 수치는 계획 도구 검증이며 수집 runtime의 품질/보안 성적이 아니다.
+
 ## 아직 구현하지 않은 범위
 
 구독 인증·개인 provider 연결, 자동 기억 추출·문서/목표·평가, 예약·캘린더·알림·푸시,
-첨부·녹음·PWA, 기존 수집 connector, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
+첨부·녹음·PWA, 공식 Gmail·Slack 자동 수집·custom HTTP 수신/상태 추적, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
 community 설치·업데이트·제안 카드, 독립 볼트·TOTP·credential broker,
 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
 연결 여부만 선택 사항이다. 이번 웹·브라우저·Gmail 구현을 전체 비서 완성으로 표시하지 않는다.

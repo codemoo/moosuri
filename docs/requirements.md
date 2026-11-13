@@ -1,6 +1,6 @@
 # 확정 요구사항과 추적
 
-2026-11-12 사용자 추가 지시까지 반영한다. 구현 방식이 충돌하는 부분은 최신 지시가 우선한다. 기존 비서의 기능·UX·복구 요구는 계속 유지한다. 현재 저장소는 계획 패키지이며 아래 항목은 구현 완료 표시가 아니다.
+2026-11-13 데이터 수집 범위 변경(R29)까지 반영한다. 구현 방식이 충돌하는 부분은 최신 지시가 우선한다. 기존 비서의 기능·UX·복구 요구는 계속 유지한다. 아래 항목은 요구 계약이며 실제 구현 상태는 [status](status.md)를 따른다.
 
 | ID | 사용자 요구 | 최종 계획에서의 위치 | 검증 기준 |
 | --- | --- | --- | --- |
@@ -22,7 +22,7 @@
 | R16 | 사용자별 분리 환경과 세션 유지 | accounts-isolation | 모든 객체·event·worker·remote session·tempdir tenant binding, restart·logout·switch·revoke 회귀 |
 | R17 | OpenAI/Claude 외 OpenRouter | providers | 직접 API·모델 catalog/capability·usage·router/privacy 설정·same tenant tools |
 | R18 | 로컬 LLM 사용자 지원 | providers | Ollama/LM Studio/vLLM/compatible endpoint, LAN/Tailscale 주소·컨테이너 localhost·auth·offline 동작 |
-| R19 | 지금까지 비서 기능 누락 금지 | features F01~F64 | 대화·첨부·녹음·기억·학습·예약·메일·수집·푸시·볼트·복구 모두 trace |
+| R19 | 지금까지 비서 기능 누락 금지; R29의 카톡 공개 배포 제외를 반영 | features F01~F64/F70, data-connections | 대화·첨부·녹음·기억·학습·예약·메일·수집·푸시·볼트·복구 모두 trace |
 | R20 | 과도한 상호 승인 요구 금지 | architecture, accounts-isolation | 정상 조회/저장/명시된 작업은 즉시, admin 초기연결/실제 모호한 값만 입력 |
 | R21 | 전수 조사·죽은/불필요한 항목 제거 | audit | 523개 파일 모두 판정, 실제 dead block 증거, active/optional과 dead 구분 |
 | R22 | 단계별 계획, 코드 이전·재작성 순서 | migration | 각 단계 source→target→test→cutover 조건, 미구현과 검증 완료 구별 |
@@ -41,3 +41,13 @@ R03 때문에 전면 WASM UI 제안은 폐기한다. R05 때문에 단일 소유
 | R26 | community 스킬 개발·공유·설치를 간단히 | community-skills, F66/F67 | SKILL.md+필요 sidecar·Git pin·개인 설치/update/rollback/remove·명시적 합성 export |
 | R27 | Git에 공유하고 기존 제안/할 수 있는 일로 노출 | community-skills, F68 | Git→public catalog→로컬 추천→기존 카드, 별도 marketplace 계정 불필요·준비 상태 정확 |
 | R28 | 작업에 vault credential 연결·이미 사용한 정보 자동 재사용 | credential-use, F69 | 유효 tenant/service binding 자동 사용·최초/모호한 선택만 입력, secret 모델 비노출·offline/revoke/lost ACK 복구 |
+
+## 데이터 수집 배포 범위 변경
+
+| ID | 사용자 요구 | 최종 계획에서의 위치 | 검증 기준 |
+| --- | --- | --- | --- |
+| R29 | 카톡 수집기는 공개 배포 제외·개인 외부 수집기로 유지; 공식 메일/Slack과 커스텀 연결의 출처·상태 추적 | data-connections, F23/F34/F38/F39/F70, build-source-connections | public Kakao code/installer0; official/custom와 실제 가용성 분리, 연결→원문→batch receipt·scope/cursor 추적, tenant/revoke/replay/partial/heartbeat 검증 |
+
+이 요구는 카톡 수집기의 공개 Rust 재작성·동봉 계획을 대체한다. 개인 수집·기존 운영은 보존하고,
+공개 제품에는 독립 수집기가 사용할 공통 프로토콜만 제공한다. R19의 누락 금지와 충돌하지 않게
+F38을 명시적 제외로 남기고 새 공통 기능은 F70으로 추적한다.

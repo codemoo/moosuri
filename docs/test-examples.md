@@ -116,3 +116,19 @@ paired server가 새 grant를 위조하면 기기의 local grant를 확대하지
 합성 assistant/vault backup A를 만들고 outer key를 교체해 B를 만든다. 별도 시험 보관소에는 두 epoch의 backup identity, A/B archive, 최신 독립 journal/head와 필요한 검증 자료만 둔다. 기존 호스트의 data_dir/config/key·세션·provider credential을 모두 없앤 새 환경에서 그 자료만으로 A/B를 각각 복원한다. vault outer 해독 후에도 항목은 ciphertext이며 사용자 master/recovery 없이는 평문이 나오지 않아야 한다.
 
 missing identity는 `backup_key_missing`, 잘못된 key/변조는 `backup_decryption_failed`다. 옛 journal segment가 old key를 요구하면 최신 key 하나만으로 통과시키지 않는다. 최신 journal이 없으면 key가 맞아도 recovery_required를 유지한다. 이 예제는 명세이며 실제 개인 키 생성·복원 시험 결과가 아니다.
+
+## DATA06~DATA08 — 커스텀 수집과 출처 추적
+
+사용자 A/B에 동일 external ID를 쓰는 독립 custom 연결을 만든다. fake producer는 자신의
+자료만 push한다. A의 token으로 B의 연결/receipt를 요청하거나 official Gmail이라고 주장하면
+수신/노출0이다. rotate/revoke 직전 잡아둔 요청을 나중에 풀어도 commit하지 않는다.
+
+정상 batch commit 직후 ACK를 잃으면 같은 request/digest에 같은 receipt가 돌아오고 sequence는
+한 번만 증가한다. 원문 상세/검색 답변의 근거에서 해당 connection·scope·batch로 역추적한다.
+heartbeat만 보냈을 때 ‘마지막 자료 반영’은 그대로다. producer가 complete/success를 보고해도
+중간 page 누락이나 오래된 run이면 전체 동기화 완료/기존 자료 삭제를 표시하지 않는다.
+
+공식 분류지만 adapter가 없는 Slack은 준비되지 않은 상태다. Gmail interactive 조회만으로
+백그라운드 수집을 시작하지 않는다. 배포 manifest와 실제 binary/route 검사에서 Kakao 전용
+collector·installer·tool이 없음을 확인하고, generic custom 연결에 서비스 특화 필수 필드가
+없음을 확인한다. 모든 fixture는 합성이며 실제 개인 카톡 데이터/서버에는 접속하지 않는다.

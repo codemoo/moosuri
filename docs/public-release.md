@@ -10,6 +10,11 @@
 
 새로 작성한 공개 코드·문서에는 MIT OR Apache-2.0을 적용한다. 최초 공개에는 새 Rust 계획 검증기·자체 설계·상대 경로/해시 조사표만 포함하며 기존 private source·제3자 runtime/자산은 복사하지 않는다. 원본의 불명확한 라이선스를 이 공개 라이선스로 덮어쓰지 않는다. dependency와 코드 인용의 라이선스는 별도 검사한다. source inventory는 반입 허용 목록이 아니라 재작성 근거 목록이다. 로컬 AGENTS.md·CLAUDE.md와 개인 editor 지침은 .gitignore로 제외한다.
 
+공식 mail/Slack 수집 adapter와 generic custom HTTP protocol은 [수집 계획](data-connections.md)에
+따라 별도로 구현·검증한다. **카톡 수집 코드·전용 도구·설치 스크립트·DB driver는 공개 배포에
+넣지 않는다.** 개인 외부 producer는 사용자가 운영하며, generic payload를 쓰는 데 개인
+수집기 source나 credential을 공개할 필요가 없다. 분류와 실제 출시/준비 상태는 구별한다.
+
 ## 쉬운 설치의 완료 조건
 
 Linux x86_64/arm64에 signed/checksummed binary와 내장 React assets를 배포한다. 설치 경로는 standalone binary를 우선하고 OCI/Compose는 같은 private volume 설정의 선택지다. 기본 실행에 Python·Node·PostgreSQL·Redis·외부 vector DB가 없어야 한다. 현재 개발판의 `moosuri init/serve/doctor/export-types`는 실행 가능하며 [개발 안내](development.md)에 사용법/한계를 둔다. `backup/restore/update/uninstall`은 미구현이다. signed release/installer가 완성됐다고 안내하지 않는다.

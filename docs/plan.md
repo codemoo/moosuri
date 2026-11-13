@@ -1,6 +1,6 @@
 # moosuri Rust 재작성 계획
 
-2026-11-12. 기존 개인 비서를 누구나 설치할 수 있는 공개 프로젝트로 재설계한다. 이 문서는 제품 구현 완료 보고서가 아니다. 파일별 조사 결과는 [audit](audit.md), 현재 진행은 [status](status.md)가 정본이다.
+2026-11-13 범위 갱신. 기존 개인 비서를 누구나 설치할 수 있는 공개 프로젝트로 재설계한다. 이 문서는 제품 구현 완료 보고서가 아니다. 파일별 조사 결과는 [audit](audit.md), 현재 진행은 [status](status.md)가 정본이다.
 
 ## 목표와 완료 기준
 
@@ -26,7 +26,7 @@
 - 개인 환경 설치 스크립트는 일반 CLI·배포 템플릿으로 다시 만든다.
 - 실험용 후보 엔진·오래된 빌드 도구·템플릿 hosting 설정은 제품에 넣지 않는다.
 - 과거 배포 문서·모델 응답·운영 증거는 기능 근거만 요약한다. 전부 공개 저장소에 이관하지 않는다.
-- 수집은 활성 경로와 보존된 차세대 코드를 구별하고, 선택 가능한 Rust connector로 바꾼다.
+- 수집은 공식 Gmail·Slack adapter와 외부 custom HTTP protocol로 나눈다. 카톡 수집기는 공개 배포에서 제외하고 개인 프로젝트에서 공통 protocol로 연결한다. [R29 수집 계약](data-connections.md)을 따른다.
 
 ## 제품 구획
 
@@ -37,7 +37,7 @@
 | 기억·자료 | 원문 provenance, 검색, 현재 사실, 정정·망각, 자동 추출 | 근거를 보고 수정/삭제할 수 있음 |
 | 에이전트 | bounded loop, 도구 선택, 체크포인트, 예산, 완료 검증 | 명확한 요청은 실행하고 막힌 값만 질문 |
 | 맡긴 일·예약 | 목표, 지속 작업, 회차, 알림, 변경 비교, 조용한 시간 | 대화로 맡기고 카드에서 정지·재개 |
-| 외부 연결 | 읽기, 초안, 명시된 발송/일정 변경, 영수증 | 연결된 실제 기능만 노출 |
+| 외부 연결·수집 | 공식 mail/Slack·custom ingest, 출처·sync 이력, 초안/발송/일정 영수증 | 공식/커스텀과 실제 준비 상태를 구별, 원문에서 연결 추적 |
 | 암호 볼트 | 별도 origin·DB·세션, 기기 암호화, 가져오기·TOTP·trusted credential broker | 연결한 계정을 작업에 자동 재사용·잠금 시 대기 |
 | community·기여 | GitHub/OpenSpec, 스킬 pin/update/rollback·합성 export | 기존 제안/할 수 있는 일에서 추가·연결·실행 |
 
@@ -53,7 +53,7 @@
 | P3 자료·기억·문서 | source ingest·검색·근거 읽기·기억·정정·망각·자동 추출·문서 | 오래된 기록·정정·삭제·범위 해제와 재시작 계약 통과 |
 | P4 도구·학습·복합 작업 | tool registry/discovery, bounded harness, skills lifecycle·Git package 설치/제안 카드, 계획/검증/보완 | 도구 호출/결과 연결·최종 활성화·실패·예산·변경 시 무효화 통과 |
 | P5 예약·소식·푸시 | 5초 due loop, occurrence, change-only, 알림/quiet hours, Push | 실제 시간·재시작·중복·정지·변경·기기 열기 검증 |
-| P6 연결·외부 작업 | Google 읽기/초안/발송/일정, 공개 검색/배송, 선택 수집 connector | 새 설치 OAuth, private 원문·쓰기 영수증·결과 불명 계약 통과 |
+| P6 연결·외부 작업 | Google 읽기/초안/발송/일정, 공식 Gmail·Slack 수집, custom HTTP ingest·provenance, 공개 검색/배송 | 새 설치 OAuth, 연결/run/batch/source 추적·custom token 격리·cursor/partial·쓰기 영수증·결과 불명 계약 통과 |
 | P7 첨부·모바일 완성 | 사진/파일/음성, 녹음, 미리보기, 압축, PWA 공유, 접근성 | 모바일/데스크톱·느린 네트워크·삭제 경합·실기기 검증 |
 | P8 독립 볼트 | Rust 서버·React UI/격리 crypto Worker, CSV·TOTP·내보내기·복구·키 교체·credential broker | 기존 format 호환 벡터·취소/partial import·철회·독립 복원 통과 |
 | P9 데이터 이전·제한 전환 | private importer, manifest, drain, 하나의 writer, 호환/복원 기록 | row/reference 대조, latest journal, 중복 effects0, 재시작/rollback drill |
@@ -94,3 +94,10 @@ paired95% 구간 하한>−3%p의 품질 non-inferiority 기준(표본/중단 �
 [CONTRIBUTING](../CONTRIBUTING.md)의 작은 PR과 [OpenSpec](../openspec/README.md) delta로 협업한다. typo/일반 recipe는 절차를 줄이고 새 동작·저장·권한·설치 계약에 집중한다. 공개 source는 GitHub, 사용자의 주 화면은 기존 제안/할 수 있는 일 카드다. 별도 marketplace를 기본 진입점으로 만들지 않는다.
 
 계획된 [평가 하네스](../openspec/changes/build-agent-evaluation-harness/proposal.md), [community 스킬](../openspec/changes/add-community-skill-discovery/proposal.md), [credential 연결](../openspec/changes/connect-vault-credentials/proposal.md)은 active change로 두고 구현·시험 전 완료/archived로 표시하지 않는다. 이미 연결된 vault credential은 원래 사용자 요청의 범위에서 자동 사용하고 잠금·철회·모호함만 실제 상황대로 처리한다.
+
+## 수집 구현 범위 갱신
+
+R29에 따라 F38 카톡 수집·설치·전용 도구는 공개 제품 범위 밖이다. F70으로 공식/커스텀 공통
+연결·상태·provenance를 구현하며 [data-connections](data-connections.md)와
+[OpenSpec](../openspec/changes/build-source-connections/tasks.md)에 코드 좌표·순서·검증을 둔다.
+공식 분류만으로 사용 가능을 주장하지 않으며, 실제 수집 runtime 완료는 별도 task로 남긴다.

@@ -31,10 +31,10 @@ TS 집계는 `test(...)`/`it(...)`의 literal title 선언을 대상으로 한�
 
 | 판정 | 파일 수 | 뜻 |
 | --- | ---: | --- |
-| rewrite | 150 | 동작을 새 Rust 또는 React 구조에 재작성 |
-| contract | 39 | 스키마·프로토콜·평가 기준의 동작 근거. 테스트 파일 자동 이식은 제외 |
+| rewrite | 148 | 동작을 새 Rust 또는 React 구조에 재작성 |
+| contract | 40 | 스키마·프로토콜·평가 기준의 동작 근거. 테스트 파일 자동 이식은 제외 |
 | reference | 140 | 설계/화면 등 근거만 참조, 원문 그대로 반입하지 않음 |
-| exclude | 126 | 이전 실험·private 지침·운영 증적·hosting 통합을 새 source에서 제외 |
+| exclude | 127 | 이전 실험·private 지침·운영 증적·hosting 통합을 새 source에서 제외 |
 | optional | 2 | 선택 provider/inference 책임. 미구성/중지 상태를 dead라고 판정하지 않음 |
 | replace | 66 | 패키징·설치·자산·진입점 등을 새 일반 구성으로 대체 |
 
@@ -65,10 +65,21 @@ TS 집계는 `test(...)`/`it(...)`의 literal title 선언을 대상으로 한�
 
 진입은 AGENTS→README→필요한 상세 문서, 변경 가능한 상태는 [status](status.md) 한 곳이다. CLAUDE는 같은 정본으로 연결한다. 옛 운영 문서를 새 지시로 복사하지 않고 역사적 증거로 남긴다. file inventory·manifest는 이번 source snapshot 기준이며 새 버전 조사 시 기존 evidence를 덮어쓰기보다 새 baseline을 명시한다.
 
-`cargo run --locked -p xtask -- verify-plan`은523 경로/해시/크기 대조·필수 필드·단계/F ID·R01~R28/F01~F69 정의·새 평가 시나리오/feature 연결·108진입점·정적 시험 수·로컬 문서 링크를 검사한다. inventory 의미의 정확성·전체 보안·암호·제품 동작·최신 외부 문서의 진실성을 증명하지 않는다. 이 부분은 독립 검토와 향후 구현별 시험으로 확인한다.
+`cargo run --locked -p xtask -- verify-plan`은523 경로/해시/크기 대조·필수 필드·단계/F ID·R01~R29/F01~F70 정의·새 평가 시나리오/feature 연결·108진입점·정적 시험 수·로컬 문서 링크를 검사한다. inventory 의미의 정확성·전체 보안·암호·제품 동작·최신 외부 문서의 진실성을 증명하지 않는다. 이 부분은 독립 검토와 향후 구현별 시험으로 확인한다.
 
 ## 기존 테스트 재선별
 
 사용자 지시에 따라112개 test/support는108개 reference·4개 exclude로 변경했다. 제외한 네 파일은 `vault-web/tests/integration/{api_server.py,run.py,static_proxy.mjs}`와 `vault-web/tests/static-server.mjs`의 옛 실행 wrapper다.99개 test source의 선언/line 좌표는 조사 증거로 보존하고 target은 새 Rust 파일명이 아닌 참고 정책으로 바꿨다. `source-manifest.tsv`의 원본 hash/bytes는 바꾸지 않았다.
 
 새 테스트는 [testing](testing.md)의 실제 결함/사용자 결과로 선정한다. 기존 helper·mock 호출 순서·prompt wording·중복 CRUD는 새 구현의 의무가 아니다. 과거 사고의 유효한 실패 조건만 새 경로로 재현하고 기능별 누락은 [새 시나리오](../audit/evaluation-scenarios.tsv)로 확인한다.
+
+## R29에 따른 수집 target 변경
+
+2026-11-13부터 카톡 collector는 exclude, 카톡 전용 retrieval은 공통 thread/provenance의
+contract만 남긴다. shared dispatch/config/bridge의 Kakao-specific 분기도 공개 target에서
+제외한다. source hash/bytes/원래 evidence와 manifest는 그대로 보존한다. 기존 운영 파일을
+삭제하지 않는다. [source-connectors](../audit/source-connectors.tsv)와 [수집 계약](data-connections.md)이
+공식/custom 계획과 개인 전용 제외의 정본이다. 현재 추적표의 상태는 planned/excluded만 허용하며,
+구현 완료 상태는 실제 runtime 검증·증적 계약을 추가한 뒤 도입한다. Rust 계획 검증은 분류/배포/상태의
+일치, feature/scenario 참조, 안전한 상대 target/spec 경로와 카톡 제외를 검사한다. metadata 연결을 검사할 뿐
+수집 runtime/API가 구현됐다고 증명하지 않는다.

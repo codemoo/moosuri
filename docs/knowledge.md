@@ -3,7 +3,9 @@
 The knowledge screens let each account manage text sources and editable facts.
 They are a manual management foundation. Tool-verified models can search and read
 them in chat; see [knowledge agent](knowledge-agent.md). Automatic extraction,
-external collectors and document/goal editing remain upcoming features.
+official/custom external collection and document/goal editing remain upcoming features.
+[Data connections](data-connections.md) defines the next ingestion/provenance contract;
+Kakao collection remains an independently operated private producer.
 
 ## Sources
 

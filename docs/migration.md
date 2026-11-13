@@ -1,6 +1,6 @@
 # 단계별 코드·데이터 이전
 
-파일별 source→target은 [source inventory](../audit/source-inventory.tsv), 기능 기준은 [features](features.md), 설계 기준은 [architecture](architecture.md)다. 아래 순서는 구현 계획이며 아직 제품 코드를 이관하지 않았다. 기존 수집기·cron·DB·서비스·사용자 미완료 변경은 보존한다.
+파일별 source→target은 [source inventory](../audit/source-inventory.tsv), 기능 기준은 [features](features.md), 설계 기준은 [architecture](architecture.md)다. 아래 순서는 구현 계획이며 실제 완료 범위는 [status](status.md)를 따른다. 기존 수집기·cron·DB·서비스·사용자 미완료 변경은 보존한다.
 
 ## 단계와 종료 조건
 
@@ -12,7 +12,7 @@
 | P3 자료·기억·문서 | source_protocol/bridge/adapters/retrieval/source_units/memory/extraction/workspace/obligations | Rust ingest protocol+private legacy read adapter→tenant projection/FTS→evidence/history→memory/revision/forget→bounded extraction→document/goal→obligation | cursor commit/lost ACK/full snapshot, 한국어·시간·화자·100턴/다른대화·정정·철회·재추출 방지·같은 문서 ID, 사용자별 isolation |
 | P4 도구·학습·작업 | capabilities/discovery/tools/skills/learned_* /tasks/task_contract/background/runtime_effects | typed registry→필요 schema discovery→공개 절차 재작성→Git package pin/install/update/rollback·기존 제안 카드→proven route lifecycle→accepted task/plan/budget→verify/repair→effect adoption | actual linked receipts,2 distinct inputs/finalization, 귀속 실패3회, schema drift,8step/work bound, 최대2repair/동일 budget, 재시작 중복외부효과0 |
 | P5 예약·소식·푸시 | schedules/scheduled_external/schedule_results/maintenance/proactive/push | 5초 due claim→occurrence/시간대/misfire→fair queue→always/changes→inbox/quiet hours→Push→고정본문 예약 effect | idle model0, active1+latest queued1, pause/wait/resume, DST·서버 중단·연속회차·이전 비교 fence, architecture의 DST/misfire/pause/edit 정책 UTC oracle, Push 계정 전환·초안 보존 |
-| P6 선택 연결·메일 | collector service/state/native/calls/work_sessions, google/provider_* /parcel/public_web/assistant_connectors, deploy bridges | Google web OAuth·개인 binding·시스템 sender→gws fixture/native Gmail→초대 delivery→Gmail read/draft/send/reply→Calendar→공개검색/배송→Kakao/Slack/call/session feed→선택 CLI/vehicle/maps | fresh OAuth/scopes/refresh, gws home/cache/env 분리, marker/revision/receipt/unknown, response loss 재발송0, source identity/cursor, local-only cloud fallback0; 미구성 adapter는 미지원 |
+| P6 선택 연결·메일 | collector service/state/native/calls/work_sessions, google/provider_* /parcel/public_web/assistant_connectors, deploy bridges | Google web OAuth·개인 binding·시스템 sender→gws fixture/native Gmail→초대 delivery→Gmail read/draft/send/reply→Calendar→공개검색/배송→공식 Gmail·Slack source sync→custom HTTP ingress·추적→call/session feed→선택 CLI/vehicle/maps | fresh OAuth/scopes/refresh, gws home/cache/env 분리, marker/revision/receipt/unknown, response loss 재발송0, connection/run/batch/source identity·provider checkpoint/local sequence 분리, local-only cloud fallback0; 개인 카톡 collector는 제외·custom protocol만; 미구성 adapter는 미지원 |
 | P7 첨부·모바일 | media/attachment_text/mail_text, React composer/recorder/library/PWA tests | bounded upload/processor→thumbnail/object URL→image compression→PDF/media provider→녹음/편집→share/notification deep link→accessibility/preview | 업로드 중 다른 전송, failed retry 초안 보존,32MiB/48MP/2400px/2MiB×4 기준, pending cancel·late result·real iOS/Android/desktop·IME/keyboard/scroll |
 | P8 독립 볼트 | vault API/store/journal/backup, vault-web crypto/import/TOTP/useVault | Rust ciphertext server·tenant store→React vault/Worker→v1 crypto→item/search/copy→CSV/TOTP→recovery/rotation/archive→independent backup→account lifecycle outbox→trusted-device credential binding/typed broker | 강한 합성 key DB/log/network canary, 기존format 양방향,nonce/envelope reservation·lost ACK/kill·partial import·회수/복원, 계정reset decrypt0, JS 위협 문구, CRED 자동 재사용/잠금 대기/수신인·범위/회수/중복0 |
 | P9 private 데이터 이전·제한 전환 | 모든23 migration 계약, backup/recovery/offhost/source bridge, active deployment manifests | 아래 offline import와 drain 수행→parallel read-only 비교→명시한 범위 전환→암호화 백업·실제 restore drill | 필수 파일 manifest/pin·원래 host-local secrets 없는 빈 data_dir 복원·outer key 교체 전후/누락·파일 누락/변조/백업 중 삭제, source/target mapping·hash/count/FK·receipt/tombstone·session/credential/role/provider quarantine·accounting_unknown·latest journal·중복효과0·rollback 복구; 원본 collector/cron 유지 |
@@ -46,3 +46,10 @@ code rollback과 DB rollback을 분리한다. 새로운 irreversible schema/effe
 신규 검사는 [testing](testing.md)과 [시나리오 표](../audit/evaluation-scenarios.tsv)의 현재 사용자 계약에서 만든다. `test-surfaces.tsv`의 옛 filename/함수 개수는 backlog가 아니며 쓸모없는 검사 재작성도 하지 않는다. 모든 F ID 연결은 누락 검사만 한다. P0의 broker spike는 P8 완료가 아니고 P6의 server-managed Google credential은 강한 vault mode와 구별한다. 주요 동작 PR은 OpenSpec delta와 관련 시나리오의 실제 증거를 함께 갱신한다.
 
 P8의 볼트/지원 broker는 v1 제공 대상으로 남으며 선택은 사용자의 설치·연결 선택이다. P2 alpha와 P10 안정판을 구별하고, 공개 개발 저장소/기여 기반은 P0부터 준비한다. P0에서 baseline 실행/공통 fixture를 먼저 확인하므로 P10에서 비교 불가를 처음 발견하지 않게 한다. 새 복원·예약 계약은 [runtime recovery change](../openspec/changes/complete-runtime-recovery-contracts/proposal.md)에 추적한다.
+
+## 공식·커스텀 수집 변경의 이전 순서
+
+[build-source-connections](../openspec/changes/build-source-connections/tasks.md)의 공통 저장/인증
+→custom 수신과 합성 sender→공식 Gmail/Slack→React 추적 순으로 검증한다. 기존 수동 모음은
+이름만으로 외부 연결에 붙이지 않는다. private 카톡 producer의 실제 설정·데이터 전환은 별도
+비공개 작업이며 공개 배포·installer가 기존 collector/cron/DB를 교체하지 않는다.

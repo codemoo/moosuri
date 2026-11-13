@@ -9,7 +9,7 @@ accounts, data, infrastructure settings and experimental runtimes are not copied
 - [현재 상태와 다음 작업](docs/status.md)
 - [재작성 계획](docs/plan.md): 목표·순서·완료 조건
 - [설계](docs/architecture.md): Rust 경계·실행·저장·복구
-- [요구사항](docs/requirements.md): 사용자 지시 28개와 검증 추적
+- [요구사항](docs/requirements.md): 사용자 지시 29개와 검증 추적
 - [설치·관리자](docs/onboarding.md): 초기 설정·초대·대시보드·접속 방식
 - [사용자 격리](docs/accounts-isolation.md): 각자의 세션·실행 환경·사용량
 - [모델 연결](docs/providers.md): OpenAI·Anthropic·OpenRouter·로컬 LLM
@@ -26,6 +26,7 @@ accounts, data, infrastructure settings and experimental runtimes are not copied
 - [개인 작업 브라우저](docs/browser-workspaces.md): 같은 로그인 세션·화면 보기·직접 조작·대화 이어가기
 - [뮤즈·피클 브라우저 조사](docs/research/browser-workspaces-2026-11-13.md): 공식 근거와 채택 범위
 - [credential 자동 사용](docs/credential-use.md): 볼트 연결·재사용·잠금/철회 처리
+- [데이터 수집 연결](docs/data-connections.md): 공식 Gmail·Slack과 커스텀 수집, 출처·동기화 추적 계획
 - [기능별 이전표](docs/features.md): 유지할 동작과 검증 기준
 - [이전 순서](docs/migration.md): 코드·데이터·운영 전환
 - [전수 조사와 제외 목록](docs/audit.md): 파일별 판정과 근거
@@ -50,6 +51,9 @@ The application stack is **Rust backend/agent/CLI + React/TypeScript web + SQLit
 All user, admin, vault and PWA screens use React. Shared model connections serve
 separate user environments. Linux is the deployment target; Tailscale-private and
 ordinary HTTPS self-hosting are supported design paths. PostgreSQL is future work.
+Official Gmail/Slack collection and a generic custom HTTP ingest protocol are planned.
+Kakao collection is privately operated and excluded from public packages; its data
+can use the planned custom protocol. [Scope and implementation tracking](docs/data-connections.md).
 This does not claim that every transitive dependency is implemented in Rust.
 The exact boundary and build gates are in [architecture](docs/architecture.md).
 

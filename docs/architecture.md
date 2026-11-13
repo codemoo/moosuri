@@ -103,6 +103,19 @@ Rig의 serializable sans-IO AgentRun은 후보 내부 driver다. 이미 내구�
 
 credential은 [볼트 연결 설계](credential-use.md)의 opaque user/service binding으로 선택한다. 이미 연결된 계정은 원래 요청 범위에서 자동 재사용한다. 실제 인증은 신뢰한 사용자 기기의 typed broker가 수행하고 secret/TOTP를 모델에 돌려주지 않는다. operation/resource/recipient·exact origin·version을 확인하며 잠금/offline이면 슬롯을 반환하고 같은 run/effect로 대기·재개한다. adopted effect는 broker identity/generation에 고정하며 다른 기기로 자동 failover하지 않는다. 발송 가능성이 있으면 원래 journal로 reconcile하거나 outcome_unknown을 유지한다. 신뢰한 기기의 local grant가 최대 허용 범위이며, 새 dispatch commitment와 철회를 서버 writer에서 순서화한다. 비밀 비노출과 악성 서버의 작업 의도 위조 방어는 구별한다. 상세 경계는 연결 설계가 정본이다. 별도 server token 선택은 user-key vault와 다른 신뢰 경계다.
 
+## 공식·커스텀 수집 경계
+
+[data-connections](data-connections.md)의 R29/F70을 따른다. 공식 Rust Gmail/Slack adapter와
+별도 외부 producer의 authenticated HTTP push는 같은 source commit 경로로 정규화한다.
+개인 카톡 collector는 공개 package/installer에 포함하지 않는다. 연결 등록으로 임의 코드를
+서버에서 실행하지 않으며 수집 token은 한 tenant/connection의 ingest/status만 허용한다.
+
+connection/config epoch, immutable source scope, server-issued sync run, batch receipt와
+원문 provenance를 저장한다. provider의 opaque checkpoint와 기존 collection의 i64 commit
+sequence는 별도다. 두 cursor와 자료/receipt를 함께 commit하며 heartbeat와 remote coverage는
+별도로 기록한다. ‘공식’ 분류와 실제 adapter/credential 준비 상태, custom 성공 보고와 서버가
+증명하는 local commit을 구별한다. 상세 구현 파일·API/화면·검증 순서는 위 계약과 OpenSpec에 둔다.
+
 ## 자료·기억·스킬·일
 
 자료는 tenant/binding/dataset/scope/source identity/version/speaker/observed_at/valid_at로 식별한다. batch commit 뒤 cursor 진행, lost ACK replay no-op, complete snapshot만 retire를 허용한다. 원문 해제의 keep/delete·기억 망각·대화 삭제를 구별한다. epoch/tombstone은 검색·FTS·캐시·checkpoint·SSE·문서에 적용된다.

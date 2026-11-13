@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod source_connections;
+
 type Check<T> = Result<T, String>;
 
 fn read(path: &Path) -> Check<String> {
@@ -135,7 +137,7 @@ fn links_and_stale_text(root: &Path) -> Check<usize> {
     Ok(count)
 }
 
-fn scenarios(root: &Path, features: &BTreeSet<String>) -> Check<usize> {
+fn scenarios(root: &Path, features: &BTreeSet<String>) -> Check<BTreeSet<String>> {
     let rows = table(
         root,
         "evaluation-scenarios.tsv",
@@ -218,12 +220,12 @@ fn scenarios(root: &Path, features: &BTreeSet<String>) -> Check<usize> {
             )?;
         }
     }
-    Ok(rows.len())
+    Ok(ids)
 }
 
 fn verify(root: &Path) -> Check<()> {
-    let features = definitions(root, "features.md", 'F', 69)?;
-    definitions(root, "requirements.md", 'R', 28)?;
+    let features = definitions(root, "features.md", 'F', 70)?;
+    let requirements = definitions(root, "requirements.md", 'R', 29)?;
     let inventory = table(
         root,
         "source-inventory.tsv",
@@ -360,10 +362,15 @@ fn verify(root: &Path) -> Check<()> {
             && totals.get("typescript") == Some(&215),
         "unexpected static test counts",
     )?;
-    let scenario_count = scenarios(root, &features)?;
+    let scenario_ids = scenarios(root, &features)?;
+    let connector_count =
+        source_connections::verify(root, &features, &scenario_ids, &inventory, &entries)?;
+    let scenario_count = scenario_ids.len();
+    let requirement_count = requirements.len();
+    let feature_count = features.len();
     let links = links_and_stale_text(root)?;
     println!(
-        "Plan verified: 523 sources, 108 entrypoints, 99 historical test files (772 Python / 215 TS declarations), 28 requirements, 69 features, {scenario_count} planned scenario groups, {links} local links."
+        "Plan verified: 523 sources, 108 entrypoints, 99 historical test files (772 Python / 215 TS declarations), {requirement_count} requirements, {feature_count} features, {scenario_count} planned scenario groups, {connector_count} connector scope records, {links} local links."
     );
     println!(
         "This validates planning metadata and links, not product behavior or cryptographic security."

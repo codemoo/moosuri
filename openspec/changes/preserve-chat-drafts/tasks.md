@@ -1,0 +1,9 @@
+- [x] Add optional non-authenticating server draft namespace and restricted-session omission.
+- [x] Add bounded tab-session envelope with closed pending validation and no automatic resubmission.
+- [x] Gate restore by verified session/current thread list; preserve selected thread and next draft.
+- [x] Fence same-account session replacement and synchronously clear on auth/logout/password boundaries.
+- [x] Add synthetic App/storage and HTTP boundary regressions.
+- [x] Repair CHAT-DRAFT-R1: preserve recovery on automatic/manual connectivity boot retry; fence abandoned boot probes and cover late-reply races before/after fresh authentication with StrictMode lifecycle regressions.
+- [x] Complete focused frontend/typecheck/build, new HTTP scope boundary and affected Clippy checks; compare exact generated DTO.
+- [x] Resolve the historical broader HTTP scripted-toolset fixture separately; original failure retained, repaired native/Linux HTTP suites pass.
+- [x] Source-pinned independent auth/privacy review and R1 rereview; root native/Linux/React/exact DTO and actual Chrome refresh/offline/retry/logout acceptance.

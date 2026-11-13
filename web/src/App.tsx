@@ -1,3 +1,4 @@
+import {ChatDraftRecovery,draftScope,type ChatDraftSession} from "./chat-drafts";
 import {activatePushAccount,clearBrowserPushBinding} from "./push-binding";
 
 import {VaultLaunch,lockVaultWindows} from "./VaultLaunch";
@@ -9,6 +10,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type SetStateAction,
   type ReactNode,
 } from "react";
 import type {
@@ -136,6 +138,8 @@ export default function App() {
 }
 
 function Application({ scopes }: { scopes: Set<RequestScope> }) {
+  const draftRecovery=useMemo(()=>new ChatDraftRecovery(),[]);
+  const [draftSession,setDraftSession]=useState<ChatDraftSession|null>(null);
   const [system, setSystem] = useState<SystemStatus | null>(null);
   const [session, setSession] = useState<SessionView | null>(null);
   const [epoch, setEpoch] = useState(0);
@@ -151,6 +155,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   const logoutIdentity = useRef<string | null>(null);
   const authChannel = useRef<BroadcastChannel | null>(null);
   const revalidateRef = useRef<() => void>(() => {});
+  const retryBootRef = useRef<() => void>(() => {});
   const checkSessionRef = useRef<() => void>(() => {});
   const [path, setPath] = useState(window.location.pathname);
   useEffect(() => {
@@ -177,19 +182,32 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   }
   useEffect(()=>{if(session)void activatePushAccount(session.user.id).catch(()=>{});},[session?.user.id]);
   useEffect(()=>{const listener=(event:MessageEvent)=>{if(event.data?.type==="moosuri-open-schedules"&&session)navigate("/app/schedules");};navigator.serviceWorker?.addEventListener("message",listener);return()=>navigator.serviceWorker?.removeEventListener("message",listener);},[session?.user.id]);
+  function retryBoot() {
+    // Connectivity is not an authentication transition. Keep saved bytes opaque
+    // until the fresh session and owned inventory confirm them, but synchronously
+    // retire the abandoned probe before React starts the replacement effect.
+    bootScope.current?.close();
+    bootScope.current = null;
+    setLoading(true);
+    setBoot((value) => value + 1);
+  }
   function revalidate() {
+    draftRecovery.clear();
+    setDraftSession(null);
     if(session)void clearBrowserPushBinding(session.user.id);
     // Synchronously fence every old response before React unmounts its UI.
     clearLifetimes();
     authMutation.current = null;
     setSession(null);
     setEpoch((value) => value + 1);
-    setLoading(true);
     setLoggingOut(false);
-    setBoot((value) => value + 1);
+    retryBoot();
   }
   revalidateRef.current = revalidate;
+  retryBootRef.current = retryBoot;
   function beginMutation() {
+    draftRecovery.clear();
+    setDraftSession(null);
     const owner = Symbol();
     authMutation.current = owner;
     focusScope.current?.close();
@@ -210,6 +228,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
       .then((current) => {
         if (
           current.user.id !== session.user.id ||
+          draftScope(current) !== draftScope(session) ||
           current.user.role !== session.user.role ||
           current.password_change_required !==
             session.password_change_required ||
@@ -270,20 +289,28 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     void (async () => {
       try {
         const status = await scope.request<SystemStatus>("/system");
+        if (bootScope.current !== scope) return;
         setSystem(status);
         if (status.initialized) {
           try {
             const current = await scope.request<SessionView>("/auth/session");
+            if (bootScope.current !== scope) return;
             logoutIdentity.current = null;
+            setDraftSession(draftRecovery.confirm(current));
             setSession(current);
           } catch (e) {
+            if (bootScope.current !== scope) return;
             if (!(e instanceof ApiFailure && e.status === 401)) throw e;
+            draftRecovery.clear();
+            setDraftSession(null);
             void clearBrowserPushBinding();
             setSession(null);
           }
         }
+        if(!status.initialized)draftRecovery.clear();
         setLoading(false);
       } catch (e) {
+        if (bootScope.current !== scope) return;
         if (!isAborted(e)) {
           setError(errorText(e));
           setBootFailed(true);
@@ -291,9 +318,14 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
         }
       }
     })();
-    return () => scope.close();
+    return () => {
+      scope.close();
+      if (bootScope.current === scope) bootScope.current = null;
+    };
   }, [boot]);
   function adopt(next: SessionView) {
+    draftRecovery.clear();
+    setDraftSession(draftRecovery.confirm(next));
     logoutIdentity.current = null;
     setEpoch((value) => value + 1);
     setSession(next);
@@ -305,7 +337,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   }
   useEffect(() => {
     const reconnect = () => {
-      if (bootFailed || loading) revalidateRef.current();
+      if (bootFailed || loading) retryBootRef.current();
       else checkSessionRef.current();
     };
     window.addEventListener("online", reconnect);
@@ -314,6 +346,8 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   async function logout() {
     const expectedAccount = session?.user.id ?? logoutIdentity.current;
     if (!expectedAccount || logoutScope.current) return;
+    draftRecovery.clear();
+    setDraftSession(null);
     void clearBrowserPushBinding(expectedAccount);
     logoutIdentity.current = expectedAccount;
     focusScope.current?.close();
@@ -371,7 +405,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
           <Notice>{error}</Notice>
           <button
             className="primary"
-            onClick={() => setBoot((value) => value + 1)}
+            onClick={retryBoot}
           >
             Try again
           </button>
@@ -396,7 +430,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
           </p>
           <button
             className="primary"
-            onClick={() => setBoot((value) => value + 1)}
+            onClick={retryBoot}
           >
             Check again
           </button>
@@ -437,6 +471,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     <Workspace
       key={`${session.user.id}:${epoch}`}
       session={session}
+      draftSession={draftSession}
       path={path}
       navigate={navigate}
       onLogout={logout}
@@ -667,12 +702,14 @@ function PasswordChange({
 
 function Workspace({
   session,
+  draftSession,
   path,
   navigate,
   onLogout,
   onExpired,
 }: {
   session: SessionView;
+  draftSession: ChatDraftSession|null;
   path: string;
   navigate: (path: string) => void;
   onLogout: () => void;
@@ -680,7 +717,7 @@ function Workspace({
 }) {
   const scope = useScope(session.user.id);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, updateSelected] = useState<string | null>(null);
   const [knowledgeDrafts, setKnowledgeDrafts] = useState(
     initialKnowledgeDrafts,
   );
@@ -688,12 +725,31 @@ function Workspace({
   const [artifactKind,setArtifactKind]=useState<import("../shared/api-types").ArtifactKind>("document");
   const [artifactDrafts,setArtifactDrafts]=useState<ArtifactDrafts>({});
   const [knowledgeTarget, setKnowledgeTarget] = useState<ChatEvidence | null>(null);
-  const [chatMemory, setChatMemory] = useState<ChatMemory>({
-    drafts: {},
-    pending: {},
-  });
+  const [chatMemory, updateChatMemory] = useState<ChatMemory>({drafts:{},pending:{}});
+  const chatMemoryRef=useRef(chatMemory);
+  const recoveryReady=useRef(false);
+  const [chatReady,setChatReady]=useState(!draftSession);
+  const alive=useRef(true);
+  useLayoutEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
+  const threadIds=useRef<string[]>([]);
+  function persist() {
+    if(alive.current&&recoveryReady.current)draftSession?.save(chatMemoryRef.current,selectedRef.current,threadIds.current);
+  }
+  function setChatMemory(next:SetStateAction<ChatMemory>) {
+    if(!alive.current)return;
+    const memory=typeof next==="function"?next(chatMemoryRef.current):next;
+    chatMemoryRef.current=memory;
+    updateChatMemory(memory);
+    persist();
+  }
+  function setSelected(next:SetStateAction<string|null>) {
+    if(!alive.current)return;
+    const id=typeof next==="function"?next(selectedRef.current):next;
+    selectedRef.current=id;
+    updateSelected(id);
+    persist();
+  }
   const selectedRef = useRef(selected);
-  selectedRef.current = selected;
   const pathRef = useRef(path);
   pathRef.current = path;
   const listController = useRef<AbortController | null>(null);
@@ -737,12 +793,22 @@ function Workspace({
     void scope
       .request<ThreadsResponse>("/threads", "GET", undefined, controller.signal)
       .then((result) => {
+        threadIds.current=result.threads.map(t=>t.id);
         setThreads(result.threads);
-        setSelected((current) =>
-          result.threads.some((t) => t.id === current)
-            ? current
-            : (result.threads[0]?.id ?? null),
-        );
+        if(!recoveryReady.current) {
+          const recovered=draftSession?.load(threadIds.current);
+          recoveryReady.current=true;
+          if(recovered?.restored) {
+            setChatMemory(recovered.memory);
+            setSelected(recovered.selected??(recovered.memory.drafts.new||recovered.memory.pending.new?null:result.threads[0]?.id??null));
+          }else setSelected(result.threads[0]?.id??null);
+        }else {
+          const allowed=new Set(["new",...threadIds.current]);
+          setChatMemory(current=>({drafts:Object.fromEntries(Object.entries(current.drafts).filter(([id])=>allowed.has(id))),pending:Object.fromEntries(Object.entries(current.pending).filter(([id])=>allowed.has(id)))}));
+          setSelected(current=>result.threads.some(t=>t.id===current)?current:result.threads[0]?.id??null);
+        }
+        persist();
+        setChatReady(true);
         setLoading(false);
       })
       .catch((e) => {
@@ -762,6 +828,7 @@ function Workspace({
       const thread = await scope.request<ThreadSummary>("/threads", "POST", {
         title: "New conversation",
       });
+      threadIds.current=[thread.id,...threadIds.current.filter(id=>id!==thread.id)];
       setThreads((current) => [thread, ...current]);
       setSelected(thread.id);
       setDrawer(false);
@@ -779,6 +846,7 @@ function Workspace({
       const thread = await scope.request<ThreadSummary>("/threads", "POST", {
         title: "New conversation",
       });
+      threadIds.current=[thread.id,...threadIds.current.filter(id=>id!==thread.id)];
       setThreads((current) => [
         thread,
         ...current.filter((item) => item.id !== thread.id),
@@ -804,6 +872,7 @@ function Workspace({
     });
   }
   function threadMissing(id: string) {
+    threadIds.current=threadIds.current.filter(current=>current!==id);
     setThreads((current) => current.filter((thread) => thread.id !== id));
     setSelected((current) => (current === id ? null : current));
     removeMemory(id);
@@ -819,6 +888,7 @@ function Workspace({
         {},
       );
       const remaining = threads.filter((t) => t.id !== deleting.id);
+      threadIds.current=remaining.map(t=>t.id);
       setThreads(remaining);
       if (selected === deleting.id) setSelected(remaining[0]?.id ?? null);
       removeMemory(deleting.id);
@@ -1151,7 +1221,7 @@ function Workspace({
               </button>
             </div>
           )
-        ) : (
+        ) : !chatReady ? <p role="status">Checking your conversations…</p> : (
           <ChatPanel
             accountId={session.user.id}
             artifactTarget={artifactTarget}

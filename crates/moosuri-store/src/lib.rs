@@ -130,6 +130,21 @@ impl UserContext {
     pub fn password_change_required(&self) -> bool {
         self.restricted
     }
+    /// Non-authenticating namespace for optional tab-session draft recovery.
+    /// Domain separation hides the opaque session digest and prevents reuse as
+    /// a session token. Restricted sessions never receive a recovery namespace.
+    pub fn chat_draft_scope(&self) -> Option<String> {
+        if self.restricted {
+            return None;
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"moosuri/chat-drafts/scope/v1\0");
+        hash.update(self.digest);
+        hash.update((self.account.id.len() as u64).to_be_bytes());
+        hash.update(self.account.id.as_bytes());
+        hash.update(self.epoch.to_be_bytes());
+        Some(format!("{:x}", hash.finalize()))
+    }
 }
 /// Contains a bearer token; deliberately does not implement Debug.
 pub struct LoginResult {

@@ -83,3 +83,34 @@ memory writes, automatic extraction, external tools, media and subscriptions rem
 
 See [verification](reviews/2026-11-12-durable-text-chat.md) for actual acceptance and
 [status](status.md) for the remaining assistant implementation.
+
+## Drafts after page refresh
+
+After this server confirms the same login session, the current tab can recover its unsent composer,
+selected existing thread and uncertain original request metadata. Recovery waits for the authenticated
+thread list; deleted or missing threads lose their slots. It never sends automatically. An uncertain
+request first checks saved history with GET. The existing **same request resubmit** button keeps its
+original request UUID, immutable attachment IDs/revisions and target/timezone context. A saved failed
+run is shown with its status; it does not replace the next draft in the composer.
+
+Recovery uses one plaintext `sessionStorage` key, with at most16slots,128KiB total,8192 UTF-8 bytes
+per text, and an8-hour lifetime since the last save. Over-limit text/slots may remain in the current
+UI but are not guaranteed recovery. Corrupt/full/disabled storage falls back to in-memory chat.
+It stores no credentials, API result bodies, source/artifact bodies, media bytes or upload handles.
+It does not use localStorage, the Cache API or the service worker. Older servers without the optional
+public session draft scope retain only the existing in-memory behavior.
+
+Logout/authentication transitions and password changes clear the owned key immediately, even when
+the logout network response is lost. A new login for the same account has a different public scope
+and cannot load the prior session's drafts. Passive session revalidation also fences delayed UI
+responses when that scope changes. Network failures do not establish authentication or authorize a
+stored request. Automatic reconnect and **Try again** preserve inaccessible saved drafts while
+rechecking the exact session and thread list, including when an earlier boot probe is still loading.
+Late replies from abandoned boot probes cannot clear those drafts or replace the current session.
+Neither retry automatically sends the pending request.
+
+This is trusted-browser convenience, not vault encryption or durable backup. Same-origin scripts,
+browser extensions and anyone with browser/OS access may read plaintext sessionStorage. Browsers can
+copy a session into a duplicated tab or restore it after a crash/restart; tab-close erasure and crash
+recovery are browser behavior, not guaranteed here. Recovery still requires the same current server
+session. On shared devices, sign out and clear browser data as appropriate.

@@ -497,6 +497,7 @@ fn session_view(user: &UserContext) -> SessionView {
     SessionView {
         user: user.account().clone(),
         password_change_required: user.password_change_required(),
+        chat_draft_scope: user.chat_draft_scope(),
     }
 }
 fn session_response(user: &UserContext, token: &str, secure: bool) -> Response {

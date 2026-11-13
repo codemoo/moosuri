@@ -60,6 +60,10 @@ pub struct AccountSummary {
 pub struct SessionView {
     pub user: AccountSummary,
     pub password_change_required: bool,
+    /// Public tab-draft namespace only; never a bearer or authentication proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub chat_draft_scope: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct SystemStatus {

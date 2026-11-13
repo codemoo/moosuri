@@ -115,7 +115,11 @@ export type MailReconciliation = { status: string, last_result: string, last_che
 export type MailApproval = { revision: number, digest: string, };
 export type Role = "admin" | "member";
 export type AccountSummary = { id: string, name: string, email: string, role: Role, must_change_password: boolean, };
-export type SessionView = { user: AccountSummary, password_change_required: boolean, };
+export type SessionView = { user: AccountSummary, password_change_required: boolean,
+/**
+ * Public tab-draft namespace only; never a bearer or authentication proof.
+ */
+chat_draft_scope?: string, };
 export type SystemStatus = { version: string, initialized: boolean, stage: string, };
 export type ThreadSummary = { id: string, title: string, created_at: number, updated_at: number, };
 export type ThreadsResponse = { threads: Array<ThreadSummary>, };

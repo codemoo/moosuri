@@ -11,7 +11,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 영역 | 구현한 범위 | 남은 경계와 사용·증거 |
 | --- | --- | --- |
 | 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 초대 메일/gws·전체 계정 삭제/볼트 outbox·일반 installer/update/uninstall은 미구현. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
-| 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량, 저장 채팅·SSE·취소·재시도·격리, 별도 ChatGPT plan·OAuth protocol | 구독의 durable credential·개인 provider 연결/선택·Claude 실행·종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
+| 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량, 저장 채팅·SSE·취소·재시도·새로고침 초안 복구·격리, 별도 ChatGPT plan·OAuth protocol | 구독의 durable credential·개인 provider 연결/선택·Claude 실행·종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·검색, 직접 기억·정정·망각, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 여섯 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check | 성공 절차의 typed 학습/독립 proof·합성 재구성 export·정적 catalog generator·예약 needs_skill/GC 등은 남음. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-13-community-authoring.md) |
 | 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·로컬 답장 초안·승인된 frozen 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. Gmail provider 초안 CRUD·고정 예약 발송, 인증된 자동 폼/장기 profile 복구는 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
@@ -22,6 +22,15 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·선택·retry·인증 preview/library·삭제 철회, 실제 vision probe, 공개 offline shell·설치/업데이트 | 녹음/STT·PDF OCR/시각 이해·PWA 공유받기·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·CredentialBroker·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 대화 초안과 재접속
+
+같은 탭에서 새로고침하거나 오프라인 뒤 다시 연결해도, 정확한 로그인 세션과 대화 목록을
+확인한 뒤 작성 중인 글과 미확인 요청을 복구한다. 자동으로 메시지를 다시 보내지 않으며
+직접 재제출할 때 원래 요청을 유지한다. 로그아웃·다른 세션에서는 이전 초안을 지운다.
+재접속이 초안을 지우던 결함을 독립 재현·수정하고 실제 Chrome/Rust/SQLite에서 검증했다.
+탭의 제한된 평문 보관이며 볼트 암호화나 탭 종료 후 백업은 아니다.
+[검증 기록](reviews/2026-11-14-chat-draft-continuity.md).
 
 ## 최근 수락한 단위 · 메일 결과 확인
 
@@ -43,7 +52,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 IO·HTTP, 실제 Rust/SQLite와 Chrome의 명확화/설정 링크/영수증 재조회가 통과했다.
 [검증 기록](reviews/2026-11-13-conversational-calendar.md)에 수정과 수락 범위를 남겼다.
 
-응답 중 작성한 초안은 유지되지만 전체 새로고침 시 미전송 초안은 아직 유지되지 않는다.
+응답 중 작성한 초안과 같은 탭의 검증된 새로고침 복구를 지원한다.
 실제 Google 계정·모델의 언어 이해 정확도·실기기는 별도 검증이다. 앞서 수락한
 [PDF 텍스트 첨부](reviews/2026-11-14-private-pdf-files.md)와
 [독립 볼트 현재 checkpoint 복구](reviews/2026-11-13-vault-service-recovery.md)는 유지한다.
@@ -60,7 +69,7 @@ identity의 실패 사용량이 섞이는 결함을 수정하고 독립 재검�
 우선순위는 현재 지원 범위를 실제 대화 업무에 연결하는 순서다. `선택` 연결/볼트 패키지는
 사용자의 설치 선택이며 v1 제공 계약을 후속으로 미루는 뜻이 아니다.
 
-1. **대화 연속성과 Calendar 후속**: 새로고침 뒤 미전송 초안 복구, 여러 턴의 대상 명확화,
+1. **대화와 Calendar 후속**: 여러 턴의 대상 명확화,
    현재 범위의 실계정·언어 holdout 검증을 진행한다. 기본 캘린더의 제한된 대화 읽기/쓰기는
    구현했고, 미션·반복/종일/참석자/보조 캘린더 작업은 아직 확장하지 않았다.
 2. **볼트 broker와 복구**: device pairing·local grant·online commitment/revoke·secret 비노출·offline resume,

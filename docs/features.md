@@ -112,3 +112,11 @@ Kakao 발송·전화 발신·Slack 쓰기·reply-all·첨부 메일 발송·미�
 ## 시험 선정 규칙
 
 원본에서 정적으로 확인한 Python test 함수772개와 TypeScript test 선언215개는 전체 source 표면의 정적 수다. parametrize·dynamic tests·skip·과거 릴리스 실행 수와 같지 않다. 기존 backend1,121·UI150을 새 Rust 통과 수로 쓰지 않는다. 파일별 test 목록은 `audit/test-surfaces.tsv`에 역사적 근거로만 둔다. 기존112 test/support 파일은108 reference·4 exclude이며 자동 이식 대상은0개다. 새 검사는 [평가 계획](testing.md)과 [시나리오](../audit/evaluation-scenarios.tsv)의 사용자 결과·실제 결함·독립 oracle로 선정한다. 구현을 따라 쓴 검사·동일 CRUD 중복·고정 prompt 문구·폐기한 framework 검사는 버린다. F ID 연결은 누락 탐지이며 테스트 개수나 품질 증명이 아니다.
+
+### 이미지 첨부 구현 범위 (F10–F12/F14)
+
+현재 이미지 단위는 PNG/JPEG/WebP 원본32MiB·48MP를 브라우저에서2400px·2MiB 이하로 준비하고, 서버가 서명/실제 decode/할당 한도를 다시 검사하여 EXIF 없는 JPEG와 실제 thumbnail을 저장한다. 파일별 진행·취소·같은 UUID/bytes 재시도가 독립적이며, 글을 보내도 미완료 업로드는 남는다. 준비된 최대4장의 ID/revision만 turn과 retry에 고정한다. 인증 no-store preview·확대·download를 composer/말풍선/보관함에서 제공한다.
+
+이미지 연결은 provider revision/model/effort별 임의4×4 색상 probe를 실제 통과해야 한다. 이름으로 vision을 추정하지 않는다. 미지원 조합은 입력/선택을 보존하고 관리자 설정의 이미지 연결 확인으로 안내한다. 현재 turn의 이미지만 전송하며, 이전 이미지에서 파생된 대화는 직접 새 이미지를 본 것과 구분한다. 이미지 및 이를 상속한 대화는 모든 tool/메모리/기록 쓰기를 비활성화한다. 이미지 유래 기록 저장, 일반 파일 텍스트/PDF/STT/오디오/동영상/공유는 후속 단위이며 업로드 완료를 해당 처리 완료로 표시하지 않는다.
+
+삭제는 typed destructive journal의 tombstone과 의존 답변·checkpoint·evidence 철회를 함께 처리한다. 처리 중/응답 중 늦은 완료는 복구하지 못하며, restart/restore의 미완료 처리는 재선택 필요 상태로 격리된다. 합성 HTTP→픽셀을 읽는 loopback provider→retry/reload/library 및 소유권·tombstone·object URL 수명 검증은 `crates/moosuri-server/tests/media.rs`, `store::media::tests`, `web/src/Media.test.tsx`에 있다.

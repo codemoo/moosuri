@@ -282,6 +282,7 @@ pub(super) fn turn(conn: &Connection, run: &Run) -> Result<ChatTurn> {
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(ChatTurn {
+        attachments: crate::media::turn_media(conn, &run.tenant, &run.id)?,
         sequence: run.sequence,
         user_text: run.text.clone(),
         assistant,
@@ -809,15 +810,50 @@ pub(super) fn submit_turn_artifact_in(
     text: String,
     target: Option<moosuri_core::ArtifactTarget>,
 ) -> Result<ChatTurn> {
+    submit_turn_media_in(
+        tx,
+        provider_key,
+        web_profile,
+        user,
+        thread_id,
+        request_id,
+        text,
+        target,
+        vec![],
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn submit_turn_media_in(
+    tx: &Connection,
+    provider_key: &[u8; 32],
+    web_profile: &moosuri_core::WebToolProfile,
+    user: UserContext,
+    thread_id: String,
+    request_id: String,
+    text: String,
+    target: Option<moosuri_core::ArtifactTarget>,
+    attachments: Vec<moosuri_core::MediaRef>,
+) -> Result<ChatTurn> {
     let user = validate(tx, &user, true, false)?;
     thread_exists(tx, &user, &thread_id)?;
+    if attachments.len() > 4 {
+        return Err(StoreError::InvalidInput);
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for media in &attachments {
+        if media.revision != 1 || Uuid::parse_str(&media.id).is_err() || !seen.insert(&media.id) {
+            return Err(StoreError::InvalidInput);
+        }
+    }
     if text.trim().is_empty() || text.len() > 8192 {
         return Err(StoreError::InvalidInput);
     }
     let request_id = Uuid::parse_str(&request_id)
         .map_err(|_| StoreError::InvalidInput)?
         .to_string();
-    let payload: [u8; 32] = if target.is_some() {
+    let payload: [u8; 32] = if !attachments.is_empty() {
+        Sha256::digest(json(&(&thread_id, &text, &target, &attachments))?.as_bytes()).into()
+    } else if target.is_some() {
         Sha256::digest(json(&(&thread_id, &text, &target))?.as_bytes()).into()
     } else {
         Sha256::digest(json(&(&thread_id, &text))?.as_bytes()).into()
@@ -844,6 +880,21 @@ pub(super) fn submit_turn_artifact_in(
     queue_capacity(tx, &user.tenant.0)?;
     let choice = providers::selected_choice(tx, &user)?;
     providers::binding_for_choice(tx, provider_key, &choice)?;
+    for media in &attachments {
+        let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM media_objects WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND revision=?4 AND state='ready')",params![user.tenant.0,user.account.id,media.id,media.revision],|r|r.get(0))?;
+        if !valid {
+            return Err(StoreError::Conflict);
+        }
+    }
+    if !attachments.is_empty() {
+        let vision:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM provider_vision_probes WHERE provider_id=?1 AND revision=?2 AND model=?3 AND effort=?4)",params![choice.provider_id,choice.provider_revision,choice.model,choice.effort.as_deref().unwrap_or("")],|r|r.get(0))?;
+        if !vision {
+            return Err(StoreError::InvalidInput);
+        }
+        if target.is_some() {
+            return Err(StoreError::InvalidInput);
+        }
+    }
     let id = Uuid::new_v4().to_string();
     tx.execute(
         "UPDATE threads SET chat_turn_seq=chat_turn_seq+1 WHERE tenant_id=?1 AND id=?2",
@@ -870,6 +921,18 @@ pub(super) fn submit_turn_artifact_in(
     }
     let order = next_order(tx)?;
     tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(||crate::web::admitted_profile(tx,&user,web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
+    for (ordinal, media) in attachments.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO chat_media VALUES(?1,?2,?3,?4,?5)",
+            params![user.tenant.0, id, media.id, media.revision, ordinal as i64],
+        )?;
+        tx.execute(
+            "INSERT INTO media_run_dependencies VALUES(?1,?2,?3,?4)",
+            params![user.tenant.0, id, media.id, media.revision],
+        )?;
+    }
+    // Inherit even queued/running ancestors: their output may arrive before dispatch.
+    tx.execute("INSERT OR IGNORE INTO media_run_dependencies SELECT d.tenant_id,?2,d.media_id,d.revision FROM media_run_dependencies d JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.run_id JOIN media_objects m ON m.tenant_id=d.tenant_id AND m.id=d.media_id WHERE r.tenant_id=?1 AND r.thread_id=?3 AND r.id!=?2 AND m.state='ready' AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=r.tenant_id AND a.run_id=r.id AND a.invalidated=1)",params![user.tenant.0,id,thread_id])?;
     let run = load_run(tx, &user.tenant.0, &id)?;
     if run.tool_profile.is_some() {
         tx.execute(
@@ -1191,6 +1254,40 @@ impl Store {
                 request,
                 text,
                 target,
+            )?;
+            tx.commit()?;
+            Ok(result)
+        })
+        .await
+    }
+}
+
+impl Store {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_turn_with_media(
+        &self,
+        user: &UserContext,
+        thread: String,
+        request: String,
+        text: String,
+        target: Option<moosuri_core::ArtifactTarget>,
+        attachments: Vec<moosuri_core::MediaRef>,
+    ) -> Result<ChatTurn> {
+        let user = user.clone();
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let result = submit_turn_media_in(
+                &tx,
+                &db.provider_key,
+                &db.web_profile,
+                user,
+                thread,
+                request,
+                text,
+                target,
+                attachments,
             )?;
             tx.commit()?;
             Ok(result)

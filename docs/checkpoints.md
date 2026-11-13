@@ -3,8 +3,8 @@
 This command permanently retires a stopped source installation and produces one
 self-contained age-encrypted cutover snapshot. It is for a deliberate migration
 handoff. The matching [restore command](restore.md), independent storage/auth
-review and integrated Linux checks are complete for this bounded schema19/20
-path. [Validation and limits](reviews/2026-11-13-sealed-restore.md) distinguish
+review and integrated Linux checks are complete for this bounded path, including
+schema21 image storage and forward migration from19/20. [Validation and limits](reviews/2026-11-13-sealed-restore.md) distinguish
 synthetic acceptance from operating a real migration.
 
 First configure and retain an independent recovery identity as described in
@@ -69,8 +69,11 @@ receipts, quarantine schedules, and retain account suspension.
 
 Original export format1/four entries and format2/five entries remain unchanged.
 An older export does not acquire historical replay eligibility from sharing these
-journal heads. Authoritative media inventory remains empty; documents stored in
-SQLite are not photo/PDF/blob storage. No dependent checkpoint/old identity chain
+journal heads. The external authoritative-file inventory remains empty: current
+documents, canonical images and thumbnails are stored inside the SQLite snapshot.
+Schema21 preserves ready image bytes and tombstones, quarantines unfinished uploads
+and clears image capability proofs during restore. PDF and external blob storage
+are not implemented. No dependent checkpoint/old identity chain
 is needed to decrypt this self-contained package. Retained older archives still
 require their own independently retained identities.
 
@@ -88,9 +91,9 @@ Within the supported binary, local lock and fsync boundary, no operation can be
 acknowledged by this source after its durable seal. This does not prove there are
 no other live copies or defend against a malicious same-UID whole-root rollback.
 Periodic checkpoints while continuing runtime are not ongoing disaster protection.
-Future restore must consume this exact final-state DB under persistent credential,
-account/role, old-work/schedule and accounting quarantine, preserve suspension and
-require new enrollment. Those gates are not implemented here.
+The implemented [restore](restore.md) consumes this exact final-state DB, quarantines
+credentials and unfinished work, pauses schedules, preserves suspension/accounting
+and requires fresh account enrollment. Historical archive replay remains unavailable.
 
 Bounds:1GiB DB/WAL/snapshot,64MiB per journal,32KiB manifest,16KiB seal,64KiB receipt,
 8KiB head and2GiB ciphertext. The60-second cooperative deadline is not an OS IO

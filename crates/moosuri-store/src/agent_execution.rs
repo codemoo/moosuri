@@ -111,6 +111,8 @@ pub struct AgentContext {
     pub calls: Vec<AgentToolSlot>,
 }
 pub struct AgentClaim {
+    pub media_context: bool,
+    pub images: Vec<Vec<u8>>,
     pub lease: RunLease,
     pub binding: ProviderBinding,
     pub model: moosuri_core::ModelChoice,
@@ -653,8 +655,10 @@ impl Store {
                 let lease=RunLease{tenant:tenant.clone(),run:id.clone(),attempt:run.attempt,nonce:n,epoch:run.epoch};
                 let context=context(&tx,&tenant,&id)?;
                 let artifact_profile=crate::artifacts::agent::profile(&tx,&run.tenant,&run.id)?;
+                let media_context=crate::media::has_context(&tx,&tenant,&id)?;
+                let images=crate::media::bound_images(&tx,&tenant,&id)?;
                 tx.commit()?;
-                return Ok(Some(AgentClaim{lease,binding,model:run.model,messages,context,tool_profile:run.tool_profile,artifact_profile}));
+                return Ok(Some(AgentClaim{lease,binding,model:run.model,messages,context,tool_profile:run.tool_profile,artifact_profile,media_context,images}));
             }
             tx.commit()?;Ok(None)
         }).await

@@ -93,6 +93,7 @@ export function validTurn(value: unknown): value is ChatTurn {
   return (
     object(value) &&
     integer(value.sequence, 1) &&
+    (value.attachments === undefined || (Array.isArray(value.attachments) && value.attachments.length <= 4 && value.attachments.every(item=>object(item)&&id(item.id)&&integer(item.revision,1)&&typeof item.digest==="string"&&["ready","deleted","processing","retry_required"].includes(String(item.state))&&integer(item.width)&&integer(item.height)&&integer(item.bytes)&&integer(item.created_at)))) &&
     typeof value.user_text === "string" &&
     new TextEncoder().encode(value.user_text).byteLength <= 8192 &&
     Array.isArray(value.assistant) &&

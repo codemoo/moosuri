@@ -588,3 +588,77 @@ async fn verify_tool_probe(
     }
     Ok(())
 }
+
+/// The unknown 4x4 pattern is present only in pixels, never in the prompt.
+pub(super) async fn vision_probe(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<ProbeInput>,
+) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    let binding = state
+        .store
+        .probe_binding(
+            &user,
+            id.clone(),
+            input.revision,
+            input.model.clone(),
+            input.effort.clone(),
+        )
+        .await?;
+    let _permit = state
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    let (image, expected) = moosuri_store::media::vision_challenge()?;
+    let client = match bound_client(&binding).and_then(|c| c.with_images(vec![image])) {
+        Ok(c) => c,
+        Err(e) => return Ok(transport_failure(e)),
+    };
+    let request=TextRequest{model:binding.model.clone(),effort:binding.effort.clone(),max_output_tokens:256,messages:vec![TextMessage{role:TextRole::User,text:"Read the 4 by 4 colored tile image row by row, left to right. Return exactly 16 uppercase letters, one per tile: R=red, G=green, B=blue, Y=yellow. No spaces, punctuation or explanation.".into(),phase:None}]};
+    let cancellation = CancellationToken::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let stream = client.stream_text(&request, &tx, &cancellation);
+    tokio::pin!(stream);
+    let mut text = String::new();
+    let mut model = None;
+    let mut finish = None;
+    let mut refusal = false;
+    let mut tick = tokio::time::interval(Duration::from_millis(250));
+    loop {
+        tokio::select! {biased;
+            _=tick.tick()=>{state.store.validate_provider_binding(&user,id.clone(),input.revision).await?;},
+            event=rx.recv()=>{if let Some(event)=event{match event{ModelEvent::Started{model:m,..}=>model=m,ModelEvent::TextDelta{text:t,..}=>{if text.len()+t.len()>128{return Ok(failure(StatusCode::BAD_GATEWAY,"vision_probe_failed"))}text.push_str(&t)},ModelEvent::Finished{outcome,..}=>finish=Some(outcome),ModelEvent::RefusalDelta{..}=>refusal=true,_=>{}}}},
+            result=&mut stream=>{if let Err(e)=result{return Ok(transport_failure(e))}break;}
+        }
+    }
+    // A bounded stream may complete with buffered events; inspect every one.
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            ModelEvent::Started { model: m, .. } => model = m,
+            ModelEvent::TextDelta { text: t, .. } => {
+                if text.len() + t.len() > 128 {
+                    return Ok(failure(StatusCode::BAD_GATEWAY, "vision_probe_failed"));
+                }
+                text.push_str(&t)
+            }
+            ModelEvent::Finished { outcome, .. } => finish = Some(outcome),
+            ModelEvent::RefusalDelta { .. } => refusal = true,
+            _ => {}
+        }
+    }
+    if text.trim() != expected
+        || model.as_deref() != Some(binding.model.as_str())
+        || finish != Some(FinishOutcome::Completed)
+        || refusal
+    {
+        return Ok(failure(StatusCode::BAD_GATEWAY, "vision_probe_failed"));
+    }
+    state
+        .store
+        .record_vision_probe(&user, id, input.revision, input.model, input.effort)
+        .await?;
+    Ok(Json(serde_json::json!({"vision":true})).into_response())
+}

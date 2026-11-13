@@ -2353,3 +2353,133 @@ mod tests {
         ));
     }
 }
+
+/// Wire-only image overlay. Only server-loaded canonical JPEG bytes are accepted;
+/// no model/caller URL, file path or media identifier enters the wire request.
+pub fn encode_image_request(
+    protocol: Protocol,
+    request: &TextRequest,
+    capabilities: &TextCapabilities,
+    images: &[Vec<u8>],
+) -> Result<Value, ProtocolError> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let mut value = encode_request(protocol, request, capabilities)?;
+    if images.is_empty() {
+        return Ok(value);
+    }
+    if images.len() > 4
+        || images
+            .iter()
+            .any(|v| v.len() > 2 * 1024 * 1024 || !v.starts_with(&[255, 216, 255]))
+    {
+        return Err(ProtocolError::LimitExceeded);
+    }
+    let index = request
+        .messages
+        .iter()
+        .rposition(|m| m.role == TextRole::User)
+        .ok_or(ProtocolError::Protocol)?;
+    let mut content = vec![
+        json!({"type":if protocol==Protocol::Responses{"input_text"}else{"text"},"text":request.messages[index].text}),
+    ];
+    for image in images {
+        let data = STANDARD.encode(image);
+        content.push(match protocol{
+            Protocol::Responses=>json!({"type":"input_image","image_url":format!("data:image/jpeg;base64,{data}"),"detail":"auto"}),
+            Protocol::AnthropicMessages=>json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":data}}),
+            Protocol::OpenRouterChat|Protocol::ChatCompletions=>json!({"type":"image_url","image_url":{"url":format!("data:image/jpeg;base64,{data}")}})
+        });
+    }
+    let key = if protocol == Protocol::Responses {
+        "input"
+    } else {
+        "messages"
+    };
+    let projected_index = if protocol == Protocol::AnthropicMessages {
+        request.messages[..index]
+            .iter()
+            .filter(|m| m.role != TextRole::System)
+            .count()
+    } else {
+        index
+    };
+    value[key][projected_index]["content"] = json!(content);
+    if serde_json::to_vec(&value)
+        .map_err(|_| ProtocolError::Protocol)?
+        .len()
+        > 12 * 1024 * 1024
+    {
+        return Err(ProtocolError::LimitExceeded);
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    #[test]
+    fn private_image_dialects_and_text_history_compatibility() {
+        let request = TextRequest {
+            model: "synthetic".into(),
+            messages: vec![
+                TextMessage {
+                    role: TextRole::System,
+                    text: "untrusted images".into(),
+                    phase: None,
+                },
+                TextMessage {
+                    role: TextRole::User,
+                    text: "inspect".into(),
+                    phase: None,
+                },
+            ],
+            max_output_tokens: 100,
+            effort: None,
+        };
+        let caps = TextCapabilities { efforts: vec![] };
+        let images = vec![vec![255, 216, 255, 0]];
+        for p in [
+            Protocol::Responses,
+            Protocol::AnthropicMessages,
+            Protocol::ChatCompletions,
+            Protocol::OpenRouterChat,
+        ] {
+            assert_eq!(
+                encode_request(p, &request, &caps).unwrap(),
+                encode_image_request(p, &request, &caps, &[]).unwrap()
+            );
+            let value = encode_image_request(p, &request, &caps, &images).unwrap();
+            let image = match p {
+                Protocol::Responses => &value["input"][1]["content"][1],
+                Protocol::AnthropicMessages => &value["messages"][0]["content"][1],
+                _ => &value["messages"][1]["content"][1],
+            };
+            match p {
+                Protocol::Responses => assert_eq!(image["type"], "input_image"),
+                Protocol::AnthropicMessages => {
+                    assert_eq!(image["source"]["type"], "base64");
+                    assert_eq!(image["source"]["media_type"], "image/jpeg")
+                }
+                _ => assert_eq!(image["type"], "image_url"),
+            };
+        }
+        assert!(
+            encode_image_request(
+                Protocol::Responses,
+                &request,
+                &caps,
+                &vec![images[0].clone(); 5]
+            )
+            .is_err()
+        );
+        assert!(
+            encode_image_request(
+                Protocol::Responses,
+                &request,
+                &caps,
+                &[b"https://foreign/image".to_vec()]
+            )
+            .is_err()
+        );
+    }
+}

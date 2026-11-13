@@ -123,8 +123,7 @@ async fn tool(
         .unwrap()
 }
 #[tokio::test]
-async fn actual_schema20_restores_all_seven_artifact_tables_receipts_quarantine_and_suspended_auth()
-{
+async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_suspended_auth() {
     let _g = TEST_LOCK.lock().await;
     let root = tempfile::Builder::new()
         .permissions(fs::Permissions::from_mode(0o700))
@@ -179,6 +178,16 @@ async fn actual_schema20_restores_all_seven_artifact_tables_receipts_quarantine_
         .await
         .unwrap();
     store
+        .record_vision_probe(
+            &a,
+            provider.id.clone(),
+            provider.revision,
+            "synthetic".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    store
         .set_default_model(
             &a,
             Some(ModelSelection {
@@ -190,6 +199,42 @@ async fn actual_schema20_restores_all_seven_artifact_tables_receipts_quarantine_
         )
         .await
         .unwrap();
+    let (pixels, _) = crate::media::vision_challenge().unwrap();
+    let digest: [u8; 32] = Sha256::digest(&pixels).into();
+    let mut image_ids = vec![];
+    for owner in [&a, &b, &a] {
+        let id = Uuid::new_v4().to_string();
+        let crate::media::UploadAdmission::Process(upload) =
+            store.media_begin(owner, id.clone(), digest).await.unwrap()
+        else {
+            panic!("new upload must be admitted")
+        };
+        store
+            .media_finish(upload, Some(crate::media::normalize(&pixels).unwrap()))
+            .await
+            .unwrap();
+        image_ids.push(id);
+    }
+    let ready_image = image_ids.remove(0);
+    let other_image = image_ids.remove(0);
+    let deleted_image = image_ids.remove(0);
+    let canonical = store
+        .media_bytes(&a, ready_image.clone(), false)
+        .await
+        .unwrap();
+    let thumbnail = store
+        .media_bytes(&a, ready_image.clone(), true)
+        .await
+        .unwrap();
+    store.delete_media(&a, deleted_image.clone()).await.unwrap();
+    let processing_image = Uuid::new_v4().to_string();
+    let crate::media::UploadAdmission::Process(pending_upload) = store
+        .media_begin(&a, processing_image.clone(), digest)
+        .await
+        .unwrap()
+    else {
+        panic!("pending upload")
+    };
     let retained = store
         .write_artifact(&a, record("Retained editable current document", vec![]))
         .await
@@ -408,6 +453,40 @@ async fn actual_schema20_restores_all_seven_artifact_tables_receipts_quarantine_
     let conn = Connection::open(dest.join("assistant.sqlite")).unwrap();
     assert_eq!(artifact_state(&conn, false).unwrap(), expected);
     assert_eq!(
+        conn.query_row("SELECT count(*) FROM provider_vision_probes", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT state FROM media_objects WHERE id=?1",
+            [&processing_image],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "retry_required"
+    );
+    assert!(
+        conn.query_row(
+            "SELECT nonce IS NULL FROM media_objects WHERE id=?1",
+            [&processing_image],
+            |r| r.get::<_, bool>(0)
+        )
+        .unwrap()
+    );
+    assert!(conn.query_row("SELECT state='deleted' AND bytes IS NULL AND thumbnail IS NULL FROM media_objects WHERE id=?1", [&deleted_image], |r| r.get::<_, bool>(0)).unwrap());
+    assert_eq!(
+        conn.query_row(
+            "SELECT bytes FROM media_objects WHERE id=?1",
+            [&other_image],
+            |r| r.get::<_, Vec<u8>>(0)
+        )
+        .unwrap(),
+        canonical
+    );
+
+    assert_eq!(
         conn.query_row(
             "SELECT count(*) FROM personal_artifact_command_plans WHERE used=0",
             [],
@@ -573,6 +652,37 @@ async fn actual_schema20_restores_all_seven_artifact_tables_receipts_quarantine_
             .await,
         Err(crate::StoreError::Conflict)
     ));
+    assert_eq!(
+        store
+            .media_bytes(&current, ready_image.clone(), false)
+            .await
+            .unwrap(),
+        canonical
+    );
+    assert_eq!(
+        store
+            .media_bytes(&current, ready_image, true)
+            .await
+            .unwrap(),
+        thumbnail
+    );
+    assert!(matches!(
+        store.media_bytes(&current, deleted_image, false).await,
+        Err(crate::StoreError::NotFound)
+    ));
+    assert!(matches!(
+        store.media_bytes(&current, other_image, false).await,
+        Err(crate::StoreError::NotFound)
+    ));
+    assert!(
+        store
+            .media_finish(
+                pending_upload,
+                Some(crate::media::normalize(&pixels).unwrap())
+            )
+            .await
+            .is_err()
+    );
     assert!(store.claim_agent_run().await.unwrap().is_none());
     assert!(
         store

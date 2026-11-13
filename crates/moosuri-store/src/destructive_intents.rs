@@ -38,6 +38,10 @@ pub(crate) enum Effect {
         request: String,
         revision: i64,
     },
+    DeleteMedia {
+        target: String,
+        account: String,
+    },
     DeleteThread {
         target: String,
     },
@@ -76,6 +80,10 @@ fn validate(tenant: &str, effect: &Effect) -> Result<()> {
             if !(1..=128).contains(revision) {
                 return Err(StoreError::InvalidInput);
             }
+        }
+        Effect::DeleteMedia { target, account } => {
+            id(target)?;
+            id(account)?;
         }
         Effect::ForgetCommand {
             target,
@@ -289,6 +297,9 @@ pub(crate) fn apply(conn: &Connection, record: &Record) -> Result<()> {
                 expected_revision: *revision,
             },
         )?,
+        Effect::DeleteMedia { target, account } => {
+            crate::media::apply_delete(conn, &record.tenant, account, target)?
+        }
         Effect::DeleteThread { target } => {
             mail::purge_thread(conn, &record.tenant, target)?;
             conn.execute(

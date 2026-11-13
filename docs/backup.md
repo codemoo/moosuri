@@ -2,8 +2,9 @@
 
 The development CLI can export its current SQLite data and snapshot journals to an
 age-encrypted archive. It requires a stopped installation and an independently
-held X25519 backup identity. **Historical restore, unattended backup, an off-host
-latest journal and authoritative media recovery are not implemented.** Do not
+held X25519 backup identity. **Historical restore, unattended backup and an off-host
+latest journal are not implemented.** The separate [sealed-current restore](restore.md)
+supports the exact final snapshot, including ready SQLite image bytes. Do not
 move production accounts or data into this preview on the basis of export support.
 
 ## Prepare a separate recovery identity
@@ -93,7 +94,9 @@ snapshot coverage, not proof of independently current deletions or an off-host
 checkpoint. Coverage cannot reconstruct unjournaled deletions before0015.
 
 The manifest purpose is `assistant-export`. Its authoritative-file inventory is
-explicitly empty because attachment/photo/PDF/artifact storage is not implemented.
+explicitly empty because no authoritative files live outside SQLite. Editable
+documents and schema21 canonical images/thumbnails are inside the database snapshot;
+PDF and external blob storage remain unavailable.
 Provider/OAuth/connector ciphertext may remain in the snapshot, but the server
 key, operator identity, external credential files, browser profiles/capsules and
 user vault keys are excluded. Any future restore must purge/re-register server

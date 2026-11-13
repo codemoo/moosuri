@@ -22,6 +22,16 @@ export function useScope(expectedAccountId?: string, lifetime?: string | null) {
   }, [expectedAccountId, registry, ref]);
   return useMemo(
     () => ({
+      localUrl: (blob: Blob) => ref.current!.localUrl(blob),
+      releaseUrl: (url: string) => ref.current?.releaseUrl(url),
+      imageUrl: (path: string, signal?: AbortSignal) =>
+        ref.current!.imageUrl(path, signal),
+      upload: <T>(
+        id: string,
+        blob: Blob,
+        progress: (percent: number) => void,
+        signal: AbortSignal,
+      ) => ref.current!.upload<T>(id, blob, progress, signal),
       request: <T>(
         path: string,
         method?: string,

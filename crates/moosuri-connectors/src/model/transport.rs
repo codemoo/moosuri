@@ -3,7 +3,6 @@ use super::protocol::tools::{
 };
 use super::protocol::{
     ModelEvent, Protocol, ProtocolError, StreamDecoder, TextCapabilities, TextRequest,
-    encode_request,
 };
 use reqwest::{Client, header};
 use std::{net::IpAddr, time::Duration};
@@ -111,6 +110,7 @@ pub enum TransportError {
 }
 
 pub struct ModelClient {
+    images: Vec<Vec<u8>>,
     protocol: Protocol,
     endpoint: Url,
     network: NetworkPolicy,
@@ -161,6 +161,7 @@ impl ModelClient {
             return Err(TransportError::InvalidConfiguration);
         }
         Ok(Self {
+            images: vec![],
             protocol,
             endpoint: Url::parse(url).map_err(|_| TransportError::InvalidConfiguration)?,
             network: NetworkPolicy::PublicHttps,
@@ -220,6 +221,7 @@ impl ModelClient {
         let path = format!("{}/chat/completions", endpoint.path().trim_end_matches('/'));
         endpoint.set_path(&path);
         Ok(Self {
+            images: vec![],
             protocol: Protocol::ChatCompletions,
             endpoint,
             network,
@@ -228,6 +230,19 @@ impl ModelClient {
             router: None,
             limits: TransportLimits::default(),
         })
+    }
+
+    /// Private bounded canonical images for this one client lifetime.
+    pub fn with_images(mut self, images: Vec<Vec<u8>>) -> Result<Self, TransportError> {
+        if images.len() > 4
+            || images
+                .iter()
+                .any(|v| v.len() > 2 * 1024 * 1024 || !v.starts_with(&[255, 216, 255]))
+        {
+            return Err(TransportError::LimitExceeded);
+        }
+        self.images = images;
+        Ok(self)
     }
 
     pub fn with_limits(mut self, limits: TransportLimits) -> Result<Self, TransportError> {
@@ -382,7 +397,12 @@ impl ModelClient {
         request: &TextRequest,
         events: &mpsc::Sender<ModelEvent>,
     ) -> Result<(), TransportError> {
-        let body = encode_request(self.protocol, request, &self.capabilities)?;
+        let body = super::protocol::encode_image_request(
+            self.protocol,
+            request,
+            &self.capabilities,
+            &self.images,
+        )?;
         self.stream_encoded(body, StreamDecoder::new(self.protocol), events)
             .await
     }
@@ -398,6 +418,9 @@ impl ModelClient {
     ) -> Result<ToolRound, TransportError> {
         if cancellation.is_cancelled() || events.is_closed() {
             return Err(TransportError::Cancelled);
+        }
+        if !self.images.is_empty() {
+            return Err(TransportError::InvalidConfiguration);
         }
         let body = encode_tool_request(self.protocol, request, &self.capabilities, capabilities)?;
         let decoder =
@@ -427,7 +450,13 @@ impl ModelClient {
             });
         }
         let body = serde_json::to_vec(&body).map_err(|_| TransportError::InvalidConfiguration)?;
-        if body.len() > 1024 * 1024 {
+        if body.len()
+            > if self.images.is_empty() {
+                1024 * 1024
+            } else {
+                12 * 1024 * 1024
+            }
+        {
             return Err(TransportError::LimitExceeded);
         }
         let client = self.http_client(&self.endpoint).await?;

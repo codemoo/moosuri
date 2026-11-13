@@ -8,6 +8,7 @@ mod community_skills;
 mod google_setup;
 mod knowledge;
 mod mail;
+mod media;
 mod providers;
 mod schedules;
 mod source_connections;
@@ -265,6 +266,17 @@ pub fn router_with_runtime(
             "/api/v1/settings/model",
             get(providers::settings).put(providers::set_preference),
         )
+        .route(
+            "/api/v1/admin/providers/{id}/vision-probe",
+            post(providers::vision_probe),
+        )
+        .route("/api/v1/media", get(media::library))
+        .route(
+            "/api/v1/media/{id}",
+            post(media::upload).delete(media::remove),
+        )
+        .route("/api/v1/media/{id}/content", get(media::content))
+        .route("/api/v1/media/{id}/thumbnail", get(media::thumbnail))
         .route("/api/v1/threads", get(threads).post(create_thread))
         .route("/api/v1/threads/{id}", delete(delete_thread))
         .route(

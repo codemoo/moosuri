@@ -74,6 +74,8 @@ function settingsError(error: unknown) {
     return "요청이 많습니다. 잠시 뒤 다시 시도해 주세요.";
   if (error.code === "model_identity_unverified")
     return "응답 모델을 확인하지 못했습니다. 모델 목록의 정확한 버전 ID로 다시 확인해 주세요.";
+  if (error.code === "vision_probe_failed")
+    return "이 모델 조합에서 이미지 픽셀을 정확히 읽는지 확인하지 못했습니다. 다른 이미지 지원 모델을 선택한 뒤 다시 확인하세요.";
   if (error.code === "model_tool_probe_incomplete")
     return "도구 호출과 결과 연결을 확인하지 못했습니다. 일반 텍스트 대화는 계속 사용할 수 있습니다.";
   if (error.code === "model_probe_incomplete")
@@ -592,6 +594,7 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
                     <strong>{choice.model}</strong>
                     <small>{choice.effort ?? "기본 강도"} · {choice.function_tools ? "도구 사용 가능" : "대화 확인됨"}</small>
                   </span>
+                  <button className="text-button" disabled={busy || !!editor} onClick={()=>void mutation(()=>scope.request(`/admin/providers/${encodeURIComponent(provider.id)}/vision-probe`,"POST",{revision:provider.revision,model:choice.model,effort:choice.effort}),()=>{setError("이미지 연결 확인 완료: 이 조합에서 이미지 분석을 사용할 수 있습니다.");})}>이미지 연결 확인</button>
                   {!choice.function_tools && (
                     <button className="text-button" disabled={busy || !!editor}
                       onClick={() => probe(provider, choice.model, choice.effort, true)}>

@@ -1,3 +1,4 @@
+import {useMediaUploads,MediaLibraryView,PrivateImage} from "./Media";
 import { WebEvidence } from "./WebEvidence";
 import { BrowserWorkspace } from "./BrowserWorkspace";
 import {
@@ -33,6 +34,8 @@ import "./chat.css";
 export type PendingSend = {
   request_id: string;
   text: string;
+  attachments?:{id:string;revision:number}[];
+  attachment_selections?:string[];
   artifact_target?:{id:string;revision:number};
   status: "sending" | "accepted" | "uncertain";
 };
@@ -107,7 +110,7 @@ function chatError(error: unknown) {
     if (error.status === 429)
       return "요청이 많습니다. 잠시 뒤 다시 시도해 주세요.";
     if (error.status === 400)
-      return "메시지를 접수하지 못했습니다. 입력과 모델 설정을 확인해 주세요.";
+      return "메시지를 접수하지 못했습니다. 첨부 이미지는 현재 모델의 이미지 연결 확인이 필요합니다. 관리자 설정에서 확인하거나 선택을 해제하세요. 입력과 첨부는 유지됩니다.";
   }
   return "서버 응답을 확인하지 못했습니다. 기록을 다시 확인해 주세요.";
 }
@@ -126,6 +129,7 @@ export function ChatPanel(props: Props) {
   const readScope = useScope(accountId, threadId);
   const sendScope = useScope(accountId);
   const slot = threadId ?? "new";
+  const media=useMediaUploads(accountId,slot);
   const draft = memory.drafts[slot] ?? "";
   const pending = memory.pending[slot];
   const pendingRef = useRef(memory.pending);
@@ -166,9 +170,13 @@ export function ChatPanel(props: Props) {
   >([]);
   const flushRef = useRef<() => void>(() => {});
 
+  function accepted(thread:string,requestId:string) {
+    const value=pendingRef.current[thread];
+    if(value?.request_id===requestId)media.sent(value.attachment_selections);
+    callbacks.current.onPending(thread,null,requestId);
+  }
   function settle(page: ChatPage) {
-    for (const turn of page.turns)
-      callbacks.current.onPending(page.thread_id, null, turn.run.request_id);
+    for (const turn of page.turns) accepted(page.thread_id,turn.run.request_id);
   }
   function resolveWaiters(thread: string, page: ChatPage | null) {
     for (const waiter of waiters.current.filter(
@@ -315,11 +323,7 @@ export function ChatPanel(props: Props) {
       if (!nearBottom.current) setUnseen(true);
       for (const event of events) {
         if (event.change.kind === "turn")
-          callbacks.current.onPending(
-            thread,
-            null,
-            event.change.turn.run.request_id,
-          );
+          accepted(thread,event.change.turn.run.request_id);
       }
       if (
         events.some(
@@ -606,7 +610,7 @@ export function ChatPanel(props: Props) {
             .then((value) => parsePage(value, thread))
             .catch(() => null);
     const known = page?.turns.some((turn) => turn.run.request_id === requestId);
-    if (known) callbacks.current.onPending(thread, null, requestId);
+    if (known) accepted(thread,requestId);
     else {
       const current = pendingRef.current[thread];
       if (current?.request_id === requestId)
@@ -624,7 +628,7 @@ export function ChatPanel(props: Props) {
       const result = await sendScope.request<unknown>(
         `/threads/${encodeURIComponent(thread)}/messages`,
         "POST",
-        { request_id: value.request_id, text: value.text,...(value.artifact_target?{artifact_target:value.artifact_target}:{}) },
+        { request_id: value.request_id, text: value.text,...(value.artifact_target?{artifact_target:value.artifact_target}:{}),...(value.attachments?.length?{attachments:value.attachments}:{}) },
         controller.signal,
       );
       if (
@@ -633,6 +637,7 @@ export function ChatPanel(props: Props) {
         result.run.request_id !== value.request_id
       )
         throw new StreamFailure();
+      media.sent(value.attachment_selections);
       callbacks.current.onPending(
         thread,
         { ...value, status: "accepted" },
@@ -701,6 +706,8 @@ export function ChatPanel(props: Props) {
       return;
     setError("");
     const value: PendingSend = {
+      attachments:resubmit?resubmit.attachments:media.ready,
+      attachment_selections:resubmit?resubmit.attachment_selections:media.readySelections,
       request_id: resubmit?.request_id ?? crypto.randomUUID(),
       text,
       artifact_target:resubmit?resubmit.artifact_target:(callbacks.current.artifactTarget?{id:callbacks.current.artifactTarget.id,revision:callbacks.current.artifactTarget.revision}:undefined),
@@ -714,6 +721,7 @@ export function ChatPanel(props: Props) {
       posts.current.set("new", guard);
       try {
         thread = await callbacks.current.createThread();
+        media.moveSlot("new",thread);
         callbacks.current.onCreated(thread, value.request_id);
       } catch (error) {
         callbacks.current.onPending("new", null, value.request_id);
@@ -881,6 +889,7 @@ export function ChatPanel(props: Props) {
               <div className="user-message">
                 <span className="sr-only">나</span>
                 <p>{turn.user_text}</p>
+                {turn.attachments&&<div className="chat-attachments">{turn.attachments.map(item=><PrivateImage key={item.id} accountId={accountId} media={item}/>)}</div>}
               </div>
               <div className="assistant-reply">
                 {turn.assistant
@@ -1018,6 +1027,8 @@ export function ChatPanel(props: Props) {
         </div>
       )}
       <footer className="chat-composer-area">
+        {media.view}
+        <MediaLibraryView accountId={accountId} onSelect={media.select}/>
         {modelError && (
           <p className="composer-help">
             {modelError}{" "}

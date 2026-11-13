@@ -10,7 +10,7 @@ search/read that private knowledge in chat and apply explicit
 [remember/correct/forget requests](conversational-memory.md). [Public HTTP research](web-research.md)
 and [personal Gmail](mail.md) are connected; every email send requires final human
 approval. An optional [Linux Chromium capsule](browser-chat.md) reads rendered
-public pages after the operator verifies its deployment. [Browser workspaces](browser-workspaces.md) add watch, human login/control and same-page conversation continuation to that deployment. Fixed local [reminders](schedules.md) and opt-in [automatic memory](automatic-memory.md) are available. Automatic authenticated browser actions, scheduled model missions, media, vault and historical restore remain pending. Stopped encrypted [exports](backup.md) are available.
+public pages after the operator verifies its deployment. [Browser workspaces](browser-workspaces.md) add watch, human login/control and same-page conversation continuation to that deployment. Fixed local [reminders](schedules.md) and opt-in [automatic memory](automatic-memory.md) are available. [Private image attachments](media.md) and exact sealed-current [restore](restore.md) are available. Automatic authenticated browser actions, scheduled model missions, general files/audio, the usable vault service/client and historical restore remain pending. Stopped encrypted [exports](backup.md) are available.
 
 Use Rust 1.89+ and Node.js 22.22+. Node is needed to build React, not to run the
 resulting server. SQLite is bundled. Build from a clean public checkout:
@@ -135,8 +135,9 @@ An interruption after the new journal record but before the SQLite commit locks
 the account again on restart; repeat enrollment with a new credential. If commit
 succeeded but the response was lost, the supplied temporary credential remains
 valid and repeating recovery is rejected with `account_not_recovery_required`.
-Do not clear journal files or flip the recovery flag manually. Historical restore,
-off-host latest journals and restored-installation enrollment remain unavailable.
+Do not clear journal files or flip the recovery flag manually. The separate sealed-current
+[restore](restore.md) path supports fresh enrollment; historical restore and independently
+maintained off-host latest journals remain unavailable.
 
 ## Local instruction-package authoring
 
@@ -196,7 +197,7 @@ while the source remains permanently sealed. `backup
 checkpoint-status` reports only local stored phase/opaque IDs, not transfer or restore
 readiness. The [checkpoint contract and limits](checkpoints.md) distinguish six-entry
 sealed snapshots from ordinary export formats. The integrated artifact16/schedule17/account18/
-checkpoint19/restore20 path passed independent review and Linux checks, including
+checkpoint19/restore20/media21 path passed independent review and Linux checks, including
 late-publication admission errors; see [evidence](reviews/2026-11-13-sealed-restore.md).
 
 Matching sealed cutover [restore](restore.md) verifies and quarantines a private destination before runtime admission.

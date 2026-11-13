@@ -18,6 +18,7 @@ mod chat;
 mod destructive_intents;
 mod knowledge;
 mod knowledge_journal;
+pub mod media;
 mod memory_commands;
 pub use agent_execution::{
     AgentClaim, AgentContext, AgentStepStatus, AgentToolSlot, KnowledgeToolInput,
@@ -172,7 +173,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 20;
+const CURRENT_SCHEMA_VERSION: i64 = 21;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -447,7 +448,15 @@ impl Store {
                 include_str!("../../../migrations/assistant/0020_restore.sql")
             ))?;
         }
+        if version < 21 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0021_media.sql"),
+                "COMMIT;"
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
+        media::quarantine(&conn)?;
         schedules::restart(&conn)?;
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;

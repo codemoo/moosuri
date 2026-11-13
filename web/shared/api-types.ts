@@ -18,6 +18,9 @@ export type ManagedAccount = { user: AccountSummary, status: AccountStatus, revi
 export type AccountManagementAction = { "kind": "suspend" } | { "kind": "resume" } | { "kind": "change_role", role: Role, } | { "kind": "reset_password" } | { "kind": "end_sessions" };
 export type AccountManagementInput = { request_id: string, expected_revision: number, action: AccountManagementAction, };
 export type AccountManagementReceipt = { request_id: string, account_id: string, revision: number, };
+export type MediaRef = { id: string, revision: number, };
+export type MediaSummary = { id: string, revision: number, digest: string, state: string, width: number, height: number, bytes: number, created_at: number, };
+export type MediaLibrary = { items: Array<MediaSummary>, quota_bytes: number, used_bytes: number, };
 export type GitHubSkillLocation = { repository: string, directory: string, };
 export type GitHubSkillPreviewInput = { repository: string, directory: string, reference: string, };
 export type MemoryExtractionChange = { expected_revision: number, enabled: boolean, attribution_mode: string,
@@ -103,7 +106,7 @@ export type RunView = { id: string, request_id: string, thread_id: string, attem
  * Fixed application error category, never provider text.
  */
 error: string | null, usage: RunUsage, evidence: Array<ChatEvidence>, web_evidence?: Array<WebEvidence>, artifact_receipts?: Array<ArtifactReceipt>, can_retry: boolean, can_cancel: boolean, created_at: number, };
-export type ChatTurn = { sequence: number, user_text: string, assistant: Array<AssistantMessage>, run: RunView, };
+export type ChatTurn = { attachments?: Array<MediaSummary>, sequence: number, user_text: string, assistant: Array<AssistantMessage>, run: RunView, };
 export type ChatPage = { thread_id: string,
 /**
  * Cursor of the committed event log at the same snapshot as these turns.

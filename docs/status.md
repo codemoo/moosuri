@@ -2,7 +2,7 @@
 
 2026-11-13. 실제 구현·검증과 다음 작업은 이 문서가 정본이다. 기능 계약은 [features](features.md), 상세 단계는 [plan](plan.md)을 따른다.
 
-공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델·저장되는 대화·개인 자료/기억·업무 스킬에 공개 HTTP·격리 Chromium 작업 공간과 개인 Gmail을 연결한 개발 프리뷰다. 메일은 최종 내용을 사용자가 승인한 뒤에만 발송한다. 브라우저 화면 보기·직접 로그인/조작·같은 화면에서 대화 이어가기를 지원한다. 자료 모음별 자동 기억 추출을 지원한다. 고정 로컬 알림 예약·소식함과 계정 관리도 지원한다. 자연어 예약·예약된 모델 업무·인증된 사이트의 자동 조작은 개발 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
+공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델·저장되는 대화·개인 자료/기억·업무 스킬에 공개 HTTP·격리 Chromium 작업 공간과 개인 Gmail을 연결한 개발 프리뷰다. 메일은 최종 내용을 사용자가 승인한 뒤에만 발송한다. 브라우저 화면 보기·직접 로그인/조작·같은 화면에서 대화 이어가기를 지원한다. 자료 모음별 자동 기억 추출을 지원한다. 고정 로컬 알림 예약·소식함과 계정 관리, 이미지 첨부·실제 미리보기·보관함도 지원한다. 자연어 예약·예약된 모델 업무·인증된 사이트의 자동 조작은 개발 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
 
 ## 구현된 첫 단위
 
@@ -425,14 +425,15 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 ## 아직 구현하지 않은 범위
 
 구독 인증·개인 provider 연결, 추가 실모델 평가, 자연어 예약·예약된 모델 업무·캘린더·푸시,
-첨부·녹음·PWA 공유받기, 공용 OAuth 연결 서비스·Slack OAuth 앱 설치, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
-개인 학습 공유·자동 catalog 갱신, 독립 볼트·TOTP·credential broker,
-운영 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
+일반 파일·PDF·녹음·PWA 공유받기, 공용 OAuth 연결 서비스·Slack OAuth 앱 설치, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
+개인 학습 공유·자동 catalog 갱신, 독립 볼트 서비스·웹·credential broker,
+자동 운영 백업·과거 복원·데이터 이전·일반 설치 패키지는 남아 있다. TOTP와 로컬 CSV
+암호화는 native 코어까지 구현했다. 사용할 수 있는 볼트는 첫 출시의 필수 범위이며 사용자
 연결 여부만 선택 사항이다. 이번 웹·브라우저·Gmail 구현을 전체 비서 완성으로 표시하지 않는다.
 
 계정 복구 단위는 macOS·Linux x86_64 Rust340개(실모델 opt-in1개 제외)를 통과했고 독립 검토에서 발견한 초기화 부작용을 수정·재검토했다.
 
-현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 중지한 설치의 로컬 `recover-account`는 계정 UUID·역할·새 비밀번호 파일을 명시해24시간 임시 credential로 재등록하며 최초 변경과 기존 세션 철회를 강제한다. 정상 계정의 임의 재설정이나 백업/복원 기능은 아니다. [중지된 설치의 암호화 export](backup.md)는 현재 DB·snapshot journal과 별도 운영자 recipient를 지원한다. 최신 독립 journal·과거 삭제를 보존하는 빈 설치 복원·미디어 백업은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. [사용법](development.md#recovering-a-journal-locked-account)과 [합성 검증 범위](reviews/2026-11-13-operator-account-recovery.md)를 따르며 `doctor`도 중지된 설치에만 사용한다.
+현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 중지한 설치의 로컬 `recover-account`는 계정 UUID·역할·새 비밀번호 파일을 명시해24시간 임시 credential로 재등록하며 최초 변경과 기존 세션 철회를 강제한다. 정상 계정의 임의 재설정이나 백업/복원 기능은 아니다. [중지된 설치의 암호화 export](backup.md)는 현재 DB·snapshot journal과 별도 운영자 recipient를 지원한다. 이후 추가한 [봉인된 현재 스냅샷 복원](restore.md)은 완료된 SQLite 이미지도 보존한다. 최신 독립 journal·과거 export 재생·일반 운영 이전은 남아 있으므로 이 개발 프리뷰를 운영 이전 완료로 취급하지 않는다. [사용법](development.md#recovering-a-journal-locked-account)과 [합성 검증 범위](reviews/2026-11-13-operator-account-recovery.md)를 따르며 `doctor`도 중지된 설치에만 사용한다.
 
 ## 다음 작업
 
@@ -592,3 +593,20 @@ Rust v2 암호화·복구 키·암호 변경/루트 회전·TOTP·로컬 Apple C
 검토한 공개 dependency12개만 추가했다. WASM/Worker·안전한 암호문 저장/복원·
 구버전 이전·자동 credential 사용은 남아 있다. [정확한 범위](vault-core.md)와
 [검증 기록](reviews/2026-11-13-vault-core.md)을 따른다.
+
+## 이미지 첨부·미리보기·보관함
+
+schema21에 PNG/JPEG/WebP 준비·독립 업로드·파일별 취소/재시도와 실제 composer/
+대화/보관함 미리보기·확대·다운로드·삭제를 연결했다. 글을 보내도 미완료 업로드는
+남으며, 보낸 메시지와 재시도는 동일한 준비된 이미지를 사용한다. 실제 픽셀 검사를
+통과한 model/effort만 이미지를 받는다. 이미지 문맥의 도구·메모리/문서 변경은 제한한다.
+
+삭제 후 늦은 다운로드가 완료되는 경쟁을 독립 검토에서 수정·재검증했다. 완료된
+이미지는 SQLite 스냅샷에 포함하고 복원 시 미완료 업로드·vision proof는 격리한다.
+Linux 관련482개와 macOS React196개·타입/build·clippy·DTO를 통과했다. 실제 Chrome에서
+발견한 CSP 미리보기 차단을 별도로 수정·독립 검토하고 Linux CLI18개를 재확인했다.
+
+390×844 Chrome에서 합성 이미지 업로드·확대·재시작 후 보관·삭제·초안 유지·입력 영역
+스크롤을 확인했다. 실모델 이미지 품질과 실제 모바일 기기는 아직 검증하지 않았다.
+일반 파일·PDF·STT·녹음·PWA 공유받기는 후속 범위다. [사용법](media.md)과
+[검증 기록](reviews/2026-11-13-private-images.md)에 정확한 범위를 남겼다.

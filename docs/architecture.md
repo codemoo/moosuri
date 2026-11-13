@@ -202,3 +202,11 @@ v1은 공개 recipient로 암호화하고 private identity로 복원하는 표�
 복원 v1은 과거 password hash를 새 로그인에도 사용하지 않는다. 서버의 private 로컬 recovery CLI로 operator가 복구 admin 한 명의 현재 역할과 새 credential을 명시적으로 설정하고 기록한다. 나머지 계정은 정지/삭제 journal을 먼저 적용한 상태에서 새 임시 credential/강제 변경으로 재등록하며 옛 admin role은 자동 복구하지 않는다. provider/API/OAuth binding도 기본 disabled이며 현재 정책·credential을 다시 등록한 뒤 새 작업의 dispatch를 연다. 재등록만으로 복원된 미완료 run/effect의 quarantine이 자동 해제되지는 않는다. 기존 vault master/recovery key는 이 절차로 바뀌거나 해독되지 않는다. 일반 재시작에는 이 복원 절차를 요구하지 않는다.
 
 복원 v1은 별도 최신 usage ledger를 구현했다고 가정하지 않는다. snapshot 이후 영향을 받을 수 있는 개인/공용 billing period를 accounting_unknown으로 표시하고 남은 예산을0으로 취급해 새 유료 dispatch를 차단한다. snapshot의 정산/미완료 reservation은 보수적 하한으로 보존하며 timeout을 환불하지 않는다. provider 영수증/청구와 독립 보존한 accounting evidence로 reconcile할 수 있을 때만 unknown을 해소한다. 정확한 개인 귀속을 복구할 수 없으면 관리자가 명시한 보수적 조정 또는 별도 신규 예산으로 앞으로의 작업만 허용하며 옛 불명을 지우지 않는다. 과거 금액을0으로 만들거나 실제 지출을 완벽히 복구했다고 말하지 않는다. snapshot→password reset/demotion/provider revoke/charge→restore 및 in-flight reservation kill 시험이 P9 필수다.
+
+### 첫 이미지 단위의 저장 경계
+
+이 단위는 최대2MiB의 정규화 JPEG와128KiB thumbnail을 불변 SQLite BLOB으로 저장한다. 계정별 총64MiB(처리 예약 포함), 선택4장, 미디어 ID4096개(삭제 tombstone 포함)로 제한한다. 이는 백업/journal 정합성을 우선한 작은 설치용 결정이다. 외부 blob 경로로 확장할 때는 불변 publication·snapshot pin·복원 hash 검증·revocable GC를 먼저 구현해야 하며 현재의 bytes를 단순 경로 참조로 바꾸지 않는다.
+
+업로드 semaphore는 body 수집 전에 잡고 전역2개의 요청/normalization 작업만 허용한다. 원본은 브라우저32MiB/48MP, 서버 수신은2MiB와2400px/5.76MP 및48MiB decoder 할당 한도다. `image`0.25.10(Rust minimum1.88; workspace1.89)의 PNG/JPEG/WebP만 활성화하고 JPEG 재인코딩으로 metadata를 제거한다. SVG/HTML과 기타 파일은 거절한다. raw input은 DB에 저장하지 않으며, digest·nonce·현재 auth epoch가 processing 완료를 fence한다. `media::quarantine`은 processing만 retry_required로 바꾸고 ready BLOB은 보존한다. 복원 담당은 이 hook과 기존 모든 run 격리를 활성화 전에 수행한다.
+
+`chat_media`는 원래 선택을 고정하고 `media_run_dependencies`는 같은 thread의 아직 유효한 선행 turn을 보수적으로 상속한다. queued/running 선행 turn도 포함하여 dispatch 전에 생긴 이미지 유래 출력이 쓰기 권한을 얻지 못하게 한다. 이미지 컨텍스트에서는 별도 intent planner와 모든 tool을 사용하지 않으며 기존 accounted dispatch/lease/output guard는 유지한다. canonical bytes는 wire에서만 base64가 되고 checkpoint나 ordinary DTO에 들어가지 않는다. `DeleteMedia` journal은 owner-bound UUID tombstone 및 모든 의존 run 출력을 철회하여 늦은 callback을 막는다.

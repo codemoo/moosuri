@@ -24,6 +24,8 @@ pub(super) struct SubmitInput {
     text: String,
     #[serde(default)]
     artifact_target: Option<moosuri_core::ArtifactTarget>,
+    #[serde(default)]
+    attachments: Vec<moosuri_core::MediaRef>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,12 +54,13 @@ pub(super) async fn submit(
     }
     let turn = state
         .store
-        .submit_turn_with_artifact(
+        .submit_turn_with_media(
             &user,
             id,
             input.request_id,
             input.text,
             input.artifact_target,
+            input.attachments,
         )
         .await?;
     state.runtime.wake();

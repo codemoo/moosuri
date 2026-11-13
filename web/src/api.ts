@@ -3,9 +3,112 @@
 export class RequestScope {
   constructor(private readonly expectedAccountId?: string) {}
   private active = true;
+  private urls = new Set<string>();
+  private uploads = new Set<XMLHttpRequest>();
+  releaseUrl(url: string) {
+    URL.revokeObjectURL(url);
+    this.urls.delete(url);
+  }
+  private keepUrl(blob: Blob) {
+    if (!this.active)
+      throw new DOMException("Closed account lifetime", "AbortError");
+    const url = URL.createObjectURL(blob);
+    this.urls.add(url);
+    return url;
+  }
+  async imageUrl(path: string, signal?: AbortSignal): Promise<string> {
+    if (!this.active)
+      throw new DOMException("Closed account lifetime", "AbortError");
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) controller.abort();
+    this.controllers.add(controller);
+    try {
+      const response = await fetch(`/api/v1${path}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: controller.signal,
+        headers: this.expectedAccountId
+          ? { "X-Moosuri-Account": this.expectedAccountId }
+          : {},
+      });
+      if (!response.ok)
+        throw new ApiFailure(response.status, "media_unavailable");
+      const blob = await response.blob();
+      if (!this.active || controller.signal.aborted)
+        throw new DOMException("Closed account lifetime", "AbortError");
+      return this.keepUrl(blob);
+    } finally {
+      this.controllers.delete(controller);
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+  localUrl(blob: Blob) {
+    return this.keepUrl(blob);
+  }
+  upload<T>(
+    id: string,
+    blob: Blob,
+    progress: (percent: number) => void,
+    signal: AbortSignal,
+  ): Promise<T> {
+    if (!this.active || signal.aborted)
+      return Promise.reject(
+        new DOMException("Closed account lifetime", "AbortError"),
+      );
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      this.uploads.add(xhr);
+      const abort = () => xhr.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      const done = () => {
+        this.uploads.delete(xhr);
+        signal.removeEventListener("abort", abort);
+      };
+      xhr.open("POST", `/api/v1/media/${encodeURIComponent(id)}`);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      if (this.expectedAccountId)
+        xhr.setRequestHeader("X-Moosuri-Account", this.expectedAccountId);
+      xhr.upload.onprogress = (e) => {
+        if (this.active && !signal.aborted && e.lengthComputable)
+          progress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        done();
+        if (!this.active || signal.aborted) {
+          reject(new DOMException("Closed account lifetime", "AbortError"));
+          return;
+        }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new ApiFailure(xhr.status, "media_upload_failed"));
+          return;
+        }
+        try {
+          resolve(JSON.parse(xhr.responseText) as T);
+        } catch {
+          reject(new ApiFailure(502, "media_upload_failed"));
+        }
+      };
+      xhr.onerror = () => {
+        done();
+        reject(new TypeError("Upload unavailable"));
+      };
+      xhr.onabort = () => {
+        done();
+        reject(new DOMException("Upload cancelled", "AbortError"));
+      };
+      xhr.send(blob);
+    });
+  }
   private controllers = new Set<AbortController>();
   close() {
     this.active = false;
+    for (const xhr of this.uploads) xhr.abort();
+    this.uploads.clear();
+    for (const url of this.urls) URL.revokeObjectURL(url);
+    this.urls.clear();
     for (const controller of this.controllers) controller.abort();
     this.controllers.clear();
   }

@@ -19,6 +19,8 @@ mod browser;
 pub use browser::*;
 mod mail;
 pub use mail::*;
+mod media;
+pub use media::*;
 mod chat;
 mod knowledge;
 mod memory_command;
@@ -102,6 +104,9 @@ pub fn typescript_contract() -> String {
         AccountManagementAction::decl(),
         AccountManagementInput::decl(),
         AccountManagementReceipt::decl(),
+        MediaRef::decl(),
+        MediaSummary::decl(),
+        MediaLibrary::decl(),
         GitHubSkillLocation::decl(),
         GitHubSkillPreviewInput::decl(),
         MemoryExtractionChange::decl(),

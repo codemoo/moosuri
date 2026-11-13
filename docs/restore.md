@@ -2,7 +2,9 @@
 
 This development command restores the exact full current-state checkpoint made by
 [sealed checkpoint](checkpoints.md). The combined schema19/20 path passed independent
-storage/auth review and integrated Linux checks; see the [evidence](reviews/2026-11-13-sealed-restore.md). It does not import ordinary
+storage/auth review and integrated Linux checks; see the [evidence](reviews/2026-11-13-sealed-restore.md).
+Schema21 image storage and forward migration from19/20 have also passed
+[integrated checks](reviews/2026-11-13-private-images.md). It does not import ordinary
 older exports, merge installations, unseal the source or provide ongoing recovery
 freshness after a host loss.
 
@@ -61,6 +63,11 @@ schedules stay disabled/paused even after account enrollment. Queued chat and
 uncommitted mail are cancelled; already committed unknown external dispatch stays
 unknown. No pending action is resent. Committed mail/model/source/notification
 receipts and accounting remain historical evidence.
+
+Ready canonical images and thumbnails remain inside SQLite with their ownership,
+immutable selections and deletion records. Unfinished uploads become retry-required;
+old upload contexts cannot settle them. Image capability proofs are cleared along
+with provider verification. Restore does not process an image or call a model.
 
 On failure, retry the same command with the same retained inputs. Each attempt
 uses a new private reserved staging path that ordinary Store/raw entry points

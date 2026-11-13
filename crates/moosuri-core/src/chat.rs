@@ -89,6 +89,9 @@ pub struct RunView {
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct ChatTurn {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub attachments: Option<Vec<crate::MediaSummary>>,
     #[ts(type = "number")]
     pub sequence: i64,
     pub user_text: String,

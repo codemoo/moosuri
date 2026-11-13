@@ -6,6 +6,7 @@ A self-hosted assistant for individuals, families and friends.
 The existing private deployment remains the behavioral reference; its source history,
 accounts, data, infrastructure settings and experimental runtimes are not copied here.
 
+- [홈 화면에 설치하기](docs/pwa.md): 공개 화면 오프라인 지원과 업데이트
 - [현재 상태와 다음 작업](docs/status.md)
 - [재작성 계획](docs/plan.md): 목표·순서·완료 조건
 - [설계](docs/architecture.md): Rust 경계·실행·저장·복구

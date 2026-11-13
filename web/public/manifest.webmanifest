@@ -1,0 +1,20 @@
+{
+  "id": "/app",
+  "name": "moosuri — 무수리",
+  "short_name": "무수리",
+  "description": "나와 가족을 위한 개인 비서",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f4ed",
+  "theme_color": "#f6f4ed",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "/moosuri-app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

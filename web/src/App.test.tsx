@@ -250,6 +250,25 @@ describe("account and session boundaries", () => {
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
   });
+  it("restarts a pending initial boot on reconnect and discards its late failure", async () => {
+    server();
+    const reachable = fetch;
+    const late = deferred<Response>();
+    let reconnected = false;
+    const fetcher = vi.fn((url: string, init?: RequestInit) =>
+      url.endsWith("/system") && !reconnected
+        ? late.promise
+        : reachable(url, init),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(<StrictMode><App /></StrictMode>);
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    reconnected = true;
+    act(() => { window.dispatchEvent(new Event("online")); });
+    await act(async () => { late.resolve(response({ code: "unavailable" }, 503)); });
+    expect(await screen.findByRole("heading", { name: "Hello, Alice." })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Let’s reconnect." })).toBeNull();
+  });
   it("discards A’s late response after logout and B login", async () => {
     const user = userEvent.setup();
     const late = deferred<Response>();

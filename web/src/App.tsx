@@ -19,6 +19,7 @@ import type {
 import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
+import { PwaInstallButton } from "./PwaInstallButton";
 import { MailConnections } from "./MailConnections";
 import { GoogleSetup } from "./GoogleSetup";
 import { SourceConnections } from "./SourceConnections";
@@ -286,6 +287,14 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   function expire() {
     revalidate();
   }
+  useEffect(() => {
+    const reconnect = () => {
+      if (bootFailed || loading) revalidateRef.current();
+      else checkSessionRef.current();
+    };
+    window.addEventListener("online", reconnect);
+    return () => window.removeEventListener("online", reconnect);
+  }, [bootFailed, loading]);
   async function logout() {
     const expectedAccount = session?.user.id ?? logoutIdentity.current;
     if (!expectedAccount || logoutScope.current) return;
@@ -875,6 +884,7 @@ function Workspace({
         )}
       </nav>
       <div className="sidebar-bottom">
+        <PwaInstallButton />
         <div className="boundary-note">
           <span aria-hidden="true">⌁</span>
           <span>

@@ -1,0 +1,2 @@
+.offline-status { position: fixed; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 200; width: max-content; max-width: calc(100vw - 28px); padding: 10px 16px; color: #f6f4ed; background: #34473f; border-radius: 14px; box-shadow: 0 3px 16px #18332924; font-size: .82rem; line-height: 1.6; pointer-events: none; }
+.offline-status span { margin-right: 6px; }

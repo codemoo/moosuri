@@ -143,6 +143,7 @@ fn cli_init_embedded_app_http_session_and_restart_work_together() {
     let html = request(port, "GET", "/app", "", None);
     assert_eq!(html.status, 200);
     assert!(html.body.contains("<script"));
+    assert!(html.body.contains("/manifest.webmanifest"));
     assert!(html.headers.contains("default-src 'self'"));
     for path in [
         "/app/knowledge",
@@ -155,6 +156,32 @@ fn cli_init_embedded_app_http_session_and_restart_work_together() {
         assert!(page.body.contains("<script"));
     }
     assert!(!html.headers.contains("default-src 'none'"));
+    let manifest = request(port, "GET", "/manifest.webmanifest", "", None);
+    assert_eq!(manifest.status, 200);
+    assert!(manifest.headers.contains("application/manifest+json"));
+    let manifest: Value = serde_json::from_str(&manifest.body).unwrap();
+    assert_eq!(manifest["start_url"], "/app");
+    assert_eq!(manifest["display"], "standalone");
+    let icon = request(
+        port,
+        "GET",
+        manifest["icons"][0]["src"].as_str().unwrap(),
+        "",
+        None,
+    );
+    assert_eq!(icon.status, 200);
+    assert!(icon.headers.contains("image/svg+xml"));
+    assert!(icon.body.contains("data:image/png;base64,"));
+    let worker = request(port, "GET", "/service-worker.js", "", None);
+    assert_eq!(worker.status, 200);
+    assert!(worker.headers.contains("text/javascript"));
+    assert!(
+        worker
+            .headers
+            .to_lowercase()
+            .contains("cache-control: no-cache")
+    );
+    assert!(worker.body.contains("moosuri-public-shell-"));
     assert_eq!(request(port, "GET", "/health/ready", "", None).status, 204);
     let login = request(
         port,

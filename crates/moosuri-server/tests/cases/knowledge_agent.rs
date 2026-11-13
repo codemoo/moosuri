@@ -23,6 +23,7 @@ fn request_id() -> String {
 #[derive(Clone)]
 struct ModelState {
     calls: Arc<AtomicUsize>,
+    classifications: Arc<AtomicUsize>,
     hold_answer: Arc<AtomicBool>,
     answer_entered: Arc<Notify>,
     answer_release: Arc<Notify>,
@@ -40,6 +41,14 @@ impl Drop for KnowledgeModel {
 fn tool_delta(id: &str, name: &str, arguments: Value) -> Value {
     json!({"role":"assistant","tool_calls":[{"index":0,"id":id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]})
 }
+fn response_frames(call: usize, delta: Value, finish: &str) -> axum::response::Response {
+    let id = format!("knowledge-http-round-{call}");
+    let first = json!({"id":id,"model":"knowledge-http-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
+    let last = json!({"id":id,"model":"knowledge-http-model","choices":[{"index":0,"delta":{},"finish_reason":finish}]});
+    let usage = json!({"id":id,"model":"knowledge-http-model","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":3}});
+    let wire = format!("data: {first}\n\ndata: {last}\n\ndata: {usage}\n\ndata: [DONE]\n\n");
+    ([("content-type", "text/event-stream")], wire).into_response()
+}
 async fn model_round(
     State(state): State<ModelState>,
     axum::Json(input): axum::Json<Value>,
@@ -52,6 +61,30 @@ async fn model_round(
         .iter()
         .map(|tool| tool["function"]["name"].as_str().unwrap())
         .collect();
+    if tools.contains("mission_chat_decision") {
+        assert_eq!(
+            tools,
+            ["calendar_chat_decision", "mission_chat_decision"]
+                .into_iter()
+                .collect()
+        );
+        // Friday is an existing scheduling cue. The isolated proposal must pass
+        // this immediate source question back to the ordinary read-only runtime.
+        let messages = input["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "What does my Friday note say?");
+        state.classifications.fetch_add(1, Ordering::SeqCst);
+        return response_frames(
+            call,
+            tool_delta(
+                "classification-call",
+                "mission_chat_decision",
+                json!({"decision":"no_command","action":null,"target_kind":null,"intent_quote":null,"task_quote":null,"constraints_quote":null,"time_quote":null,"target_quote":null,"instruction_quote":null,"time":null,"clarification":null}),
+            ),
+            "tool_calls",
+        );
+    }
     assert_eq!(
         tools,
         [
@@ -79,7 +112,7 @@ async fn model_round(
             tool_delta(
                 "search-call",
                 "knowledge_search",
-                json!({"kind":"source","text":"Friday","collection_id":null,"subject":null,"speaker":null,"valid_at":null}),
+                json!({"kind":"source","text":"Friday","collection_id":null,"subject":null,"speaker":null,"valid_at":null,"cursor":null}),
             ),
             "tool_calls",
         ),
@@ -119,18 +152,14 @@ async fn model_round(
         }
         _ => panic!("unexpected automatic extra round"),
     };
-    let id = format!("knowledge-http-round-{call}");
-    let first = json!({"id":id,"model":"knowledge-http-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
-    let last = json!({"id":id,"model":"knowledge-http-model","choices":[{"index":0,"delta":{},"finish_reason":finish}]});
-    let usage = json!({"id":id,"model":"knowledge-http-model","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":3}});
-    let wire = format!("data: {first}\n\ndata: {last}\n\ndata: {usage}\n\ndata: [DONE]\n\n");
-    ([("content-type", "text/event-stream")], wire).into_response()
+    response_frames(call, delta, finish)
 }
 async fn synthetic_model() -> KnowledgeModel {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let state = ModelState {
         calls: Arc::new(AtomicUsize::new(0)),
+        classifications: Arc::new(AtomicUsize::new(0)),
         hold_answer: Arc::new(AtomicBool::new(false)),
         answer_entered: Arc::new(Notify::new()),
         answer_release: Arc::new(Notify::new()),
@@ -386,7 +415,8 @@ async fn search_read_answer_http_delete_resets_replay_and_blocks_a_held_late_ans
         turn["run"]["evidence"],
         json!([{"kind":"source","id":first_source,"revision":1,"title":"Synthetic Friday note"}])
     );
-    assert_eq!(model.state.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(model.state.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(model.state.classifications.load(Ordering::SeqCst), 1);
     delete_and_check_reset(
         &app,
         &cookie,
@@ -414,7 +444,8 @@ async fn search_read_answer_http_delete_resets_replay_and_blocks_a_held_late_ans
     .expect("provider received both saved read results");
     let before = page(&app, &cookie, &second_thread.id).await;
     assert_eq!(before["turns"][0]["run"]["state"], "running");
-    assert_eq!(model.state.calls.load(Ordering::SeqCst), 6);
+    assert_eq!(model.state.calls.load(Ordering::SeqCst), 8);
+    assert_eq!(model.state.classifications.load(Ordering::SeqCst), 2);
     let mut changed = runtime.subscribe();
     let previous = *changed.borrow_and_update();
     delete_and_check_reset(
@@ -440,7 +471,8 @@ async fn search_read_answer_http_delete_resets_replay_and_blocks_a_held_late_ans
     runtime.shutdown().await; // Drain the worker, then check again for late publication.
     assert_purged(&page(&app, &cookie, &second_thread.id).await);
     assert_purged(&page(&app, &cookie, &first_thread.id).await);
-    assert_eq!(model.state.calls.load(Ordering::SeqCst), 6); // No replay/fallback.
+    assert_eq!(model.state.calls.load(Ordering::SeqCst), 8); // No replay/fallback.
+    assert_eq!(model.state.classifications.load(Ordering::SeqCst), 2);
     let usage = value(send(&app, "GET", "/api/v1/usage", Some(&cookie), Value::Null).await).await;
-    assert_eq!(usage["dispatched_calls"], 6); // Deletion retains accounting.
+    assert_eq!(usage["dispatched_calls"], 8); // Deletion retains accounting.
 }

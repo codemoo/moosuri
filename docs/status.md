@@ -540,6 +540,8 @@ Chromium의 생성/수정/현지 날짜/모바일 스크롤을 확인했다. Rea
 실제 자연어 예약·매주 규칙·모델 업무·변경만 알림·Push는 후속 범위다. 계정 정지는 현재 active 상태와 auth epoch로 차단한다.
 복원 기능에는 별도 quarantine hook을 연결한다.
 [현재 범위](schedules.md)와 [검증 기록](reviews/2026-11-13-local-reminders.md)을 따른다.
+주기 조회 중에도 입력·저장이 가능하며, 늦은 조회가 저장 결과를 덮어쓰지 않는다.
+이 수정 뒤 예약 UI8개와 타입/production build를 다시 확인했다.
 
 ## 계정 관리 수명
 

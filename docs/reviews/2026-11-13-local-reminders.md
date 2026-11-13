@@ -71,3 +71,22 @@ React32 reminder/workspace/public-shell cases, typecheck/production build,
 generated DTO equality and affected all-target warnings-denied clippy pass.
 Account suspension and historical restore integration are subsequent units. The
 quarantine helper is reserved for restoration and never ordinary startup.
+
+## Background refresh usability repair
+
+The five-second read refresh originally used the same disabled state as mutations,
+briefly locking the form and controls. Reads now preserve editing and allow a user
+write to supersede them. A delayed-read test types and saves while the refresh is
+held, then verifies the late response cannot erase the saved card. All8 reminder
+UI cases and typecheck/production build pass after this change. No Rust/runtime
+or schedule authority semantics changed.
+
+A real Chrome synthetic journey created a near-future reminder, observed its
+automatic inbox delivery, marked/read/dismissed it and retained that state after
+reload and server restart. At390×844, the schedule panel scrolls independently,
+with no horizontal/document scroll. Removing the duplicate heading and stacked
+form gaps reduces the same content from1750px to1582px; the panel remains768px.
+The final rendered screenshot has one page heading and the complete new-reminder
+form fits the viewport. This is desktop Chrome mobile emulation, not physical
+iOS/Android testing. The held-read behavior is covered by the deterministic UI
+test, separately from the browser journey.

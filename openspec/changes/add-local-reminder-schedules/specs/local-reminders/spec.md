@@ -45,3 +45,15 @@ and SHALL leave model tasks, changes-only observations and WebPush explicitly ab
 #### Scenario: Account change or delayed refresh
 - **WHEN** an old-account response or pre-mutation refresh arrives after a newer account or accepted mutation
 - **THEN** it cannot replace current form/inbox/control state or bypass account revision checks
+
+### Requirement: Background reads preserve editing
+
+The reminder screen SHALL keep editable inputs and authorized mutation controls
+available while a background read is pending. A mutation SHALL supersede a stale
+read without allowing the read's late response to replace accepted state.
+
+#### Scenario: Slow refresh overlaps typing and save
+
+- **WHEN** a reminder refresh is pending and the owner edits and saves the draft
+- **THEN** the input remains usable, the save uses the current draft, and a late
+  pre-save response cannot remove the newly accepted reminder

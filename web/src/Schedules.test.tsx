@@ -51,3 +51,32 @@ it.each([
  vi.stubGlobal("fetch",vi.fn(async(path:string,init?:RequestInit)=>{if(init?.method==="PUT"){saved=JSON.parse(String(init.body)).draft;return response({...row,...saved,revision:2});}return response(data(path,[row]));}));
  render(<Schedules {...props}/>);fireEvent.click(await screen.findByRole("button",{name:"편집"}));fireEvent.change(screen.getByLabelText("알림 제목"),{target:{value:"Title only"}});fireEvent.click(screen.getByRole("button",{name:"변경 저장"}));await screen.findByText("Title only");expect(saved!.rule).toEqual(rule);
 });
+
+
+it("keeps a draft editable during background reads and fences the read when the owner saves",async()=>{
+ let release!:(value:Response)=>void;
+ const held=new Promise<Response>(resolve=>release=resolve);
+ let reads=0;let saved:ScheduleDraft|undefined;
+ vi.stubGlobal("fetch",vi.fn(async(path:string,init?:RequestInit)=>{
+  if(path.endsWith("/schedules")&&init?.method==="GET"){
+   reads++;if(reads===2)return held;return response([]);
+  }
+  if(path.endsWith("/schedules")&&init?.method==="POST"){
+   saved=JSON.parse(String(init.body)).draft;
+   return response(item({...saved,id:"saved-during-refresh"}));
+  }
+  return response(data(path));
+ }));
+ render(<Schedules {...props}/>);await ready();fill();
+ fireEvent.click(screen.getByRole("button",{name:"새로고침"}));
+ await waitFor(()=>expect(reads).toBe(2));
+ expect(screen.getByLabelText("알림 제목")).toBeEnabled();
+ expect(screen.getByLabelText("알려 줄 내용")).toBeEnabled();
+ expect(screen.getByRole("button",{name:"알림 예약"})).toBeEnabled();
+ fireEvent.change(screen.getByLabelText("알림 제목"),{target:{value:"Typing while a refresh is slow"}});
+ fireEvent.click(screen.getByRole("button",{name:"알림 예약"}));
+ await screen.findByRole("heading",{name:"Typing while a refresh is slow"});
+ expect(saved?.title).toBe("Typing while a refresh is slow");
+ await act(async()=>release(response([])));
+ expect(screen.getByRole("heading",{name:"Typing while a refresh is slow"})).toBeInTheDocument();
+});

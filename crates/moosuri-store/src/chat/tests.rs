@@ -721,7 +721,7 @@ async fn schema_two_migrates_in_place_and_restricted_sessions_never_admit_text()
             assert_eq!(
                 db.conn
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                11
+                crate::CURRENT_SCHEMA_VERSION
             );
             assert_eq!(
                 db.conn

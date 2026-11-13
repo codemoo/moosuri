@@ -100,8 +100,8 @@ pub struct AgentToolSlot {
 }
 pub struct AgentContext {
     pub checkpoint_seq: i64,
-    /// True only before any run-wide local tool execution. Retries retain the
-    /// counter, so old retrieved context can never re-enable intent planning.
+    /// True only before any run-wide local tool execution or sealed target plan.
+    /// Both fences survive retry, including private target-plan purging.
     pub memory_planning_allowed: bool,
     pub checkpoint: Option<PrivateCheckpoint>,
     pub current_step_status: Option<AgentStepStatus>,
@@ -307,6 +307,10 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
             params![tenant, id],
         )?;
         conn.execute(
+            "DELETE FROM memory_target_plans WHERE tenant_id=?1 AND run_id=?2",
+            params![tenant, id],
+        )?;
+        conn.execute(
             "DELETE FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2",
             params![tenant, id],
         )?;
@@ -338,10 +342,10 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
     Ok(())
 }
 fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
-    let (seq, tool_calls): (i64, i64) = conn.query_row(
-        "SELECT checkpoint_seq,tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",
+    let (seq, tool_calls, memory_target_started): (i64, i64, bool) = conn.query_row(
+        "SELECT checkpoint_seq,tool_calls,memory_target_started FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",
         params![tenant, run],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
     let latest: Option<(i64,String,Option<Vec<u8>>)>=conn.query_row("SELECT step,state,checkpoint FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 ORDER BY step DESC LIMIT 1",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let mut calls = Vec::new();
@@ -379,7 +383,7 @@ fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
     };
     Ok(AgentContext {
         checkpoint_seq: seq,
-        memory_planning_allowed: tool_calls == 0,
+        memory_planning_allowed: tool_calls == 0 && !memory_target_started,
         checkpoint,
         current_step_status: status,
         calls,
@@ -664,6 +668,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match chat::guard(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
             if !is_agent(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
+            if let Err(e)=memory_commands::guard_target_dispatch(&tx,&run) {tx.commit()?;return Err(e)}
             if memory_commands::has_slot(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
             let (seq,remote):(i64,i64)=tx.query_row("SELECT checkpoint_seq,remote_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if seq!=expected_checkpoint_seq {return Err(StoreError::Conflict)}
@@ -692,6 +697,7 @@ impl Store {
             let digest: [u8;32]=Sha256::digest(encoded(&(&checkpoint.bytes,&calls))?.as_bytes()).into();
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
+            if !calls.is_empty() && memory_commands::has_target_plan(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
             let (state,old):(String,Option<Vec<u8>>)=tx.query_row("SELECT state,completion_digest FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if state=="completed" {
                 if old.as_deref()!=Some(digest.as_slice()){return Err(StoreError::Conflict)}
@@ -714,7 +720,7 @@ impl Store {
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
-            if memory_commands::has_slot(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
+            if memory_commands::has_slot(&tx,&run.tenant,&run.id)? || memory_commands::has_target_plan(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
             let state: String=tx.query_row("SELECT state FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get(0))?;
             if state!="completed" {return Err(StoreError::Conflict)}
             let (input,saved):(String,Option<String>)=tx.query_row("SELECT input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
@@ -748,7 +754,9 @@ impl Store {
                     return Err(e);
                 }
             };
-            if memory_commands::has_slot(&tx, &run.tenant, &run.id)? {
+            if memory_commands::has_slot(&tx, &run.tenant, &run.id)?
+                || memory_commands::has_target_plan(&tx, &run.tenant, &run.id)?
+            {
                 return Err(StoreError::Conflict);
             }
             chat::apply_patches(&tx, &run, patches)?;
@@ -787,7 +795,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
             if state==RunState::Completed {
-                if memory_commands::has_slot(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
+                if memory_commands::has_slot(&tx,&run.tenant,&run.id)? || memory_commands::has_target_plan(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
                 let complete: bool=tx.query_row("SELECT state='completed' AND NOT EXISTS(SELECT 1 FROM agent_tool_slots t WHERE t.tenant_id=agent_steps.tenant_id AND t.run_id=agent_steps.run_id AND t.step=agent_steps.step) FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get(0))?;
                 if !complete {return Err(StoreError::Conflict)}
             }

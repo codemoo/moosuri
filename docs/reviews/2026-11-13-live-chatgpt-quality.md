@@ -165,6 +165,26 @@ facts and ambiguous people/topics against independent unseen cases; matching a s
 reduced token must not silently authorize changing the wrong memory. Automatic
 extraction and general assistant acceptance remain outside this work unit.
 
+## Subsequent offline target-resolution work
+
+A later implementation adds an isolated candidate-index selection round only when
+literal resolution finds no target. The Store seals the already accepted current
+intent and complete bounded current candidate snapshot; neither candidate text nor
+the selector can change action/fact or provide account/memory IDs. Generation,
+full-snapshot and effective/head revision checks fence selection and commit.
+Candidate memory/evidence dependencies purge private snapshots and checkpoints on
+actual forget/source withdrawal; snapshot checks also run before resume and remote
+dispatch admission. Literal ambiguity still clarifies without a selector. Limits and retry behavior are
+in [conversational memory](../conversational-memory.md).
+
+Synthetic Store and scripted-runtime checks exercise preference, residence, work
+and dietary assertions, person/negation/qualifier ambiguity, index/parser authority,
+candidate drift, effective-time changes and retry boundaries. These checks are
+protocol/storage evidence, not a new semantic score. No account-backed model was
+called for that implementation; the historical7/10 and exact-target3/3 results above
+remain unchanged. Cross-topic selection accuracy and candidate prompt-injection
+behavior require a separately authorized independent model evaluation.
+
 ## Reusable opt-in evaluation
 
 Ordinary `cargo test` never starts an authenticated model. After explicit authorization
@@ -202,3 +222,6 @@ Rust/React product. General native subscription setup remains separate work.
 
 These sources explain supported local account integration and why tool tests,
 classification and a product harness must be reported as different evidence.
+
+
+The later semantic-selector implementation and failed-before-case holdout setup are documented in [target-resolution acceptance](2026-11-13-memory-target-resolution.md). Its two fresh connection probes did not establish tool capability, so no new holdout score replaces the historical observations above.

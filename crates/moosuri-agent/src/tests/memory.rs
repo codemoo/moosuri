@@ -77,7 +77,31 @@ async fn memory_response(
     if matches!(state.mode, Mode::RetryAfterRead) && call == 3 {
         return Response::builder().status(503).body(Body::empty()).unwrap();
     }
-    let (delta, finish) = if planning {
+    let selecting = input["tools"][0]["function"]["name"] == "memory_target_decision";
+    let (delta, finish) = if selecting {
+        assert_eq!(input["max_tokens"], 1024);
+        assert_eq!(
+            messages.len(),
+            2,
+            "selection must not inherit chat or continuation"
+        );
+        assert!(!input.to_string().contains(PRIVATE_PREVIEW));
+        let data: Value = serde_json::from_str(current).unwrap();
+        let request = data["current_authenticated_request"].as_str().unwrap();
+        let expected = match request {
+            CORRECT => "나는 홍차를 좋아해",
+            FORGET => "나는 녹차를 좋아해",
+            _ => panic!("unexpected selection"),
+        };
+        let candidates = data["untrusted_candidate_data"].as_array().unwrap();
+        let candidate = candidates.iter().find(|v| v["text"] == expected).unwrap();
+        assert!(candidate.get("id").is_none());
+        let args = json!({"selection":"select","index":candidate["index"]});
+        (
+            json!({"tool_calls":[{"index":0,"id":format!("target-{call}"),"type":"function","function":{"name":"memory_target_decision","arguments":args.to_string()}}]}),
+            "tool_calls",
+        )
+    } else if planning {
         assert_eq!(input["max_tokens"], 2048);
         assert_eq!(
             messages.len(),
@@ -107,9 +131,9 @@ async fn memory_response(
                     "수정해 줘",
                     Some("나는 녹차를 좋아해"),
                     Some("음료 취향"),
-                    Some("홍차"),
+                    Some("홍차 취향"),
                 ),
-                FORGET => command("forget", "잊어 줘", None, None, Some("녹차")),
+                FORGET => command("forget", "잊어 줘", None, None, Some("녹차 취향")),
                 "홍차 기억을 지워 줘." => {
                     command("forget", "지워 줘", None, None, Some("홍차"))
                 }
@@ -156,7 +180,7 @@ async fn memory_response(
     let id = format!("memory-response-{call}");
     let head = frame(
         json!({"id":id,"model":"fixture-model","choices":[{"index":0,"delta":{
-        "role":"assistant","content":if planning {PRIVATE_PREVIEW}else{""}},"finish_reason":null}],
+        "role":"assistant","content":if planning || selecting {PRIVATE_PREVIEW}else{""}},"finish_reason":null}],
         "usage":{"prompt_tokens":7,"completion_tokens":1}}),
     );
     let tail = frame(
@@ -332,7 +356,7 @@ async fn explicit_commands_recall_correct_self_context_forget_and_reopen_without
             .unwrap()
             .is_some()
     );
-    assert_eq!(model.state.calls.load(Ordering::SeqCst), 5);
+    assert_eq!(model.state.calls.load(Ordering::SeqCst), 7);
 }
 
 #[tokio::test]

@@ -2,7 +2,7 @@ use super::*;
 use crate::tests::{TEST_LOCK, admin, directory, member};
 use moosuri_core::*;
 
-async fn configured(store: &Store) -> UserContext {
+pub(super) async fn configured(store: &Store) -> UserContext {
     let user = admin(store).await.user;
     let provider = store
         .create_provider(
@@ -76,7 +76,7 @@ fn forget() -> (String, MemoryCommandIntent) {
         },
     )
 }
-fn draft(text: &str) -> MemoryDraft {
+pub(super) fn draft(text: &str) -> MemoryDraft {
     MemoryDraft {
         text: text.into(),
         subject: "Drink preference".into(),
@@ -94,7 +94,7 @@ fn preview(text: &str) -> Vec<OutputPatch> {
         refusal: false,
     }]
 }
-async fn planning(
+pub(super) async fn planning(
     store: &Store,
     user: &UserContext,
     text: &str,
@@ -126,7 +126,7 @@ async fn planning(
         .unwrap();
     (thread.id, claim, step)
 }
-async fn memory_count(store: &Store) -> i64 {
+pub(super) async fn memory_count(store: &Store) -> i64 {
     store
         .call(|db| {
             Ok(db.conn.query_row(
@@ -138,7 +138,7 @@ async fn memory_count(store: &Store) -> i64 {
         .await
         .unwrap()
 }
-fn applied_id(outcome: &MemoryCommandOutcome) -> String {
+pub(super) fn applied_id(outcome: &MemoryCommandOutcome) -> String {
     match outcome {
         MemoryCommandOutcome::Applied {
             memory_id: Some(id),

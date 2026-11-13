@@ -205,6 +205,19 @@ fn resolve_at(conn: &Connection, tenant: &str, text: &str, time: i64) -> Result<
         (None, Some(MemoryCommandClarification::NoTarget))
     })
 }
+fn value_run(conn: &Connection, tenant: &str, value: &Slot) -> Result<String> {
+    Ok(conn.query_row(
+        "SELECT run_id FROM memory_command_slots WHERE tenant_id=?1 AND command_id=?2",
+        params![tenant, value.command],
+        |r| r.get(0),
+    )?)
+}
+pub(super) fn has_target_plan(conn: &Connection, tenant: &str, run: &str) -> Result<bool> {
+    targets::has_plan(conn, tenant, run)
+}
+pub(super) fn guard_target_dispatch(conn: &Connection, run: &chat::Run) -> Result<()> {
+    targets::guard_dispatch(conn, run)
+}
 fn current_target(conn: &Connection, tenant: &str, value: &Slot, quote: &str) -> Result<bool> {
     current_target_at(conn, tenant, value, quote, now()?)
 }
@@ -220,6 +233,9 @@ fn current_target_at(
     else {
         return Ok(false);
     };
+    if targets::has_plan(conn, tenant, &value_run(conn, tenant, value)?)? {
+        return targets::current_selection(conn, tenant, value, time);
+    }
     let (selected, clarification) = resolve_at(conn, tenant, quote, time)?;
     Ok(clarification.is_none()
         && selected
@@ -327,6 +343,10 @@ fn finalize(
         "DELETE FROM memory_command_plans WHERE tenant_id=?1 AND run_id=?2",
         params![tenant, run_id],
     )?;
+    conn.execute(
+        "DELETE FROM memory_target_plans WHERE tenant_id=?1 AND run_id=?2",
+        params![tenant, run_id],
+    )?;
     let run = match chat::load_run(conn, tenant, run_id) {
         Ok(v) => v,
         Err(StoreError::NotFound) => return Ok(()),
@@ -415,6 +435,64 @@ pub(super) fn apply_journal_forget(conn: &Connection, tenant: &str, command: &st
     )
 }
 
+fn prepare_slot(
+    conn: &Connection,
+    run: &chat::Run,
+    step: &StepLease,
+    intent: &MemoryCommandIntent,
+    resolution: Option<Target>,
+) -> Result<PreparedMemoryCommand> {
+    let completed: bool = conn.query_row(
+        "SELECT state='completed' FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",
+        params![run.tenant, run.id, step.step],
+        |r| r.get(0),
+    )?;
+    if !completed {
+        return Err(StoreError::Conflict);
+    }
+    no_tools(conn, &run.tenant, &run.id)?;
+    validate_intent(&run.text, intent)?;
+    let digest = intent_digest(&run.text, intent)?;
+    if let Some(value) = slot(conn, &run.tenant, &run.id)? {
+        if value.digest != digest {
+            return Err(StoreError::Conflict);
+        }
+        let cap = capability(&step.run, &value)?;
+        return Ok(cap);
+    }
+    if targets::abandoned(conn, &run.tenant, &run.id)? {
+        return Err(StoreError::Conflict);
+    }
+    if resolution.is_none() && targets::has_plan(conn, &run.tenant, &run.id)? {
+        return Err(StoreError::Conflict);
+    }
+    let (target, clarification) = match resolution {
+        Some(value) => value,
+        None => match &intent.target_quote {
+            Some(target) => resolve(conn, &run.tenant, target)?,
+            None => (None, None),
+        },
+    };
+    let command = Uuid::new_v4().to_string();
+    let mut nonce = [0; 32];
+    OsRng
+        .try_fill_bytes(&mut nonce)
+        .map_err(|_| StoreError::Unavailable)?;
+    let (target, revision, effective) = target
+        .map(|(id, head, effective)| (Some(id), Some(head), Some(effective)))
+        .unwrap_or((None, None, None));
+    conn.execute("INSERT INTO memory_command_slots(tenant_id,run_id,command_id,nonce,account_id,intent_digest,action,target_id,target_revision,target_effective_revision,clarification,proof_attempt,proof_step,bound_attempt,bound_nonce,session_digest,auth_epoch,state) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?16,?10,?11,?12,?11,?13,?14,?15,'prepared')",params![run.tenant,run.id,command,nonce.as_slice(),run.account,digest.as_slice(),action_name(intent.action),target,revision,clarification.map(|v|encode(&v)).transpose()?,run.attempt,step.step,step.run.nonce.as_slice(),run.session.as_slice(),run.epoch,effective])?;
+    conn.execute(
+        "INSERT INTO memory_command_plans VALUES(?1,?2,?3)",
+        params![run.tenant, run.id, encode(intent)?],
+    )?;
+    Ok(PreparedMemoryCommand {
+        lease: step.run.clone(),
+        command,
+        nonce,
+    })
+}
+
 impl Store {
     pub async fn prepare_memory_command(
         &self,
@@ -422,24 +500,22 @@ impl Store {
         intent: MemoryCommandIntent,
     ) -> Result<PreparedMemoryCommand> {
         let step = step.clone();
-        self.call(move|db|{
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let run=match agent_execution::guard_step(&tx,&db.provider_key,&step){Ok(run)=>run,Err(e)=>{tx.commit()?;return Err(e)}};
-            let completed: bool=tx.query_row("SELECT state='completed' FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,step.step],|r|r.get(0))?;
-            if !completed {return Err(StoreError::Conflict)}
-            no_tools(&tx,&run.tenant,&run.id)?;validate_intent(&run.text,&intent)?;
-            let digest=intent_digest(&run.text,&intent)?;
-            if let Some(value)=slot(&tx,&run.tenant,&run.id)? {
-                if value.digest!=digest {return Err(StoreError::Conflict)}
-                let cap=capability(&step.run,&value)?;tx.commit()?;return Ok(cap)
-            }
-            let (target,clarification)=match &intent.target_quote {Some(target)=>resolve(&tx,&run.tenant,target)?,None=>(None,None)};
-            let command=Uuid::new_v4().to_string();let mut nonce=[0;32];OsRng.try_fill_bytes(&mut nonce).map_err(|_|StoreError::Unavailable)?;
-            let (target,revision,effective)=target.map(|(id,head,effective)|(Some(id),Some(head),Some(effective))).unwrap_or((None,None,None));
-            tx.execute("INSERT INTO memory_command_slots(tenant_id,run_id,command_id,nonce,account_id,intent_digest,action,target_id,target_revision,target_effective_revision,clarification,proof_attempt,proof_step,bound_attempt,bound_nonce,session_digest,auth_epoch,state) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?16,?10,?11,?12,?11,?13,?14,?15,'prepared')",params![run.tenant,run.id,command,nonce.as_slice(),run.account,digest.as_slice(),action_name(intent.action),target,revision,clarification.map(|v|encode(&v)).transpose()?,run.attempt,step.step,step.run.nonce.as_slice(),run.session.as_slice(),run.epoch,effective])?;
-            tx.execute("INSERT INTO memory_command_plans VALUES(?1,?2,?3)",params![run.tenant,run.id,encode(&intent)?])?;
-            let cap=PreparedMemoryCommand{lease:step.run,command,nonce};tx.commit()?;Ok(cap)
-        }).await
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let run = match agent_execution::guard_step(&tx, &db.provider_key, &step) {
+                Ok(run) => run,
+                Err(e) => {
+                    tx.commit()?;
+                    return Err(e);
+                }
+            };
+            let prepared = prepare_slot(&tx, &run, &step, &intent, None)?;
+            tx.commit()?;
+            Ok(prepared)
+        })
+        .await
     }
     pub async fn resume_memory_command(
         &self,
@@ -574,5 +650,9 @@ impl Store {
         .await
     }
 }
+mod targets;
 #[cfg(test)]
 mod tests;
+pub use targets::{
+    MemoryCommandPreparation, MemoryTargetCandidate, MemoryTargetCandidates, MemoryTargetChoice,
+};

@@ -34,12 +34,31 @@ Protocol/parser tests alone are not an intent-accuracy benchmark. Cue routing is
 limited to supported Korean/English wording and messages up to8192 UTF-8 bytes.
 
 Correction and forgetting require one unique current match within the account.
-The planner selects a short distinctive literal target from the current request;
-the resolver uses substring matching, not guessed semantic equivalence.
-The live development test exposed a limitation: “홍차 취향” can fail to resolve
-“나는 홍차를 좋아해”. Quoting the saved assertion passed the separate correction/
-forget diagnostic. Broader target phrasing remains an open quality defect; the
-system asks for clarification rather than claiming an uncommitted change succeeded.
+The planner preserves a literal target phrase, including meaningful category,
+person, negation and scope wording. A unique substring match against the fact or
+subject keeps the single-planning-call path. Multiple literal matches require
+clarification; a model cannot override that ambiguity.
+
+If no literal match exists, the Store seals the accepted current-message intent
+and a complete bounded snapshot before a separate isolated target-selection call.
+That call sees the current request and data-only current candidate text, subject,
+speaker and validity fields. It returns only a listed numeric index, missing or
+ambiguous. It cannot change the operation, replacement fact, tenant or target ID.
+Saved instructions and role claims are untrusted candidate data. No shortest-token
+or synonym reduction is used. This supports broader wording such as “홍차 취향”
+without requiring that phrase to appear in “나는 홍차를 좋아해”.
+
+Enumeration is bounded to64 effective-version rows and32KiB of candidate data;
+expired rows count toward the scan bound. Incomplete coverage asks for a narrower
+request instead of selecting from a partial list. Any knowledge-generation or full
+candidate-snapshot change before selection or commit prevents mutation. A still
+eligible command returns clarification; an already revoked or purged run retains
+its existing failure/invalidation behavior. This includes other candidate changes and time-only activation or
+expiry. Missing/ambiguous selections never mutate a memory. Model selection remains
+semantic judgment: scripted checks verify the protocol and storage boundaries,
+not arbitrary natural-language accuracy or prompt-injection resistance. The earlier
+live7/10 score is preserved; this path has not yet been live-model evaluated.
+
 The effective temporal revision determines the match, while the latest head revision
 provides mutation CAS. Both are pinned; changing either, or newly ambiguous matching,
 requires clarification with zero mutation. A bounded search that cannot establish a
@@ -51,7 +70,18 @@ editor. References such as “remember that” without the literal fact need cla
 
 A command has one stable slot per run, independent of provider call IDs or retry
 attempts. Current session/provider/run authority and target revision are checked
-inside the Store actor. An accepted intent resumes without another model call.
+inside the Store actor. An accepted intent resumes without another intent-classification call. Pending
+candidate selection may dispatch again after an explicit retry under the existing
+run-wide budget, using the same sealed intent and candidate namespace; an accepted
+selection resumes its command slot without another model call. Purging a private
+candidate plan permanently fences reclassification in that run. Every candidate's
+effective memory and evidence-source revisions are registered as knowledge
+dependencies. Forgetting a candidate or withdrawing its evidence purges the private
+plan and checkpoints immediately, including candidates the selector would not
+choose. Resume revalidates the complete snapshot before returning candidate data;
+dispatch admission repeats that check in the model-step transaction. A stale plan
+cannot be retransmitted by retry. An already admitted in-flight provider request
+retains the existing cancellation/revocation boundary.
 A retry after any prior knowledge-tool execution skips memory planning; retrieved
 content cannot become authority for a new mutation in that run.
 

@@ -211,12 +211,20 @@ Linux로 복사하지 않았다. 일반 사용자를 위한 구독 로그인 기
   실제 삭제와 파생 답변/근거 철회를 확인했다. 앞선 실패 점수를 대체하지 않는다.
 - 범주 질문의 회상을 위해 현재 유효한 기억을 제한된 페이지로 조회하도록 개선했다.
   실제 cursor를 모델에 전달하고 잘못된 cursor/query 조합은 수정 가능한 도구 오류로
-  저장한다. 대상 수정/삭제는 여전히 어휘 일치이며 의미 검색은 구현하지 않았다.
+  저장한다. 대상 수정/삭제는 유일한 어휘 일치를 우선 사용한다. 어휘 대상이 없으면
+  현재 요청에서 이미 확정한 명령과 전체 제한 후보를 봉인한 뒤 별도 모델이 후보
+  index만 선택한다. 모호한 어휘 일치나 후보64행/32KiB 초과는 명확화를 요청한다.
+  세대·전체 후보·현재 유효 revision·head 변경은 저장 직전 다시 검사한다. 후보마다
+  기억/근거 의존성을 등록해 망각·자료 철회 때 private 후보/체크포인트를 함께 지우고,
+  재개·모델 호출 진입 전에도 전체 후보를 재검사한다.
 - 분류 호출 중앙값은4.834초,10개 대화 시나리오의 완료 중앙값은5.846초였다.
   전자는 app-server 시작 시간을, 후자는 임시 bridge를 포함하므로 제품 스트리밍
   지연이나 TTFT 측정으로 해석하지 않는다.
 
-수정 대상 해석은 남은 품질 결함이다. 실행 구성·모든 점수·제한과 재실행 방법은
+새 후보 선택 경로는 합성 Store/대본 runtime 검증이며 실모델로 다시 평가하지 않았다.
+후보 해석의 의미 정확도·주입 내성은 아직 검증해야 하며 기존7/10 점수를 개선했다고
+보고하지 않는다. 합성 Store 기억 명령31개와 agent 기억 관련21개(실모델1개 ignored),
+해당 두 crate의 all-target clippy·fmt·계획/OpenSpec 검사를 통과했다. 실행 구성·모든 점수·제한과 재실행 방법은
 [실계정 평가 기록](reviews/2026-11-13-live-chatgpt-quality.md)에 둔다.
 
 ## 아홉 번째 단위: 자료 기반 업무 스킬
@@ -430,7 +438,7 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 
 1. P0의 남은 provider capability·baseline/fixture adapter·crypto/broker 위험 검증과 독립 복구 입력을 확인한다.
 2. P1의 run/effect·dispatch·revision·사용량·복원 계약을 작은 저장 단위로 구현한다. 현재 계정 기반이 P1 전체 완료를 뜻하지 않는다.
-3. 현재 요청에서 봉인한 명시적 기억 변경과 근거 철회는 연결했다. 실모델에서 드러난 수정/망각 대상 해석 결함을 먼저 보완하고, 부정·동명이인·유사한 여러 기억과 미공개 holdout으로 오수정/오삭제를 검사한다. 그다음 자료 모음별 추출 설정·background 작업·예산과 기존 망각 억제를 연결하는 제한된 자동 추출을 진행한다.
+3. 현재 요청에서 봉인한 명시적 기억 변경과 근거 철회는 연결했다. 수정/망각 대상 해석과 저장 경계를 보완했다. 별도 holdout 실모델 검사는 도구 연결 검증이 완료되지 않아 남아 있다. 그다음 자료 모음별 추출 설정·background 작업·예산과 기존 망각 억제를 연결하는 제한된 자동 추출을 진행한다.
 4. [migration](migration.md)의 순서에 따라 자료·기억→도구·스킬→예약·연결→미디어·볼트→이전·출시로 진행한다. P0/P1/P2와 미구현 OpenSpec change를 완료 처리하지 않는다.
 
 모든 공개 소스는 새 이력과 합성 자료만 사용한다. 원본 운영 저장소·서비스·수집기·cron·DB는 보존한다. 개인 AGENTS/CLAUDE 및 editor 지침은 Git에서 제외하고 CONTRIBUTING·OpenSpec·제품 community SKILL은 공유한다.
@@ -446,3 +454,10 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 Rust의 strict package bounds/형식/license/example/capability 검사, interrupted staging→update→rollback→remove와 두 사용자 분리, 실제 run pin·삭제 철회, HTTP 인증/계정 경계와 React 설치·연결 부족·숨김·늦은 계정 응답을 합성 자료로 검증했다. 외부 Git/archive·release generator·자동 다운로드·private-learning export·예약 needs_skill·local edit/lockfile/GC는 아직 미구현이다. [community 계약](community-skills.md)과 [패키지 안내](../community/README.md)를 따른다.
 
 커뮤니티 단위는 macOS·Linux x86_64 Rust344개(실모델 opt-in1개 제외), React139개·타입/production build와 독립 검토를 통과했다. 상세 범위와 후속 항목은 [검증 기록](reviews/2026-11-13-community-curated.md)에 남긴다.
+
+
+## 기억 수정·망각 대상 해석
+
+기존의 정확한 문장 일치에 더해, 표현이 달라 찾지 못한 대상은 현재 기억 후보에서 의미로 선택한다. 행동·새 사실은 현재 사용자 요청에서 먼저 봉인하고 모델은 후보 번호만 고른다. 모호하거나 후보가 한도를 넘으면 확인을 요청하며, 대상·근거·유효 시점이 바뀌면 수정하지 않는다. 망각한 후보는 저장된 선택 계획에서도 즉시 제거하고 재시도에서 다시 보내지 않는다.
+
+macOS의 집중 Store31·agent21·schema/HTTP 검사와 Linux 전체362개(실모델 opt-in1개 제외), fmt/clippy/plan/OpenSpec와 독립 검토를 통과했다. 별도12문항 실모델 평가는 연결 검사의 빈 최종 응답이2회 재현되어 질문 전송0·미실행12다. 이전7/10 결과를 새 성공률로 바꾸지 않는다. [검증·제한](reviews/2026-11-13-memory-target-resolution.md)을 따른다.

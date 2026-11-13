@@ -5,6 +5,7 @@ mod knowledge_tools;
 pub mod mail;
 mod mail_tools;
 mod memory_intent;
+mod memory_target;
 mod runner;
 mod source_connections;
 mod web;

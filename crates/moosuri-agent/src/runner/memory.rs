@@ -2,7 +2,10 @@
 //! become local write authority. Only a sealed Store command can mutate memories.
 use super::*;
 use crate::memory_intent::{self, Decision};
-use moosuri_store::{AgentContext, PreparedMemoryCommand};
+use crate::memory_target;
+use moosuri_store::{
+    AgentContext, MemoryCommandPreparation, MemoryTargetCandidates, PreparedMemoryCommand,
+};
 
 pub(super) struct PlanningSession<'a> {
     pub store: &'a Store,
@@ -78,6 +81,17 @@ pub(super) async fn run(
             return None;
         }
     }
+    match retry_local(|| session.store.resume_memory_targets(session.lease)).await {
+        Ok(Some(candidates)) => {
+            select_target(session, context, current_text, candidates).await;
+            return None;
+        }
+        Ok(None) => (),
+        Err(error) => {
+            failed(session, None, error).await;
+            return None;
+        }
+    }
     if !context.memory_planning_allowed || !memory_intent::has_memory_cue(current_text) {
         return Some(context);
     }
@@ -101,9 +115,128 @@ pub(super) async fn run(
         }
     };
     let definitions = memory_intent::definitions();
+    let (round, next, step) = planning_round(session, &context, &request, &definitions).await?;
+    let Ok(decision) = memory_intent::parse_completed(current_text, &round) else {
+        finish(
+            session.store,
+            session.lease,
+            Some(&step),
+            RunState::Failed,
+            Some(RunFailure::ProtocolFailed),
+            session.signals,
+        )
+        .await;
+        return None;
+    };
+    match decision {
+        // The caller starts a fresh normal request. This classifier capsule and
+        // its function call/result are never forwarded into conversation context.
+        Decision::NoCommand => Some(next),
+        Decision::Clarify(reason) => {
+            let output = OutputPatch::Append {
+                item: format!("step-{}-memory-clarification", step.step()),
+                text: reason.message().into(),
+                phase: Some(MessagePhase::FinalAnswer),
+                refusal: false,
+            };
+            match retry_local(|| {
+                session
+                    .store
+                    .append_agent_output(&step, copy_patches(std::slice::from_ref(&output)))
+            })
+            .await
+            {
+                Ok(()) => {
+                    finish(
+                        session.store,
+                        session.lease,
+                        Some(&step),
+                        RunState::Completed,
+                        None,
+                        session.signals,
+                    )
+                    .await
+                }
+                Err(error) => failed(session, Some(&step), error).await,
+            }
+            None
+        }
+        Decision::Command(intent) => {
+            let preparation = match retry_local(|| {
+                session
+                    .store
+                    .prepare_memory_command_resolution(&step, intent.clone())
+            })
+            .await
+            {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    failed(session, Some(&step), error).await;
+                    return None;
+                }
+            };
+            match preparation {
+                MemoryCommandPreparation::Prepared(prepared) => apply(session, prepared).await,
+                MemoryCommandPreparation::Resolve(candidates) => {
+                    select_target(session, next, current_text, candidates).await
+                }
+            }
+            None
+        }
+    }
+}
+
+async fn select_target(
+    session: &PlanningSession<'_>,
+    context: AgentContext,
+    current_text: &str,
+    candidates: MemoryTargetCandidates,
+) {
+    let request = memory_target::request(
+        session.request.model.clone(),
+        session.request.effort.clone(),
+        current_text,
+        &candidates,
+    );
+    let definitions = memory_target::definitions();
+    let Some((round, _next, step)) =
+        planning_round(session, &context, &request, &definitions).await
+    else {
+        return;
+    };
+    let Some(choice) = memory_target::parse_completed(&round, candidates.candidates().len()) else {
+        finish(
+            session.store,
+            session.lease,
+            Some(&step),
+            RunState::Failed,
+            Some(RunFailure::ProtocolFailed),
+            session.signals,
+        )
+        .await;
+        return;
+    };
+    match retry_local(|| {
+        session
+            .store
+            .select_memory_target(&step, &candidates, choice)
+    })
+    .await
+    {
+        Ok(prepared) => apply(session, prepared).await,
+        Err(error) => failed(session, Some(&step), error).await,
+    }
+}
+
+async fn planning_round(
+    session: &PlanningSession<'_>,
+    context: &AgentContext,
+    request: &TextRequest,
+    definitions: &[moosuri_connectors::model::protocol::tools::FunctionDefinition],
+) -> Option<(ToolRound, AgentContext, StepLease)> {
     let tools = ToolRequest {
-        text: &request,
-        tools: &definitions,
+        text: request,
+        tools: definitions,
         continuation: None,
         results: &[],
     };
@@ -148,7 +281,7 @@ pub(super) async fn run(
     };
     let observed = match stream_round(
         session.client,
-        &request,
+        request,
         Some(&tools),
         &checkpoint,
         session.lease,
@@ -212,64 +345,5 @@ pub(super) async fn run(
             return None;
         }
     };
-    let Ok(decision) = memory_intent::parse_completed(current_text, &round) else {
-        finish(
-            session.store,
-            session.lease,
-            Some(&step),
-            RunState::Failed,
-            Some(RunFailure::ProtocolFailed),
-            session.signals,
-        )
-        .await;
-        return None;
-    };
-    match decision {
-        // The caller starts a fresh normal request. This classifier capsule and
-        // its function call/result are never forwarded into conversation context.
-        Decision::NoCommand => Some(next),
-        Decision::Clarify(reason) => {
-            let output = OutputPatch::Append {
-                item: format!("step-{}-memory-clarification", step.step()),
-                text: reason.message().into(),
-                phase: Some(MessagePhase::FinalAnswer),
-                refusal: false,
-            };
-            match retry_local(|| {
-                session
-                    .store
-                    .append_agent_output(&step, copy_patches(std::slice::from_ref(&output)))
-            })
-            .await
-            {
-                Ok(()) => {
-                    finish(
-                        session.store,
-                        session.lease,
-                        Some(&step),
-                        RunState::Completed,
-                        None,
-                        session.signals,
-                    )
-                    .await
-                }
-                Err(error) => failed(session, Some(&step), error).await,
-            }
-            None
-        }
-        Decision::Command(intent) => {
-            let prepared =
-                match retry_local(|| session.store.prepare_memory_command(&step, intent.clone()))
-                    .await
-                {
-                    Ok(prepared) => prepared,
-                    Err(error) => {
-                        failed(session, Some(&step), error).await;
-                        return None;
-                    }
-                };
-            apply(session, prepared).await;
-            None
-        }
-    }
+    Some((round, next, step))
 }

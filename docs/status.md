@@ -20,24 +20,22 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 여러 턴의 자동 명확화·넓은 자연어/시간 해석·Calendar/mail/browser/vault 미션 실행은 미완료. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
 | Calendar | 별도 개인 동의, 소유권 확인한 기본 캘린더 읽기·직접 양식 solo-event 쓰기, ETag/dispatch receipt·불명 결과 lookup | agent/대화/미션 Calendar 도구·반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[검증](reviews/2026-11-13-personal-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8 파일 upload·선택·retry·인증 preview/library·삭제 철회, 실제 vision probe, 공개 offline shell·설치/업데이트 | PDF·녹음/STT·PWA 공유받기·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md) |
-| 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import | standalone service backup/restore·구 v1 이전·account deletion/outbox·CredentialBroker·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[검증](reviews/2026-11-13-vault-archive.md) |
+| 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·CredentialBroker·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
-## 최근 수락한 단위 · schema29 대화형 읽기 업무
+## 최근 수락한 단위 · 독립 볼트의 현재 checkpoint 복구
 
-현재 대화의 명시적 요청으로 일회성·반복 읽기/계산 업무를 만들고 정지·재개·취소·
-추가 지시·예약 시각 변경을 연결했다. 명확한 요청에 승인 화면을 추가하지 않는다.
-빠진 시각이나 불명확한 대상은 묻고, 고정 알림 문구는 그대로 유지한다. 일반 대화에는
-새 업무 분류 호출이 없으며 후보 요청만 한 번 해석한다. 재시도는 원래 요청·로그인 세션·
-모델·시각 기준과 저장한 결정을 사용하므로 새 로그인으로 미적용 권한을 되살리지 않는다.
+중지한 볼트 서비스를 먼저 영구 봉인하고, 현재 SQLite와 독립 journal을 age로 암호화해
+새 private root에 복원하는 CLI를 추가했다. 암호문·항목 이력·삭제·nonce 예약·영수증을
+검증해 보존하고, 이전 세션과 미완료 작업 권한은 없앤다. 같은 복원 재시도는 새 root의
+후속 작업을 덮어쓰지 않는다. 사용자 암호나 복호화한 항목을 export하지 않는다.
 
-독립 검토에서 세션 교체, 명시한 날짜/분/요일/시간대, 선택한 업무와 이름 충돌,
-만료 상태 rollback, 자연어 후보 누락을 발견해 수정했다. Native/Linux·React·실제 Chrome에서
-예약 저장·정지·시각 누락 안내·계산 영수증·새로고침 후 결과와 작성 중인 초안 보존을 확인했다.
-수정 전 실패와 수정 후 검사 범위는 [통합 검증](reviews/2026-11-13-conversational-missions.md)에 남겼다.
-
-여러 턴에 걸친 자동 명확화와 넓은 시각 표현은 후속이다. Calendar/mail/browser/vault 실행
-권한을 늘리지 않았으며 합성 loopback 검증은 실모델 이해도·응답 속도 성적이 아니다.
+독립 검토에서 발견한 상위 디렉터리 바꿔치기와 reserved 경로 문제를 수정했고,
+native/Linux 시험과 실제 서로 다른 UID의 소유권 검사를 통과했다.
+[통합 검증](reviews/2026-11-13-vault-service-recovery.md)에 범위와 실패·수정 증거를 남겼다.
+현재 checkpoint를 옮기는 기능이며, 과거 백업의 일반 재해복구·상시 off-host 최신성·
+CredentialBroker·실운영 이전은 아직 남아 있다. 앞서 수락한
+[대화형 읽기 업무](reviews/2026-11-13-conversational-missions.md)는 그대로 유지한다.
 
 ## 다음 구현과 출시까지 남은 일
 
@@ -48,7 +46,8 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
    공통 CalendarService 분리와 기존 양식 동작 검증을 완료했다([증거](reviews/2026-11-13-calendar-service.md)).
    대화 도구는 primary solo-event부터 연결하고 불명 결과를 새 쓰기로 재발송하지 않는다.
 2. **볼트 broker와 복구**: device pairing·local grant·online commitment/revoke·secret 비노출·offline resume,
-   standalone vault backup/restore·구 v1 호환/이전, 전체 계정 삭제/outbox를 작은 경계별 단위로 구현한다.
+   완료한 standalone 현재 checkpoint 복구에 이어 ongoing/off-host 복구·구 v1 호환/이전,
+   전체 계정 삭제/outbox를 작은 경계별 단위로 구현한다.
 3. **미디어·외부 연결**: PDF, 녹음·초안 확인 STT, one-use share; Gmail provider draft/불명 조회·승인된 고정 예약 발송,
    통화 feed·opt-in 작업 세션·공식 배송 parser를 각각 receipt/실패 계약과 구현한다.
 4. **학습·품질·소식**: typed 성공 절차와 독립2입력 proof, 합성 export/catalog·예약 lifecycle,

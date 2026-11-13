@@ -27,7 +27,7 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 - [Chat](docs/chat.md) · [private knowledge](docs/knowledge.md) · [conversational memory](docs/conversational-memory.md) · [automatic extraction](docs/automatic-memory.md) · [documents, goals and followups](docs/artifacts.md).
 - [Task skills](docs/task-skills.md) · [community packages](docs/community-skills.md) · [missions](docs/missions.md) · [reminders/inbox](docs/schedules.md) · [Web Push](docs/web-push.md).
 - [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [public web research](docs/web-research.md) · [private browser workspaces](docs/browser-workspaces.md).
-- [Images](docs/media.md) · [UTF-8 files](docs/private-files.md) · [PWA](docs/pwa.md) · [vault service/client](docs/vault-service-client.md) · [encrypted vault archive](docs/vault-archive.md) · [credential broker contract](docs/credential-use.md).
+- [Images](docs/media.md) · [UTF-8 files](docs/private-files.md) · [PWA](docs/pwa.md) · [vault service/client](docs/vault-service-client.md) · [encrypted vault archive](docs/vault-archive.md) · [vault service recovery](docs/vault-service-recovery.md) · [credential broker contract](docs/credential-use.md).
 - [Stopped encrypted export](docs/backup.md) · [sealed-current restore](docs/restore.md) · [release/installation contracts](docs/public-release.md). Ongoing historical/off-host recovery and general update/uninstall are still pending.
 
 Account-owned Gmail/Slack collection and generic custom ingest expose scope, sync

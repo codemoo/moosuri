@@ -2155,6 +2155,7 @@ dependencies = [
 name = "moosuri-vault-service"
 version = "0.1.0-dev.1"
 dependencies = [
+ "age",
  "axum",
  "clap",
  "fs2",

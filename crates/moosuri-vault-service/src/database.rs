@@ -8,23 +8,23 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::Path,
 };
 
-const JOURNAL_LIMIT: u64 = 1024 * 1024 * 1024;
-const MAGIC: &[u8; 8] = b"MVSJ0001";
+pub(crate) const JOURNAL_LIMIT: u64 = 1024 * 1024 * 1024;
+pub(crate) const MAGIC: &[u8; 8] = b"MVSJ0001";
 pub struct Database {
-    conn: Connection,
+    pub(crate) conn: Connection,
     journal: File,
-    head: [u8; 32],
-    sequence: i64,
+    pub(crate) head: [u8; 32],
+    pub(crate) sequence: i64,
     _lock: File,
     poisoned: bool,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum Intent {
+pub(crate) enum Intent {
     Prepare {
         owner: Owner,
         operation: Operation,
@@ -53,7 +53,11 @@ fn private_file(path: &Path, create: bool) -> Result<File> {
         opts.create_new(true);
     }
     let f = opts.open(path)?;
-    if !f.metadata()?.is_file() || f.metadata()?.permissions().mode() & 0o077 != 0 {
+    if !f.metadata()?.is_file()
+        || f.metadata()?.permissions().mode() & 0o077 != 0
+        || f.metadata()?.uid() != crate::recovery::current_uid()
+        || f.metadata()?.nlink() != 1
+    {
         return Err(Error::Unavailable);
     }
     Ok(f)
@@ -77,17 +81,45 @@ fn inventory(items: &[EncryptedItem]) -> Result<String> {
 }
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_inner(path, false)
+    }
+    pub(crate) fn open_recovery(path: &Path) -> Result<Self> {
+        Self::open_inner(path, true)
+    }
+    fn open_inner(path: &Path, recovery: bool) -> Result<Self> {
+        let absolute;
+        let path = if path.is_absolute() {
+            path
+        } else {
+            absolute = std::env::current_dir()?.join(path);
+            &absolute
+        };
+        crate::recovery::check_components(path)?;
+        if !recovery
+            && (path.join("vault.sealed").symlink_metadata().is_ok()
+                || crate::recovery::reserved_stage_name(path))
+        {
+            return Err(Error::Unavailable);
+        }
         let fresh = !path.exists();
         if fresh {
             fs::DirBuilder::new().mode(0o700).create(path)?
         }
         let meta = fs::symlink_metadata(path)?;
-        if !meta.is_dir() || meta.file_type().is_symlink() || meta.permissions().mode() & 0o077 != 0
+        if !meta.is_dir()
+            || meta.file_type().is_symlink()
+            || meta.permissions().mode() & 0o077 != 0
+            || meta.uid() != crate::recovery::current_uid()
         {
             return Err(Error::Unavailable);
         }
         let lock = private_file(&path.join("vault.lock"), !path.join("vault.lock").exists())?;
         lock.try_lock_exclusive().map_err(|_| Error::Unavailable)?;
+        // Admission must recheck under the writer lock: an opener may have read
+        // the unsealed path just before an offline checkpoint acquired this lock.
+        if !recovery && path.join("vault.sealed").symlink_metadata().is_ok() {
+            return Err(Error::Unavailable);
+        }
         let db_exists = path.join("vault.sqlite").exists();
         let journal_exists = path.join("vault.journal").exists();
         if db_exists != journal_exists {
@@ -177,6 +209,9 @@ impl Database {
             if version != 1 {
                 return Err(Error::Unavailable);
             }
+        }
+        if let Some(parent) = path.parent() {
+            File::open(parent)?.sync_all()?;
         }
         Ok(Self {
             conn,

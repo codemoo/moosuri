@@ -1,7 +1,8 @@
 //! Separate-origin ciphertext service. No decryption or plaintext DTO exists here.
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 pub mod database;
 pub mod http;
+pub mod recovery;
 pub use moosuri_vault_protocol as protocol;
 use sha2::{Digest, Sha256};
 pub const MAX_BODY: usize = 32 * 1024 * 1024;

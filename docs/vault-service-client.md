@@ -1,6 +1,6 @@
 # Separate vault service and browser client
 
-This increment adds a usable v2 vault to the native core: a separate Rust ciphertext process and private SQLite/journal, a React client, and an actual wasm32 Rust module Worker. The crypto/service/client review findings and root integration review are closed; targeted Linux and actual Chrome verification passed. This is a development preview, not a deployment or mobile release. The later [bounded encrypted client archive](vault-archive.md) adds independent file export/import. The credential broker, standalone vault backup/restore, old-v1 migration, account deletion/outbox and signed independent client remain open.
+This increment adds a usable v2 vault to the native core: a separate Rust ciphertext process and private SQLite/journal, a React client, and an actual wasm32 Rust module Worker. The crypto/service/client review findings and root integration review are closed; targeted Linux and actual Chrome verification passed. This is a development preview, not a deployment or mobile release. The later [bounded encrypted client archive](vault-archive.md) adds independent file export/import. The later [sealed-current service recovery](vault-service-recovery.md) adds bounded offline checkpoint/restore. The credential broker, general historical/off-host recovery, old-v1 migration, account deletion/outbox and signed independent client remain open.
 
 ## Admission and revocation
 

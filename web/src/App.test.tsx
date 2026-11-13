@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { RequestScope } from "./api";
-import type { SessionView, ThreadSummary } from "../shared/api-types";
+import type { CommunitySkillCard, SessionView, ThreadSummary } from "../shared/api-types";
 
 const alice: SessionView = {
   user: {
@@ -802,3 +802,28 @@ describe("authentication mutation overlap", () => {
     ]);
   });
 });
+
+
+it.each(["", "검토 중인 초안\n예산은 10만 원"])(
+  "opens a community starter without losing an unsent draft or sending a message (%s)",
+  async (draft) => {
+    const card: CommunitySkillCard = {
+      id: "source-briefing", name: "모아 둔 자료 정리", description: "정리할 자료를 골라 주세요",
+      source: "https://github.com/codemoo/moosuri", source_commit: "a".repeat(40),
+      version: "1.0.0", digest: "a".repeat(64), license: "Apache-2.0",
+      capabilities: ["knowledge_search"], installed_version: "1.0.0",
+      installed_digest: "a".repeat(64), enabled: true, hidden: false, revision: 1,
+      can_rollback: false, readiness: "ready", missing: [],
+    };
+    const calls = server(path => path === "/community-skills" ? response([card]) : response({ threads: [] }));
+    const user = userEvent.setup();
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "메시지" });
+    if (draft) await user.type(composer, draft);
+    await user.click(screen.getByRole("button", { name: /제안 · 할 수 있는 일/ }));
+    await user.click(await screen.findByRole("button", { name: "채팅에서 시작" }));
+    expect(await screen.findByRole("textbox", { name: "메시지" })).toHaveValue(`모아 둔 자료 정리 절차로 도와줘: ${draft}`);
+    expect(calls.filter(call => call.init.method === "POST")).toHaveLength(0);
+    expect(window.location.pathname).toBe("/app");
+  },
+);

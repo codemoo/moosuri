@@ -22,6 +22,7 @@ import { ChatPanel, type ChatMemory } from "./ChatPanel";
 import { PwaInstallButton } from "./PwaInstallButton";
 import { MailConnections } from "./MailConnections";
 import { GoogleSetup } from "./GoogleSetup";
+import { CommunitySkills } from "./CommunitySkills";
 import { SourceConnections } from "./SourceConnections";
 import { UsageView } from "./UsageView";
 import { KnowledgeView } from "./KnowledgeView";
@@ -698,6 +699,7 @@ function Workspace({
   const personalModel = path === "/settings/model";
   const personalMail = path === "/settings/mail";
   const personalSources = path === "/settings/sources";
+  const communitySkills = path === "/app/skills";
   const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -933,6 +935,7 @@ function Workspace({
         >
           자료 수집 연결<span aria-hidden="true">↗</span>
         </button>
+        <button className={`nav-link ${communitySkills ? "chosen" : ""}`} onClick={()=>{navigate("/app/skills");setDrawer(false)}}>제안 · 할 수 있는 일<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${personalMail ? "chosen" : ""}`} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
         <button
           className={`nav-link ${personalUsage ? "chosen" : ""}`}
@@ -991,7 +994,7 @@ function Workspace({
           </button>
           <div>
             <span className="eyebrow">
-              {personalSources ? "내 연결" : knowledgeOpen
+              {communitySkills ? "제안" : personalSources ? "내 연결" : knowledgeOpen
                 ? "나의 기록"
                 : admin
                   ? "INSTALLATION"
@@ -1000,7 +1003,7 @@ function Workspace({
                     : "YOUR SPACE"}
             </span>
             <h1>
-              {personalSources ? "자료 수집 연결" : knowledgeOpen
+              {communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
                   ? "기억"
                   : "자료"
@@ -1066,7 +1069,17 @@ function Workspace({
         )}
         {personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
-        ) : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => navigate("/admin/google") : undefined}/> : knowledgeOpen ? (
+        ) : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
+          setSelected(null);
+          setChatMemory(current => ({
+            ...current,
+            drafts: {
+              ...current.drafts,
+              new: `${name} 절차로 도와줘: ${current.drafts.new ?? ""}`,
+            },
+          }));
+          navigate("/app");
+        }}/> : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => navigate("/admin/google") : undefined}/> : knowledgeOpen ? (
           <KnowledgeView
             accountId={session.user.id}
             mode={memoryPage ? "memory" : "source"}

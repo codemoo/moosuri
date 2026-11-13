@@ -418,7 +418,7 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 
 구독 인증·개인 provider 연결, 자동 기억 추출·문서/목표·평가, 예약·캘린더·알림·푸시,
 첨부·녹음·PWA 공유받기, 공용 OAuth 연결 서비스·Slack OAuth 앱 설치, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
-community 설치·업데이트·제안 카드, 독립 볼트·TOTP·credential broker,
+외부 Git 스킬 설치·개인 학습 공유·자동 catalog 갱신, 독립 볼트·TOTP·credential broker,
 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
 연결 여부만 선택 사항이다. 이번 웹·브라우저·Gmail 구현을 전체 비서 완성으로 표시하지 않는다.
 
@@ -438,3 +438,11 @@ community 설치·업데이트·제안 카드, 독립 볼트·TOTP·credential b
 ## 유지되는 설계 결정
 
 백업 manifest·첨부 pin·서버 밖 outer recovery key, DST/중단 예약 규칙, current epoch의 dispatch/철회 순서, 사용자 기기의 credential grant, 증거 없는 외부 작업 성공 금지와 평가의 not-run 구분은 그대로 유지한다. 계약 검토 기록은 [초기 검사](reviews/2026-11-12-initial-checks.md)와 [사용자 여정 검토](reviews/2026-11-12-user-journeys.md)에 있으며 실제 암호/복원/provider 시험과 구별한다.
+
+## Community curated 설치 첫 단위 (2026-11-13)
+
+제안·할 수 있는 일(`/app/skills`)에서 공개6개 instruction package의 사용자별 설치·갱신·rollback·비활성화·삭제·숨김을 SQLite0011에 저장한다. exact source commit+4-file package SHA로 고정하고 새 run에만 active revision을 적용한다. 설치는 외부 실행이 아니다. remove는 해당 사용자 관련 진행 run과 retry를 철회하고 완료 receipt는 보존한다. 실제 credential/tool 권한은 기존 run profile만 결정한다. 시작 버튼은 작성 중인 초안을 보존하며 전송하지 않는다. 화면 직접 접속도 지원한다.
+
+Rust의 strict package bounds/형식/license/example/capability 검사, interrupted staging→update→rollback→remove와 두 사용자 분리, 실제 run pin·삭제 철회, HTTP 인증/계정 경계와 React 설치·연결 부족·숨김·늦은 계정 응답을 합성 자료로 검증했다. 외부 Git/archive·release generator·자동 다운로드·private-learning export·예약 needs_skill·local edit/lockfile/GC는 아직 미구현이다. [community 계약](community-skills.md)과 [패키지 안내](../community/README.md)를 따른다.
+
+커뮤니티 단위는 macOS·Linux x86_64 Rust344개(실모델 opt-in1개 제외), React139개·타입/production build와 독립 검토를 통과했다. 상세 범위와 후속 항목은 [검증 기록](reviews/2026-11-13-community-curated.md)에 남긴다.

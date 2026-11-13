@@ -148,6 +148,7 @@ fn cli_init_embedded_app_http_session_and_restart_work_together() {
     for path in [
         "/app/knowledge",
         "/app/memory",
+        "/app/skills",
         "/settings/sources",
         "/admin/google",
     ] {

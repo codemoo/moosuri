@@ -46,7 +46,7 @@ community/skills/<slug>/
   LICENSE
 ```
 
-이 구조는 패키징 계획이며 아직 agent installer가 구현되지 않았다. 실제 작성 template은 [community](../community/README.md)에 둔다. 외부 표준에서 가져온 파일의 redistribution 권리와 버전을 확인한다.
+첫 구현은 이 중 정확히 네 파일만 받는 앱 내장 curated catalog installer다. references/assets·외부 Git/archive·plain SKILL import는 아직 지원하지 않는다. 실제 작성 template은 [community](../community/README.md)에 둔다. 외부 표준에서 가져온 파일의 redistribution 권리와 버전을 확인한다.
 
 ## 개인별 설치와 수명
 
@@ -73,3 +73,15 @@ disable/remove는 새 사용을 막고 종속 예약을 needs_skill로 멈춘다
 최소 검사는 하나의 lifecycle fixture(install→중단 update→정상 update→rollback→remove), 두 사용자 enable/version/credential 분리, archive/path/size 변조, permission 확대 금지, export private canary, 제안 카드→추가/연결/실행/숨김이다. 라벨 하나마다 test를 늘리지 않는다. [testing](testing.md)의 COMM 시나리오에 연결한다.
 
 참고한 구조: [Agent Skills](https://agentskills.io/specification), [Vercel skills](https://github.com/vercel-labs/skills/blob/main/README.md), [ClawHub](https://docs.openclaw.ai/clawhub). 표준 형식·Git install·version pin·local edit 보호를 가져오고 각 도구의 runtime/marketplace 전체를 moosuri 의존성으로 넣지 않는다.
+
+## 첫 curated 수직 구현 (2026-11-13)
+
+`/app/skills`의 제안 카드와 인증된 `/api/v1/community-skills` API에서 사용자별 추가·업데이트·이전판·활성/비활성·삭제·숨김을 제공한다. 추가는 로컬 상태 변경이며 실행이나 외부 effect를 시작하지 않는다. 준비된 카드의 시작은 작성 중인 새 대화 초안을 유지한 채 절차 이름을 앞에 붙여 채팅 입력을 연다. 사용자가 필요한 실제 요청을 입력하고 전송한다. Gmail 부재와 서버 웹 읽기 부재를 개인 readiness로 표시한다. 별도 install 승인 화면은 없다.
+
+현재 여섯 패키지는 공개 저장소 `7f91c0ad8ef38049c5e0e601658da9b99b5f824e`의 실제 네 파일과 `community/catalog-pins.json`에 고정했다. Rust는 경로 집합·파일당32KiB/전체64KiB·frontmatter·엄격한 sidecar 부분 문법·allowlist capability·SPDX/license·정상/실패 합성 예제를 검증한다. format1은 현재 typed capability 계약1을 뜻한다. repository/commit/slug/정렬한 파일명과 원문을 길이로 구분해 SHA-256을 기록한다. 해시는 안전성 인증이 아니다. 네 파일 밖의 scripts/hooks/assets와 지원하지 않는 key/capability는 거부한다. 외부 파일·archive를 받는 경로는 없다.
+
+SQLite0011은 immutable 공개 snapshot과 사용자별 active/previous pointer, enabled/hidden/revision을 저장한다. snapshot staging과 pointer 변경은 같은 SQLite transaction으로 원자적이다. 활성판 변경은 새 run에만 적용되며 기존 run의 exact pin과 기존 tool profile은 유지한다. disable은 새 admission을 막는다. remove는 해당 사용자에게 이미 admit된 관련 run을 취소하고 agent 상태를 invalidate하며 durable retry 철회를 남긴다. 늦은 실행·출력은 기존 lease/state fence로 막고 외부 receipt나 완료한 effect는 삭제하지 않는다. 공개 snapshot은 진행 run의 identity를 위해 유지하며 GC는 아직 없다.
+
+자동 catalog 다운로드/업데이트·정적 release 생성기·외부 Git 주소·예약 needs_skill·수정본 fork·portable lockfile·개인 학습 재구성/export는 후속이다. 이번 단위를 그 전체 구현으로 표시하지 않는다.
+
+같은 이름의 bundled 절차는 최초 managed 설치 시 단일 community pin으로 대체한다. disable/remove tombstone은 이후 새 run에서 bundled twin까지 discovery에서 제외하며 native 도구 권한 자체는 바꾸지 않는다. 다시 추가하면 복구한다. 버전이 바뀌어도 tombstone/숨김은 source+subdirectory identity로 유지한다.

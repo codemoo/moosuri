@@ -55,6 +55,7 @@ mod tests {
         let mut profile = RunToolProfile {
             version: 4,
             skills: vec![],
+            community_metadata: vec![],
             mail_connections: vec![],
             web: Some(moosuri_core::WebToolProfile {
                 read: true,
@@ -107,6 +108,7 @@ mod tests {
         let mut profile = RunToolProfile {
             version: 1,
             skills: vec![],
+            community_metadata: vec![],
             mail_connections: vec![],
             web: Some(moosuri_core::WebToolProfile {
                 read: true,
@@ -136,6 +138,7 @@ mod tests {
         let mut profile = RunToolProfile {
             version: 3,
             skills: vec![],
+            community_metadata: vec![],
             mail_connections: vec![],
             web: Some(moosuri_core::WebToolProfile {
                 read: true,
@@ -183,6 +186,7 @@ mod tests {
         let profile = RunToolProfile {
             version: 3,
             skills: vec![],
+            community_metadata: vec![],
             mail_connections: vec![moosuri_core::MailConnectionPin {
                 id: "synthetic-mail".into(),
                 epoch: 1,

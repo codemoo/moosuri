@@ -524,3 +524,83 @@ mod source_connections;
 
 #[path = "cases/google_setup.rs"]
 mod google_setup_tests;
+
+#[tokio::test]
+async fn community_catalog_lifecycle_requires_current_account_and_does_not_admit_execution() {
+    let _lock = TEST_LOCK.lock().await;
+    let (_dir, store, app) = fixture(false).await;
+    assert_eq!(
+        send(&app, "GET", "/api/v1/community-skills", None, json!(null))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let cookie = login(&app, "admin@example.test", PASSWORD).await;
+    let cards = value(
+        send(
+            &app,
+            "GET",
+            "/api/v1/community-skills",
+            Some(&cookie),
+            json!(null),
+        )
+        .await,
+    )
+    .await;
+    let digest = cards[0]["digest"].as_str().unwrap();
+    let install = send(
+        &app,
+        "POST",
+        "/api/v1/community-skills/source-briefing",
+        Some(&cookie),
+        json!({"action":"install","expected_revision":0,"expected_digest":digest}),
+    )
+    .await;
+    assert_eq!(install.status(), StatusCode::OK);
+    assert_eq!(value(install).await[0]["enabled"], true);
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/community-skills/source-briefing",
+            Some(&cookie),
+            json!({"action":"remove","expected_revision":0,"expected_digest":null})
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let stale = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/community-skills/source-briefing")
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, ORIGIN)
+                .header(header::COOKIE, &cookie)
+                .header("x-moosuri-account", "different-account")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"action":"remove","expected_revision":1,"expected_digest":null})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+    assert!(store.claim_agent_run().await.unwrap().is_none());
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/community-skills/source-briefing",
+            Some(&cookie),
+            json!({"action":"remove","expected_revision":1,"expected_digest":null})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+}

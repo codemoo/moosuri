@@ -445,6 +445,7 @@ fn browser_requires_v4_and_identical_current_deployment_pin() {
         let profile = RunToolProfile {
             version,
             skills: vec![],
+            community_metadata: vec![],
             mail_connections: vec![],
             web: Some(current.clone()),
         };

@@ -1,6 +1,7 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
 mod browser;
 mod chat;
+mod community_skills;
 mod google_setup;
 mod knowledge;
 mod mail;
@@ -272,6 +273,7 @@ pub fn router_with_runtime(
         .route("/api/v1/threads/{id}/events", get(chat::events))
         .route("/api/v1/runs/{id}/cancel", post(chat::cancel))
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
+        .nest("/api/v1/community-skills", community_skills::routes())
         .nest("/api/v1/knowledge", knowledge::routes())
         .nest("/api/v1/mail", mail::routes())
         .nest("/api/v1/admin/google", google_setup::routes())

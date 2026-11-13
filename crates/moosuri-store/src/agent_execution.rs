@@ -194,6 +194,13 @@ pub(super) fn evidence(
 type RetryBounds = (bool, i64, i64, Option<i64>, Option<i64>);
 type ExecutionFence = (bool, Option<i64>, Option<i64>, Option<i64>);
 pub(super) fn retry_allowed(conn: &Connection, tenant: &str, run: &str) -> Result<bool> {
+    if conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM community_run_revocations WHERE tenant_id=?1 AND run_id=?2)",
+        params![tenant, run],
+        |r| r.get::<_, bool>(0),
+    )? {
+        return Ok(false);
+    }
     let row: Option<RetryBounds> = conn.query_row("SELECT invalidated,remote_calls,tool_calls,deadline_ms,last_clock_ms FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
     let Some((invalid, remote, tools, deadline, last)) = row else {
         return Ok(true);
@@ -424,7 +431,7 @@ fn read_tool(
     input: &KnowledgeToolInput,
 ) -> Result<KnowledgeToolResult> {
     let read = match input {
-        KnowledgeToolInput::SkillRead { pin } => Ok(skills::read(run, pin)),
+        KnowledgeToolInput::SkillRead { pin } => Ok(skills::read(conn, run, pin)),
         KnowledgeToolInput::DecimalCalculate { calculation } => {
             if run
                 .tool_profile

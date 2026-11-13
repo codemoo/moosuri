@@ -15,15 +15,23 @@ pub(crate) fn profile() -> RunToolProfile {
     RunToolProfile {
         version: BUILTIN_TOOLSET_VERSION,
         skills: BUNDLED_SKILLS.iter().map(pin).collect(),
+        community_metadata: vec![],
         mail_connections: vec![],
         web: None,
     }
 }
 
-pub(super) fn read(run: &Run, requested: &SkillPin) -> KnowledgeToolResult {
+pub(super) fn read(conn: &Connection, run: &Run, requested: &SkillPin) -> KnowledgeToolResult {
     let available = run.tool_profile.as_ref().is_some_and(|profile| {
         matches!(profile.version, 1..=5) && profile.skills.contains(requested)
     });
+    if available
+        && let Some(document) = crate::community_skills::read(conn, requested)
+            .ok()
+            .flatten()
+    {
+        return KnowledgeToolResult::Skill(document);
+    }
     if available && let Some(skill) = BUNDLED_SKILLS.iter().find(|skill| pin(skill) == *requested) {
         return KnowledgeToolResult::Skill(SkillDocument {
             pin: requested.clone(),

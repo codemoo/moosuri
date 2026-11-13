@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod community_skills;
+pub use community_skills::*;
 mod google_setup;
 pub use google_setup::*;
 mod source_connections;
@@ -73,6 +75,8 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        CommunitySkillCard::decl(),
+        CommunitySkillMutation::decl(),
         GoogleSetupStatus::decl(),
         GoogleSetupValidation::decl(),
         GoogleConnectionCheck::decl(),

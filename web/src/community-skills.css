@@ -1,0 +1,5 @@
+.community-skills .admin-card p { line-height: 1.7; overflow-wrap: anywhere; }
+.community-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.community-hidden { display: flex; align-items: center; gap: 8px; margin: 0 0 20px; }
+.community-skills details { margin-top: 12px; }
+.community-skills summary { cursor: pointer; }

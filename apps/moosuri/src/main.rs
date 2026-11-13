@@ -432,7 +432,7 @@ async fn static_asset(uri: Uri) -> Response {
     let path = match uri.path() {
         "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/admin/google"
         | "/settings/model" | "/settings/mail" | "/settings/sources" | "/settings/usage"
-        | "/app/knowledge" | "/app/memory" | "/login" => "/index.html",
+        | "/app/knowledge" | "/app/memory" | "/app/skills" | "/login" => "/index.html",
         other => other,
     };
     let Some((_, bytes)) = ASSETS.iter().find(|(name, _)| *name == path) else {

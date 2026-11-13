@@ -20,6 +20,7 @@ pub(crate) fn admitted_profile(
         profile.version = 5;
         profile.web = Some(current.clone());
     }
+    crate::community_skills::admit(conn, user, &mut profile)?;
     Ok(profile)
 }
 

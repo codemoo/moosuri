@@ -302,3 +302,196 @@ async fn exact_source_authority_and_deletion_cover_recipe_math_and_final_payload
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn community_runs_pin_installed_bytes_updates_do_not_expand_tools_and_removal_revokes_late_work()
+ {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = enabled(&store).await;
+    let card = store.community_skills(&user).await.unwrap().remove(0);
+    store
+        .mutate_community_skill(
+            &user,
+            card.id.clone(),
+            CommunitySkillMutation {
+                action: "install".into(),
+                expected_revision: 0,
+                expected_digest: Some(card.digest.clone()),
+            },
+        )
+        .await
+        .unwrap();
+    let thread = store
+        .create_thread(&user, "Pinned community".into())
+        .await
+        .unwrap();
+    let old = claimed(&store, &user, &thread.id).await;
+    let original = old.tool_profile.as_ref().unwrap();
+    assert_eq!(original.skills.len(), BUNDLED_SKILLS.len());
+    assert!(original.skills.iter().all(|p| p.id != "source-briefing"));
+    let pin = original
+        .skills
+        .iter()
+        .find(|p| p.id.starts_with("community:"))
+        .unwrap()
+        .clone();
+    let step = tool_step(&store, &old, skill_call("community", pin.clone())).await;
+    let owner = user.clone();
+    store
+        .call(move |db| crate::community_skills::tests::activate_v2(db, owner))
+        .await
+        .unwrap();
+    match store
+        .execute_knowledge_tool(&step, "community".into())
+        .await
+        .unwrap()
+    {
+        KnowledgeToolResult::Skill(doc) => {
+            assert!(doc.pin == pin);
+            assert!(!doc.instructions.contains("Synthetic v2 guidance"));
+        }
+        _ => panic!("original installed revision unavailable"),
+    }
+    let second_thread = store
+        .create_thread(&user, "Updated community".into())
+        .await
+        .unwrap();
+    let new = store
+        .submit_turn(
+            &user,
+            second_thread.id,
+            Uuid::new_v4().to_string(),
+            "Synthetic updated request".into(),
+        )
+        .await
+        .unwrap();
+    let owner = user.clone();
+    let run_id = new.run.id.clone();
+    let updated = store
+        .call(move |db| {
+            Ok(chat::load_run(&db.conn, &owner.tenant.0, &run_id)?
+                .tool_profile
+                .unwrap())
+        })
+        .await
+        .unwrap();
+    let changed = updated
+        .skills
+        .iter()
+        .find(|p| p.id.starts_with("community:"))
+        .unwrap();
+    assert_ne!(changed.digest, pin.digest);
+    assert_eq!(updated.version, original.version);
+    assert!(original.web.is_none() && updated.web.is_none());
+    assert!(
+        !original.community_metadata[0]
+            .description
+            .contains("Synthetic updated")
+    );
+    assert!(
+        updated.community_metadata[0]
+            .description
+            .contains("Synthetic updated")
+    );
+    assert_eq!(
+        updated.mail_connections.len(),
+        original.mail_connections.len()
+    );
+    let current = store.community_skills(&user).await.unwrap().remove(0);
+    store
+        .mutate_community_skill(
+            &user,
+            card.id.clone(),
+            CommunitySkillMutation {
+                action: "disable".into(),
+                expected_revision: current.revision,
+                expected_digest: None,
+            },
+        )
+        .await
+        .unwrap();
+    let third_thread = store
+        .create_thread(&user, "Disabled community".into())
+        .await
+        .unwrap();
+    let fresh_turn = store
+        .submit_turn(
+            &user,
+            third_thread.id,
+            Uuid::new_v4().to_string(),
+            "Synthetic disabled request".into(),
+        )
+        .await
+        .unwrap();
+    let owner = user.clone();
+    let run_id = fresh_turn.run.id.clone();
+    let fresh_profile = store
+        .call(move |db| {
+            Ok(chat::load_run(&db.conn, &owner.tenant.0, &run_id)?
+                .tool_profile
+                .unwrap())
+        })
+        .await
+        .unwrap();
+    assert!(
+        fresh_profile
+            .skills
+            .iter()
+            .all(|p| !p.id.starts_with("community:"))
+    );
+    assert!(
+        fresh_profile
+            .skills
+            .iter()
+            .all(|p| p.id != "source-briefing")
+    );
+    let context_before_remove = store.agent_context(&old.lease).await.unwrap();
+    let late_step = store
+        .begin_agent_step(&old.lease, context_before_remove.checkpoint_seq)
+        .await
+        .unwrap();
+    let current = store.community_skills(&user).await.unwrap().remove(0);
+    store
+        .mutate_community_skill(
+            &user,
+            card.id.clone(),
+            CommunitySkillMutation {
+                action: "remove".into(),
+                expected_revision: current.revision,
+                expected_digest: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .begin_agent_step(&old.lease, old.context.checkpoint_seq)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .append_agent_output(&late_step, patch("synthetic late community answer"))
+            .await
+            .is_err()
+    );
+    let owner = user.clone();
+    let run = old.lease.run_id().to_owned();
+    store
+        .call(move |db| {
+            assert!(!retry_allowed(&db.conn, &owner.tenant.0, &run)?);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let fresh = store.claim_agent_run().await.unwrap().unwrap();
+    assert_eq!(fresh.lease.run_id(), fresh_turn.run.id);
+    assert!(
+        store
+            .begin_agent_step(&fresh.lease, fresh.context.checkpoint_seq)
+            .await
+            .is_ok()
+    );
+}

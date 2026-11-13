@@ -11,13 +11,17 @@ use std::{
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
-mod files;
+pub(crate) mod files;
 #[cfg(test)]
 mod tests;
 
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
+    #[error("installation_sealed")]
+    Sealed,
+    #[error("checkpoint_journal_pending")]
+    JournalPending,
     #[error("backup_invalid_input")]
     InvalidInput,
     #[error("backup_unavailable")]
@@ -49,8 +53,8 @@ impl From<StoreError> for Error {
         Self::Integrity
     }
 }
-const DB_LIMIT: u64 = 1024 * 1024 * 1024;
-const JOURNAL_LIMIT: u64 = 64 * 1024 * 1024;
+pub(crate) const DB_LIMIT: u64 = 1024 * 1024 * 1024;
+pub(crate) const JOURNAL_LIMIT: u64 = 64 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(60);
 const CHALLENGE: &[u8] = b"moosuri/assistant-export/setup/v1";
 
@@ -68,14 +72,14 @@ pub struct Configuration {
     pub active_epoch: Option<i64>,
     pub retained_epochs: Vec<KeyEpoch>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub name: String,
     pub sha256: String,
     pub size: u64,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalHead {
     pub sequence: i64,
@@ -101,7 +105,7 @@ pub struct Manifest {
     pub limitations: Vec<String>,
 }
 /// Explicit format2 metadata. Format1 remains the unchanged four-entry codec.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Coverage {
     pub version: u32,
@@ -220,7 +224,7 @@ pub struct ExportSummary {
     pub export_id: String,
     pub key_epoch: i64,
 }
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 fn now() -> Result<i64> {
@@ -240,21 +244,29 @@ fn check_deadline(start: Instant) -> Result<()> {
     }
 }
 
-struct Offline {
-    root: PathBuf,
+pub(crate) struct Offline {
+    pub(crate) root: PathBuf,
     _lock: File,
-    temp: files::Temporary,
-    conn: Connection,
-    auth: journal::Journal,
-    knowledge: knowledge_journal::Journal,
-    destructive: destructive_intents::Journal,
+    pub(crate) temp: files::Temporary,
+    pub(crate) conn: Connection,
+    pub(crate) auth: journal::Journal,
+    pub(crate) knowledge: knowledge_journal::Journal,
+    pub(crate) destructive: destructive_intents::Journal,
 }
 impl Offline {
     fn open(root: &Path) -> Result<Self> {
+        let offline = Self::for_cutover(root)?;
+        crate::cutover::require_active(&offline.conn, &offline.root)?;
+        Ok(offline)
+    }
+    pub(crate) fn for_cutover(root: &Path) -> Result<Self> {
         if rusqlite::version_number() < 3_054_000 {
             return Err(Error::UnsupportedInstallation);
         }
         let (root, lock) = files::stopped_lock(root)?;
+        Self::capture(root, lock)
+    }
+    fn capture(root: PathBuf, lock: File) -> Result<Self> {
         let temp = files::Temporary::new(&root)?;
         files::copy_file(
             &root.join("assistant.sqlite"),
@@ -322,8 +334,21 @@ impl Offline {
             destructive,
         })
     }
+    pub(crate) fn refresh(self) -> Result<Self> {
+        let Self {
+            root,
+            _lock,
+            temp,
+            conn,
+            auth,
+            knowledge,
+            destructive,
+        } = self;
+        drop((conn, auth, knowledge, destructive, temp));
+        Self::capture(root, _lock)
+    }
 }
-fn configuration(conn: &Connection) -> Result<Configuration> {
+pub(crate) fn configuration(conn: &Connection) -> Result<Configuration> {
     let (installation_id, active_epoch): (String, Option<i64>) = conn.query_row(
         "SELECT installation_id,active_epoch FROM backup_installation WHERE singleton=1",
         [],
@@ -362,7 +387,7 @@ fn configuration(conn: &Connection) -> Result<Configuration> {
         retained_epochs: rows,
     })
 }
-fn journal_heads(
+pub(crate) fn journal_heads(
     conn: &Connection,
     auth: &journal::Journal,
     knowledge: &knowledge_journal::Journal,
@@ -456,6 +481,7 @@ pub fn setup(root: &Path, recipient: &str, identity_file: &Path) -> Result<Confi
     if identity_parent.starts_with(&root) {
         return Err(Error::InvalidInput);
     }
+    let offline = Offline::open(&root)?;
     let file = files::read_file(identity_file, 4096).map_err(|e| {
         if e == Error::InvalidInput {
             Error::KeyMissing
@@ -485,7 +511,6 @@ pub fn setup(root: &Path, recipient: &str, identity_file: &Path) -> Result<Confi
     if plain.as_slice() != CHALLENGE {
         return Err(Error::DecryptionFailed);
     }
-    let offline = Offline::open(&root)?;
     let mut conn = Connection::open_with_flags(
         offline.root.join("assistant.sqlite"),
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -526,7 +551,7 @@ pub fn setup(root: &Path, recipient: &str, identity_file: &Path) -> Result<Confi
     Ok(config)
 }
 
-fn entry(path: &Path, name: &str, cap: u64) -> Result<Entry> {
+pub(crate) fn entry(path: &Path, name: &str, cap: u64) -> Result<Entry> {
     let mut file = files::read_file(path, cap)?;
     let size = file.metadata().map_err(|_| Error::Unavailable)?.len();
     let mut hash = Sha256::new();
@@ -568,7 +593,7 @@ fn append<W: Write>(tar: &mut tar::Builder<W>, item: &Entry, mut input: impl Rea
         .map_err(|_| Error::Unavailable)
 }
 
-fn write_archive<W: Write>(
+pub(crate) fn write_archive<W: Write>(
     output: W,
     recipient: &age::x25519::Recipient,
     entries: &[Entry],

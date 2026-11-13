@@ -31,6 +31,7 @@ pub use memory_commands::{
 };
 pub mod backup;
 mod browser;
+pub mod cutover;
 mod files;
 mod journal;
 mod mail;
@@ -40,7 +41,6 @@ pub use mail::*;
 mod providers;
 mod recovery;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
-use fs2::FileExt;
 use moosuri_core::{AccountSummary, Role, ThreadSummary};
 pub use providers::{CredentialChange, ProviderBinding, ProviderChange};
 use rand::{RngCore, rngs::OsRng};
@@ -172,7 +172,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 18;
+const CURRENT_SCHEMA_VERSION: i64 = 20;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -277,15 +277,20 @@ impl Store {
         if rusqlite::version_number() < 3_054_000 {
             return Err(StoreError::Unavailable);
         }
-        let dir = files::prepare_dir(path)?;
-        let lock = files::private_file(&dir.join("writer.lock"))?;
-        lock.try_lock_exclusive().map_err(|e| {
-            if e.kind() == std::io::ErrorKind::WouldBlock {
-                StoreError::Busy
-            } else {
-                StoreError::Unavailable
-            }
-        })?;
+        let admission = cutover::runtime_admission(path)?;
+        Self::open_admitted(path, web_profile, admission)
+    }
+    pub(crate) fn open_admitted(
+        path: &Path,
+        web_profile: moosuri_core::WebToolProfile,
+        admission: Option<cutover::RuntimeAdmission>,
+    ) -> Result<Self> {
+        // Never trust an earlier absent/empty decision after an async interleave.
+        let admission = match admission {
+            Some(admission) => admission,
+            None => cutover::runtime_admission(path)?.ok_or(StoreError::Unavailable)?,
+        };
+        let (dir, lock) = (admission.root, admission.lock);
         for name in [
             "assistant.sqlite",
             "assistant.sqlite-wal",
@@ -430,6 +435,19 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 19 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0019_sealed_cutover.sql")
+            ))?;
+        }
+        if version < 20 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0020_restore.sql")
+            ))?;
+        }
+        cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         schedules::restart(&conn)?;
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;

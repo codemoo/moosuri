@@ -30,14 +30,7 @@ fn existing_private_file(path: &Path) -> Result<File> {
 }
 fn preflight(path: &Path) -> Result<()> {
     // Do not create/chmod even the lock or required installation markers.
-    let lock = existing_private_file(&path.join("writer.lock"))?;
-    lock.try_lock_exclusive().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::WouldBlock {
-            StoreError::Busy
-        } else {
-            StoreError::Unavailable
-        }
-    })?;
+    // Caller retains the central runtime-admission lock through Store construction.
     for name in [
         "auth-epochs.journal",
         "knowledge-invalidations.journal",
@@ -124,8 +117,16 @@ pub async fn recover_account(
     if rusqlite::version_number() < 3_054_000 {
         return Err(StoreError::Unavailable);
     }
+    // Recovery is never initialization: unlike normal legacy Store open it
+    // requires the existing lock before any admission helper could create one.
+    existing_private_file(&path.join("writer.lock"))?;
+    let admission = cutover::runtime_admission(path)?.ok_or(StoreError::NotFound)?;
     preflight(path)?;
-    let store = Store::open(path)?;
+    let store = Store::open_admitted(
+        path,
+        moosuri_core::WebToolProfile::default(),
+        Some(admission),
+    )?;
     store
         .recover_locked_account(account_id, role, password)
         .await

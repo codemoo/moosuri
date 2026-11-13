@@ -3,7 +3,7 @@ use fs2::FileExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Component;
 
-pub(super) struct Temporary(pub PathBuf);
+pub(crate) struct Temporary(pub PathBuf);
 impl Temporary {
     pub fn new(source_root: &Path) -> Result<Self> {
         let parent = std::env::temp_dir()
@@ -26,7 +26,7 @@ impl Drop for Temporary {
     }
 }
 
-pub(super) fn directory(path: &Path) -> Result<PathBuf> {
+pub(crate) fn directory(path: &Path) -> Result<PathBuf> {
     if !path.is_absolute() {
         return Err(Error::InvalidInput);
     }
@@ -50,7 +50,7 @@ pub(super) fn directory(path: &Path) -> Result<PathBuf> {
     }
     Ok(current)
 }
-pub(super) fn read_file(path: &Path, cap: u64) -> Result<File> {
+pub(crate) fn read_file(path: &Path, cap: u64) -> Result<File> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
@@ -69,7 +69,7 @@ pub(super) fn read_file(path: &Path, cap: u64) -> Result<File> {
     }
     Ok(file)
 }
-pub(super) fn create_file(path: &Path) -> Result<File> {
+pub(crate) fn create_file(path: &Path) -> Result<File> {
     OpenOptions::new()
         .read(true)
         .write(true)
@@ -79,7 +79,7 @@ pub(super) fn create_file(path: &Path) -> Result<File> {
         .open(path)
         .map_err(|_| Error::Unavailable)
 }
-pub(super) fn copy_file(source: &Path, dest: &Path, cap: u64) -> Result<()> {
+pub(crate) fn copy_file(source: &Path, dest: &Path, cap: u64) -> Result<()> {
     let input = read_file(source, cap)?;
     let expected = input.metadata().map_err(|_| Error::Unavailable)?.len();
     let mut input = input.take(cap + 1);
@@ -90,12 +90,13 @@ pub(super) fn copy_file(source: &Path, dest: &Path, cap: u64) -> Result<()> {
     }
     output.sync_all().map_err(|_| Error::Unavailable)
 }
-pub(super) fn sync_dir(path: &Path) -> Result<()> {
+pub(crate) fn sync_dir(path: &Path) -> Result<()> {
     File::open(path)
         .and_then(|f| f.sync_all())
         .map_err(|_| Error::Unavailable)
 }
-pub(super) fn stopped_lock(root: &Path) -> Result<(PathBuf, File)> {
+pub(crate) fn stopped_lock(root: &Path) -> Result<(PathBuf, File)> {
+    crate::cutover::restore::reject_stage(root)?;
     let root = directory(root)?;
     // Reject unrelated application data instead of silently omitting unknown files.
     const NAMES: &[&str] = &[
@@ -107,6 +108,8 @@ pub(super) fn stopped_lock(root: &Path) -> Result<(PathBuf, File)> {
         "knowledge-invalidations.journal",
         "destructive-intents.journal",
         "provider-secrets.key",
+        crate::cutover::MARKER,
+        crate::cutover::STAGING,
     ];
     for entry in fs::read_dir(&root).map_err(|_| Error::Unavailable)? {
         let entry = entry.map_err(|_| Error::Unavailable)?;
@@ -122,6 +125,7 @@ pub(super) fn stopped_lock(root: &Path) -> Result<(PathBuf, File)> {
             Error::Unavailable
         }
     })?;
+    crate::cutover::sync_parent_before_admission(&root)?;
     // Provider key is deliberately not required or opened: export never decrypts
     // server credentials and future recovery must require re-registration.
     Ok((root, lock))
@@ -143,6 +147,8 @@ pub(super) fn private_output_path(output: &Path) -> Result<PathBuf> {
             || ancestor.join("package.json").is_file()
             || ancestor.join("assistant.sqlite").exists()
             || ancestor.join("writer.lock").exists()
+            || fs::symlink_metadata(ancestor.join(crate::cutover::MARKER)).is_ok()
+            || fs::symlink_metadata(ancestor.join(crate::cutover::STAGING)).is_ok()
         {
             return Err(Error::InvalidInput);
         }

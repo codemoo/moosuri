@@ -194,7 +194,8 @@ pub(crate) fn verify(
         [],
         |r| r.get(0),
     )?;
-    if id != installed {
+    if id != installed && !crate::cutover::restore::journal_lineage_matches(conn, &installed, &id)?
+    {
         return Err(StoreError::Corrupt);
     }
     journal.check_binding(&id, seq, &head)?;

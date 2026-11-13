@@ -1,0 +1,607 @@
+use super::*;
+use crate::{
+    KnowledgeToolInput, KnowledgeToolResult, PendingKnowledgeCall, PrivateCheckpoint, Store,
+    UserContext,
+    tests::{TEST_LOCK, admin, member},
+};
+use moosuri_core::*;
+use std::{collections::BTreeMap, os::unix::fs::PermissionsExt};
+const TABLES: [&str; 7] = [
+    "personal_artifacts",
+    "personal_artifact_versions",
+    "personal_artifact_dependencies",
+    "personal_artifact_mutations",
+    "personal_artifact_command_plans",
+    "personal_artifact_run_dependencies",
+    "personal_artifact_run_profiles",
+];
+type Rows = BTreeMap<String, Vec<Vec<String>>>;
+fn artifact_state(conn: &Connection, committed_only: bool) -> crate::Result<Rows> {
+    let mut state = BTreeMap::new();
+    for table in TABLES {
+        let filter = if committed_only && table == "personal_artifact_command_plans" {
+            " WHERE used=1"
+        } else {
+            ""
+        };
+        let mut stmt = conn.prepare(&format!("SELECT * FROM {table}{filter}"))?;
+        let width = stmt.column_count();
+        let mut rows = stmt
+            .query_map([], |r| {
+                (0..width)
+                    .map(|i| Ok(format!("{:?}", r.get_ref(i)?)))
+                    .collect::<std::result::Result<Vec<_>, rusqlite::Error>>()
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.sort();
+        state.insert(table.into(), rows);
+    }
+    Ok(state)
+}
+fn record(body: &str, refs: Vec<ArtifactDependency>) -> ArtifactWrite {
+    ArtifactWrite {
+        request_id: Uuid::new_v4().to_string(),
+        id: None,
+        expected_revision: None,
+        draft: ArtifactDraft {
+            title: "Restore proof document".into(),
+            body: body.into(),
+            payload: ArtifactPayload::Document,
+            references: refs,
+        },
+    }
+}
+async fn plan(store: &Store, user: &UserContext) -> crate::agent_execution::AgentClaim {
+    let t = store
+        .create_thread(user, "Synthetic actual artifact command".into())
+        .await
+        .unwrap();
+    store
+        .submit_turn(
+            user,
+            t.id,
+            Uuid::new_v4().to_string(),
+            "보고서로 저장해 줘".into(),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    let step = store
+        .begin_agent_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    store
+        .commit_agent_step(
+            &step,
+            PrivateCheckpoint {
+                bytes: b"{}".to_vec(),
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    store
+        .prepare_artifact_intent(
+            &step,
+            Some(ArtifactIntent {
+                action: "create".into(),
+                kind: ArtifactKind::Document,
+                intent_quote: "보고서로 저장해 줘".into(),
+                target_quote: None,
+            }),
+        )
+        .await
+        .unwrap();
+    claim
+}
+async fn tool(
+    store: &Store,
+    claim: &crate::agent_execution::AgentClaim,
+    input: ArtifactToolRequest,
+) -> KnowledgeToolResult {
+    let ctx = store.agent_context(&claim.lease).await.unwrap();
+    let step = store
+        .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    store
+        .commit_agent_step(
+            &step,
+            PrivateCheckpoint {
+                bytes: b"{}".to_vec(),
+            },
+            vec![PendingKnowledgeCall {
+                call_id: "proof".into(),
+                input: KnowledgeToolInput::Artifact { request: input },
+            }],
+        )
+        .await
+        .unwrap();
+    store
+        .execute_knowledge_tool(&step, "proof".into())
+        .await
+        .unwrap()
+}
+#[tokio::test]
+async fn actual_schema20_restores_all_seven_artifact_tables_receipts_quarantine_and_suspended_auth()
+{
+    let _g = TEST_LOCK.lock().await;
+    let root = tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o700))
+        .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
+        .unwrap();
+    let data = root.path().join("source");
+    let dest = root.path().join("destination");
+    let kit = root.path().join("kit");
+    let heads = root.path().join("heads");
+    for p in [&kit, &heads] {
+        fs::DirBuilder::new().mode(0o700).create(p).unwrap()
+    }
+    let store = Store::open(&data).unwrap();
+    let a = admin(&store).await.user;
+    let b = member(&store, &a, "suspended@example.test").await.user;
+    let provider = store
+        .create_provider(
+            &a,
+            crate::ProviderChange {
+                name: "Synthetic no-I/O restore binding".into(),
+                enabled: true,
+                config: ProviderConfig {
+                    kind: ProviderKind::Compatible,
+                    base_url: Some("http://127.0.0.1:9/v1".into()),
+                    allowed_ips: vec!["127.0.0.1".into()],
+                    router_providers: vec![],
+                    zero_data_retention: false,
+                },
+                credential: crate::CredentialChange::Clear,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .record_model_probe(
+            &a,
+            provider.id.clone(),
+            provider.revision,
+            "synthetic".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .record_tool_probe(
+            &a,
+            provider.id.clone(),
+            provider.revision,
+            "synthetic".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_default_model(
+            &a,
+            Some(ModelSelection {
+                provider_id: provider.id,
+                provider_revision: provider.revision,
+                model: "synthetic".into(),
+                effort: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let retained = store
+        .write_artifact(&a, record("Retained editable current document", vec![]))
+        .await
+        .unwrap();
+    let second = store
+        .write_artifact(&b, record("Other tenant retained document", vec![]))
+        .await
+        .unwrap();
+    let deleted = store
+        .write_artifact(&a, record("Deleted body must not return", vec![]))
+        .await
+        .unwrap();
+    let delete_input = ArtifactDelete {
+        request_id: Uuid::new_v4().to_string(),
+        expected_revision: 1,
+    };
+    let deletion = store
+        .delete_artifact(&a, deleted.id.clone(), delete_input.clone())
+        .await
+        .unwrap();
+    let collection = store
+        .create_collection(
+            &a,
+            "Actual source withdrawal proof".into(),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .unwrap();
+    let batch = |cursor, version: &str, text: &str, revision| IngestBatch {
+        request_id: Uuid::new_v4().to_string(),
+        expected_cursor: cursor,
+        next_cursor: cursor + 1,
+        complete_snapshot: false,
+        entries: vec![SourceInput {
+            external_id: "proof".into(),
+            version: version.into(),
+            expected_revision: revision,
+            title: "Source proof".into(),
+            text: text.into(),
+            speaker: None,
+            observed_at: 1,
+            valid_from: None,
+            valid_until: None,
+        }],
+    };
+    let text = "Source version one withdrawn canary";
+    let source = store
+        .ingest_text(&a, collection.id.clone(), batch(0, "v1", text, None))
+        .await
+        .unwrap()
+        .source_ids[0]
+        .clone();
+    let derived = store
+        .write_artifact(
+            &a,
+            record(
+                "Derived body must stay withdrawn",
+                vec![ArtifactDependency {
+                    kind: ArtifactDependencyKind::Source,
+                    id: source.clone(),
+                    revision: 1,
+                }],
+            ),
+        )
+        .await
+        .unwrap();
+    let memory = store
+        .create_memory(
+            &a,
+            Uuid::new_v4().to_string(),
+            MemoryDraft {
+                text: "Derived memory withdrawn canary".into(),
+                subject: "proof".into(),
+                speaker: None,
+                valid_from: None,
+                valid_until: None,
+                evidence: vec![EvidenceRef {
+                    source_id: source.clone(),
+                    source_revision: 1,
+                    start_byte: 0,
+                    end_byte: text.len() as u32,
+                    quote: text.into(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .ingest_text(
+            &a,
+            collection.id,
+            batch(1, "v2", "Current source replacement", Some(1)),
+        )
+        .await
+        .unwrap();
+    store.delete_source(&a, source.clone(), 2).await.unwrap();
+    let committed = plan(&store, &a).await;
+    tool(
+        &store,
+        &committed,
+        ArtifactToolRequest::Read {
+            id: retained.id.clone(),
+            revision: 1,
+            start_byte: 0,
+            max_bytes: 1024,
+        },
+    )
+    .await;
+    let saved = tool(
+        &store,
+        &committed,
+        ArtifactToolRequest::Write {
+            title: "Actual command receipt".into(),
+            body: "Stored once through actual command slot".into(),
+            payload: ArtifactPayload::Document,
+            anchor: None,
+        },
+    )
+    .await;
+    let KnowledgeToolResult::External(saved) = saved else {
+        panic!("real receipt required")
+    };
+    let saved_id = saved["id"].as_str().unwrap().to_owned();
+    let pending = plan(&store, &a).await;
+    tool(
+        &store,
+        &pending,
+        ArtifactToolRequest::Read {
+            id: retained.id.clone(),
+            revision: 1,
+            start_byte: 0,
+            max_bytes: 1024,
+        },
+    )
+    .await;
+    let at = crate::now().unwrap() + 60;
+    let schedule = store
+        .create_schedule(
+            &a,
+            ScheduleCreate {
+                request_id: Uuid::new_v4().to_string(),
+                draft: ScheduleDraft {
+                    title: "Actual retained local reminder".into(),
+                    message: "Notification is a committed local receipt".into(),
+                    rule: ScheduleRule::Interval {
+                        anchor: at,
+                        seconds: 60,
+                    },
+                    valid_until: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
+    store.enqueue_scheduled_reminders_at(at).await.unwrap();
+    let delivered_lease = store
+        .claim_scheduled_reminder_at(at)
+        .await
+        .unwrap()
+        .unwrap();
+    let notification = store
+        .finish_scheduled_reminder_at(&delivered_lease, at)
+        .await
+        .unwrap();
+    store.enqueue_scheduled_reminders_at(at + 60).await.unwrap();
+    let old_claim = store
+        .claim_scheduled_reminder_at(at + 60)
+        .await
+        .unwrap()
+        .unwrap();
+    let target = store
+        .managed_accounts(&a)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.user.id == b.account().id)
+        .unwrap();
+    let prepared = store
+        .prepare_account_management(
+            &a,
+            b.account().id.clone(),
+            AccountManagementInput {
+                request_id: Uuid::new_v4().to_string(),
+                expected_revision: target.revision,
+                action: AccountManagementAction::Suspend,
+            },
+        )
+        .await
+        .unwrap();
+    store.apply_account_management(prepared).await.unwrap();
+    let (all, expected) = store
+        .call(|db| {
+            Ok((
+                artifact_state(&db.conn, false)?,
+                artifact_state(&db.conn, true)?,
+            ))
+        })
+        .await
+        .unwrap();
+    for table in TABLES {
+        assert!(!all[table].is_empty(), "must populate real table {table}")
+    }
+    assert_eq!(all["personal_artifact_command_plans"].len(), 2);
+    let accounts = (a.account().id.clone(), b.account().id.clone());
+    drop(store);
+    let identity = kit.join("identity");
+    let recipient = backup::keygen(&identity).unwrap();
+    backup::setup(&data, &recipient, &identity).unwrap();
+    let cipher = kit.join("snapshot.age");
+    let trusted = heads.join("head.json");
+    checkpoint(&data, &cipher, &trusted).unwrap();
+    let before_db = fs::read(data.join("assistant.sqlite")).unwrap();
+    restore(&cipher, &trusted, &identity, &dest).unwrap();
+    assert_eq!(before_db, fs::read(data.join("assistant.sqlite")).unwrap());
+    assert!(Store::open(&data).is_err());
+    let conn = Connection::open(dest.join("assistant.sqlite")).unwrap();
+    assert_eq!(artifact_state(&conn, false).unwrap(), expected);
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM personal_artifact_command_plans WHERE used=0",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT state FROM reminder_schedules WHERE id=?1",
+            [&schedule.id],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "paused"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT reason FROM reminder_schedules WHERE id=?1",
+            [&schedule.id],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "restore_quarantine"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM reminder_occurrences WHERE state IN('queued','claimed')",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM local_notifications WHERE id=?1 AND occurrence_id=?2",
+            params![notification.id, notification.occurrence_id],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    drop(conn);
+    crate::recover_account(
+        &dest,
+        accounts.0,
+        Role::Admin,
+        "New-proof-enrollment".into(),
+    )
+    .await
+    .unwrap();
+    crate::recover_account(
+        &dest,
+        accounts.1,
+        Role::Member,
+        "Suspended-proof-enrollment".into(),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(&dest).unwrap();
+    assert!(matches!(
+        store
+            .login(
+                "suspended@example.test".into(),
+                "Suspended-proof-enrollment".into()
+            )
+            .await,
+        Err(crate::StoreError::Unauthorized)
+    ));
+    let restricted = store
+        .login("admin@example.test".into(), "New-proof-enrollment".into())
+        .await
+        .unwrap();
+    let current = store
+        .change_password(&restricted.user, "New-proof-current-password".into())
+        .await
+        .unwrap()
+        .user;
+    assert_eq!(
+        store
+            .artifact(&current, retained.id.clone(), None)
+            .await
+            .unwrap()
+            .draft
+            .unwrap()
+            .body,
+        "Retained editable current document"
+    );
+    assert_eq!(
+        store
+            .artifact(&current, saved_id, None)
+            .await
+            .unwrap()
+            .draft
+            .unwrap()
+            .body,
+        "Stored once through actual command slot"
+    );
+    assert!(
+        store
+            .artifact(&current, derived.id.clone(), None)
+            .await
+            .unwrap()
+            .draft
+            .is_none()
+    );
+    assert!(
+        store
+            .artifact_history(&current, derived.id, None)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .all(|v| v.draft.is_none())
+    );
+    assert_eq!(
+        store
+            .artifact(&current, deleted.id.clone(), None)
+            .await
+            .unwrap()
+            .artifact
+            .status,
+        ArtifactStatus::Deleted
+    );
+    assert!(
+        store
+            .artifact(&current, deleted.id.clone(), None)
+            .await
+            .unwrap()
+            .draft
+            .is_none()
+    );
+    let replay = store
+        .delete_artifact(&current, deleted.id, delete_input)
+        .await
+        .unwrap();
+    assert_eq!(replay.request_id, deletion.request_id);
+    assert_eq!(replay.revision, deletion.revision);
+    assert!(matches!(
+        store.artifact(&current, second.id, None).await,
+        Err(crate::StoreError::NotFound)
+    ));
+    assert!(matches!(
+        store.memory(&current, memory.id, None).await,
+        Err(crate::StoreError::NotFound)
+    ));
+    assert!(store.source(&current, source, Some(1)).await.is_err());
+    assert_eq!(
+        store
+            .notifications(&current, None, false)
+            .await
+            .unwrap()
+            .items[0]
+            .id,
+        notification.id
+    );
+    assert_eq!(store.schedules(&current).await.unwrap()[0].state, "paused");
+    assert!(matches!(
+        store
+            .retry_run(&current, pending.lease.run_id().to_owned(), 1)
+            .await,
+        Err(crate::StoreError::Conflict)
+    ));
+    assert!(store.claim_agent_run().await.unwrap().is_none());
+    assert!(
+        store
+            .finish_scheduled_reminder_at(&old_claim, at + 120)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .enqueue_scheduled_reminders_at(at + 120)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(
+        store
+            .claim_scheduled_reminder_at(at + 120)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop(store);
+    let reopened = Store::open(&dest).unwrap();
+    assert!(reopened.claim_agent_run().await.unwrap().is_none());
+    assert!(
+        reopened
+            .claim_scheduled_reminder_at(at + 180)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}

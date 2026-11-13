@@ -186,3 +186,17 @@ Linux release. Current measured evidence and remaining work are in
 The optional [ChatGPT evaluation](reviews/2026-11-13-live-chatgpt-quality.md) is
 explicitly ignored by ordinary tests. It requires separately authorized existing
 Codex login and writes only a private report outside the checkout.
+
+## Isolated sealed-checkpoint development
+
+`backup checkpoint --seal-installation --output ABSOLUTE.age --head-output ABSOLUTE.json`
+permanently retires only the explicitly selected stopped installation. Use dedicated
+synthetic roots for development; a matching [restore](restore.md) is available,
+while the source remains permanently sealed. `backup
+checkpoint-status` reports only local stored phase/opaque IDs, not transfer or restore
+readiness. The [checkpoint contract and limits](checkpoints.md) distinguish six-entry
+sealed snapshots from ordinary export formats. The integrated artifact16/schedule17/account18/
+checkpoint19/restore20 path passed independent review and Linux checks, including
+late-publication admission errors; see [evidence](reviews/2026-11-13-sealed-restore.md).
+
+Matching sealed cutover [restore](restore.md) verifies and quarantines a private destination before runtime admission.

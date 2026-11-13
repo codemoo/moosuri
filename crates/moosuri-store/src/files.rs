@@ -9,7 +9,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub(crate) fn prepare_dir(path: &Path) -> Result<PathBuf> {
+pub(crate) fn unprepared_dir(path: &Path) -> Result<PathBuf> {
     if path.as_os_str().is_empty() {
         return Err(StoreError::InvalidInput);
     }
@@ -53,6 +53,8 @@ pub(crate) fn prepare_dir(path: &Path) -> Result<PathBuf> {
         "provider-secrets.key",
         "knowledge-invalidations.journal",
         "destructive-intents.journal",
+        crate::cutover::MARKER,
+        crate::cutover::STAGING,
         "writer.lock",
         "assistant.sqlite",
         "auth-epochs.journal",
@@ -69,6 +71,11 @@ pub(crate) fn prepare_dir(path: &Path) -> Result<PathBuf> {
     if absolute.parent().is_none() || unrelated {
         return Err(StoreError::InvalidInput);
     }
+    Ok(absolute)
+}
+
+pub(crate) fn prepare_dir(path: &Path) -> Result<PathBuf> {
+    let absolute = unprepared_dir(path)?;
     #[cfg(unix)]
     {
         let metadata = fs::metadata(&absolute).map_err(|_| StoreError::Unavailable)?;

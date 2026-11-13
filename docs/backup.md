@@ -152,3 +152,17 @@ build metadata or produce compiler diagnostics, not runtime identity/archive
 input. They remain tracked dependency limitations; this is not a zero-advisory
 claim. The pin avoids introducing unnecessary alternate-recipient crypto
 implementations. No SSH/plugin/passphrase or compression path is enabled.
+
+## Deliberate sealed cutover (separate development unit)
+
+[Sealed checkpoints](checkpoints.md) capture a complete current DB and retire the
+source permanently. They use a distinct purpose/format and six entries; they do
+not alter either ordinary export codec. They require explicit `--seal-installation`
+and refuse pending journal effects before adoption. After adoption, ordinary setup,
+exports and runtime/account recovery are blocked, including when output failed.
+A locally written head needs a separately trusted operator handoff. Matching
+[offline restore](restore.md) verifies and quarantines a new installation. Ordinary
+historical exports and ongoing independently latest recovery remain unsupported.
+The combined schema19/20 implementation passed independent review and integrated
+Linux checks. See the [evidence and limits](reviews/2026-11-13-sealed-restore.md);
+this does not establish ongoing disaster recovery or authorize migration of a real installation.

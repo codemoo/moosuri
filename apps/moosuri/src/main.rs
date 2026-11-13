@@ -101,6 +101,26 @@ enum Command {
 
 #[derive(Subcommand)]
 enum BackupCommand {
+    /// Restore one matching sealed checkpoint into a new --data-dir. Requires independent trust in the head.
+    Restore {
+        #[arg(long)]
+        checkpoint: PathBuf,
+        #[arg(long)]
+        trusted_head: PathBuf,
+        #[arg(long)]
+        identity_file: PathBuf,
+    },
+    /// Inspect the local cutover phase without opening runtime or verifying transfer.
+    CheckpointStatus,
+    /// Permanently retire this stopped source and create a local cutover checkpoint.
+    Checkpoint {
+        #[arg(long, required=true, action=clap::ArgAction::SetTrue)]
+        seal_installation: bool,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        head_output: PathBuf,
+    },
     /// Generate a private recovery identity; print only its public age recipient.
     Keygen {
         #[arg(long)]
@@ -154,6 +174,59 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::Skills { .. } => unreachable!("skills authoring runs without installation state"),
         Command::Backup { command } => match command {
             BackupCommand::Keygen { .. } => unreachable!("keygen runs without installation state"),
+            BackupCommand::Restore {
+                checkpoint,
+                trusted_head,
+                identity_file,
+            } => {
+                let result = moosuri_store::cutover::restore(
+                    &checkpoint,
+                    &trusted_head,
+                    &identity_file,
+                    &data,
+                )
+                .map_err(|e| e.to_string())?;
+                if result.already_published {
+                    println!(
+                        "Matching restore already published as installation {} from checkpoint {}. This retry preserved current destination enrollment and work state; source stays sealed.",
+                        result.installation_id, result.checkpoint_id
+                    );
+                } else {
+                    println!(
+                        "Restored installation {} from checkpoint {}. All accounts require fresh local enrollment; source stays sealed. Provider/mail/source connections require re-enrollment; schedules and background grants stay quarantined. Configure backup setup again for this new installation.",
+                        result.installation_id, result.checkpoint_id
+                    );
+                }
+                for account in result.accounts {
+                    println!(
+                        "For account {} still requiring enrollment: recover-account --account-id {} --role {} --password-file <private-new-password-file> (status: {}). Suspended accounts stay suspended.",
+                        account.account_id, account.account_id, account.role, account.status
+                    );
+                }
+            }
+            BackupCommand::CheckpointStatus => {
+                let s = moosuri_store::cutover::status(&data).map_err(|e| e.to_string())?;
+                println!(
+                    "Local cutover phase: {}. Seal: {}. Checkpoint: {}. This does not verify output transfer, restore readiness or independent freshness.",
+                    s.phase,
+                    s.seal_id.as_deref().unwrap_or("none"),
+                    s.checkpoint_id.as_deref().unwrap_or("none")
+                );
+            }
+            BackupCommand::Checkpoint {
+                seal_installation,
+                output,
+                head_output,
+            } => {
+                if !seal_installation {
+                    return Err("seal_installation_flag_required".into());
+                }
+                let result=moosuri_store::cutover::checkpoint(&data,&output,&head_output).map_err(|e|format!("{e}; any adopted seal remains permanent. Retry the same checkpoint; there is no unseal; matching backup restore requires the trusted head and recovery identity."))?;
+                println!(
+                    "Source permanently sealed: {}. Checkpoint {} locally complete (SHA256 {}). Carry its trusted head and recovery identity through an independent channel. No off-host transfer, restore or ongoing disaster protection was performed.",
+                    result.seal_id, result.checkpoint_id, result.ciphertext_sha256
+                );
+            }
             BackupCommand::Setup {
                 recipient,
                 identity_file,
@@ -340,7 +413,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             let store = Store::open(&data).map_err(|e| e.to_string())?;
             let ready = store.initialized().await.map_err(|e| e.to_string())?;
             println!(
-                "SQLite: ready\nPrivate writer lock: acquired\nAdministrator initialized: {ready}\nText chat: available with a verified connection\nStopped encrypted export: available after setup\nHistorical restore: not implemented"
+                "SQLite: ready\nPrivate writer lock: acquired\nAdministrator initialized: {ready}\nText chat: available with a verified connection\nStopped encrypted export: available after setup\nSealed cutover restore: available with separately trusted head; ordinary historical exports unsupported"
             );
         }
         Command::ExportTypes => unreachable!(),

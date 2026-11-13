@@ -1,8 +1,8 @@
 # Model transport foundation
 
-This Rust library supplies provider verification and durable text chat. A separate
-[typed tool-round API](model-tools.md) is available for the upcoming agent runtime;
-it is not yet exposed by chat. Tests use synthetic loopback services without live
+This Rust library supplies provider verification and durable text chat. Its
+[typed tool-round API](model-tools.md) also supports the bounded agent runtime.
+Tests use synthetic loopback services without live
 API keys or subscriptions.
 
 ## Contract
@@ -16,14 +16,15 @@ excludes tools/media; tool-looking prose never executes a tool.
 | Protocol | Request/stream behavior |
 | --- | --- |
 | OpenAI Responses | `stream:true`, `store:false`, input array, reasoning effort; item IDs and assistant phase remain available; completed/incomplete/failed are distinct |
+| ChatGPT plan protocol | Explicit fixed-origin constructor; separate catalog, developer input, omitted unsupported output cap and fixed namespace tools; OAuth/selection still pending |
 | Anthropic Messages | separate system text, `max_tokens`, model-verified `output_config.effort`; indexed block lifetimes and cumulative usage; `message_stop` required |
 | OpenRouter Chat | model-verified `reasoning.effort`, approved provider list, fallback disabled and required parameters; repeated finish reason in final accounting is accepted; `[DONE]` required |
 | Compatible/local Chat | conservative Chat Completions text SSE, one choice, explicitly registered endpoint; unverified effort unsupported; unknown usage remains unknown |
 
 There is no native Ollama NDJSON decoder or claim that every compatible server
-implements all parameters. A future connection probe must verify the selected
-model/server. ChatGPT plan authentication and Claude official CLI execution remain
-separate planned adapters in [providers](providers.md).
+implements all parameters. Connection probes must verify the selected model/server.
+ChatGPT plan authentication and Claude official CLI execution remain separate pending
+integrations in [providers](providers.md). The plan protocol alone enables neither.
 
 Events distinguish text, explicit refusal, message metadata, optional usage and
 terminal outcome. Reasoning is not exposed as answer text. Output budgets, frame
@@ -71,6 +72,10 @@ AWS-LC native crypto in this build, consistent with the explicit dependency
 boundary in [architecture](architecture.md).
 
 ## Verification
+
+The [ChatGPT protocol acceptance](reviews/2026-11-14-chatgpt-plan-protocol.md) records
+its independent identity repair, native/real-loopback tests and integrated Linux gate.
+No OAuth grant or actual subscription/model access was used for those checks.
 
 Run `cargo test --locked -p moosuri-connectors` for synthetic state-machine cases
 and real loopback HTTP boundaries. The fixtures exercise UTF-8 fragmentation,

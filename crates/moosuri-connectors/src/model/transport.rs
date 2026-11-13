@@ -1,3 +1,4 @@
+use super::chatgpt::{PlanError, ResponsesDialect};
 use super::protocol::tools::{
     ToolCapabilities, ToolRequest, ToolRound, ToolRoundDecoder, encode_tool_request,
 };
@@ -105,11 +106,18 @@ pub enum TransportError {
         status: u16,
         retry_after_seconds: Option<u64>,
     },
+    #[error("ChatGPT plan HTTP {status}: {code}")]
+    ChatGptPlan {
+        status: u16,
+        code: PlanError,
+        retry_after_seconds: Option<u64>,
+    },
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
 }
 
 pub struct ModelClient {
+    dialect: ResponsesDialect,
     images: Vec<Vec<u8>>,
     protocol: Protocol,
     endpoint: Url,
@@ -131,7 +139,7 @@ pub struct Catalog {
 
 impl ModelClient {
     /// Hosted credentials can only be sent to the corresponding fixed origin.
-    /// ChatGPT OAuth and Claude CLI authorization are separate, future adapters.
+    /// Personal ChatGPT plan authorization uses the explicit separate constructor.
     pub fn hosted(
         protocol: Protocol,
         credential: Secret,
@@ -161,6 +169,7 @@ impl ModelClient {
             return Err(TransportError::InvalidConfiguration);
         }
         Ok(Self {
+            dialect: ResponsesDialect::Api,
             images: vec![],
             protocol,
             endpoint: Url::parse(url).map_err(|_| TransportError::InvalidConfiguration)?,
@@ -170,6 +179,21 @@ impl ModelClient {
             router,
             limits: TransportLimits::default(),
         })
+    }
+
+    /// Caller must resolve a personal, consented, valid SIWC access token. This is
+    /// protocol construction only: it neither logs in nor registers a shared profile.
+    pub fn chatgpt_plan(
+        access_token: Secret,
+        capabilities: TextCapabilities,
+    ) -> Result<Self, TransportError> {
+        let mut client = Self::hosted(Protocol::Responses, access_token, capabilities, None)?;
+        client.dialect = ResponsesDialect::ChatGptPlan;
+        Ok(client)
+    }
+
+    pub fn responses_dialect(&self) -> ResponsesDialect {
+        self.dialect
     }
 
     /// Custom/local connections use only the verified Chat Completions subset.
@@ -221,6 +245,7 @@ impl ModelClient {
         let path = format!("{}/chat/completions", endpoint.path().trim_end_matches('/'));
         endpoint.set_path(&path);
         Ok(Self {
+            dialect: ResponsesDialect::Api,
             images: vec![],
             protocol: Protocol::ChatCompletions,
             endpoint,
@@ -234,6 +259,9 @@ impl ModelClient {
 
     /// Private bounded canonical images for this one client lifetime.
     pub fn with_images(mut self, images: Vec<Vec<u8>>) -> Result<Self, TransportError> {
+        if self.dialect == ResponsesDialect::ChatGptPlan && !images.is_empty() {
+            return Err(ProtocolError::UnsupportedCapability.into());
+        }
         if images.len() > 4
             || images
                 .iter()
@@ -290,7 +318,7 @@ impl ModelClient {
                 .header(header::ACCEPT, "application/json"),
         )?;
         let mut response = request.send().await.map_err(map_network_error)?;
-        check_status(&response)?;
+        self.check_status(&mut response).await?;
         let content_type = response
             .headers()
             .get(header::CONTENT_TYPE)
@@ -311,7 +339,11 @@ impl ModelClient {
             }
             bytes.extend_from_slice(&chunk);
         }
-        parse_catalog(self.protocol, &bytes)
+        if self.dialect == ResponsesDialect::ChatGptPlan {
+            super::chatgpt::parse_catalog(&bytes)
+        } else {
+            parse_catalog(self.protocol, &bytes)
+        }
     }
 
     async fn http_client(&self, endpoint: &Url) -> Result<Client, TransportError> {
@@ -397,14 +429,23 @@ impl ModelClient {
         request: &TextRequest,
         events: &mpsc::Sender<ModelEvent>,
     ) -> Result<(), TransportError> {
-        let body = super::protocol::encode_image_request(
-            self.protocol,
-            request,
-            &self.capabilities,
-            &self.images,
-        )?;
-        self.stream_encoded(body, StreamDecoder::new(self.protocol), events)
-            .await
+        let (body, decoder) = if self.dialect == ResponsesDialect::ChatGptPlan {
+            (
+                super::chatgpt::encode_text_request(request, &self.capabilities)?,
+                StreamDecoder::chatgpt_plan(&request.model),
+            )
+        } else {
+            (
+                super::protocol::encode_image_request(
+                    self.protocol,
+                    request,
+                    &self.capabilities,
+                    &self.images,
+                )?,
+                StreamDecoder::new(self.protocol),
+            )
+        };
+        self.stream_encoded(body, decoder, events).await
     }
 
     /// Complete calls are returned only after a successful validated round. Event
@@ -422,9 +463,21 @@ impl ModelClient {
         if !self.images.is_empty() {
             return Err(TransportError::InvalidConfiguration);
         }
-        let body = encode_tool_request(self.protocol, request, &self.capabilities, capabilities)?;
-        let decoder =
-            ToolRoundDecoder::new(self.protocol, request, &self.capabilities, capabilities)?;
+        let (body, decoder) = if self.dialect == ResponsesDialect::ChatGptPlan {
+            (
+                super::protocol::tools::encode_chatgpt_plan_tool_request(
+                    request,
+                    &self.capabilities,
+                    capabilities,
+                )?,
+                ToolRoundDecoder::chatgpt_plan(request, &self.capabilities, capabilities)?,
+            )
+        } else {
+            (
+                encode_tool_request(self.protocol, request, &self.capabilities, capabilities)?,
+                ToolRoundDecoder::new(self.protocol, request, &self.capabilities, capabilities)?,
+            )
+        };
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => Err(TransportError::Cancelled),
@@ -432,6 +485,40 @@ impl ModelClient {
             result = tokio::time::timeout(self.limits.total, self.stream_encoded(body, decoder, events)) =>
                 result.map_err(|_| TransportError::Timeout)?,
         }
+    }
+
+    async fn check_status(&self, response: &mut reqwest::Response) -> Result<(), TransportError> {
+        let error = match check_status(response) {
+            Ok(()) => return Ok(()),
+            Err(error) => error,
+        };
+        if self.dialect != ResponsesDialect::ChatGptPlan {
+            return Err(error);
+        }
+        let status = response.status().as_u16();
+        let retry_after_seconds = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|n| *n <= 86_400);
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(map_network_error)? {
+            if bytes.len().saturating_add(chunk.len()) > 16 * 1024 {
+                return Err(error);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
+            && let Some(code) = PlanError::from_value(&value)
+        {
+            return Err(TransportError::ChatGptPlan {
+                status,
+                code,
+                retry_after_seconds,
+            });
+        }
+        Err(error)
     }
 
     async fn stream_encoded<D: WireDecoder>(
@@ -468,7 +555,7 @@ impl ModelClient {
                 .body(body),
         )?;
         let mut response = call.send().await.map_err(map_network_error)?;
-        check_status(&response)?;
+        self.check_status(&mut response).await?;
         let content_type = response
             .headers()
             .get(header::CONTENT_TYPE)
@@ -479,6 +566,7 @@ impl ModelClient {
             return Err(TransportError::ContentType);
         }
         let mut received = 0usize;
+        let mut plan_terminal = None;
         while let Some(chunk) = response.chunk().await.map_err(map_network_error)? {
             received = received
                 .checked_add(chunk.len())
@@ -491,6 +579,12 @@ impl ModelClient {
             for fragment in chunk.split_inclusive(|b| *b == b'\r' || *b == b'\n') {
                 let batch = decoder.push(fragment);
                 for event in batch.events {
+                    if self.dialect == ResponsesDialect::ChatGptPlan
+                        && matches!(event, ModelEvent::Finished { .. })
+                    {
+                        plan_terminal = Some(event);
+                        continue;
+                    }
                     events
                         .send(event)
                         .await
@@ -503,11 +597,21 @@ impl ModelClient {
             // Text previews retain their existing terminal-marker behavior.
             // Executable tool rounds must also observe clean HTTP EOF: otherwise
             // an error/duplicate terminal in a later chunk could be missed.
-            if decoder.is_terminal() && !D::REQUIRE_CLEAN_EOF {
+            if decoder.is_terminal()
+                && !D::REQUIRE_CLEAN_EOF
+                && self.dialect != ResponsesDialect::ChatGptPlan
+            {
                 return decoder.finish().map_err(TransportError::Protocol);
             }
         }
-        decoder.finish().map_err(TransportError::Protocol)
+        let result = decoder.finish().map_err(TransportError::Protocol)?;
+        if let Some(event) = plan_terminal {
+            events
+                .send(event)
+                .await
+                .map_err(|_| TransportError::Cancelled)?;
+        }
+        Ok(result)
     }
 }
 

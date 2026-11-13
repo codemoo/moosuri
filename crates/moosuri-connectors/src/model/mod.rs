@@ -1,4 +1,5 @@
 //! Bounded text and client-function model protocols. Not a durable agent runner.
+pub mod chatgpt;
 pub mod protocol;
 mod transport;
 

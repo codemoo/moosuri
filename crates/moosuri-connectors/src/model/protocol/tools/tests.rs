@@ -600,3 +600,328 @@ fn sparse_terminal_snapshots_do_not_drop_earlier_assistant_phase() {
         serde_json::from_slice(&round.continuation.to_private_checkpoint().unwrap()).unwrap();
     assert_eq!(v["history"][1]["phase"], "commentary");
 }
+
+fn plan_frames() -> Vec<Value> {
+    let mut frames = response_frames();
+    for f in &mut frames {
+        if f["item"]["type"] == "function_call" {
+            f["item"]["namespace"] = json!("moosuri");
+        }
+        if let Some(output) = f
+            .pointer_mut("/response/output")
+            .and_then(Value::as_array_mut)
+        {
+            for item in output {
+                if item["type"] == "function_call" {
+                    item["namespace"] = json!("moosuri");
+                }
+            }
+        }
+    }
+    frames
+}
+fn decode_plan(frames: &[Value], chunk: usize) -> Result<ToolRound, ProtocolError> {
+    let t = text();
+    let ts = tools();
+    let r = ToolRequest {
+        text: &t,
+        tools: &ts,
+        continuation: None,
+        results: &[],
+    };
+    let mut d = ToolRoundDecoder::chatgpt_plan(
+        &r,
+        &TextCapabilities::default(),
+        &ToolCapabilities {
+            function_tools: true,
+        },
+    )?;
+    for bytes in wire(Protocol::Responses, frames).as_bytes().chunks(chunk) {
+        let b = d.push(bytes);
+        if let Some(e) = b.error {
+            return Err(e);
+        }
+    }
+    d.finish()
+}
+#[test]
+fn plan_fragmented_namespace_calls_checkpoint_and_result_roundtrip_keep_exact_identity() {
+    for size in [1, 7, 65536] {
+        let round = decode_plan(&plan_frames(), size).unwrap();
+        assert_eq!(round.calls[0].namespace(), Some("moosuri"));
+        assert_eq!(round.calls[0].name(), "knowledge_search");
+        assert_eq!(round.calls[0].call_id(), "call-1");
+        assert_eq!(round.calls[0].arguments(), "{\"q\":\"홍차\"}");
+        let bytes = round.continuation.to_private_checkpoint().unwrap();
+        assert!(
+            Continuation::from_private_checkpoint(
+                &bytes,
+                Protocol::Responses,
+                "fixture-model",
+                None
+            )
+            .is_err()
+        );
+        let restored =
+            Continuation::from_chatgpt_plan_checkpoint(&bytes, "fixture-model", None).unwrap();
+        assert_eq!(restored.to_private_checkpoint().unwrap(), bytes);
+        let t = text();
+        let ts = tools();
+        let results = [ToolResult {
+            call_id: "call-1".into(),
+            output: "fresh synthetic challenge".into(),
+            is_error: false,
+        }];
+        let r = ToolRequest {
+            text: &t,
+            tools: &ts,
+            continuation: Some(&restored),
+            results: &results,
+        };
+        let body = encode_chatgpt_plan_tool_request(
+            &r,
+            &TextCapabilities::default(),
+            &ToolCapabilities {
+                function_tools: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(body["tools"][0]["type"], "namespace");
+        assert_eq!(body["tools"][0]["name"], "moosuri");
+        assert_eq!(body["tools"][0]["tools"][0]["name"], "knowledge_search");
+        assert_eq!(body["input"][3]["namespace"], "moosuri");
+        assert_eq!(body["input"][3]["call_id"], "call-1");
+        assert_eq!(
+            body["input"][4],
+            json!({"type":"function_call_output","call_id":"call-1","output":"fresh synthetic challenge"})
+        );
+        assert!(body.get("max_output_tokens").is_none());
+        assert!(body.get("previous_response_id").is_none());
+        assert!(
+            ToolRoundDecoder::chatgpt_plan(
+                &r,
+                &TextCapabilities::default(),
+                &ToolCapabilities {
+                    function_tools: true
+                }
+            )
+            .is_ok()
+        );
+        assert!(
+            encode_tool_request(
+                Protocol::Responses,
+                &r,
+                &TextCapabilities::default(),
+                &ToolCapabilities {
+                    function_tools: true
+                }
+            )
+            .is_err()
+        );
+        let mut corrupt: Value = serde_json::from_slice(&bytes).unwrap();
+        corrupt["history"][2]["namespace"] = json!("foreign");
+        assert!(
+            Continuation::from_chatgpt_plan_checkpoint(
+                &serde_json::to_vec(&corrupt).unwrap(),
+                "fixture-model",
+                None
+            )
+            .is_err()
+        );
+        let wrong = [ToolResult {
+            call_id: "wrong-id".into(),
+            output: "challenge".into(),
+            is_error: false,
+        }];
+        assert!(
+            encode_chatgpt_plan_tool_request(
+                &ToolRequest {
+                    results: &wrong,
+                    ..r
+                },
+                &TextCapabilities::default(),
+                &ToolCapabilities {
+                    function_tools: true
+                }
+            )
+            .is_err()
+        );
+    }
+}
+#[test]
+fn plan_missing_foreign_or_changed_namespace_name_and_call_id_are_not_executable() {
+    for (index, key, value) in [
+        (9, "namespace", Value::Null),
+        (9, "namespace", json!("foreign")),
+        (9, "name", json!("unoffered")),
+        (13, "namespace", json!("foreign")),
+        (13, "name", json!("other")),
+        (13, "call_id", json!("changed")),
+        (13, "id", json!("changed-item")),
+    ] {
+        let mut frames = plan_frames();
+        frames[index]["item"][key] = value;
+        assert!(decode_plan(&frames, 1).is_err(), "{index} {key}");
+    }
+    let mut frames = plan_frames();
+    frames[14]["response"]["output"][2]["namespace"] = json!("foreign");
+    assert!(decode_plan(&frames, 1).is_err());
+    // Ordinary API flat tools still succeed and never claim a namespace.
+    let (api, _) = decode(
+        Protocol::Responses,
+        &wire(Protocol::Responses, &response_frames()),
+        1,
+    )
+    .unwrap();
+    assert_eq!(api.calls[0].namespace(), None);
+    let bytes = api.continuation.to_private_checkpoint().unwrap();
+    assert!(Continuation::from_chatgpt_plan_checkpoint(&bytes, "fixture-model", None).is_err());
+}
+
+#[test]
+fn plan_preserves_safe_direct_call_metadata_and_rejects_async_or_programmatic_execution() {
+    for (caller, asynchronous, allowed) in [
+        (json!({"type":"direct"}), json!(false), true),
+        (Value::Null, Value::Null, true),
+        (
+            json!({"type":"program","caller_id":"other"}),
+            json!(false),
+            false,
+        ),
+        (json!({"type":"direct"}), json!(true), false),
+    ] {
+        let mut frames = plan_frames();
+        for f in &mut frames {
+            if f["item"]["type"] == "function_call" {
+                f["item"]["caller"] = caller.clone();
+                f["item"]["async"] = asynchronous.clone();
+            }
+            if let Some(output) = f
+                .pointer_mut("/response/output")
+                .and_then(Value::as_array_mut)
+            {
+                for item in output {
+                    if item["type"] == "function_call" {
+                        item["caller"] = caller.clone();
+                        item["async"] = asynchronous.clone();
+                    }
+                }
+            }
+        }
+        let result = decode_plan(&frames, 1);
+        if allowed {
+            let bytes = result
+                .unwrap()
+                .continuation
+                .to_private_checkpoint()
+                .unwrap();
+            let v: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(v["history"][2]["caller"], caller);
+            assert_eq!(v["history"][2]["async"], asynchronous);
+            assert!(
+                Continuation::from_chatgpt_plan_checkpoint(&bytes, "fixture-model", None).is_ok()
+            );
+        } else {
+            assert!(matches!(result, Err(ProtocolError::UnsupportedCapability)));
+        }
+    }
+}
+
+#[test]
+fn plan_tool_failure_usage_is_never_unattributed_and_keeps_prior_visible_text() {
+    let t = text();
+    let ts = tools();
+    let r = ToolRequest {
+        text: &t,
+        tools: &ts,
+        continuation: None,
+        results: &[],
+    };
+    let valid = json!({"id":"resp-1","model":"fixture-model","error":{"code":"subscription_sharing_usage_limit_exceeded"},"usage":{"input_tokens":99,"output_tokens":2}});
+    let mut responses = vec![valid.clone()];
+    for key in ["id", "model"] {
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove(key);
+        responses.push(missing);
+        let mut wrong = valid.clone();
+        wrong[key] = json!("foreign");
+        responses.push(wrong);
+    }
+    for started in [false, true] {
+        for response in &responses {
+            let mut d = ToolRoundDecoder::chatgpt_plan(
+                &r,
+                &TextCapabilities::default(),
+                &ToolCapabilities {
+                    function_tools: true,
+                },
+            )
+            .unwrap();
+            let mut events = vec![];
+            if started {
+                // The complete valid prefix includes visible text, but no tool call.
+                for frame_value in plan_frames().into_iter().take(9) {
+                    let batch = d.push(frame(frame_value).as_bytes());
+                    assert!(batch.error.is_none());
+                    events.extend(batch.events);
+                }
+            }
+            let batch =
+                d.push(frame(json!({"type":"response.failed","response":response})).as_bytes());
+            let attributed = started && response == &valid;
+            assert_eq!(
+                batch.error,
+                Some(if attributed {
+                    ProtocolError::ChatGptPlan(PlanError::UsageLimitExceeded)
+                } else {
+                    ProtocolError::Protocol
+                })
+            );
+            events.extend(batch.events);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, ModelEvent::UsageSnapshot(_)))
+                    .count(),
+                usize::from(attributed)
+            );
+            assert_eq!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, ModelEvent::TextDelta { .. })),
+                started
+            );
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, ModelEvent::Finished { .. }))
+            );
+            assert!(d.finish().is_err());
+        }
+    }
+}
+
+#[test]
+fn plan_tool_foreign_progress_cannot_be_followed_by_a_valid_executable_round() {
+    for kind in ["response.in_progress", "response.queued"] {
+        for response in [
+            json!({"id":"foreign","model":"fixture-model"}),
+            json!({"id":"resp-1","model":"foreign"}),
+            json!({"model":"fixture-model"}),
+            json!({"id":"resp-1"}),
+        ] {
+            let mut frames = plan_frames();
+            frames.insert(1, json!({"type":kind,"response":response}));
+            assert!(matches!(
+                decode_plan(&frames, 1),
+                Err(ProtocolError::Protocol)
+            ));
+        }
+        let mut frames = plan_frames();
+        frames.insert(
+            1,
+            json!({"type":kind,"response":{"id":"resp-1","model":"fixture-model"}}),
+        );
+        assert_eq!(decode_plan(&frames, 1).unwrap().calls.len(), 1);
+    }
+}

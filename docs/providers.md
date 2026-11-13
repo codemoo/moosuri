@@ -38,6 +38,14 @@ run은 provider version/model/effort/capability/budget policy를 고정한다. �
 
 preview adapter는 `store:false`, `stream:true`, input array와 로컬 durable history를 사용한다. HTTP `previous_response_id`에 의존하지 않는다. `max_output_tokens` 등 미지원 필드, hosted file/tool search·code interpreter·computer use·hosted MCP·이미지 생성·Files/audio/video 경로를 별도 capability로 차단한다. 앱의 도구 발견은 자체 ToolRegistry이며 Responses hosted tool_search와 다르다. 사용량/시간/반복 상한은 지원되는 기능과 앱 admission에서 관리하고 provider가 지원하지 않는 hard output cap을 보장하지 않는다. 출시 시 최신 공식 제한과 실제 계정 access를 재검증한다.
 
+### SIWC protocol foundation (M0)
+
+Connector에만 `ModelClient::chatgpt_plan`과 opt-in `ResponsesDialect::ChatGptPlan`을 추가했다. 공식 `api.openai.com/v1` model catalog의 `models[].slug/display_name/visibility`를 account 순서대로 읽고, Responses 요청에서 `store:false`, `stream:true`, input array, system→developer projection과 미지원 output-token cap 생략을 적용한다. `max_output_tokens`는 이 route에서 provider 상한으로 전송되지 않으며 로컬 시간/byte/반복 admission이 원격 과금 상한을 보장하지 않는다.
+
+function tools는 명시적으로 검증한 capability만 사용하며 고정 `moosuri` namespace로 감싼다. decoder와 private continuation은 namespace/name/call ID·정확한 model·dialect를 보존하고 foreign/missing namespace와 다른 dialect 재생을 거절한다. API의 flat function tools 경로는 유지한다. 계획/사용량 오류는 알려진 안전한 code만 노출하고 중간 text·usage 관측을 완료로 표시하지 않는다. failed-frame usage는 검증된 response.created 이후 명시적인 동일 response ID/model이 있을 때만 정산 관측으로 보존한다. progress/queued 등 후속 full snapshot의 누락·충돌 identity도 실패하며, 이후의 올바른 terminal로 덮지 않는다. synthetic fragmented stream·loopback HTTP 시험은 실계정 capability 증명이 아니다.
+
+OAuth/JWKS·credential refresh·개인 binding 소유권·웹 선택/로그인·VM credential 전달은 이 M0에 포함되지 않는다. 따라서 구독 로그인/연결 완료나 공유 provider 사용을 활성화하지 않는다. 이미지·파일·hosted search·기타 media는 이 adapter에서 아직 노출하지 않는다. 개인 소유 layer와 실제 계정별 text/tool 검증이 준비된 뒤에만 선택 가능 상태로 전환한다. 근거: [SIWC inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference), [preview limits](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [namespace schema](https://developers.openai.com/api/docs/guides/function-calling#defining-namespaces).
+
 ## Claude 공식 실행 연결
 
 Anthropic 문서는 자체 제품/Agent SDK에는 API key 또는 지원 cloud를 사용하도록 한다. Claude.ai OAuth/session cookie 추출·중계는 지원하지 않는다. 별도 조건을 지킨 변경 없는 공식 Claude Code hosting은 가능하며 각 사용자가 자기 계정으로 인증하고 직접 과금된다. CLI를 선택 설치할 때 외부 runtime/라이선스/버전·기능 차이를 표시한다. 기본 Rust 서버 실행에 필수로 넣지 않는다.

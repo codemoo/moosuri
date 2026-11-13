@@ -4,6 +4,7 @@
 //! A terminal event is evidence of the provider's declared outcome, not evidence
 //! that an incomplete/refused/continuation result satisfied the user's request.
 pub mod tools;
+use super::chatgpt::{PlanError, ResponsesDialect};
 
 use std::collections::BTreeMap;
 
@@ -128,6 +129,8 @@ pub enum ProtocolError {
     UnsupportedCapability,
     #[error("model provider reported a failure")]
     Provider,
+    #[error("ChatGPT plan request failed: {0}")]
+    ChatGptPlan(PlanError),
 }
 
 pub fn encode_request(
@@ -282,6 +285,8 @@ struct ResponseItem {
 /// Any error poisons this decoder: it cannot later manufacture a success event.
 pub struct StreamDecoder {
     protocol: Protocol,
+    dialect: ResponsesDialect,
+    expected_model: Option<String>,
     tools: Option<tools::RoundState>,
     line: Vec<u8>,
     after_cr: bool,
@@ -308,6 +313,8 @@ impl StreamDecoder {
     pub fn new(protocol: Protocol) -> Self {
         Self {
             protocol,
+            dialect: ResponsesDialect::Api,
+            expected_model: None,
             tools: None,
             line: Vec::new(),
             after_cr: false,
@@ -329,6 +336,14 @@ impl StreamDecoder {
             response_items: BTreeMap::new(),
             anthropic_blocks: BTreeMap::new(),
         }
+    }
+
+    /// Exact model pin for the personal plan route; connection does not prove capabilities.
+    pub fn chatgpt_plan(model: &str) -> Self {
+        let mut decoder = Self::new(Protocol::Responses);
+        decoder.dialect = ResponsesDialect::ChatGptPlan;
+        decoder.expected_model = Some(model.into());
+        decoder
     }
 
     pub fn is_terminal(&self) -> bool {
@@ -425,7 +440,28 @@ impl StreamDecoder {
             let prefix = events.len();
             let result = self.dispatch(&name, &data, events);
             if result.is_err() {
+                // A validated plan failure may report final partial usage. Preserve
+                // only those accounting observations, never failed-frame output or
+                // terminal events. Malformed/identity failures keep the old rollback.
+                let usage = if self.dialect == ResponsesDialect::ChatGptPlan
+                    && matches!(
+                        result,
+                        Err(ProtocolError::ChatGptPlan(_) | ProtocolError::Provider)
+                    ) {
+                    events[prefix..]
+                        .iter()
+                        .filter_map(|event| match event {
+                            ModelEvent::UsageSnapshot(usage) => Some(*usage),
+                            _ => None,
+                        })
+                        .next_back()
+                } else {
+                    None
+                };
                 events.truncate(prefix);
+                if let Some(usage) = usage {
+                    events.push(ModelEvent::UsageSnapshot(usage));
+                }
             }
             return result;
         }
@@ -466,7 +502,7 @@ impl StreamDecoder {
         if self.terminal {
             return Err(ProtocolError::Protocol);
         }
-        if name == "error" {
+        if name == "error" && self.dialect != ResponsesDialect::ChatGptPlan {
             return Err(ProtocolError::Provider);
         }
         if data == "[DONE]" {
@@ -486,6 +522,11 @@ impl StreamDecoder {
             return Err(ProtocolError::Protocol);
         }
         if value.get("error").is_some_and(|value| !value.is_null()) {
+            if self.dialect == ResponsesDialect::ChatGptPlan
+                && let Some(code) = PlanError::from_value(&value)
+            {
+                return Err(ProtocolError::ChatGptPlan(code));
+            }
             return Err(ProtocolError::Provider);
         }
         if let Some(mut state) = self.tools.take() {
@@ -600,7 +641,57 @@ impl StreamDecoder {
         events: &mut Vec<ModelEvent>,
     ) -> Result<(), ProtocolError> {
         let kind = event_type(name, value)?;
+        if self.dialect == ResponsesDialect::ChatGptPlan {
+            // Every full snapshot after creation belongs to the established exact
+            // response. Progress/queued frames must not introduce a foreign ID
+            // that a later valid terminal would otherwise hide.
+            let full_snapshot = matches!(
+                kind,
+                "response.created"
+                    | "response.in_progress"
+                    | "response.queued"
+                    | "response.completed"
+                    | "response.incomplete"
+            );
+            let failure_usage = matches!(kind, "error" | "response.failed")
+                && value
+                    .pointer("/response/usage")
+                    .is_some_and(|usage| !usage.is_null());
+            if full_snapshot || failure_usage {
+                let response = object(value, "response")?;
+                let id = required_id(response, "id")?;
+                let model = required_text(response, "model")?;
+                if Some(model) != self.expected_model.as_deref() {
+                    return Err(ProtocolError::Protocol);
+                }
+                if kind != "response.created" {
+                    self.require_started()?;
+                    if self.response_id.as_deref() != Some(id.as_str()) {
+                        return Err(ProtocolError::Protocol);
+                    }
+                }
+            } else if let Some(response) = nonnull(value, "response") {
+                // Sanitized standalone errors without usage remain available.
+                // Any identity they do provide still cannot contradict the pin.
+                if nonnull(response, "model")
+                    .is_some_and(|model| model.as_str() != self.expected_model.as_deref())
+                    || (self.started
+                        && nonnull(response, "id")
+                            .is_some_and(|id| id.as_str() != self.response_id.as_deref()))
+                {
+                    return Err(ProtocolError::Protocol);
+                }
+            }
+        }
         if kind == "error" || kind == "response.failed" {
+            if self.dialect == ResponsesDialect::ChatGptPlan {
+                if let Some(usage) = value.pointer("/response/usage").filter(|v| !v.is_null()) {
+                    self.record_usage(response_usage(usage)?, events)?;
+                }
+                if let Some(code) = PlanError::from_value(value) {
+                    return Err(ProtocolError::ChatGptPlan(code));
+                }
+            }
             return Err(ProtocolError::Provider);
         }
         if unsupported_event(kind) {

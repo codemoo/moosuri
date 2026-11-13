@@ -36,9 +36,13 @@ pub struct ToolRequest<'a> {
 pub struct CompletedToolCall {
     call_id: String,
     name: String,
+    namespace: Option<String>,
     arguments: String,
 }
 impl CompletedToolCall {
+    pub fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
     pub fn call_id(&self) -> &str {
         &self.call_id
     }
@@ -53,6 +57,7 @@ impl CompletedToolCall {
 /// checkpoint methods are for a future private durable store, never logs/API.
 pub struct Continuation {
     protocol: Protocol,
+    dialect: ResponsesDialect,
     model: String,
     effort: Option<String>,
     history: Vec<Value>,
@@ -76,7 +81,7 @@ fn dialect(p: Protocol) -> &'static str {
 }
 impl Continuation {
     pub fn to_private_checkpoint(&self) -> Result<Vec<u8>, ProtocolError> {
-        let bytes=serde_json::to_vec(&json!({"v":1,"protocol":dialect(self.protocol),"model":self.model,"effort":self.effort,"history":self.history,"pending":self.pending})).map_err(|_|ProtocolError::Protocol)?;
+        let bytes=serde_json::to_vec(&json!({"v":1,"protocol":if self.dialect == ResponsesDialect::ChatGptPlan { "chatgpt_plan" } else { dialect(self.protocol) },"model":self.model,"effort":self.effort,"history":self.history,"pending":self.pending})).map_err(|_|ProtocolError::Protocol)?;
         if bytes.len() > MAX_CAPSULE {
             return Err(ProtocolError::LimitExceeded);
         }
@@ -90,12 +95,39 @@ impl Continuation {
         model: &str,
         effort: Option<&str>,
     ) -> Result<Self, ProtocolError> {
+        Self::from_checkpoint_with_dialect(bytes, protocol, ResponsesDialect::Api, model, effort)
+    }
+    pub fn from_chatgpt_plan_checkpoint(
+        bytes: &[u8],
+        model: &str,
+        effort: Option<&str>,
+    ) -> Result<Self, ProtocolError> {
+        Self::from_checkpoint_with_dialect(
+            bytes,
+            Protocol::Responses,
+            ResponsesDialect::ChatGptPlan,
+            model,
+            effort,
+        )
+    }
+    fn from_checkpoint_with_dialect(
+        bytes: &[u8],
+        protocol: Protocol,
+        response_dialect: ResponsesDialect,
+        model: &str,
+        effort: Option<&str>,
+    ) -> Result<Self, ProtocolError> {
         if bytes.len() > MAX_CAPSULE {
             return Err(ProtocolError::LimitExceeded);
         }
         let v: Value = serde_json::from_slice(bytes).map_err(|_| ProtocolError::Protocol)?;
         if v["v"] != 1
-            || v["protocol"] != dialect(protocol)
+            || v["protocol"]
+                != if response_dialect == ResponsesDialect::ChatGptPlan {
+                    "chatgpt_plan"
+                } else {
+                    dialect(protocol)
+                }
             || v["model"] != model
             || v.get("effort")
                 .is_none_or(|e| !(e.is_null() || e.is_string()))
@@ -125,11 +157,12 @@ impl Continuation {
             }
         }
         for item in &history {
-            validate_history_item(protocol, item)?;
+            validate_dialect_item(protocol, response_dialect, item)?;
         }
         validate_history(protocol, &history, &pending)?;
         Ok(Self {
             protocol,
+            dialect: response_dialect,
             model: model.into(),
             effort: effort.map(str::to_owned),
             history,
@@ -277,17 +310,52 @@ pub fn encode_tool_request(
     text_caps: &TextCapabilities,
     caps: &ToolCapabilities,
 ) -> Result<Value, ProtocolError> {
+    encode_with_dialect(protocol, ResponsesDialect::Api, r, text_caps, caps)
+}
+/// Plan tools use one fixed namespace. This opt-in does not establish account capability.
+pub fn encode_chatgpt_plan_tool_request(
+    r: &ToolRequest<'_>,
+    text_caps: &TextCapabilities,
+    caps: &ToolCapabilities,
+) -> Result<Value, ProtocolError> {
+    encode_with_dialect(
+        Protocol::Responses,
+        ResponsesDialect::ChatGptPlan,
+        r,
+        text_caps,
+        caps,
+    )
+}
+fn encode_with_dialect(
+    protocol: Protocol,
+    response_dialect: ResponsesDialect,
+    r: &ToolRequest<'_>,
+    text_caps: &TextCapabilities,
+    caps: &ToolCapabilities,
+) -> Result<Value, ProtocolError> {
     if !caps.function_tools {
         return Err(ProtocolError::UnsupportedCapability);
     }
     definitions(r.tools)?;
-    let mut body = encode_request(protocol, r.text, text_caps)?;
+    let mut body = if response_dialect == ResponsesDialect::ChatGptPlan {
+        super::super::chatgpt::encode_text_request(r.text, text_caps)?
+    } else {
+        encode_request(protocol, r.text, text_caps)?
+    };
     let mut history = Vec::new();
     if let Some(c) = r.continuation {
-        if c.protocol != protocol || c.model != r.text.model || c.effort != r.text.effort {
+        if c.protocol != protocol
+            || c.dialect != response_dialect
+            || c.model != r.text.model
+            || c.effort != r.text.effort
+        {
             return Err(ProtocolError::Protocol);
         }
         c.to_private_checkpoint()?;
+        for item in &c.history {
+            validate_dialect_item(protocol, response_dialect, item)?;
+        }
+        validate_history(protocol, &c.history, &c.pending)?;
         if r.results.len() != c.pending.len() {
             return Err(ProtocolError::Protocol);
         }
@@ -338,6 +406,10 @@ pub fn encode_tool_request(
  Protocol::Responses=>json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":true}),
  Protocol::AnthropicMessages=>json!({"name":t.name,"description":t.description,"input_schema":t.parameters,"strict":true}),
  _=>json!({"type":"function","function":{"name":t.name,"description":t.description,"parameters":t.parameters,"strict":true}}),}).collect());
+    if response_dialect == ResponsesDialect::ChatGptPlan {
+        let definitions = body["tools"].take();
+        body["tools"] = json!([{"type":"namespace","name":super::super::chatgpt::TOOL_NAMESPACE,"description":"Authorized Moosuri operations","tools":definitions}]);
+    }
     if protocol != Protocol::AnthropicMessages {
         body["parallel_tool_calls"] = json!(false);
     }
@@ -357,6 +429,7 @@ struct Call {
 }
 pub(super) struct RoundState {
     protocol: Protocol,
+    dialect: ResponsesDialect,
     model: String,
     effort: Option<String>,
     history: Vec<Value>,
@@ -378,20 +451,51 @@ impl ToolRoundDecoder {
         text_caps: &TextCapabilities,
         caps: &ToolCapabilities,
     ) -> Result<Self, ProtocolError> {
-        let body = encode_tool_request(protocol, r, text_caps, caps)?;
+        Self::with_dialect(protocol, ResponsesDialect::Api, r, text_caps, caps)
+    }
+    pub fn chatgpt_plan(
+        r: &ToolRequest<'_>,
+        text_caps: &TextCapabilities,
+        caps: &ToolCapabilities,
+    ) -> Result<Self, ProtocolError> {
+        Self::with_dialect(
+            Protocol::Responses,
+            ResponsesDialect::ChatGptPlan,
+            r,
+            text_caps,
+            caps,
+        )
+    }
+    fn with_dialect(
+        protocol: Protocol,
+        response_dialect: ResponsesDialect,
+        r: &ToolRequest<'_>,
+        text_caps: &TextCapabilities,
+        caps: &ToolCapabilities,
+    ) -> Result<Self, ProtocolError> {
+        let body = encode_with_dialect(protocol, response_dialect, r, text_caps, caps)?;
         let key = if protocol == Protocol::Responses {
             "input"
         } else {
             "messages"
         };
-        let initial = encode_request(protocol, r.text, text_caps)?[key]
+        let initial = if response_dialect == ResponsesDialect::ChatGptPlan {
+            super::super::chatgpt::encode_text_request(r.text, text_caps)?
+        } else {
+            encode_request(protocol, r.text, text_caps)?
+        }[key]
             .as_array()
             .ok_or(ProtocolError::Protocol)?
             .len();
         let history = body[key].as_array().ok_or(ProtocolError::Protocol)?[initial..].to_vec();
-        let mut inner = StreamDecoder::new(protocol);
+        let mut inner = if response_dialect == ResponsesDialect::ChatGptPlan {
+            StreamDecoder::chatgpt_plan(&r.text.model)
+        } else {
+            StreamDecoder::new(protocol)
+        };
         inner.tools = Some(RoundState {
             protocol,
+            dialect: response_dialect,
             model: r.text.model.clone(),
             effort: r.text.effort.clone(),
             history,
@@ -521,6 +625,8 @@ impl RoundState {
             Self::validate_args(&c)?;
             calls.push(CompletedToolCall {
                 call_id: c.id,
+                namespace: (self.dialect == ResponsesDialect::ChatGptPlan)
+                    .then(|| super::super::chatgpt::TOOL_NAMESPACE.into()),
                 name: c.name,
                 arguments: c.args,
             });
@@ -544,6 +650,7 @@ impl RoundState {
         validate_history(self.protocol, &self.history, &pending)?;
         let continuation = Continuation {
             protocol: self.protocol,
+            dialect: self.dialect,
             model: self.model,
             effort: self.effort,
             history: self.history,
@@ -566,6 +673,31 @@ fn only_keys(v: &Value, allowed: &[&str]) -> Result<(), ProtocolError> {
         Err(ProtocolError::UnsupportedCapability)
     } else {
         Ok(())
+    }
+}
+fn validate_dialect_item(
+    protocol: Protocol,
+    response_dialect: ResponsesDialect,
+    v: &Value,
+) -> Result<(), ProtocolError> {
+    if response_dialect == ResponsesDialect::ChatGptPlan && v["type"] == "function_call" {
+        if v["namespace"].as_str() != Some(super::super::chatgpt::TOOL_NAMESPACE) {
+            return Err(ProtocolError::UnsupportedCapability);
+        }
+        bounded_json(v, MAX_CAPSULE)?;
+        if nonnull(v, "caller").is_some_and(|caller| caller != &json!({"type":"direct"}))
+            || nonnull(v, "async").is_some_and(|value| value.as_bool() != Some(false))
+        {
+            return Err(ProtocolError::UnsupportedCapability);
+        }
+        let mut plain = v.clone();
+        let object = plain.as_object_mut().ok_or(ProtocolError::Protocol)?;
+        object.remove("namespace");
+        object.remove("caller");
+        object.remove("async");
+        validate_history_item(protocol, &plain)
+    } else {
+        validate_history_item(protocol, v)
     }
 }
 fn validate_history_item(protocol: Protocol, v: &Value) -> Result<(), ProtocolError> {
@@ -822,7 +954,7 @@ impl RoundState {
                 d.require_started()?;
                 let item = object(v, "item")?;
                 let idx = index(v, "output_index")?;
-                validate_history_item(self.protocol, item)?;
+                validate_dialect_item(self.protocol, self.dialect, item)?;
                 if self.items.contains_key(&idx)
                     || self.items.values().any(|x| x["id"] == item["id"])
                 {
@@ -864,7 +996,7 @@ impl RoundState {
             "response.output_item.done" => {
                 let item = object(v, "item")?;
                 let idx = index(v, "output_index")?;
-                validate_history_item(self.protocol, item)?;
+                validate_dialect_item(self.protocol, self.dialect, item)?;
                 if self.closed.contains(&idx) {
                     return Err(ProtocolError::Protocol);
                 }
@@ -917,7 +1049,7 @@ impl RoundState {
                     if old != next {
                         return Err(ProtocolError::Protocol);
                     }
-                    validate_history_item(self.protocol, item)?;
+                    validate_dialect_item(self.protocol, self.dialect, item)?;
                     if item["type"] == "function_call" {
                         shadow["response"]["output"][idx] = tool_placeholder(item);
                     }

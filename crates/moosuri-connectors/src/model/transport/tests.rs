@@ -23,6 +23,7 @@ enum Reply {
         release: Arc<tokio::sync::Notify>,
     },
     Status(u16),
+    JsonStatus(u16, serde_json::Value),
     Redirect(String),
     Idle,
     DelayedHeaders,
@@ -30,6 +31,7 @@ enum Reply {
 }
 
 struct Captured {
+    path: String,
     headers: HeaderMap,
     body: serde_json::Value,
 }
@@ -65,6 +67,7 @@ async fn fixture(reply: Reply) -> Fixture {
                 let (parts, body) = request.into_parts();
                 let bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
                 captures.lock().await.push(Captured {
+                    path: parts.uri.path().to_string(),
                     headers: parts.headers,
                     body: serde_json::from_slice(&bytes).unwrap(),
                 });
@@ -119,6 +122,12 @@ async fn fixture(reply: Reply) -> Fixture {
                             .body(Body::from_stream(body))
                             .unwrap()
                     }
+                    Reply::JsonStatus(code, body) => Response::builder()
+                        .status(StatusCode::from_u16(*code).unwrap())
+                        .header("retry-after", "9")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
                     Reply::Status(code) => Response::builder()
                         .status(StatusCode::from_u16(*code).unwrap())
                         .header("retry-after", "9")
@@ -1009,4 +1018,347 @@ async fn existing_text_stream_keeps_terminal_marker_completion_without_waiting_f
     )
     .await;
     assert!(matches!(result, Ok(Ok(()))));
+}
+
+fn plan_client(f: &Fixture) -> ModelClient {
+    let mut c = ModelClient::chatgpt_plan(
+        Secret::new("synthetic-plan-access".into()).unwrap(),
+        TextCapabilities::default(),
+    )
+    .unwrap();
+    assert_eq!(c.endpoint.as_str(), "https://api.openai.com/v1/responses");
+    assert_eq!(c.responses_dialect(), ResponsesDialect::ChatGptPlan);
+    // Private test-only override. No constructor can retarget a plan token.
+    c.endpoint = Url::parse(&format!("{}/responses", f.base)).unwrap();
+    c.network = NetworkPolicy::LocalExact(vec!["127.0.0.1".parse().unwrap()]);
+    c
+}
+fn plan_text_frames() -> Vec<serde_json::Value> {
+    use serde_json::json;
+    let part = json!({"type":"output_text","text":"합성","annotations":[]});
+    let item = json!({"type":"message","id":"m","role":"assistant","status":"completed","content":[part.clone()]});
+    vec![
+        json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),
+        json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"m","role":"assistant","content":[]}}),
+        json!({"type":"response.content_part.added","output_index":0,"item_id":"m","content_index":0,"part":{"type":"output_text","text":""}}),
+        json!({"type":"response.output_text.delta","output_index":0,"item_id":"m","content_index":0,"delta":"합성"}),
+        json!({"type":"response.output_text.done","output_index":0,"item_id":"m","content_index":0,"text":"합성"}),
+        json!({"type":"response.content_part.done","output_index":0,"item_id":"m","content_index":0,"part":part}),
+        json!({"type":"response.output_item.done","output_index":0,"item":item.clone()}),
+        json!({"type":"response.completed","response":{"id":"r","model":"fixture-model","status":"completed","output":[item],"usage":{"input_tokens":4,"output_tokens":2}}}),
+    ]
+}
+fn plan_wire(frames: &[serde_json::Value]) -> Vec<u8> {
+    frames
+        .iter()
+        .map(|v| format!("data: {v}\n\n"))
+        .collect::<String>()
+        .into_bytes()
+}
+#[tokio::test]
+async fn chatgpt_plan_actual_http_uses_dialect_headers_and_preserves_partial_failure() {
+    use serde_json::json;
+    let wire = plan_wire(&plan_text_frames());
+    let f = fixture(Reply::Stream(wire.chunks(1).map(|b| b.to_vec()).collect())).await;
+    let mut r = request();
+    r.messages.insert(
+        0,
+        TextMessage {
+            role: TextRole::System,
+            text: "trusted synthetic rule".into(),
+            phase: None,
+        },
+    );
+    let c = plan_client(&f);
+    let (result, events) = run(&c, &r).await;
+    assert!(result.is_ok(), "{result:?}");
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ModelEvent::Finished {
+            outcome: FinishOutcome::Completed,
+            ..
+        }
+    )));
+    let captures = f.captures.lock().await;
+    assert_eq!(captures[0].path, "/v1/responses");
+    assert_eq!(
+        captures[0].headers["authorization"],
+        "Bearer synthetic-plan-access"
+    );
+    assert_eq!(captures[0].body["input"][0]["role"], "developer");
+    assert_eq!(captures[0].body["store"], false);
+    assert_eq!(captures[0].body["stream"], true);
+    assert!(captures[0].body.get("max_output_tokens").is_none());
+    assert!(captures[0].body.get("previous_response_id").is_none());
+    drop(captures);
+    let mut frames = plan_text_frames();
+    frames.truncate(4);
+    frames.push(json!({"type":"response.failed","response":{"id":"r","model":"fixture-model","error":{"code":"subscription_sharing_usage_limit_exceeded","message":"private marker"},"usage":{"input_tokens":4,"output_tokens":1}}}));
+    let f = fixture(Reply::Stream(vec![plan_wire(&frames)])).await;
+    let (result, events) = run(&plan_client(&f), &request()).await;
+    assert!(matches!(
+        result,
+        Err(TransportError::Protocol(ProtocolError::ChatGptPlan(
+            PlanError::UsageLimitExceeded
+        )))
+    ));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::TextDelta { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e,ModelEvent::UsageSnapshot(u) if u.output_tokens==Some(1)))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::Finished { .. }))
+    );
+    assert_eq!(f.count.load(Ordering::SeqCst), 1);
+    assert!(!result.err().unwrap().to_string().contains("private marker"));
+}
+#[tokio::test]
+async fn chatgpt_plan_http_errors_are_known_safe_codes_or_status_and_never_retried() {
+    use serde_json::json;
+    for code in [
+        "subscription_sharing_usage_limit_exceeded",
+        "unknown-private-marker",
+    ] {
+        let f = fixture(Reply::JsonStatus(
+            429,
+            json!({"error":{"code":code,"message":"private marker"}}),
+        ))
+        .await;
+        let (result, events) = run(&plan_client(&f), &request()).await;
+        match &result {
+            Err(TransportError::ChatGptPlan {
+                status: 429,
+                code: PlanError::UsageLimitExceeded,
+                retry_after_seconds: Some(9),
+            }) if code == "subscription_sharing_usage_limit_exceeded" => {}
+            Err(TransportError::Http { status: 429, .. }) if code == "unknown-private-marker" => {}
+            other => panic!("unexpected safe result {other:?}"),
+        }
+        assert!(events.is_empty());
+        assert_eq!(f.count.load(Ordering::SeqCst), 1);
+        assert!(!result.err().unwrap().to_string().contains("private"));
+    }
+}
+#[tokio::test]
+async fn chatgpt_plan_catalog_uses_same_bearer_fixed_models_path_and_byte_limits() {
+    use axum::routing::get;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router=Router::new().route("/v1/models",get(|headers:HeaderMap|async move {
+        assert_eq!(headers["authorization"],"Bearer synthetic-plan-access");
+        ([("content-type","application/json")],r#"{"models":[{"slug":"fixture-model","display_name":"Fixture","visibility":"list"}]}"#)
+    }));
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let mut c = ModelClient::chatgpt_plan(
+        Secret::new("synthetic-plan-access".into()).unwrap(),
+        TextCapabilities::default(),
+    )
+    .unwrap();
+    c.endpoint = Url::parse(&format!("http://{address}/v1/responses")).unwrap();
+    c.network = NetworkPolicy::LocalExact(vec![address.ip()]);
+    let catalog = c.list_models(&CancellationToken::new()).await.unwrap();
+    assert_eq!(catalog.models[0].id, "fixture-model");
+    let c = c
+        .with_limits(TransportLimits {
+            response_bytes: 4,
+            ..TransportLimits::default()
+        })
+        .unwrap();
+    assert!(matches!(
+        c.list_models(&CancellationToken::new()).await,
+        Err(TransportError::LimitExceeded)
+    ));
+    task.abort();
+}
+#[tokio::test]
+async fn chatgpt_plan_tool_round_real_http_resumes_exact_namespace_and_results() {
+    use super::super::protocol::tools::{Continuation, ToolCapabilities, ToolRequest, ToolResult};
+    use serde_json::json;
+    let call = json!({"type":"function_call","id":"fc","call_id":"call-1","namespace":"moosuri","name":"knowledge_search","arguments":"{\"q\":\"홍차\"}","status":"completed"});
+    let frames = vec![
+        json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),
+        json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc","call_id":"call-1","namespace":"moosuri","name":"knowledge_search","arguments":"","status":"in_progress"}}),
+        json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc","delta":"{\"q\":\"홍차\"}"}),
+        json!({"type":"response.function_call_arguments.done","output_index":0,"item_id":"fc","arguments":"{\"q\":\"홍차\"}"}),
+        json!({"type":"response.output_item.done","output_index":0,"item":call.clone()}),
+        json!({"type":"response.completed","response":{"id":"r","model":"fixture-model","status":"completed","output":[call],"usage":{"input_tokens":5,"output_tokens":2}}}),
+    ];
+    let f = fixture(Reply::Stream(
+        plan_wire(&frames).chunks(3).map(|b| b.to_vec()).collect(),
+    ))
+    .await;
+    let (round, _) = run_tools(&plan_client(&f), &CancellationToken::new()).await;
+    let round = round.unwrap();
+    assert_eq!(round.calls[0].namespace(), Some("moosuri"));
+    let bytes = round.continuation.to_private_checkpoint().unwrap();
+    let restored =
+        Continuation::from_chatgpt_plan_checkpoint(&bytes, "fixture-model", None).unwrap();
+    let f2 = fixture(Reply::Stream(vec![plan_wire(&plan_text_frames())])).await;
+    let c = plan_client(&f2);
+    let t = request();
+    let defs = tool_definitions();
+    let results = [ToolResult {
+        call_id: "call-1".into(),
+        output: "new synthetic result".into(),
+        is_error: false,
+    }];
+    let r = ToolRequest {
+        text: &t,
+        tools: &defs,
+        continuation: Some(&restored),
+        results: &results,
+    };
+    let (tx, mut rx) = mpsc::channel(32);
+    let (result, _) = tokio::join!(
+        async {
+            let r = c
+                .stream_tool_round(
+                    &r,
+                    &ToolCapabilities {
+                        function_tools: true,
+                    },
+                    &tx,
+                    &CancellationToken::new(),
+                )
+                .await;
+            drop(tx);
+            r
+        },
+        async { while rx.recv().await.is_some() {} }
+    );
+    let next = result.unwrap();
+    assert_eq!(next.outcome, FinishOutcome::Completed);
+    assert!(next.calls.is_empty());
+    let captures = f2.captures.lock().await;
+    assert_eq!(captures[0].body["input"][1]["namespace"], "moosuri");
+    assert_eq!(
+        captures[0].body["input"][2],
+        json!({"type":"function_call_output","call_id":"call-1","output":"new synthetic result"})
+    );
+    assert_eq!(captures[0].body["tools"][0]["name"], "moosuri");
+    assert!(captures[0].body.get("max_output_tokens").is_none());
+}
+#[tokio::test]
+async fn chatgpt_plan_tool_dialect_preflight_rejects_capability_without_dispatch() {
+    let f = fixture(Reply::Status(500)).await;
+    let c = plan_client(&f);
+    let t = request();
+    let defs = tool_definitions();
+    let (tx, _rx) = mpsc::channel(8);
+    let result = c
+        .stream_tool_round(
+            &super::super::protocol::tools::ToolRequest {
+                text: &t,
+                tools: &defs,
+                continuation: None,
+                results: &[],
+            },
+            &super::super::protocol::tools::ToolCapabilities::default(),
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(TransportError::Protocol(
+            ProtocolError::UnsupportedCapability
+        ))
+    ));
+    assert_eq!(f.count.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        c.with_images(vec![vec![255, 216, 255]]),
+        Err(TransportError::Protocol(
+            ProtocolError::UnsupportedCapability
+        ))
+    ));
+}
+
+#[tokio::test]
+async fn chatgpt_plan_terminal_prefix_requires_clean_eof_before_finished_publication() {
+    use serde_json::json;
+    let mut frames = plan_text_frames();
+    frames.push(json!({"type":"response.failed","response":{"id":"r","error":{"code":"subscription_sharing_usage_limit_exceeded"}}}));
+    let f = fixture(Reply::Stream(vec![plan_wire(&frames)])).await;
+    let (result, events) = run(&plan_client(&f), &request()).await;
+    assert!(result.is_err());
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::Finished { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::TextDelta { .. }))
+    );
+
+    let waiting = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let f = fixture(Reply::HeldTail {
+        prefix: plan_wire(&plan_text_frames()),
+        tail: vec![],
+        waiting: waiting.clone(),
+        release: release.clone(),
+    })
+    .await;
+    let c = plan_client(&f);
+    let r = request();
+    let cancel = CancellationToken::new();
+    let (tx, mut rx) = mpsc::channel(32);
+    let work = c.stream_text(&r, &tx, &cancel);
+    tokio::pin!(work);
+    tokio::select! {result=&mut work=>panic!("returned before EOF {result:?}"), _=waiting.notified()=>{}}
+    while let Ok(e) = rx.try_recv() {
+        assert!(!matches!(e, ModelEvent::Finished { .. }));
+    }
+    cancel.cancel();
+    assert!(matches!(work.await, Err(TransportError::Cancelled)));
+    while let Ok(e) = rx.try_recv() {
+        assert!(!matches!(e, ModelEvent::Finished { .. }));
+    }
+    release.notify_one();
+}
+
+#[tokio::test]
+async fn chatgpt_plan_http_identity_errors_never_publish_usage_or_finished() {
+    use serde_json::json;
+    for frames in [
+        vec![json!({"type":"response.failed","response":{"usage":{"input_tokens":99}}})],
+        vec![
+            json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),
+            json!({"type":"response.failed","response":{"model":"fixture-model","usage":{"input_tokens":99}}}),
+        ],
+        vec![
+            json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),
+            json!({"type":"response.failed","response":{"id":"r","usage":{"input_tokens":99}}}),
+        ],
+        vec![
+            json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),
+            json!({"type":"response.in_progress","response":{"id":"foreign","model":"fixture-model"}}),
+            json!({"type":"response.completed","response":{"id":"r","model":"fixture-model","status":"completed","output":[]}}),
+        ],
+    ] {
+        let f = fixture(Reply::Stream(
+            plan_wire(&frames).chunks(3).map(|v| v.to_vec()).collect(),
+        ))
+        .await;
+        let (result, events) = run(&plan_client(&f), &request()).await;
+        assert!(matches!(
+            result,
+            Err(TransportError::Protocol(ProtocolError::Protocol))
+        ));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            ModelEvent::UsageSnapshot(_) | ModelEvent::Finished { .. }
+        )));
+        assert_eq!(f.count.load(Ordering::SeqCst), 1);
+    }
 }

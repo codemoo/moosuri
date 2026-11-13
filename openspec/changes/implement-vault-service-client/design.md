@@ -1,0 +1,3 @@
+# Design
+
+Use the [service/client contract](../../../docs/vault-service-client.md) for the exact authority and local commit linearization, revocation races, journal fail-closed behavior, browser storage and deployment limits. The assistant stores only handoff/grant digests and opaque operation commitments. The independent schema1 vault stores ciphertext/wrapped roots and opaque metadata. Keys/plaintext remain in the Rust WASM Worker; no model decryption/tool interface is added. The core-owned pending adapter preserves the old active state until an exact receipt and current head match. No authority or restoration claim is inferred from a receipt constructor alone.

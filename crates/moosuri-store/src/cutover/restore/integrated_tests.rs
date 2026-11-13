@@ -391,6 +391,28 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
     assert_eq!(reminder.run.state, RunState::Completed);
     let reminder_receipt = reminder.run.schedule_receipts.clone().unwrap();
     assert_eq!(reminder_receipt.len(), 1);
+    let vault_handoff = store
+        .vault_handoff(&a, "https://vault.example.test".into())
+        .await
+        .unwrap();
+    let vault_grant = store
+        .vault_authority(moosuri_vault_protocol::AuthorityRequest::Exchange {
+            handoff: vault_handoff.token,
+            vault_origin: vault_handoff.vault_origin,
+        })
+        .await
+        .unwrap()
+        .grant
+        .unwrap();
+    let vault_operation = Uuid::new_v4();
+    store
+        .vault_authority(moosuri_vault_protocol::AuthorityRequest::Commit {
+            grant: vault_grant.clone(),
+            operation: vault_operation,
+            digest: "a".repeat(64),
+        })
+        .await
+        .unwrap();
     let push_device = Uuid::new_v4().to_string();
     let (_, p256dh) = moosuri_connectors::push::generate_vapid().unwrap();
     let push_binding = store
@@ -525,6 +547,23 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         .unwrap(),
         1
     );
+    for table in ["vault_handoffs", "vault_grants"] {
+        assert_eq!(
+            conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM vault_operation_commitments WHERE operation_id=?1",
+            [vault_operation.to_string()],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
     assert_eq!(artifact_state(&conn, false).unwrap(), expected);
     assert_eq!(
         conn.query_row("SELECT count(*) FROM provider_vision_probes", [], |r| r
@@ -623,6 +662,14 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
     .await
     .unwrap();
     let store = Store::open(&dest).unwrap();
+    assert!(
+        store
+            .vault_authority(moosuri_vault_protocol::AuthorityRequest::Validate {
+                grant: vault_grant
+            })
+            .await
+            .is_err()
+    );
     assert!(matches!(
         store
             .login(

@@ -1,0 +1,12 @@
+BEGIN IMMEDIATE;
+CREATE TABLE meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),installation TEXT NOT NULL,sequence INTEGER NOT NULL,head BLOB NOT NULL CHECK(length(head)=32)) STRICT;
+CREATE TABLE owners(tenant TEXT NOT NULL,owner TEXT NOT NULL,PRIMARY KEY(tenant,owner)) STRICT;
+CREATE TABLE sessions(digest TEXT PRIMARY KEY,owner TEXT NOT NULL,tenant TEXT NOT NULL,installation TEXT NOT NULL,epoch INTEGER NOT NULL,expires_at INTEGER NOT NULL,closed INTEGER NOT NULL) STRICT;
+CREATE TABLE vaults(tenant TEXT NOT NULL,owner TEXT NOT NULL,vault TEXT NOT NULL,header BLOB NOT NULL,PRIMARY KEY(tenant,owner),FOREIGN KEY(tenant,owner) REFERENCES owners(tenant,owner)) STRICT;
+CREATE TABLE headers(tenant TEXT NOT NULL,owner TEXT NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,header BLOB NOT NULL,PRIMARY KEY(tenant,owner,revision),FOREIGN KEY(tenant,owner) REFERENCES vaults(tenant,owner) DEFERRABLE INITIALLY DEFERRED) STRICT;
+CREATE TABLE items(tenant TEXT NOT NULL,owner TEXT NOT NULL,item TEXT NOT NULL,revision INTEGER NOT NULL,ciphertext BLOB NOT NULL,deleted INTEGER NOT NULL CHECK(deleted IN(0,1)),PRIMARY KEY(tenant,owner,item),FOREIGN KEY(tenant,owner) REFERENCES vaults(tenant,owner)) STRICT;
+CREATE TABLE item_versions(tenant TEXT NOT NULL,owner TEXT NOT NULL,item TEXT NOT NULL,revision INTEGER NOT NULL,ciphertext BLOB NOT NULL,PRIMARY KEY(tenant,owner,item,revision),FOREIGN KEY(tenant,owner,item) REFERENCES items(tenant,owner,item) DEFERRABLE INITIALLY DEFERRED) STRICT;
+CREATE TABLE operations(tenant TEXT NOT NULL,owner TEXT NOT NULL,id TEXT NOT NULL,epoch INTEGER NOT NULL,body BLOB NOT NULL,receipt BLOB NOT NULL,status TEXT NOT NULL CHECK(status IN('pending','committed','conflict','aborted')),PRIMARY KEY(tenant,owner,id),FOREIGN KEY(tenant,owner) REFERENCES owners(tenant,owner)) STRICT;
+CREATE TABLE nonce_ledger(tenant TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,domain TEXT NOT NULL,nonce TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(tenant,owner,generation,domain,nonce),FOREIGN KEY(tenant,owner) REFERENCES owners(tenant,owner)) STRICT;
+PRAGMA user_version=1;
+COMMIT;

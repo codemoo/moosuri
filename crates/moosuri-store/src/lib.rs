@@ -2,6 +2,7 @@
 //! Authentication capabilities can only be created here and are revalidated on every use.
 pub mod push;
 mod schedules;
+pub mod vault_authority;
 pub use schedules::ReminderLease;
 mod accounts;
 pub use accounts::{AccountManagementResult, PreparedAccountManagement};
@@ -174,7 +175,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 23;
+const CURRENT_SCHEMA_VERSION: i64 = 24;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -467,6 +468,13 @@ impl Store {
             conn.execute_batch(&format!(
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0023_web_push.sql")
+            ))?;
+        }
+        if version < 24 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0024_vault_authority.sql"),
+                "COMMIT;"
             ))?;
         }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;

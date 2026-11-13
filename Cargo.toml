@@ -1,5 +1,8 @@
 [workspace]
 members = [
+  "crates/moosuri-vault-wasm",
+  "crates/moosuri-vault-service",
+  "crates/moosuri-vault-protocol",
   "crates/moosuri-vault-core","tools/xtask", "crates/moosuri-core", "crates/moosuri-store", "crates/moosuri-server", "crates/moosuri-connectors", "crates/moosuri-agent", "apps/moosuri"]
 resolver = "3"
 

@@ -368,6 +368,16 @@ struct Candidate<'a> {
     items: &'a [EncryptedItem],
     parent_sha256: [u8; 32],
 }
+/// Public ciphertext-only commitment verification for the authenticated storage
+/// adapter. Computing this digest does not authorize a candidate or prove fsync.
+pub fn storage_commitment(
+    id: Uuid,
+    h: &Header,
+    items: &[EncryptedItem],
+    parent: [u8; 32],
+) -> Result<[u8; 32]> {
+    commitment(id, h, items, parent)
+}
 fn commitment(id: Uuid, h: &Header, items: &[EncryptedItem], parent: [u8; 32]) -> Result<[u8; 32]> {
     if items.len() > MAX_ITEMS {
         return Err(Error::Limit);
@@ -732,6 +742,206 @@ impl<'a> PendingChange<'a> {
         Ok(self.items)
     }
 }
+
+/// Trusted client state owner for asynchronous storage round trips. Pending
+/// changes own their new keys while all active operations remain blocked. No
+/// self-referential Rust/JS object or manufactured storage receipt is necessary.
+pub struct ClientVault {
+    active: ActiveVault,
+    pending: Option<OwnedChange>,
+}
+struct OwnedChange {
+    header: Header,
+    root: Option<Key>,
+    items: Vec<EncryptedItem>,
+    recovery: Option<RecoveryKey>,
+    nonces: Nonces,
+    id: Uuid,
+    parent: [u8; 32],
+    recovery_verified: bool,
+    confirmed: bool,
+}
+impl PendingChange<'_> {
+    fn detach(self) -> OwnedChange {
+        OwnedChange {
+            header: self.header,
+            root: self.root,
+            items: self.items,
+            recovery: self.recovery,
+            nonces: self.nonces,
+            id: self.id,
+            parent: self.parent,
+            recovery_verified: self.recovery_verified,
+            confirmed: self.confirmed,
+        }
+    }
+}
+impl ClientVault {
+    pub fn new(active: ActiveVault) -> Self {
+        Self {
+            active,
+            pending: None,
+        }
+    }
+    pub fn active(&mut self) -> Result<&mut ActiveVault> {
+        if self.pending.is_some() {
+            return Err(Error::State);
+        }
+        Ok(&mut self.active)
+    }
+    pub fn prepare_password(
+        &mut self,
+        password: &SecretText,
+        entropy: &mut impl TrustedEntropy,
+    ) -> Result<()> {
+        if self.pending.is_some() {
+            return Err(Error::State);
+        }
+        self.pending = Some(
+            self.active
+                .prepare_password_change(password, entropy)?
+                .detach(),
+        );
+        Ok(())
+    }
+    pub fn prepare_recovery(&mut self, entropy: &mut impl TrustedEntropy) -> Result<()> {
+        if self.pending.is_some() {
+            return Err(Error::State);
+        }
+        self.pending = Some(self.active.prepare_recovery_change(entropy)?.detach());
+        Ok(())
+    }
+    pub fn prepare_rotation(
+        &mut self,
+        password: &SecretText,
+        items: &[EncryptedItem],
+        inventory: [u8; 32],
+        entropy: &mut impl TrustedEntropy,
+    ) -> Result<()> {
+        if self.pending.is_some() {
+            return Err(Error::State);
+        }
+        self.pending = Some(
+            self.active
+                .prepare_root_rotation(password, items, inventory, entropy)?
+                .detach(),
+        );
+        Ok(())
+    }
+    pub fn pending_header(&self) -> Result<&Header> {
+        Ok(&self.pending.as_ref().ok_or(Error::State)?.header)
+    }
+    pub fn pending_items(&self) -> Result<&[EncryptedItem]> {
+        Ok(&self.pending.as_ref().ok_or(Error::State)?.items)
+    }
+    pub fn pending_recovery(&self) -> Result<Option<&RecoveryKey>> {
+        Ok(self.pending.as_ref().ok_or(Error::State)?.recovery.as_ref())
+    }
+    pub fn verify_recovery(&mut self, value: &RecoveryKey) -> Result<()> {
+        let p = self.pending.as_mut().ok_or(Error::State)?;
+        let expected = p.recovery.as_ref().ok_or(Error::State)?;
+        if !bool::from(expected.0.as_ref().ct_eq(value.0.as_ref())) {
+            return Err(Error::Authentication);
+        }
+        p.recovery_verified = true;
+        Ok(())
+    }
+    pub fn pending_candidate(&self) -> Result<(Uuid, [u8; 32])> {
+        let p = self.pending.as_ref().ok_or(Error::State)?;
+        Ok((p.id, commitment(p.id, &p.header, &p.items, p.parent)?))
+    }
+    pub fn confirm_commit(&mut self, receipt: StorageReceipt) -> Result<()> {
+        let (id, digest) = self.pending_candidate()?;
+        let p = self.pending.as_mut().ok_or(Error::State)?;
+        if !p.recovery_verified || id != receipt.candidate_id || digest != receipt.digest {
+            return Err(Error::State);
+        }
+        p.confirmed = true;
+        Ok(())
+    }
+    pub fn activate(&mut self) -> Result<Vec<EncryptedItem>> {
+        let p = self.pending.as_ref().ok_or(Error::State)?;
+        if !p.confirmed || p.parent != self.active.header_digest()? {
+            return Err(Error::State);
+        }
+        let p = self.pending.take().ok_or(Error::State)?;
+        PendingChange {
+            active: &mut self.active,
+            header: p.header,
+            root: p.root,
+            items: p.items,
+            recovery: p.recovery,
+            nonces: p.nonces,
+            id: p.id,
+            parent: p.parent,
+            recovery_verified: p.recovery_verified,
+            confirmed: p.confirmed,
+        }
+        .activate()
+    }
+    /// Only after exact storage reconciliation says this candidate was not adopted.
+    pub fn abort_pending(&mut self) {
+        self.pending = None;
+    }
+}
+
+#[cfg(all(test, feature = "native-entropy"))]
+mod client_state_tests {
+    use super::*;
+    #[test]
+    fn owned_pending_keeps_old_header_blocks_active_work_and_requires_matching_receipt() {
+        let b = Binding {
+            owner_id: Uuid::from_u128(1),
+            tenant_id: Uuid::from_u128(2),
+            vault_id: Uuid::from_u128(3),
+        };
+        let password = SecretText::new("Synthetic owned client password".into()).unwrap();
+        let mut p = PendingVault::prepare(b, &password, &mut crate::OsEntropy).unwrap();
+        let recovery = RecoveryKey::parse(&p.recovery().expose_encoded()).unwrap();
+        p.verify_recovery(&recovery).unwrap();
+        let (id, d) = p.candidate().unwrap();
+        p.confirm_commit(StorageReceipt::from_verified_storage(id, d))
+            .unwrap();
+        let mut c = ClientVault::new(p.activate().unwrap());
+        let original = c.active().unwrap().header().to_json().unwrap();
+        c.prepare_recovery(&mut crate::OsEntropy).unwrap();
+        assert!(c.active().is_err());
+        let (id, d) = c.pending_candidate().unwrap();
+        assert!(
+            c.confirm_commit(StorageReceipt::from_verified_storage(id, d))
+                .is_err()
+        );
+        assert!(c.activate().is_err());
+        c.abort_pending();
+        assert_eq!(c.active().unwrap().header().to_json().unwrap(), original);
+        c.prepare_password(
+            &SecretText::new("Synthetic replacement password".into()).unwrap(),
+            &mut crate::OsEntropy,
+        )
+        .unwrap();
+        let (id, d) = c.pending_candidate().unwrap();
+        assert!(
+            c.confirm_commit(StorageReceipt::from_verified_storage(id, [0; 32]))
+                .is_err()
+        );
+        assert!(c.activate().is_err());
+        c.confirm_commit(StorageReceipt::from_verified_storage(id, d))
+            .unwrap();
+        c.activate().unwrap();
+        assert_ne!(c.active().unwrap().header().to_json().unwrap(), original);
+        let active = c.active().unwrap();
+        let h = active.committed_header();
+        assert!(
+            ActiveVault::unlock_password(
+                h,
+                b,
+                &SecretText::new("Synthetic replacement password".into()).unwrap()
+            )
+            .is_ok()
+        );
+    }
+}
+
 fn fresh_nonce(nonces: &mut Nonces, entropy: &mut impl TrustedEntropy) -> Result<[u8; 12]> {
     if nonces.len() >= NONCE_CAP {
         return Err(Error::Limit);

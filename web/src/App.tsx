@@ -1,4 +1,6 @@
 import {activatePushAccount,clearBrowserPushBinding} from "./push-binding";
+
+import {VaultLaunch,lockVaultWindows} from "./VaultLaunch";
 import {
   useEffect,
   useLayoutEffect,
@@ -163,6 +165,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     [],
   );
   function clearLifetimes() {
+    lockVaultWindows(session?.user.id ?? logoutIdentity.current);
     for (const scope of scopes) scope.close();
     bootScope.current?.close();
     focusScope.current?.close();
@@ -985,6 +988,7 @@ function Workspace({
             {session.user.name}
             <small>{session.user.email}</small>
           </span>
+          <VaultLaunch accountId={session.user.id}/>
           <button
             className="icon-button"
             title="Sign out"

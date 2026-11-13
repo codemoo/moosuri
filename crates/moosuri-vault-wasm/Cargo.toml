@@ -1,0 +1,20 @@
+[package]
+name = "moosuri-vault-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+moosuri-vault-core = { path = "../moosuri-vault-core", default-features = false }
+moosuri-vault-protocol = { path = "../moosuri-vault-protocol" }
+wasm-bindgen = "=0.2.130"
+serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "=1.26.1", default-features = false, features = ["serde", "std"] }
+sha2 = "=0.10.9"
+zeroize = { version = "=1.9.1", features = ["alloc"] }

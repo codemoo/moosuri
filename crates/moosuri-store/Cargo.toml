@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+moosuri-vault-protocol = { path = "../moosuri-vault-protocol" }
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 chrono-tz = "=0.10.4"
 moosuri-connectors = { path = "../moosuri-connectors" }

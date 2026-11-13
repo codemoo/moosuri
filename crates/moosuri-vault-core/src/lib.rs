@@ -9,8 +9,8 @@ mod wire;
 
 pub use apple::{AppleImport, ImportPreview, ImportRow, ImportStatus, UsernameFilter};
 pub use crypto::{
-    ActiveVault, CommittedHeader, HeaderReceipt, PendingChange, PendingVault, RecoveryKey,
-    StorageReceipt, inventory_digest,
+    ActiveVault, ClientVault, CommittedHeader, HeaderReceipt, PendingChange, PendingVault,
+    RecoveryKey, StorageReceipt, inventory_digest, storage_commitment,
 };
 pub use secret::{ItemFields, ItemKind, SecretText};
 pub use totp::{OtpCode, Totp, TotpAlgorithm};

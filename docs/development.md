@@ -201,3 +201,7 @@ checkpoint19/restore20/media21/conversational-reminder22 path passed independent
 late-publication admission errors; see [evidence](reviews/2026-11-13-sealed-restore.md).
 
 Matching sealed cutover [restore](restore.md) verifies and quarantines a private destination before runtime admission.
+
+## Optional separate vault
+
+The [vault service/client guide](vault-service-client.md) documents actual Rust/WASM/React build order, separate UID/origin/cookie setup and exact incomplete release boundaries. Build `vault-web` before its Rust binary and avoid concurrent dist rebuilds during cargo/rustdoc. Assistant schema0024 is reserved for root integration; this standalone increment uses schema21.

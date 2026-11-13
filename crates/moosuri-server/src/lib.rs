@@ -13,6 +13,7 @@ mod providers;
 mod push;
 mod schedules;
 mod source_connections;
+pub mod vault;
 use axum::{
     Json, Router,
     extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
@@ -77,6 +78,7 @@ pub struct ServerConfig {
     google: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
     web: Option<Arc<moosuri_connectors::web::WebClient>>,
     browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
+    vault_origin: Option<String>,
 }
 impl ServerConfig {
     pub fn new(origin: &str, allow_http_loopback: bool) -> Result<Self, &'static str> {
@@ -114,7 +116,23 @@ impl ServerConfig {
             google: None,
             web: None,
             browser: None,
+            vault_origin: None,
         })
+    }
+    pub fn with_vault_origin(mut self, origin: &str, dev: bool) -> Result<Self, &'static str> {
+        let other = Self::new(origin, dev)?;
+        if other.origin == self.origin
+            || url::Url::parse(&other.origin)
+                .map_err(|_| "invalid_origin")?
+                .host_str()
+                == url::Url::parse(&self.origin)
+                    .map_err(|_| "invalid_origin")?
+                    .host_str()
+        {
+            return Err("separate_vault_cookie_host_required");
+        }
+        self.vault_origin = Some(other.origin);
+        Ok(self)
     }
     pub fn with_google_client_json_owned(self, value: String) -> Result<Self, &'static str> {
         let value = zeroize::Zeroizing::new(value);
@@ -240,6 +258,8 @@ pub fn router_with_runtime(
         .route("/api/v1/auth/session", get(session))
         .route("/api/v1/auth/password", post(change_password))
         .route("/api/v1/auth/logout", post(logout))
+        .route("/api/v1/vault", get(vault::status))
+        .route("/api/v1/vault/handoff", post(vault::handoff))
         .route("/api/v1/admin/users", get(users).post(create_user))
         .route("/api/v1/admin/users/{id}/manage", post(accounts::manage))
         .route(

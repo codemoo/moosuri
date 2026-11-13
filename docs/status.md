@@ -630,7 +630,6 @@ schema22에 한글·영문 시간/주간 반복 해석과 생성·내용/시간 
 실제 범위는 [검증 기록](reviews/2026-11-13-conversational-reminders.md)에 남긴다.
 CI는 계속 비활성이고 실모델 성능이나 실제 기기 푸시 성적을 주장하지 않는다.
 
-
 ## 기기별 Web Push
 
 schema23에 사용자가 켜는 기기 알림을 통합했다. 소식함을 기준으로 별도 worker가
@@ -645,3 +644,26 @@ schema23에 사용자가 켜는 기기 알림을 통합했다. 소식함을 기�
 검사했다. 마지막 안내 문구 수정 후 관련 React29개·타입/build를 재확인했다.
 실제 iOS/Android 수신·설치·백그라운드 표시는 미검증이다.
 [사용법](web-push.md)과 [검증 기록](reviews/2026-11-13-web-push.md)을 따른다.
+
+
+## 별도 볼트 서비스와 브라우저 클라이언트
+
+assistant schema24와 독립 볼트 schema1에 별도 Rust 암호문 서비스·DB·journal·cookie/origin,
+현재 로그인에 묶인 일회용 연결, 실제 Rust WASM Worker와 React 화면을 통합했다.
+항목 생성·수정·삭제·검색, TOTP, 로컬 CSV 선택 가져오기, 비밀번호·복구 키·root 교체를
+지원한다. 제목·아이디·URL도 암호화하며 관리자 로그인으로 볼트를 열 수 없다.
+
+독립 검토에서 찾은 키 교체 후 오래된 Worker의 새 비밀 작업 허용과 동시 항목 저장의
+영수증 재조정 실패를 수정·재검증했다. 별도 통합 검토에서 복원 후 옛 연결 권한 차단과
+기존 푸시·이미지·예약 보존을 확인했다. 실제 암호화 export/restore 및 migration24의
+늦은 실패 rollback/retry도 통과했다. 비서 백업에 별도 볼트 DB를 포함하지 않는다.
+
+Linux 관련 Rust105개(별도 opt-in2개 제외), React234개와 Worker2개, 실제 WASM 빌드,
+두 웹 빌드·타입·clippy·fmt·DTO·strict OpenSpec41개를 확인했다. 실제 Chrome390×844에서
+비서 로그인→별도 호스트 연결→복구 키 확인→항목/TOTP→수정·잠금/다시 열기·삭제→
+비서 로그아웃 시 볼트 잠금과 채팅 초안 보존을 검증했다. 합성 자료만 사용했다.
+
+[사용법과 경계](vault-service-client.md), [검증 기록](reviews/2026-11-13-vault-service-client.md)을
+따른다. 운영 배포·실기기·독립 archive/backup/restore·구 v1 이전·credential broker·전체
+계정 삭제/outbox·독립 서명 client는 아직 남아 있다. 악성 서버가 제공하는 JavaScript를
+바꾸는 공격은 일반 웹 볼트로 막을 수 없다. CI는 계속 비활성이다.

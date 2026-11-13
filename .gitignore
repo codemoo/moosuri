@@ -42,3 +42,7 @@ GEMINI.md
 .cursorrules
 .github/copilot-instructions.md
 .github/instructions/
+
+/output/
+/vault-web/dist/
+/vault-web/src/wasm/

@@ -23,7 +23,7 @@ lock/logout/idle/account switch/worker generation 변경 시 root/임시 평문�
 
 ## 현재 Rust core 구현 범위
 
-[Native core](vault-core.md)는 암호화·TOTP·합성 CSV import의 첫 구현이며, 서비스·React/WASM·credential broker 완료가 아니다. owner/tenant AAD와 header 인증을 추가한 명시적 v2 형식이다. 아래 v1 primitive 계약은 유지하지만, 실제 v1 wire 호환·양방향 합성 벡터·사용자 로컬 migration은 아직 gate로 남는다. raw Header는 unlock 입력이 아니며, 신뢰한 저장소/archive adapter의 committed-header admission과 후보 receipt 확인이 필요하다. 이 타입 경계가 durable journal·rollback·악성 서버 JS 방어를 구현했다는 뜻은 아니다.
+[Native core](vault-core.md)는 암호화·TOTP·합성 CSV import의 기반이다. [별도 서비스/실제 WASM Worker/React 클라이언트](vault-service-client.md)는 이 코어 위에서 동작한다. 독립 검토에서 발견한 두 결함을 수정·재검증했고 assistant schema24 통합과 Linux·실제 Chrome 검증을 통과했다. credential broker·독립 archive/backup/restore·구 v1 이전·출시 전체는 완료가 아니다. owner/tenant AAD와 header 인증을 추가한 명시적 v2 형식이다. 아래 v1 primitive 계약은 유지하지만, 실제 v1 wire 호환·양방향 합성 벡터·사용자 로컬 migration은 아직 gate로 남는다. raw Header는 unlock 입력이 아니며, 신뢰한 저장소/archive adapter의 committed-header admission과 후보 receipt 확인이 필요하다. 이 타입 경계가 durable journal·rollback·악성 서버 JS 방어를 구현했다는 뜻은 아니다.
 
 ## 기존 v1 암호문 호환
 

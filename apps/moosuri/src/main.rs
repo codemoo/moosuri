@@ -92,6 +92,15 @@ enum Command {
         /// Owner-only JSON for an already verified isolated Linux browser deployment.
         #[arg(long)]
         browser_capsule_file: Option<PathBuf>,
+        /// Separate installed vault browser origin; no public default is assumed.
+        #[arg(long)]
+        vault_origin: Option<String>,
+        /// Loopback listener reserved exclusively for the authenticated ciphertext service.
+        #[arg(long, default_value = "127.0.0.1:3211")]
+        vault_adapter_bind: SocketAddr,
+        /// Separate owner-only copy of a random256-bit hex deployment adapter key.
+        #[arg(long)]
+        vault_adapter_key_file: Option<PathBuf>,
     },
     /// Check a stopped installation without printing account or secret data.
     Doctor,
@@ -332,6 +341,9 @@ async fn run(cli: Cli) -> Result<(), String> {
             google_client_file,
             web_search_key_file,
             browser_capsule_file,
+            vault_origin,
+            vault_adapter_bind,
+            vault_adapter_key_file,
         } => {
             if !bind.ip().is_loopback() {
                 return Err("loopback_bind_required_use_a_tls_proxy".into());
@@ -360,6 +372,19 @@ async fn run(cli: Cli) -> Result<(), String> {
                     .with_browser_capsule_json(&read_browser_capsule_file(&path)?)
                     .map_err(str::to_owned)?;
             }
+            let vault_key = match (&vault_origin, vault_adapter_key_file) {
+                (Some(origin), Some(path)) => {
+                    if !vault_adapter_bind.ip().is_loopback() {
+                        return Err("vault_adapter_loopback_required".into());
+                    }
+                    config = config
+                        .with_vault_origin(origin, dev)
+                        .map_err(str::to_owned)?;
+                    Some(read_password_file(&path)?)
+                }
+                (None, None) => None,
+                _ => return Err("vault_origin_and_private_adapter_key_required".into()),
+            };
             if !ASSETS.iter().any(|(name, _)| *name == "/index.html") {
                 return Err(
                     "web_assets_missing_run_npm_ci_and_build_in_web_then_rebuild_rust".into(),
@@ -367,11 +392,61 @@ async fn run(cli: Cli) -> Result<(), String> {
             }
             let store = config.open_store(&data).map_err(|e| e.to_string())?;
             let runtime = config.start_runtime(store.clone());
-            let app = moosuri_server::router_with_runtime(store, config, runtime.clone())
-                .fallback(static_asset);
+            let adapter_router = vault_key
+                .as_ref()
+                .map(|key| moosuri_server::vault::adapter_router(store.clone(), key))
+                .transpose()
+                .map_err(str::to_owned)?;
+            let vault_form_origin = vault_origin.as_ref().map(|v| {
+                url::Url::parse(v)
+                    .expect("validated vault origin")
+                    .origin()
+                    .ascii_serialization()
+            });
+            let app = moosuri_server::router_with_runtime(store, config, runtime.clone()).fallback(
+                move |uri: Uri| {
+                    let vault_origin = vault_form_origin.clone();
+                    async move {
+                        let mut response = static_asset(uri).await;
+                        if let Some(origin) = vault_origin
+                            && let Some(policy) = response
+                                .headers()
+                                .get(header::CONTENT_SECURITY_POLICY)
+                                .and_then(|v| v.to_str().ok())
+                                .map(str::to_owned)
+                        {
+                            // Cross-origin form handoff must preserve the assistant
+                            // Origin. no-referrer turns this header into null.
+                            response.headers_mut().insert(
+                                header::REFERRER_POLICY,
+                                header::HeaderValue::from_static("strict-origin"),
+                            );
+                            let policy = policy.replace(
+                                "form-action 'self'",
+                                &format!("form-action 'self' {origin}"),
+                            );
+                            response.headers_mut().insert(
+                                header::CONTENT_SECURITY_POLICY,
+                                policy.parse().expect("validated vault origin"),
+                            );
+                        }
+                        response
+                    }
+                },
+            );
             let listener = tokio::net::TcpListener::bind(bind)
                 .await
                 .map_err(|_| "listen_failed")?;
+            let adapter_task = if let Some(router) = adapter_router {
+                let listener = tokio::net::TcpListener::bind(vault_adapter_bind)
+                    .await
+                    .map_err(|_| "vault_adapter_listen_failed")?;
+                Some(tokio::spawn(async move {
+                    let _ = axum::serve(listener, router).await;
+                }))
+            } else {
+                None
+            };
             println!(
                 "moosuri {} listening on {}",
                 env!("CARGO_PKG_VERSION"),
@@ -401,6 +476,9 @@ async fn run(cli: Cli) -> Result<(), String> {
                     match http { Ok(Err(_)) => Err("server_failed"), _ => Ok(()) }
                 }
             };
+            if let Some(task) = adapter_task {
+                task.abort();
+            }
             if !runtime.is_stopping() {
                 runtime.shutdown().await;
             }

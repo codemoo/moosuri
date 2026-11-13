@@ -495,3 +495,112 @@ async fn community_runs_pin_installed_bytes_updates_do_not_expand_tools_and_remo
             .is_ok()
     );
 }
+
+#[tokio::test]
+async fn external_source_pins_survive_updates_and_remove_revokes_held_output_without_disabling_bundled_tools()
+ {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = enabled(&store).await;
+    let owner = user.clone();
+    let id = store
+        .call(move |db| crate::community_skills::external::tests::activate_fixture(db, owner, 1))
+        .await
+        .unwrap();
+    let thread = store
+        .create_thread(&user, "Synthetic external run".into())
+        .await
+        .unwrap();
+    let old = claimed(&store, &user, &thread.id).await;
+    let profile = old.tool_profile.as_ref().unwrap();
+    assert_eq!(profile.skills.len(), BUNDLED_SKILLS.len() + 1);
+    let pin = profile
+        .skills
+        .iter()
+        .find(|p| p.id.starts_with("community:github-"))
+        .unwrap()
+        .clone();
+    let step = tool_step(&store, &old, skill_call("external", pin.clone())).await;
+    let owner = user.clone();
+    store
+        .call(move |db| crate::community_skills::external::tests::activate_fixture(db, owner, 2))
+        .await
+        .unwrap();
+    match store
+        .execute_knowledge_tool(&step, "external".into())
+        .await
+        .unwrap()
+    {
+        KnowledgeToolResult::Skill(document) => {
+            assert!(document.pin == pin);
+            assert!(
+                !document
+                    .instructions
+                    .contains("Synthetic external version two")
+            );
+        }
+        _ => panic!("pinned external instructions were not read"),
+    }
+    let next_thread = store
+        .create_thread(&user, "Synthetic updated external run".into())
+        .await
+        .unwrap();
+    let queued = store
+        .submit_turn(
+            &user,
+            next_thread.id,
+            Uuid::new_v4().to_string(),
+            "Synthetic external request".into(),
+        )
+        .await
+        .unwrap();
+    let owner = user.clone();
+    let run_id = queued.run.id;
+    let updated = store
+        .call(move |db| {
+            Ok(chat::load_run(&db.conn, &owner.tenant.0, &run_id)?
+                .tool_profile
+                .unwrap())
+        })
+        .await
+        .unwrap();
+    let new_pin = updated.skills.iter().find(|p| p.id == pin.id).unwrap();
+    assert_ne!(new_pin.digest, pin.digest);
+    assert_eq!(updated.version, profile.version);
+    assert!(updated.web.is_none() && profile.web.is_none());
+    let context = store.agent_context(&old.lease).await.unwrap();
+    let late = store
+        .begin_agent_step(&old.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    store
+        .mutate_community_skill(
+            &user,
+            id,
+            CommunitySkillMutation {
+                action: "remove".into(),
+                expected_revision: 2,
+                expected_digest: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .append_agent_output(&late, patch("Synthetic late external answer"))
+            .await
+            .is_err()
+    );
+    let owner = user.clone();
+    store
+        .call(move |db| {
+            let mut fresh = crate::agent_execution::skills::profile();
+            crate::community_skills::admit(&db.conn, &owner, &mut fresh)?;
+            assert_eq!(fresh.skills.len(), BUNDLED_SKILLS.len());
+            assert!(fresh.skills.iter().any(|p| p.id == "source-briefing"));
+            Ok(())
+        })
+        .await
+        .unwrap();
+}

@@ -75,6 +75,8 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        GitHubSkillLocation::decl(),
+        GitHubSkillPreviewInput::decl(),
         CommunitySkillCard::decl(),
         CommunitySkillMutation::decl(),
         GoogleSetupStatus::decl(),

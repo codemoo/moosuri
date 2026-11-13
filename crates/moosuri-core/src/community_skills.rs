@@ -22,6 +22,9 @@ pub struct CommunitySkillCard {
     pub can_rollback: bool,
     pub readiness: String,
     pub missing: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub github: Option<GitHubSkillLocation>,
 }
 #[derive(Clone, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -30,4 +33,18 @@ pub struct CommunitySkillMutation {
     #[ts(type = "number")]
     pub expected_revision: i64,
     pub expected_digest: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct GitHubSkillLocation {
+    pub repository: String,
+    pub directory: String,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct GitHubSkillPreviewInput {
+    pub repository: String,
+    pub directory: String,
+    pub reference: String,
 }

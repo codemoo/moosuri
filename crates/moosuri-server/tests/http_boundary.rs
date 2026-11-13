@@ -604,3 +604,6 @@ async fn community_catalog_lifecycle_requires_current_account_and_does_not_admit
         StatusCode::OK
     );
 }
+
+#[path = "cases/github_skills.rs"]
+mod github_skills_tests;

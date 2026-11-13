@@ -1,5 +1,6 @@
 //! Trusted, repository-owned instruction packages. No network, shell or executable loading.
 use super::*;
+pub(crate) mod external;
 use moosuri_core::{CommunitySkillCard, CommunitySkillMutation, SkillPin};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -41,14 +42,26 @@ struct Validated {
     digest: String,
     metadata: Sidecar,
     description: String,
+    external: Option<moosuri_core::GitHubSkillLocation>,
 }
 impl Validated {
     fn id(&self) -> String {
-        format!("{SOURCE}#community/skills/{}", self.package.slug)
+        if let Some(location) = &self.external {
+            external::identity(location)
+        } else {
+            format!("{SOURCE}#community/skills/{}", self.package.slug)
+        }
+    }
+    fn card_id(&self) -> String {
+        if self.external.is_some() {
+            self.id()
+        } else {
+            self.package.slug.clone()
+        }
     }
     fn pin(&self) -> SkillPin {
         SkillPin {
-            id: format!("community:{}", self.package.slug),
+            id: format!("community:{}", self.card_id()),
             revision: format!("{}:{}", self.package.commit, self.metadata.version),
             digest: self.digest.clone(),
         }
@@ -77,8 +90,13 @@ fn sidecar(text: &str) -> Result<Sidecar> {
     serde_json::from_value(serde_json::Value::Object(fields)).map_err(|_| StoreError::InvalidInput)
 }
 fn validate_package(package: Package) -> Result<Validated> {
-    if package.source != SOURCE
-        || package.commit.len() != 40
+    if package.source != SOURCE {
+        return Err(StoreError::InvalidInput);
+    }
+    validate_contents(package)
+}
+fn validate_contents(package: Package) -> Result<Validated> {
+    if package.commit.len() != 40
         || !package
             .commit
             .bytes()
@@ -186,6 +204,7 @@ fn validate_package(package: Package) -> Result<Validated> {
         package,
         metadata,
         description,
+        external: None,
         digest: format!("{:x}", hash.finalize()),
     })
 }
@@ -249,20 +268,22 @@ fn catalog() -> Result<Vec<Validated>> {
     Ok(entries)
 }
 fn stored(conn: &Connection, digest: &str) -> Result<Validated> {
-    let json: String = conn.query_row(
-        "SELECT package FROM community_packages WHERE digest=?1",
-        [digest],
-        |r| r.get(0),
-    )?;
-    let package: Package = serde_json::from_str(&json).map_err(|_| StoreError::Corrupt)?;
-    let verified = validate_package(package).map_err(|_| StoreError::Corrupt)?;
+    let json: String = conn
+        .query_row(
+            "SELECT package FROM community_packages WHERE digest=?1",
+            [digest],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(StoreError::NotFound)?;
+    let verified = external::decode(&json).map_err(|_| StoreError::Corrupt)?;
     if verified.digest != digest {
         return Err(StoreError::Corrupt);
     }
     Ok(verified)
 }
 fn stage(conn: &Connection, entry: &Validated) -> Result<()> {
-    conn.execute("INSERT OR IGNORE INTO community_packages(digest,source,source_commit,package) VALUES (?1,?2,?3,?4)",params![entry.digest,entry.package.source,entry.package.commit,serde_json::to_string(&entry.package).map_err(|_|StoreError::Corrupt)?])?;
+    conn.execute("INSERT OR IGNORE INTO community_packages(digest,source,source_commit,package) VALUES (?1,?2,?3,?4)",params![entry.digest,entry.package.source,entry.package.commit,external::encode(entry)?])?;
     let _ = stored(conn, &entry.digest)?;
     Ok(())
 }
@@ -273,13 +294,16 @@ pub(crate) fn admit(
 ) -> Result<()> {
     let installs=conn.prepare("SELECT package_id,active_digest,enabled FROM community_installs WHERE tenant_id=?1 AND managed=1 ORDER BY package_id")?.query_map([&user.tenant.0],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,bool>(2)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for (identity, digest, enabled) in installs {
-        let slug = identity
-            .strip_prefix(&format!("{SOURCE}#community/skills/"))
-            .ok_or(StoreError::Corrupt)?;
+        let twin = identity.strip_prefix(&format!("{SOURCE}#community/skills/"));
+        if twin.is_none() && !external::valid_id(&identity) {
+            return Err(StoreError::Corrupt);
+        }
         // Opting into managed distribution replaces the bundled twin. A durable
         // tombstone suppresses procedure discovery after disable/removal; it
         // never suppresses or grants the underlying native tool capabilities.
-        profile.skills.retain(|pin| pin.id != slug);
+        if let Some(slug) = twin {
+            profile.skills.retain(|pin| pin.id != slug);
+        }
         if enabled && let Some(digest) = digest {
             let entry = stored(conn, &digest)?;
             if entry.id() != identity {
@@ -290,7 +314,17 @@ pub(crate) fn admit(
                 .community_metadata
                 .push(moosuri_core::SkillMetadata {
                     pin: pin.clone(),
-                    description: entry.description.clone(),
+                    description: if let Some(location) = &entry.external {
+                        format!(
+                            "External recipe {} from {}#{}: {}",
+                            entry.package.slug,
+                            location.repository,
+                            location.directory,
+                            entry.description
+                        )
+                    } else {
+                        entry.description.clone()
+                    },
                 });
             profile.skills.push(pin);
         }
@@ -325,21 +359,91 @@ fn curated_title(slug: &str) -> &str {
     }
 }
 
+fn card(
+    conn: &Connection,
+    user: &UserContext,
+    e: &Validated,
+    web: &moosuri_core::WebToolProfile,
+    preview: bool,
+) -> Result<CommunitySkillCard> {
+    let row=conn.query_row("SELECT active_digest,previous_digest,enabled,hidden,revision FROM community_installs WHERE tenant_id=?1 AND package_id=?2",params![user.tenant.0,e.id()],|r|Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,bool>(2)?,r.get::<_,bool>(3)?,r.get::<_,i64>(4)?))).optional()?;
+    let (active, previous, enabled, hidden, revision) =
+        row.unwrap_or((None, None, false, false, 0));
+    let current = active.as_deref().map(|d| stored(conn, d)).transpose()?;
+    let requirements = if preview {
+        e
+    } else {
+        current.as_ref().unwrap_or(e)
+    };
+    let mail = !crate::mail::pins(conn, user)?.is_empty();
+    let missing: Vec<_> = requirements
+        .metadata
+        .capabilities
+        .iter()
+        .filter(|c| (c.starts_with("mail_") && !mail) || (c.as_str() == "web_read" && !web.read))
+        .cloned()
+        .collect();
+    let directory = e
+        .external
+        .as_ref()
+        .map(|x| x.directory.clone())
+        .unwrap_or_else(|| format!("community/skills/{}", e.package.slug));
+    Ok(CommunitySkillCard {
+        id: e.card_id(),
+        name: if e.external.is_none() {
+            curated_title(&e.package.slug).to_owned()
+        } else {
+            e.package.slug.clone()
+        },
+        description: e.description.clone(),
+        source: format!(
+            "{}/tree/{}/{}",
+            e.package.source, e.package.commit, directory
+        ),
+        source_commit: e.package.commit.clone(),
+        version: e.metadata.version.clone(),
+        digest: e.digest.clone(),
+        license: e.metadata.license.clone(),
+        capabilities: e.metadata.capabilities.clone(),
+        installed_version: current.as_ref().map(|v| v.metadata.version.clone()),
+        installed_digest: active,
+        enabled,
+        hidden,
+        revision,
+        can_rollback: previous.is_some(),
+        readiness: if !missing.is_empty() {
+            "connection_needed"
+        } else if enabled {
+            "ready"
+        } else if current.is_some() {
+            "disabled"
+        } else {
+            "installable"
+        }
+        .into(),
+        missing,
+        github: e.external.clone(),
+    })
+}
 fn cards(
     conn: &Connection,
     user: &UserContext,
     web: &moosuri_core::WebToolProfile,
 ) -> Result<Vec<CommunitySkillCard>> {
-    let mail = !crate::mail::pins(conn, user)?.is_empty();
-    catalog()?.into_iter().map(|e| {
-        let row=conn.query_row("SELECT active_digest,previous_digest,enabled,hidden,revision FROM community_installs WHERE tenant_id=?1 AND package_id=?2",params![user.tenant.0,e.id()],|r|Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,bool>(2)?,r.get::<_,bool>(3)?,r.get::<_,i64>(4)?))).optional()?;
-        let (active,previous,enabled,hidden,revision)=row.unwrap_or((None,None,false,false,0));
-        let current=active.as_deref().map(|d|stored(conn,d)).transpose()?;
-        let requirements=current.as_ref().unwrap_or(&e);
-        let missing:Vec<_>=requirements.metadata.capabilities.iter().filter(|c| (c.starts_with("mail_")&&!mail) || (c.as_str()=="web_read"&&!web.read)).cloned().collect();
-        Ok(CommunitySkillCard { id:e.package.slug.clone(),name:curated_title(&e.package.slug).to_owned(),description:e.description.clone(),source:format!("{SOURCE}/tree/{COMMIT}/community/skills/{}",e.package.slug),source_commit:e.package.commit.clone(),version:e.metadata.version.clone(),digest:e.digest.clone(),license:e.metadata.license.clone(),capabilities:e.metadata.capabilities.clone(),installed_version:current.as_ref().map(|v|v.metadata.version.clone()),installed_digest:active.clone(),enabled,hidden,revision,can_rollback:previous.is_some(),readiness:if !missing.is_empty(){"connection_needed"}else if enabled{"ready"}else if active.is_some(){"disabled"}else{"installable"}.into(),missing })
-    }).collect()
+    let mut entries = catalog()?;
+    let digests=conn.prepare("SELECT active_digest FROM community_installs WHERE tenant_id=?1 AND package_id LIKE 'github-%' AND active_digest IS NOT NULL ORDER BY package_id LIMIT 65")?.query_map([&user.tenant.0],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    if digests.len() > 64 {
+        return Err(StoreError::BudgetExhausted);
+    }
+    for digest in digests {
+        entries.push(stored(conn, &digest)?)
+    }
+    entries
+        .iter()
+        .map(|e| card(conn, user, e, web, false))
+        .collect()
 }
+
 impl Store {
     pub async fn community_skills(&self, user: &UserContext) -> Result<Vec<CommunitySkillCard>> {
         let user = user.clone();
@@ -358,10 +462,16 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             let user = validate(&db.conn, &user, true, false)?;
-            let entry = catalog()?
-                .into_iter()
-                .find(|e| e.package.slug == id)
-                .ok_or(StoreError::NotFound)?;
+            let entry=if external::valid_id(&id) {
+                let digest=if matches!(input.action.as_str(),"install"|"update") {
+                    input.expected_digest.clone().ok_or(StoreError::InvalidInput)?
+                }else{
+                    db.conn.query_row("SELECT active_digest FROM community_installs WHERE tenant_id=?1 AND package_id=?2",params![user.tenant.0,id],|r|r.get::<_,Option<String>>(0)).optional()?.flatten().ok_or(StoreError::NotFound)?
+                };
+                let entry=stored(&db.conn,&digest)?;
+                if entry.external.is_none() || entry.card_id()!=id {return Err(StoreError::InvalidInput)}
+                entry
+            }else{catalog()?.into_iter().find(|e|e.package.slug==id).ok_or(StoreError::NotFound)?};
             apply(db, user, entry, input)
         })
         .await
@@ -383,6 +493,12 @@ fn apply(
         row.unwrap_or((None, None, false, false, 0, false));
     if revision != input.expected_revision {
         return Err(StoreError::Conflict);
+    }
+    if entry.external.is_some() && revision == 0 {
+        let count:i64=tx.query_row("SELECT count(*) FROM community_installs WHERE tenant_id=?1 AND package_id LIKE 'github-%'",[&user.tenant.0],|r|r.get(0))?;
+        if count >= 64 {
+            return Err(StoreError::BudgetExhausted);
+        }
     }
     match input.action.as_str() {
         "install" | "update" => {
@@ -406,6 +522,9 @@ fn apply(
         "rollback" => {
             if previous.is_none() {
                 return Err(StoreError::Conflict);
+            }
+            if stored(&tx, previous.as_deref().ok_or(StoreError::Conflict)?)?.id() != entry.id() {
+                return Err(StoreError::Corrupt);
             }
             std::mem::swap(&mut active, &mut previous);
         }

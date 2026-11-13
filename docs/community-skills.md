@@ -85,3 +85,15 @@ SQLite0011은 immutable 공개 snapshot과 사용자별 active/previous pointer,
 자동 catalog 다운로드/업데이트·정적 release 생성기·외부 Git 주소·예약 needs_skill·수정본 fork·portable lockfile·개인 학습 재구성/export는 후속이다. 이번 단위를 그 전체 구현으로 표시하지 않는다.
 
 같은 이름의 bundled 절차는 최초 managed 설치 시 단일 community pin으로 대체한다. disable/remove tombstone은 이후 새 run에서 bundled twin까지 discovery에서 제외하며 native 도구 권한 자체는 바꾸지 않는다. 다시 추가하면 복구한다. 버전이 바뀌어도 tombstone/숨김은 source+subdirectory identity로 유지한다.
+
+## 공개 GitHub 원본 직접 추가
+
+제안 화면의 **GitHub 원본에서 추가**는 공개 저장소 root URL·패키지 디렉터리·브랜치/태그/전체 commit을 받는다. `https://github.com/author/repository`와 `community/skills/example`처럼 입력한다. **원본 확인**은 공개 원본을 읽고 exact commit·version·license·필요 연결을 보여주며 설치하지 않는다. **추가** 또는 **이 버전으로 업데이트** 한 번이 그 SHA-256 snapshot을 현재 사용자에게 활성화한다. 작업·메시지·예약은 실행하지 않는다. Gmail 최종 발송 승인은 기존 경계를 따른다. 다른 버전 확인은 사용자가 다시 원본을 지정하는 수동 흐름이며 자동 upstream 갱신은 없다.
+
+Git subprocess·archive·redirect 대신 고정 `api.github.com`의 commit/tree/blob를 읽는다. ref는 한 번만 resolve하고 이후 full immutable object만 읽는다. private 인증·cookie·proxy·개인 기억/대화는 보내지 않는다. 일반 read-only 공개 API이므로 GitHub 요청 제한·오프라인이면 실패를 그대로 표시하고 이전 활성판을 유지한다. 소스 URL만 붙이는 대신 root URL/상대 경로/ref 세 항목을 받으며 slash가 포함된 ref도 모호하게 추측하지 않는다.
+
+현재는 정확히 SKILL.md/moosuri.toml/examples.json/LICENSE 네 regular100644 파일과 기존 instruction 형식1/Apache-2.0/allowlisted capability만 지원한다. symlink/submodule/executable·scripts/hooks·references/assets·다른 파일은 거절한다. 파일당32KiB/전체64KiB, 디렉터리6단계, 최대12요청/30초/응답합계2MiB 등 bounded tree/blob 검사를 적용한다. Git blob SHA-1은 길이로 구분한 Git object identity와 bytes 일관성을 확인하고, 앱 snapshot은 별도 SHA-256을 쓴다. 어느 해시도 안전성·license 진실성·실행 성공을 보증하지 않는다.
+
+외부 envelope2와 stable opaque ID는 정규화한 repository+directory를 포함한다. 같은 표시 이름을 고른 다른 제작자나 다른 하위 경로가 서로 덮어쓰지 않는다. 외부 원본은 bundled 절차를 대체하지 않는다. 기존 curated envelope/hash/pin은 재작성하지 않으며, 이미 admit된 run은 원래 package bytes·metadata·tool profile을 유지한다. 다운로드는 SQLite writer 밖에서 수행하고 download 뒤와 activation 때 각각 currentUserContext를 다시 검증한다. 새 schema migration은 없다. 사용자당64개 외부 identity(tombstone 포함)까지만 보관하며 공개 staging cache의 GC는 후속이다.
+
+private GitHub 인증·범용 SKILL import·archive·스크립트·자동 갱신/정적 release 생성·개인 학습 export·cache GC는 아직 지원하지 않는다.

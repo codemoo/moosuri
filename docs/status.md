@@ -451,7 +451,7 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 
 제안·할 수 있는 일(`/app/skills`)에서 공개6개 instruction package의 사용자별 설치·갱신·rollback·비활성화·삭제·숨김을 SQLite0011에 저장한다. exact source commit+4-file package SHA로 고정하고 새 run에만 active revision을 적용한다. 설치는 외부 실행이 아니다. remove는 해당 사용자 관련 진행 run과 retry를 철회하고 완료 receipt는 보존한다. 실제 credential/tool 권한은 기존 run profile만 결정한다. 시작 버튼은 작성 중인 초안을 보존하며 전송하지 않는다. 화면 직접 접속도 지원한다.
 
-Rust의 strict package bounds/형식/license/example/capability 검사, interrupted staging→update→rollback→remove와 두 사용자 분리, 실제 run pin·삭제 철회, HTTP 인증/계정 경계와 React 설치·연결 부족·숨김·늦은 계정 응답을 합성 자료로 검증했다. 외부 Git/archive·release generator·자동 다운로드·private-learning export·예약 needs_skill·local edit/lockfile/GC는 아직 미구현이다. [community 계약](community-skills.md)과 [패키지 안내](../community/README.md)를 따른다.
+Rust의 strict package bounds/형식/license/example/capability 검사, interrupted staging→update→rollback→remove와 두 사용자 분리, 실제 run pin·삭제 철회, HTTP 인증/계정 경계와 React 설치·연결 부족·숨김·늦은 계정 응답을 합성 자료로 검증했다. 이 첫 단위는 curated package를 대상으로 했다. 공개 GitHub 원본 추가는 아래 후속 단위에서 구현했으며 archive·release generator·자동 다운로드·private-learning export·예약 needs_skill·local edit/lockfile/GC는 아직 미구현이다. [community 계약](community-skills.md)과 [패키지 안내](../community/README.md)를 따른다.
 
 커뮤니티 단위는 macOS·Linux x86_64 Rust344개(실모델 opt-in1개 제외), React139개·타입/production build와 독립 검토를 통과했다. 상세 범위와 후속 항목은 [검증 기록](reviews/2026-11-13-community-curated.md)에 남긴다.
 
@@ -467,3 +467,9 @@ macOS의 집중 Store31·agent21·schema/HTTP 검사와 Linux 전체362개(실�
 Rust CLI의 `backup keygen`으로 별도 복구 키를 만들고 `backup setup/create`로 현재 SQLite·snapshot journal을 표준 age 암호화 tar 파일로 내보낸다. 개인 키는 별도0600 파일에만 쓰고 공개 recipient만 출력한다. 설치 UUID·공개 키 이력을 보존하고 WAL을 포함한 일관된 snapshot을 만들며 실행 중인 설치·잘못된 경로·덮어쓰기를 거절한다. 서버 provider key 없이도 export할 수 있다.
 
 macOS 검사와 표준 Go age 복호화, Linux의 영향받는 저장/CLI 검사 및 독립 검토 범위를 [검증 기록](reviews/2026-11-13-stopped-encrypted-export.md)에 남긴다. Linux의 최초 fixture 권한 실패와0700 수정 후 재검증도 포함한다. 과거 백업 복원·서버 밖 최신 삭제 기록·미디어 복구는 후속 작업이다. 이 단위로 전체 백업/복원 계획을 완료 처리하지 않는다.
+
+## 공개 GitHub community 원본 추가
+
+수동 public GitHub root URL·디렉터리·ref 입력→고정 commit 미리보기→사용자별 추가/업데이트를 제공한다. Rust는 bounded commit/tree/blob와 decoded size/Git object identity를 확인하고 instruction4-file 형식·license·capability 검사를 재사용한다. 외부 identity는 repository+directory이며 표시 이름으로 bundled 절차를 덮어쓰지 않는다. 기존 curated pins는 유지한다. 다운로드 뒤 account 재검증과 activation CAS를 적용하고 preview/설치는 작업을 실행하지 않는다. private 소스·Git subprocess/archive/script·자동 갱신·export·GC는 아직 없다. [community 계약](community-skills.md)을 따른다.
+
+공개 GitHub 추가 단위는 macOS·Linux의 집중 connector/저장/run-pin/HTTP/설치 검사와 React56개·생성 DTO·타입/build·clippy·독립 검토를 통과했다. 늦은 catalog 응답이 설치된 카드를 숨기던 문제를 수정하고 재현 검사로 확인했다. [검증 기록](reviews/2026-11-13-public-github-skills.md)을 따른다.

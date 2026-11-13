@@ -1,0 +1,33 @@
+# Native vault cryptography/import core (development only)
+
+`crates/moosuri-vault-core` is a client-only Rust library. It is not a usable vault service, React/WASM client or credential broker. Do not run it on the assistant server with user keys. [Design and limits](vault-core-design.md), [dependency review](vault-core-dependencies.md), [required vault security](vault-security.md) and [credential-use boundary](credential-use.md) remain separate contracts.
+
+## Key and state APIs
+
+`PendingVault::prepare` creates a random root, password wrapper and independent recovery wrapper. Record the recovery key through a trusted local display, verify it explicitly, persist the immutable public header through the later trusted store, reconcile its exact candidate ID/digest receipt, then activate. No candidate is active merely because encryption succeeded. Wrong/missing receipts leave the borrowed candidate pending.
+
+Unlock accepts `CommittedHeader`, not raw `Header`. A trusted adapter admits it with the expected owner binding and a matching `HeaderReceipt` from an authenticated current storage read or verified archive. These receipt types deliberately mark an external trust boundary: a caller that fabricates a receipt has bypassed the integration contract. This core neither proves disk fsync nor implements an authenticated server protocol, journal, current-head discovery or rollback prevention. Header HMAC and AEAD subsequently authenticate its exact contents under the unlocked root.
+
+`ActiveVault` owns the zeroizing root. Items get fresh independent data keys; payload and root-key wrap bind v2 purpose, tenant/owner/vault, item, generation and revision. Every field, including kind/title/username/URL/OTP/favorite/expiry, is encrypted. Public JSON contains only opaque routing/version/KDF metadata and ciphertext. Fixed errors contain no supplied input. No secret type has Debug/Clone/Serialize; explicit `expose()` is only for a trusted client display/typed adapter. Dropping the active session locks this in-memory core.
+
+Password changes replace the password wrapper and header authentication, preserve the recovery wrapper and leave every item byte/ID unchanged. Recovery replacement requires new recovery verification. Root rotation uses a new root/generation and a complete **client-pinned** ordered inventory; it preserves item IDs, increments revisions and swaps only after its exact header+item commitment is confirmed. A server-supplied subset cannot prove completeness. Borrowed pending changes block other active operations and leave the previous state intact on abort.
+
+Password/recovery rewrap is not retroactive revocation: someone retaining an old wrapper and its secret can still recover the same root. Use full root rotation when root secrecy may be compromised. Previously downloaded archives remain decryptable by their original keys; software cannot erase those copies. Durable nonce reservations, immutable envelope retention/CAS, recovery after a process kill/lost ACK and server epoch/session revocation remain required service/client integration work. The current nonce set only fences reuse within the live root session and caps it at100000 entries; trusted entropy must be a CSPRNG.
+
+## Formats and primitives
+
+V2 uses AES256-GCM (12-byte nonce/16-byte tag), Argon2id13 (64MiB,t3,p1,16-byte salt,32-byte result) and HKDF/HMAC-SHA256 with distinct purposes. Password UTF-8 bytes are not normalized and are capped before KDF. Base64 must be canonical/padded. Header16KiB, plaintext item64KiB, serialized item100000bytes and inventory1000 items are bounded. Header/items are closed typed schemas, and unsupported versions/KDFs are rejected before derivation. KDF block memory is explicitly zeroized. Primitives/OS/compiler copies and JS GC are not claimed completely erased.
+
+The owner/tenant AAD and header authentication make this an explicit **v2** format. Required v1 AES/Argon/HKDF primitives were retained, but no old wire compatibility is claimed. Real v1 ciphertext needs separate synthetic cross-client vectors and explicit user-local migration; the library rejects v1 rather than silently rewriting it. Full independent archive import/export is still open.
+
+## Local TOTP and CSV
+
+TOTP supports RFC6238 SHA1/256/512,6..8digits,15..120second periods,T0=0 and checked clock arithmetic. SHA1 is used only inside RFC HMAC-TOTP, not password hashing or signatures. Strict bounded `otpauth://totp` rejects HOTP, duplicate/unknown parameters and unsupported options. Seed/code are secret types, and there is no model/tool registration. UI timers/focus/clock-skew/copy recalculation and verified challenge/origin association belong to the later client/broker.
+
+Apple import consumes an in-memory `Read` stream:10MiB total,64KiB decoded row,16columns,1000nonempty rows and10000data records. It preserves UTF-8/Unicode, quoted commas/escaped quotes and quoted CR/LF, handles BOM and mixed record endings, and rejects malformed quoting/columns/encoding rather than guessing. Required headers are Title/URL/Username/Password; optional Notes/OTPAuth/Favorite are recognized case-insensitively. Unknown headers fail explicitly.
+
+Callers must choose `UsernameFilter::All` or an exact arbitrary username (including empty). Preview exposes only row IDs, statuses and counts. Exact private-content duplicates are excluded; changed content for a matching account is flagged for selection, never overwritten. Blank passwords and unsupported URLs/OTP are flagged but retained exactly in encrypted content; importing them is not a claim that a login/OTP adapter works. Chosen rows produce one stable encrypted batch for same-selection retries. Cancel/failure publishes nothing; durable partial commit acknowledgements are service work. No raw CSV is persisted, sent, logged or deleted by the core.
+
+## Verification and remaining gates
+
+Published [RFC9106 Argon2id](https://www.rfc-editor.org/rfc/rfc9106.html#section-5.3), [RFC5869 HKDF](https://www.rfc-editor.org/rfc/rfc5869.html#appendix-A.1), [RFC6238 TOTP](https://www.rfc-editor.org/rfc/rfc6238.html#appendix-B) and [NIST GCM](https://csrc.nist.gov/pubs/sp/800/38/d/final) vectors are tested alongside tamper/cross-owner/item/revision/purpose, hostile bounds, wrong recovery, staged activation, unchanged rewrap ciphertext, root rotation and synthetic multiline/filter/duplicate/cancel import outcomes. New tests were authored; historical tests were not copied. Native Rust1.89 is the tested execution boundary. No WASM build/performance, Worker/React, independent client updater, vault service/DB/journal/backup/archive, admin/tenant HTTP isolation or credential adapter/broker execution is certified by this unit.

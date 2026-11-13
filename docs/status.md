@@ -579,3 +579,16 @@ macOS cutover18개와 참조 Go age1개, clippy/fmt/계획/OpenSpec을 확인했
 [복원 사용법](restore.md)과 [검증 기록](reviews/2026-11-13-sealed-restore.md)을 따른다.
 과거 export의 임의 재생·자동 외부 백업·서버 유실 뒤의 독립 최신성 증명·운영
 설치의 실제 이전은 별도 범위다. CI는 계속 비활성이다.
+
+## 사용자 기기용 볼트 암호화 코어
+
+Rust v2 암호화·복구 키·암호 변경/루트 회전·TOTP·로컬 Apple CSV 필터/암호화
+코어를 통합했다. 항목 제목·아이디·URL·암호·TOTP seed를 모두 암호화하고
+계정 관리자 비밀번호 재설정으로 볼트를 열 수 있는 경로는 제공하지 않는다.
+이 단위는 라이브러리이며, 아직 볼트 서버·웹 화면·credential broker는 아니다.
+
+독립 검토와 별도 Python 구현의 암호화/TOTP 교차 검증을 통과했다. macOS·Linux에서
+코어13개와 금지된 API 사용의 compile-fail4개를 확인했다. 기존 lock 항목 변경 없이
+검토한 공개 dependency12개만 추가했다. WASM/Worker·안전한 암호문 저장/복원·
+구버전 이전·자동 credential 사용은 남아 있다. [정확한 범위](vault-core.md)와
+[검증 기록](reviews/2026-11-13-vault-core.md)을 따른다.

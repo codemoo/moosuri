@@ -21,6 +21,10 @@ Rust vault service는 별도 UID·DB·origin·cookie·journal·backup을 사용�
 
 lock/logout/idle/account switch/worker generation 변경 시 root/임시 평문·object URL·clipboard timer를 정리한다. visibility 복귀·TOTP 복사·late response를 다시 검사한다. 브라우저/OS가 만든 모든 사본을 완전 소거한다고 말하지 않는다. service worker/private IndexedDB/localStorage에 키·암호·CSV 원본을 보관하지 않는다. account auth는 내부 검증을 거쳐 독립 vault session을 발급하고 master unlock과 합치지 않는다.
 
+## 현재 Rust core 구현 범위
+
+[Native core](vault-core.md)는 암호화·TOTP·합성 CSV import의 첫 구현이며, 서비스·React/WASM·credential broker 완료가 아니다. owner/tenant AAD와 header 인증을 추가한 명시적 v2 형식이다. 아래 v1 primitive 계약은 유지하지만, 실제 v1 wire 호환·양방향 합성 벡터·사용자 로컬 migration은 아직 gate로 남는다. raw Header는 unlock 입력이 아니며, 신뢰한 저장소/archive adapter의 committed-header admission과 후보 receipt 확인이 필요하다. 이 타입 경계가 durable journal·rollback·악성 서버 JS 방어를 구현했다는 뜻은 아니다.
+
 ## 기존 v1 암호문 호환
 
 | 요소 | 보존할 값·형식 |

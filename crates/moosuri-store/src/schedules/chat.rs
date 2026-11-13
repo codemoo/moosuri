@@ -82,7 +82,7 @@ pub(crate) fn finish(
         parser::Decision::Mission => (MISSION.into(), None),
         parser::Decision::Command(command) => {
             if crate::media::has_context(conn, &run.tenant, &run.id)? {
-                confirmation(conn, run, "이미지가 연결된 대화에서는 알림을 변경하지 않습니다. 새 대화에서 알림을 요청하거나 예약 화면을 이용해 주세요.".into(), None)?;
+                confirmation(conn, run, "첨부 자료가 연결된 대화에서는 알림을 변경하지 않습니다. 새 대화에서 알림을 요청하거나 예약 화면을 이용해 주세요.".into(), None)?;
                 return Ok(true);
             }
             use parser::Action;

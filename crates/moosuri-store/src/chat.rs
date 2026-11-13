@@ -914,13 +914,16 @@ fn submit_turn_context_in(
     queue_capacity(tx, &user.tenant.0)?;
     let choice = providers::selected_choice(tx, &user)?;
     providers::binding_for_choice(tx, provider_key, &choice)?;
+    let mut needs_vision = false;
     for media in &attachments {
+        let image:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM media_objects WHERE tenant_id=?1 AND id=?2 AND filename IS NULL)",params![user.tenant.0,media.id],|r|r.get(0))?;
+        needs_vision |= image;
         let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM media_objects WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND revision=?4 AND state='ready')",params![user.tenant.0,user.account.id,media.id,media.revision],|r|r.get(0))?;
         if !valid {
             return Err(StoreError::Conflict);
         }
     }
-    if !attachments.is_empty() {
+    if needs_vision {
         let vision:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM provider_vision_probes WHERE provider_id=?1 AND revision=?2 AND model=?3 AND effort=?4)",params![choice.provider_id,choice.provider_revision,choice.model,choice.effort.as_deref().unwrap_or("")],|r|r.get(0))?;
         if !vision {
             return Err(StoreError::InvalidInput);
@@ -928,6 +931,9 @@ fn submit_turn_context_in(
         if target.is_some() {
             return Err(StoreError::InvalidInput);
         }
+    }
+    if !attachments.is_empty() && target.is_some() {
+        return Err(StoreError::InvalidInput);
     }
     let id = Uuid::new_v4().to_string();
     tx.execute(

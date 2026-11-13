@@ -33,10 +33,10 @@ for (const mode of ["delete-ack", "another-view", "unmount"] as const) {
     await waitFor(() => expect(view.pending).toHaveLength(2));
     if (mode === "delete-ack") {
       fireEvent.click(screen.getByText("이미지 삭제"));
-      await screen.findByText("보관한 이미지가 없습니다.");
+      await screen.findByText("보관한 첨부가 없습니다.");
     } else if (mode === "another-view") {
       act(() => window.dispatchEvent(new CustomEvent("moosuri-media-deleted", { detail: id })));
-      await screen.findByText("보관한 이미지가 없습니다.");
+      await screen.findByText("보관한 첨부가 없습니다.");
     } else view.unmount();
     expect(view.pending.every((request) => request.signal.aborted)).toBe(true);
     const before = view.created.mock.calls.length;

@@ -52,6 +52,7 @@ export class RequestScope {
     blob: Blob,
     progress: (percent: number) => void,
     signal: AbortSignal,
+    filename?: string,
   ): Promise<T> {
     if (!this.active || signal.aborted)
       return Promise.reject(
@@ -66,7 +67,7 @@ export class RequestScope {
         this.uploads.delete(xhr);
         signal.removeEventListener("abort", abort);
       };
-      xhr.open("POST", `/api/v1/media/${encodeURIComponent(id)}`);
+      xhr.open("POST", filename === undefined ? `/api/v1/media/${encodeURIComponent(id)}` : `/api/v1/files/${encodeURIComponent(id)}?filename=${encodeURIComponent(filename)}`);
       xhr.withCredentials = true;
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
       if (this.expectedAccountId)

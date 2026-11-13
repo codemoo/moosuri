@@ -14,6 +14,12 @@ pub struct MediaSummary {
     #[ts(type = "number")]
     pub revision: i64,
     pub digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub filename: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub media_type: Option<String>,
     pub state: String,
     pub width: u32,
     pub height: u32,

@@ -11,6 +11,7 @@ mod knowledge;
 mod mail;
 mod media;
 mod missions;
+mod private_files;
 mod providers;
 mod push;
 mod schedules;
@@ -300,6 +301,12 @@ pub fn router_with_runtime(
         )
         .route("/api/v1/media/{id}/content", get(media::content))
         .route("/api/v1/media/{id}/thumbnail", get(media::thumbnail))
+        .route(
+            "/api/v1/files/{id}",
+            post(private_files::upload).delete(media::remove),
+        )
+        .route("/api/v1/files/{id}/preview", get(private_files::preview))
+        .route("/api/v1/files/{id}/content", get(private_files::content))
         .route(
             "/api/v1/notifications/push",
             get(push::configuration).post(push::enroll),

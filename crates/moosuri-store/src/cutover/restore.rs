@@ -386,6 +386,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0026_calendar.sql"
         ))?;
     }
+    if captured < 27 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0027_private_files.sql"
+        ))?;
+    }
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);

@@ -235,6 +235,43 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
     else {
         panic!("pending upload")
     };
+    let file_original = b"# Synthetic original\nquantity,37\n";
+    let file_digest: [u8; 32] = Sha256::digest(file_original).into();
+    let ready_file = Uuid::new_v4().to_string();
+    let deleted_file = Uuid::new_v4().to_string();
+    let other_file = Uuid::new_v4().to_string();
+    for (owner, id) in [(&a, &ready_file), (&a, &deleted_file), (&b, &other_file)] {
+        let crate::media::UploadAdmission::Process(upload) = store
+            .file_begin(owner, id.clone(), file_digest, "restore.md".into())
+            .await
+            .unwrap()
+        else {
+            panic!("new file")
+        };
+        store
+            .file_finish(
+                upload,
+                Some(
+                    crate::private_files::extract(file_original.to_vec(), "text/markdown").unwrap(),
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    store.delete_media(&a, deleted_file.clone()).await.unwrap();
+    let processing_file = Uuid::new_v4().to_string();
+    let crate::media::UploadAdmission::Process(pending_file) = store
+        .file_begin(
+            &a,
+            processing_file.clone(),
+            file_digest,
+            "pending.txt".into(),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("pending file")
+    };
     let retained = store
         .write_artifact(&a, record("Retained editable current document", vec![]))
         .await
@@ -599,6 +636,24 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         canonical
     );
 
+    assert!(
+        conn.query_row(
+            "SELECT state='retry_required' AND nonce IS NULL FROM media_objects WHERE id=?1",
+            [&processing_file],
+            |r| r.get::<_, bool>(0)
+        )
+        .unwrap()
+    );
+    assert!(conn.query_row("SELECT state='deleted' AND bytes IS NULL AND extracted_text IS NULL FROM media_objects WHERE id=?1",[&deleted_file],|r|r.get::<_,bool>(0)).unwrap());
+    assert_eq!(
+        conn.query_row(
+            "SELECT bytes FROM media_objects WHERE id=?1",
+            [&ready_file],
+            |r| r.get::<_, Vec<u8>>(0)
+        )
+        .unwrap(),
+        file_original
+    );
     assert_eq!(
         conn.query_row(
             "SELECT count(*) FROM personal_artifact_command_plans WHERE used=0",
@@ -828,6 +883,40 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
             .media_finish(
                 pending_upload,
                 Some(crate::media::normalize(&pixels).unwrap())
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .file_bytes(&current, ready_file.clone())
+            .await
+            .unwrap(),
+        file_original
+    );
+    assert_eq!(
+        store
+            .file_preview(&current, ready_file)
+            .await
+            .unwrap()
+            .as_bytes(),
+        file_original
+    );
+    for id in [deleted_file, other_file, processing_file] {
+        assert!(matches!(
+            store.file_bytes(&current, id.clone()).await,
+            Err(crate::StoreError::NotFound)
+        ));
+        assert!(matches!(
+            store.file_preview(&current, id).await,
+            Err(crate::StoreError::NotFound)
+        ));
+    }
+    assert!(
+        store
+            .file_finish(
+                pending_file,
+                Some(crate::private_files::extract(file_original.to_vec(), "text/plain").unwrap())
             )
             .await
             .is_err()

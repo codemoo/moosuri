@@ -12,9 +12,9 @@ pub struct NormalizedImage {
     pub height: u32,
 }
 pub struct MediaUpload {
-    user: UserContext,
-    id: String,
-    nonce: String,
+    pub(crate) user: UserContext,
+    pub(crate) id: String,
+    pub(crate) nonce: String,
 }
 type UploadRow = (String, Option<Vec<u8>>, String, i64, Option<Vec<u8>>);
 pub enum UploadAdmission {
@@ -90,10 +90,12 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MediaSummary> {
         height: r.get(5)?,
         bytes: r.get(6)?,
         created_at: r.get(7)?,
+        filename: r.get(8)?,
+        media_type: r.get(9)?,
     })
 }
-const SELECT: &str = "SELECT id,revision,digest,state,width,height,coalesce(length(bytes),0),created_at FROM media_objects";
-fn summary(conn: &Connection, tenant: &str, id: &str) -> Result<MediaSummary> {
+const SELECT: &str = "SELECT id,revision,digest,state,width,height,coalesce(length(bytes),0),created_at,filename,media_type FROM media_objects";
+pub(crate) fn summary(conn: &Connection, tenant: &str, id: &str) -> Result<MediaSummary> {
     conn.query_row(
         &format!("{SELECT} WHERE tenant_id=?1 AND id=?2"),
         params![tenant, id],
@@ -122,7 +124,7 @@ pub(super) fn turn_media(
 }
 pub(super) fn apply_delete(conn: &Connection, tenant: &str, account: &str, id: &str) -> Result<()> {
     // A tombstone also wins when cancellation arrives before upload admission.
-    conn.execute("INSERT INTO media_objects(tenant_id,account_id,id,state,auth_epoch,created_at) VALUES(?1,?2,?3,'deleted',0,?4) ON CONFLICT(tenant_id,id) DO UPDATE SET state='deleted',bytes=NULL,thumbnail=NULL,nonce=NULL",params![tenant,account,id,now()?])?;
+    conn.execute("INSERT INTO media_objects(tenant_id,account_id,id,state,auth_epoch,created_at) VALUES(?1,?2,?3,'deleted',0,?4) ON CONFLICT(tenant_id,id) DO UPDATE SET state='deleted',bytes=NULL,thumbnail=NULL,extracted_text=NULL,nonce=NULL",params![tenant,account,id,now()?])?;
     let runs = conn
         .prepare("SELECT run_id FROM media_run_dependencies WHERE tenant_id=?1 AND media_id=?2")?
         .query_map(params![tenant, id], |r| r.get::<_, String>(0))?
@@ -143,7 +145,7 @@ pub(super) fn has_context(conn: &Connection, tenant: &str, run: &str) -> Result<
     )?)
 }
 pub(super) fn bound_images(conn: &Connection, tenant: &str, run: &str) -> Result<Vec<Vec<u8>>> {
-    Ok(conn.prepare("SELECT m.bytes FROM media_objects m JOIN chat_media c ON c.tenant_id=m.tenant_id AND c.media_id=m.id AND c.revision=m.revision WHERE c.tenant_id=?1 AND c.run_id=?2 AND m.state='ready' ORDER BY c.ordinal")?.query_map(params![tenant,run],|r|r.get(0))?.collect::<std::result::Result<Vec<_>,_>>()?)
+    Ok(conn.prepare("SELECT m.bytes FROM media_objects m JOIN chat_media c ON c.tenant_id=m.tenant_id AND c.media_id=m.id AND c.revision=m.revision WHERE c.tenant_id=?1 AND c.run_id=?2 AND m.state='ready' AND m.filename IS NULL ORDER BY c.ordinal")?.query_map(params![tenant,run],|r|r.get(0))?.collect::<std::result::Result<Vec<_>,_>>()?)
 }
 impl Store {
     pub async fn media_begin(
@@ -152,6 +154,15 @@ impl Store {
         id: String,
         digest: [u8; 32],
     ) -> Result<UploadAdmission> {
+        self.attachment_begin(user, id, digest, None).await
+    }
+    pub(crate) async fn attachment_begin(
+        &self,
+        user: &UserContext,
+        id: String,
+        digest: [u8; 32],
+        file: Option<(String, String)>,
+    ) -> Result<UploadAdmission> {
         let user = user.clone();
         self.call(move|db|{
             let user=validate(&db.conn,&user,true,false)?;
@@ -159,16 +170,20 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let old:Option<UploadRow>=tx.query_row("SELECT state,input_digest,account_id,auth_epoch,session_digest FROM media_objects WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
             let existing=old.is_some();
+            if existing {
+                let name:Option<String>=tx.query_row("SELECT filename FROM media_objects WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,id],|r|r.get(0))?;
+                if name.as_deref()!=file.as_ref().map(|v|v.0.as_str()) {return Err(StoreError::Conflict)}
+            }
             if let Some((state,old,owner,epoch,session))=old {
                 if owner!=user.account.id || state=="deleted" || old.as_deref()!=Some(digest.as_slice()){return Err(StoreError::Conflict)}
                 if state=="ready" { return Ok(UploadAdmission::Ready(summary(&tx,&user.tenant.0,&id)?)); }
                 if state=="processing" && epoch==user.epoch && session.as_deref()==Some(user.digest.as_slice()) { return Err(StoreError::Busy); }
             }
-            let used:i64=tx.query_row("SELECT coalesce(sum(CASE WHEN state='processing' THEN 2228224 ELSE coalesce(length(bytes),0)+coalesce(length(thumbnail),0) END),0) FROM media_objects WHERE account_id=?1 AND id!=?2 AND state!='deleted'",params![user.account.id,id],|r|r.get(0))?;
+            let used:i64=tx.query_row("SELECT coalesce(sum(CASE WHEN state='processing' THEN 2228224 ELSE coalesce(length(bytes),0)+coalesce(length(thumbnail),0)+coalesce(length(CAST(extracted_text AS BLOB)),0) END),0) FROM media_objects WHERE account_id=?1 AND id!=?2 AND state!='deleted'",params![user.account.id,id],|r|r.get(0))?;
             let count:i64=tx.query_row("SELECT count(*) FROM media_objects WHERE account_id=?1",[&user.account.id],|r|r.get(0))?;
             if used+MAX_BYTES as i64+131072>QUOTA_BYTES as i64 || (!existing && count>=4096) { return Err(StoreError::Busy); }
             let nonce=Uuid::new_v4().to_string();
-            tx.execute("INSERT INTO media_objects(tenant_id,account_id,id,input_digest,state,nonce,auth_epoch,created_at,session_digest) VALUES(?1,?2,?3,?4,'processing',?5,?6,?7,?8) ON CONFLICT(tenant_id,id) DO UPDATE SET state='processing',nonce=?5,auth_epoch=?6,session_digest=?8",params![user.tenant.0,user.account.id,id,digest.as_slice(),nonce,user.epoch,now()?,user.digest.as_slice()])?;
+            tx.execute("INSERT INTO media_objects(tenant_id,account_id,id,input_digest,state,nonce,auth_epoch,created_at,session_digest,filename,media_type) VALUES(?1,?2,?3,?4,'processing',?5,?6,?7,?8,?9,?10) ON CONFLICT(tenant_id,id) DO UPDATE SET state='processing',nonce=?5,auth_epoch=?6,session_digest=?8",params![user.tenant.0,user.account.id,id,digest.as_slice(),nonce,user.epoch,now()?,user.digest.as_slice(),file.as_ref().map(|v|&v.0),file.as_ref().map(|v|&v.1)])?;
             tx.commit()?; Ok(UploadAdmission::Process(MediaUpload{user,id,nonce}))
         }).await
     }
@@ -182,7 +197,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let n=if let Some(image)=image {
                 let digest=format!("{:x}",Sha256::digest(&image.bytes));
-                tx.execute("UPDATE media_objects SET state='ready',nonce=NULL,digest=?5,width=?6,height=?7,bytes=?8,thumbnail=?9 WHERE tenant_id=?1 AND id=?2 AND nonce=?3 AND auth_epoch=?4 AND state='processing'",params![user.tenant.0,upload.id,upload.nonce,user.epoch,digest,image.width,image.height,image.bytes,image.thumbnail])?
+                tx.execute("UPDATE media_objects SET state='ready',nonce=NULL,digest=?5,width=?6,height=?7,bytes=?8,thumbnail=?9 WHERE tenant_id=?1 AND id=?2 AND nonce=?3 AND auth_epoch=?4 AND state='processing' AND filename IS NULL",params![user.tenant.0,upload.id,upload.nonce,user.epoch,digest,image.width,image.height,image.bytes,image.thumbnail])?
             }else{tx.execute("UPDATE media_objects SET state='retry_required',nonce=NULL WHERE tenant_id=?1 AND id=?2 AND nonce=?3 AND auth_epoch=?4 AND state='processing'",params![user.tenant.0,upload.id,upload.nonce,user.epoch])?};
             if n!=1{return Err(StoreError::Conflict)}
             let result=summary(&tx,&user.tenant.0,&upload.id)?;tx.commit()?;Ok(result)
@@ -193,7 +208,7 @@ impl Store {
         self.call(move|db|{
         let user=validate(&db.conn,&user,true,false)?;
         let items=db.conn.prepare(&format!("{SELECT} WHERE tenant_id=?1 AND account_id=?2 AND state!='deleted' ORDER BY created_at DESC,id LIMIT 128"))?.query_map(params![user.tenant.0,user.account.id],row)?.collect::<std::result::Result<Vec<_>,_>>()?;
-        let used_bytes=db.conn.query_row("SELECT coalesce(sum(coalesce(length(bytes),0)+coalesce(length(thumbnail),0)),0) FROM media_objects WHERE account_id=?1",[user.account.id],|r|r.get(0))?;
+        let used_bytes=db.conn.query_row("SELECT coalesce(sum(coalesce(length(bytes),0)+coalesce(length(thumbnail),0)+coalesce(length(CAST(extracted_text AS BLOB)),0)),0) FROM media_objects WHERE account_id=?1",[user.account.id],|r|r.get(0))?;
         Ok(MediaLibrary{items,used_bytes,quota_bytes:QUOTA_BYTES as u32})
     }).await
     }
@@ -206,7 +221,7 @@ impl Store {
         let user = user.clone();
         self.call(move|db|{
         let user=validate(&db.conn,&user,true,false)?;
-        db.conn.query_row(if thumbnail {"SELECT thumbnail FROM media_objects WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND state='ready'"}else{"SELECT bytes FROM media_objects WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND state='ready'"},params![user.tenant.0,user.account.id,id],|r|r.get(0)).optional()?.ok_or(StoreError::NotFound)
+        db.conn.query_row(if thumbnail {"SELECT thumbnail FROM media_objects WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND state='ready' AND filename IS NULL"}else{"SELECT bytes FROM media_objects WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND state='ready' AND filename IS NULL"},params![user.tenant.0,user.account.id,id],|r|r.get(0)).optional()?.ok_or(StoreError::NotFound)
     }).await
     }
     pub async fn delete_media(&self, user: &UserContext, id: String) -> Result<()> {

@@ -1245,3 +1245,10 @@ it("opens only the exact backend evidence revision from a chat reference",async(
   expect(test.calls.some(call=>call.path===`/knowledge/sources/${id}?revision=7`)).toBe(true);
   expect(window.location.pathname).toBe("/app/knowledge");
 });
+
+it("attaches an exact private file from the library and keeps its original refs through lost ACK retry",async()=>{
+ const user=userEvent.setup();const id="11111111-1111-4111-8111-111111111111";const original={id,revision:1,filename:"synthetic-receipt.json",media_type:"application/json",digest:"a".repeat(64),state:"ready",width:0,height:0,bytes:15,created_at:1};let attempts=0;
+ const test=fixture({extra:call=>{if(call.path==="/media")return response({items:[original],used_bytes:30,quota_bytes:67108864});if(call.path===`/files/${id}/preview`)return response('{"quantity":37}');},post:call=>{if(++attempts===1)return Promise.reject(new TypeError("Synthetic lost ACK"));const accepted={...turn({request_id:String(call.body?.request_id)},String(call.body?.text)),attachments:[original]};test.state.page={thread_id:thread.id,cursor:1,turns:[accepted],next_before:null};return response(accepted,201);}});
+ open();await ready(test.streams);await user.click(screen.getByText("내 이미지·파일 보관함"));await user.click(await screen.findByRole("button",{name:"대화에 첨부"}));await user.type(screen.getByLabelText("메시지"),"What is quantity in my exact selected file?");await user.click(screen.getByRole("button",{name:"메시지 전송"}));await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(1));await user.type(screen.getByLabelText("메시지"),"Next draft remains");
+ const retry=await screen.findByRole("button",{name:/같은 요청 다시 제출/});await user.click(retry);await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(2));expect(postCalls(test.calls)[0].body?.attachments).toEqual([{id,revision:1}]);expect(postCalls(test.calls)[1].body).toEqual(postCalls(test.calls)[0].body);expect(screen.getByLabelText("메시지")).toHaveValue("Next draft remains");expect(screen.getAllByText("synthetic-receipt.json").length).toBeGreaterThan(0);
+});

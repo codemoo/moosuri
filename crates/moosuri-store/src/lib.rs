@@ -27,6 +27,7 @@ mod knowledge;
 mod knowledge_journal;
 pub mod media;
 mod memory_commands;
+pub mod private_files;
 pub use agent_execution::{
     AgentClaim, AgentContext, AgentStepStatus, AgentToolSlot, KnowledgeToolInput,
     KnowledgeToolResult, PendingKnowledgeCall, PrivateCheckpoint, SourceExcerpt, StepLease,
@@ -180,7 +181,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 26;
+const CURRENT_SCHEMA_VERSION: i64 = 27;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -493,6 +494,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0026_calendar.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 27 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0027_private_files.sql"),
                 "COMMIT;"
             ))?;
         }

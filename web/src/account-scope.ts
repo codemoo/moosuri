@@ -31,7 +31,8 @@ export function useScope(expectedAccountId?: string, lifetime?: string | null) {
         blob: Blob,
         progress: (percent: number) => void,
         signal: AbortSignal,
-      ) => ref.current!.upload<T>(id, blob, progress, signal),
+        filename?: string,
+      ) => ref.current!.upload<T>(id, blob, progress, signal, filename),
       request: <T>(
         path: string,
         method?: string,

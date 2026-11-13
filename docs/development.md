@@ -1,16 +1,9 @@
 # Run the development preview
 
-This is a development preview, not the finished assistant. It supports real
-local accounts, session persistence, durable text conversations and an
-administrator user list/invitation flow. Shared provider setup, model discovery,
-synthetic verification and personal model/effort selection are available. Streaming,
-cancel/retry, saved history and observed usage are connected. Private text sources,
-lexical search and explicit memory editing are available. Tool-verified models can
-search/read that private knowledge in chat and apply explicit
-[remember/correct/forget requests](conversational-memory.md). [Public HTTP research](web-research.md)
-and [personal Gmail](mail.md) are connected; every email send requires final human
-approval. An optional [Linux Chromium capsule](browser-chat.md) reads rendered
-public pages after the operator verifies its deployment. [Browser workspaces](browser-workspaces.md) add watch, human login/control and same-page conversation continuation to that deployment. Bounded conversational and form-based [reminders](schedules.md) and opt-in [automatic memory](automatic-memory.md) are available. [Private image attachments](media.md) and exact sealed-current [restore](restore.md) are available. Automatic authenticated browser actions, scheduled model missions, general files/audio, the usable vault service/client and historical restore remain pending. Stopped encrypted [exports](backup.md) are available.
+Build and run the current development preview with the commands below. This is not
+an installer or a stable release. [Current status](status.md) is the canonical map
+of supported behavior, validation limits and remaining work. Every email send
+requires explicit approval of its final preview.
 
 Use Rust 1.89+ and Node.js 22.22+. Node is needed to build React, not to run the
 resulting server. SQLite is bundled. Build from a clean public checkout:

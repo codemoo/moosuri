@@ -144,7 +144,12 @@ fn cli_init_embedded_app_http_session_and_restart_work_together() {
     assert_eq!(html.status, 200);
     assert!(html.body.contains("<script"));
     assert!(html.headers.contains("default-src 'self'"));
-    for path in ["/app/knowledge", "/app/memory", "/settings/sources"] {
+    for path in [
+        "/app/knowledge",
+        "/app/memory",
+        "/settings/sources",
+        "/admin/google",
+    ] {
         let page = request(port, "GET", path, "", None);
         assert_eq!(page.status, 200);
         assert!(page.body.contains("<script"));

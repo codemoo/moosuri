@@ -278,7 +278,7 @@ fn read_password_file(path: &Path) -> Result<String, String> {
 }
 fn read_google_client_file(path: &Path) -> Result<String, String> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
@@ -295,8 +295,12 @@ fn read_google_client_file(path: &Path) -> Result<String, String> {
         return Err("google_client_file_must_be_owner_only_regular_and_small".into());
     }
     let mut bytes = String::new();
-    file.read_to_string(&mut bytes)
+    file.take(16385)
+        .read_to_string(&mut bytes)
         .map_err(|_| "google_client_file_unreadable")?;
+    if bytes.len() > 16384 {
+        return Err("google_client_file_too_large".into());
+    }
     Ok(bytes)
 }
 fn read_browser_capsule_file(path: &Path) -> Result<String, String> {
@@ -376,9 +380,9 @@ async fn shutdown_signal() {
 }
 async fn static_asset(uri: Uri) -> Response {
     let path = match uri.path() {
-        "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/settings/model"
-        | "/settings/mail" | "/settings/sources" | "/settings/usage" | "/app/knowledge"
-        | "/app/memory" | "/login" => "/index.html",
+        "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/admin/google"
+        | "/settings/model" | "/settings/mail" | "/settings/sources" | "/settings/usage"
+        | "/app/knowledge" | "/app/memory" | "/login" => "/index.html",
         other => other,
     };
     let Some((_, bytes)) = ASSETS.iter().find(|(name, _)| *name == path) else {

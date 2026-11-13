@@ -46,11 +46,13 @@ export function MailConnections({
   onExpired,
   back,
   originThreadId,
+  openGoogleSetup,
 }: {
   accountId: string;
   onExpired: () => void;
   back: () => void;
   originThreadId: string | null;
+  openGoogleSetup?: () => void;
 }) {
   const scope = useScope(accountId);
   const [connections, setConnections] = useState<Connections | null>(null);
@@ -283,10 +285,7 @@ export function MailConnections({
         <section className="admin-card">
           <h3>개인 연결</h3>
           {!connections.configured && (
-            <p>
-              관리자가 Gmail 연결 설정을 준비해야 합니다. 다른 기능은 계속
-              사용할 수 있습니다.
-            </p>
+            <div><p>{openGoogleSetup ? "설치의 Google 앱 설정을 먼저 준비하세요. 설정 후 각 회원이 자신의 계정으로 연결합니다." : "설치자에게 Google 연결 설정을 요청하세요. 준비가 끝나면 여기서 본인 Google 계정으로 로그인할 수 있습니다."} 다른 기능은 계속 사용할 수 있습니다.</p>{openGoogleSetup && <button onClick={openGoogleSetup}>Google 설치 설정 열기</button>}</div>
           )}
           <p>
             이 연결 토큰은 서버에서 관리합니다. 연결 해제는 새 작업을 막지만

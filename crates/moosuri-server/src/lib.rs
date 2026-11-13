@@ -1,6 +1,7 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
 mod browser;
 mod chat;
+mod google_setup;
 mod knowledge;
 mod mail;
 mod providers;
@@ -112,39 +113,17 @@ impl ServerConfig {
         let value = zeroize::Zeroizing::new(value);
         self.with_google_client_json(&value)
     }
-    /// Read by the operator from an owner-only file, never from an HTTP body.
+    /// Compatibility for operator-owned files; web imports use the same parser.
     pub fn with_google_client_json(mut self, bytes: &str) -> Result<Self, &'static str> {
-        #[derive(Deserialize)]
-        struct File {
-            web: Web,
-        }
-        #[derive(Deserialize)]
-        struct Web {
-            client_id: String,
-            client_secret: moosuri_connectors::gmail::SecretString,
-            redirect_uris: Vec<String>,
-        }
-        if bytes.len() > 16384 {
-            return Err("invalid_google_client_file");
-        }
-        let file: File = serde_json::from_str(bytes).map_err(|_| "invalid_google_client_file")?;
-        let redirect = format!("{}/api/v1/mail/oauth/callback", self.origin);
-        if !file.web.redirect_uris.contains(&redirect) {
-            return Err("google_redirect_uri_mismatch");
-        }
-        moosuri_connectors::gmail::GmailClient::authorization_url(
-            &file.web.client_id,
-            &redirect,
-            &"s".repeat(64),
-            &"v".repeat(64),
-        )
-        .map_err(|_| "invalid_google_client_file")?;
-        self.google = Some(Arc::new(moosuri_connectors::gmail::OAuthClient {
-            client_id: file.web.client_id,
-            client_secret: file.web.client_secret,
-            redirect_uri: redirect,
-        }));
+        let redirect = self.google_redirect_uri();
+        self.google = Some(Arc::new(
+            moosuri_connectors::gmail::OAuthClient::from_web_client_json(bytes, &redirect)
+                .map_err(google_setup::client_file_code)?,
+        ));
         Ok(self)
+    }
+    fn google_redirect_uri(&self) -> String {
+        format!("{}/api/v1/mail/oauth/callback", self.origin)
     }
     /// Configure public HTTP reading and optional fixed-provider search before Store admission.
     /// This is trusted operator configuration, not an HTTP or model capability switch.
@@ -184,11 +163,12 @@ impl ServerConfig {
         Store::open_with_web(path, profile)
     }
     pub fn start_runtime(&self, store: Store) -> moosuri_agent::Runtime {
-        moosuri_agent::Runtime::start_with_browser_tools(
+        moosuri_agent::Runtime::start_with_google_setup(
             store,
             self.google.clone(),
             self.web.clone(),
             self.browser.clone(),
+            self.google_redirect_uri(),
         )
     }
     pub fn with_trusted_proxy(
@@ -294,6 +274,7 @@ pub fn router_with_runtime(
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
         .nest("/api/v1/knowledge", knowledge::routes())
         .nest("/api/v1/mail", mail::routes())
+        .nest("/api/v1/admin/google", google_setup::routes())
         .nest("/api/v1/source-connections", source_connections::routes())
         .nest("/api/v1/source-ingest", source_connections::ingest_routes())
         .merge(browser::routes())
@@ -375,6 +356,12 @@ impl IntoResponse for HttpError {
             StoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             StoreError::Conflict | StoreError::AlreadyInitialized => {
                 (StatusCode::CONFLICT, "conflict")
+            }
+            StoreError::GoogleConnectionsInUse => {
+                (StatusCode::CONFLICT, "google_connections_in_use")
+            }
+            StoreError::GoogleAuthorizationInProgress => {
+                (StatusCode::CONFLICT, "google_authorization_in_progress")
             }
             StoreError::BudgetExhausted => (StatusCode::CONFLICT, "budget_exhausted"),
             StoreError::NotFound => (StatusCode::NOT_FOUND, "not_found"),

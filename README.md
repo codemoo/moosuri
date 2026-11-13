@@ -53,7 +53,9 @@ separate user environments. Linux is the deployment target; Tailscale-private an
 ordinary HTTPS self-hosting are supported design paths. PostgreSQL is future work.
 Account-owned Gmail/Slack collection and a generic custom HTTP ingest protocol are implemented.
 Each user opts into a bounded source scope and can inspect sync history and provenance
-in `/settings/sources`. Gmail requires the operator's OAuth app; Slack accepts a
+in `/settings/sources`. Gmail uses the operator's OAuth app, configured once in the
+[Google setup wizard](docs/mail.md) at `/admin/google`; every member grants their own
+Google account access. Slack accepts a
 personal user token. Synthetic Linux acceptance does not replace live-account setup.
 Kakao collection is privately operated and excluded from public packages; its data
 can use the custom protocol. [Scope and implementation tracking](docs/data-connections.md).

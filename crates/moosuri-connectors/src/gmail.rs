@@ -58,10 +58,56 @@ pub struct OAuthClient {
     pub redirect_uri: String,
 }
 impl OAuthClient {
+    /// Parse Google's downloaded web-client file. Endpoints in the file never
+    /// select network destinations; transport uses the fixed Google endpoints.
+    pub fn from_web_client_json(
+        bytes: &str,
+        redirect_uri: &str,
+    ) -> Result<Self, GoogleClientFileError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct File {
+            web: Web,
+        }
+        #[derive(Deserialize)]
+        struct Web {
+            client_id: String,
+            client_secret: SecretString,
+            redirect_uris: Vec<String>,
+        }
+        if bytes.len() > 16384 {
+            return Err(GoogleClientFileError::Invalid);
+        }
+        let file: File = serde_json::from_str(bytes).map_err(|_| GoogleClientFileError::Invalid)?;
+        if file.web.redirect_uris.is_empty()
+            || file.web.redirect_uris.len() > 32
+            || file.web.redirect_uris.iter().any(|uri| uri.len() > 2048)
+        {
+            return Err(GoogleClientFileError::Invalid);
+        }
+        if !file.web.redirect_uris.iter().any(|uri| uri == redirect_uri) {
+            return Err(GoogleClientFileError::RedirectMismatch);
+        }
+        let client = Self {
+            client_id: file.web.client_id,
+            client_secret: file.web.client_secret,
+            redirect_uri: redirect_uri.into(),
+        };
+        client
+            .validate()
+            .map_err(|_| GoogleClientFileError::Invalid)?;
+        Ok(client)
+    }
     fn validate(&self) -> Result<(), GmailError> {
         validate_atom(&self.client_id, 1024)?;
         validate_redirect(&self.redirect_uri)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoogleClientFileError {
+    Invalid,
+    RedirectMismatch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

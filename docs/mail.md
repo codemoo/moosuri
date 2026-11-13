@@ -15,15 +15,45 @@ Gmail 연결은 사용자별이다. 공용 LLM 설정과 분리하며, 관리자
 Google 연결 뒤 [자료 연결](data-connections.md)을 따로 설정하면 허용한 메일 범위를 자동 수집한다.
 연결 자체로 과거 메일 전체를 자동 수집하지 않는다.
 
-## 연결 준비
+## 설치 관리자 설정
 
-운영자가 Google Cloud에서 Gmail API와 OAuth **웹 애플리케이션** client를 준비한다.
-승인된 redirect URI는 정확히 `https://YOUR-HOST/api/v1/mail/oauth/callback`이다.
-로컬 개발은 명시적인 loopback HTTP origin에서만 가능하다. Google의 테스트 사용자,
-앱 검증과 계정 정책은 배포자가 자신의 설정에 맞게 적용한다.
+관리자로 로그인하고 **Google 앱 설정** (`/admin/google`)을 연다. 설치자는 한 번만
+준비하며 다른 회원은 자신의 계정 연결만 수행한다.
 
-Google에서 받은 client JSON은 저장소 밖의 소유자 전용 일반 파일에 보관한다.
-서비스 계정이 소유하고 권한은0600이어야 하며 symlink는 받지 않는다. 실행 예:
+1. Google Cloud 프로젝트에서 Gmail API를 사용 설정하고 OAuth 동의 화면을 구성한다.
+   가족·친구와 쓰는 External/Testing 앱이면 연결할 사람을 테스트 사용자로 추가한다.
+2. OAuth 클라이언트를 **웹 애플리케이션**으로 만든다. 마법사의 **콜백 주소 복사**로
+   얻은 주소를 승인된 리디렉션 URI에 정확히 등록한다. 주소는 서버의 `--origin`으로
+   결정하며 `https://YOUR-HOST/api/v1/mail/oauth/callback` 형식이다. 로컬 개발만
+   명시적인 loopback HTTP를 허용한다.
+3. 내려받은 웹 클라이언트 JSON을 마법사에서 선택하고 **파일과 콜백 확인**을 누른다.
+   16KiB까지 받으며 파일 형식·콜백 일치만 검사한다. 이 단계는 Google API 활성화,
+   동의 화면·테스트 사용자나 실제 secret의 유효성을 확인하지 않는다.
+4. **이 설치에 저장**하면 별도 설치 키로 secret을 암호화한다. 바로 연결에 사용할 수
+   있고 서버를 재시작해도 유지된다. secret은 응답이나 화면·브라우저 저장소에 남기지
+   않는다. 운영 환경의 파일 등록은 HTTPS에서만 사용한다.
+5. **내 Google 계정 연결**로 본인의 동의를 마친다. **내 연결 프로필 확인**은 본인
+   계정 주소만 확인한다. 메일 읽기·발송·자동 수집을 실행하지 않는다. 다른 회원의
+   메일 연결을 관리자가 대신 확인할 수 없다.
+
+Google 앱 생성·동의 화면·검증 정책은 설치자가 자신의 프로젝트에서 관리한다.
+[웹 서버 OAuth 안내](https://developers.google.com/identity/protocols/oauth2/web-server)처럼
+scheme·대소문자·마지막 슬래시까지 리디렉션 URI가 일치해야 한다. External 앱의
+Testing 상태에서 이 Gmail 권한으로 발급받은 갱신 토큰은
+[7일 후 만료된다](https://developers.google.com/identity/protocols/oauth2#expiration).
+계속 사용할 앱의 게시·검증 조건도 Google에서 확인한다.
+
+## 설정 변경과 운영자 파일
+
+같은 클라이언트 ID의 secret은 기존 개인 연결을 유지하며 교체할 수 있다. 진행 중인
+Google 로그인은 완료·취소되거나 만료(10분)될 때까지 설정 변경을 막는다. 다른 앱이나
+콜백으로 바꾸려면 기존 앱을 사용하는 개인 연결을 각 소유자가 해제해야 한다.
+다른 회원 연결이 있다는 이유로 그 회원의 주소나 토큰을 관리자에게 공개하지 않는다.
+늦은 토큰 갱신·오류·수집 결과는 변경된 설정에 반영하지 않으며 이미 모은 자료와
+checkpoint는 보존한다. 서버 origin을 바꾸면 콜백을 갱신하기 전 새 연결이 차단된다.
+
+파일을 사용하는 기존 운영 방식도 유지한다. Google JSON을 저장소 밖에 서비스 계정
+소유의0600 일반 파일로 두며 symlink는 받지 않는다.
 
 ```sh
 moosuri --data-dir /private/moosuri serve \
@@ -31,8 +61,12 @@ moosuri --data-dir /private/moosuri serve \
   --google-client-file /private/google-client.json
 ```
 
-client secret을 CLI 인자 값, 브라우저 설정 본문이나 Git에 넣지 않는다. 설정이 없으면
-메일 화면에 연결 준비가 필요하다고 표시하며 연결됐다고 가장하지 않는다.
+이 옵션이 있으면 **운영자 파일 모드**가 명시적으로 우선하며 웹 저장은 거절한다.
+파일을 바꾸려면 운영자가 파일을 교체하고 서버를 재시작한다. client secret을 CLI
+인자 값이나 Git에 넣지 않는다. 마법사의 입력 JSON은 인증한 관리자 요청으로만
+받으며 재노출하지 않는다. 파일 등록 성공을 실제 Google 연결 성공으로 표시하지 않는다.
+
+## 각 사용자의 Google 연결
 
 로그인한 사용자가 **메일 → Google 연결**에서 자신의 계정을 승인한다. 현재 요청하는
 scope는 `gmail.readonly`와 `gmail.send`다. 초안은 무수리에 저장하므로 Gmail 초안함을

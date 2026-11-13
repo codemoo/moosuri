@@ -20,6 +20,7 @@ import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
 import { MailConnections } from "./MailConnections";
+import { GoogleSetup } from "./GoogleSetup";
 import { SourceConnections } from "./SourceConnections";
 import { UsageView } from "./UsageView";
 import { KnowledgeView } from "./KnowledgeView";
@@ -677,7 +678,8 @@ function Workspace({
   const historyOpener = useRef<HTMLButtonElement>(null);
   const deleteOpener = useRef<HTMLButtonElement | null>(null);
   const admin =
-    path === "/admin" || path === "/admin/providers" || path === "/admin/usage";
+    path === "/admin" || path === "/admin/providers" || path === "/admin/usage" || path === "/admin/google";
+  const googleAdmin = path === "/admin/google";
   const adminUsage = path === "/admin/usage";
   const personalUsage = path === "/settings/usage";
   const knowledgePage = path === "/app/knowledge";
@@ -993,7 +995,9 @@ function Workspace({
                   ? "기억"
                   : "자료"
                 : admin
-                  ? adminUsage
+                  ? googleAdmin
+                    ? "Google 연결 설정"
+                    : adminUsage
                     ? "계정별 사용량"
                     : providerAdmin
                       ? "모델 연결"
@@ -1028,7 +1032,7 @@ function Workspace({
         {admin && allowedAdmin && (
           <nav className="settings-tabs" aria-label="설치 관리">
             <button
-              aria-current={!providerAdmin && !adminUsage ? "page" : undefined}
+              aria-current={!providerAdmin && !adminUsage && !googleAdmin ? "page" : undefined}
               onClick={() => navigate("/admin")}
             >
               사용자
@@ -1045,11 +1049,14 @@ function Workspace({
             >
               사용량
             </button>
+            <button aria-current={googleAdmin ? "page" : undefined} onClick={() => navigate("/admin/google")}>
+              Google 연결
+            </button>
           </nav>
         )}
         {personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
-        ) : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected}/> : knowledgeOpen ? (
+        ) : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => navigate("/admin/google") : undefined}/> : knowledgeOpen ? (
           <KnowledgeView
             accountId={session.user.id}
             mode={memoryPage ? "memory" : "source"}
@@ -1068,7 +1075,9 @@ function Workspace({
           />
         ) : admin ? (
           allowedAdmin ? (
-            adminUsage ? (
+            googleAdmin ? (
+              <GoogleSetup accountId={session.user.id} onExpired={onExpired} />
+            ) : adminUsage ? (
               <UsageView
                 accountId={session.user.id}
                 admin

@@ -478,3 +478,60 @@ fn additional_mixed_inline_sections_are_explicitly_incomplete() {
         "the first section must not masquerade as the complete email"
     );
 }
+
+#[test]
+fn downloaded_web_client_requires_exact_callback_and_never_selects_endpoints() {
+    let redirect = "https://assistant.example.test/api/v1/mail/oauth/callback";
+    let file = serde_json::json!({"web":{
+        "client_id":"synthetic.apps.googleusercontent.com","client_secret":"synthetic-setup-secret",
+        "redirect_uris":[redirect],"auth_uri":"https://attacker.example/authorize",
+        "token_uri":"https://attacker.example/token","project_id":"synthetic-project"
+    }});
+    let client = OAuthClient::from_web_client_json(&file.to_string(), redirect).unwrap();
+    let auth = GmailClient::authorization_url(
+        &client.client_id,
+        &client.redirect_uri,
+        &"s".repeat(64),
+        &"v".repeat(64),
+    )
+    .unwrap();
+    let auth = url::Url::parse(&auth).unwrap();
+    assert_eq!(
+        auth.origin().ascii_serialization(),
+        "https://accounts.google.com"
+    );
+    assert_eq!(
+        auth.query_pairs()
+            .find(|(key, _)| key == "redirect_uri")
+            .unwrap()
+            .1,
+        redirect
+    );
+    assert!(!auth.as_str().contains("synthetic-setup-secret"));
+    assert!(matches!(
+        OAuthClient::from_web_client_json(&file.to_string(), &format!("{redirect}/")),
+        Err(GoogleClientFileError::RedirectMismatch)
+    ));
+    assert!(matches!(
+        OAuthClient::from_web_client_json(
+            &file.to_string(),
+            "https://other.example.test/api/v1/mail/oauth/callback"
+        ),
+        Err(GoogleClientFileError::RedirectMismatch)
+    ));
+}
+
+#[test]
+fn downloaded_client_rejects_other_credential_types_and_bounded_bad_inputs() {
+    let redirect = "http://127.0.0.1:3210/api/v1/mail/oauth/callback";
+    for file in ["{}".to_owned(), "not-json secret-canary".into(), " ".repeat(16385),
+        serde_json::json!({"installed":{"client_id":"synthetic","client_secret":"secret-canary","redirect_uris":[redirect]}}).to_string(),
+        serde_json::json!({"type":"service_account","private_key":"secret-canary"}).to_string(),
+        serde_json::json!({"web":{"client_id":"synthetic","client_secret":"secret\ncanary","redirect_uris":[redirect]}}).to_string(),
+        serde_json::json!({"web":{"client_id":"synthetic","client_secret":"secret-canary","redirect_uris":[redirect]},"installed":{}}).to_string(),
+    ] {
+        assert!(matches!(OAuthClient::from_web_client_json(&file, redirect),Err(GoogleClientFileError::Invalid)));
+    }
+    let good=serde_json::json!({"web":{"client_id":"synthetic","client_secret":"secret-canary","redirect_uris":[redirect]}}).to_string();
+    assert!(OAuthClient::from_web_client_json(&good, redirect).is_ok());
+}

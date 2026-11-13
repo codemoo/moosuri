@@ -32,7 +32,9 @@ let requests: {
   body: any;
   account: string | null;
 }[];
+let configured = true;
 beforeEach(() => {
+  configured = true;
   requests = [];
   action = structuredClone(fixture);
   window.history.replaceState(null, "", "/settings/mail");
@@ -50,7 +52,7 @@ beforeEach(() => {
       });
       if (path.endsWith("/connections"))
         return Response.json({
-          configured: true,
+          configured,
           connections: [
             {
               id: "c1",
@@ -90,6 +92,20 @@ beforeEach(() => {
       throw new Error(`Unexpected fixture route ${method} ${path}`);
     }),
   );
+});
+it("unconfigured Gmail takes an installer to setup while members ask their installer", async () => {
+  configured = false;
+  const user = userEvent.setup();
+  const openGoogleSetup = vi.fn();
+  const view = render(<MailConnections accountId="owner" onExpired={vi.fn()} back={vi.fn()} originThreadId={null} openGoogleSetup={openGoogleSetup} />);
+  await user.click(await screen.findByRole("button", { name: "Google 설치 설정 열기" }));
+  expect(openGoogleSetup).toHaveBeenCalledOnce();
+  view.unmount();
+  render(<MailConnections accountId="member" onExpired={vi.fn()} back={vi.fn()} originThreadId={null} />);
+  await screen.findByText(/설치자에게 Google 연결 설정을 요청하세요/);
+  expect(screen.queryByRole("button", { name: "Google 설치 설정 열기" })).toBeNull();
+  expect(screen.queryByText(/Google Cloud/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Google 계정 연결" })).toBeDisabled();
 });
 it("shows every recipient and entire body; only human click sends approval with immutable identity", async () => {
   const user = userEvent.setup();

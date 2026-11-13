@@ -3,8 +3,8 @@ use moosuri_connectors::gmail::{GmailClient, GmailError, OAuthClient};
 use moosuri_connectors::model::CancellationToken;
 use moosuri_core::{ExternalToolRequest, MailToolRequest};
 use moosuri_store::{
-    ExternalToolPermit, KnowledgeToolResult, MailBinding, MailDispatch, Store, StoreError,
-    ToolReadError, UserContext,
+    ExternalToolPermit, GoogleApp, GoogleAppPin, KnowledgeToolResult, MailBinding, MailDispatch,
+    Store, StoreError, ToolReadError, UserContext,
 };
 use std::{
     collections::HashMap,
@@ -18,6 +18,7 @@ pub struct MailService {
     store: Store,
     client: GmailClient,
     oauth: Option<Arc<OAuthClient>>,
+    managed_redirect: Option<String>,
     locks: MailLocks,
     signals: crate::Signals,
 }
@@ -31,15 +32,35 @@ impl MailService {
             store,
             client: GmailClient::google(),
             oauth,
+            managed_redirect: None,
             locks: Arc::new(Mutex::new(HashMap::new())),
             signals,
         }
     }
-    pub fn configured(&self) -> bool {
-        self.oauth.is_some()
+    pub(crate) fn with_managed_google(mut self, redirect_uri: Option<String>) -> Self {
+        self.managed_redirect = redirect_uri;
+        self
     }
-    pub fn oauth_client(&self) -> Option<&OAuthClient> {
-        self.oauth.as_deref()
+    pub async fn configured(&self) -> bool {
+        matches!(self.oauth_client().await, Ok(Some(_)))
+    }
+    /// Resolve one immutable configuration per operation. The writer checks its
+    /// pin again before any OAuth/refresh success or failure can mutate state.
+    pub async fn oauth_client(&self) -> Result<Option<GoogleApp>, StoreError> {
+        if let Some(client) = &self.oauth {
+            return Ok(Some(GoogleApp {
+                client: client.clone(),
+                pin: GoogleAppPin {
+                    revision: None,
+                    client_id: client.client_id.clone(),
+                    redirect_uri: client.redirect_uri.clone(),
+                },
+            }));
+        }
+        match &self.managed_redirect {
+            Some(redirect) => self.store.google_app(redirect.clone()).await,
+            None => Ok(None),
+        }
     }
     pub fn client(&self) -> &GmailClient {
         &self.client
@@ -70,15 +91,19 @@ impl MailService {
         cancel: &CancellationToken,
         dispatch: Option<&MailDispatch>,
     ) -> Result<MailBinding, StoreError> {
+        let app = self.oauth_client().await?.ok_or(StoreError::Unavailable)?;
+        binding = self
+            .store
+            .pin_mail_binding(binding, app.pin.clone())
+            .await?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| StoreError::Unavailable)?
             .as_secs() as i64;
         if binding.expires_at <= now + 60 {
-            let oauth = self.oauth.as_ref().ok_or(StoreError::Unavailable)?;
             let tokens = match self
                 .client
-                .refresh(oauth, &binding.refresh_token, cancel)
+                .refresh(&app.client, &binding.refresh_token, cancel)
                 .await
             {
                 Ok(tokens) => tokens,
@@ -97,6 +122,7 @@ impl MailService {
                     .mail_binding(binding.user(), binding.id.clone())
                     .await?
             };
+            binding = self.store.pin_mail_binding(binding, app.pin).await?;
         }
         Ok(binding)
     }
@@ -118,20 +144,26 @@ impl MailService {
         cap: &moosuri_store::SourceIngestCapability,
         cancel: &CancellationToken,
     ) -> Result<moosuri_store::SourceGmailCredentials, StoreError> {
-        let first = self.store.source_mail_credentials(cap).await?;
+        let app = self.oauth_client().await?.ok_or(StoreError::Unavailable)?;
+        let first = self
+            .store
+            .source_mail_credentials_with_app(cap, app.pin.clone())
+            .await?;
         let lock = self.lock(&first.mail_connection_id).await;
         drop(first);
         let _guard = lock.lock().await;
-        let mut credentials = self.store.source_mail_credentials(cap).await?;
+        let mut credentials = self
+            .store
+            .source_mail_credentials_with_app(cap, app.pin.clone())
+            .await?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| StoreError::Unavailable)?
             .as_secs() as i64;
         if credentials.expires_at <= now + 60 {
-            let client = self.oauth.as_ref().ok_or(StoreError::Unavailable)?;
             let tokens = self
                 .client
-                .refresh(client, &credentials.refresh_token, cancel)
+                .refresh(&app.client, &credentials.refresh_token, cancel)
                 .await
                 .map_err(|error| {
                     if matches!(error, GmailError::Http(400 | 401 | 403)) {
@@ -141,9 +173,17 @@ impl MailService {
                     }
                 })?;
             self.store
-                .save_source_mail_refresh(cap, credentials.revision, tokens)
+                .save_source_mail_refresh_with_app(
+                    cap,
+                    credentials.revision,
+                    tokens,
+                    app.pin.clone(),
+                )
                 .await?;
-            credentials = self.store.source_mail_credentials(cap).await?;
+            credentials = self
+                .store
+                .source_mail_credentials_with_app(cap, app.pin)
+                .await?;
         }
         Ok(credentials)
     }
@@ -237,7 +277,7 @@ impl MailService {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {_ =stop.cancelled()=>break,_=tick.tick()=>{}}
-            if !self.configured() {
+            if !self.configured().await {
                 continue;
             }
             if let Ok(Some(dispatch)) = self.store.next_mail_dispatch().await {

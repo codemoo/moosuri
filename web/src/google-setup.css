@@ -1,0 +1,22 @@
+.google-setup-scroll { flex: 1; min-height: 0; overflow: auto; padding: 28px; display: flex; flex-direction: column; gap: 18px; max-width: 100%; }
+.google-setup-intro, .google-setup-step { width: 100%; max-width: 900px; box-sizing: border-box; }
+.google-setup-intro h2 { margin: 8px 0 12px; }
+.google-setup-intro p, .google-setup-step p, .google-setup-step li { line-height: 1.7; }
+.google-setup-step { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
+.google-setup-step h3, .google-setup-step p { margin: 0; }
+.google-setup-step ol { padding-left: 24px; margin: 0; }
+.google-setup-step li + li { margin-top: 10px; }
+.google-setup-step label { width: 100%; display: grid; gap: 8px; }
+.google-setup-step input, .google-setup-step select { width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px; }
+.google-setup-step input[type=file] { white-space: normal; padding: 10px; }
+.google-setup-step button, .google-setup-scroll > button { min-height: 44px; max-width: 100%; white-space: normal; }
+.google-setup-step summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.google-setup-step details { width: 100%; }
+.google-setup-step a, .google-setup-step dd, .google-client-id, .google-setup-success { overflow-wrap: anywhere; }
+.google-setup-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.google-local-result { width: 100%; min-width: 0; border-left: 3px solid #b6a77e; padding-left: 14px; box-sizing: border-box; }
+.google-local-result dl { margin-bottom: 0; }
+.google-local-result dt { font-size: .85rem; margin-top: 8px; }
+.google-local-result dd { margin: 4px 0 0; }
+.google-setup-success { color: #385747; background: #eef3ec; border-radius: 10px; padding: 12px 16px; }
+@media (max-width: 600px) { .google-setup-scroll { padding: 16px; gap: 14px; } .google-setup-actions { width: 100%; } .google-setup-actions button { flex: 1 1 150px; } }

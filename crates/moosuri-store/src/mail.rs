@@ -80,6 +80,7 @@ pub struct MailOAuthExchange {
     pub verifier: SecretString,
     user: UserContext,
     state: Vec<u8>,
+    app: Option<GoogleAppPin>,
 }
 
 /// Trusted application carrier. Never Debug/Serialize or pass to the model.
@@ -94,6 +95,7 @@ pub struct MailBinding {
     user: UserContext,
     scopes: Vec<String>,
     dispatch: Option<(String, Vec<u8>)>,
+    app: Option<GoogleAppPin>,
 }
 
 impl MailBinding {
@@ -158,6 +160,7 @@ fn binding(conn: &Connection, key: &[u8; 32], user: &UserContext, id: &str) -> R
         user: user.clone(),
         scopes: parse(&scopes)?,
         dispatch: None,
+        app: None,
     })
 }
 
@@ -273,10 +276,28 @@ impl Store {
     }
 
     pub async fn start_mail_oauth(&self, user: &UserContext) -> Result<MailOAuthStart> {
-        let user = user.clone();
+        self.start_mail_oauth_inner(user, None, false).await
+    }
 
+    pub async fn start_mail_oauth_with_app(
+        &self,
+        user: &UserContext,
+        pin: GoogleAppPin,
+        setup_return: bool,
+    ) -> Result<MailOAuthStart> {
+        self.start_mail_oauth_inner(user, Some(pin), setup_return)
+            .await
+    }
+    async fn start_mail_oauth_inner(
+        &self,
+        user: &UserContext,
+        pin: Option<GoogleAppPin>,
+        setup_return: bool,
+    ) -> Result<MailOAuthStart> {
+        let user = user.clone();
         self.call(move|db|{
             validate(&db.conn,&user,true,false)?;
+            if let Some(pin)=&pin {google_setup::guard_app(&db.conn,pin)?;}
             db.conn.execute("DELETE FROM mail_oauth_sessions WHERE expires_at<?1",[now()?])?;
             if db.conn.query_row("SELECT count(*) FROM mail_oauth_sessions WHERE tenant_id=?1",[&user.tenant.0],|r|r.get::<_,i64>(0))?>=8{
                 return Err(StoreError::Busy)}
@@ -284,7 +305,7 @@ impl Store {
             let verifier=Zeroizing::new(random()?);
             let digest=hash(&state);
             let cipher=providers::encrypt(&db.provider_key,verifier.as_bytes(),&oauth_aad(&digest,"verifier"))?;
-            db.conn.execute("INSERT INTO mail_oauth_sessions(state_hash,tenant_id,account_id,session_digest,auth_epoch,expires_at,verifier) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![digest,user.tenant.0,user.account.id,user.digest.as_slice(),user.epoch,now()?+600,cipher])?;
+            db.conn.execute("INSERT INTO mail_oauth_sessions(state_hash,tenant_id,account_id,session_digest,auth_epoch,expires_at,verifier,app_revision,client_id,redirect_uri,setup_return) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![digest,user.tenant.0,user.account.id,user.digest.as_slice(),user.epoch,now()?+600,cipher,pin.as_ref().and_then(|p|p.revision),pin.as_ref().map(|p|&p.client_id),pin.as_ref().map(|p|&p.redirect_uri),setup_return])?;
             Ok(MailOAuthStart{
                 state,verifier}
             )}
@@ -294,6 +315,15 @@ impl Store {
     /// Unauthenticated GET callback authority is the unguessable, unexpired one-use
     /// state. This stores no token and never activates a connection.
     pub async fn capture_mail_oauth(&self, state: String, code: SecretString) -> Result<String> {
+        self.capture_mail_oauth_with_return(state, code)
+            .await
+            .map(|r| r.0)
+    }
+    pub async fn capture_mail_oauth_with_return(
+        &self,
+        state: String,
+        code: SecretString,
+    ) -> Result<(String, bool)> {
         if state.len() != 64 {
             return Err(StoreError::InvalidInput);
         }
@@ -304,7 +334,8 @@ impl Store {
             let cipher=providers::encrypt(&db.provider_key,code.expose().as_bytes(),&oauth_aad(&digest,"code"))?;
             if db.conn.execute("UPDATE mail_oauth_sessions SET code=?2,result_hash=?3 WHERE state_hash=?1 AND expires_at>?4 AND code IS NULL AND claimed=0",params![digest,cipher,hash(&handle),now()?])?!=1{
                 return Err(StoreError::Conflict)}
-            Ok(handle)}
+            let setup_return=db.conn.query_row("SELECT setup_return FROM mail_oauth_sessions WHERE state_hash=?1",[digest],|r|r.get::<_,bool>(0))?;
+            Ok((handle,setup_return))}
         ).await
     }
 
@@ -313,17 +344,39 @@ impl Store {
         user: &UserContext,
         handle: String,
     ) -> Result<MailOAuthExchange> {
+        self.claim_mail_oauth_inner(user, handle, None).await
+    }
+    pub async fn claim_mail_oauth_with_app(
+        &self,
+        user: &UserContext,
+        handle: String,
+        pin: GoogleAppPin,
+    ) -> Result<MailOAuthExchange> {
+        self.claim_mail_oauth_inner(user, handle, Some(pin)).await
+    }
+    async fn claim_mail_oauth_inner(
+        &self,
+        user: &UserContext,
+        handle: String,
+        pin: Option<GoogleAppPin>,
+    ) -> Result<MailOAuthExchange> {
         let user = user.clone();
 
         self.call(move|db|{
             validate(&db.conn,&user,true,false)?;
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let(state,code,verifier):(Vec<u8>,Vec<u8>,Vec<u8>)=tx.query_row("SELECT state_hash,code,verifier FROM mail_oauth_sessions WHERE result_hash=?1 AND tenant_id=?2 AND account_id=?3 AND session_digest=?4 AND auth_epoch=?5 AND expires_at>?6 AND claimed=0 AND code IS NOT NULL",params![hash(&handle),user.tenant.0,user.account.id,user.digest.as_slice(),user.epoch,now()?],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::Conflict)?;
+            let saved:(Option<i64>,Option<String>,Option<String>)=tx.query_row("SELECT app_revision,client_id,redirect_uri FROM mail_oauth_sessions WHERE state_hash=?1",[&state],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            match &pin {
+                Some(p) if saved==(p.revision,Some(p.client_id.clone()),Some(p.redirect_uri.clone()))=>google_setup::guard_app(&tx,p)?,
+                None if saved==(None,None,None)=>(),
+                _=>return Err(StoreError::Conflict),
+            }
             let decode=|bytes:&[u8],purpose:&str|->Result<SecretString>{
                 let plain=providers::decrypt(&db.provider_key,bytes,&oauth_aad(&state,purpose))?;
                 SecretString::new(String::from_utf8(plain.to_vec()).map_err(|_|StoreError::Corrupt)?).map_err(|_|StoreError::Corrupt)};
             let result=MailOAuthExchange{
-                code:decode(&code,"code")?,verifier:decode(&verifier,"verifier")?,user,state:state.clone()};
+                code:decode(&code,"code")?,verifier:decode(&verifier,"verifier")?,user,state:state.clone(),app:pin};
             tx.execute("UPDATE mail_oauth_sessions SET claimed=1,code=NULL,verifier=NULL WHERE state_hash=?1",[state])?;
             tx.commit()?;
             Ok(result)}
@@ -340,6 +393,7 @@ impl Store {
             let user=validate(&db.conn,&exchange.user,true,false)?;
             if !db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_oauth_sessions WHERE state_hash=?1 AND claimed=1 AND expires_at>?2)",params![exchange.state,now()?],|r|r.get::<_,bool>(0))?{
                 return Err(StoreError::Conflict)}
+            if let Some(pin)=&exchange.app {google_setup::guard_app(&db.conn,pin)?;}
             let scopes=tokens.scopes.unwrap_or_else(||moosuri_connectors::gmail::MINIMAL_SCOPES.iter().map(|s|s.to_string()).collect());
             if moosuri_connectors::gmail::MINIMAL_SCOPES.iter().any(|s|!scopes.iter().any(|v|v==s)){
                 return Err(StoreError::Forbidden)}
@@ -350,12 +404,59 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             if tx.query_row("SELECT count(*) FROM mail_connections WHERE tenant_id=?1 AND status='active'",[&user.tenant.0],|r|r.get::<_,i64>(0))?>=8{
                 return Err(StoreError::Busy)}
-            tx.execute("INSERT INTO mail_connections(tenant_id,account_id,id,email,epoch,credential_revision,status,credential,expires_at,scopes) VALUES(?1,?2,?3,?4,1,1,'active',?5,?6,?7)",params![user.tenant.0,user.account.id,id,email,cipher,now()?+tokens.expires_in as i64,json(&scopes)?])?;
+            tx.execute("INSERT INTO mail_connections(tenant_id,account_id,id,email,epoch,credential_revision,status,credential,expires_at,scopes,oauth_client_id) VALUES(?1,?2,?3,?4,1,1,'active',?5,?6,?7,?8)",params![user.tenant.0,user.account.id,id,email,cipher,now()?+tokens.expires_in as i64,json(&scopes)?,exchange.app.as_ref().map(|p|&p.client_id)])?;
             tx.execute("DELETE FROM mail_oauth_sessions WHERE state_hash=?1",[exchange.state])?;
             let c=connection(&tx,&user,&id)?;
             tx.commit()?;
             Ok(c)}
         ).await
+    }
+
+    pub async fn cancel_mail_oauth_state(&self, state: String) -> Result<bool> {
+        if state.len() != 64 {
+            return Ok(false);
+        }
+        self.call(move|db|{
+            let digest=hash(&state);
+            let trusted=db.conn.query_row("SELECT setup_return FROM mail_oauth_sessions WHERE state_hash=?1 AND expires_at>?2 AND claimed=0",params![digest,now()?],|r|r.get::<_,bool>(0)).optional()?.unwrap_or(false);
+            db.conn.execute("DELETE FROM mail_oauth_sessions WHERE state_hash=?1 AND claimed=0",[digest])?;
+            Ok(trusted)
+        }).await
+    }
+    pub async fn cancel_mail_oauth_exchange(&self, exchange: &MailOAuthExchange) -> Result<()> {
+        let state = exchange.state.clone();
+        self.call(move |db| {
+            db.conn.execute(
+                "DELETE FROM mail_oauth_sessions WHERE state_hash=?1 AND claimed=1",
+                [state],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+    pub async fn pin_mail_binding(
+        &self,
+        mut binding: MailBinding,
+        pin: GoogleAppPin,
+    ) -> Result<MailBinding> {
+        self.call(move |db| {
+            google_setup::guard_mail_app(&db.conn, &binding.user.tenant.0, &binding.id, &pin)?;
+            let current = connection(&db.conn, &binding.user, &binding.id)?;
+            let revision: i64 = db.conn.query_row(
+                "SELECT credential_revision FROM mail_connections WHERE tenant_id=?1 AND id=?2",
+                params![binding.user.tenant.0, binding.id],
+                |r| r.get(0),
+            )?;
+            if current.status != "active"
+                || current.epoch != binding.epoch
+                || revision != binding.revision
+            {
+                return Err(StoreError::Conflict);
+            }
+            binding.app = Some(pin);
+            Ok(binding)
+        })
+        .await
     }
 
     pub async fn mail_binding(&self, user: &UserContext, id: String) -> Result<MailBinding> {
@@ -373,6 +474,7 @@ impl Store {
         let user = old.user.clone();
 
         let dispatch = old.dispatch.clone();
+        let app = old.app.clone();
 
         let id = old.id.clone();
 
@@ -393,6 +495,7 @@ impl Store {
         );
 
         self.call(move|db|{
+            if let Some(pin)=&app {google_setup::guard_mail_app(&db.conn,&user.tenant.0,&id,pin)?;}
             if let Some((action,nonce))=dispatch{
                 if !db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_actions a JOIN accounts u ON u.tenant_id=a.tenant_id AND u.id=a.account_id WHERE a.tenant_id=?1 AND a.id=?2 AND a.dispatch_nonce=?3 AND a.state='dispatch_committed' AND u.auth_epoch=a.auth_epoch AND u.recovery_required=0)",params![user.tenant.0,action,nonce],|r|r.get::<_,bool>(0))?{
                     return Err(StoreError::Conflict)}
@@ -412,6 +515,7 @@ impl Store {
 
     pub async fn mark_mail_needs_reconnect(&self, old: &MailBinding) -> Result<()> {
         let user = old.user.clone();
+        let app = old.app.clone();
 
         let id = old.id.clone();
 
@@ -421,6 +525,7 @@ impl Store {
 
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if let Some(pin)=&app {google_setup::guard_mail_app(&tx,&user.tenant.0,&id,pin)?;}
             if tx.execute("UPDATE mail_connections SET status='needs_reconnect',epoch=epoch+1,credential_revision=credential_revision+1,credential=NULL WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND credential_revision=?4 AND epoch=?5 AND status='active' AND EXISTS(SELECT 1 FROM accounts WHERE tenant_id=?1 AND id=?2 AND auth_epoch=?6 AND recovery_required=0)",params![user.tenant.0,user.account.id,id,revision,epoch,user.epoch])?!=1{
                 return Err(StoreError::Conflict)}
             tx.execute("UPDATE mail_actions SET version=version+1,state='cancelled',content=NULL,raw=NULL WHERE tenant_id=?1 AND connection_id=?2 AND state IN('pending_approval','approved')",params![user.tenant.0,id])?;

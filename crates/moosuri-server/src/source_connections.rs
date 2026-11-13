@@ -134,7 +134,7 @@ fn read_error(error: ReadError) -> HttpError {
 }
 async fn list(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     let user = current(&s, &headers).await?;
-    Ok(Json(serde_json::json!({"connections":s.store.source_connections(&user).await?,"gmail_configured":s.mail.configured()})).into_response())
+    Ok(Json(serde_json::json!({"connections":s.store.source_connections(&user).await?,"gmail_configured":s.mail.configured().await})).into_response())
 }
 async fn detail(
     State(s): State<AppState>,
@@ -180,7 +180,7 @@ async fn create(
             after_unix,
             poll_interval_seconds,
         } => {
-            if !s.mail.configured() {
+            if !s.mail.configured().await {
                 return Ok(failure(StatusCode::CONFLICT, "gmail_setup_required"));
             }
             let binding = s.mail.binding(&user, &mail_connection_id, &cancel).await?;

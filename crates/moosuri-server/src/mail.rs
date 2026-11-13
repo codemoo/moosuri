@@ -54,7 +54,7 @@ pub(super) fn routes() -> Router<AppState> {
 async fn connections(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     let u = current(&s, &headers).await?;
     Ok(Json(MailConnections {
-        configured: s.mail.configured(),
+        configured: s.mail.configured().await,
         connections: s.store.mail_connections(&u).await?,
     })
     .into_response())
@@ -73,14 +73,34 @@ async fn disconnect(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 async fn start(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
-    let u = current(&s, &headers).await?;
-    let Some(client) = s.mail.oauth_client() else {
-        return Ok(failure(StatusCode::CONFLICT, "gmail_setup_required"));
+    let user = current(&s, &headers).await?;
+    start_for(&s, &user, false).await
+}
+pub(super) async fn start_for(s: &AppState, user: &UserContext, setup_return: bool) -> HttpResult {
+    let app = match s.mail.oauth_client().await {
+        Ok(Some(app)) => app,
+        Ok(None) => {
+            return Ok(failure(
+                StatusCode::CONFLICT,
+                if setup_return {
+                    "google_setup_required"
+                } else {
+                    "gmail_setup_required"
+                },
+            ));
+        }
+        Err(StoreError::Conflict) => {
+            return Ok(failure(StatusCode::CONFLICT, "google_origin_changed"));
+        }
+        Err(error) => return Err(error.into()),
     };
-    let start = s.store.start_mail_oauth(&u).await?;
+    let start = s
+        .store
+        .start_mail_oauth_with_app(user, app.pin, setup_return)
+        .await?;
     let url = GmailClient::authorization_url(
-        &client.client_id,
-        &client.redirect_uri,
+        &app.client.client_id,
+        &app.client.redirect_uri,
         &start.state,
         &start.verifier,
     )
@@ -88,47 +108,88 @@ async fn start(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     Ok(Json(serde_json::json!({"authorization_url":url})).into_response())
 }
 async fn callback(State(s): State<AppState>, Query(input): Query<Callback>) -> HttpResult {
-    if !s.mail.configured() {
-        return Ok(failure(StatusCode::CONFLICT, "gmail_setup_required"));
-    }
     let _ = (input.scope, input.authuser, input.prompt);
     if input.error.is_some() {
-        return Ok(
-            axum::response::Redirect::to("/settings/mail?oauth_error=denied").into_response(),
-        );
+        let setup = s.store.cancel_mail_oauth_state(input.state).await?;
+        let path = if setup {
+            "/admin/google?oauth_error=denied"
+        } else {
+            "/settings/mail?oauth_error=denied"
+        };
+        return Ok(axum::response::Redirect::to(path).into_response());
     }
     let code = SecretString::new(input.code.ok_or(StoreError::InvalidInput)?)
         .map_err(|_| HttpError(StoreError::InvalidInput))?;
-    let handle = s.store.capture_mail_oauth(input.state, code).await?;
-    Ok(axum::response::Redirect::to(&format!("/settings/mail?oauth={handle}")).into_response())
+    let (handle, setup) = s
+        .store
+        .capture_mail_oauth_with_return(input.state, code)
+        .await?;
+    let path = if setup {
+        "/admin/google"
+    } else {
+        "/settings/mail"
+    };
+    Ok(axum::response::Redirect::to(&format!("{path}?oauth={handle}")).into_response())
 }
 async fn complete(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(input): Json<Handle>,
 ) -> HttpResult {
-    let u = current(&s, &headers).await?;
-    let Some(client) = s.mail.oauth_client() else {
-        return Ok(failure(StatusCode::CONFLICT, "gmail_setup_required"));
+    let user = current(&s, &headers).await?;
+    let Some(app) = s.mail.oauth_client().await? else {
+        return Ok(failure(StatusCode::CONFLICT, "google_setup_required"));
     };
-    let exchange = s.store.claim_mail_oauth(&u, input.handle).await?;
-    let tokens = s
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    let exchange = s
+        .store
+        .claim_mail_oauth_with_app(&user, input.handle, app.pin)
+        .await?;
+    let cancel = CancellationToken::new();
+    let tokens = match s
         .mail
         .client()
-        .exchange_code(
-            client,
-            &exchange.code,
-            &exchange.verifier,
-            &CancellationToken::new(),
-        )
+        .exchange_code(&app.client, &exchange.code, &exchange.verifier, &cancel)
         .await
-        .map_err(|_| HttpError(StoreError::Unavailable))?;
-    let profile = s
-        .mail
-        .client()
-        .profile(&tokens.access_token, &CancellationToken::new())
-        .await
-        .map_err(|_| HttpError(StoreError::Unavailable))?;
+    {
+        Ok(tokens) => tokens,
+        Err(_) => {
+            s.store.cancel_mail_oauth_exchange(&exchange).await?;
+            return Ok(failure(
+                StatusCode::BAD_GATEWAY,
+                "google_oauth_exchange_failed",
+            ));
+        }
+    };
+    // A partial consent cannot establish a durable mailbox connection. Release
+    // the claimed flow so a failed consent does not block installer edits.
+    if tokens.refresh_token.is_none()
+        || tokens.scopes.as_ref().is_some_and(|scopes| {
+            moosuri_connectors::gmail::MINIMAL_SCOPES
+                .iter()
+                .any(|required| !scopes.iter().any(|scope| scope == required))
+        })
+    {
+        s.store.cancel_mail_oauth_exchange(&exchange).await?;
+        return Ok(failure(
+            StatusCode::BAD_REQUEST,
+            "google_consent_incomplete",
+        ));
+    }
+    let profile = match s.mail.client().profile(&tokens.access_token, &cancel).await {
+        Ok(profile) => profile,
+        Err(_) => {
+            s.store.cancel_mail_oauth_exchange(&exchange).await?;
+            return Ok(failure(
+                StatusCode::BAD_GATEWAY,
+                "google_profile_unavailable",
+            ));
+        }
+    };
     let connection = s
         .store
         .complete_mail_oauth(exchange, tokens, profile.email_address)

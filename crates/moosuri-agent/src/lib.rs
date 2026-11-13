@@ -152,10 +152,33 @@ impl Runtime {
     ) -> Self {
         Self::start_with_web_service(store, oauth, web::Service::new(web).with_browser(browser))
     }
+    /// Hosted settings keep the configured origin separate from request headers.
+    pub fn start_with_google_setup(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: Option<Arc<moosuri_connectors::web::WebClient>>,
+        browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
+        redirect_uri: String,
+    ) -> Self {
+        Self::start_with_services(
+            store,
+            oauth,
+            web::Service::new(web).with_browser(browser),
+            Some(redirect_uri),
+        )
+    }
     fn start_with_web_service(
         store: Store,
         oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: web::Service,
+    ) -> Self {
+        Self::start_with_services(store, oauth, web, None)
+    }
+    fn start_with_services(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
         mut web: web::Service,
+        redirect_uri: Option<String>,
     ) -> Self {
         let (changes, _) = watch::channel(0);
         let (done_tx, done) = watch::channel(false);
@@ -165,7 +188,8 @@ impl Runtime {
             changes,
             delivery: Arc::new(tokio::sync::RwLock::new(())),
         };
-        let mail = mail::MailService::new(store.clone(), oauth, signals.clone());
+        let mail = mail::MailService::new(store.clone(), oauth, signals.clone())
+            .with_managed_google(redirect_uri);
         let browser =
             browser::BrowserService::new(store.clone(), web.reader(), signals.stop.clone());
         web.set_workspaces(browser.clone());

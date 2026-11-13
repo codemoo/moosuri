@@ -1,5 +1,7 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
+mod google_setup;
+pub use google_setup::*;
 mod source_connections;
 pub use source_connections::*;
 mod agent_execution;
@@ -45,6 +47,10 @@ use zeroize::Zeroizing;
 pub type Result<T> = std::result::Result<T, StoreError>;
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum StoreError {
+    #[error("Google connections use a different application")]
+    GoogleConnectionsInUse,
+    #[error("Google authorization is in progress")]
+    GoogleAuthorizationInProgress,
     #[error("invalid input")]
     InvalidInput,
     #[error("authentication required")]
@@ -282,7 +288,7 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if !matches!(version, 1..=9) {
+        } else if !matches!(version, 1..=10) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {
@@ -348,6 +354,12 @@ impl Store {
             conn.execute_batch(&format!(
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0009_source_connections.sql")
+            ))?;
+        }
+        if version < 10 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0010_google_setup.sql")
             ))?;
         }
         source_connections::restart(&conn)?;

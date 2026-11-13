@@ -167,8 +167,23 @@ async fn oauth_callback_works_without_strict_cookie_but_complete_requires_origin
         .authenticate(cookie.strip_prefix("moosuri_session=").unwrap().into())
         .await
         .unwrap();
-    assert!(store.claim_mail_oauth(&user, handle.clone()).await.is_ok());
-    assert!(store.claim_mail_oauth(&user, handle).await.is_err());
+    let pin = moosuri_store::GoogleAppPin {
+        revision: None,
+        client_id: "synthetic-client".into(),
+        redirect_uri: format!("{ORIGIN}/api/v1/mail/oauth/callback"),
+    };
+    assert!(
+        store
+            .claim_mail_oauth_with_app(&user, handle.clone(), pin.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        store
+            .claim_mail_oauth_with_app(&user, handle, pin)
+            .await
+            .is_err()
+    );
 }
 #[tokio::test]
 async fn missing_operator_config_and_stale_identity_are_honest() {

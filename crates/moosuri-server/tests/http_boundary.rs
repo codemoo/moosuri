@@ -521,3 +521,6 @@ mod mail;
 
 #[path = "cases/source_connections.rs"]
 mod source_connections;
+
+#[path = "cases/google_setup.rs"]
+mod google_setup_tests;

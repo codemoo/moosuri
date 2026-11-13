@@ -48,6 +48,7 @@ pub struct SourceRuntimeBinding {
     pub slack_token: Option<SecretString>,
 }
 pub struct SourceGmailCredentials {
+    pub app: Option<GoogleAppPin>,
     pub mail_connection_id: String,
     pub mail_epoch: i64,
     pub revision: i64,
@@ -745,13 +746,28 @@ impl Store {
         &self,
         cap: &SourceIngestCapability,
     ) -> Result<SourceGmailCredentials> {
+        self.source_mail_credentials_inner(cap, None).await
+    }
+    pub async fn source_mail_credentials_with_app(
+        &self,
+        cap: &SourceIngestCapability,
+        pin: GoogleAppPin,
+    ) -> Result<SourceGmailCredentials> {
+        self.source_mail_credentials_inner(cap, Some(pin)).await
+    }
+    async fn source_mail_credentials_inner(
+        &self,
+        cap: &SourceIngestCapability,
+        pin: Option<GoogleAppPin>,
+    ) -> Result<SourceGmailCredentials> {
         let cap = cap.clone();
         self.call(move|db|{let c=guard(&db.conn,&cap)?;if cap.token_hash.is_some() || c.kind!=SourceConnectionKind::Gmail{return Err(StoreError::Forbidden)}
             let id=c.mail_connection_id.ok_or(StoreError::Corrupt)?;
+            if let Some(pin)=&pin {google_setup::guard_mail_app(&db.conn,&cap.tenant,&id,pin)?;}
             let (epoch,revision,cipher,expires):(i64,i64,Vec<u8>,i64)=db.conn.query_row("SELECT epoch,credential_revision,credential,expires_at FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND status='active'",params![cap.tenant,cap.account,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
             let plain=providers::decrypt(&db.provider_key,&cipher,&gmail_aad(&cap,&id,revision)?)?;
             let (access,refresh):(String,String)=serde_json::from_slice(&plain).map_err(|_|StoreError::Corrupt)?;
-            Ok(SourceGmailCredentials{mail_connection_id:id,mail_epoch:epoch,revision,expires_at:expires,access_token:SecretString::new(access).map_err(|_|StoreError::Corrupt)?,refresh_token:SecretString::new(refresh).map_err(|_|StoreError::Corrupt)?})
+            Ok(SourceGmailCredentials{app:pin,mail_connection_id:id,mail_epoch:epoch,revision,expires_at:expires,access_token:SecretString::new(access).map_err(|_|StoreError::Corrupt)?,refresh_token:SecretString::new(refresh).map_err(|_|StoreError::Corrupt)?})
         }).await
     }
     pub async fn save_source_mail_refresh(
@@ -760,10 +776,31 @@ impl Store {
         old_revision: i64,
         tokens: TokenSet,
     ) -> Result<()> {
+        self.save_source_mail_refresh_inner(cap, old_revision, tokens, None)
+            .await
+    }
+    pub async fn save_source_mail_refresh_with_app(
+        &self,
+        cap: &SourceIngestCapability,
+        old_revision: i64,
+        tokens: TokenSet,
+        pin: GoogleAppPin,
+    ) -> Result<()> {
+        self.save_source_mail_refresh_inner(cap, old_revision, tokens, Some(pin))
+            .await
+    }
+    async fn save_source_mail_refresh_inner(
+        &self,
+        cap: &SourceIngestCapability,
+        old_revision: i64,
+        tokens: TokenSet,
+        pin: Option<GoogleAppPin>,
+    ) -> Result<()> {
         let cap = cap.clone();
         self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let c=guard(&tx,&cap)?;
             if cap.token_hash.is_some() || c.kind!=SourceConnectionKind::Gmail{return Err(StoreError::Forbidden)}
             let id=c.mail_connection_id.ok_or(StoreError::Corrupt)?;
+            if let Some(pin)=&pin {google_setup::guard_mail_app(&tx,&cap.tenant,&id,pin)?;}
             let (revision,cipher,old_scopes):(i64,Vec<u8>,String)=tx.query_row("SELECT credential_revision,credential,scopes FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND status='active'",params![cap.tenant,cap.account,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
             if revision!=old_revision{return Err(StoreError::Conflict)}
             let plain=providers::decrypt(&db.provider_key,&cipher,&gmail_aad(&cap,&id,revision)?)?;

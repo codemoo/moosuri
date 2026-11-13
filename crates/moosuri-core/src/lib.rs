@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod google_setup;
+pub use google_setup::*;
 mod source_connections;
 pub use source_connections::*;
 mod web;
@@ -71,6 +73,9 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        GoogleSetupStatus::decl(),
+        GoogleSetupValidation::decl(),
+        GoogleConnectionCheck::decl(),
         BrowserWorkspaceState::decl(),
         BrowserWorkspaceView::decl(),
         BrowserWorkspaceStatus::decl(),

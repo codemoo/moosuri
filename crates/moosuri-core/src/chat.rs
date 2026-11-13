@@ -81,6 +81,9 @@ pub struct RunView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub artifact_receipts: Option<Vec<crate::ArtifactReceipt>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub schedule_receipts: Option<Vec<crate::ScheduleChatReceipt>>,
     pub can_retry: bool,
     pub can_cancel: bool,
     #[ts(type = "number")]

@@ -86,6 +86,9 @@ pub struct ApiError {
 pub fn typescript_contract() -> String {
     let declarations = [
         ScheduleRule::decl(),
+        ScheduleTarget::decl(),
+        ScheduleChatContext::decl(),
+        ScheduleChatReceipt::decl(),
         ScheduleDraft::decl(),
         ScheduleCreate::decl(),
         ScheduleEdit::decl(),

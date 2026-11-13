@@ -2,6 +2,7 @@
 use super::*;
 use moosuri_core::*;
 use serde::{Serialize, de::DeserializeOwned};
+pub(crate) mod chat;
 #[cfg(test)]
 mod tests;
 mod time;
@@ -341,16 +342,16 @@ impl Store {
         input: ScheduleCreate,
     ) -> Result<ScheduleView> {
         let user = user.clone();
-        self.call(move|db|{
-        let user=validate(&db.conn,&user,true,false)?;uuid(&input.request_id)?;let encoded=encode(&input.draft)?;let digest:[u8;32]=Sha256::digest(encoded.as_bytes()).into();
-        let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let old:Option<(String,Vec<u8>)>=tx.query_row("SELECT id,request_digest FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",params![user.tenant.0,user.account.id,input.request_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-        if let Some((id,old))=old{if old!=digest{return Err(StoreError::Conflict)}return owner_view(&tx,&user.tenant.0,load(&tx,&user.tenant.0,&id)?)}
-        let time=clock()?;draft(&input.draft,time)?;let slot=time::after(&input.draft.rule,time)?.ok_or(StoreError::InvalidInput)?;
-        let count:i64=tx.query_row("SELECT count(*) FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked'",params![user.tenant.0,user.account.id],|r|r.get(0))?;if count>=64{return Err(StoreError::BudgetExhausted)}
-        let id=Uuid::new_v4().to_string();tx.execute("INSERT INTO reminder_schedules VALUES(?1,?2,?3,?4,?5,1,?6,'active',NULL,?7,?8,?9,?10,?11,?12,?13,?14,?14)",params![user.tenant.0,id,user.account.id,input.request_id,digest.as_slice(),user.epoch,input.draft.title,input.draft.message,encode(&input.draft.rule)?,input.draft.valid_until,time::TZDB,encode(&slot)?,slot.due,time])?;
-        tx.execute("INSERT OR IGNORE INTO reminder_owners VALUES(?1,?2,0)",params![user.tenant.0,user.account.id])?;let out=load(&tx,&user.tenant.0,&id)?.view;tx.commit()?;Ok(out)
-    }).await
+        self.call(move |db| {
+            let user = validate(&db.conn, &user, true, false)?;
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let out = create_in(&tx, &user, &input, clock()?)?;
+            tx.commit()?;
+            Ok(out)
+        })
+        .await
     }
     pub async fn schedules(&self, user: &UserContext) -> Result<Vec<ScheduleView>> {
         let user = user.clone();
@@ -367,11 +368,16 @@ impl Store {
         input: ScheduleEdit,
     ) -> Result<ScheduleView> {
         let user = user.clone();
-        self.call(move|db|{
-        let u=validate(&db.conn,&user,true,false)?;let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let s=owned(&tx,&u,&id)?;if s.view.revision!=input.expected_revision||s.view.state=="revoked"{return Err(StoreError::Conflict)}
-        let time=clock()?;draft(&input.draft,time)?;let slot=time::after(&input.draft.rule,time)?.ok_or(StoreError::InvalidInput)?;fence(&tx,&u.tenant.0,&id,"edited",time)?;
-        tx.execute("UPDATE reminder_schedules SET revision=revision+1,auth_epoch=?3,title=?4,message=?5,rule=?6,valid_until=?7,timezone_db=?8,state=?9,reason=NULL,updated_at=?10 WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,u.epoch,input.draft.title,input.draft.message,encode(&input.draft.rule)?,input.draft.valid_until,time::TZDB,if s.view.state=="paused"||!eligible(&tx,&u.tenant.0,&s,time)?{"paused"}else{"active"},time])?;save_slot(&tx,&u.tenant.0,&id,Some(&slot))?;let out=load(&tx,&u.tenant.0,&id)?.view;tx.commit()?;Ok(out)
-    }).await
+        self.call(move |db| {
+            let user = validate(&db.conn, &user, true, false)?;
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let out = edit_in(&tx, &user, &id, &input, clock()?)?;
+            tx.commit()?;
+            Ok(out)
+        })
+        .await
     }
     pub async fn control_schedule(
         &self,
@@ -381,35 +387,15 @@ impl Store {
     ) -> Result<ScheduleView> {
         let user = user.clone();
         self.call(move |db| {
-            let u=validate(&db.conn,&user,true,false)?;
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let s=owned(&tx,&u,&id)?;
-            let target=match input.action.as_str(){"pause"=>"paused","resume"=>"active","revoke"=>"revoked",_=>return Err(StoreError::InvalidInput)};
-            let expired_resume=input.action=="resume" && s.view.state=="expired" && matches!(s.view.reason.as_deref(),Some("pause_period"|"validity_expired"));
-            if Some(s.view.revision)==input.expected_revision.checked_add(1) && (s.view.state==target || expired_resume) {return owner_view(&tx,&u.tenant.0,s);}
-            if s.view.revision!=input.expected_revision || s.view.state=="revoked" {return Err(StoreError::Conflict);}
-            let time=clock()?;
-            let stale_grant=s.view.state=="active" && !eligible(&tx,&u.tenant.0,&s,time)?;
-            if (input.action=="pause" && s.view.state!="active") || (input.action=="resume" && s.view.state!="paused" && !stale_grant) {return Err(StoreError::Conflict);}
-
-            fence(&tx,&u.tenant.0,&id,&input.action,time)?;
-            let slot=if target=="active" {time::after(&s.view.rule,time)?} else {s.slot.clone()};
-            let mut state=target;
-            let mut reason=None;
-            if target=="active" && s.view.valid_until.is_some_and(|end|time>end) {state="expired";reason=Some("validity_expired");}
-            else if target=="active" && slot.is_none() {state="expired";reason=Some("pause_period");}
-            if target=="active" && let Some(first)=&s.slot && first.due<=time {
-                let plan=time::plan(&s.view.rule,first,time)?;
-                let count=plan.skipped.as_ref().map(|v|v.2).unwrap_or(0)+plan.gaps.len() as i64+i64::from(plan.latest.is_some());
-                let last=plan.gaps.iter().chain(plan.latest.iter()).max_by_key(|slot|slot.due).map(|slot|slot.local.as_str()).unwrap_or(&first.local);
-                if count>0 {range(&tx,&u.tenant.0,&s,(&first.local,last,count),"pause_period",time)?;}
-            }
-            tx.execute("UPDATE reminder_schedules SET revision=revision+1,auth_epoch=?3,state=?4,reason=?6,updated_at=?5 WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,u.epoch,state,time,reason])?;
-            save_slot(&tx,&u.tenant.0,&id,if matches!(state,"active"|"paused"){slot.as_ref()}else{None})?;
-            let out=load(&tx,&u.tenant.0,&id)?.view;
+            let user = validate(&db.conn, &user, true, false)?;
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let out = control_in(&tx, &user, &id, &input, clock()?)?;
             tx.commit()?;
             Ok(out)
-        }).await
+        })
+        .await
     }
     pub async fn schedule_history(
         &self,
@@ -510,4 +496,150 @@ impl Store {
         let user = user.clone();
         self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;uuid(&id)?;if db.conn.execute("UPDATE local_notifications SET is_read=1,dismissed=CASE WHEN ?4 THEN 1 ELSE dismissed END WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,id,dismiss])?!=1{return Err(StoreError::NotFound)}notification(&db.conn,&u.tenant.0,&u.account.id,&id)}).await
     }
+}
+
+pub(super) fn create_in(
+    conn: &Connection,
+    user: &UserContext,
+    input: &ScheduleCreate,
+    time: i64,
+) -> Result<ScheduleView> {
+    uuid(&input.request_id)?;
+    let encoded = encode(&input.draft)?;
+    let digest: [u8; 32] = Sha256::digest(encoded.as_bytes()).into();
+
+    let old:Option<(String,Vec<u8>)>=conn.query_row("SELECT id,request_digest FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",params![user.tenant.0,user.account.id,input.request_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    if let Some((id, old)) = old {
+        if old != digest {
+            return Err(StoreError::Conflict);
+        }
+        return owner_view(conn, &user.tenant.0, load(conn, &user.tenant.0, &id)?);
+    }
+    draft(&input.draft, time)?;
+    let slot = time::after(&input.draft.rule, time)?.ok_or(StoreError::InvalidInput)?;
+    let count:i64=conn.query_row("SELECT count(*) FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked'",params![user.tenant.0,user.account.id],|r|r.get(0))?;
+    if count >= 64 {
+        return Err(StoreError::BudgetExhausted);
+    }
+    let id = Uuid::new_v4().to_string();
+    conn.execute("INSERT INTO reminder_schedules VALUES(?1,?2,?3,?4,?5,1,?6,'active',NULL,?7,?8,?9,?10,?11,?12,?13,?14,?14)",params![user.tenant.0,id,user.account.id,input.request_id,digest.as_slice(),user.epoch,input.draft.title,input.draft.message,encode(&input.draft.rule)?,input.draft.valid_until,time::TZDB,encode(&slot)?,slot.due,time])?;
+    conn.execute(
+        "INSERT OR IGNORE INTO reminder_owners VALUES(?1,?2,0)",
+        params![user.tenant.0, user.account.id],
+    )?;
+    let out = load(conn, &user.tenant.0, &id)?.view;
+    Ok(out)
+}
+
+pub(super) fn edit_in(
+    conn: &Connection,
+    user: &UserContext,
+    id: &str,
+    input: &ScheduleEdit,
+    time: i64,
+) -> Result<ScheduleView> {
+    let s = owned(conn, user, id)?;
+    if s.view.revision != input.expected_revision || s.view.state == "revoked" {
+        return Err(StoreError::Conflict);
+    }
+    draft(&input.draft, time)?;
+    let slot = time::after(&input.draft.rule, time)?.ok_or(StoreError::InvalidInput)?;
+    fence(conn, &user.tenant.0, id, "edited", time)?;
+    conn.execute("UPDATE reminder_schedules SET revision=revision+1,auth_epoch=?3,title=?4,message=?5,rule=?6,valid_until=?7,timezone_db=?8,state=?9,reason=NULL,updated_at=?10 WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,id,user.epoch,input.draft.title,input.draft.message,encode(&input.draft.rule)?,input.draft.valid_until,time::TZDB,if s.view.state=="paused"||!eligible(conn,&user.tenant.0,&s,time)?{"paused"}else{"active"},time])?;
+    save_slot(conn, &user.tenant.0, id, Some(&slot))?;
+    let out = load(conn, &user.tenant.0, id)?.view;
+    Ok(out)
+}
+
+pub(super) fn control_in(
+    conn: &Connection,
+    user: &UserContext,
+    id: &str,
+    input: &ScheduleControl,
+    time: i64,
+) -> Result<ScheduleView> {
+    let s = owned(conn, user, id)?;
+    let target = match input.action.as_str() {
+        "pause" => "paused",
+        "resume" => "active",
+        "revoke" => "revoked",
+        _ => return Err(StoreError::InvalidInput),
+    };
+    let expired_resume = input.action == "resume"
+        && s.view.state == "expired"
+        && matches!(
+            s.view.reason.as_deref(),
+            Some("pause_period" | "validity_expired")
+        );
+    if Some(s.view.revision) == input.expected_revision.checked_add(1)
+        && (s.view.state == target || expired_resume)
+    {
+        return owner_view(conn, &user.tenant.0, s);
+    }
+    if s.view.revision != input.expected_revision || s.view.state == "revoked" {
+        return Err(StoreError::Conflict);
+    }
+
+    let stale_grant = s.view.state == "active" && !eligible(conn, &user.tenant.0, &s, time)?;
+    if (input.action == "pause" && s.view.state != "active")
+        || (input.action == "resume" && s.view.state != "paused" && !stale_grant)
+    {
+        return Err(StoreError::Conflict);
+    }
+
+    fence(conn, &user.tenant.0, id, &input.action, time)?;
+    let slot = if target == "active" {
+        time::after(&s.view.rule, time)?
+    } else {
+        s.slot.clone()
+    };
+    let mut state = target;
+    let mut reason = None;
+    if target == "active" && s.view.valid_until.is_some_and(|end| time > end) {
+        state = "expired";
+        reason = Some("validity_expired");
+    } else if target == "active" && slot.is_none() {
+        state = "expired";
+        reason = Some("pause_period");
+    }
+    if target == "active"
+        && let Some(first) = &s.slot
+        && first.due <= time
+    {
+        let plan = time::plan(&s.view.rule, first, time)?;
+        let count = plan.skipped.as_ref().map(|v| v.2).unwrap_or(0)
+            + plan.gaps.len() as i64
+            + i64::from(plan.latest.is_some());
+        let last = plan
+            .gaps
+            .iter()
+            .chain(plan.latest.iter())
+            .max_by_key(|slot| slot.due)
+            .map(|slot| slot.local.as_str())
+            .unwrap_or(&first.local);
+        if count > 0 {
+            range(
+                conn,
+                &user.tenant.0,
+                &s,
+                (&first.local, last, count),
+                "pause_period",
+                time,
+            )?;
+        }
+    }
+    conn.execute("UPDATE reminder_schedules SET revision=revision+1,auth_epoch=?3,state=?4,reason=?6,updated_at=?5 WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,id,user.epoch,state,time,reason])?;
+    save_slot(
+        conn,
+        &user.tenant.0,
+        id,
+        if matches!(state, "active" | "paused") {
+            slot.as_ref()
+        } else {
+            None
+        },
+    )?;
+    let out = load(conn, &user.tenant.0, id)?.view;
+
+    Ok(out)
 }

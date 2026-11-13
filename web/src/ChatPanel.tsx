@@ -16,6 +16,8 @@ import type {
   ModelSettings,
   RunUsage,
   RunView,
+  ScheduleChatContext,
+  ScheduleChatReceipt,
 } from "../shared/api-types";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
@@ -37,6 +39,7 @@ export type PendingSend = {
   attachments?:{id:string;revision:number}[];
   attachment_selections?:string[];
   artifact_target?:{id:string;revision:number};
+  schedule_context?:ScheduleChatContext;
   status: "sending" | "accepted" | "uncertain";
 };
 export type ChatMemory = {
@@ -134,6 +137,8 @@ export function ChatPanel(props: Props) {
   const pending = memory.pending[slot];
   const pendingRef = useRef(memory.pending);
   pendingRef.current = memory.pending;
+  const [scheduleTarget,setScheduleTarget]=useState<ScheduleChatReceipt|null>(null);
+  useEffect(()=>setScheduleTarget(null),[accountId,threadId]);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const turnsRef = useRef<ChatTurn[]>([]);
   const historyEpoch = useRef(0);
@@ -170,13 +175,26 @@ export function ChatPanel(props: Props) {
   >([]);
   const flushRef = useRef<() => void>(() => {});
 
-  function accepted(thread:string,requestId:string) {
+  function acknowledgeSchedule(thread:string,value:PendingSend,turn:ChatTurn) {
+    if(currentThread.current!==thread)return;
+    const sent=value.schedule_context?.target;
+    if(!sent)return;
+    const receipt=turn.run.schedule_receipts?.find(r=>r.request_id===value.request_id&&r.id===sent.id&&r.revision>sent.revision);
+    if(!receipt)return;
+    setScheduleTarget(current=>current?.id===sent.id&&current.revision===sent.revision
+      ?receipt.state==="revoked"?null:receipt
+      :current);
+  }
+  function accepted(thread:string,requestId:string,turn?:ChatTurn) {
     const value=pendingRef.current[thread];
-    if(value?.request_id===requestId)media.sent(value.attachment_selections);
+    if(value?.request_id===requestId){
+      media.sent(value.attachment_selections);
+      if(turn)acknowledgeSchedule(thread,value,turn);
+    }
     callbacks.current.onPending(thread,null,requestId);
   }
   function settle(page: ChatPage) {
-    for (const turn of page.turns) accepted(page.thread_id,turn.run.request_id);
+    for (const turn of page.turns) accepted(page.thread_id,turn.run.request_id,turn);
   }
   function resolveWaiters(thread: string, page: ChatPage | null) {
     for (const waiter of waiters.current.filter(
@@ -323,7 +341,7 @@ export function ChatPanel(props: Props) {
       if (!nearBottom.current) setUnseen(true);
       for (const event of events) {
         if (event.change.kind === "turn")
-          accepted(thread,event.change.turn.run.request_id);
+          accepted(thread,event.change.turn.run.request_id,event.change.turn);
       }
       if (
         events.some(
@@ -609,8 +627,8 @@ export function ChatPanel(props: Props) {
             .request<unknown>(`/threads/${encodeURIComponent(thread)}/messages`)
             .then((value) => parsePage(value, thread))
             .catch(() => null);
-    const known = page?.turns.some((turn) => turn.run.request_id === requestId);
-    if (known) accepted(thread,requestId);
+    const known = page?.turns.find((turn) => turn.run.request_id === requestId);
+    if (known) accepted(thread,requestId,known);
     else {
       const current = pendingRef.current[thread];
       if (current?.request_id === requestId)
@@ -628,7 +646,7 @@ export function ChatPanel(props: Props) {
       const result = await sendScope.request<unknown>(
         `/threads/${encodeURIComponent(thread)}/messages`,
         "POST",
-        { request_id: value.request_id, text: value.text,...(value.artifact_target?{artifact_target:value.artifact_target}:{}),...(value.attachments?.length?{attachments:value.attachments}:{}) },
+        { request_id: value.request_id, text: value.text,...(value.artifact_target?{artifact_target:value.artifact_target}:{}),...(value.attachments?.length?{attachments:value.attachments}:{}),...(value.schedule_context?{schedule_context:value.schedule_context}:{}) },
         controller.signal,
       );
       if (
@@ -637,6 +655,7 @@ export function ChatPanel(props: Props) {
         result.run.request_id !== value.request_id
       )
         throw new StreamFailure();
+      acknowledgeSchedule(thread,value,result);
       media.sent(value.attachment_selections);
       callbacks.current.onPending(
         thread,
@@ -711,6 +730,7 @@ export function ChatPanel(props: Props) {
       request_id: resubmit?.request_id ?? crypto.randomUUID(),
       text,
       artifact_target:resubmit?resubmit.artifact_target:(callbacks.current.artifactTarget?{id:callbacks.current.artifactTarget.id,revision:callbacks.current.artifactTarget.revision}:undefined),
+      schedule_context:resubmit?resubmit.schedule_context:{timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC",target:!callbacks.current.artifactTarget&&scheduleTarget?{id:scheduleTarget.id,revision:scheduleTarget.revision}:null},
       status: "sending",
     };
     callbacks.current.onPending(originalSlot, value, resubmit?.request_id);
@@ -822,6 +842,7 @@ export function ChatPanel(props: Props) {
         </button>
       </div>
       {props.artifactTarget&&<p>선택한 기록: {props.artifactTarget.title} · v{props.artifactTarget.revision} <button onClick={props.clearArtifactTarget}>선택 해제</button></p>}
+      {scheduleTarget&&!props.artifactTarget&&<p>선택한 알림: {scheduleTarget.title} <button onClick={()=>setScheduleTarget(null)}>알림 선택 해제</button></p>}
       <BrowserWorkspace
         accountId={accountId}
         threadId={threadId}
@@ -959,6 +980,7 @@ export function ChatPanel(props: Props) {
                   </div>
                 )}
                 {turn.run.artifact_receipts?.map(r=><button key={r.request_id} onClick={()=>props.openArtifact?.(r.id)}>저장한 기록 · 버전 {r.revision} ↗</button>)}
+                {turn.run.schedule_receipts?.map(r=><div key={r.request_id}><a href={r.url}>알림 · {r.title} ↗</a>{r.state!=="revoked"&&<button onClick={()=>{props.clearArtifactTarget?.();setScheduleTarget(r)}}>이 알림 선택</button>}</div>)}
                 <WebEvidence observations={turn.run.web_evidence}/>
                 <details className="run-model">
                   <summary>실행 정보</summary>

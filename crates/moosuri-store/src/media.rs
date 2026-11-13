@@ -766,7 +766,7 @@ mod tombstone_quota_tests {
         let user = admin(&store).await.user;
         drop(store);
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-        conn.execute_batch("DROP TABLE chat_media; DROP TABLE media_run_dependencies; DROP TABLE media_objects; DROP TABLE provider_vision_probes; CREATE TABLE provider_vision_probes(conflict INTEGER); PRAGMA user_version=20;").unwrap();
+        conn.execute_batch("DROP TABLE schedule_chat_commands;DROP TABLE chat_media; DROP TABLE media_run_dependencies; DROP TABLE media_objects; DROP TABLE provider_vision_probes; CREATE TABLE provider_vision_probes(conflict INTEGER); PRAGMA user_version=20;").unwrap();
         drop(conn);
         assert!(Store::open(dir.path()).is_err());
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

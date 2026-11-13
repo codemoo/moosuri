@@ -69,6 +69,8 @@ export function validRun(value: unknown): value is RunView {
     (value.error === null ||
       (typeof value.error === "string" && value.error.length <= 128)) &&
     validUsage(value.usage) &&
+    (value.schedule_receipts===undefined || value.schedule_receipts===null ||
+      (Array.isArray(value.schedule_receipts)&&value.schedule_receipts.length<=1&&value.schedule_receipts.every(r=>object(r)&&id(r.request_id)&&id(r.id)&&integer(r.revision,1)&&["create","edit","pause","resume","revoke"].includes(String(r.action))&&typeof r.state==="string"&&typeof r.title==="string"&&r.title.length<=160&&typeof r.timezone==="string"&&r.timezone.length<=64&&r.url==="/app/schedules"&&(r.next_local_slot===null||typeof r.next_local_slot==="string")))) &&
     Array.isArray(value.evidence) && value.evidence.length <= 12 &&
     value.evidence.every((reference) => object(reference) &&
       (reference.kind === "source" || reference.kind === "memory") &&

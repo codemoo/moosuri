@@ -360,3 +360,165 @@ async fn owner_http_creation_control_and_worker_inbox_survive_actual_restart_wit
     );
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn direct_chat_is_atomically_completed_and_http_retries_freeze_timezone_and_target() {
+    use moosuri_core::{ModelSelection, ProviderConfig, ProviderKind};
+    use moosuri_store::{CredentialChange, ProviderChange};
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let password = "Synthetic-only-reminder-http-password";
+    store
+        .bootstrap(
+            "Synthetic owner".into(),
+            "schedule-chat@example.test".into(),
+            password.into(),
+            false,
+        )
+        .await
+        .unwrap();
+    let a = store
+        .login("schedule-chat@example.test".into(), password.into())
+        .await
+        .unwrap();
+    let p = store
+        .create_provider(
+            &a.user,
+            ProviderChange {
+                name: "Synthetic offline provider".into(),
+                config: ProviderConfig {
+                    kind: ProviderKind::Compatible,
+                    base_url: Some("http://127.0.0.1:11434/v1".into()),
+                    allowed_ips: vec!["127.0.0.1".into()],
+                    router_providers: vec![],
+                    zero_data_retention: false,
+                },
+                enabled: true,
+                credential: CredentialChange::Clear,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .record_model_probe(&a.user, p.id.clone(), 1, "synthetic-model".into(), None)
+        .await
+        .unwrap();
+    store
+        .set_default_model(
+            &a.user,
+            Some(ModelSelection {
+                provider_id: p.id,
+                provider_revision: 1,
+                model: "synthetic-model".into(),
+                effort: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let thread = store
+        .create_thread(&a.user, "Synthetic chat".into())
+        .await
+        .unwrap();
+    let config = ServerConfig::new("https://assistant.example.test", false).unwrap();
+    let runtime = config.start_runtime(store.clone());
+    let app = router_with_runtime(store.clone(), config, runtime.clone());
+    let path = format!("/api/v1/threads/{}/messages", thread.id);
+    let request = json!({"request_id":"00000000-0000-4000-8000-000000000021","text":"remind me every Monday at 9AM to stretch","schedule_context":{"timezone":"Asia/Seoul","target":null}});
+    let first = send(
+        &app,
+        "POST",
+        &path,
+        Some(&a.token),
+        Some(&a.user.account().id),
+        request.clone(),
+    )
+    .await;
+    assert_eq!(first.0, StatusCode::CREATED);
+    assert_eq!(first.1["run"]["state"], "completed");
+    assert_eq!(first.1["run"]["schedule_receipts"][0]["revision"], 1);
+    let replay = send(
+        &app,
+        "POST",
+        &path,
+        Some(&a.token),
+        Some(&a.user.account().id),
+        request.clone(),
+    )
+    .await;
+    assert_eq!(replay.1, first.1);
+    let mut changed = request.clone();
+    changed["schedule_context"]["timezone"] = json!("UTC");
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path,
+            Some(&a.token),
+            Some(&a.user.account().id),
+            changed
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let receipt = &first.1["run"]["schedule_receipts"][0];
+    let pause = json!({"request_id":"00000000-0000-4000-8000-000000000022","text":"pause reminder","schedule_context":{"timezone":"Asia/Seoul","target":{"id":receipt["id"],"revision":1}}});
+    let paused = send(
+        &app,
+        "POST",
+        &path,
+        Some(&a.token),
+        Some(&a.user.account().id),
+        pause.clone(),
+    )
+    .await;
+    assert_eq!(paused.1["run"]["schedule_receipts"][0]["state"], "paused");
+    let mut stale = pause;
+    stale["request_id"] = json!("00000000-0000-4000-8000-000000000023");
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path,
+            Some(&a.token),
+            Some(&a.user.account().id),
+            stale
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let mut forged = request.clone();
+    forged["request_id"] = json!("00000000-0000-4000-8000-000000000024");
+    forged["schedule_context"]["clock"] = json!(0);
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path,
+            Some(&a.token),
+            Some(&a.user.account().id),
+            forged
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert!(store.claim_run().await.unwrap().is_none());
+    assert_eq!(store.schedules(&a.user).await.unwrap().len(), 1);
+    store.logout(&a.user).await.unwrap();
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path,
+            Some(&a.token),
+            Some(&a.user.account().id),
+            request
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    runtime.shutdown().await;
+}

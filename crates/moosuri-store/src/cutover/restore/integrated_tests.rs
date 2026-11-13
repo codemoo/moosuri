@@ -370,6 +370,27 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         },
     )
     .await;
+    let reminder_thread = store
+        .create_thread(&a, "Synthetic conversational restore receipt".into())
+        .await
+        .unwrap();
+    let reminder = store
+        .submit_turn_with_schedule_context(
+            &a,
+            reminder_thread.id.clone(),
+            Uuid::new_v4().to_string(),
+            "remind me in 1 day to keep the historical receipt".into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reminder.run.state, RunState::Completed);
+    let reminder_receipt = reminder.run.schedule_receipts.clone().unwrap();
+    assert_eq!(reminder_receipt.len(), 1);
     let at = crate::now().unwrap() + 60;
     let schedule = store
         .create_schedule(
@@ -645,7 +666,19 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
             .id,
         notification.id
     );
-    assert_eq!(store.schedules(&current).await.unwrap()[0].state, "paused");
+    let restored_schedules = store.schedules(&current).await.unwrap();
+    assert_eq!(restored_schedules.len(), 2);
+    assert!(restored_schedules.iter().all(|s| s.state == "paused"));
+    let restored_reminder = store
+        .conversation(&current, reminder_thread.id, None)
+        .await
+        .unwrap();
+    assert_eq!(restored_reminder.turns[0].run.state, RunState::Completed);
+    assert_eq!(
+        serde_json::to_value(&restored_reminder.turns[0].run.schedule_receipts).unwrap(),
+        serde_json::to_value(Some(reminder_receipt)).unwrap()
+    );
+    assert!(!restored_reminder.turns[0].run.can_retry);
     assert!(matches!(
         store
             .retry_run(&current, pending.lease.run_id().to_owned(), 1)

@@ -635,7 +635,7 @@ async fn supported_predecessor_migrates_offline_and_repeated_restore_keeps_journ
         .write_all(&items[1].1)
         .unwrap();
     let conn = Connection::open(&db).unwrap();
-    conn.execute_batch("DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;").unwrap();
+    conn.execute_batch("DROP TABLE schedule_chat_commands;DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;").unwrap();
     conn.execute(
         "UPDATE installation_cutover SET seal=?1",
         [String::from_utf8(encode(&manifest.seal, 16384).unwrap()).unwrap()],

@@ -26,6 +26,8 @@ pub(super) struct SubmitInput {
     artifact_target: Option<moosuri_core::ArtifactTarget>,
     #[serde(default)]
     attachments: Vec<moosuri_core::MediaRef>,
+    #[serde(default)]
+    schedule_context: Option<moosuri_core::ScheduleChatContext>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,13 +56,14 @@ pub(super) async fn submit(
     }
     let turn = state
         .store
-        .submit_turn_with_media(
+        .submit_turn_with_context(
             &user,
             id,
             input.request_id,
             input.text,
             input.artifact_target,
             input.attachments,
+            input.schedule_context,
         )
         .await?;
     state.runtime.wake();

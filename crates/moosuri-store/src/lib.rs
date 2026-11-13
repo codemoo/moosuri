@@ -173,7 +173,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 21;
+const CURRENT_SCHEMA_VERSION: i64 = 22;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -452,6 +452,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0021_media.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 22 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0022_schedule_chat.sql"),
                 "COMMIT;"
             ))?;
         }

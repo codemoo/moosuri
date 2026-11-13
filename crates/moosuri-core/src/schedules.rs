@@ -18,6 +18,11 @@ pub enum ScheduleRule {
         time: String,
         timezone: String,
     },
+    Weekly {
+        days: Vec<u8>,
+        time: String,
+        timezone: String,
+    },
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -144,4 +149,31 @@ pub struct LocalNotification {
 pub struct NotificationPage {
     pub items: Vec<LocalNotification>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleTarget {
+    pub id: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+}
+#[derive(Clone, Default, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleChatContext {
+    pub timezone: String,
+    pub target: Option<ScheduleTarget>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct ScheduleChatReceipt {
+    pub request_id: String,
+    pub id: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    pub action: String,
+    pub state: String,
+    pub title: String,
+    pub next_local_slot: Option<String>,
+    pub timezone: String,
+    pub url: String,
 }

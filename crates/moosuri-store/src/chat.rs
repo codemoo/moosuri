@@ -251,6 +251,10 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             let r = crate::artifacts::agent::receipts(conn, &run.tenant, &run.id)?;
             (!r.is_empty()).then_some(r)
         },
+        schedule_receipts: {
+            let r = crate::schedules::chat::receipts(conn, &run.tenant, &run.id)?;
+            (!r.is_empty()).then_some(r)
+        },
         can_retry: !run.state.active()
             && run.state != RunState::Completed
             && run.attempt < 32
@@ -810,7 +814,7 @@ pub(super) fn submit_turn_artifact_in(
     text: String,
     target: Option<moosuri_core::ArtifactTarget>,
 ) -> Result<ChatTurn> {
-    submit_turn_media_in(
+    submit_turn_context_in(
         tx,
         provider_key,
         web_profile,
@@ -820,10 +824,11 @@ pub(super) fn submit_turn_artifact_in(
         text,
         target,
         vec![],
+        None,
     )
 }
 #[allow(clippy::too_many_arguments)]
-fn submit_turn_media_in(
+fn submit_turn_context_in(
     tx: &Connection,
     provider_key: &[u8; 32],
     web_profile: &moosuri_core::WebToolProfile,
@@ -833,6 +838,7 @@ fn submit_turn_media_in(
     text: String,
     target: Option<moosuri_core::ArtifactTarget>,
     attachments: Vec<moosuri_core::MediaRef>,
+    context: Option<moosuri_core::ScheduleChatContext>,
 ) -> Result<ChatTurn> {
     let user = validate(tx, &user, true, false)?;
     thread_exists(tx, &user, &thread_id)?;
@@ -851,7 +857,26 @@ fn submit_turn_media_in(
     let request_id = Uuid::parse_str(&request_id)
         .map_err(|_| StoreError::InvalidInput)?
         .to_string();
-    let payload: [u8; 32] = if !attachments.is_empty() {
+    if let Some(c) = &context {
+        crate::schedules::chat::validate_timezone(&c.timezone)?;
+        if c.target.is_some() && target.is_some() {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    let payload: [u8; 32] = if context.is_some() {
+        Sha256::digest(
+            json(&(
+                "turn-context-v1",
+                &thread_id,
+                &text,
+                &target,
+                &attachments,
+                &context,
+            ))?
+            .as_bytes(),
+        )
+        .into()
+    } else if !attachments.is_empty() {
         Sha256::digest(json(&(&thread_id, &text, &target, &attachments))?.as_bytes()).into()
     } else if target.is_some() {
         Sha256::digest(json(&(&thread_id, &text, &target))?.as_bytes()).into()
@@ -945,6 +970,8 @@ fn submit_turn_media_in(
             ],
         )?;
     }
+    crate::schedules::chat::finish(tx, &user, &run, context.as_ref())?;
+    let run = load_run(tx, &run.tenant, &run.id)?;
     let result = turn(tx, &run)?;
     emit(
         tx,
@@ -1273,12 +1300,42 @@ impl Store {
         target: Option<moosuri_core::ArtifactTarget>,
         attachments: Vec<moosuri_core::MediaRef>,
     ) -> Result<ChatTurn> {
+        self.submit_turn_with_context(user, thread, request, text, target, attachments, None)
+            .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_turn_with_schedule_context(
+        &self,
+        user: &UserContext,
+        thread: String,
+        request: String,
+        text: String,
+        target: Option<moosuri_core::ArtifactTarget>,
+        context: Option<moosuri_core::ScheduleChatContext>,
+    ) -> Result<ChatTurn> {
+        self.submit_turn_with_context(user, thread, request, text, target, vec![], context)
+            .await
+    }
+}
+
+impl Store {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_turn_with_context(
+        &self,
+        user: &UserContext,
+        thread: String,
+        request: String,
+        text: String,
+        target: Option<moosuri_core::ArtifactTarget>,
+        attachments: Vec<moosuri_core::MediaRef>,
+        context: Option<moosuri_core::ScheduleChatContext>,
+    ) -> Result<ChatTurn> {
         let user = user.clone();
         self.call(move |db| {
             let tx = db
                 .conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let result = submit_turn_media_in(
+            let result = submit_turn_context_in(
                 &tx,
                 &db.provider_key,
                 &db.web_profile,
@@ -1288,6 +1345,7 @@ impl Store {
                 text,
                 target,
                 attachments,
+                context,
             )?;
             tx.commit()?;
             Ok(result)

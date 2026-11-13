@@ -1,7 +1,7 @@
 //! Pure UTC/wall-clock recurrence. Gaps are local-slot skips, never invented UTC executions.
 use super::*;
 use chrono::{
-    DateTime, Days, LocalResult, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike, Utc,
+    DateTime, Datelike, Days, LocalResult, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
 pub(super) const TZDB: &str = chrono_tz::IANA_TZDB_VERSION;
@@ -121,6 +121,29 @@ pub(super) fn after(rule: &ScheduleRule, after: i64) -> Result<Option<Slot>> {
                     .ok_or(StoreError::InvalidInput)?,
             )?))
         }
+        ScheduleRule::Weekly {
+            days,
+            time,
+            timezone,
+        } => {
+            weekly_days(days)?;
+            let (time, tz) = daily_parts(time, timezone)?;
+            let mut date = utc(after)?.with_timezone(&tz).date_naive();
+            for _ in 0..15 {
+                if selected(days, date) {
+                    let slot = daily_slot(date, time, tz)?;
+                    if slot.due > after {
+                        if slot.due > MAX_TIME {
+                            return Ok(None);
+                        }
+                        utc(slot.due)?;
+                        return Ok(Some(slot));
+                    }
+                }
+                date = next_day(date)?;
+            }
+            Err(StoreError::InvalidInput)
+        }
         ScheduleRule::Daily { time, timezone } => {
             let (time, tz) = daily_parts(time, timezone)?;
             let mut date = utc(after)?.with_timezone(&tz).date_naive();
@@ -189,6 +212,88 @@ pub(super) fn plan(rule: &ScheduleRule, first: &Slot, now: i64) -> Result<Plan> 
                     .filter(|at| *at <= MAX_TIME)
                     .map(utc_slot)
                     .transpose()?,
+            })
+        }
+        ScheduleRule::Weekly {
+            days,
+            time,
+            timezone,
+        } => {
+            weekly_days(days)?;
+            let (time, tz) = daily_parts(time, timezone)?;
+            let from = NaiveDate::parse_from_str(
+                first.local.get(..10).ok_or(StoreError::Corrupt)?,
+                "%Y-%m-%d",
+            )
+            .map_err(|_| StoreError::Corrupt)?;
+            let mut date = utc(now)?.with_timezone(&tz).date_naive();
+            for _ in 0..8 {
+                if selected(days, date) && daily_slot(date, time, tz)?.due <= now {
+                    break;
+                }
+                date = previous_day(date)?;
+            }
+            let mut gaps = if first.at.is_none() {
+                vec![first.clone()]
+            } else {
+                vec![]
+            };
+            let mut latest = None;
+            for _ in 0..15 {
+                if date < from {
+                    break;
+                }
+                if selected(days, date) {
+                    let slot = daily_slot(date, time, tz)?;
+                    if slot.at.is_some() {
+                        latest = Some(slot);
+                        break;
+                    }
+                    if !gaps.iter().any(|s| s.local == slot.local) {
+                        gaps.push(slot);
+                    }
+                }
+                date = previous_day(date)?;
+            }
+            let begin = if first.at.is_none() {
+                next_day(from)?
+            } else {
+                from
+            };
+            let skipped = if date > begin {
+                let end = previous_day(date)?;
+                let count = weekly_count(days, begin, end);
+                if count > 0 {
+                    let mut start = begin;
+                    for _ in 0..7 {
+                        if selected(days, start) {
+                            break;
+                        }
+                        start = next_day(start)?;
+                    }
+                    let mut end = end;
+                    for _ in 0..7 {
+                        if selected(days, end) {
+                            break;
+                        }
+                        end = previous_day(end)?;
+                    }
+                    Some((
+                        daily_slot(start, time, tz)?.local,
+                        daily_slot(end, time, tz)?.local,
+                        count,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            Ok(Plan {
+                latest,
+                gaps,
+                skipped,
+                next: after(rule, now)?,
             })
         }
         ScheduleRule::Daily { time, timezone } => {
@@ -260,4 +365,34 @@ pub(super) fn quiet(settings: &QuietHours, now: i64) -> Result<bool> {
     } else {
         minute >= settings.start_minute || minute < settings.end_minute
     })
+}
+
+fn weekly_days(days: &[u8]) -> Result<()> {
+    if days.is_empty()
+        || days.len() > 7
+        || days.iter().any(|d| !(1..=7).contains(d))
+        || days.windows(2).any(|v| v[0] >= v[1])
+    {
+        Err(StoreError::InvalidInput)
+    } else {
+        Ok(())
+    }
+}
+fn selected(days: &[u8], date: NaiveDate) -> bool {
+    days.contains(&(date.weekday().number_from_monday() as u8))
+}
+fn weekly_count(days: &[u8], from: NaiveDate, to: NaiveDate) -> i64 {
+    if to < from {
+        return 0;
+    }
+    let n = (to - from).num_days() + 1;
+    let mut count = (n / 7) * days.len() as i64;
+    for i in 0..n % 7 {
+        if let Some(date) = from.checked_add_days(Days::new(i as u64))
+            && selected(days, date)
+        {
+            count += 1
+        }
+    }
+    count
 }

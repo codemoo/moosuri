@@ -80,3 +80,10 @@ it("keeps a draft editable during background reads and fences the read when the 
  await act(async()=>release(response([])));
  expect(screen.getByRole("heading",{name:"Typing while a refresh is slow"})).toBeInTheDocument();
 });
+
+it("weekly edits preserve exact weekdays and owning timezone and new rules sort selected weekdays",async()=>{
+ let saved:ScheduleDraft|undefined;const rule={kind:"weekly",days:[2,5],time:"13:25",timezone:"America/New_York"} as const;
+ const row=item({rule:{...rule,days:[...rule.days]}});
+ vi.stubGlobal("fetch",vi.fn(async(path:string,init?:RequestInit)=>{if(init?.method==="PUT"){saved=JSON.parse(String(init.body)).draft;return response({...row,...saved,revision:2});}return response(data(path,[row]));}));
+ render(<Schedules {...props}/>);fireEvent.click(await screen.findByRole("button",{name:"편집"}));expect(screen.getByLabelText("화요일")).toBeChecked();expect(screen.getByLabelText("금요일")).toBeChecked();fireEvent.click(screen.getByLabelText("월요일"));fireEvent.change(screen.getByLabelText("알림 제목"),{target:{value:"Weekly title"}});fireEvent.click(screen.getByRole("button",{name:"변경 저장"}));await screen.findByText("Weekly title");expect(saved!.rule).toEqual({...rule,days:[1,2,5]});
+});

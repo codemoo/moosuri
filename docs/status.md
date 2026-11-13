@@ -11,7 +11,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 영역 | 구현한 범위 | 남은 경계와 사용·증거 |
 | --- | --- | --- |
 | 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 초대 메일/gws·전체 계정 삭제/볼트 outbox·일반 installer/update/uninstall은 미구현. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
-| 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량, 저장 채팅·SSE·취소·재시도·격리, 별도 ChatGPT plan protocol | 구독 OAuth·개인 provider 연결/선택·Claude 실행·종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
+| 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량, 저장 채팅·SSE·취소·재시도·격리, 별도 ChatGPT plan·OAuth protocol | 구독의 durable credential·개인 provider 연결/선택·Claude 실행·종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·검색, 직접 기억·정정·망각, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 여섯 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check | 성공 절차의 typed 학습/독립 proof·합성 재구성 export·정적 catalog generator·예약 needs_skill/GC 등은 남음. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-13-community-authoring.md) |
 | 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·로컬 답장 초안·승인된 frozen 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. Gmail provider 초안 CRUD·고정 예약 발송, 인증된 자동 폼/장기 profile 복구는 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
@@ -51,7 +51,9 @@ IO·HTTP, 실제 Rust/SQLite와 Chrome의 명확화/설정 링크/영수증 재�
 ChatGPT 구독의 별도 catalog·요청 형식·namespace 도구 protocol도 검증했다. 잘못된 response
 identity의 실패 사용량이 섞이는 결함을 수정하고 독립 재검토·Native/Linux 검사를 통과했다.
 [기록](reviews/2026-11-14-chatgpt-plan-protocol.md)의 범위는 protocol이며 로그인/구독 선택을
-아직 활성화하지 않는다. OAuth·개인 소유 연결과 실제 계정 capability 검사가 이어질 작업이다.
+아직 활성화하지 않는다. 이어 [OAuth protocol](reviews/2026-11-14-chatgpt-authentication.md)의
+서명 검증·재로그인·refresh/revoke도 독립 검토와 Native/Linux 검사를 통과했다. 실제 개인 저장·
+로그인 helper·VM 전달·계정별 capability와 선택 연결은 이어질 구현이다.
 
 ## 다음 구현과 출시까지 남은 일
 

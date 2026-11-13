@@ -46,6 +46,15 @@ function tools는 명시적으로 검증한 capability만 사용하며 고정 `m
 
 OAuth/JWKS·credential refresh·개인 binding 소유권·웹 선택/로그인·VM credential 전달은 이 M0에 포함되지 않는다. 따라서 구독 로그인/연결 완료나 공유 provider 사용을 활성화하지 않는다. 이미지·파일·hosted search·기타 media는 이 adapter에서 아직 노출하지 않는다. 개인 소유 layer와 실제 계정별 text/tool 검증이 준비된 뒤에만 선택 가능 상태로 전환한다. 근거: [SIWC inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference), [preview limits](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [namespace schema](https://developers.openai.com/api/docs/guides/function-calling#defining-namespaces).
 
+### SIWC authentication foundation
+
+별도 [인증 protocol](chatgpt-authentication.md)은 고정 공식 discovery/endpoints, PKCE/state/nonce,
+실제 RS256/JWKS 검증, 부여된 scope의 plan 상태, refresh/revoke 형식을 구현했다.
+반환 callback의 선택적 client_id와 최초 교환 실패 뒤 issued registration 재사용을 수정하고
+독립 재검토·Native/Linux 검사를 통과했다. [검증 기록](reviews/2026-11-14-chatgpt-authentication.md).
+이는 connector 기반이며 개인 credential 저장·실제 loopback helper·원격 VM 전달·개인 모델 선택은
+아직 연결하지 않았다. 기존 Codex 로그인이나 합성 토큰 검증으로 그 기능을 활성화하지 않는다.
+
 ## Claude 공식 실행 연결
 
 Anthropic 문서는 자체 제품/Agent SDK에는 API key 또는 지원 cloud를 사용하도록 한다. Claude.ai OAuth/session cookie 추출·중계는 지원하지 않는다. 별도 조건을 지킨 변경 없는 공식 Claude Code hosting은 가능하며 각 사용자가 자기 계정으로 인증하고 직접 과금된다. CLI를 선택 설치할 때 외부 runtime/라이선스/버전·기능 차이를 표시한다. 기본 Rust 서버 실행에 필수로 넣지 않는다.

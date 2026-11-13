@@ -2153,6 +2153,7 @@ dependencies = [
  "mail-parser",
  "moosuri-core",
  "reqwest",
+ "ring",
  "scraper",
  "serde",
  "serde_json",

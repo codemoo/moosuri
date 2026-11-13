@@ -3,6 +3,7 @@
 mod artifact_tools;
 mod automatic_memory;
 pub mod browser;
+pub mod calendar;
 mod knowledge_tools;
 pub mod mail;
 mod mail_tools;

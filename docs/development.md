@@ -166,6 +166,17 @@ npm ci --ignore-scripts --prefix tools/openspec
 OPENSPEC_TELEMETRY=0 tools/openspec/node_modules/.bin/openspec validate --all --strict --no-interactive
 ```
 
+Keep one reusable Cargo target directory per toolchain/target instead of copying
+build output into each review checkout. For smaller development builds, set
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_INCREMENTAL=0`;
+leave debug information enabled when investigating a crash. Source snapshots
+should exclude Cargo's declared target directory, installed `node_modules` and
+package download caches. Do not recursively delete folders by name: dependencies
+can contain real source directories named `target`. Serialize writers to a shared
+build directory. After its processes have stopped, disposable
+build output can be removed with `cargo clean --target-dir /absolute/build/target`.
+Preserve pending source edits, validation reports and installation data separately.
+
 Build React **before** the Rust binary/installation integration test so the public
 shell is embedded. Changing React requires a rebuild of the binary. For hot
 reload, run Rust with `--origin http://127.0.0.1:5173 --dev` and use `npm run dev --prefix web`; Vite preserves Host while proxying API requests to port3210.

@@ -43,7 +43,8 @@ Native/Linux·React·실제 Chrome에서 중복 생성 방지,3회 계산과 동
 1. **대화에서 맡긴 일 생성·제어**를 기존 요청/회차 identity로 연결한다.
    명확한 원래 요청만 권한으로 쓰고 모호한 대상·시각만 묻는다. Calendar/broker/구독 adapter를 선행 조건으로 만들지 않는다.
 2. **Calendar 읽기 도구와 제한된 대화 일정 작업**을 기존 typed dispatch/ETag/lookup에 연결한다.
-   primary solo-event부터 시작하고 불명 결과를 새 쓰기로 재발송하지 않는다.
+   공통 CalendarService 분리와 기존 양식 동작 검증을 완료했다([증거](reviews/2026-11-13-calendar-service.md)).
+   대화 도구는 primary solo-event부터 연결하고 불명 결과를 새 쓰기로 재발송하지 않는다.
 3. **볼트 broker와 복구**: device pairing·local grant·online commitment/revoke·secret 비노출·offline resume,
    standalone vault backup/restore·구 v1 호환/이전, 전체 계정 삭제/outbox를 작은 경계별 단위로 구현한다.
 4. **미디어·외부 연결**: PDF, 녹음·초안 확인 STT, one-use share; Gmail provider draft/불명 조회·승인된 고정 예약 발송,

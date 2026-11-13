@@ -7,4 +7,5 @@
 - [x] Add synthetic connector/store/HTTP/React behavior verification and docs.
 - [x] Independent boundary review, both reproduced repairs and combined migration26 after missions25.
 - [x] Root Linux and rendered browser verification; publication allowlist and secret scan required per repository policy.
+- [x] Extract one authenticated CalendarService for direct forms; preserve single dispatch, lookup-only recovery and late-result fencing with independent review and focused Linux checks.
 - [ ] Future agent/conversational admission, recurrence/all-day/secondary writes and attendee support.

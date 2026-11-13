@@ -1,13 +1,14 @@
 //! Explicit authenticated Calendar forms. No model/agent mutation admission.
 use super::*;
 use axum::extract::Query;
+use moosuri_agent::calendar::CalendarService;
 use moosuri_connectors::{
-    calendar::{CalendarClient, CalendarWrite},
+    calendar::CalendarClient,
     gmail::{GmailClient, GmailError, SecretString},
     model::CancellationToken,
 };
 use moosuri_core::*;
-use moosuri_store::{CalendarAdmission, CalendarBinding, GoogleApp};
+use moosuri_store::GoogleApp;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Handle {
@@ -48,46 +49,6 @@ async fn app(s: &AppState) -> Result<GoogleApp, HttpError> {
         .oauth_client()
         .await?
         .ok_or(HttpError(StoreError::Unavailable))
-}
-async fn binding(s: &AppState, u: &UserContext, id: String) -> Result<CalendarBinding, HttpError> {
-    let app = app(s).await?;
-    let mut b = s
-        .store
-        .calendar_binding(u, id.clone(), app.pin.clone())
-        .await?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| StoreError::Unavailable)?
-        .as_secs() as i64;
-    if b.expires_at <= now + 60 {
-        let token = s
-            .mail
-            .client()
-            .refresh(&app.client, &b.refresh, &CancellationToken::new())
-            .await;
-        match token {
-            Ok(tokens) => s.store.refresh_calendar(&b, tokens).await?,
-            Err(e) => {
-                if matches!(e, GmailError::Http(400 | 401 | 403)) {
-                    let _ = s.store.calendar_needs_reconnect(&b).await;
-                }
-                return Err(remote(e));
-            }
-        }
-        b = s.store.calendar_binding(u, id, app.pin).await?;
-    }
-    Ok(b)
-}
-async fn primary(s: &AppState, b: &CalendarBinding) -> Result<CalendarInfo, HttpError> {
-    let p = CalendarClient::google()
-        .primary(&b.access, &CancellationToken::new())
-        .await
-        .map_err(remote)?;
-    s.store.check_calendar_binding(b).await?;
-    if p.id != b.connection.primary_id {
-        return Err(HttpError(StoreError::Conflict));
-    }
-    Ok(p)
 }
 async fn connections(State(s): State<AppState>, h: HeaderMap) -> HttpResult {
     let u = current(&s, &h).await?;
@@ -208,17 +169,9 @@ async fn calendars(
     Query(q): Query<ConnectionQuery>,
 ) -> HttpResult {
     let u = current(&s, &h).await?;
-    let b = binding(&s, &u, q.connection_id).await?;
-    primary(&s, &b).await?;
-    let page = CalendarClient::google()
-        .calendars(
-            &b.access,
-            q.page_token.as_deref(),
-            &CancellationToken::new(),
-        )
-        .await
-        .map_err(remote)?;
-    s.store.check_calendar_binding(&b).await?;
+    let page = CalendarService::new(s.store.clone(), s.mail.clone())
+        .calendars(&u, q.connection_id, q.page_token)
+        .await?;
     Ok(Json(page).into_response())
 }
 async fn events(
@@ -227,13 +180,9 @@ async fn events(
     Json(q): Json<CalendarRange>,
 ) -> HttpResult {
     let u = current(&s, &h).await?;
-    let b = binding(&s, &u, q.connection_id.clone()).await?;
-    let p = primary(&s, &b).await?;
-    let page = CalendarClient::google()
-        .events(&b.access, &p.id, &q, &CancellationToken::new())
-        .await
-        .map_err(remote)?;
-    s.store.check_calendar_binding(&b).await?;
+    let page = CalendarService::new(s.store.clone(), s.mail.clone())
+        .events(&u, q)
+        .await?;
     Ok(Json(page).into_response())
 }
 async fn actions(State(s): State<AppState>, h: HeaderMap) -> HttpResult {
@@ -246,189 +195,15 @@ async fn change(
     Json(input): Json<CalendarChange>,
 ) -> HttpResult {
     let u = current(&s, &h).await?;
-    if let Some(existing) = s.store.existing_calendar_change(&u, input.clone()).await? {
-        return Ok(Json(existing).into_response());
-    }
-    let b = binding(&s, &u, input.connection_id.clone()).await?;
-    let p = primary(&s, &b).await?;
-    let client = CalendarClient::google();
-    let cancel = CancellationToken::new();
-    let prior = match &input.mutation {
-        CalendarMutation::Create { .. } => None,
-        CalendarMutation::Update { event_id, .. } | CalendarMutation::Delete { event_id, .. } => {
-            Some(
-                client
-                    .event(&b.access, &p.id, event_id, &cancel)
-                    .await
-                    .map_err(remote)?,
-            )
-        }
-    };
-    s.store.check_calendar_binding(&b).await?;
-    let admission = s
-        .store
-        .admit_calendar_change(&b, input, p, prior.as_ref().map(|v| v.event.clone()))
-        .await?;
-    let dispatch = match admission {
-        CalendarAdmission::Recorded(v) => return Ok(Json(v).into_response()),
-        CalendarAdmission::Dispatch(d) => d,
-    };
-    // This is the only write invocation. No retry or refresh is performed after commitment.
-    let result = client
-        .mutate(
-            &b.access,
-            CalendarWrite {
-                primary: &dispatch.primary_id,
-                id: &dispatch.event_id,
-                change: &dispatch.change.mutation,
-                operation: &dispatch.change.request_id,
-                digest: &dispatch.digest,
-                prior: prior.as_ref(),
-            },
-            &cancel,
-        )
-        .await;
-    let (state, event, receipt, error) = match result {
-        Ok(result) => {
-            let etag = result.event.as_ref().map(|e| e.event.etag.clone());
-            let receipt=serde_json::json!({"provider":"google_calendar","http_status":result.status,"operation_id":dispatch.change.request_id,"event_id":dispatch.event_id,"etag":etag}).to_string();
-            ("applied", result.event.map(|v| v.event), receipt, None)
-        }
-        Err(e) => {
-            let state = match e {
-                GmailError::Http(409 | 412) => "conflict",
-                GmailError::Http(400 | 401 | 403 | 404 | 410) | GmailError::InvalidInput => {
-                    "failed_definite"
-                }
-                _ => "outcome_unknown",
-            };
-            (
-                state,
-                None,
-                serde_json::json!({"provider":"google_calendar","state":state,"http_status":match e{GmailError::Http(status)=>Some(status),_=>None}}).to_string(),
-                Some(
-                    if state == "outcome_unknown" {
-                        "lookup_required"
-                    } else {
-                        "provider_rejected"
-                    }
-                    .into(),
-                ),
-            )
-        }
-    };
-    let action = s
-        .store
-        .settle_calendar_change(&dispatch, state.into(), event, receipt, error)
+    let action = CalendarService::new(s.store.clone(), s.mail.clone())
+        .change(&u, input)
         .await?;
     Ok(Json(action).into_response())
 }
 async fn lookup(State(s): State<AppState>, h: HeaderMap, Path(id): Path<String>) -> HttpResult {
     let u = current(&s, &h).await?;
-    let app = app(&s).await?;
-    let d = s.store.calendar_reconcile(&u, id, app.pin).await?;
-    let b = binding(&s, &u, d.change.connection_id.clone()).await?;
-    let d = s
-        .store
-        .calendar_reconcile(&u, d.change.request_id.clone(), b.app.clone())
-        .await?;
-    let p = primary(&s, &b).await?;
-    let observed = CalendarClient::google()
-        .event(&b.access, &p.id, &d.event_id, &CancellationToken::new())
-        .await;
-    s.store.check_calendar_binding(&b).await?;
-    let (state, event, receipt) = lookup_result(
-        &d.change.mutation,
-        &d.event_id,
-        &d.change.request_id,
-        &d.digest,
-        observed,
-    );
-    let action = s
-        .store
-        .settle_calendar_change(
-            &d,
-            state.into(),
-            event,
-            receipt.into(),
-            if state == "outcome_unknown" {
-                Some("lookup_inconclusive".into())
-            } else {
-                None
-            },
-        )
+    let action = CalendarService::new(s.store.clone(), s.mail.clone())
+        .lookup(&u, id)
         .await?;
     Ok(Json(action).into_response())
-}
-
-fn lookup_result(
-    mutation: &CalendarMutation,
-    event_id: &str,
-    request_id: &str,
-    digest: &str,
-    observed: Result<moosuri_connectors::calendar::EventObservation, GmailError>,
-) -> (&'static str, Option<CalendarEvent>, &'static str) {
-    match observed {
-        Ok(v)
-            if moosuri_connectors::calendar::observed_change(
-                &v, event_id, request_id, digest, mutation,
-            ) =>
-        {
-            (
-                "applied",
-                Some(v.event),
-                "matching_event_and_operation_observed",
-            )
-        }
-        Err(GmailError::Http(404 | 410)) if matches!(mutation, CalendarMutation::Delete { .. }) => {
-            (
-                "observed_absent",
-                None,
-                "current_absence_observed_causality_unknown",
-            )
-        }
-        _ => ("outcome_unknown", None, "no_conclusive_operation_evidence"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn missing_event_is_causal_unknown_for_create_and_only_absence_for_delete() {
-        let fields = CalendarFields {
-            title: "Synthetic".into(),
-            description: "".into(),
-            location: "".into(),
-            start: "2026-11-15T10:00:00Z".into(),
-            end: "2026-11-15T11:00:00Z".into(),
-            time_zone: None,
-        };
-        for status in [404, 410] {
-            let create = CalendarMutation::Create {
-                fields: fields.clone(),
-            };
-            let result = lookup_result(
-                &create,
-                "synthetic1",
-                "request",
-                "digest",
-                Err(GmailError::Http(status)),
-            );
-            assert_eq!(result.0, "outcome_unknown");
-            let delete = CalendarMutation::Delete {
-                event_id: "synthetic1".into(),
-                etag: "etag".into(),
-            };
-            let result = lookup_result(
-                &delete,
-                "synthetic1",
-                "request",
-                "digest",
-                Err(GmailError::Http(status)),
-            );
-            assert_eq!(result.0, "observed_absent");
-            assert_eq!(result.2, "current_absence_observed_causality_unknown");
-        }
-    }
 }

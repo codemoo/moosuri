@@ -102,11 +102,12 @@ async fn encrypted_snapshot_manifest_epochs_and_provider_key_independence() {
         vec![
             "assistant.sqlite",
             "auth-epochs.journal",
+            "destructive-intents.journal",
             "knowledge-invalidations.journal",
             "manifest.json"
         ]
     );
-    let manifest: Manifest = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+    let manifest: ManifestV2 = serde_json::from_slice(&entries["manifest.json"]).unwrap();
     assert_eq!(manifest.installation_id, c1.installation_id);
     assert_eq!(manifest.key_epoch, 1);
     assert_eq!(manifest.purpose, "assistant-export");
@@ -122,7 +123,7 @@ async fn encrypted_snapshot_manifest_epochs_and_provider_key_independence() {
     let output_b = exports.path().join("epoch-b.age");
     create(data.path(), &output_b).unwrap();
     assert_eq!(
-        serde_json::from_slice::<Manifest>(&unpack(&output_b, &b)["manifest.json"])
+        serde_json::from_slice::<ManifestV2>(&unpack(&output_b, &b)["manifest.json"])
             .unwrap()
             .key_epoch,
         2
@@ -327,7 +328,7 @@ async fn source_size_caps_and_stream_failure_never_publish_a_complete_archive() 
         write_archive(
             FailedWriter,
             &key.to_public(),
-            &manifest,
+            &manifest.entries,
             b"{}",
             &offline.temp.0.join("unused"),
             &offline.temp.0,
@@ -377,7 +378,7 @@ async fn reference_go_age_reads_export_and_rust_reads_reference_ciphertext() {
         .unwrap()
         .map(|e| e.unwrap().path().unwrap().to_string_lossy().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 4);
+    assert_eq!(names.len(), 5);
     let plain = exports.path().join("synthetic-input");
     fs::write(&plain, CHALLENGE).unwrap();
     let encoded = std::process::Command::new(&binary)
@@ -416,7 +417,7 @@ async fn export_keeps_pending_journal_intent_without_replaying_or_mutating_sourc
     create(data.path(), &output).unwrap();
     assert_eq!(snapshot(data.path()), before);
     let entries = unpack(&output, &key);
-    let manifest: Manifest = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+    let manifest: ManifestV2 = serde_json::from_slice(&entries["manifest.json"]).unwrap();
     assert_eq!(manifest.auth_journal.sequence, 1);
     assert_eq!(manifest.auth_journal.snapshot_sequence, 0);
     assert_eq!(entries["auth-epochs.journal"].len(), 104);
@@ -463,4 +464,153 @@ async fn unsupported_schema_uninitialized_account_and_missing_journal_are_unchan
         assert_eq!(snapshot(data.path()), before);
     }
     assert_eq!(fs::read_dir(exports.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn format1_fixture_retains_exact_codec_and_four_entry_archive() {
+    // An unchanged schema13/format1 manifest has no successor or coverage field.
+    const FIXTURE: &str = r#"{"format":1,"purpose":"assistant-export","installation_id":"00000000-0000-4000-8000-000000000001","export_id":"00000000-0000-4000-8000-000000000002","schema":13,"created_at":0,"key_epoch":1,"recipient":"legacy-public-recipient","entries":[{"name":"assistant.sqlite","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},{"name":"auth-epochs.journal","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},{"name":"knowledge-invalidations.journal","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0}],"auth_journal":{"sequence":0,"head":"0000000000000000000000000000000000000000000000000000000000000000","snapshot_sequence":0,"snapshot_head":"0000000000000000000000000000000000000000000000000000000000000000"},"knowledge_journal":{"sequence":0,"head":"0000000000000000000000000000000000000000000000000000000000000000","snapshot_sequence":0,"snapshot_head":"0000000000000000000000000000000000000000000000000000000000000000"},"authoritative_files":[],"limitations":[]}"#;
+    let DecodedManifest::V1(manifest) = decode_manifest(FIXTURE.as_bytes()).unwrap() else {
+        panic!("format1 changed");
+    };
+    assert_eq!(serde_json::to_string(&manifest).unwrap(), FIXTURE);
+    assert!(serde_json::from_str::<ManifestV2>(FIXTURE).is_err());
+    let source = directory();
+    for entry in &manifest.entries {
+        files::create_file(&source.path().join(&entry.name))
+            .unwrap()
+            .sync_all()
+            .unwrap();
+    }
+    let identity = age::x25519::Identity::generate();
+    let archive = source.path().join("legacy.age");
+    let file = files::create_file(&archive).unwrap();
+    write_archive(
+        file,
+        &identity.to_public(),
+        &manifest.entries,
+        FIXTURE.as_bytes(),
+        &source.path().join("assistant.sqlite"),
+        source.path(),
+        Instant::now(),
+    )
+    .unwrap();
+    let entries = unpack(&archive, &identity);
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries["manifest.json"], FIXTURE.as_bytes());
+    assert!(!entries.contains_key("destructive-intents.journal"));
+}
+
+#[tokio::test]
+async fn format2_requires_successor_and_coverage_and_preserves_unapplied_intent_heads() {
+    let _guard = TEST_LOCK.lock().await;
+    let data = directory();
+    let kit = directory();
+    let exports = directory();
+    installed(data.path()).await;
+    let (key, identity) = key(kit.path(), "identity");
+    setup(data.path(), &key.to_public().to_string(), &identity).unwrap();
+    let store = Store::open(data.path()).unwrap();
+    let user = store
+        .login("admin@example.test".into(), crate::tests::PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    let thread = store
+        .create_thread(&user, "Synthetic pending deletion".into())
+        .await
+        .unwrap();
+    let tenant = user.tenant.0.clone();
+    store
+        .call(move |db| {
+            let prepared = db.destructive_journal.prepare(
+                &tenant,
+                destructive_intents::Effect::DeleteThread { target: thread.id },
+            )?;
+            db.destructive_journal.append(prepared)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    drop(store);
+    let before = snapshot(data.path());
+    let output = exports.path().join("pending-successor.age");
+    create(data.path(), &output).unwrap();
+    assert_eq!(snapshot(data.path()), before);
+    let entries = unpack(&output, &key);
+    let bytes = &entries["manifest.json"];
+    let DecodedManifest::V2(manifest) = decode_manifest(bytes).unwrap() else {
+        panic!("requires format2");
+    };
+    assert_eq!(manifest.coverage.version, 1);
+    assert_eq!(manifest.coverage.schema_baseline, 15);
+    assert_eq!(manifest.coverage.successor_format, "MSDSTR01");
+    assert_eq!(manifest.coverage.successor_journal.sequence, 1);
+    assert_eq!(manifest.coverage.successor_journal.snapshot_sequence, 0);
+    let journal =
+        destructive_intents::Journal::open(&data.path().join(destructive_intents::FILE_NAME))
+            .unwrap();
+    assert_eq!(
+        manifest.coverage.successor_journal.head,
+        hex(&journal.records[0].hash)
+    );
+    assert_eq!(
+        manifest.coverage.successor_journal.snapshot_head,
+        hex(&journal.binding.header_head)
+    );
+    assert_eq!(
+        manifest.coverage.legacy_sequence,
+        journal.binding.legacy_sequence
+    );
+    assert_eq!(
+        manifest.coverage.legacy_head,
+        hex(&journal.binding.legacy_head)
+    );
+    let entry = manifest
+        .entries
+        .iter()
+        .find(|e| e.name == destructive_intents::FILE_NAME)
+        .unwrap();
+    assert_eq!(
+        entry.sha256,
+        hex(&Sha256::digest(&entries[destructive_intents::FILE_NAME]))
+    );
+    assert_eq!(
+        entry.size,
+        entries[destructive_intents::FILE_NAME].len() as u64
+    );
+    drop(journal);
+    for defect in 0..6 {
+        let mut value: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        match defect {
+            0 => {
+                value.as_object_mut().unwrap().remove("coverage");
+            }
+            1 => {
+                value["entries"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|e| e["name"] != destructive_intents::FILE_NAME);
+            }
+            2 => {
+                value["coverage"]["legacy_head"] = serde_json::json!("f".repeat(64));
+            }
+            3 => {
+                value["coverage"]["successor_journal"]["snapshot_sequence"] = serde_json::json!(2);
+            }
+            4 => {
+                value["coverage"]["successor_journal"]["head"] = serde_json::json!("invalid");
+            }
+            _ => {
+                value["format"] = serde_json::json!(1);
+            }
+        }
+        assert!(decode_manifest(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+    // Missing mandatory journal is rejected without recreating it or exporting.
+    fs::remove_file(data.path().join(destructive_intents::FILE_NAME)).unwrap();
+    let missing = snapshot(data.path());
+    assert!(create(data.path(), &exports.path().join("missing.age")).is_err());
+    assert_eq!(snapshot(data.path()), missing);
+    assert!(!exports.path().join("missing.age").exists());
 }

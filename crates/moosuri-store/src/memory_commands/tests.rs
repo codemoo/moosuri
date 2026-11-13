@@ -434,10 +434,10 @@ async fn no_append_gap_never_autoexecutes_and_explicit_authenticated_resume_conv
         Err(StoreError::Conflict)
     ));
     assert_eq!(
-        std::fs::metadata(dir.path().join("knowledge-invalidations.journal"))
+        std::fs::metadata(dir.path().join(destructive_intents::FILE_NAME))
             .unwrap()
             .len(),
-        0
+        96
     );
     store.retry_run(&user, claim.lease.run, 1).await.unwrap();
     let next = store.claim_agent_run().await.unwrap().unwrap();
@@ -482,16 +482,23 @@ async fn adopted_forget_replays_after_auth_revocation_and_deleted_chat_without_r
     let command = store.prepare_memory_command(&step, intent).await.unwrap();
     let tenant = user.tenant.0.clone();
     let id = command.command.clone();
-    // Model the fsynced action5/SQLite-apply crash gap. The opaque row must also
-    // survive a deleted conversation in the database snapshot being recovered.
+    // Model an adopted direct-forget/SQLite-apply gap and a snapshot whose
+    // conversation was already deleted. Preserve the opaque slot/receipt row.
+    let deleted_thread = thread.clone();
     store
         .call(move |db| {
-            db.knowledge_journal.append(&tenant, &id, 5)?;
+            destructive_intents::adopt_unapplied_for_test(db, &tenant, &id, 5)?;
+            let tx = db.conn.transaction()?;
+            mail::purge_thread(&tx, &tenant, &deleted_thread)?;
+            tx.execute(
+                "DELETE FROM threads WHERE tenant_id=?1 AND id=?2",
+                params![tenant, deleted_thread],
+            )?;
+            tx.commit()?;
             Ok(())
         })
         .await
         .unwrap();
-    store.delete_thread(&user, thread.clone()).await.unwrap();
     store.logout(&user).await.unwrap();
     drop(store);
     let store = Store::open(dir.path()).unwrap();
@@ -549,7 +556,7 @@ async fn adopted_forget_replays_after_auth_revocation_and_deleted_chat_without_r
         })
         .await
         .unwrap();
-    let journal = std::fs::read(dir.path().join("knowledge-invalidations.journal")).unwrap();
+    let journal = std::fs::read(dir.path().join(destructive_intents::FILE_NAME)).unwrap();
     assert!(
         !journal
             .windows(b"green tea".len())
@@ -1109,7 +1116,7 @@ async fn journal_adopted_before_target_expiry_replays_after_expiry_without_new_e
             let value = slot(&db.conn, &tenant, &run)?.ok_or(StoreError::Corrupt)?;
             assert!(value.clarification.is_none());
             assert!(current_target(&db.conn, &tenant, &value, "green tea")?);
-            db.knowledge_journal.append(&tenant, &command, 5)?;
+            destructive_intents::adopt_unapplied_for_test(db, &tenant, &command, 5)?;
             Ok(())
         })
         .await
@@ -1214,10 +1221,10 @@ async fn effective_past_revision_and_second_current_match_remain_ambiguous_witho
     assert_eq!(store.memory(&user, b.id, None).await.unwrap().revision, 1);
     assert_eq!(memory_count(&store).await, 2);
     assert_eq!(
-        std::fs::metadata(dir.path().join("knowledge-invalidations.journal"))
+        std::fs::metadata(dir.path().join(destructive_intents::FILE_NAME))
             .unwrap()
             .len(),
-        0
+        96
     );
 }
 
@@ -1306,10 +1313,10 @@ async fn a_clock_activated_effective_revision_is_fenced_even_when_head_and_query
     ));
     assert_eq!(store.memory(&user, id, None).await.unwrap().revision, 2);
     assert_eq!(
-        std::fs::metadata(dir.path().join("knowledge-invalidations.journal"))
+        std::fs::metadata(dir.path().join(destructive_intents::FILE_NAME))
             .unwrap()
             .len(),
-        0
+        96
     );
 }
 
@@ -1412,4 +1419,80 @@ async fn an_active_effective_revision_can_be_forgotten_with_an_invalidated_futur
         store.memory(&user, first.id, None).await,
         Err(StoreError::NotFound)
     ));
+}
+
+#[tokio::test]
+async fn successor_forget_records_direct_target_independent_of_post_snapshot_command_slot() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let memory = store
+        .create_memory(
+            &user,
+            Uuid::new_v4().to_string(),
+            draft("I prefer green tea."),
+        )
+        .await
+        .unwrap();
+    let snapshot = directory();
+    let path = snapshot.path().join("before-command.sqlite");
+    let path_copy = path.clone();
+    store
+        .call(move |db| {
+            let mut saved = Connection::open(path_copy)?;
+            let backup = rusqlite::backup::Backup::new(&db.conn, &mut saved)?;
+            backup.run_to_completion(128, std::time::Duration::from_millis(1), None)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (text, intent) = forget();
+    let (_, _, step) = planning(&store, &user, &text).await;
+    let prepared = store.prepare_memory_command(&step, intent).await.unwrap();
+    store.execute_memory_command(&prepared).await.unwrap();
+    let expected = memory.id.clone();
+    let direct = store
+        .call(move |db| {
+            assert!(db.knowledge_journal.records.is_empty());
+            let record = db.destructive_journal.records.last().unwrap();
+            match &record.effect {
+                destructive_intents::Effect::ForgetCommand {
+                    target,
+                    command,
+                    revision,
+                    ..
+                } => {
+                    assert_eq!(target, &expected);
+                    assert_ne!(target, command);
+                    assert_eq!(*revision, 1);
+                    Ok(target.clone())
+                }
+                _ => panic!("missing direct forget record"),
+            }
+        })
+        .await
+        .unwrap();
+    let saved = Connection::open(path).unwrap();
+    assert_eq!(
+        saved
+            .query_row("SELECT count(*) FROM memory_command_slots", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    let tx = saved.unchecked_transaction().unwrap();
+    knowledge::destructive::forget(&tx, &user.tenant.0, &direct).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(
+        saved
+            .query_row(
+                "SELECT status FROM knowledge_memories WHERE id=?1",
+                [direct],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+        "forgotten"
+    );
+    // This is only a component proof of the direct mapping, not a restore API.
 }

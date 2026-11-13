@@ -71,14 +71,26 @@ Backup API incorporates committed WAL pages; it never copies a live DB alone or
 deletes WAL/SHM. Private temporary DB+WAL copies avoid read-only SQLite creating
 sidecars beside rejected original inputs. The exporter never starts runtime
 workers, decrypts provider credentials or needs `provider-secrets.key` to exist.
-It streams four fixed standard tar entries inside a standard age-v1 ciphertext:
+It streams five fixed standard tar entries inside a standard age-v1 ciphertext:
 
 - `manifest.json`: purpose/version, installation/export IDs, public key epoch,
-  snapshot schema, byte hashes/sizes and auth/knowledge journal heads/watermarks.
+  snapshot schema, byte hashes/sizes and auth/knowledge journal heads/watermarks,
+  plus required format2 destructive coverage metadata.
 - `assistant.sqlite`: the complete current database snapshot, including retained
   public recipient history and existing tombstones/receipts.
 - `auth-epochs.journal` and `knowledge-invalidations.journal`: exact snapshot-era
   journal bytes, checked against the snapshot's committed prefix watermarks.
+- `destructive-intents.journal`: required MSDSTR01 successor bytes, including
+  the installation binding and exact frozen predecessor boundary.
+
+New schema0015 exports are format2 exactly, including an empty successor journal.
+Coverage version1 records baseline15, the frozen predecessor sequence/head,
+successor format and complete/snapshot-applied sequence/head. The successor also
+has normal byte-size/SHA256 inventory. Format1 retains its original four-entry
+manifest codec; no format1 downgrade or fifth-file omission switch exists. Unknown
+formats and missing required coverage/entries are rejected. This metadata is
+snapshot coverage, not proof of independently current deletions or an off-host
+checkpoint. Coverage cannot reconstruct unjournaled deletions before0015.
 
 The manifest purpose is `assistant-export`. Its authoritative-file inventory is
 explicitly empty because attachment/photo/PDF/artifact storage is not implemented.

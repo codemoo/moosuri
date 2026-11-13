@@ -339,10 +339,10 @@ async fn candidate_set_drift_before_selection_or_commit_fences_mutation() {
             1
         );
         assert_eq!(
-            std::fs::metadata(dir.path().join("knowledge-invalidations.journal"))
+            std::fs::metadata(dir.path().join(destructive_intents::FILE_NAME))
                 .unwrap()
                 .len(),
-            0
+            96
         );
     }
 }
@@ -684,10 +684,10 @@ async fn selection_phase_rechecks_session_provider_and_cross_plan_capability() {
         );
         assert_eq!(memory_count(&store).await, 1);
         assert_eq!(
-            std::fs::metadata(dir.path().join("knowledge-invalidations.journal"))
+            std::fs::metadata(dir.path().join(destructive_intents::FILE_NAME))
                 .unwrap()
                 .len(),
-            0
+            96
         );
     }
 }
@@ -744,14 +744,24 @@ async fn accepted_selection_resumes_without_a_new_decision_and_adopted_forget_su
     );
     let tenant = user.tenant.0.clone();
     let command_id = command.command.clone();
+    let deleted_thread = thread.clone();
     store
         .call(move |db| {
-            db.knowledge_journal.append(&tenant, &command_id, 5)?;
+            destructive_intents::adopt_unapplied_for_test(db, &tenant, &command_id, 5)?;
+            // Arrange the historical synthetic fault state directly: this actor
+            // models a dead process with unapplied adoption, so issuing a second
+            // public destructive command before replay would be invalid.
+            let tx = db.conn.transaction()?;
+            mail::purge_thread(&tx, &tenant, &deleted_thread)?;
+            tx.execute(
+                "DELETE FROM threads WHERE tenant_id=?1 AND id=?2",
+                params![tenant, deleted_thread],
+            )?;
+            tx.commit()?;
             Ok(())
         })
         .await
         .unwrap();
-    store.delete_thread(&user, thread.clone()).await.unwrap();
     drop(store);
     let store = Store::open(dir.path()).unwrap();
     assert!(matches!(

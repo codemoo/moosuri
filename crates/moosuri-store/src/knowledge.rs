@@ -60,7 +60,7 @@ pub(super) fn generation(conn: &Connection, tenant: &str) -> Result<i64> {
         .optional()?
         .unwrap_or(0))
 }
-fn bump(conn: &Connection, tenant: &str) -> Result<i64> {
+pub(crate) fn bump(conn: &Connection, tenant: &str) -> Result<i64> {
     conn.execute("INSERT INTO knowledge_state(tenant_id,generation) VALUES (?1,1) ON CONFLICT(tenant_id) DO UPDATE SET generation=generation+1",[tenant])?;
     generation(conn, tenant)
 }

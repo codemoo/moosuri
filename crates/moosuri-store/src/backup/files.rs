@@ -105,6 +105,7 @@ pub(super) fn stopped_lock(root: &Path) -> Result<(PathBuf, File)> {
         "assistant.sqlite-shm",
         "auth-epochs.journal",
         "knowledge-invalidations.journal",
+        "destructive-intents.journal",
         "provider-secrets.key",
     ];
     for entry in fs::read_dir(&root).map_err(|_| Error::Unavailable)? {

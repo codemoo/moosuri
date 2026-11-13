@@ -161,6 +161,18 @@ async fn cli_setup_create_and_reference_decrypt_work_without_a_server_key() {
         .output()
         .unwrap();
     assert!(decrypted.status.success());
+    for required in [
+        b"\"format\":2".as_slice(),
+        b"destructive-intents.journal",
+        b"\"schema_baseline\":15",
+    ] {
+        assert!(
+            decrypted
+                .stdout
+                .windows(required.len())
+                .any(|w| w == required)
+        );
+    }
     assert!(
         decrypted
             .stdout
@@ -168,3 +180,6 @@ async fn cli_setup_create_and_reference_decrypt_work_without_a_server_key() {
             .any(|w| w == b"manifest.json")
     );
 }
+
+// The reference-decrypted fixed tar bytes must advertise the explicit new format;
+// the store tests separately parse the manifest and validate every entry/head.

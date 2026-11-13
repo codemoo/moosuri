@@ -9,6 +9,7 @@ mod source_connections;
 pub use source_connections::*;
 mod agent_execution;
 mod chat;
+mod destructive_intents;
 mod knowledge;
 mod knowledge_journal;
 mod memory_commands;
@@ -150,6 +151,7 @@ struct Database {
     poisoned: bool,
     provider_key: Zeroizing<[u8; 32]>,
     knowledge_journal: knowledge_journal::Journal,
+    destructive_journal: destructive_intents::Journal,
     web_profile: moosuri_core::WebToolProfile,
 }
 #[derive(Clone)]
@@ -162,7 +164,7 @@ struct LoginAccount {
     recovery: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 14;
+const CURRENT_SCHEMA_VERSION: i64 = 15;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -321,7 +323,7 @@ impl Store {
         {
             return Err(StoreError::Corrupt);
         }
-        let knowledge_journal = knowledge_journal::Journal::open(&knowledge_journal_path)?;
+        let mut knowledge_journal = knowledge_journal::Journal::open(&knowledge_journal_path)?;
         File::open(&dir)
             .and_then(|f| f.sync_all())
             .map_err(|_| StoreError::Unavailable)?;
@@ -394,6 +396,12 @@ impl Store {
                 include_str!("../../../migrations/assistant/0014_automatic_memory.sql")
             ))?;
         }
+        let destructive_journal = destructive_intents::open_or_migrate(
+            &conn,
+            &dir,
+            &mut knowledge_journal,
+            version < 15,
+        )?;
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;
         browser::restart(&conn)?;
@@ -410,10 +418,12 @@ impl Store {
             poisoned: false,
             provider_key,
             knowledge_journal,
+            destructive_journal,
             web_profile,
         };
         database.replay_journal()?;
         knowledge::replay(&mut database)?;
+        destructive_intents::replay(&mut database)?;
         chat::restart(&mut database.conn)?;
         let dummy_hash = DUMMY_HASH.to_owned();
         let (sender, mut receiver) = mpsc::channel::<Command>(64);
@@ -648,15 +658,19 @@ impl Store {
         }
         self.call(move |db| {
             let current = validate(&db.conn, &user, true, false)?;
-            mail::purge_thread(&db.conn, &current.tenant.0, &id)?;
-            if db.conn.execute(
-                "DELETE FROM threads WHERE tenant_id=?1 AND id=?2",
+            let exists: bool = db.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM threads WHERE tenant_id=?1 AND id=?2)",
                 params![current.tenant.0, id],
-            )? != 1
-            {
+                |r| r.get(0),
+            )?;
+            if !exists {
                 return Err(StoreError::NotFound);
             }
-            Ok(())
+            destructive_intents::commit(
+                db,
+                &current.tenant.0,
+                destructive_intents::Effect::DeleteThread { target: id },
+            )
         })
         .await
     }

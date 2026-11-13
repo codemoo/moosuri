@@ -556,3 +556,39 @@ async fn knowledge_withdrawal_cancels_derived_draft_even_after_manual_edit() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn successor_disconnect_replays_full_credential_and_draft_purge_after_failed_commit() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = admin(&store).await.user;
+    let other = member(&store, &user, "other@example.test").await.user;
+    let own = connect(&store, &user).await;
+    let retained = connect(&store, &other).await;
+    let draft = store
+        .create_mail_draft(&user, input(&own), None)
+        .await
+        .unwrap();
+    store.call(|db|{db.conn.execute_batch("CREATE TEMP TRIGGER fail_disconnect BEFORE UPDATE OF credential ON mail_connections BEGIN SELECT RAISE(ABORT,'synthetic interruption'); END;")?;Ok(())}).await.unwrap();
+    assert!(store.disconnect_mail(&user, own.id.clone()).await.is_err());
+    assert_eq!(store.initialized().await, Err(StoreError::Unavailable));
+    drop(store);
+    let store = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        store.mail_connections(&user).await.unwrap()[0].status,
+        "disconnected"
+    );
+    assert!(store.mail_binding(&user, own.id.clone()).await.is_err());
+    // Repeating after a lost response is an explicit no-op, not a new adoption.
+    store.disconnect_mail(&user, own.id).await.unwrap();
+    let action = store.mail_action(&user, draft.id).await.unwrap();
+    assert_eq!(action.state, "cancelled");
+    assert!(action.content.is_none());
+    assert_eq!(
+        store.mail_connections(&other).await.unwrap()[0].id,
+        retained.id
+    );
+    let tenant = user.tenant.0.clone();
+    store.call(move|db|{assert_eq!(db.destructive_journal.records.len(),1);assert!(db.knowledge_journal.records.is_empty());let count:i64=db.conn.query_row("SELECT count(*) FROM mail_connections WHERE tenant_id=?1 AND credential IS NOT NULL",[tenant],|r|r.get(0))?;assert_eq!(count,0);Ok(())}).await.unwrap();
+}

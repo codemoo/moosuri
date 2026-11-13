@@ -493,3 +493,18 @@ macOS의 관련 기억/자료/백업 회귀, React31개, 생성 DTO·타입/buil
 OpenSpec와 독립 검토를 통과했다. 늦은 설정 응답과 긴 CRLF 이메일의 문단 처리를
 수정했다. [검증 기록](reviews/2026-11-13-automatic-memory.md)을 따르며 실모델 추출
 precision/recall은 아직 측정하지 않았다.
+
+
+## 삭제·연결 해제의 중단 복구
+
+migration0015부터 설치 UUID와 동결된 MSKNOW01 끝을 묶는 MSDSTR01을 사용한다.
+기억/자료 삭제, 명령 forget, 대화 삭제, 메일 연결 해제, 최대32개 자료의 한 배치
+삭제는 한 번의 append+fsync 뒤 효과·영수증·watermark를 같은 DB transaction에
+반영한다. 실패한 actor는 재시작 replay 전까지 막힌다. 새 export는 format2의
+고정5개 entry와 필수 coverage를 포함하며 기존 format1 codec은 보존한다.
+
+합성 fault/replay와 구버전 codec 검증은 [검증 기록](reviews/2026-11-13-destructive-intents.md),
+정확한 범위·재시도·한계는 [계약](recovery-intents.md)을 따른다. 자동 기억14와
+합친 schema15의 macOS·Linux 검사와 독립 검토를 마쳤다. Linux 최초 실행의
+fixture 파일 권한1건을 수정한 뒤 영향받는 검사와 doc-tests도 통과했다. 과거
+복원·외부 최신 checkpoint·기존 미기록 삭제의 소급 복구는 구현하지 않았다.

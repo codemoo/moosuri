@@ -577,10 +577,12 @@ impl Store {
             // No fallible input validation remains beyond this boundary. A crash
             // after intent fsync withdraws sources during startup replay even if the
             // page receipt was not committed. Keep the writer poisoned on failure.
-            if !deleted.is_empty(){db.poisoned=true;}
-            for source in deleted {
-                let record=db.knowledge_journal.append(&lease.cap.tenant,&source,2)?;
-                knowledge::destructive::apply(&tx,&record)?;
+            if !deleted.is_empty(){
+                let intent=destructive_intents::Effect::DeleteSources{targets:deleted};
+                let prepared=db.destructive_journal.prepare(&lease.cap.tenant,intent)?;
+                db.poisoned=true;
+                let record=db.destructive_journal.append(prepared)?;
+                destructive_intents::apply(&tx,&record)?;
             }
             // Tombstones may release provenance pins in this transaction. Prune
             // after their cascades so newly unreferenced history is also bounded.

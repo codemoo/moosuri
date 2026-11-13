@@ -1,5 +1,5 @@
 //! Stopped-installation encrypted exports. This is not a historical restore API.
-use crate::{CURRENT_SCHEMA_VERSION, StoreError, journal, knowledge_journal};
+use crate::{CURRENT_SCHEMA_VERSION, StoreError, destructive_intents, journal, knowledge_journal};
 use rusqlite::{Connection, OpenFlags, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -100,6 +100,122 @@ pub struct Manifest {
     pub authoritative_files: Vec<String>,
     pub limitations: Vec<String>,
 }
+/// Explicit format2 metadata. Format1 remains the unchanged four-entry codec.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Coverage {
+    pub version: u32,
+    pub schema_baseline: i64,
+    pub legacy_sequence: i64,
+    pub legacy_head: String,
+    pub successor_format: String,
+    pub successor_journal: JournalHead,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestV2 {
+    pub format: u32,
+    pub purpose: String,
+    pub installation_id: String,
+    pub export_id: String,
+    pub schema: i64,
+    pub created_at: i64,
+    pub key_epoch: i64,
+    pub recipient: String,
+    pub entries: Vec<Entry>,
+    pub auth_journal: JournalHead,
+    pub knowledge_journal: JournalHead,
+    pub authoritative_files: Vec<String>,
+    pub limitations: Vec<String>,
+    pub coverage: Coverage,
+}
+pub enum DecodedManifest {
+    V1(Manifest),
+    V2(ManifestV2),
+}
+/// Bounded version dispatch only; this does not decrypt, extract or restore data.
+pub fn decode_manifest(bytes: &[u8]) -> Result<DecodedManifest> {
+    if bytes.len() > 32768 {
+        return Err(Error::LimitExceeded);
+    }
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| Error::Integrity)?;
+    fn inventory(entries: &[Entry], successor: bool) -> Result<()> {
+        let mut expected = std::collections::BTreeSet::from([
+            "assistant.sqlite",
+            "auth-epochs.journal",
+            "knowledge-invalidations.journal",
+        ]);
+        if successor {
+            expected.insert(destructive_intents::FILE_NAME);
+        }
+        if entries.len() != expected.len() {
+            return Err(Error::Integrity);
+        }
+        for item in entries {
+            if !expected.remove(item.name.as_str())
+                || item.sha256.len() != 64
+                || !item
+                    .sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            {
+                return Err(Error::Integrity);
+            }
+            let cap = if item.name == "assistant.sqlite" {
+                DB_LIMIT
+            } else {
+                JOURNAL_LIMIT
+            };
+            if item.size > cap {
+                return Err(Error::LimitExceeded);
+            }
+        }
+        Ok(())
+    }
+    match value.get("format").and_then(|v| v.as_u64()) {
+        Some(1) => {
+            let manifest: Manifest = serde_json::from_value(value).map_err(|_| Error::Integrity)?;
+            inventory(&manifest.entries, false)?;
+            Ok(DecodedManifest::V1(manifest))
+        }
+        Some(2) => {
+            let manifest: ManifestV2 =
+                serde_json::from_value(value).map_err(|_| Error::Integrity)?;
+            inventory(&manifest.entries, true)?;
+            if manifest.coverage.version != 1
+                || manifest.coverage.schema_baseline != destructive_intents::COVERAGE_SCHEMA
+                || manifest.coverage.successor_format != "MSDSTR01"
+                || manifest.coverage.legacy_sequence != manifest.knowledge_journal.sequence
+                || manifest.coverage.legacy_head != manifest.knowledge_journal.head
+            {
+                return Err(Error::Integrity);
+            }
+            for head in [
+                &manifest.auth_journal,
+                &manifest.knowledge_journal,
+                &manifest.coverage.successor_journal,
+            ] {
+                if head.snapshot_sequence < 0
+                    || head.sequence < head.snapshot_sequence
+                    || [head.head.as_str(), head.snapshot_head.as_str()]
+                        .iter()
+                        .any(|value| {
+                            value.len() != 64
+                                || !value
+                                    .bytes()
+                                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                        })
+                    || (head.sequence == head.snapshot_sequence && head.head != head.snapshot_head)
+                {
+                    return Err(Error::Integrity);
+                }
+            }
+            Ok(DecodedManifest::V2(manifest))
+        }
+        _ => Err(Error::UnsupportedInstallation),
+    }
+}
+
 pub struct ExportSummary {
     pub export_id: String,
     pub key_epoch: i64,
@@ -131,6 +247,7 @@ struct Offline {
     conn: Connection,
     auth: journal::Journal,
     knowledge: knowledge_journal::Journal,
+    destructive: destructive_intents::Journal,
 }
 impl Offline {
     fn open(root: &Path) -> Result<Self> {
@@ -153,7 +270,11 @@ impl Offline {
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
             Err(_) => return Err(Error::Unavailable),
         }
-        for name in ["auth-epochs.journal", "knowledge-invalidations.journal"] {
+        for name in [
+            "auth-epochs.journal",
+            "knowledge-invalidations.journal",
+            destructive_intents::FILE_NAME,
+        ] {
             files::copy_file(&root.join(name), &temp.0.join(name), JOURNAL_LIMIT)?;
         }
         let conn = Connection::open_with_flags(
@@ -188,6 +309,9 @@ impl Offline {
         let knowledge =
             knowledge_journal::Journal::open(&temp.0.join("knowledge-invalidations.journal"))?;
         journal_heads(&conn, &auth, &knowledge)?;
+        let destructive =
+            destructive_intents::Journal::open(&temp.0.join(destructive_intents::FILE_NAME))?;
+        destructive_intents::verify(&conn, &knowledge, &destructive)?;
         Ok(Self {
             root,
             _lock: lock,
@@ -195,6 +319,7 @@ impl Offline {
             conn,
             auth,
             knowledge,
+            destructive,
         })
     }
 }
@@ -446,7 +571,7 @@ fn append<W: Write>(tar: &mut tar::Builder<W>, item: &Entry, mut input: impl Rea
 fn write_archive<W: Write>(
     output: W,
     recipient: &age::x25519::Recipient,
-    manifest: &Manifest,
+    entries: &[Entry],
     encoded: &[u8],
     snapshot: &Path,
     staging: &Path,
@@ -468,7 +593,7 @@ fn write_archive<W: Write>(
         },
         encoded,
     )?;
-    for item in &manifest.entries {
+    for item in entries {
         check_deadline(started)?;
         let path = if item.name == "assistant.sqlite" {
             snapshot.to_owned()
@@ -518,6 +643,27 @@ pub fn create(root: &Path, output: &Path) -> Result<ExportSummary> {
         return Err(Error::Integrity);
     }
     let (auth, knowledge) = journal_heads(&destination, &offline.auth, &offline.knowledge)?;
+    let (successor_applied, successor_head) =
+        destructive_intents::verify(&destination, &offline.knowledge, &offline.destructive)?;
+    let (successor_complete, complete_head) = offline
+        .destructive
+        .records
+        .last()
+        .map(|r| (r.seq, r.hash))
+        .unwrap_or((0, offline.destructive.binding.header_head));
+    let coverage = Coverage {
+        version: 1,
+        schema_baseline: destructive_intents::COVERAGE_SCHEMA,
+        legacy_sequence: offline.destructive.binding.legacy_sequence,
+        legacy_head: hex(&offline.destructive.binding.legacy_head),
+        successor_format: "MSDSTR01".into(),
+        successor_journal: JournalHead {
+            sequence: successor_complete,
+            head: hex(&complete_head),
+            snapshot_sequence: successor_applied,
+            snapshot_head: hex(&successor_head),
+        },
+    };
     drop(destination);
     snapshot_file.sync_all().map_err(|_| Error::Unavailable)?;
     let mut entries = Vec::new();
@@ -533,12 +679,17 @@ pub fn create(root: &Path, output: &Path) -> Result<ExportSummary> {
             offline.temp.0.join("knowledge-invalidations.journal"),
             JOURNAL_LIMIT,
         ),
+        (
+            destructive_intents::FILE_NAME,
+            offline.temp.0.join(destructive_intents::FILE_NAME),
+            JOURNAL_LIMIT,
+        ),
     ] {
         entries.push(entry(&path, name, cap)?);
     }
     let export_id = Uuid::new_v4().to_string();
-    let manifest = Manifest {
-        format: 1,
+    let manifest = ManifestV2 {
+        format: 2,
         purpose: "assistant-export".into(),
         installation_id: config.installation_id,
         export_id: export_id.clone(),
@@ -549,6 +700,7 @@ pub fn create(root: &Path, output: &Path) -> Result<ExportSummary> {
         entries,
         auth_journal: auth,
         knowledge_journal: knowledge,
+        coverage,
         authoritative_files: vec![],
         limitations: vec![
             "current_db_only_no_authoritative_media".into(),
@@ -568,7 +720,7 @@ pub fn create(root: &Path, output: &Path) -> Result<ExportSummary> {
         let file = write_archive(
             file,
             &recipient,
-            &manifest,
+            &manifest.entries,
             &encoded,
             &snapshot,
             &offline.temp.0,

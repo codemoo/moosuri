@@ -105,3 +105,16 @@ private operator identities and the server provider key never enter the fixed
 age-encrypted tar payload. SQLite Backup incorporates committed WAL pages. See
 [export setup, key retention and limitations](../../docs/backup.md). This is not
 an independent latest-journal or historical restore implementation.
+
+## Direct destructive intents
+
+Migration0015 freezes the legacy MSKNOW01 terminal boundary and adds the
+installation-bound MSDSTR01 successor for new knowledge/command/thread/mail and
+bounded source-batch destructive effects. Append+fsync adopts one operation;
+effect, receipt and successor watermark commit together, with post-append failure
+poisoning the actor until replay. Format2 exports require all five fixed entries;
+the original format1 codec remains separate. See [coverage, semantic page retry
+and limits](../../docs/recovery-intents.md). No historical restore or independent
+latest checkpoint is implemented. The isolated implementation worker temporarily
+uses schema14; main integration must retain automatic-memory0014 and set this
+migration, its threshold and shared current schema to15 together.

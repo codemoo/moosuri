@@ -566,7 +566,7 @@ async fn destructive_journal_replays_append_before_db_commit_and_rejects_truncat
     let object = memory.id.clone();
     store
         .call(move |db| {
-            db.knowledge_journal.append(&tenant, &object, 1)?;
+            destructive_intents::adopt_unapplied_for_test(db, &tenant, &object, 1)?;
             Ok(())
         })
         .await
@@ -577,7 +577,7 @@ async fn destructive_journal_replays_append_before_db_commit_and_rejects_truncat
         store.memory(&user, memory.id, None).await,
         Err(StoreError::NotFound)
     ));
-    let journal = std::fs::read(dir.path().join("knowledge-invalidations.journal")).unwrap();
+    let journal = std::fs::read(dir.path().join(destructive_intents::FILE_NAME)).unwrap();
     assert!(
         !journal
             .windows(b"private canary".len())
@@ -586,7 +586,7 @@ async fn destructive_journal_replays_append_before_db_commit_and_rejects_truncat
     drop(store);
     std::fs::OpenOptions::new()
         .write(true)
-        .open(dir.path().join("knowledge-invalidations.journal"))
+        .open(dir.path().join(destructive_intents::FILE_NAME))
         .unwrap()
         .set_len(0)
         .unwrap();
@@ -904,7 +904,7 @@ async fn collection_journal_replay_keeps_or_deletes_and_corruption_fails_closed(
     let object = group.id.clone();
     store
         .call(move |db| {
-            db.knowledge_journal.append(&tenant, &object, 4)?;
+            destructive_intents::adopt_unapplied_for_test(db, &tenant, &object, 4)?;
             Ok(())
         })
         .await
@@ -924,7 +924,7 @@ async fn collection_journal_replay_keeps_or_deletes_and_corruption_fails_closed(
     let object = group.id;
     store
         .call(move |db| {
-            db.knowledge_journal.append(&tenant, &object, 3)?;
+            destructive_intents::adopt_unapplied_for_test(db, &tenant, &object, 3)?;
             Ok(())
         })
         .await
@@ -939,7 +939,7 @@ async fn collection_journal_replay_keeps_or_deletes_and_corruption_fails_closed(
         Err(StoreError::NotFound)
     ));
     drop(store);
-    let path = dir.path().join("knowledge-invalidations.journal");
+    let path = dir.path().join(destructive_intents::FILE_NAME);
     let valid = std::fs::read(&path).unwrap();
     std::fs::write(&path, &valid[..valid.len() - 1]).unwrap();
     assert!(matches!(Store::open(dir.path()), Err(StoreError::Corrupt)));

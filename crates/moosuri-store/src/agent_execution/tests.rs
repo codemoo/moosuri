@@ -988,7 +988,7 @@ async fn destructive_journal_fault_replays_derived_purge_before_readiness() {
     let object = id.clone();
     store
         .call(move |db| {
-            db.knowledge_journal.append(&tenant, &object, 2)?;
+            destructive_intents::adopt_unapplied_for_test(db, &tenant, &object, 2)?;
             Ok(())
         })
         .await
@@ -1033,7 +1033,7 @@ async fn destructive_journal_fault_replays_derived_purge_before_readiness() {
         })
         .await
         .unwrap();
-    let journal = std::fs::read(dir.path().join("knowledge-invalidations.journal")).unwrap();
+    let journal = std::fs::read(dir.path().join(destructive_intents::FILE_NAME)).unwrap();
     assert!(!journal.windows(b"canary".len()).any(|v| v == b"canary"));
 }
 

@@ -72,52 +72,49 @@ fn delete_source(conn: &Connection, tenant: &str, object: &str) -> Result<()> {
     remove_index(conn, tenant, "source", object)
 }
 pub(crate) fn apply(conn: &Connection, record: &knowledge_journal::Record) -> Result<()> {
-    match record.action {
-        1 => forget(conn, &record.tenant, &record.target)?,
-        2 => delete_source(conn, &record.tenant, &record.target)?,
-        3 | 4 => {
-            crate::automatic_memory::invalidate_collection(conn, &record.tenant, &record.target)?;
-            let group = collection(conn, &record.tenant, &record.target)
-                .map_err(|_| StoreError::Corrupt)?;
-            if record.action == 3 && !group.deleted {
-                let sources=conn.prepare("SELECT id FROM knowledge_sources WHERE tenant_id=?1 AND collection_id=?2 AND deleted=0")?.query_map(params![record.tenant,record.target],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
-                for source in sources {
-                    delete_source(conn, &record.tenant, &source)?;
-                }
-            }
-            if (record.action == 3 && !group.deleted) || (record.action == 4 && group.connected) {
-                conn.execute("UPDATE knowledge_collections SET connected=0,deleted=?3,revision=revision+1 WHERE tenant_id=?1 AND id=?2",params![record.tenant,record.target,record.action==3])?;
-                conn.execute("UPDATE source_connections SET state='disconnected',config_revision=config_revision+1,credential_epoch=credential_epoch+1,token_hash=NULL,token_expires=NULL,credential=NULL,sync_enabled=0 WHERE tenant_id=?1 AND collection_id=?2",params![record.tenant,record.target])?;
-                conn.execute("UPDATE source_sync_runs SET state='unknown',error='lease_invalidated',finished_at=?3 WHERE tenant_id=?1 AND connection_id IN (SELECT id FROM source_connections WHERE tenant_id=?1 AND collection_id=?2) AND state='running'",params![record.tenant,record.target,now()?])?;
-            }
-        }
-        6 => crate::source_connections::revoke_for_journal(conn, &record.tenant, &record.target)?,
-        5 => {
-            bump(conn, &record.tenant)?;
-            memory_commands::apply_journal_forget(conn, &record.tenant, &record.target)?;
-        }
-        _ => return Err(StoreError::Corrupt),
-    }
-    if record.action != 5 {
-        bump(conn, &record.tenant)?;
-    }
+    apply_body(conn, &record.tenant, &record.target, record.action)?;
     conn.execute(
         "UPDATE knowledge_journal_meta SET sequence=?1,head=?2 WHERE singleton=1",
         params![record.seq, record.hash.as_slice()],
     )?;
     Ok(())
 }
-pub(crate) fn destructive(db: &mut Database, tenant: &str, target: &str, action: u8) -> Result<()> {
-    db.poisoned = true;
-    let record = db.knowledge_journal.append(tenant, target, action)?;
-    let tx = db
-        .conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    apply(&tx, &record)?;
-    tx.commit()?;
-    db.poisoned = false;
+pub(crate) fn apply_body(conn: &Connection, tenant: &str, target: &str, action: u8) -> Result<()> {
+    match action {
+        1 => forget(conn, tenant, target)?,
+        2 => delete_source(conn, tenant, target)?,
+        3 | 4 => {
+            crate::automatic_memory::invalidate_collection(conn, tenant, target)?;
+            let group = collection(conn, tenant, target).map_err(|_| StoreError::Corrupt)?;
+            if action == 3 && !group.deleted {
+                let sources=conn.prepare("SELECT id FROM knowledge_sources WHERE tenant_id=?1 AND collection_id=?2 AND deleted=0")?.query_map(params![tenant,target],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+                for source in sources {
+                    delete_source(conn, tenant, &source)?;
+                }
+            }
+            if (action == 3 && !group.deleted) || (action == 4 && group.connected) {
+                conn.execute("UPDATE knowledge_collections SET connected=0,deleted=?3,revision=revision+1 WHERE tenant_id=?1 AND id=?2",params![tenant,target,action==3])?;
+                conn.execute("UPDATE source_connections SET state='disconnected',config_revision=config_revision+1,credential_epoch=credential_epoch+1,token_hash=NULL,token_expires=NULL,credential=NULL,sync_enabled=0 WHERE tenant_id=?1 AND collection_id=?2",params![tenant,target])?;
+                conn.execute("UPDATE source_sync_runs SET state='unknown',error='lease_invalidated',finished_at=?3 WHERE tenant_id=?1 AND connection_id IN (SELECT id FROM source_connections WHERE tenant_id=?1 AND collection_id=?2) AND state='running'",params![tenant,target,now()?])?;
+            }
+        }
+        6 => crate::source_connections::revoke_for_journal(conn, tenant, target)?,
+        5 => {
+            bump(conn, tenant)?;
+            memory_commands::apply_journal_forget(conn, tenant, target)?;
+        }
+        _ => return Err(StoreError::Corrupt),
+    }
+    if action != 5 {
+        bump(conn, tenant)?;
+    }
     Ok(())
 }
+pub(crate) fn destructive(db: &mut Database, tenant: &str, target: &str, action: u8) -> Result<()> {
+    let effect = destructive_intents::legacy_effect(action, target)?;
+    destructive_intents::commit(db, tenant, effect)
+}
+
 pub(super) fn replay(db: &mut Database) -> Result<()> {
     let (sequence, head): (i64, Vec<u8>) = db.conn.query_row(
         "SELECT sequence,head FROM knowledge_journal_meta WHERE singleton=1",

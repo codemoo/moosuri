@@ -1280,3 +1280,147 @@ async fn pruning_pins_source_receipt_and_run_but_bounds_unreferenced_history() {
         Err(StoreError::Conflict)
     ));
 }
+
+#[tokio::test]
+async fn mixed_batch_adoption_failure_replays_one_delete_record_and_retries_semantically() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = admin(&store).await.user;
+    let other = member(&store, &user, "mixed-other@example.test").await.user;
+    let (connection, cap, token) = connection_with_token(&store, &user, "Mixed crash").await;
+    let (_, other_cap, _) = connection_with_token(&store, &other, "Other intact").await;
+    let other_run = store.begin_source_run(&other_cap).await.unwrap();
+    let other_receipt = store
+        .commit_source_batch(
+            &other_run,
+            batch(&other_run, 0, vec![input("delete-a", "Other retained")]),
+        )
+        .await
+        .unwrap();
+    let lease = store.begin_source_run(&cap).await.unwrap();
+    let mut first = batch(
+        &lease,
+        0,
+        vec![
+            input("delete-a", "Deleted A canary"),
+            input("delete-b", "Deleted B canary"),
+            input("update", "Original retained"),
+        ],
+    );
+    first.checkpoint_after = Some("checkpoint-one".into());
+    let before = store.commit_source_batch(&lease, first).await.unwrap();
+    let mut update = input("update", "Updated retained");
+    update.version = "v2".into();
+    update.expected_revision = Some(1);
+    let mut mixed = batch(&lease, 1, vec![update, input("new", "New retained")]);
+    mixed.checkpoint_before = Some("checkpoint-one".into());
+    mixed.checkpoint_after = Some("checkpoint-two".into());
+    mixed.tombstones = vec!["delete-a".into(), "delete-b".into()];
+    let request = mixed.request_id.clone();
+    let baseline = store
+        .call(|db| Ok(db.destructive_journal.records.len()))
+        .await
+        .unwrap();
+    // The trigger fires within the effect transaction, after the one batch record
+    // has actually been appended and fsynced. All page SQL must then roll back.
+    store.call(|db| { db.conn.execute_batch("CREATE TEMP TRIGGER interrupt_tombstone BEFORE UPDATE OF deleted ON knowledge_sources WHEN NEW.deleted=1 BEGIN SELECT RAISE(ABORT,'synthetic post-adoption interruption'); END;")?; Ok(()) }).await.unwrap();
+    assert!(
+        store
+            .commit_source_batch(&lease, mixed.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(store.initialized().await, Err(StoreError::Unavailable));
+    drop(store);
+    let journal =
+        destructive_intents::Journal::open(&dir.path().join(destructive_intents::FILE_NAME))
+            .unwrap();
+    assert_eq!(journal.records.len(), baseline + 1);
+    assert!(
+        matches!(&journal.records.last().unwrap().effect, destructive_intents::Effect::DeleteSources { targets } if targets.len()==2)
+    );
+    drop(journal);
+    let store = Store::open(dir.path()).unwrap();
+    let cap = store.authenticate_source_token(token).await.unwrap();
+    let status = store.source_ingest_status(&cap).await.unwrap();
+    assert_eq!(status.local_sequence, 1);
+    assert_eq!(status.checkpoint.as_deref(), Some("checkpoint-one"));
+    assert!(matches!(
+        store.source_ingest_receipt(&cap, request.clone()).await,
+        Err(StoreError::NotFound)
+    ));
+    for id in &before.source_ids[..2] {
+        assert!(matches!(
+            store.source(&user, id.clone(), None).await,
+            Err(StoreError::NotFound)
+        ));
+    }
+    let retained = store
+        .source(&user, before.source_ids[2].clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(retained.source.revision, 1);
+    assert!(
+        store
+            .source(&other, other_receipt.source_ids[0].clone(), None)
+            .await
+            .is_ok()
+    );
+    assert!(matches!(
+        store.commit_source_batch(&lease, mixed.clone()).await,
+        Err(StoreError::Conflict)
+    ));
+    // Restart fences the old lease. With no committed receipt, refresh only the
+    // server lease fields; retain the business UUID, entries and checkpoints.
+    let next = store.begin_source_run(&cap).await.unwrap();
+    mixed.run_id = next.id.clone();
+    mixed.generation = next.generation;
+    let receipt = store
+        .commit_source_batch(&next, mixed.clone())
+        .await
+        .unwrap();
+    assert_eq!(receipt.request_id, request);
+    assert_eq!(receipt.sequence, 2);
+    assert_eq!(receipt.accepted, 2);
+    assert_eq!(receipt.unchanged, 0);
+    assert_eq!(receipt.source_ids.len(), 2);
+    assert_eq!(
+        json(&store.commit_source_batch(&next, mixed).await.unwrap()).unwrap(),
+        json(&receipt).unwrap()
+    );
+    let status = store.source_ingest_status(&cap).await.unwrap();
+    assert_eq!(status.local_sequence, 2);
+    assert_eq!(status.checkpoint.as_deref(), Some("checkpoint-two"));
+    let tenant = user.tenant.0.clone();
+    let id = connection.id;
+    let request_copy = request.clone();
+    store.call(move |db| {
+        assert_eq!(db.destructive_journal.records.len(), baseline + 1);
+        let count:i64 = db.conn.query_row("SELECT count(*) FROM source_batch_receipts WHERE tenant_id=?1 AND connection_id=?2 AND request_id=?3", params![tenant,id,request_copy], |r|r.get(0))?;
+        assert_eq!(count, 1);
+        let pages:i64 = db.conn.query_row("SELECT page_count FROM source_sync_runs WHERE tenant_id=?1 AND connection_id=?2 AND id=?3", params![tenant,id,next.id], |r|r.get(0))?;
+        assert_eq!(pages, 1);
+        Ok(())
+    }).await.unwrap();
+    let mut revival = batch(
+        &store
+            .source_run_lease(&cap, receipt.run_id, next.generation)
+            .await
+            .unwrap(),
+        2,
+        vec![
+            input("delete-a", "Forbidden resurrection"),
+            input("delete-b", "Forbidden resurrection"),
+        ],
+    );
+    revival.checkpoint_before = Some("checkpoint-two".into());
+    let current = store
+        .source_run_lease(&cap, revival.run_id.clone(), revival.generation)
+        .await
+        .unwrap();
+    let suppressed = store.commit_source_batch(&current, revival).await.unwrap();
+    assert_eq!(suppressed.accepted, 0);
+    assert_eq!(suppressed.unchanged, 2);
+    assert!(suppressed.source_ids.is_empty());
+}

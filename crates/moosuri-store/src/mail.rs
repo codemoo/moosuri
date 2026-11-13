@@ -264,6 +264,31 @@ pub(super) fn pins(conn: &Connection, user: &UserContext) -> Result<Vec<MailConn
     ))?.collect::<std::result::Result<Vec<_>,_>>()?)
 }
 
+pub(crate) fn apply_disconnect(
+    conn: &Connection,
+    tenant: &str,
+    id: &str,
+    epoch: i64,
+    credential_revision: i64,
+) -> Result<()> {
+    let current: (i64, i64) = conn.query_row(
+        "SELECT epoch,credential_revision FROM mail_connections WHERE tenant_id=?1 AND id=?2",
+        params![tenant, id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let next = epoch.checked_add(1).ok_or(StoreError::Corrupt)?;
+    let next_revision = credential_revision
+        .checked_add(1)
+        .ok_or(StoreError::Corrupt)?;
+    if current != (epoch, credential_revision) && current != (next, next_revision) {
+        return Err(StoreError::Corrupt);
+    }
+    conn.execute("UPDATE mail_connections SET status='disconnected',epoch=?3,credential_revision=?4,credential=NULL WHERE tenant_id=?1 AND id=?2",params![tenant,id,next,next_revision])?;
+    conn.execute("UPDATE mail_actions SET version=version+1,state='cancelled',content=NULL,raw=NULL WHERE tenant_id=?1 AND connection_id=?2 AND state IN('pending_approval','approved')",params![tenant,id])?;
+    let runs=conn.prepare("SELECT DISTINCT run_id FROM mail_run_dependencies WHERE tenant_id=?1 AND connection_id=?2")?.query_map(params![tenant,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    agent_execution::purge_runs(conn, tenant, runs)
+}
+
 impl Store {
     pub async fn mail_connections(&self, user: &UserContext) -> Result<Vec<MailConnection>> {
         let user = user.clone();
@@ -541,15 +566,9 @@ impl Store {
 
         self.call(move|db|{
             validate(&db.conn,&user,true,false)?;
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            connection(&tx,&user,&id)?;
-            tx.execute("UPDATE mail_connections SET status='disconnected',epoch=epoch+1,credential_revision=credential_revision+1,credential=NULL WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,id])?;
-            tx.execute("UPDATE mail_actions SET version=version+1,state='cancelled',content=NULL,raw=NULL WHERE tenant_id=?1 AND connection_id=?2 AND state IN('pending_approval','approved')",params![user.tenant.0,id])?;
-
-            let runs=tx.prepare("SELECT DISTINCT run_id FROM mail_run_dependencies WHERE tenant_id=?1 AND connection_id=?2")?.query_map(params![user.tenant.0,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
-
-            agent_execution::purge_runs(&tx,&user.tenant.0,runs)?;
-            tx.commit()?;
+            if connection(&db.conn,&user,&id)?.status=="disconnected" {return Ok(())}
+            let (epoch,credential_revision):(i64,i64)=db.conn.query_row("SELECT epoch,credential_revision FROM mail_connections WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            destructive_intents::commit(db,&user.tenant.0,destructive_intents::Effect::DisconnectMail{target:id,epoch,credential_revision})?;
             Ok(())}
         ).await
     }

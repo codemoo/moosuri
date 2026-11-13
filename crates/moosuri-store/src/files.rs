@@ -52,6 +52,7 @@ pub(crate) fn prepare_dir(path: &Path) -> Result<PathBuf> {
     let unfinished_names = [
         "provider-secrets.key",
         "knowledge-invalidations.journal",
+        "destructive-intents.journal",
         "writer.lock",
         "assistant.sqlite",
         "auth-epochs.journal",

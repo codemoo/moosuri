@@ -404,6 +404,40 @@ pub(super) fn apply_journal_forget(conn: &Connection, tenant: &str, command: &st
     }
     let target = value.target.ok_or(StoreError::Corrupt)?;
     let expected = value.revision.ok_or(StoreError::Corrupt)?;
+    let effective = value.effective_revision.ok_or(StoreError::Corrupt)?;
+    apply_direct_forget(conn, tenant, command, &target, expected, effective)
+}
+/// The durable successor record carries target/revisions independently of this
+/// ordinary receipt lookup. A future historical replayer need not resolve target
+/// through a command slot that may postdate its snapshot.
+pub(crate) fn apply_direct_forget(
+    conn: &Connection,
+    tenant: &str,
+    command: &str,
+    target: &str,
+    expected: i64,
+    effective: i64,
+) -> Result<()> {
+    let run: String = conn
+        .query_row(
+            "SELECT run_id FROM memory_command_slots WHERE tenant_id=?1 AND command_id=?2",
+            params![tenant, command],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(StoreError::Corrupt)?;
+    let value = slot(conn, tenant, &run)?.ok_or(StoreError::Corrupt)?;
+    if value.action != "forget"
+        || value.clarification.is_some()
+        || value.target.as_deref() != Some(target)
+        || value.revision != Some(expected)
+        || value.effective_revision != Some(effective)
+    {
+        return Err(StoreError::Corrupt);
+    }
+    if value.state == "committed" {
+        return Ok(());
+    }
     let revision = expected.checked_add(1).ok_or(StoreError::Corrupt)?;
     let current: Option<(i64, String)> = conn
         .query_row(
@@ -412,13 +446,11 @@ pub(super) fn apply_journal_forget(conn: &Connection, tenant: &str, command: &st
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    // Eligibility was checked at durable journal adoption. Later expiry, auth
-    // changes or downtime cannot revoke an already committed forget intent.
     match current {
         Some((r, status))
             if r == expected && matches!(status.as_str(), "active" | "invalidated") =>
         {
-            knowledge::destructive::forget(conn, tenant, &target)?
+            knowledge::destructive::forget(conn, tenant, target)?
         }
         Some((r, status)) if r == revision && status == "forgotten" => {}
         _ => return Err(StoreError::Corrupt),
@@ -429,7 +461,7 @@ pub(super) fn apply_journal_forget(conn: &Connection, tenant: &str, command: &st
         &run,
         &MemoryCommandOutcome::Applied {
             action: MemoryCommandAction::Forget,
-            memory_id: Some(target),
+            memory_id: Some(target.into()),
             revision: Some(revision),
         },
     )
@@ -583,11 +615,16 @@ impl Store {
             if intent.action == MemoryCommandAction::Forget {
                 // No actor yield or await can occur between final guard, durable
                 // adoption and apply. Any post-append failure poisons readiness.
+                let intent = destructive_intents::Effect::ForgetCommand {
+                    target: value.target.clone().ok_or(StoreError::Corrupt)?,
+                    revision: value.revision.ok_or(StoreError::Corrupt)?,
+                    effective_revision: value.effective_revision.ok_or(StoreError::Corrupt)?,
+                    command: value.command.clone(),
+                };
+                let prepared_record = db.destructive_journal.prepare(&run.tenant, intent)?;
                 db.poisoned = true;
-                let record = db
-                    .knowledge_journal
-                    .append(&run.tenant, &value.command, 5)?;
-                knowledge::destructive::apply(&tx, &record)?;
+                let record = db.destructive_journal.append(prepared_record)?;
+                destructive_intents::apply(&tx, &record)?;
                 let result = slot(&tx, &run.tenant, &run.id)?
                     .and_then(|v| v.outcome)
                     .ok_or(StoreError::Corrupt)?;

@@ -20,6 +20,7 @@ pub(super) struct Record {
 pub(super) struct Journal {
     file: File,
     pub records: Vec<Record>,
+    frozen: bool,
 }
 impl Journal {
     pub fn open(path: &Path) -> Result<Self> {
@@ -57,9 +58,20 @@ impl Journal {
         }
         // Also persist initial creation before the caller commits its migration.
         file.sync_all().map_err(|_| StoreError::Unavailable)?;
-        Ok(Self { file, records })
+        Ok(Self {
+            file,
+            records,
+            frozen: false,
+        })
     }
+    pub fn freeze(&mut self) {
+        self.frozen = true;
+    }
+    #[allow(dead_code)] // retained legacy-format fixture writer; live journals are frozen
     pub fn append(&mut self, tenant: &str, target: &str, action: u8) -> Result<Record> {
+        if self.frozen {
+            return Err(StoreError::Corrupt);
+        }
         let seq = i64::try_from(self.records.len())
             .map_err(|_| StoreError::Corrupt)?
             .checked_add(1)

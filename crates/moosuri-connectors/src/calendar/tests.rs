@@ -262,3 +262,38 @@ fn exact_lookup_requires_own_id_digest_fields_and_supported_event_shape() {
         &change
     ));
 }
+
+#[tokio::test]
+async fn actual_calendar_chat_page_limit_is_five_and_never_silently_drops_provider_rows() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let recorded = seen.clone();
+    let app=Router::new().fallback(any(move|request:Request|{let recorded=recorded.clone();async move{assert_eq!(request.method(),"GET");let url=url::Url::parse(&format!("http://fixture{}",request.uri())).unwrap();let q=url.query_pairs().collect::<std::collections::HashMap<_,_>>();assert_eq!(q["maxResults"],"5");assert_eq!(q["showDeleted"],"false");assert_eq!(q["singleEvents"],"true");let token=q.get("pageToken").map(|v|v.to_string());recorded.lock().unwrap().push(token.clone());let count=if token.is_some(){6}else{5};response(json!({"items":(0..count).map(|i|event(&format!("synthetic{i}"))).collect::<Vec<_>>(),"nextPageToken":"actual-page-two"}))}}));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = CalendarClient::fixture(format!("http://{}", listener.local_addr().unwrap()));
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cancel = CancellationToken::new();
+    let mut range = CalendarRange {
+        connection_id: "synthetic".into(),
+        start: "2026-11-15T00:00:00+09:00".into(),
+        end: "2026-11-16T00:00:00+09:00".into(),
+        page_token: None,
+    };
+    let page = client
+        .events_page(&secret(), "calendar-owner@example.test", &range, 5, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(page.events.len(), 5);
+    assert!(page.partial);
+    range.page_token = page.next_page_token;
+    assert!(matches!(
+        client
+            .events_page(&secret(), "calendar-owner@example.test", &range, 5, &cancel)
+            .await,
+        Err(GmailError::LimitExceeded)
+    ));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![None, Some("actual-page-two".into())]
+    );
+    task.abort();
+}

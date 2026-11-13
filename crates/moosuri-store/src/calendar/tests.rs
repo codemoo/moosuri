@@ -20,7 +20,7 @@ async fn calendar_schema26_late_failure_preserves_prior_schema_and_retries_atomi
         .unwrap();
     drop(store);
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    conn.execute_batch("DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions; DROP TABLE calendar_oauth_sessions; DROP TABLE calendar_connections; CREATE TABLE calendar_actions(conflict INTEGER); PRAGMA user_version=25;").unwrap();
+    conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions; DROP TABLE calendar_oauth_sessions; DROP TABLE calendar_connections; CREATE TABLE calendar_actions(conflict INTEGER); PRAGMA user_version=25;").unwrap();
     drop(conn);
     assert!(Store::open(dir.path()).is_err());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
@@ -64,7 +64,7 @@ async fn calendar_schema26_late_failure_preserves_prior_schema_and_retries_atomi
             |r| r.get::<_, i64>(0)
         )
         .unwrap(),
-        3
+        9
     );
     assert_eq!(
         conn.query_row(
@@ -599,8 +599,23 @@ async fn calendar_operator_app_change_oauth_and_epoch_fences_are_enforced() {
 #[tokio::test]
 async fn calendar_actual_encrypted_restore_disables_credentials_and_never_replays_unknown_write() {
     let _g = TEST_LOCK.lock().await;
-    let (dir, s, u, c) = fixture().await;
-    let d = dispatch(&s, &u, &c, change(&c)).await;
+    let (dir, s, u, c) = conversation::setup().await;
+    let text = "Create Synthetic meeting on 2026-12-01 from 10:00 to 11:00";
+    let (_, lease) = conversation::source(&s, &u, text, None).await;
+    conversation::commit(&s, &lease, &conversation::decision(text)).await;
+    let binding = s.calendar_binding(&u, c.id.clone(), app()).await.unwrap();
+    let CalendarAdmission::Dispatch(d) = s
+        .admit_calendar_agent_change(&lease, &binding, primary(), None)
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    let tenant = u.tenant.0.clone();
+    let run = lease.run_id().to_owned();
+    let conn = c.id.clone();
+    s.call(move|db|{db.conn.execute("INSERT INTO calendar_agent_observations VALUES(?1,?2,'synthetic-observation',?3,1,1,'read','{}','synthetic1','etag',0,'synthetic-digest')",params![tenant,run,conn])?;Ok(())}).await.unwrap();
+    s.finish_calendar_chat(&lease, None).await.unwrap();
     let id = d.change.request_id.clone();
     let account = u.account.id.clone();
     drop(d);
@@ -618,6 +633,33 @@ async fn calendar_actual_encrypted_restore_disables_credentials_and_never_replay
     crate::cutover::restore(&cipher, &head, &identity, &restored).unwrap();
     let s = Store::open(&restored).unwrap();
     s.call(|db| {
+        assert_eq!(
+            db.conn
+                .query_row("SELECT count(*) FROM chat_output", [], |r| r
+                    .get::<_, i64>(0))?,
+            0
+        );
+        for table in [
+            "calendar_agent_profiles",
+            "calendar_command_plans",
+            "calendar_agent_observations",
+            "calendar_run_dependencies",
+        ] {
+            assert_eq!(
+                db.conn
+                    .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                        .get::<_, i64>(0))?,
+                0
+            );
+        }
+        assert_eq!(
+            db.conn.query_row(
+                "SELECT count(*) FROM calendar_agent_action_links",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?,
+            1
+        );
         assert_eq!(
             db.conn.query_row(
                 "SELECT count(*) FROM calendar_connections WHERE credential IS NOT NULL",
@@ -796,3 +838,6 @@ async fn independent_pending_oauth_cannot_undo_disconnect() {
         "disconnected"
     );
 }
+
+#[path = "agent_tests.rs"]
+mod conversation;

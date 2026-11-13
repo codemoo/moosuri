@@ -110,3 +110,66 @@ pub struct CalendarAction {
     #[ts(type = "number")]
     pub version: i64,
 }
+
+/// Only created for newly submitted ordinary chat. No credential or provider URL.
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct CalendarRunProfile {
+    pub version: u32,
+    #[ts(type = "number")]
+    pub reference: i64,
+    pub timezone: Option<String>,
+    pub connections: Vec<CalendarAgentPin>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct CalendarAgentPin {
+    pub id: String,
+    pub title: String,
+    #[ts(type = "number")]
+    pub epoch: i64,
+    pub client_id: String,
+    #[ts(type = "number | null")]
+    pub app_revision: Option<i64>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CalendarReadRequest {
+    List { range: CalendarRange },
+    Read { observation_ref: String },
+    Status { action_id: String },
+}
+/// One isolated current-message proposal. Nullable fields must stay absent for noncommands.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarChatDecision {
+    pub domain: String,
+    pub decision: String,
+    pub operation: Option<String>,
+    pub connection_quote: Option<String>,
+    pub intent_quote: Option<String>,
+    pub title_quote: Option<String>,
+    pub target_quote: Option<String>,
+    pub date_quote: Option<String>,
+    pub date: Option<String>,
+    pub start_quote: Option<String>,
+    pub start: Option<String>,
+    pub end_quote: Option<String>,
+    pub end: Option<String>,
+    pub duration_quote: Option<String>,
+    pub duration_minutes: Option<u32>,
+    pub clarification: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CurrentChatDecision {
+    Calendar(CalendarChatDecision),
+    Mission(crate::MissionChatDecision),
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct CalendarChatReceipt {
+    pub action_id: Option<String>,
+    pub operation: String,
+    pub state: String,
+    pub event_id: Option<String>,
+    pub provider_etag: Option<String>,
+    pub message: String,
+}

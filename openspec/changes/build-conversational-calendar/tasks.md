@@ -1,0 +1,9 @@
+- [x] Add schema30 chat profiles, dependency/observation/plan/action-link storage and restore stripping.
+- [x] Extend existing isolated current-text interpretation with one Calendar domain alternative.
+- [x] Add bounded chat-only read vocabulary and exact page/observation authority.
+- [x] Bind one sealed action UUID to existing Calendar ledger admission and trusted chat receipt.
+- [x] Preserve direct forms, original-session fences, inherited withdrawal and late settlement.
+- [x] Add synthetic Store/service/routing/UI regression cases and document bounded support.
+- [x] Complete targeted Rust verification; generate the exact DTO contract.
+- [x] Independent boundary review and CALCHAT-R1 repair rereview; repaired Linux, integrated Linux and actual Rust/SQLite/Chrome synthetic browser acceptance.
+- [ ] Real Google consent/account/provider/device acceptance remains external and unclaimed.

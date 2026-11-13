@@ -121,11 +121,26 @@ impl CalendarClient {
         range: &CalendarRange,
         cancel: &CancellationToken,
     ) -> Result<CalendarEvents, GmailError> {
+        self.events_page(token, primary, range, 100, cancel).await
+    }
+    /// Provider paging limit is real: never locally drop unseen entries.
+    pub async fn events_page(
+        &self,
+        token: &SecretString,
+        primary: &str,
+        range: &CalendarRange,
+        limit: u8,
+        cancel: &CancellationToken,
+    ) -> Result<CalendarEvents, GmailError> {
+        if !matches!(limit, 5 | 100) {
+            return Err(GmailError::InvalidInput);
+        }
         validate_range(&range.start, &range.end)?;
+        let max = limit.to_string();
         let path = query(
             "calendars/primary/events",
             vec![
-                ("maxResults", "100"),
+                ("maxResults", max.as_str()),
                 ("singleEvents", "true"),
                 ("showDeleted", "false"),
                 ("orderBy", "startTime"),
@@ -138,7 +153,7 @@ impl CalendarClient {
             .request(token, Method::GET, &path, Body::Empty, None, cancel)
             .await?;
         let rows = v["items"].as_array().ok_or(GmailError::InvalidResponse)?;
-        if rows.len() > 100 {
+        if rows.len() > usize::from(limit) {
             return Err(GmailError::LimitExceeded);
         }
         let next = optional(&v, "nextPageToken", 4096)?;

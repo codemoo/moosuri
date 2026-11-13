@@ -1,3 +1,4 @@
+import {CalendarEvidence} from "./CalendarEvidence";
 import type {MissionChatContext,MissionChatTarget} from "../shared/api-types";
 import {useMediaUploads,MediaLibraryView,PrivateImage} from "./Media";
 import { WebEvidence } from "./WebEvidence";
@@ -1007,6 +1008,7 @@ export function ChatPanel(props: Props) {
                   </div>
                 )}
                 {turn.run.artifact_receipts?.map(r=><button key={r.request_id} onClick={()=>props.openArtifact?.(r.id)}>저장한 기록 · 버전 {r.revision} ↗</button>)}
+                {turn.run.calendar_receipt&&<CalendarEvidence receipt={turn.run.calendar_receipt}/>}
                 {turn.run.mission_receipt&&<div><a href="/app/missions">맡긴 일 · {missionReceiptLabel(turn.run.mission_receipt.state)} ↗</a>{turn.run.mission_receipt.target&&<button onClick={()=>{props.clearArtifactTarget?.();setScheduleTarget(null);setMissionTarget(turn.run.mission_receipt!.target!)}}>이 업무 선택</button>}{turn.run.mission_receipt.next_local_slot&&<p>다음 실행: {turn.run.mission_receipt.next_local_slot}</p>}{turn.run.mission_receipt.candidates.map(c=><button key={c.target.id} onClick={()=>{props.clearArtifactTarget?.();setScheduleTarget(null);setMissionTarget(c.target)}}>{c.title} 선택</button>)}</div>}
                 {turn.run.schedule_receipts?.map(r=><div key={r.request_id}><a href={r.url}>알림 · {r.title} ↗</a>{r.state!=="revoked"&&<button onClick={()=>{props.clearArtifactTarget?.();setMissionTarget(null);setScheduleTarget(r)}}>이 알림 선택</button>}</div>)}
                 <WebEvidence observations={turn.run.web_evidence}/>

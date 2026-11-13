@@ -132,7 +132,7 @@ pub(crate) fn tool(
                 return Err(StoreError::InvalidInput);
             }
             let external:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM external_tool_dispatches d JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.run_id WHERE r.tenant_id=?1 AND r.thread_id=?3 AND r.sequence<=?4)",params![run.tenant,run.id,run.thread,run.sequence],|r|r.get(0))?;
-            if external {
+            if external || crate::calendar::agent::persistence_context(conn, run)? {
                 return Ok(serde_json::json!({"error":"external_provenance_unavailable"}));
             }
             let plan:Option<StoredPlan>=conn.query_row("SELECT action,kind,target_id,target_revision,generation,request_id FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2 AND schema_version=1",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;

@@ -9,6 +9,7 @@ pub struct Planning {
     pub anchor: i64,
     pub timezone: Option<String>,
     pub selected_kind: Option<String>,
+    pub calendar: Option<CalendarRunProfile>,
 }
 fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|_| StoreError::InvalidInput)
@@ -165,6 +166,22 @@ pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
         serde_json::from_slice(bytes).map_err(|_| StoreError::InvalidInput)?;
     if value.get("kind").and_then(|v| v.as_str()) != Some("mission_chat_decision") {
         return Ok(());
+    }
+    if value
+        .get("decision")
+        .and_then(|v| v.get("domain"))
+        .and_then(|v| v.as_str())
+        == Some("calendar")
+    {
+        original_authority(c, r)?;
+        return crate::calendar::agent::record(
+            c,
+            r,
+            value
+                .get("decision")
+                .ok_or(StoreError::InvalidInput)?
+                .clone(),
+        );
     }
     let d: MissionChatDecision = serde_json::from_value(
         value
@@ -351,7 +368,7 @@ fn explicit_clock(q: &str) -> Option<(u32, u32)> {
     }
     if found.len() == 1 { found.pop() } else { None }
 }
-fn civil_consistent(d: &MissionChatDecision, anchor: i64, zone: &str) -> bool {
+pub(crate) fn civil_consistent(d: &MissionChatDecision, anchor: i64, zone: &str) -> bool {
     use chrono::{Days, NaiveDate, NaiveTime, Timelike};
     let raw = d.time_quote.as_deref().unwrap_or("");
     let mut civil = raw.to_owned();
@@ -489,7 +506,7 @@ fn civil_consistent(d: &MissionChatDecision, anchor: i64, zone: &str) -> bool {
     true
 }
 /// An explicit supported zone in the current text overrides browser metadata. Unknown zones clarify.
-fn source_zone(text: &str, fallback: Option<&str>) -> Result<Option<String>> {
+pub(crate) fn source_zone(text: &str, fallback: Option<&str>) -> Result<Option<String>> {
     let mut zones = vec![];
     let text = text.replace(['−', '–'], "-").replace('＋', "+");
     for token in text
@@ -814,7 +831,7 @@ impl Store {
         self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
         retry_authority(&tx,&r)?;
         let attempted:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans p JOIN agent_execution e ON e.tenant_id=p.tenant_id AND e.run_id=p.run_id WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.state='awaiting' AND e.remote_calls>0)",params![r.tenant,r.id],|r|r.get(0))?;if attempted{return Err(StoreError::Conflict)}
-        let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
+        let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{calendar:crate::calendar::agent::profile(&tx,&r.tenant,&r.id)?,anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
     }
     /// None means not yet decided; Some(false) continues ordinary chat without reclassification.
     pub async fn apply_mission_chat(&self, lease: &crate::RunLease) -> Result<Option<bool>> {

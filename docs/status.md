@@ -18,34 +18,36 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 공식·custom 자료 연결 | 개인 Gmail/Slack 수집·custom ingest, scope/cursor/receipt/provenance·상태 화면·철회 | 합성 Linux 검증은 실제 OAuth/계정 scope/rate 검증을 대신하지 않는다. 카톡 코드는 공개 패키지에서 제외. 통화·작업 세션·배송 adapter는 남음. [연결](data-connections.md)·[검증](reviews/2026-11-13-source-connections.md) |
 | 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours, opt-in 기기 Push | topic mute·전체 proactive 제안 정책·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[검증](reviews/2026-11-13-web-push.md) |
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 여러 턴의 자동 명확화·넓은 자연어/시간 해석·Calendar/mail/browser/vault 미션 실행은 미완료. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
-| Calendar | 별도 개인 동의, 소유권 확인한 기본 캘린더 읽기·직접 양식 solo-event 쓰기, ETag/dispatch receipt·불명 결과 lookup | agent/대화/미션 Calendar 도구·반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[검증](reviews/2026-11-13-personal-calendar.md) |
+| Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 여러 턴 대상 해석·날짜 간 이동·미션 Calendar·반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·선택·retry·인증 preview/library·삭제 철회, 실제 vision probe, 공개 offline shell·설치/업데이트 | 녹음/STT·PDF OCR/시각 이해·PWA 공유받기·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·CredentialBroker·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
-## 최근 수락한 단위 · 제한된 PDF 텍스트 첨부
+## 최근 수락한 단위 · 대화에서 Calendar 읽기와 일정 작업
 
-PDF 원본을 보관하고 별도 Rust 프로세스에서 읽은 텍스트를 대화와 보관함에 연결했다.
-업로드가 진행 중이어도 메시지를 보낼 수 있고, 원본 재시도와 작성 중인 초안이 유지된다.
-추출 텍스트는 페이지 표시와 함께 미리보기로 보이며 원본 PDF도 그대로 내려받을 수 있다.
+현재 사용자의 명확한 요청으로 기본 캘린더의 단일 시간 지정 일정을 만들고, 같은 날짜의
+제목/시간을 바꾸거나 삭제할 수 있다. 모호한 대상·종료 시각은 변경하지 않고 물어본다.
+기존 typed CalendarService를 공유하며 추가 승인 창 없이 실제 작업 영수증을 표시한다.
+결과가 불명확하면 조회만 하고 새 작업으로 재발송하지 않는다.
 
-독립 검토에서 입력 EOF 대기, 일부 텍스트의 조용한 누락, 압축 해제 제한 누락을 찾아
-수정했다. Native/Linux 실제 프로세스·HTTP·저장소 검사, 취소/시간 초과 종료, 합성 모델과
-실제 Chrome의 모바일 크기 화면을 확인했다. [통합 검증](reviews/2026-11-14-private-pdf-files.md)에
-실패와 수정 범위를 남겼다. 지원하지 않는 Form/글꼴 구조는 일부만 읽고 완료로 표시하지 않는다.
+독립 검토에서 취소→재시도 뒤 늦은 응답이 private 일정 정보를 되살리는 결함을 재현하고,
+되돌릴 수 없는 철회 표시와 원자적 데이터 제거로 수정했다. Native/Linux 저장소·실제 typed
+IO·HTTP, 실제 Rust/SQLite와 Chrome의 명확화/설정 링크/영수증 재조회가 통과했다.
+[검증 기록](reviews/2026-11-13-conversational-calendar.md)에 수정과 수락 범위를 남겼다.
 
-OCR·표/그림의 시각적 이해·실기기·실모델 문서 답변 품질은 별도다. 앞서 수락한
-[독립 볼트 현재 checkpoint 복구](reviews/2026-11-13-vault-service-recovery.md)와
-[대화형 읽기 업무](reviews/2026-11-13-conversational-missions.md)는 그대로 유지한다.
+응답 중 작성한 초안은 유지되지만 전체 새로고침 시 미전송 초안은 아직 유지되지 않는다.
+실제 Google 계정·모델의 언어 이해 정확도·실기기는 별도 검증이다. 앞서 수락한
+[PDF 텍스트 첨부](reviews/2026-11-14-private-pdf-files.md)와
+[독립 볼트 현재 checkpoint 복구](reviews/2026-11-13-vault-service-recovery.md)는 유지한다.
 
 ## 다음 구현과 출시까지 남은 일
 
 우선순위는 현재 지원 범위를 실제 대화 업무에 연결하는 순서다. `선택` 연결/볼트 패키지는
 사용자의 설치 선택이며 v1 제공 계약을 후속으로 미루는 뜻이 아니다.
 
-1. **Calendar 읽기 도구와 제한된 대화 일정 작업**을 기존 typed dispatch/ETag/lookup에 연결한다.
-   공통 CalendarService 분리와 기존 양식 동작 검증을 완료했다([증거](reviews/2026-11-13-calendar-service.md)).
-   대화 도구는 primary solo-event부터 연결하고 불명 결과를 새 쓰기로 재발송하지 않는다.
+1. **대화 연속성과 Calendar 후속**: 새로고침 뒤 미전송 초안 복구, 여러 턴의 대상 명확화,
+   현재 범위의 실계정·언어 holdout 검증을 진행한다. 기본 캘린더의 제한된 대화 읽기/쓰기는
+   구현했고, 미션·반복/종일/참석자/보조 캘린더 작업은 아직 확장하지 않았다.
 2. **볼트 broker와 복구**: device pairing·local grant·online commitment/revoke·secret 비노출·offline resume,
    완료한 standalone 현재 checkpoint 복구에 이어 ongoing/off-host 복구·구 v1 호환/이전,
    전체 계정 삭제/outbox를 작은 경계별 단위로 구현한다.

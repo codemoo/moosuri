@@ -4,6 +4,8 @@ mod artifact_tools;
 mod automatic_memory;
 pub mod browser;
 pub mod calendar;
+mod calendar_intent;
+mod calendar_tools;
 mod knowledge_tools;
 pub mod mail;
 mod mail_tools;

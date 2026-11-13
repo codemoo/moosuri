@@ -129,7 +129,7 @@ F17의 기기 등록·일반 payload·계정/멀티탭 수명·소식함 연결�
 
 F27의 일회성 명시 요청·계획·읽기·영수증 검증 범위는 [맡긴 일](missions.md)에 설명한다. schema28의 직접 반복 읽기 업무는 아래 검증한 범위를 따른다. 대화의 제한된 읽기 업무 등록은 아래 schema29 범위를 따르며 일반적인 실행 범위 확장은 미완료다.
 
-F37의 현재 기본 캘린더 읽기·직접 양식 쓰기 범위는 [내 Google Calendar](calendar.md)에 설명한다. 일반 대화/agent Calendar 실행·반복/참석자 일정 변경은 포함하지 않는다.
+F37의 기본 캘린더 읽기·직접 양식 및 schema30의 제한된 현재 대화 단일 solo-event 작업은 [내 Google Calendar](calendar.md)에 설명한다. Calendar 미션·반복/참석자 일정 변경·넓은 자연어/실계정 검증은 포함하지 않는다.
 
 
 F10/F14의 제한된 UTF-8 파일과 PDF 텍스트 경로는 [개인 파일](private-files.md)을 따른다.

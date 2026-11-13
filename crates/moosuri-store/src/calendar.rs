@@ -1,5 +1,6 @@
 //! Personal Calendar credentials and durable direct-owner dispatch ledger. No network IO.
 use super::*;
+pub(crate) mod agent;
 use moosuri_connectors::calendar::SCOPES;
 use moosuri_connectors::gmail::{SecretString, TokenSet};
 use moosuri_core::*;
@@ -103,7 +104,7 @@ type ActionRow = (
 );
 fn action(c: &Connection, u: &UserContext, id: &str) -> Result<CalendarAction> {
     let v:ActionRow=c.query_row("SELECT id,connection_id,state,event_id,before_etag,provider_etag,event,receipt,error,version,auth_epoch FROM calendar_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::NotFound)?;
-    Ok(CalendarAction{id:v.0,connection_id:v.1,state:v.2,event_id:v.3,before_etag:v.4,provider_etag:v.5,event:if v.10==u.epoch && c.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions a JOIN calendar_connections c ON c.tenant_id=a.tenant_id AND c.id=a.connection_id WHERE a.tenant_id=?1 AND a.id=?2 AND c.status='active' AND c.auth_epoch=?3 AND c.epoch=a.connection_epoch)",params![u.tenant.0,id,u.epoch],|r|r.get::<_,bool>(0))?{v.6.as_deref().map(parse).transpose()?}else{None},receipt:v.7,error:v.8,version:v.9})
+    Ok(CalendarAction{id:v.0,connection_id:v.1,state:v.2,event_id:v.3,before_etag:v.4,provider_etag:v.5,event:if v.10==u.epoch && agent::action_private_current(c,&u.tenant.0,id)? && c.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions a JOIN calendar_connections c ON c.tenant_id=a.tenant_id AND c.id=a.connection_id WHERE a.tenant_id=?1 AND a.id=?2 AND c.status='active' AND c.auth_epoch=?3 AND c.epoch=a.connection_epoch)",params![u.tenant.0,id,u.epoch],|r|r.get::<_,bool>(0))?{v.6.as_deref().map(parse).transpose()?}else{None},receipt:v.7,error:v.8,version:v.9})
 }
 pub(crate) fn restart(c: &Connection) -> Result<()> {
     c.execute("UPDATE calendar_actions SET state='outcome_unknown',error='server_restarted',version=version+1 WHERE state='dispatch_committed'",[])?;
@@ -116,6 +117,7 @@ pub(crate) fn disconnect(
     epoch: i64,
     revision: i64,
 ) -> Result<()> {
+    agent::invalidate(c, t, id)?;
     // The provider account is unknown until OAuth completes. Retire every
     // pending or claimed flow owned by this connection's exact account in the
     // durable disconnect transaction, including an exchange already in flight.
@@ -170,7 +172,7 @@ impl Store {
         tokens: TokenSet,
         primary: CalendarInfo,
     ) -> Result<CalendarConnection> {
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&e.user,true,false)?;crate::google_setup::guard_app(&tx,&e.app)?;scopes(&tokens,true)?;if !primary.primary||primary.access_role!="owner"||primary.id.is_empty()||primary.id.len()>1024{return Err(StoreError::Forbidden)}let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_oauth_sessions WHERE state_hash=?1 AND claimed=1 AND expires_at>?2)",params![e.state,now()?],|r|r.get(0))?;if !exists{return Err(StoreError::Conflict)}let refresh=tokens.refresh_token.ok_or(StoreError::Forbidden)?;let existing:Option<(String,i64,i64)>=tx.query_row("SELECT id,epoch,credential_revision FROM calendar_connections WHERE tenant_id=?1 AND primary_id=?2",params![u.tenant.0,primary.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;let(id,epoch,revision)=existing.map(|(id,e,r)|(id,e+1,r+1)).unwrap_or((Uuid::new_v4().to_string(),1,1));let plain=Zeroizing::new(json(&StoredTokens{access:tokens.access_token.expose().into(),refresh:refresh.expose().into()})?);let cipher=providers::encrypt(&db.provider_key,plain.as_bytes(),&aad(&u,&id,revision)?)?;tx.execute("INSERT INTO calendar_connections VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'active',?10,?11,?12,?13) ON CONFLICT(tenant_id,primary_id) DO UPDATE SET title=excluded.title,time_zone=excluded.time_zone,auth_epoch=excluded.auth_epoch,epoch=excluded.epoch,credential_revision=excluded.credential_revision,status='active',credential=excluded.credential,expires_at=excluded.expires_at,scopes=excluded.scopes,client_id=excluded.client_id",params![u.tenant.0,u.account.id,id,primary.id,primary.title,primary.time_zone,u.epoch,epoch,revision,cipher,now()?+tokens.expires_in as i64,json(&tokens.scopes)?,e.app.client_id])?;tx.execute("DELETE FROM calendar_oauth_sessions WHERE state_hash=?1",[e.state])?;let result=connection(&tx,&u,&id)?;tx.commit()?;Ok(result)}).await
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&e.user,true,false)?;crate::google_setup::guard_app(&tx,&e.app)?;scopes(&tokens,true)?;if !primary.primary||primary.access_role!="owner"||primary.id.is_empty()||primary.id.len()>1024{return Err(StoreError::Forbidden)}let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_oauth_sessions WHERE state_hash=?1 AND claimed=1 AND expires_at>?2)",params![e.state,now()?],|r|r.get(0))?;if !exists{return Err(StoreError::Conflict)}let refresh=tokens.refresh_token.ok_or(StoreError::Forbidden)?;let existing:Option<(String,i64,i64)>=tx.query_row("SELECT id,epoch,credential_revision FROM calendar_connections WHERE tenant_id=?1 AND primary_id=?2",params![u.tenant.0,primary.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;if let Some((ref id,_,_))=existing {agent::invalidate(&tx,&u.tenant.0,id)?;}let(id,epoch,revision)=existing.map(|(id,e,r)|(id,e+1,r+1)).unwrap_or((Uuid::new_v4().to_string(),1,1));let plain=Zeroizing::new(json(&StoredTokens{access:tokens.access_token.expose().into(),refresh:refresh.expose().into()})?);let cipher=providers::encrypt(&db.provider_key,plain.as_bytes(),&aad(&u,&id,revision)?)?;tx.execute("INSERT INTO calendar_connections VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'active',?10,?11,?12,?13) ON CONFLICT(tenant_id,primary_id) DO UPDATE SET title=excluded.title,time_zone=excluded.time_zone,auth_epoch=excluded.auth_epoch,epoch=excluded.epoch,credential_revision=excluded.credential_revision,status='active',credential=excluded.credential,expires_at=excluded.expires_at,scopes=excluded.scopes,client_id=excluded.client_id",params![u.tenant.0,u.account.id,id,primary.id,primary.title,primary.time_zone,u.epoch,epoch,revision,cipher,now()?+tokens.expires_in as i64,json(&tokens.scopes)?,e.app.client_id])?;tx.execute("DELETE FROM calendar_oauth_sessions WHERE state_hash=?1",[e.state])?;let result=connection(&tx,&u,&id)?;tx.commit()?;Ok(result)}).await
     }
     pub async fn calendar_binding(
         &self,
@@ -210,7 +212,9 @@ impl Store {
         let u = b.user.clone();
         let c = b.connection.clone();
         let app = b.app.clone();
-        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;crate::google_setup::guard_app(&db.conn,&app)?;db.conn.execute("UPDATE calendar_connections SET status='needs_reconnect',credential=NULL,epoch=epoch+1,credential_revision=credential_revision+1 WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND epoch=?4 AND credential_revision=?5",params![u.tenant.0,u.account.id,c.id,c.epoch,c.revision])?;Ok(())}).await
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&u,true,false)?;crate::google_setup::guard_app(&tx,&app)?;
+        let changed=tx.execute("UPDATE calendar_connections SET status='needs_reconnect',credential=NULL,epoch=epoch+1,credential_revision=credential_revision+1 WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND epoch=?4 AND credential_revision=?5",params![u.tenant.0,u.account.id,c.id,c.epoch,c.revision])?;
+        if changed==1 {agent::invalidate(&tx,&u.tenant.0,&c.id)?;}tx.commit()?;Ok(())}).await
     }
     pub async fn disconnect_calendar(&self, u: &UserContext, id: String) -> Result<()> {
         let u = u.clone();
@@ -251,11 +255,17 @@ impl Store {
         let u = b.user.clone();
         let conn = b.connection.clone();
         let app = b.app.clone();
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&u,true,false)?;crate::google_setup::guard_app(&tx,&app)?;let payload=json(&change)?;Uuid::parse_str(&change.request_id).map_err(|_|StoreError::InvalidInput)?;let digest=format!("{:x}",Sha256::digest(payload.as_bytes()));if let Some(old)=tx.query_row("SELECT digest FROM calendar_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,change.request_id],|r|r.get::<_,String>(0)).optional()?{if old!=digest{return Err(StoreError::Conflict)}return Ok(CalendarAdmission::Recorded(action(&tx,&u,&change.request_id)?))}
- let current=connection(&tx,&u,&change.connection_id)?;if change.connection_id!=conn.id||change.expected_epoch!=current.epoch||change.expected_revision!=current.revision||conn.epoch!=current.epoch||conn.revision!=current.revision||current.status!="active"||!primary.primary||primary.access_role!="owner"||primary.email_notifications||primary.id!=current.primary_id{return Err(StoreError::Conflict)}let count:i64=tx.query_row("SELECT count(*) FROM calendar_actions WHERE tenant_id=?1 AND state IN('dispatch_committed','outcome_unknown')",[&u.tenant.0],|r|r.get(0))?;if count>=16{return Err(StoreError::Busy)}
- let(kind,event_id,etag)=match &change.mutation{CalendarMutation::Create{fields}=>{moosuri_connectors::calendar::validate_fields(fields).map_err(|_|StoreError::InvalidInput)?;("create",format!("m{}",change.request_id.replace('-',"")),None)},CalendarMutation::Update{event_id,etag,fields}=>{moosuri_connectors::calendar::validate_fields(fields).map_err(|_|StoreError::InvalidInput)?;let p=prior.as_ref().ok_or(StoreError::InvalidInput)?;if !p.writable||p.id!=*event_id||p.etag!=*etag{return Err(StoreError::Conflict)}("update",event_id.clone(),Some(etag.clone()))},CalendarMutation::Delete{event_id,etag}=>{let p=prior.as_ref().ok_or(StoreError::InvalidInput)?;if !p.writable||p.id!=*event_id||p.etag!=*etag{return Err(StoreError::Conflict)}("delete",event_id.clone(),Some(etag.clone()))}};
- moosuri_connectors::calendar::event_id(&event_id).map_err(|_|StoreError::InvalidInput)?;let nonce=token_hash(&random()?);tx.execute("INSERT INTO calendar_actions(tenant_id,account_id,id,connection_id,connection_epoch,credential_revision,auth_epoch,session_digest,app_pin,payload,digest,kind,event_id,before_etag,state,nonce,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'dispatch_committed',?15,?16)",params![u.tenant.0,u.account.id,change.request_id,current.id,current.epoch,current.revision,u.epoch,u.digest.as_slice(),json(&app)?,payload,digest,kind,event_id,etag,nonce,now()?])?;tx.commit()?;Ok(CalendarAdmission::Dispatch(CalendarDispatch{change,primary_id:primary.id,event_id,digest,user:u,nonce,app,settlement_revision:current.revision}))}).await
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let admission = admit_change_in(&tx, &u, &conn, &app, change, primary, prior)?;
+            tx.commit()?;
+            Ok(admission)
+        })
+        .await
     }
+
     pub async fn settle_calendar_change(
         &self,
         d: &CalendarDispatch,
@@ -271,7 +281,7 @@ impl Store {
         let c = d.change.connection_id.clone();
         let epoch = d.change.expected_epoch;
         let d_revision = d.settlement_revision;
-        self.call(move|db|{if !["applied","outcome_unknown","conflict","failed_definite","observed_absent"].contains(&state.as_str())||receipt.len()>4096{return Err(StoreError::InvalidInput)}let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let matches:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions WHERE tenant_id=?1 AND id=?2 AND nonce=?3)",params![u.tenant.0,id,nonce],|r|r.get(0))?;if !matches{return Err(StoreError::Unauthorized)}let eligible=validate(&tx,&u,true,false).is_ok()&&crate::google_setup::guard_app(&tx,&app).is_ok()&&connection(&tx,&u,&c).is_ok_and(|v|v.status=="active"&&v.epoch==epoch&&v.revision==d_revision);let old:String=tx.query_row("SELECT state FROM calendar_actions WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id],|r|r.get(0))?;if matches!(old.as_str(),"dispatch_committed"|"outcome_unknown"){tx.execute("UPDATE calendar_actions SET state=?3,provider_etag=?4,event=?5,receipt=?6,error=?7,version=version+1,payload=CASE WHEN ?8 THEN payload ELSE NULL END WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,state,event.as_ref().map(|e|&e.etag),if eligible{event.as_ref().map(json).transpose()?}else{None},receipt,error,eligible])?;}let result=if eligible{action(&tx,&u,&id)}else{Err(StoreError::Unauthorized)};tx.commit()?;result}).await
+        self.call(move|db|{if !["applied","outcome_unknown","conflict","failed_definite","observed_absent"].contains(&state.as_str())||receipt.len()>4096{return Err(StoreError::InvalidInput)}let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let matches:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions WHERE tenant_id=?1 AND id=?2 AND nonce=?3)",params![u.tenant.0,id,nonce],|r|r.get(0))?;if !matches{return Err(StoreError::Unauthorized)}let eligible=agent::action_private_current(&tx,&u.tenant.0,&id)? && validate(&tx,&u,true,false).is_ok()&&crate::google_setup::guard_app(&tx,&app).is_ok()&&connection(&tx,&u,&c).is_ok_and(|v|v.status=="active"&&v.epoch==epoch&&v.revision==d_revision);let old:String=tx.query_row("SELECT state FROM calendar_actions WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id],|r|r.get(0))?;if matches!(old.as_str(),"dispatch_committed"|"outcome_unknown"){tx.execute("UPDATE calendar_actions SET state=?3,provider_etag=?4,event=?5,receipt=?6,error=?7,version=version+1,payload=CASE WHEN ?8 THEN payload ELSE NULL END WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,state,event.as_ref().map(|e|&e.etag),if eligible{event.as_ref().map(json).transpose()?}else{None},receipt,error,eligible])?;}let result=if eligible{action(&tx,&u,&id)}else{Err(StoreError::Unauthorized)};tx.commit()?;result}).await
     }
     pub async fn calendar_reconcile(
         &self,
@@ -285,3 +295,98 @@ impl Store {
 }
 #[cfg(test)]
 mod tests;
+
+fn admit_change_in(
+    c: &Connection,
+    u: &UserContext,
+    conn: &CalendarConnection,
+    app: &GoogleAppPin,
+    change: CalendarChange,
+    primary: CalendarInfo,
+    prior: Option<CalendarEvent>,
+) -> Result<CalendarAdmission> {
+    let u = validate(c, u, true, false)?;
+    crate::google_setup::guard_app(c, app)?;
+    let payload = json(&change)?;
+    Uuid::parse_str(&change.request_id).map_err(|_| StoreError::InvalidInput)?;
+    let digest = format!("{:x}", Sha256::digest(payload.as_bytes()));
+    if let Some(old) = c
+        .query_row(
+            "SELECT digest FROM calendar_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",
+            params![u.tenant.0, u.account.id, change.request_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        if old != digest {
+            return Err(StoreError::Conflict);
+        }
+        return Ok(CalendarAdmission::Recorded(action(
+            c,
+            &u,
+            &change.request_id,
+        )?));
+    }
+    let current = connection(c, &u, &change.connection_id)?;
+    if change.connection_id != conn.id
+        || change.expected_epoch != current.epoch
+        || change.expected_revision != current.revision
+        || conn.epoch != current.epoch
+        || conn.revision != current.revision
+        || current.status != "active"
+        || !primary.primary
+        || primary.access_role != "owner"
+        || primary.email_notifications
+        || primary.id != current.primary_id
+    {
+        return Err(StoreError::Conflict);
+    }
+    let count:i64=c.query_row("SELECT count(*) FROM calendar_actions WHERE tenant_id=?1 AND state IN('dispatch_committed','outcome_unknown')",[&u.tenant.0],|r|r.get(0))?;
+    if count >= 16 {
+        return Err(StoreError::Busy);
+    }
+    let (kind, event_id, etag) = match &change.mutation {
+        CalendarMutation::Create { fields } => {
+            moosuri_connectors::calendar::validate_fields(fields)
+                .map_err(|_| StoreError::InvalidInput)?;
+            (
+                "create",
+                format!("m{}", change.request_id.replace('-', "")),
+                None,
+            )
+        }
+        CalendarMutation::Update {
+            event_id,
+            etag,
+            fields,
+        } => {
+            moosuri_connectors::calendar::validate_fields(fields)
+                .map_err(|_| StoreError::InvalidInput)?;
+            let p = prior.as_ref().ok_or(StoreError::InvalidInput)?;
+            if !p.writable || p.id != *event_id || p.etag != *etag {
+                return Err(StoreError::Conflict);
+            }
+            ("update", event_id.clone(), Some(etag.clone()))
+        }
+        CalendarMutation::Delete { event_id, etag } => {
+            let p = prior.as_ref().ok_or(StoreError::InvalidInput)?;
+            if !p.writable || p.id != *event_id || p.etag != *etag {
+                return Err(StoreError::Conflict);
+            }
+            ("delete", event_id.clone(), Some(etag.clone()))
+        }
+    };
+    moosuri_connectors::calendar::event_id(&event_id).map_err(|_| StoreError::InvalidInput)?;
+    let nonce = token_hash(&random()?);
+    c.execute("INSERT INTO calendar_actions(tenant_id,account_id,id,connection_id,connection_epoch,credential_revision,auth_epoch,session_digest,app_pin,payload,digest,kind,event_id,before_etag,state,nonce,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'dispatch_committed',?15,?16)",params![u.tenant.0,u.account.id,change.request_id,current.id,current.epoch,current.revision,u.epoch,u.digest.as_slice(),json(&app)?,payload,digest,kind,event_id,etag,nonce,now()?])?;
+    Ok(CalendarAdmission::Dispatch(CalendarDispatch {
+        change,
+        primary_id: primary.id,
+        event_id,
+        digest,
+        user: u,
+        nonce,
+        app: app.clone(),
+        settlement_revision: current.revision,
+    }))
+}

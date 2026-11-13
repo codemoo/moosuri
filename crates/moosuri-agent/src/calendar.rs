@@ -105,6 +105,19 @@ impl CalendarIo {
             Self::Fixture(io) => io.events(primary, range).await,
         }
     }
+    async fn events_page(
+        &self,
+        token: &SecretString,
+        primary: &str,
+        range: &CalendarRange,
+        cancel: &CancellationToken,
+    ) -> Result<CalendarEvents, GmailError> {
+        match self {
+            Self::Google(c) => c.events_page(token, primary, range, 5, cancel).await,
+            #[cfg(test)]
+            Self::Fixture(io) => io.events(primary, range).await,
+        }
+    }
     async fn event(
         &self,
         token: &SecretString,
@@ -286,6 +299,15 @@ impl CalendarService {
             .store
             .admit_calendar_change(&b, input, p, prior.as_ref().map(|v| v.event().clone()))
             .await?;
+        self.dispatch(b, admission, prior, cancel).await
+    }
+    async fn dispatch(
+        &self,
+        b: CalendarBinding,
+        admission: CalendarAdmission,
+        prior: Option<Observation>,
+        cancel: CancellationToken,
+    ) -> Result<CalendarAction, StoreError> {
         let dispatch = match admission {
             CalendarAdmission::Recorded(v) => return Ok(v),
             CalendarAdmission::Dispatch(d) => d,
@@ -328,6 +350,126 @@ impl CalendarService {
             .settle_calendar_change(&dispatch, state.into(), event, receipt, error)
             .await?;
         Ok(action)
+    }
+    /// A sealed plan owns the only mutation payload. Replay of a committed plan
+    /// renders the same ledger receipt; it can never enter IO dispatch again.
+    pub async fn chat(&self, l: &moosuri_store::RunLease) -> Result<bool, StoreError> {
+        if self.store.finish_calendar_chat(l, None).await? {
+            return Ok(true);
+        }
+        let Some(cmd) = self.store.calendar_agent_command(l).await? else {
+            return Ok(false);
+        };
+        if cmd.decision.decision != "command" {
+            return self
+                .store
+                .finish_calendar_chat(
+                    l,
+                    Some(
+                        if cmd.decision.decision == "unsupported" {
+                            "unsupported"
+                        } else {
+                            "clarify"
+                        }
+                        .into(),
+                    ),
+                )
+                .await;
+        }
+        let result = async {
+            let q = self.store.calendar_agent_range(l).await?;
+            let b = self.binding(&cmd.user, q.connection_id.clone()).await?;
+            let p = self.primary(&b).await?;
+            let cancel = CancellationToken::new();
+            let prior = if matches!(cmd.decision.operation.as_deref(), Some("update" | "delete")) {
+                let page = self
+                    .io
+                    .events_page(&b.access, &p.id, &q, &cancel)
+                    .await
+                    .map_err(remote)?;
+                let target = self.store.calendar_agent_target(l, page).await?;
+                Some(
+                    self.io
+                        .event(&b.access, &p.id, &target.id, &cancel)
+                        .await
+                        .map_err(remote)?,
+                )
+            } else {
+                None
+            };
+            let admission = self
+                .store
+                .admit_calendar_agent_change(l, &b, p, prior.as_ref().map(|v| v.event().clone()))
+                .await?;
+            self.dispatch(b, admission, prior, cancel).await?;
+            Ok::<_, StoreError>(())
+        }
+        .await;
+        match result {
+            Ok(()) => self.store.finish_calendar_chat(l, None).await,
+            Err(
+                StoreError::InvalidInput
+                | StoreError::NotFound
+                | StoreError::Conflict
+                | StoreError::Forbidden,
+            ) => {
+                // No committed action can become a new clarification/retry write.
+                if self.store.finish_calendar_chat(l, None).await? {
+                    return Ok(true);
+                }
+                self.store
+                    .finish_calendar_chat(l, Some("clarify".into()))
+                    .await
+            }
+            Err(e) => Err(e),
+        }
+    }
+    pub async fn external(
+        &self,
+        permit: &moosuri_store::ExternalToolPermit,
+        cancel: &CancellationToken,
+    ) -> moosuri_store::KnowledgeToolResult {
+        use moosuri_store::{KnowledgeToolResult, ToolReadError};
+        let ExternalToolRequest::Calendar(q) = permit.request() else {
+            return KnowledgeToolResult::Error(ToolReadError::Unavailable);
+        };
+        let Some(user) = permit.user() else {
+            return KnowledgeToolResult::Error(ToolReadError::Unavailable);
+        };
+        let result=async {
+            self.store.check_external_tool(permit).await?;
+            let value=match q {
+                CalendarReadRequest::List{range}=>{
+                    let b=self.binding(user,range.connection_id.clone()).await?;
+                    let p=self.primary(&b).await?;
+                    let page=self.io.events_page(&b.access,&p.id,range,cancel).await.map_err(remote)?;
+                    self.store.check_calendar_binding(&b).await?;
+                    serde_json::to_value(page).map_err(|_|StoreError::InvalidInput)?
+                },
+                CalendarReadRequest::Read{observation_ref}=>{
+                    let(id,event)=self.store.calendar_read_event_id(permit.run_lease(),observation_ref.clone()).await?;
+                    let b=self.binding(user,id).await?; let p=self.primary(&b).await?;
+                    let observed=self.io.event(&b.access,&p.id,&event,cancel).await.map_err(remote)?;
+                    self.store.check_calendar_binding(&b).await?;
+                    serde_json::json!({"event":observed.into_event(),"untrusted":true})
+                },
+                CalendarReadRequest::Status{action_id}=>{
+                    let action=self.store.calendar_agent_action(permit.run_lease(),action_id.clone()).await?;
+                    let action=if action.state=="outcome_unknown" {self.lookup(user,action_id.clone()).await?}else{action};
+                    serde_json::json!({"action_id":action.id,"state":action.state,"event_id":action.event_id,"provider_etag":action.provider_etag,"receipt":action.receipt,"error":action.error})
+                }
+            };
+            self.store.check_external_tool(permit).await?;
+            Ok::<_,StoreError>(value)
+        }.await;
+        match result {
+            Ok(v) => KnowledgeToolResult::External(v),
+            Err(StoreError::InvalidInput) => {
+                KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+            }
+            Err(StoreError::NotFound) => KnowledgeToolResult::Error(ToolReadError::NotFound),
+            Err(_) => KnowledgeToolResult::Error(ToolReadError::Unavailable),
+        }
     }
     pub async fn lookup(&self, u: &UserContext, id: String) -> Result<CalendarAction, StoreError> {
         let app = self.app().await?;

@@ -16,6 +16,7 @@ pub(super) async fn run(
     session: &PlanningSession<'_>,
     context: AgentContext,
     text: &str,
+    mail: &crate::mail::MailService,
 ) -> Option<AgentContext> {
     let planning = match session.store.mission_chat_planning(session.lease).await {
         Ok(Some(v)) => v,
@@ -41,6 +42,18 @@ pub(super) async fn run(
     );
     let definitions = crate::mission_intent::definitions();
     let (_, next, _) = planning_round(session, &context, &request, &definitions).await?;
+    let calendar = crate::calendar::CalendarService::new(session.store.clone(), mail.clone());
+    match calendar.chat(session.lease).await {
+        Ok(true) => {
+            session.signals.changed();
+            return None;
+        }
+        Ok(false) => {}
+        Err(e) => {
+            failed(session, None, e).await;
+            return None;
+        }
+    }
     let _gate = session.signals.delivery.write().await;
     match session.store.apply_mission_chat(session.lease).await {
         Ok(Some(false)) => Some(next),

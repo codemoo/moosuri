@@ -5,7 +5,7 @@ A self-hosted assistant for individuals, families and friends.
 **Early development preview. Start with [current support and remaining work](docs/status.md).**
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat, private knowledge and memories, editable records, bounded
-read-only missions from chat or forms, personal Gmail and Calendar, browser workspaces, local reminders,
+read-only missions from chat or forms, personal Gmail, bounded Calendar actions from chat or forms, browser workspaces, local reminders,
 opt-in Web Push, private images/UTF-8 files/text PDFs and a separate encrypted vault.
 Every mail send needs the user's explicit approval of its final preview.
 

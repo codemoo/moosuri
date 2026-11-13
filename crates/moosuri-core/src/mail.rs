@@ -117,4 +117,5 @@ impl MailToolRequest {
 pub enum ExternalToolRequest {
     Mail(MailToolRequest),
     Web(crate::WebToolRequest),
+    Calendar(crate::CalendarReadRequest),
 }

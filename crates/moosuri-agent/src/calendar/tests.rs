@@ -43,6 +43,7 @@ pub(super) struct FixtureIo {
     primary_calls: AtomicUsize,
     event_calls: Mutex<Vec<String>>,
     writes: Mutex<Vec<WriteRecord>>,
+    observed: Mutex<Option<CalendarEvent>>,
     //0 success,1 timeout (including applied-but-ACK-lost),2 definite412.
     write_mode: AtomicU8,
     //0 matching current event,1 absent,2 wrong operation marker,3 peer edit.
@@ -59,6 +60,7 @@ impl FixtureIo {
             primary_calls: AtomicUsize::new(0),
             event_calls: Mutex::new(vec![]),
             writes: Mutex::new(vec![]),
+            observed: Mutex::new(None),
             write_mode: AtomicU8::new(0),
             lookup_mode: AtomicU8::new(0),
             hold_primary: AtomicBool::new(false),
@@ -103,6 +105,23 @@ impl FixtureIo {
         range: &CalendarRange,
     ) -> Result<CalendarEvents, GmailError> {
         assert_eq!(primary_id, primary().id);
+        if range.page_token.is_none() {
+            let mut f = fields();
+            f.title = "Synthetic meeting".into();
+            f.start = range.start.clone();
+            f.end = range.start.clone();
+            let hour = range.start[11..13].parse::<u8>().unwrap() + 1;
+            assert!(hour < 24, "bounded synthetic fixture range");
+            f.end.replace_range(11..13, &format!("{hour:02}"));
+            let event = event("synthetic1", f);
+            *self.observed.lock().unwrap() = Some(event.clone());
+            return Ok(CalendarEvents {
+                events: vec![event],
+                next_page_token: None,
+                partial: false,
+                primary_id: primary_id.into(),
+            });
+        }
         assert_eq!(range.start, fields().start);
         assert_eq!(range.end, fields().end);
         assert_eq!(range.page_token.as_deref(), Some("event-page"));
@@ -129,7 +148,14 @@ impl FixtureIo {
                 }
                 _ => None,
             })
-            .unwrap_or_else(fields);
+            .unwrap_or_else(|| {
+                self.observed
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|v| v.fields.clone())
+                    .unwrap_or_else(fields)
+            });
         let mut e = event(id, f);
         if self.lookup_mode.load(Ordering::SeqCst) == 3 {
             e.fields.title = "Peer changed title".into()
@@ -553,3 +579,6 @@ fn missing_event_is_unknown_for_create_and_only_observed_absence_for_delete() {
         assert_eq!(result.2, "current_absence_observed_causality_unknown");
     }
 }
+
+#[path = "../tests/calendar.rs"]
+mod conversation;

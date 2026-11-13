@@ -625,6 +625,7 @@ pub(crate) async fn execute(
         mut context,
         tool_profile,
         mut artifact_profile,
+        calendar_profile,
     } = claimed;
     if signals.stopping().is_cancelled() {
         finish(
@@ -637,6 +638,15 @@ pub(crate) async fn execute(
         )
         .await;
         return;
+    }
+    let calendar = crate::calendar::CalendarService::new(store.clone(), mail.clone());
+    match calendar.chat(&lease).await {
+        Ok(true) => {
+            signals.changed();
+            return;
+        }
+        Ok(false) => {}
+        Err(_) => return,
     }
     // A completed typed intent resumes before any classifier or ordinary capsule handling.
     match store.apply_mission_chat(&lease).await {
@@ -769,7 +779,7 @@ pub(crate) async fn execute(
             protocol,
             capabilities: &capabilities,
         };
-        let Some(next) = mission_chat::run(&planning, context, current_text).await else {
+        let Some(next) = mission_chat::run(&planning, context, current_text, &mail).await else {
             return;
         };
         context = next;
@@ -791,7 +801,17 @@ pub(crate) async fn execute(
     request.messages[0]
         .text
         .push_str(&crate::artifact_tools::system(artifact_profile.as_ref()));
+    if !media_context {
+        request.messages[0]
+            .text
+            .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
+    }
     let mut definitions = knowledge_tools::definitions(tool_profile.as_ref());
+    if !media_context {
+        definitions.extend(crate::calendar_tools::definitions(
+            calendar_profile.as_ref(),
+        ));
+    }
     definitions.extend(crate::artifact_tools::definitions(
         artifact_profile.as_ref(),
     ));
@@ -1089,6 +1109,11 @@ async fn execute_tool(
             let io_cancel = cancel.child_token();
             let operation = async {
                 match permit.request() {
+                    moosuri_core::ExternalToolRequest::Calendar(_) => {
+                        crate::calendar::CalendarService::new(store.clone(), mail.clone())
+                            .external(&permit, &io_cancel)
+                            .await
+                    }
                     moosuri_core::ExternalToolRequest::Mail(_) => {
                         mail.external(&permit, &io_cancel).await
                     }

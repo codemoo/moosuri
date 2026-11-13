@@ -125,6 +125,8 @@ impl Store {
             let redirect_changed=old.as_ref().is_some_and(|r|r.redirect_uri!=client.redirect_uri);
             if redirect_changed && tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_connections WHERE status!='disconnected') OR EXISTS(SELECT 1 FROM calendar_connections WHERE status!='disconnected')",[],|r|r.get::<_,bool>(0))? {return Err(StoreError::GoogleConnectionsInUse)}
             if identity_changed && tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_connections WHERE status!='disconnected' AND (oauth_client_id IS NULL OR oauth_client_id!=?1)) OR EXISTS(SELECT 1 FROM calendar_connections WHERE status!='disconnected' AND client_id!=?1)",[&client.client_id],|r|r.get::<_,bool>(0))? {return Err(StoreError::GoogleConnectionsInUse)}
+            let calendar_ids=tx.prepare("SELECT tenant_id,id FROM calendar_connections WHERE status!='disconnected'")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+            for (tenant,id) in calendar_ids {crate::calendar::agent::invalidate(&tx,&tenant,&id)?;}
             let next=GoogleSetupRecord{revision:expected_revision.checked_add(1).ok_or(StoreError::InvalidInput)?,client_id:client.client_id,redirect_uri:client.redirect_uri};
             let secret=providers::encrypt(&db.provider_key,client.client_secret.expose().as_bytes(),&secret_aad(&next)?)?;
             tx.execute("INSERT INTO google_setup(singleton,revision,client_id,redirect_uri,secret) VALUES(1,?1,?2,?3,?4) ON CONFLICT(singleton) DO UPDATE SET revision=excluded.revision,client_id=excluded.client_id,redirect_uri=excluded.redirect_uri,secret=excluded.secret",params![next.revision,next.client_id,next.redirect_uri,secret])?;

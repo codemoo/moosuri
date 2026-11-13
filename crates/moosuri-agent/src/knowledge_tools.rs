@@ -199,6 +199,11 @@ pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
             .map(Invocation::External)
             .unwrap_or(Invocation::InvalidArguments);
     }
+    if name.starts_with("calendar_") {
+        return crate::calendar_tools::parse(name, arguments)
+            .map(Invocation::External)
+            .unwrap_or(Invocation::InvalidArguments);
+    }
     if name.starts_with("mail_") {
         return crate::mail_tools::parse(name, arguments)
             .map(Invocation::External)

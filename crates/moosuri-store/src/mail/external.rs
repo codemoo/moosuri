@@ -21,6 +21,9 @@ impl ExternalToolPermit {
     pub fn thread_id(&self) -> &str {
         &self.thread_id
     }
+    pub fn run_lease(&self) -> &crate::RunLease {
+        &self.lease.run
+    }
     pub fn request(&self) -> &ExternalToolRequest {
         &self.request
     }
@@ -52,6 +55,11 @@ impl Store {
                 agent_execution::guard_step(&tx, &db.provider_key, &lease).and_then(|run| {
                     if let ExternalToolRequest::Web(request) = &request
                         && !crate::web::allowed(run.tool_profile.as_ref(), &db.web_profile, request)
+                    {
+                        return Err(StoreError::Conflict);
+                    }
+                    if let ExternalToolRequest::Calendar(q) = &request
+                        && !crate::calendar::agent::allowed(&tx, &run, q)?
                     {
                         return Err(StoreError::Conflict);
                     }
@@ -104,6 +112,7 @@ impl Store {
             let valid=(!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
                 ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
+                ExternalToolRequest::Calendar(q)=>crate::calendar::agent::allowed(&tx,&run,q)?,
             };
 
             let generation=knowledge::generation(&tx,&run.tenant)?;
@@ -121,6 +130,7 @@ impl Store {
                 tx.execute("INSERT OR IGNORE INTO mail_run_dependencies VALUES(?1,?2,?3,?4)",params![run.tenant,run.id,pin.id,pin.epoch])?;
             }
 
+            if let ExternalToolRequest::Calendar(q)=&request {crate::calendar::agent::admit_read(&tx,&run,q)?;}
             let browser_pin=run.tool_profile.as_ref().filter(|p|matches!(p.version,4|5)).and_then(|p|p.web.as_ref()).and_then(|p|p.browser_pin.clone());
             let nonce=hash(&random()?);
             tx.execute("INSERT INTO external_tool_dispatches VALUES(?1,?2,?3,?4,?5,'started')",params![run.tenant,run.id,lease.step,call_id,nonce])?;
@@ -155,6 +165,7 @@ impl Store {
             let valid=(!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
                 ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.epoch==pin.epoch&&c.email==pin.email&&c.status=="active"))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
+                ExternalToolRequest::Calendar(q)=>crate::calendar::agent::allowed(&tx,&run,q)?,
             };
             if !valid {
                 agent_execution::purge_runs(&tx,&run.tenant,vec![run.id.clone()])?;
@@ -162,6 +173,7 @@ impl Store {
                 return Err(StoreError::Conflict)
             }
 
+            if let ExternalToolRequest::Calendar(q)=&request {crate::calendar::agent::complete_read(&tx,&run,lease.step,&call_id,q,&mut result)?;}
             if json(&result)?.len()>agent_execution::TOOL_RESULT_LIMIT{
                 result=KnowledgeToolResult::Error(ToolReadError::TooLargeNarrowRead)}
             let(saved,matching):(Option<String>,bool)=tx.query_row("SELECT t.result,d.nonce=?5 FROM agent_tool_slots t JOIN external_tool_dispatches d USING(tenant_id,run_id,step,call_id) WHERE t.tenant_id=?1 AND t.run_id=?2 AND t.step=?3 AND t.call_id=?4",params![run.tenant,run.id,lease.step,call_id,nonce],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;

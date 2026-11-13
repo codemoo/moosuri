@@ -323,6 +323,7 @@ pub(crate) fn apply(conn: &Connection, record: &Record) -> Result<()> {
             crate::missions::apply_delete(conn, &record.tenant, target)?;
         }
         Effect::DeleteThread { target } => {
+            crate::calendar::agent::purge_thread(conn, &record.tenant, target)?;
             mail::purge_thread(conn, &record.tenant, target)?;
             conn.execute(
                 "DELETE FROM threads WHERE tenant_id=?1 AND id=?2",

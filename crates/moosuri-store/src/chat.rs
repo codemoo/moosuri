@@ -252,6 +252,7 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             (!r.is_empty()).then_some(r)
         },
         mission_receipt: crate::missions::chat::receipt(conn, &run.tenant, &run.id)?,
+        calendar_receipt: crate::calendar::agent::receipt(conn, run)?,
         schedule_receipts: {
             let r = crate::schedules::chat::receipts(conn, &run.tenant, &run.id)?;
             (!r.is_empty()).then_some(r)
@@ -1020,6 +1021,7 @@ fn submit_turn_context_in(
         && target.is_none()
         && context.as_ref().and_then(|c| c.target.as_ref()).is_none()
     {
+        crate::calendar::agent::admit(tx, &current, context.as_ref().map(|c| c.timezone.as_str()))?;
         crate::missions::chat::admit(
             tx,
             &current,
@@ -1137,6 +1139,7 @@ fn cancel_run_inner(
     if run.attempt != expected_attempt || !run.state.active() {
         return Err(StoreError::Conflict);
     }
+    crate::calendar::agent::cancel(&tx, &run)?;
     transition(&tx, &run, RunState::Cancelled, None)?;
     let result = turn(&tx, &load_run(&tx, &run.tenant, &run.id)?)?;
     tx.commit()?;
@@ -1163,6 +1166,7 @@ fn retry_run_inner(
         return Err(StoreError::Conflict);
     }
     crate::missions::chat::retry_authority(&tx, &run)?;
+    crate::calendar::agent::retry_authority(&tx, &run)?;
     queue_capacity(&tx, &user.tenant.0)?;
     providers::binding_for_choice(&tx, &db.provider_key, &run.model)?;
     let order = next_order(&tx)?;

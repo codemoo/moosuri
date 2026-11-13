@@ -121,6 +121,7 @@ pub struct AgentClaim {
     pub context: AgentContext,
     pub tool_profile: Option<moosuri_core::RunToolProfile>,
     pub artifact_profile: Option<moosuri_core::ArtifactRunProfile>,
+    pub calendar_profile: Option<moosuri_core::CalendarRunProfile>,
 }
 /// One model dispatch capability. Its receipt nonce also permits late accounting,
 /// even after the user deleted the content. It cannot be constructed by callers.
@@ -224,6 +225,10 @@ fn retry_fences(conn: &Connection, tenant: &str, run: &str, needs_capacity: bool
         && last.is_none_or(|v| clock >= v))
 }
 pub(super) fn guard_execution(conn: &Connection, run: &Run) -> Result<()> {
+    if !crate::calendar::agent::dependencies_current(conn, run)? {
+        purge_runs(conn, &run.tenant, vec![run.id.clone()])?;
+        return Err(StoreError::Conflict);
+    }
     let row: Option<ExecutionFence>=conn.query_row("SELECT invalidated,generation,deadline_ms,last_clock_ms FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
     if let Some((invalid, generation, deadline, last)) = row {
         let changed = match generation {
@@ -268,7 +273,7 @@ pub(super) fn inherit_dependencies(
     prior: &str,
 ) -> Result<()> {
     let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
+        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
         params![tenant, prior],
         |r| r.get(0),
     )?;
@@ -278,6 +283,7 @@ pub(super) fn inherit_dependencies(
     let generation = knowledge::generation(conn, tenant)?;
     conn.execute("INSERT OR IGNORE INTO personal_artifact_run_dependencies SELECT tenant_id,?2,artifact_id,revision FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     conn.execute("INSERT OR IGNORE INTO agent_execution(tenant_id,run_id,agent,generation) VALUES(?1,?2,0,?3)",params![tenant,run,generation])?;
+    conn.execute("INSERT OR IGNORE INTO calendar_run_dependencies SELECT tenant_id,?2,connection_id,epoch,app_revision,client_id FROM calendar_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     conn.execute("INSERT OR IGNORE INTO mail_run_dependencies SELECT tenant_id,?2,connection_id,epoch FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     conn.execute("INSERT OR IGNORE INTO agent_dependencies SELECT tenant_id,?2,kind,object_id,revision FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     Ok(())
@@ -310,6 +316,7 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
     for id in &ids {
         let run = chat::load_run(conn, tenant, id)?;
         crate::mail::purge_run(conn, tenant, id)?;
+        crate::calendar::agent::purge(conn, tenant, id)?;
         conn.execute(
             "DELETE FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2",
             params![tenant, id],
@@ -670,8 +677,9 @@ impl Store {
                 let media_context=crate::media::has_context(&tx,&tenant,&id)?;
                 let images=crate::media::bound_images(&tx,&tenant,&id)?;
                 let documents=crate::private_files::bound_documents(&tx,&tenant,&id)?;
+                let calendar_profile=crate::calendar::agent::profile(&tx,&run.tenant,&run.id)?;
                 tx.commit()?;
-                return Ok(Some(AgentClaim{lease,binding,model:run.model,messages,context,tool_profile:run.tool_profile,artifact_profile,media_context,images,documents}));
+                return Ok(Some(AgentClaim{calendar_profile,lease,binding,model:run.model,messages,context,tool_profile:run.tool_profile,artifact_profile,media_context,images,documents}));
             }
             tx.commit()?;Ok(None)
         }).await

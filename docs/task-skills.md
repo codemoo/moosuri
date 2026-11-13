@@ -37,7 +37,7 @@
 | 저장 자료로 브리핑·회의 준비·비교 | 내장 절차 + 계정별 검색/조회 + 정확한 계산 | 실계정 품질/회귀 검증은 별도 |
 | 연결한 Gmail 읽기·답장 준비·승인 후 발송 | 개인 OAuth, 검색·본문/thread·thread identity를 유지한 로컬 답장 초안·최종 승인·발송 영수증 | 라벨 변경·Gmail provider 초안 CRUD·첨부·Microsoft와 자동 불명 결과 조회 |
 | 공개 웹 조사·가격/조건 읽기 | HTTP/Brave·검증한 Chromium 읽기, workspace·사람의 로그인/조작 인계·같은 페이지 후속 대화 | 인증된 자동 클릭/폼·장기 profile 복구·전용 배송 adapter; 자동 구매/웹 예약은 현재 기본 계약 밖 |
-| 일정 조율·등록·변경 | 개인 Calendar 기본 읽기·primary solo-event 직접 양식 쓰기; agent Calendar 도구는 없음 | 대화/미션 도구 admission·모호한 시간/대상 해석; 반복/종일/참석자/보조 캘린더 변경은 별도 범위 |
+| 일정 조율·등록·변경 | 개인 Calendar 기본 읽기·primary solo-event 직접 양식 및 제한된 현재 대화 쓰기; 새 chat-only5개 paging/read/status | Calendar 미션·넓은 시간/대상 해석; 반복/종일/참석자/보조 캘린더 변경은 별도 범위 |
 | 배송 현재 상태·주문/취소 | 실시간 배송·쇼핑 도구 없음 | carrier/store adapter 또는 격리된 브라우저, 조회시각·상태 영수증 |
 | 주기적 감시·변경 알림 | 고정 알림·회차·pause/edit/restart·inbox·opt-in Push 구현; schema28 직접 반복 읽기 업무·좁은 정확 일치 알림 생략 구현 | 대화 복합 업무 capture·일반 의미상 변경 비교·topic mute·실기기; [현재 상태](status.md)가 수락 정본 |
 | 전화·결제·정부 서류 제출 | 해당 실행 도구 없음 | 공급자/사이트별 실행·인증 인계·결과 조회 |

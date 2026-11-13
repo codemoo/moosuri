@@ -401,6 +401,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0029_mission_chat.sql"
         ))?;
     }
+    if captured < 30 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0030_calendar_conversation.sql"
+        ))?;
+    }
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -472,6 +477,7 @@ fn quarantine(
         "DELETE FROM personal_artifact_command_plans WHERE used=0",
         [],
     )?;
+    crate::calendar::agent::quarantine_restore(&tx)?;
     crate::schedules::quarantine_for_restore(&tx)?;
     tx.execute(
         "UPDATE mission_chat_plans SET state='quarantined' WHERE state IN('awaiting','decided')",

@@ -149,6 +149,7 @@ pub fn typescript_contract() -> String {
         MissionChatContext::decl(),
         MissionChatReceipt::decl(),
         MissionChatDecision::decl(),
+        CalendarChatReceipt::decl(),
         MissionChatTime::decl(),
         RecurringMissionCreate::decl(),
         RecurringMissionView::decl(),

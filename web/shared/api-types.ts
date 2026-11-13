@@ -64,6 +64,7 @@ export type MissionChatTarget = { kind: string, id: string, revision: number, };
 export type MissionChatContext = { target: MissionChatTarget | null, };
 export type MissionChatReceipt = { request_id: string, action: string, target: MissionChatTarget | null, state: string, next_local_slot: string | null, candidates: Array<MissionChatCandidate>, };
 export type MissionChatDecision = { decision: string, action: string | null, target_kind: string | null, intent_quote: string | null, task_quote: string | null, constraints_quote: string | null, time_quote: string | null, target_quote: string | null, instruction_quote: string | null, time: MissionChatTime | null, clarification: string | null, };
+export type CalendarChatReceipt = { action_id: string | null, operation: string, state: string, event_id: string | null, provider_etag: string | null, message: string, };
 export type MissionChatTime = { "kind": "relative", seconds: number, } | { "kind": "local_once", date: string, time: string, } | { "kind": "interval", seconds: number, } | { "kind": "daily", time: string, } | { "kind": "weekly", days: Array<number>, time: string, };
 export type RecurringMissionCreate = { request_id: string, template: MissionCreate, schedule: ScheduleDraft, changes_only: boolean, };
 export type RecurringMissionView = { schedule: ScheduleView, template: MissionCreate, model: ModelChoice, changes_only: boolean, recent: Array<RecurringMissionOccurrence>, history: ScheduleHistory, };
@@ -143,7 +144,7 @@ export type RunView = { id: string, request_id: string, thread_id: string, attem
 /**
  * Fixed application error category, never provider text.
  */
-error: string | null, usage: RunUsage, evidence: Array<ChatEvidence>, web_evidence?: Array<WebEvidence>, artifact_receipts?: Array<ArtifactReceipt>, mission_receipt?: MissionChatReceipt, schedule_receipts?: Array<ScheduleChatReceipt>, can_retry: boolean, can_cancel: boolean, created_at: number, };
+error: string | null, usage: RunUsage, evidence: Array<ChatEvidence>, web_evidence?: Array<WebEvidence>, artifact_receipts?: Array<ArtifactReceipt>, mission_receipt?: MissionChatReceipt, calendar_receipt?: CalendarChatReceipt, schedule_receipts?: Array<ScheduleChatReceipt>, can_retry: boolean, can_cancel: boolean, created_at: number, };
 export type ChatTurn = { attachments?: Array<MediaSummary>, sequence: number, user_text: string, assistant: Array<AssistantMessage>, run: RunView, };
 export type ChatPage = { thread_id: string,
 /**

@@ -144,3 +144,57 @@ fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_c
     ));
     assert!(!crate::mission_intent::candidate("안녕 잘 지냈어?", false));
 }
+
+#[tokio::test]
+async fn calendar_domain_uses_same_single_current_intent_round_and_preserves_literal_reminder_precedence()
+ {
+    let _g = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let counted = count.clone();
+    let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{let count=counted.clone();async move{
+        let n=count.fetch_add(1,Ordering::SeqCst);assert_eq!(body["messages"].as_array().unwrap().len(),2);let functions=body["tools"].as_array().unwrap();assert!(functions.iter().any(|f|f["function"]["name"]=="mission_chat_decision"));assert!(functions.iter().any(|f|f["function"]["name"]=="calendar_chat_decision"));let text=body["messages"][1]["content"].as_str().unwrap();
+        let d=moosuri_core::CalendarChatDecision{domain:"calendar".into(),decision:"clarify".into(),operation:None,connection_quote:None,intent_quote:None,title_quote:None,target_quote:None,date_quote:None,date:None,start_quote:None,start:None,end_quote:None,end:None,duration_quote:None,duration_minutes:None,clarification:Some("time".into())};assert!(text.contains("meeting"));
+        let delta=json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("calendar-decision-{n}"),"calendar_chat_decision",serde_json::to_value(d).unwrap())]});let content=frame(json!({"id":format!("cal-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}))+&frame(json!({"id":format!("cal-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";Response::builder().header("content-type","text/event-stream").body(Body::from(content)).unwrap()
+    }}));
+    let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_dir, s, u, t) = knowledge::tool_configured(&base).await;
+    s.submit_turn_with_schedule_context(
+        &u,
+        t.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        "Create a meeting tomorrow".into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let runtime = Runtime::start(s.clone());
+    let result = wait(&s, &u, &t).await;
+    assert_eq!(result.run.state, moosuri_core::RunState::Completed);
+    assert_eq!(result.run.calendar_receipt.unwrap().state, "clarify");
+    assert!(result.run.mission_receipt.is_none());
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    s.submit_turn_with_schedule_context(
+        &u,
+        t.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        "내일 오전9시에 회의 등록하라고 알려줘".into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let reminder = wait(&s, &u, &t).await;
+    assert!(reminder.run.calendar_receipt.is_none());
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    runtime.shutdown().await;
+    upstream.abort();
+}

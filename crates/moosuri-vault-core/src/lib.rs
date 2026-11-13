@@ -2,12 +2,14 @@
 //! Secrets intentionally implement neither Debug, Clone nor Serialize.
 #![forbid(unsafe_code)]
 mod apple;
+mod archive;
 mod crypto;
 mod secret;
 mod totp;
 mod wire;
 
 pub use apple::{AppleImport, ImportPreview, ImportRow, ImportStatus, UsernameFilter};
+pub use archive::{ARCHIVE_ITEMS, ARCHIVE_LIMIT, ArchiveImport, ArchivePreview, ArchiveRow};
 pub use crypto::{
     ActiveVault, ClientVault, CommittedHeader, HeaderReceipt, PendingChange, PendingVault,
     RecoveryKey, StorageReceipt, inventory_digest, storage_commitment,

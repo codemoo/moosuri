@@ -130,6 +130,15 @@ enum Request {
     Abort {
         receipt: Option<Receipt>,
     },
+    ArchiveExport,
+    ArchivePreview {
+        archive: String,
+        secret: SecretText,
+        recovery: bool,
+    },
+    ArchiveSelect {
+        rows: Vec<u32>,
+    },
     CsvPreview {
         csv: CsvText,
         username: Option<SecretText>,
@@ -173,6 +182,7 @@ pub struct VaultEngine {
     pending: Option<Operation>,
     recovery_verified: bool,
     import: Option<AppleImport>,
+    archive_import: Option<ArchiveImport>,
     batch: Vec<EncryptedItem>,
     batch_index: usize,
 }
@@ -200,6 +210,7 @@ impl VaultEngine {
             pending: None,
             recovery_verified: false,
             import: None,
+            archive_import: None,
             batch: vec![],
             batch_index: 0,
         })
@@ -234,7 +245,7 @@ impl VaultEngine {
         Ok(())
     }
     fn no_import(&self) -> Result<()> {
-        if self.import.is_some() || !self.batch.is_empty() {
+        if self.import.is_some() || self.archive_import.is_some() || !self.batch.is_empty() {
             return Err(Error::State);
         }
         Ok(())
@@ -413,6 +424,7 @@ impl VaultEngine {
             }
             Request::Put { item, fields } => {
                 self.mutable()?;
+                self.no_import()?;
                 let old = item.map(|i| self.item(i)).transpose()?;
                 let prior = old
                     .as_ref()
@@ -451,6 +463,7 @@ impl VaultEngine {
             }
             Request::Delete { item } => {
                 self.mutable()?;
+                self.no_import()?;
                 let i = self.item(item)?;
                 self.active()?;
                 self.pending = Some(Operation::Delete {
@@ -563,8 +576,55 @@ impl VaultEngine {
                 self.recovery_verified = false;
                 Ok(json!(true))
             }
+            Request::ArchiveExport => {
+                self.mutable()?;
+                self.no_import()?;
+                let items = self.current()?.items.clone();
+                let inventory = unhex(&self.current()?.inventory_sha256)?;
+                let bytes = self
+                    .active()?
+                    .export_archive(&items, inventory, &Continue)?;
+                Ok(json!(String::from_utf8(bytes).map_err(|_| Error::Invalid)?))
+            }
+            Request::ArchivePreview {
+                archive,
+                secret,
+                recovery,
+            } => {
+                self.mutable()?;
+                self.no_import()?;
+                let items = self.current()?.items.clone();
+                let import = ArchiveImport::preview(
+                    archive.as_bytes(),
+                    &secret,
+                    recovery,
+                    self.active()?,
+                    &items,
+                    &Continue,
+                )?;
+                let p = import.counts();
+                let result = json!({"eligible":p.eligible,"duplicates":p.duplicates,"filtered":0,"rows":p.rows.iter().map(|r|json!({"row":r.row,"status":match r.status{ImportStatus::New=>"new",ImportStatus::ChangedAccount=>"changed",ImportStatus::Duplicate=>"duplicate",ImportStatus::Filtered=>"filtered"},"blank_password":false,"unsupported_url":false,"invalid_otp":false})).collect::<Vec<_>>()});
+                self.archive_import = Some(import);
+                self.batch_index = 0;
+                Ok(result)
+            }
+            Request::ArchiveSelect { rows } => {
+                self.mutable()?;
+                if self.import.is_some() {
+                    return Err(Error::State);
+                }
+                let mut import = self.archive_import.take().ok_or(Error::State)?;
+                let result = import
+                    .seal_selected(self.active()?, &rows, &mut BrowserEntropy, &Continue)
+                    .map(|v| v.to_vec());
+                self.archive_import = Some(import);
+                self.batch = result?;
+                self.batch_index = 0;
+                Ok(json!({"selected":self.batch.len()}))
+            }
             Request::CsvPreview { csv, username } => {
                 self.mutable()?;
+                self.no_import()?;
                 if csv.0.len() > 10 * 1024 * 1024 {
                     return Err(Error::Limit);
                 }
@@ -600,15 +660,7 @@ impl VaultEngine {
                 if self.batch_index >= self.batch.len() {
                     return Ok(Value::Null);
                 }
-                let item = self.batch[self.batch_index].clone();
-                self.pending = Some(Operation::Put {
-                    id: id()?,
-                    expected_header: self.current()?.header_sha256.clone(),
-                    expected_revision: 0,
-                    item,
-                });
-                self.recovery_verified = true;
-                Ok(json!({"remaining":self.batch.len()-self.batch_index}))
+                self.next_import(id()?)
             }
             Request::CsvStatus => {
                 Ok(json!({"committed":self.batch_index,"selected":self.batch.len()}))
@@ -618,11 +670,28 @@ impl VaultEngine {
                     return Err(Error::State);
                 }
                 self.import = None;
+                self.archive_import = None;
                 self.batch.clear();
                 self.batch_index = 0;
                 Ok(json!(true))
             }
         }
+    }
+    fn next_import(&mut self, operation_id: Uuid) -> Result<Value> {
+        self.mutable()?;
+        let item = self
+            .batch
+            .get(self.batch_index)
+            .ok_or(Error::State)?
+            .clone();
+        self.pending = Some(Operation::Put {
+            id: operation_id,
+            expected_header: self.current()?.header_sha256.clone(),
+            expected_revision: 0,
+            item,
+        });
+        self.recovery_verified = true;
+        Ok(json!({"remaining":self.batch.len()-self.batch_index}))
     }
     // This permits exact own-commit reconciliation only. It never activates a key
     // or admits a server-provided header, and exposes no plaintext/key material.
@@ -946,5 +1015,68 @@ mod tests {
         let outcome = e.acknowledge(receipt, state).unwrap();
         assert_eq!(outcome["saved"], true);
         assert_eq!(outcome["refresh_unlock"], true);
+    }
+    #[test]
+    fn archive_batch_lost_ack_keeps_exact_operation_and_only_advances_after_receipt() {
+        let (mut e, mut entropy) = fixture();
+        let fields: ItemFields = serde_json::from_value(json!({"kind":"note","title":"Synthetic archive batch","username":"","url":"","notes":"","favorite":false,"expires_at":"","secret":"Synthetic encrypted archive value","totp":"JBSWY3DPEHPK3PXP"})).unwrap();
+        e.batch = (31..33)
+            .map(|n| {
+                e.active()
+                    .unwrap()
+                    .seal_item(Uuid::from_u128(n), 1, &fields, &mut entropy)
+                    .unwrap()
+            })
+            .collect();
+        e.next_import(Uuid::from_u128(41)).unwrap();
+        let exact = serde_json::to_vec(e.pending.as_ref().unwrap()).unwrap();
+        // Lost network ACK leaves immutable operation/batch/index untouched.
+        assert_eq!(e.batch_index, 0);
+        assert!(e.next_import(Uuid::from_u128(42)).is_err());
+        assert_eq!(
+            serde_json::to_vec(e.pending.as_ref().unwrap()).unwrap(),
+            exact
+        );
+        let mut state = e.state.take().unwrap();
+        state.items.push(e.batch[0].clone());
+        state.inventory_sha256 = hex(&inventory_digest(&state.items).unwrap());
+        let op = e.pending.as_ref().unwrap();
+        let receipt = Receipt {
+            operation: op.id(),
+            payload_sha256: hash(&exact),
+            state: "committed".into(),
+            header_sha256: state.header_sha256.clone(),
+            inventory_sha256: state.inventory_sha256.clone(),
+            commitment: None,
+        };
+        let mut wrong = receipt.clone();
+        wrong.payload_sha256 = "0".repeat(64);
+        // Retain old client inventory until exact durable receipt is checked.
+        let mut old: VaultState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        old.items.clear();
+        old.inventory_sha256 = hex(&inventory_digest(&[]).unwrap());
+        e.state = Some(old);
+        assert!(
+            e.acknowledge(
+                wrong,
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap()
+            )
+            .is_err()
+        );
+        assert_eq!(e.batch_index, 0);
+        e.acknowledge(receipt, state).unwrap();
+        assert_eq!(e.batch_index, 1);
+        e.next_import(Uuid::from_u128(43)).unwrap();
+        let Operation::Put { item, .. } = e.pending.as_ref().unwrap() else {
+            panic!()
+        };
+        assert_eq!(item.id, e.batch[1].id);
+        assert_ne!(item.id, e.batch[0].id);
+        // An unpublished remaining operation can cancel without deleting ACKed data.
+        e.dispatch(Request::Abort { receipt: None }).unwrap();
+        e.dispatch(Request::CsvCancel).unwrap();
+        assert_eq!(e.current().unwrap().items.len(), 1);
+        assert!(e.batch.is_empty());
     }
 }

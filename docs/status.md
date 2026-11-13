@@ -704,3 +704,18 @@ Linux 관련134개(별도 opt-in2개 제외), 마지막 웹을 포함한 CLI19�
 다른 캘린더 쓰기·반복/종일/참석자 일정 변경·agent/대화/미션 Calendar 실행·실계정·
 실기기·운영 배포는 완료가 아니다. [사용법](calendar.md)과
 [검증 기록](reviews/2026-11-13-personal-calendar.md)을 따른다.
+
+
+## 암호화 볼트 백업 파일
+
+[암호화 파일 계약](vault-archive.md)에 클라이언트 내보내기·가져오기를 추가했다. 원래 서버 없이
+파일을 만들 때의 비밀번호 또는 복구 키로 전체 manifest와 모든 항목을 검증한 뒤 행별 중복·선택을
+표시한다. 새 소유자/현재 키에 새 ID로 암호화하며 기존 exact Put 영수증으로 부분 저장·유실 ACK를
+확인한다. 제목은 파일 이름에 쓰지 않고 TOTP를 포함한 값은 암호화한다. 상한은26MiB·256항목이다.
+
+합성 native core16·WASM adapter4·compile-fail4·Worker/client9 검사와 실제 wasm32/React 빌드,
+타입·clippy·plan·strict OpenSpec44를 통과했다. 독립 검토와 Linux29개 검사, 실제 Chrome의
+다른 계정 가져오기·변조 거절·유실 응답 복구·중복 판별·처리 중 잠금도 확인했다.
+[검증 기록](reviews/2026-11-13-vault-archive.md)에 실제 범위와 한계를 남긴다. 과거 파일은 옛
+비밀번호/복구 키로 계속 열리며 이후 root 교체로 지울 수 없다. 별도 서비스 backup/restore·구 v1 이전·
+credential broker·전체 계정 삭제/outbox·서명 client와 악성 served JavaScript 한계는 남는다.

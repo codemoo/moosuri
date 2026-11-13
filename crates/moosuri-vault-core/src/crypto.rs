@@ -311,8 +311,9 @@ pub struct StorageReceipt {
     candidate_id: Uuid,
     digest: [u8; 32],
 }
-/// Admission from an authenticated current storage read, or a verified offline
-/// archive manifest. This is not itself an authenticated protocol or journal.
+/// Admission from an authenticated current storage read. Archive verification
+/// uses its separate private manifest-authenticated path, never this marker.
+/// This is not itself an authenticated protocol or journal.
 #[derive(Clone, Copy)]
 pub struct HeaderReceipt {
     binding: Binding,
@@ -320,7 +321,7 @@ pub struct HeaderReceipt {
 }
 impl HeaderReceipt {
     /// TRUSTED boundary: do not synthesize this from an uncommitted candidate or
-    /// an arbitrary server blob. Service/archive verification is a separate unit.
+    /// an arbitrary server blob. Service verification is a separate unit.
     pub fn from_verified_current_storage(binding: Binding, header_sha256: [u8; 32]) -> Self {
         Self {
             binding,
@@ -507,6 +508,53 @@ impl ActiveVault {
             root,
             nonces: HashSet::new(),
         })
+    }
+    /// Internal archive path: no committed-storage receipt is manufactured.
+    /// The archive module must verify the manifest and every payload before
+    /// returning any source fields or installing import state.
+    pub(crate) fn archive_open(
+        header: Header,
+        secret: &SecretText,
+        recovery: bool,
+        transcript: &[u8],
+        authentication: &[u8],
+    ) -> Result<Self> {
+        let root = if recovery {
+            open_root(
+                &header,
+                header.binding,
+                Unlock::Recovery(&RecoveryKey::parse(secret)?),
+            )?
+        } else {
+            open_root(&header, header.binding, Unlock::Password(secret))?
+        };
+        let active = Self {
+            header,
+            root,
+            nonces: HashSet::new(),
+        };
+        if !bool::from(
+            active
+                .archive_auth(transcript)?
+                .as_slice()
+                .ct_eq(authentication),
+        ) {
+            return Err(Error::Authentication);
+        }
+        Ok(active)
+    }
+    pub(crate) fn archive_auth(&self, transcript: &[u8]) -> Result<[u8; 32]> {
+        let mut derived = Zeroizing::new([0; 32]);
+        Hkdf::<Sha256>::new(
+            Some(self.header.binding.vault_id.as_bytes()),
+            self.root.0.as_ref(),
+        )
+        .expand(b"moosuri-vault/archive/v1/auth", derived.as_mut())
+        .map_err(|_| Error::Invalid)?;
+        let mut mac =
+            <Hmac<Sha256> as Mac>::new_from_slice(derived.as_ref()).map_err(|_| Error::Invalid)?;
+        mac.update(transcript);
+        Ok(mac.finalize().into_bytes().into())
     }
     pub fn header(&self) -> &Header {
         &self.header

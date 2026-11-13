@@ -266,10 +266,10 @@ impl AppleImport {
         Ok(&self.batch.as_ref().ok_or(Error::State)?.1)
     }
 }
-fn fingerprint(fields: &ItemFields) -> Result<[u8; 32]> {
+pub(crate) fn fingerprint(fields: &ItemFields) -> Result<[u8; 32]> {
     Ok(Sha256::digest(&*fields.encode()?).into())
 }
-fn account_fingerprint(fields: &ItemFields) -> Result<[u8; 32]> {
+pub(crate) fn account_fingerprint(fields: &ItemFields) -> Result<[u8; 32]> {
     let mut hash = Sha256::new();
     hash.update(b"moosuri-vault/v2/import-identity\0");
     hash.update(match fields.kind {

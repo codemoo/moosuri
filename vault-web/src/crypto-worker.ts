@@ -111,6 +111,20 @@ async function dispatch(command:Command):Promise<unknown>{
     const receipt=await api<Receipt>(`/api/operations/${encodeURIComponent(id)}/cancel`,"POST",record.operation);
     if(receipt.state==="committed"){lock("vault_refresh_unlock");return null}return load();
   }
+  if(command.op==="archive_file"){
+    const file=command.file;if(!(file instanceof File)||file.size>26*1024*1024)throw fixed("vault_limit");
+    const archive=await file.text();if(closed)throw fixed("vault_locked");await checkHead();
+    return local({op:"archive_preview",archive,secret:command.secret,recovery:command.recovery===true});
+  }
+  if(command.op==="archive_export"){
+    // Pin a fresh coherent source snapshot. Never silently export a mixed or
+    // changing inventory; a mutation after the final check is a later snapshot.
+    const before=await state();local({op:"load",state:before});
+    const encrypted=local<string>({op:"archive_export"});
+    const after=await state();
+    if(before.header_sha256!==after.header_sha256||before.inventory_sha256!==after.inventory_sha256)throw fixed("vault_conflict");
+    return encrypted;
+  }
   if(command.op==="csv_file"){
     const file=command.file;if(!(file instanceof File)||file.size>10*1024*1024)throw fixed("vault_limit");
     const csv=await file.text();if(closed)throw fixed("vault_locked");await checkHead();return local({op:"csv_preview",csv,username:command.username??null});

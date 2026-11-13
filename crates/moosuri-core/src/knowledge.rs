@@ -123,6 +123,9 @@ pub struct MemoryDraft {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MemoryDocument {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub extraction_origin: Option<crate::MemoryExtractionOrigin>,
     pub id: String,
     #[ts(type = "number")]
     pub revision: i64,

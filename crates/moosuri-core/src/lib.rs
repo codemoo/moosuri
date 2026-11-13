@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod automatic_memory;
+pub use automatic_memory::*;
 mod community_skills;
 pub use community_skills::*;
 mod google_setup;
@@ -77,6 +79,9 @@ pub fn typescript_contract() -> String {
     let declarations = [
         GitHubSkillLocation::decl(),
         GitHubSkillPreviewInput::decl(),
+        MemoryExtractionChange::decl(),
+        MemoryExtractionStatus::decl(),
+        MemoryExtractionOrigin::decl(),
         CommunitySkillCard::decl(),
         CommunitySkillMutation::decl(),
         GoogleSetupStatus::decl(),

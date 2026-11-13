@@ -2,7 +2,7 @@
 
 2026-11-13. 실제 구현·검증과 다음 작업은 이 문서가 정본이다. 기능 계약은 [features](features.md), 상세 단계는 [plan](plan.md)을 따른다.
 
-공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델·저장되는 대화·개인 자료/기억·업무 스킬에 공개 HTTP·격리 Chromium 작업 공간과 개인 Gmail을 연결한 개발 프리뷰다. 메일은 최종 내용을 사용자가 승인한 뒤에만 발송한다. 브라우저 화면 보기·직접 로그인/조작·같은 화면에서 대화 이어가기를 지원한다. 자동 기억 추출·예약·인증된 사이트의 자동 조작은 개발 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
+공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델·저장되는 대화·개인 자료/기억·업무 스킬에 공개 HTTP·격리 Chromium 작업 공간과 개인 Gmail을 연결한 개발 프리뷰다. 메일은 최종 내용을 사용자가 승인한 뒤에만 발송한다. 브라우저 화면 보기·직접 로그인/조작·같은 화면에서 대화 이어가기를 지원한다. 자료 모음별 자동 기억 추출을 지원한다. 예약·인증된 사이트의 자동 조작은 개발 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
 
 ## 구현된 첫 단위
 
@@ -424,7 +424,7 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 
 ## 아직 구현하지 않은 범위
 
-구독 인증·개인 provider 연결, 자동 기억 추출·문서/목표·평가, 예약·캘린더·알림·푸시,
+구독 인증·개인 provider 연결, 문서/목표·실모델 평가, 예약·캘린더·알림·푸시,
 첨부·녹음·PWA 공유받기, 공용 OAuth 연결 서비스·Slack OAuth 앱 설치, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
 외부 Git 스킬 설치·개인 학습 공유·자동 catalog 갱신, 독립 볼트·TOTP·credential broker,
 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
@@ -438,7 +438,7 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 
 1. P0의 남은 provider capability·baseline/fixture adapter·crypto/broker 위험 검증과 독립 복구 입력을 확인한다.
 2. P1의 run/effect·dispatch·revision·사용량·복원 계약을 작은 저장 단위로 구현한다. 현재 계정 기반이 P1 전체 완료를 뜻하지 않는다.
-3. 현재 요청에서 봉인한 명시적 기억 변경과 근거 철회는 연결했다. 수정/망각 대상 해석과 저장 경계를 보완했다. 별도 holdout 실모델 검사는 도구 연결 검증이 완료되지 않아 남아 있다. 그다음 자료 모음별 추출 설정·background 작업·예산과 기존 망각 억제를 연결하는 제한된 자동 추출을 진행한다.
+3. 현재 요청에서 봉인한 명시적 기억 변경과 근거 철회는 연결했다. 수정/망각 대상 해석과 저장 경계를 보완했다. 별도 holdout 실모델 검사는 도구 연결 검증이 완료되지 않아 남아 있다. 자료 모음별 추출 설정·background 작업·예산과 기존 망각 억제를 연결하는 제한된 자동 추출도 구현했다. 실제 모델의 추출 정확도와 더 넓은 자동화는 후속 검증이다.
 4. [migration](migration.md)의 순서에 따라 자료·기억→도구·스킬→예약·연결→미디어·볼트→이전·출시로 진행한다. P0/P1/P2와 미구현 OpenSpec change를 완료 처리하지 않는다.
 
 모든 공개 소스는 새 이력과 합성 자료만 사용한다. 원본 운영 저장소·서비스·수집기·cron·DB는 보존한다. 개인 AGENTS/CLAUDE 및 editor 지침은 Git에서 제외하고 CONTRIBUTING·OpenSpec·제품 community SKILL은 공유한다.
@@ -473,3 +473,23 @@ macOS 검사와 표준 Go age 복호화, Linux의 영향받는 저장/CLI 검사
 수동 public GitHub root URL·디렉터리·ref 입력→고정 commit 미리보기→사용자별 추가/업데이트를 제공한다. Rust는 bounded commit/tree/blob와 decoded size/Git object identity를 확인하고 instruction4-file 형식·license·capability 검사를 재사용한다. 외부 identity는 repository+directory이며 표시 이름으로 bundled 절차를 덮어쓰지 않는다. 기존 curated pins는 유지한다. 다운로드 뒤 account 재검증과 activation CAS를 적용하고 preview/설치는 작업을 실행하지 않는다. private 소스·Git subprocess/archive/script·자동 갱신·export·GC는 아직 없다. [community 계약](community-skills.md)을 따른다.
 
 공개 GitHub 추가 단위는 macOS·Linux의 집중 connector/저장/run-pin/HTTP/설치 검사와 React56개·생성 DTO·타입/build·clippy·독립 검토를 통과했다. 늦은 catalog 응답이 설치된 카드를 숨기던 문제를 수정하고 재현 검사로 확인했다. [검증 기록](reviews/2026-11-13-public-github-skills.md)을 따른다.
+
+## 제한된 자료 자동 기억 추출
+
+자료 모음별 opt-in과 표시된 작성자/지정한 사람 기준, 새 자료 revision 자동 처리와
+기존 한 자료의 명시 처리, 실제 근거가 연결된 기억·출처 표시를 추가했다.
+Store가 별도 background grant/lease를 발급하며 세션을 만들지 않는다. 일일 예산은
+모델 호출10회·직렬화 요청24,000바이트·예약 출력4,000토큰이며 입력 토큰 수라고
+표현하지 않는다. 한 작업/한 호출에서 완전한 문단만 선택하고 재시작 후 불명확한
+원격 dispatch를 반복하지 않는다. 근거 철회·계정/설정 변경·정확한 인용 망각 억제를
+commit 전에 검사한다. 원문 text나 모델 checkpoint는 작업 queue에 남기지 않는다.
+
+검증 기록과 제한은 [automatic memory](automatic-memory.md)에 둔다. 아직 실모델
+추출 precision/recall이나 모든 의미상 망각을 검증했다고 주장하지 않는다.
+
+통합 Linux 전체392개(실모델·참조 도구·public-network opt-in4개 제외) 통과 후,
+CRLF 문단 보완의 추출12개·worker1개·설치1개를 Linux에서 다시 확인했다.
+macOS의 관련 기억/자료/백업 회귀, React31개, 생성 DTO·타입/build·clippy·fmt·계획·
+OpenSpec와 독립 검토를 통과했다. 늦은 설정 응답과 긴 CRLF 이메일의 문단 처리를
+수정했다. [검증 기록](reviews/2026-11-13-automatic-memory.md)을 따르며 실모델 추출
+precision/recall은 아직 측정하지 않았다.

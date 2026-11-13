@@ -119,7 +119,11 @@ fn uncurs(
     }
     Ok(Some(p))
 }
-fn collection(conn: &Connection, tenant: &str, object: &str) -> Result<KnowledgeCollection> {
+pub(super) fn collection(
+    conn: &Connection,
+    tenant: &str,
+    object: &str,
+) -> Result<KnowledgeCollection> {
     conn.query_row("SELECT id,name,scope,revision,cursor,connected,deleted,(SELECT c.id FROM source_connections c WHERE c.tenant_id=knowledge_collections.tenant_id AND c.collection_id=knowledge_collections.id) FROM knowledge_collections WHERE tenant_id=?1 AND id=?2",params![tenant,id(object)?],|r|Ok(KnowledgeCollection{source_connection_id:r.get(7)?,id:r.get(0)?,name:r.get(1)?,scope:r.get(2)?,revision:r.get(3)?,cursor:r.get(4)?,connected:r.get(5)?,deleted:r.get(6)?})).optional()?.ok_or(StoreError::NotFound)
 }
 impl Store {

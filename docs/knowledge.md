@@ -4,7 +4,9 @@ The knowledge screens let each account manage text sources and editable facts.
 Tool-verified models can search and read them in chat; see
 [knowledge agent](knowledge-agent.md). [Data connections](data-connections.md) add
 account-owned Gmail/Slack sync and custom HTTP ingestion with per-revision provenance.
-Automatic extraction and document/goal editing remain upcoming features. Kakao
+Opt-in [source-memory extraction](automatic-memory.md) creates literal evidence-backed
+facts from newly committed text or one explicitly selected source revision.
+Document/goal editing remains upcoming work. Kakao
 collection remains an independently operated private producer outside this distribution.
 
 ## Sources
@@ -59,8 +61,8 @@ does not automatically return. Historical revisions require an explicit history 
 An independent later assertion survives source deletion. Purged historical revisions
 are no longer readable; content-free temporal barriers prevent them from exposing an
 older superseded fact as current. Opaque item identities and request receipts reject
-stale item replay. Evidence suppression hashes are retained for the upcoming automatic
-extraction path; manual saving does not consume them as a semantic denylist. This does
+stale item replay. Evidence suppression hashes are consumed by opt-in automatic extraction for exact
+source paragraphs; manual saving does not consume them as a semantic denylist. This does
 not prevent a user from explicitly saving a new assertion.
 
 Answers and private tool continuations that depend on withdrawn sources/memories are

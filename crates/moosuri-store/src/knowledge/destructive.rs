@@ -11,6 +11,7 @@ pub(crate) fn forget(conn: &Connection, tenant: &str, object: &str) -> Result<()
     if status == "forgotten" {
         return Ok(());
     }
+    crate::automatic_memory::forget_memory(conn, tenant, object)?;
     agent_execution::invalidate_object(conn, tenant, "memory", object, None)?;
     conn.execute("INSERT OR IGNORE INTO knowledge_suppressions SELECT tenant_id,source_id,quote_hash FROM knowledge_evidence WHERE tenant_id=?1 AND memory_id=?2",params![tenant,object])?;
     conn.execute(
@@ -25,6 +26,7 @@ pub(crate) fn forget(conn: &Connection, tenant: &str, object: &str) -> Result<()
     remove_index(conn, tenant, "memory", object)
 }
 fn delete_source(conn: &Connection, tenant: &str, object: &str) -> Result<()> {
+    crate::automatic_memory::withdraw_source(conn, tenant, object)?;
     let (deleted, revision): (bool, i64) = conn
         .query_row(
             "SELECT deleted,revision FROM knowledge_sources WHERE tenant_id=?1 AND id=?2",
@@ -74,6 +76,7 @@ pub(crate) fn apply(conn: &Connection, record: &knowledge_journal::Record) -> Re
         1 => forget(conn, &record.tenant, &record.target)?,
         2 => delete_source(conn, &record.tenant, &record.target)?,
         3 | 4 => {
+            crate::automatic_memory::invalidate_collection(conn, &record.tenant, &record.target)?;
             let group = collection(conn, &record.tenant, &record.target)
                 .map_err(|_| StoreError::Corrupt)?;
             if record.action == 3 && !group.deleted {

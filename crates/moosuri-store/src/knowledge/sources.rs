@@ -63,6 +63,7 @@ fn content_hash(value: &SourceInput) -> Result<[u8; 32]> {
     ))
 }
 fn invalidate(conn: &Connection, tenant: &str, source: &str) -> Result<()> {
+    crate::automatic_memory::invalidate_source(conn, tenant, source)?;
     agent_execution::invalidate_source(conn, tenant, source)?;
     let objects = conn
         .prepare(
@@ -214,6 +215,7 @@ pub(crate) fn commit_entries(
             revision,
             &format!("{}\n{}", entry.title, entry.text),
         )?;
+        crate::automatic_memory::enqueue(tx, tenant, collection_id, &object)?;
         source_ids.push(object);
     }
     Ok((source_ids, unchanged))

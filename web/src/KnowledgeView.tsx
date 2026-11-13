@@ -30,6 +30,7 @@ import {
   type KnowledgeDrafts,
 } from "./KnowledgeState";
 import "./knowledge.css";
+import { MemoryExtraction } from "./MemoryExtraction";
 import { SourceProvenance } from "./SourceProvenance";
 
 type Mode = "source" | "memory";
@@ -626,6 +627,8 @@ export function KnowledgeView({
       </div>
       {mode === "source" && currentCollection && (
         <div className="collection-context">
+          <MemoryExtraction accountId={accountId} collectionId={currentCollection.id} connected={currentCollection.connected} onExpired={onExpired}/>
+
           {!currentCollection.connected && (
             <p>자료 추가가 중단된 모음입니다.</p>
           )}
@@ -1063,6 +1066,7 @@ function SourceDetail({
               onExpired={onExpired}
             />
           )}
+          <MemoryExtraction accountId={accountId} collectionId={document.source.collection_id} connected={true} onExpired={onExpired} source={{id:document.source.id,revision:document.source.revision}}/>
           <label>
             원문 텍스트
             <textarea
@@ -1212,6 +1216,7 @@ function MemoryDetail({
               원문이 변경되어 근거를 다시 확인해야 하는 기억입니다.
             </p>
           )}
+          {document.extraction_origin&&<p className="fine">자료에서 추출한 사실 · 표시된 작성자: {document.extraction_origin.reported_speaker}. 확인된 신원이라는 뜻은 아닙니다.</p>}
           <p className="knowledge-body">{document.draft.text}</p>
           <p className="fine">
             {document.draft.evidence.length

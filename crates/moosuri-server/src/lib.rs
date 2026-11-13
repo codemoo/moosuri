@@ -1,4 +1,5 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
+mod automatic_memory;
 mod browser;
 mod chat;
 mod community_skills;

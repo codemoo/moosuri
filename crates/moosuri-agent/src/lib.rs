@@ -1,5 +1,6 @@
 //! Supervised, bounded assistant execution. No browser owns a model task.
 //! Watch notifications contain only a monotonic counter, never private identifiers.
+mod automatic_memory;
 pub mod browser;
 mod knowledge_tools;
 pub mod mail;
@@ -33,7 +34,7 @@ const MAIL_DRAIN: Duration = Duration::from_secs(2);
 const BROWSER_DRAIN: Duration = Duration::from_secs(7);
 // Enclose both sequential supervisor drains, with time to publish completion.
 // In particular, do not abort independently owned browser cleanup at five seconds.
-const SUPERVISOR_WAIT: Duration = Duration::from_secs(19);
+const SUPERVISOR_WAIT: Duration = Duration::from_secs(22);
 
 /// Constructs a connection without DNS or IO. Hosted secrets cannot be retargeted.
 pub fn model_client(
@@ -306,6 +307,8 @@ async fn supervise(
     mail: mail::MailService,
     web: web::Service,
 ) {
+    let mut extraction_worker =
+        tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
     let mut mail_worker = tokio::spawn(mail.clone().worker(signals.stop.clone()));
     let mut source_worker = tokio::spawn(
         source_connections::Service::new(store.clone(), mail.clone(), signals.clone()).worker(),
@@ -328,6 +331,11 @@ async fn supervise(
             _ = signals.wake.notified() => (),
         }
         settle_retired(&mut retired, &store, &signals).await;
+        if extraction_worker.is_finished() {
+            let _ = (&mut extraction_worker).await;
+            extraction_worker =
+                tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
+        }
         if source_worker.is_finished() {
             let _ = (&mut source_worker).await;
             source_worker = tokio::spawn(
@@ -393,6 +401,13 @@ async fn supervise(
     {
         source_worker.abort();
         let _ = source_worker.await;
+    }
+    if tokio::time::timeout(MAIL_DRAIN, &mut extraction_worker)
+        .await
+        .is_err()
+    {
+        extraction_worker.abort();
+        let _ = extraction_worker.await;
     }
     done.send_replace(true);
 }

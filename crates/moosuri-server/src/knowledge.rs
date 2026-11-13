@@ -51,6 +51,7 @@ struct MemoryCorrection {
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
+        .merge(crate::automatic_memory::routes())
         .route("/collections", get(collections).post(create_collection))
         .route("/collections/{id}/disconnect", post(disconnect))
         .route("/collections/{id}/sources", get(sources))

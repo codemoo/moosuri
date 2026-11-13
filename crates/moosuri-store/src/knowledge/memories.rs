@@ -16,6 +16,7 @@ pub(crate) fn document(
     }
     let (draft,status,at):(String,String,i64)=conn.query_row("SELECT draft,status,created_at FROM knowledge_memory_versions WHERE tenant_id=?1 AND memory_id=?2 AND revision=?3",params![tenant,object,revision],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::NotFound)?;
     Ok(MemoryDocument {
+        extraction_origin: crate::automatic_memory::origin(conn, tenant, &object, revision)?,
         id: object,
         revision,
         status: if status == "active" {

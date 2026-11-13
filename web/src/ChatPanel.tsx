@@ -1,4 +1,5 @@
 import { WebEvidence } from "./WebEvidence";
+import { BrowserWorkspace } from "./BrowserWorkspace";
 import {
   useEffect,
   useLayoutEffect,
@@ -807,6 +808,12 @@ export function ChatPanel(props: Props) {
           기록 새로고침
         </button>
       </div>
+      <BrowserWorkspace
+        accountId={accountId}
+        threadId={threadId}
+        onExpired={props.onExpired}
+        onChanged={props.onThreadUpdated}
+      />
       {error && (
         <p className="notice chat-notice" role="alert">
           {error}

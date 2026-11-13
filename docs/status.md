@@ -2,7 +2,7 @@
 
 2026-11-13. 실제 구현·검증과 다음 작업은 이 문서가 정본이다. 기능 계약은 [features](features.md), 상세 단계는 [plan](plan.md)을 따른다.
 
-공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델·저장되는 대화·개인 자료/기억·업무 스킬에 공개 HTTP·격리 Chromium 조사와 개인 Gmail을 연결한 개발 프리뷰다. 메일은 최종 내용을 사용자가 승인한 뒤에만 발송한다. 자동 기억 추출·예약·인증된 브라우저 작업은 개발 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
+공개 저장소는 [codemoo/moosuri](https://github.com/codemoo/moosuri)다. **계정·모델·저장되는 대화·개인 자료/기억·업무 스킬에 공개 HTTP·격리 Chromium 작업 공간과 개인 Gmail을 연결한 개발 프리뷰다. 메일은 최종 내용을 사용자가 승인한 뒤에만 발송한다. 브라우저 화면 보기·직접 로그인/조작·같은 화면에서 대화 이어가기를 지원한다. 자동 기억 추출·예약·인증된 사이트의 자동 조작은 개발 중이다.** GitHub Actions/CI는 사용자 지시로 꺼져 있다. 작업 단위마다 로컬 검증 후 커밋·푸시한다.
 
 ## 구현된 첫 단위
 
@@ -292,7 +292,8 @@ connector credential이며 사용자 키 볼트와 같은 보호를 주장하지
 
 [설정과 사용 범위](browser-chat.md), [Linux 배포](../deployment/browser/README.md),
 [검증·실패·수정 기록](reviews/2026-11-13-browser-chat.md)에 상세 내용을 둔다.
-인증된 사이트 조작·로그인 인계·클릭/폼·채팅 스크린샷은 아직 제공하지 않는다.
+이 열한 번째 단위는 일회성 공개 페이지 읽기다. 아래 열세 번째 단위에서 개인 작업 공간의
+화면 보기·사람의 로그인/조작·동일 화면 복귀를 추가했다. 모델의 범용 자동 클릭/폼은 아직 없다.
 
 ## 열두 번째 단위: 웹·메일 업무를 수행하는 절차
 
@@ -311,10 +312,39 @@ connector credential이며 사용자 키 볼트와 같은 보호를 주장하지
 
 [사용법](external-task-recipes.md)과 [실모델 시험·실패·수정 기록](reviews/2026-11-13-external-task-recipes.md)에 범위를 구분한다.
 
+## 열세 번째 단위: 브라우저를 이어 보고 직접 조작하기
+
+뮤즈의 전용 Linux 브라우저·broker·AX 관측과 피클의 직접 조작→완료→같은 화면 복귀를
+참고해 [개인 작업 브라우저](browser-workspaces.md)를 채팅에 연결했다. Chromium 엔진은
+유지하며 도구 호출마다 새 창을 버리는 방식에서 사용자·대화별 profile/page 유지로 확장했다.
+
+- 새 profile5의 `browser_open`·`browser_observe`·`browser_handoff`와 React 화면 보기·
+  직접 조작·완료·종료를 제공한다. 사람은 로그인/MFA·클릭·텍스트·키·스크롤·주소 이동을
+  처리한다. 조작 중 모델 관측은 멈추고, 이후에도 모델의 인증된 workspace 이동은 차단한다.
+- 완료 상태와 후속 사용자 turn을 한 transaction으로 저장한다. 같은 요청의 완료 재확인은
+  같은 turn을 반환한다. 원래 run을 되살리는 것이 아니라 같은 대화·브라우저에서 새로 이어 간다.
+- 앱 종료와 대화 stream 단절은 browser를 닫지 않는다. 30분 유휴/8시간 상한, 조작권5분 유휴,
+  다른 탭 controller fence와 계정/대화별 격리를 적용한다. 재시작은 결과 불명이며 자동 재생하지 않는다.
+- 관측은 AX와 보이는 layout text를 결합하고 editable/form 값을 제외한다. 사람에게만 전달하는
+  일회용 frame proof로 다른 페이지/포커스/overlay를 오래된 좌표로 조작하지 않게 한다.
+  화면·입력·token은 일반 대화/DB에 저장하지 않으며 사용자 키 볼트라고 주장하지 않는다.
+- 브라우저 종료 drain·후속 turn 원자성·janitor 경쟁·실제 CDP 형식 차이를 독립 검토와 Linux
+  시험에서 수정했다. 로그인 직후 screenshot 응답 정지를 재현해 캡처만 만료시키고 세션을
+  보존한다. 화면 갱신은 재시도하지만 클릭·입력은 재실행하지 않는다.
+
+- 최종 Linux Rust291개 통과(실모델 opt-in1개 제외), React91개·타입/production build·DTO·
+  fmt/clippy를 확인했다. 실제 Linux smoke31개 명령과 로그인 직후12/12 반복 복구,
+  합성 모델→실제 API/SQLite/Chromium의11가지 조건을 통과했다. 종료 후 시험 자원은0개다.
+  화면 검증은1280×720/390×844 합성 component이며 실제 모바일 기기 시험과 구별한다.
+
+공식 출처·실패·수정·최종 검증 범위는 [조사](research/browser-workspaces-2026-11-13.md)와
+[수락 기록](reviews/2026-11-13-browser-workspaces.md)에 남긴다. 범용 자동 폼·vault 자동 로그인·
+장기 profile 복구는 후속이며, 메일 최종 미리보기와 명시적인 발송 허락은 유지한다.
+
 ## 아직 구현하지 않은 범위
 
 구독 인증·개인 provider 연결, 자동 기억 추출·문서/목표·평가, 예약·캘린더·알림·푸시,
-첨부·녹음·PWA, 기존 수집 connector, 인증된 브라우저 작업·배송/예약/전화/거래,
+첨부·녹음·PWA, 기존 수집 connector, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
 community 설치·업데이트·제안 카드, 독립 볼트·TOTP·credential broker,
 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
 연결 여부만 선택 사항이다. 이번 웹·브라우저·Gmail 구현을 전체 비서 완성으로 표시하지 않는다.

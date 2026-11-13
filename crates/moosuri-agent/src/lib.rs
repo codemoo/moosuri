@@ -1,5 +1,6 @@
 //! Supervised, bounded assistant execution. No browser owns a model task.
 //! Watch notifications contain only a monotonic counter, never private identifiers.
+pub mod browser;
 mod knowledge_tools;
 pub mod mail;
 mod mail_tools;
@@ -27,9 +28,10 @@ use tokio::{
 
 const RUN_DRAIN: Duration = Duration::from_secs(6);
 const MAIL_DRAIN: Duration = Duration::from_secs(2);
+const BROWSER_DRAIN: Duration = Duration::from_secs(7);
 // Enclose both sequential supervisor drains, with time to publish completion.
 // In particular, do not abort independently owned browser cleanup at five seconds.
-const SUPERVISOR_WAIT: Duration = Duration::from_secs(9);
+const SUPERVISOR_WAIT: Duration = Duration::from_secs(16);
 
 /// Constructs a connection without DNS or IO. Hosted secrets cannot be retargeted.
 pub fn model_client(
@@ -109,6 +111,7 @@ struct Control {
     supervisor: Mutex<Option<JoinHandle<()>>>,
     done: watch::Receiver<bool>,
     mail: mail::MailService,
+    browser: browser::BrowserService,
 }
 impl Drop for Control {
     fn drop(&mut self) {
@@ -151,7 +154,7 @@ impl Runtime {
     fn start_with_web_service(
         store: Store,
         oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
-        web: web::Service,
+        mut web: web::Service,
     ) -> Self {
         let (changes, _) = watch::channel(0);
         let (done_tx, done) = watch::channel(false);
@@ -162,6 +165,9 @@ impl Runtime {
             delivery: Arc::new(tokio::sync::RwLock::new(())),
         };
         let mail = mail::MailService::new(store.clone(), oauth, signals.clone());
+        let browser =
+            browser::BrowserService::new(store.clone(), web.reader(), signals.stop.clone());
+        web.set_workspaces(browser.clone());
         let supervisor = tokio::spawn(supervise(
             store,
             signals.clone(),
@@ -175,8 +181,12 @@ impl Runtime {
                 supervisor: Mutex::new(Some(supervisor)),
                 done,
                 mail,
+                browser,
             }),
         }
+    }
+    pub fn browser_service(&self) -> browser::BrowserService {
+        self.control.browser.clone()
     }
     pub fn mail_service(&self) -> mail::MailService {
         self.control.mail.clone()
@@ -271,6 +281,8 @@ async fn supervise(
     web: web::Service,
 ) {
     let mut mail_worker = tokio::spawn(mail.clone().worker(signals.stop.clone()));
+    let workspace = web.workspaces().expect("runtime workspace service");
+    let mut browser_worker = tokio::spawn(async move { workspace.maintenance().await });
     let mut tasks = JoinSet::new();
     let mut leases = HashMap::new();
     let mut retired = Vec::new();
@@ -331,6 +343,13 @@ async fn supervise(
     {
         mail_worker.abort();
         let _ = mail_worker.await;
+    }
+    if tokio::time::timeout(BROWSER_DRAIN, &mut browser_worker)
+        .await
+        .is_err()
+    {
+        browser_worker.abort();
+        let _ = browser_worker.await;
     }
     done.send_replace(true);
 }

@@ -8,6 +8,9 @@ pub enum WebToolRequest {
     Read { url: String },
     Search { query: String },
     BrowserRead { url: String },
+    BrowserOpen { url: String },
+    BrowserObserve {},
+    BrowserHandoff { reason: String },
 }
 
 /// Capabilities are admitted by the installation, never by model arguments.

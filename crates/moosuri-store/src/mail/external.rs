@@ -14,9 +14,13 @@ pub struct ExternalToolPermit {
     request: Box<ExternalToolRequest>,
     user: UserContext,
     browser_pin: Option<String>,
+    thread_id: String,
 }
 
 impl ExternalToolPermit {
+    pub fn thread_id(&self) -> &str {
+        &self.thread_id
+    }
     pub fn request(&self) -> &ExternalToolRequest {
         &self.request
     }
@@ -98,7 +102,7 @@ impl Store {
             let user=crate::chat::authority(&tx,&run)?;
 
             let valid=match &request {
-                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=4)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|connection(&tx,&user,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email)),
+                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|connection(&tx,&user,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email)),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
             };
 
@@ -117,12 +121,12 @@ impl Store {
                 tx.execute("INSERT OR IGNORE INTO mail_run_dependencies VALUES(?1,?2,?3,?4)",params![run.tenant,run.id,pin.id,pin.epoch])?;
             }
 
-            let browser_pin=run.tool_profile.as_ref().filter(|p|p.version==4).and_then(|p|p.web.as_ref()).and_then(|p|p.browser_pin.clone());
+            let browser_pin=run.tool_profile.as_ref().filter(|p|matches!(p.version,4|5)).and_then(|p|p.web.as_ref()).and_then(|p|p.browser_pin.clone());
             let nonce=hash(&random()?);
             tx.execute("INSERT INTO external_tool_dispatches VALUES(?1,?2,?3,?4,?5,'started')",params![run.tenant,run.id,lease.step,call_id,nonce])?;
             tx.commit()?;
             Ok(ExternalToolStart::Dispatch(ExternalToolPermit{
-                lease,call_id,nonce,request:Box::new(request),user,browser_pin}
+                lease,call_id,nonce,request:Box::new(request),user,browser_pin,thread_id:run.thread}
             ))}
         ).await
     }
@@ -149,7 +153,7 @@ impl Store {
             };
             let user=crate::chat::authority(&tx,&run)?;
             let valid=match &request {
-                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=4)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|connection(&tx,&user,&pin.id).is_ok_and(|c|c.epoch==pin.epoch&&c.email==pin.email&&c.status=="active")),
+                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|connection(&tx,&user,&pin.id).is_ok_and(|c|c.epoch==pin.epoch&&c.email==pin.email&&c.status=="active")),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
             };
             if !valid {

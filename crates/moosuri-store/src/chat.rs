@@ -758,8 +758,33 @@ fn submit_turn_inner(
     request_id: String,
     text: String,
 ) -> Result<ChatTurn> {
-    let user = validate(&db.conn, &user, true, false)?;
-    thread_exists(&db.conn, &user, &thread_id)?;
+    let tx = db
+        .conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let result = submit_turn_in(
+        &tx,
+        &db.provider_key,
+        &db.web_profile,
+        user,
+        thread_id,
+        request_id,
+        text,
+    )?;
+    tx.commit()?;
+    Ok(result)
+}
+/// Caller owns the transaction; allows browser completion and turn admission to commit together.
+pub(super) fn submit_turn_in(
+    tx: &Connection,
+    provider_key: &[u8; 32],
+    web_profile: &moosuri_core::WebToolProfile,
+    user: UserContext,
+    thread_id: String,
+    request_id: String,
+    text: String,
+) -> Result<ChatTurn> {
+    let user = validate(tx, &user, true, false)?;
+    thread_exists(tx, &user, &thread_id)?;
     if text.trim().is_empty() || text.len() > 8192 {
         return Err(StoreError::InvalidInput);
     }
@@ -767,8 +792,7 @@ fn submit_turn_inner(
         .map_err(|_| StoreError::InvalidInput)?
         .to_string();
     let payload: [u8; 32] = Sha256::digest(json(&(&thread_id, &text))?.as_bytes()).into();
-    let existing: Option<(String, Vec<u8>)> = db
-        .conn
+    let existing: Option<(String, Vec<u8>)> = tx
         .query_row(
             "SELECT id,payload_digest FROM chat_runs WHERE tenant_id=?1 AND request_id=?2",
             params![user.tenant.0, request_id],
@@ -779,14 +803,11 @@ fn submit_turn_inner(
         if old != payload {
             return Err(StoreError::Conflict);
         }
-        return turn(&db.conn, &load_run(&db.conn, &user.tenant.0, &id)?);
+        return turn(tx, &load_run(tx, &user.tenant.0, &id)?);
     }
-    let tx = db
-        .conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    queue_capacity(&tx, &user.tenant.0)?;
-    let choice = providers::selected_choice(&tx, &user)?;
-    providers::binding_for_choice(&tx, &db.provider_key, &choice)?;
+    queue_capacity(tx, &user.tenant.0)?;
+    let choice = providers::selected_choice(tx, &user)?;
+    providers::binding_for_choice(tx, provider_key, &choice)?;
     let id = Uuid::new_v4().to_string();
     tx.execute(
         "UPDATE threads SET chat_turn_seq=chat_turn_seq+1 WHERE tenant_id=?1 AND id=?2",
@@ -811,18 +832,17 @@ fn submit_turn_inner(
                 params![title,user.tenant.0,thread_id])?;
         }
     }
-    let order = next_order(&tx)?;
-    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(||crate::web::admitted_profile(&tx,&user,&db.web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
-    let run = load_run(&tx, &user.tenant.0, &id)?;
-    let result = turn(&tx, &run)?;
+    let order = next_order(tx)?;
+    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(||crate::web::admitted_profile(tx,&user,web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
+    let run = load_run(tx, &user.tenant.0, &id)?;
+    let result = turn(tx, &run)?;
     emit(
-        &tx,
+        tx,
         &run,
         ChatChange::Turn {
             turn: result.clone(),
         },
     )?;
-    tx.commit()?;
     Ok(result)
 }
 fn conversation_inner(

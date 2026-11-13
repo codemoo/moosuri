@@ -950,7 +950,8 @@ async fn execute_tool(
                     moosuri_core::ExternalToolRequest::Web(request) => {
                         web.execute(
                             request,
-                            &permit.user().account().id,
+                            permit.user(),
+                            permit.thread_id(),
                             permit.browser_pin(),
                             &io_cancel,
                         )

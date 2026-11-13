@@ -1,6 +1,7 @@
 //! Trusted fixed Docker launcher for one unauthenticated rendered-page read.
 //! No command, mount, environment, action or tenant comes from model arguments.
 use super::{BrowserError, net::public_url, private_proxy};
+pub(super) mod workspace;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -17,6 +18,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+pub use workspace::{
+    CapsuleWorkspace, WorkspaceFrame, WorkspaceInput, WorkspaceKey, WorkspaceObservation,
+};
 const SECCOMP_DIGEST: &str = "18c6523f4de6aebb9d220d98fea8a03edb381d97237f954ed9d1f47d233f661c";
 const OWNER: &str = "io.moosuri.browser.owner";
 const READ: &str = "io.moosuri.browser.read";
@@ -37,7 +41,7 @@ pub struct CapsuleConfig {
     pub smoke_evidence_sha256: String,
     pub javascript_enabled: bool,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderedPage {
     pub url: String,
@@ -48,7 +52,7 @@ pub struct RenderedPage {
     pub warning: String,
     pub retrieved_at_unix_ms: u64,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderedLink {
     pub text: String,

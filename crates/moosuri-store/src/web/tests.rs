@@ -485,7 +485,7 @@ async fn browser_evidence_requires_matching_typed_slot_and_result_and_current_pi
             }
         };
         let (claim, step) = admit(&store, &user, &thread, request).await;
-        assert_eq!(claim.tool_profile.as_ref().unwrap().version, 4);
+        assert_eq!(claim.tool_profile.as_ref().unwrap().version, 5);
         let ExternalToolStart::Dispatch(permit) = store
             .prepare_external_tool(&step, "web-call".into())
             .await
@@ -642,7 +642,7 @@ async fn browser_interrupted_slot_reopen_and_explicit_retry_preserve_budget_and_
         .await
         .unwrap();
     let next = store.claim_agent_run().await.unwrap().unwrap();
-    assert_eq!(next.tool_profile.as_ref().unwrap().version, 4);
+    assert_eq!(next.tool_profile.as_ref().unwrap().version, 5);
     assert!(next.context.calls.is_empty());
     store
         .call(move |db| {

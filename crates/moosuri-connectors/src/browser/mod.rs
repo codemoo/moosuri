@@ -5,6 +5,7 @@ pub mod capsule;
 mod cdp;
 mod net;
 pub mod proxy;
+pub mod workspace;
 
 use base64::Engine;
 use cdp::Cdp;
@@ -122,8 +123,15 @@ impl BrowserSession {
         config: BrowserConfig,
         cancellation: CancellationToken,
     ) -> Result<Self, BrowserError> {
+        Self::launch_bounded(config, cancellation, Duration::from_secs(120)).await
+    }
+    async fn launch_bounded(
+        config: BrowserConfig,
+        cancellation: CancellationToken,
+        lifetime: Duration,
+    ) -> Result<Self, BrowserError> {
         capsule_health(&config)?;
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let deadline = Instant::now() + lifetime;
         if cancellation.is_cancelled() {
             return Err(BrowserError::Cancelled);
         }
@@ -278,6 +286,10 @@ impl BrowserSession {
         result
     }
     async fn open_inner(&mut self, url: &str) -> Result<BrowserPage, BrowserError> {
+        let handle = self.create_page(url).await?;
+        self.read_inner(&handle).await
+    }
+    async fn create_page(&mut self, url: &str) -> Result<PageHandle, BrowserError> {
         if self.targets.len() >= 4 {
             return Err(BrowserError::Capacity);
         }
@@ -360,7 +372,7 @@ impl BrowserSession {
             worker_generation: self.generation,
             navigation_generation: 1,
         };
-        self.read_inner(&handle).await
+        Ok(handle)
     }
     pub async fn read(&mut self, handle: &PageHandle) -> Result<BrowserPage, BrowserError> {
         let duration = self.remaining()?;
@@ -548,7 +560,8 @@ impl BrowserSession {
             Err(BrowserError::Cancelled
                 | BrowserError::Timeout
                 | BrowserError::Protocol
-                | BrowserError::Network)
+                | BrowserError::Network
+                | BrowserError::OutputTooLarge)
         ) {
             self.poisoned = true;
             self.kill();

@@ -42,7 +42,7 @@ if args == ["--network-probe"]:
         pass
     print(json.dumps({"direct_egress_blocked": True, "proxy_reachable": True}))
     raise SystemExit(0)
-if args:
+if args not in ([], ["--workspace"]):
     raise SystemExit("unsupported test worker argument")
 canary = subprocess.Popen(
     [sys.executable, "/capsule/loopback-canary.py"],
@@ -69,4 +69,4 @@ except BaseException:
     canary.terminate()
     canary.wait(timeout=2)
     raise
-os.execv(REAL, [REAL])
+os.execv(REAL, [REAL, *args])

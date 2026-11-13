@@ -10,7 +10,7 @@ HTTP 검색/읽기와 Chromium 브라우저 조작은 다른 기능이다. 실�
 실제 페이지 내용을 받는 `web_search`/`web_read`부터 연결한다. 미설정 검색은 사용 불가로
 표시하고 합성 검색 결과나 HTTP 텍스트 읽기를 브라우저 조작으로 부르지 않는다.
 
-읽기는 로그인 쿠키·Authorization 없이 public HTTP(S)만 사용한다. redirect마다 DNS
+HTTP 읽기는 로그인 쿠키·Authorization 없이 public HTTP(S)만 사용한다. redirect마다 DNS
 전체 결과를 검사하고 승인된 주소로 연결해 loopback/private/link-local/metadata 접근을
 막는다. proxy 환경변수·자동 redirect/retry를 끄고 응답 크기·시간을 제한한다. HTML의
 script/style 등은 본문에서 제외하고 동적 페이지의 한계를 표시한다.
@@ -28,7 +28,10 @@ worker/context/target/frame/navigation generation에 묶는다. “마지막 탭
 명령을 도구로 제공하지 않는다. stale handle·재시작은 관측을 새로 요구하고 알려지지 않은
 쓰기 작업을 재생하지 않는다. 일반 읽기마다 사용자 승인을 요구하지 않는다.
 
-인증된 사이트의 클릭·입력·폼 제출은 외부 작업 boundary 뒤에서 확장한다. 임의 웹메일
+[개인 작업 브라우저](browser-workspaces.md)는 같은 프로필을 유지하며 화면 보기·사람의
+클릭/입력/로그인·명시적 완료 후 현재 페이지 관측을 제공한다. 직접 조작 중에는 모델
+관측을 멈추고, 조작 이력이 있는 workspace의 모델 이동은 계속 차단한다.
+인증된 사이트의 **자동** 클릭·입력·폼 제출은 외부 작업 boundary 뒤에서 확장한다. 임의 웹메일
 버튼 클릭이나 JavaScript로 아래 메일 승인 규칙을 우회할 수 없어야 한다. 버튼의 표시
 문구를 보고 발송 여부를 판단하는 정규식은 권한 경계가 아니다. 인증 인계는 동일한
 개인 브라우저와 원래 작업을 보존하며 다른 사용자·개인 기본 브라우저에 붙지 않는다.

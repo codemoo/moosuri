@@ -17,7 +17,7 @@ pub(crate) fn admitted_profile(
         profile.web = Some(current.clone());
     }
     if current.browser_pin.is_some() {
-        profile.version = 4;
+        profile.version = 5;
         profile.web = Some(current.clone());
     }
     Ok(profile)
@@ -29,7 +29,7 @@ pub(crate) fn allowed(
     request: &WebToolRequest,
 ) -> bool {
     let Some(pin) = profile
-        .filter(|p| matches!(p.version, 3 | 4))
+        .filter(|p| matches!(p.version, 3..=5))
         .and_then(|p| p.web.as_ref())
     else {
         return false;
@@ -37,8 +37,17 @@ pub(crate) fn allowed(
     match request {
         WebToolRequest::Read { .. } => pin.read && current.read,
         WebToolRequest::Search { .. } => pin.search && current.search,
+        WebToolRequest::BrowserOpen { .. }
+        | WebToolRequest::BrowserObserve {}
+        | WebToolRequest::BrowserHandoff { .. } => {
+            profile.is_some_and(|p| p.version == 5)
+                && pin
+                    .browser_pin
+                    .as_ref()
+                    .is_some_and(|pin| Some(pin) == current.browser_pin.as_ref())
+        }
         WebToolRequest::BrowserRead { .. } => {
-            profile.is_some_and(|p| p.version == 4)
+            profile.is_some_and(|p| matches!(p.version, 4 | 5))
                 && pin
                     .browser_pin
                     .as_ref()
@@ -123,7 +132,12 @@ pub(crate) fn evidence(conn: &Connection, tenant: &str, run: &str) -> Result<Vec
                 }
             }
             agent_execution::KnowledgeToolInput::External {
-                request: moosuri_core::ExternalToolRequest::Web(WebToolRequest::BrowserRead { .. }),
+                request:
+                    moosuri_core::ExternalToolRequest::Web(
+                        WebToolRequest::BrowserRead { .. }
+                        | WebToolRequest::BrowserOpen { .. }
+                        | WebToolRequest::BrowserObserve {},
+                    ),
             } => {
                 if let Some(page) = value.get("browser_page")
                     && let (Some(time), Some(truncated)) = (

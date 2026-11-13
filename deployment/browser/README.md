@@ -1,26 +1,31 @@
 # Optional public Chromium research capsule
 
-This is a runnable worker and network proxy. Optional ordinary-chat integration is
-documented in [browser-chat.md](../../docs/browser-chat.md); neither is a claim that
-Linux containment has passed. The authoring machine compiled and tested the Rust code;
-the Linux smoke test below must pass before enabling browser tools or JavaScript.
+This is a Rust worker and network proxy for optional Linux Chromium.
+[One-shot reads](../../docs/browser-chat.md) and [persistent task workspaces](../../docs/browser-workspaces.md)
+share the same deployment boundary. Source checks alone do not establish containment;
+the Linux smoke below must pass for the actual image and host before enabling tools or JavaScript.
 No host Chrome, personal profile, credentials, app DB or Docker socket is mounted.
 
 The backend creates a separate capsule per tenant. Typed Rust methods are
 `BrowserSession::launch`, `open`, `read`, `screenshot`, `close`, and `shutdown`.
 An opaque page UUID, worker generation and navigation generation bind every handle.
 Cross-worker/closed handles fail; changed main-frame loader/frame identity fails.
-There are at most four created tabs, a 120-second worker lifetime, 15-second
-operations, bounded 4 MiB CDP messages, 8 KiB DOM text, four public links and 2 MiB viewport PNGs.
-PNG bytes are intended for tenant artifact storage, never inline model tool text.
-The optional chat adapter exposes only one fresh `open` read and uses durable
-external-tool receipts; low-level screenshot/handle APIs are not model tools.
+The one-shot mode permits at most four created tabs and a 120-second lifetime.
+The `--workspace` mode retains one profile/page, with a maximum eight-hour worker
+lifetime and thirty-minute idle cleanup in the app broker. Operations, CDP messages,
+text, links and PNGs remain bounded. Human frames travel only through authenticated
+no-store endpoints into React memory, never model tool text or ordinary artifacts.
+The app exposes `browser_read` for fresh reads and `browser_open`/`browser_observe`/
+`browser_handoff` for persistent workspaces. Low-level input and screenshot APIs
+remain human-only.
 
 `MOOSURI_BROWSER_JAVASCRIPT=enabled` enables actual page scripts only after the
 operator has verified this deployment. The default `disabled` capability reports
-that limitation. DOM reading uses fixed internal `innerText` code. There is no
-model-supplied evaluate, click, type, form, upload, authenticated-profile attach or
-download interface. No generic browser action can send an approved mail draft;
+that limitation. One-shot DOM reading uses fixed internal `innerText` code;
+workspace observation combines Accessibility with visible DOMSnapshot text while
+omitting form/editable values. Human control accepts typed click/text/key/scroll
+commands, not JavaScript. There is no model-supplied evaluate, click, type, form,
+upload, authenticated-profile attach or download interface. No generic browser action can send an approved mail draft;
 mail remains a separate typed broker requiring final explicit user approval.
 
 Production prerequisites: Linux Docker Engine/Compose, iptables/ip6tables in the
@@ -39,7 +44,10 @@ HTTP is restricted to GET/HEAD port80, CONNECT to port443. Redirects, frames,
 scripts and service-worker requests pass through the same proxy. The firewall
 blocks direct TCP/UDP, QUIC, WebRTC/DNS and private-network bypass. Proxy alone
 without the firewall is insufficient. CONNECT does not inspect HTTPS methods;
-this capsule deliberately receives no personal credentials or arbitrary actions.
+one-shot reads receive no credentials. Humans may log in inside their workspace.
+After takeover, the model cannot navigate that workspace; only human input can
+perform generic authenticated actions. Browser cookies are server-managed and are
+not a malicious-admin-resistant vault. No vault autofill is implemented.
 Namespace-local loopback serves the worker's CDP control plane; browser page
 traffic to loopback must still pass through the proxy and be denied. Chrome's
 implicit localhost proxy bypass is disabled. The health marker records
@@ -72,7 +80,10 @@ The harness bounds worker readiness, commands, response bytes, process shutdown,
 and Docker command deadlines. It builds the image and starts an isolated test proxy. A synthetic public IP is
 assigned only to that proxy container's loopback, so the actual production IP
 policy and pinned TCP path run unchanged without public web requests. Assertions
-cover JS-rendered text, aria-hidden visible negation, real PNGs, cross-worker and
+cover synthetic HTTPS login/POST and secure-cookie continuity, fresh-profile
+isolation, omitted form secrets, one-use frame proofs, stale geometry/overlay/focus
+rejection and animated-page typing, as well as JS-rendered text, aria-hidden visible
+negation, real PNGs, cross-worker and
 closed handles, stale navigation, private redirect/image/frame/fetch and DNS-rebinding canaries, plus
 direct egress denial. Private fixture listeners have successful HTTP positive
 controls before deny assertions. A test-only live listener inside **each browser
@@ -115,12 +126,18 @@ firewall. Docker requires the static proxy address to belong to the configured
 subnet. The smoke test additionally rejects pre-existing subnet/route overlap.
 Production operators must perform that inventory for their chosen deployment.
 
-The worker reads bounded JSON lines on stdin, emits a readiness record, and accepts
+The default worker reads bounded JSON lines on stdin, emits a readiness record, and accepts
 `{"op":"open","url":"https://example.com/"}`, then `read`, `screenshot` or `close`
 with the exact returned `handle`, and `{"op":"shutdown"}`. Stdin EOF/cancellation
 shuts down Chromium. The Docker init process reaps child processes; capsule removal
 discards its tmpfs profile. The app must never automatically reattach old handles
 after a worker restart or replay an ambiguous external action.
+
+Workspace mode instead accepts `workspace_open`, `workspace_observe`,
+`workspace_frame` and `workspace_input` (plus shutdown). The Rust broker keeps the
+worker attached to the original user/conversation independently of app tabs or chat
+streams. Replacing the image/config requires new smoke evidence; existing runs
+cannot silently switch their pinned deployment. See [the API/lifecycle contract](../../docs/browser-workspaces.md).
 
 The seccomp profile derives from Microsoft's Apache-2.0 Playwright
 v1.56.1 Docker profile:
@@ -138,11 +155,12 @@ Local authoring checks (no Docker or Linux browser launch):
 cargo test --locked -p moosuri-connectors browser::
 python3 -m unittest discover -s deployment/browser -p test_smoke.py
 python3 -m py_compile deployment/browser/*.py
-sh -n deployment/browser/entrypoint.sh deployment/browser/proxy-test.sh
+sh -n deployment/browser/entrypoint.sh deployment/browser/proxy-test.sh deployment/browser/chromium-test.sh
 ```
 
 These local checks do not establish actual Linux/Chromium containment. The
-Docker smoke test remains an unperformed release gate until the operator runs it.
+Docker smoke test remains a release gate for each deployment, even when the
+repository records a successful synthetic test on a different image/host.
 
 
 The unchanged upstream profile is retained as `seccomp-upstream.json`. The derived

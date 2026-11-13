@@ -518,7 +518,7 @@ async fn version_one_migrates_without_losing_accounts_or_threads() {
             assert_eq!(
                 db.conn
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                7
+                8
             );
             Ok(())
         })

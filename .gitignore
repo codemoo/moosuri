@@ -24,6 +24,8 @@
 **/playwright-report/
 **/test-results/
 /web/dist/
+/web/output/
+.playwright-cli/
 
 # Local coding-agent instructions and generated editor state (not product skills).
 AGENTS.md

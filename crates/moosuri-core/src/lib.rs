@@ -1,6 +1,8 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
 mod web;
 pub use web::*;
+mod browser;
+pub use browser::*;
 mod mail;
 pub use mail::*;
 mod chat;
@@ -67,6 +69,11 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        BrowserWorkspaceState::decl(),
+        BrowserWorkspaceView::decl(),
+        BrowserWorkspaceStatus::decl(),
+        BrowserControl::decl(),
+        BrowserFrame::decl(),
         MailConnection::decl(),
         MailConnections::decl(),
         MailReply::decl(),

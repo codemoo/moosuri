@@ -2,6 +2,7 @@ use super::BrowserError;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
@@ -108,6 +109,22 @@ impl Cdp {
     pub fn before_navigation(&mut self, session: &str) {
         self.loaded.retain(|(sid, _)| sid != session);
     }
+    pub async fn workspace_screenshot(&mut self, session: &str) -> Result<Value, BrowserError> {
+        // Chromium can leave a compositor capture unanswered across navigation.
+        // Abandon only this read, not the task's authenticated browser. A later
+        // reply cannot satisfy another command: IDs are monotonic and matched by
+        // `command`. Input/navigation timeouts retain their fatal/unknown semantics.
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            self.command(
+                "Page.captureScreenshot",
+                json!({"format":"png","captureBeyondViewport":false,"fromSurface":true}),
+                Some(session),
+            ),
+        )
+        .await
+        .unwrap_or(Err(BrowserError::StalePage))
+    }
     pub async fn wait_loaded(&mut self, session: &str, loader: &str) -> Result<(), BrowserError> {
         for _ in 0..4096 {
             if self
@@ -196,6 +213,53 @@ mod tests {
                 .unwrap_err(),
             BrowserError::Protocol
         );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stalled_workspace_capture_preserves_protocol_without_replay_or_late_reply_adoption() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!(
+            "ws://{}/devtools/browser/synthetic",
+            listener.local_addr().unwrap()
+        );
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let capture: Value =
+                serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap())
+                    .unwrap();
+            assert_eq!(capture["method"], "Page.captureScreenshot");
+            // The next command arrives only after capture times out. There is no
+            // replay of the capture or of the human action that caused navigation.
+            let next: Value =
+                serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap())
+                    .unwrap();
+            assert_eq!(next["method"], "Page.getFrameTree");
+            assert_ne!(next["id"], capture["id"]);
+            for response in [
+                json!({"id":capture["id"],"sessionId":"session","result":{"data":"stale-pixels"}}),
+                json!({"id":next["id"],"sessionId":"session","result":{"current_frame":true}}),
+            ] {
+                socket
+                    .send(Message::Text(response.to_string().into()))
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut cdp = Cdp::connect(&endpoint).await.unwrap();
+        assert_eq!(
+            cdp.workspace_screenshot("session").await.unwrap_err(),
+            BrowserError::StalePage
+        );
+        let current = tokio::time::timeout(
+            Duration::from_secs(1),
+            cdp.command("Page.getFrameTree", json!({}), Some("session")),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(current, json!({"current_frame":true}));
         server.await.unwrap();
     }
 }

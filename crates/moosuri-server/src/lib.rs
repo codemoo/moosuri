@@ -1,4 +1,5 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
+mod browser;
 mod chat;
 mod knowledge;
 mod mail;
@@ -217,6 +218,7 @@ struct AppState {
     delivery: Arc<tokio::sync::RwLock<()>>,
     streams: Arc<Mutex<HashMap<String, usize>>>,
     mail: moosuri_agent::mail::MailService,
+    browser: moosuri_agent::browser::BrowserService,
 }
 
 pub fn router(store: Store, config: ServerConfig) -> Router {
@@ -230,9 +232,11 @@ pub fn router_with_runtime(
     runtime: moosuri_agent::Runtime,
 ) -> Router {
     let mail = runtime.mail_service();
+    let browser = runtime.browser_service();
     let state = AppState {
         store,
         mail,
+        browser,
         config,
         logins: Arc::new(Mutex::new(HashMap::new())),
         probes: Arc::new(tokio::sync::Semaphore::new(2)),
@@ -289,6 +293,7 @@ pub fn router_with_runtime(
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
         .nest("/api/v1/knowledge", knowledge::routes())
         .nest("/api/v1/mail", mail::routes())
+        .merge(browser::routes())
         .route("/api/v1/usage", get(chat::usage))
         .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })

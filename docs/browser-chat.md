@@ -8,12 +8,17 @@ and search snippets. Public content is untrusted evidence. Truncated content is
 incomplete; neither the tool nor its source list proves an entire answer.
 
 This capability is off by default. `web_read` remains the lighter HTTP reader;
-profiles 1–3 retain their existing tool vocabulary. A configured deployment admits
-profile 4 and pins the SHA-256 of its complete canonical configuration. Existing
+profiles 1–3 retain their existing tool vocabulary. The initial configured reader admitted
+profile 4 and pinned the SHA-256 of its complete canonical configuration. Existing
 runs cannot gain the capability, change deployments or regain a disabled
 capability through retry. Other recipe and Gmail pins are preserved. No tool can
 approve or send mail; the existing immutable preview and final human approval
 still govern every send.
+
+For persistent pages and human login/control, use [browser workspaces](browser-workspaces.md).
+New runs on a verified deployment use profile 5 with `browser_open`, `browser_observe`
+and `browser_handoff`; profile 4 remains the historical one-shot reader contract.
+No automatic authenticated clicks or credential injection are exposed to the model.
 
 ## Deployment contract
 
@@ -105,8 +110,9 @@ during IO and again at completion, the store checks authority, admitted deployme
 pin, budget and current configuration. No SQLite actor lock spans browser IO.
 Cancellation or lost authority cancels IO and waits for bounded subprocess and
 owned-container cleanup, even when stdout stalls. Dropping the caller also
-requests independently owned cleanup. Shutdown grants a six-second task drain and a two-second mail-worker drain;
-the outer nine-second wait encloses both, including concurrent shutdown callers.
+requests independently owned cleanup. Shutdown grants a six-second task drain, a two-second mail-worker drain and a
+seven-second browser-workspace drain; the outer sixteen-second wait encloses
+all three, including concurrent shutdown callers.
 A cleanup failure yields an unavailable result; it does not claim success or that
 all resources disappeared. Three bounded exact-name queries reconcile possible
 delayed daemon creation, and only matching owner/read labels authorize removal

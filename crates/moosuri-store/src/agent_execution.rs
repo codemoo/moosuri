@@ -429,7 +429,7 @@ fn read_tool(
             if run
                 .tool_profile
                 .as_ref()
-                .is_none_or(|profile| !matches!(profile.version, 1..=4))
+                .is_none_or(|profile| !matches!(profile.version, 1..=5))
             {
                 Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
             } else {
@@ -447,7 +447,7 @@ fn read_tool(
             let allowed = run
                 .tool_profile
                 .as_ref()
-                .filter(|p| matches!(p.version, 2..=4))
+                .filter(|p| matches!(p.version, 2..=5))
                 .and_then(|p| {
                     p.mail_connections
                         .iter()

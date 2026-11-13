@@ -55,6 +55,10 @@
 | F42 | 공개 웹 검색·배송 · 선택 | `public_web.py`, `parcel.py` | connectors/public · P4/P6 | 실제 hosted search receipt/URL·usage, 일본우편 공식 이력/parser errors, 운송장 slot 재사용; 없는 배송사 연결 완료 주장0 |
 | F43 | 차량·지리·Todoist·local STT · 후속 | `assistant_connectors.py`, `native.py`, `requirements/` | optional connectors · P6 이후 | private vehicle proxy를 기본값에서 제외, routing 미연결·Todoist paused를 dead로 분류하지 않음, crate/API/권한/품질 gate 후 제공 |
 
+브라우저 관련 F09/F24/F27/F42/F58의 현재 구현 부분은 [개인 작업 브라우저](browser-workspaces.md)에
+있다. 사용자·대화별 프로필, 화면 보기, 사람의 로그인/조작과 같은 페이지에서의 후속 대화를
+연결했다. 범용 자동 폼·장기 프로필 복구·배송사 adapter나 해당 기능표 전체 완료를 뜻하지 않는다.
+
 ## 볼트·운영·공개
 
 | ID | 기능·구분 | 원본 근거 | 새 목표·단계 | 통과해야 할 동작 |

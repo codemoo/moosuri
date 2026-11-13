@@ -193,15 +193,19 @@ class Harness:
 
 
 class Worker:
-    def __init__(self, harness):
+    def __init__(self, harness, workspace=False):
         self.harness = harness
         self.name = harness.project + "-worker-" + uuid.uuid4().hex[:12]
-        self.p = subprocess.Popen(harness.compose + ["run", "--rm", "-T", "--no-deps", "--name", self.name, "browser"],
+        command = harness.compose + ["run", "--rm", "-T", "--no-deps", "--name", self.name, "browser"]
+        if workspace:
+            command.append("--workspace")
+        self.p = subprocess.Popen(command,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=harness.env)
         harness.workers.append(self)  # ready failure is still cleaned up
         self.pipe = JsonPipe(self.p)
         ready = self.pipe.read(45)
         assert ready.get("ready") and ready.get("javascript_enabled"), ready
+        assert bool(ready.get("workspace")) == workspace, ready
         harness.verify_owned("container", [self.name])
         assert self.loopback_hits() == 0, "loopback positive control did not reset"
 
@@ -275,6 +279,56 @@ def main():
         time.sleep(2)
         stale = first.ask({"op": "read", "handle": refreshed["result"]["handle"]})
         assert not stale["ok"] and "changed" in stale["error"], stale
+        # Explicit human mode reuses one page/profile through form submission,
+        # refreshes navigation for observation, and omits password field values.
+        # CA/system trust is active only in the test image; this validates the
+        # synthetic leaf SAN/chain before Chromium uses its private NSS database.
+        harness.proxy_exec("import urllib.request;u=urllib.request.build_opener(urllib.request.ProxyHandler({}));assert b'Workspace login fixture' in u.open('https://93.184.216.34/workspace-login',timeout=2).read(4096)")
+        workspace = Worker(harness, workspace=True)
+        for changing_page, action in [
+            ("workspace-shift", {"kind": "click", "x": 50, "y": 75}),
+            ("workspace-overlay", {"kind": "click", "x": 50, "y": 75}),
+            ("workspace-focus", {"kind": "insert_text", "text": "SHOULD_NOT_BE_INSERTED"}),
+        ]:
+            opened = workspace.ask({"op": "workspace_open", "url": "https://93.184.216.34/" + changing_page})
+            assert opened["ok"], opened
+            before_change = workspace.ask({"op": "workspace_frame"})
+            assert before_change["ok"], before_change
+            time.sleep(2.5)
+            rejected_change = workspace.ask({"op": "workspace_input", "expected_frame_token": before_change["result"]["frame_token"], "input": action})
+            assert not rejected_change["ok"] and rejected_change["code"] == "stale_page", (changing_page, rejected_change)
+        login = workspace.ask({"op": "workspace_open", "url": "https://93.184.216.34/workspace-login"})
+        assert login["ok"], login
+        observation = login["result"]["page"]
+        assert "not refundable" in " ".join(observation["text"].split()), observation
+        assert "FORM_DEFAULT_SECRET" not in json.dumps(observation), observation
+        def human_input(action, delay=0):
+            frame = workspace.ask({"op": "workspace_frame"})
+            assert frame["ok"], frame
+            image = frame["result"]
+            assert (image["width"], image["height"]) == (1280, 900), image.keys()
+            if delay:
+                time.sleep(delay)  # caret blink and color animation preserve geometry
+            response = workspace.ask({"op": "workspace_input", "expected_frame_token": image["frame_token"], "input": action})
+            assert response == {"ok": True, "result": {"accepted": True}}, response
+            return image["frame_token"]
+        token = human_input({"kind": "click", "x": 50, "y": 75})
+        stale_input = workspace.ask({"op": "workspace_input", "expected_frame_token": token, "input": {"kind": "key", "key": "enter"}})
+        assert not stale_input["ok"] and stale_input["code"] == "stale_page", stale_input
+        human_input({"kind": "insert_text", "text": "TYPED_SYNTHETIC_SECRET"}, delay=0.65)
+        after_typing = workspace.ask({"op": "workspace_observe"})
+        assert after_typing["ok"], after_typing
+        assert "TYPED_SYNTHETIC_SECRET" not in json.dumps(after_typing), after_typing
+        human_input({"kind": "click", "x": 50, "y": 125})
+        time.sleep(0.5)
+        resumed = workspace.ask({"op": "workspace_observe"})
+        assert resumed["ok"] and "COOKIE_SESSION_OK" in resumed["result"]["page"]["text"], resumed
+        assert json.loads(harness.fixture_get("counts"))["workspace_posts"] == 1, "HTTPS form POST was not observed"
+        same_profile = workspace.ask({"op": "workspace_open", "url": "https://93.184.216.34/workspace-home"})
+        assert same_profile["ok"] and "COOKIE_SESSION_OK" in same_profile["result"]["page"]["text"], same_profile
+        fresh_workspace = Worker(harness, workspace=True)
+        fresh_page = fresh_workspace.ask({"op": "workspace_open", "url": "https://93.184.216.34/workspace-home"})
+        assert fresh_page["ok"] and "FRESH_PROFILE_NO_COOKIE" in fresh_page["result"]["page"]["text"], fresh_page
         # Fresh workers avoid a created-tab capacity error masking the rebind test.
         domain_worker = Worker(harness)
         check_page(domain_worker.ask({"op": "open", "url": "http://fixture.example.com/"}))
@@ -295,7 +349,7 @@ def main():
             assert worker.loopback_hits() == 0, "browser request bypassed proxy to loopback canary"
         assert first.ask({"op": "close", "handle": handle})["ok"]
         assert not first.ask({"op": "read", "handle": handle})["ok"]
-        print("PASS: JS/negation/PNG, scoped and stale handles, owned live canaries, proxy DNS rebind, direct-egress deny")
+        print("PASS: JS/negation/PNG, scoped/stale handles, persistent cookie workspace/human input/form omission, owned live canaries, proxy DNS rebind, direct-egress deny")
     finally:
         errors = harness.cleanup() if configured else []
         for error in errors:

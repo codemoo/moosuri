@@ -27,7 +27,7 @@ impl Default for Upstream {
         }
     }
 }
-static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(super) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test(start_paused = true)]
 async fn concurrent_shutdown_waits_for_cleanup_past_the_old_five_second_cutoff() {
@@ -53,6 +53,7 @@ async fn concurrent_shutdown_waits_for_cleanup_past_the_old_five_second_cutoff()
     });
     let runtime = Runtime {
         control: Arc::new(Control {
+            browser: crate::browser::BrowserService::new(store.clone(), None, signals.stop.clone()),
             mail: crate::mail::MailService::new(store, None, signals.clone()),
             signals,
             supervisor: Mutex::new(Some(supervisor)),

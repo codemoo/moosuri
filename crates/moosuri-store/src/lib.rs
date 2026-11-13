@@ -14,10 +14,12 @@ pub use chat::{ClaimedRun, ContextMessage, ContextRole, OutputPatch, RunFailure,
 pub use memory_commands::{
     MemoryCommandClarification, MemoryCommandOutcome, PreparedMemoryCommand,
 };
+mod browser;
 mod files;
 mod journal;
 mod mail;
 mod web;
+pub use browser::BrowserAccess;
 pub use mail::*;
 mod providers;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
@@ -278,7 +280,7 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if !matches!(version, 1..=7) {
+        } else if !matches!(version, 1..=8) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {
@@ -334,6 +336,13 @@ impl Store {
                 include_str!("../../../migrations/assistant/0007_gmail.sql")
             ))?;
         }
+        if version < 8 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0008_browser_workspaces.sql")
+            ))?;
+        }
+        browser::restart(&conn)?;
         conn.execute("UPDATE mail_actions SET version=version+1,state='outcome_unknown',raw=NULL,content=NULL WHERE state='dispatch_committed'",[])?;
         let provider_key = providers::open_key(&conn, &dir)?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;

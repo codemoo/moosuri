@@ -9,6 +9,7 @@ use serde_json::json;
 
 #[derive(Clone, Default)]
 pub(crate) struct Service {
+    workspaces: Option<crate::browser::BrowserService>,
     client: Option<std::sync::Arc<WebClient>>,
     browser: Option<std::sync::Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
     #[cfg(test)]
@@ -22,10 +23,22 @@ type Fixture = dyn Fn(
     + Send
     + Sync;
 impl Service {
+    pub(crate) fn reader(
+        &self,
+    ) -> Option<std::sync::Arc<moosuri_connectors::browser::capsule::CapsuleReader>> {
+        self.browser.clone()
+    }
+    pub(crate) fn set_workspaces(&mut self, service: crate::browser::BrowserService) {
+        self.workspaces = Some(service);
+    }
+    pub(crate) fn workspaces(&self) -> Option<crate::browser::BrowserService> {
+        self.workspaces.clone()
+    }
     pub(crate) fn new(client: Option<std::sync::Arc<WebClient>>) -> Self {
         Self {
             client,
             browser: None,
+            workspaces: None,
             #[cfg(test)]
             fixture: None,
         }
@@ -42,19 +55,39 @@ impl Service {
         Self {
             client: None,
             browser: None,
+            workspaces: None,
             fixture: Some(fixture),
         }
     }
     pub(crate) async fn execute(
         &self,
         request: &WebToolRequest,
-        account: &str,
+        user: &moosuri_store::UserContext,
+        thread: &str,
         browser_pin: Option<&str>,
         cancel: &CancellationToken,
     ) -> KnowledgeToolResult {
         #[cfg(test)]
         if let Some(fixture) = &self.fixture {
             return fixture(request.clone(), cancel.clone()).await;
+        }
+        if matches!(
+            request,
+            WebToolRequest::BrowserOpen { .. }
+                | WebToolRequest::BrowserObserve {}
+                | WebToolRequest::BrowserHandoff { .. }
+        ) {
+            if self
+                .browser
+                .as_ref()
+                .is_none_or(|reader| Some(reader.deployment_pin()) != browser_pin)
+            {
+                return KnowledgeToolResult::Error(ToolReadError::Unavailable);
+            }
+            return match &self.workspaces {
+                Some(service) => service.execute(user, thread, request).await,
+                None => KnowledgeToolResult::Error(ToolReadError::Unavailable),
+            };
         }
         if let WebToolRequest::BrowserRead { url } = request {
             let Some(reader) = self
@@ -64,7 +97,7 @@ impl Service {
             else {
                 return KnowledgeToolResult::Error(ToolReadError::Unavailable);
             };
-            let Ok(account) = uuid::Uuid::parse_str(account) else {
+            let Ok(account) = uuid::Uuid::parse_str(&user.account().id) else {
                 return KnowledgeToolResult::Error(ToolReadError::Unavailable);
             };
             return match reader.read(account, url, cancel).await {
@@ -91,7 +124,10 @@ async fn execute(
         return KnowledgeToolResult::Error(ToolReadError::Unavailable);
     };
     let result = match request {
-        WebToolRequest::BrowserRead { .. } => {
+        WebToolRequest::BrowserRead { .. }
+        | WebToolRequest::BrowserOpen { .. }
+        | WebToolRequest::BrowserObserve {}
+        | WebToolRequest::BrowserHandoff { .. } => {
             return KnowledgeToolResult::Error(ToolReadError::Unavailable);
         }
         WebToolRequest::Read { url } => client

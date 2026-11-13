@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod source_connections;
+pub use source_connections::*;
 mod web;
 pub use web::*;
 mod browser;
@@ -114,6 +116,16 @@ pub fn typescript_contract() -> String {
         UsageSummary::decl(),
         AccountUsage::decl(),
         AccountUsageResponse::decl(),
+        SourceConnectionKind::decl(),
+        CreateSourceConnection::decl(),
+        SourceConnection::decl(),
+        SourceSyncRun::decl(),
+        SourceRunOutcome::decl(),
+        SourceBatch::decl(),
+        SourceBatchReceipt::decl(),
+        SourceIngestStatus::decl(),
+        SourceProvenance::decl(),
+        SourceObjectMetadata::decl(),
         DisconnectMode::decl(),
         KnowledgeKind::decl(),
         MemoryStatus::decl(),

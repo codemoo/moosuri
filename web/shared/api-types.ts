@@ -64,15 +64,29 @@ export type ChatEvents = { events: Array<ChatEvent>, reset: boolean, cursor: num
 export type UsageSummary = { dispatched_calls: number, unreported_calls: number, reported_input_tokens: number, reported_output_tokens: number, reported_cache_read_tokens: number, reported_cache_write_tokens: number, };
 export type AccountUsage = { account_id: string, name: string, email: string, usage: UsageSummary, };
 export type AccountUsageResponse = { accounts: Array<AccountUsage>, };
+export type SourceConnectionKind = "custom_http" | "gmail" | "slack";
+export type CreateSourceConnection = { name: string, kind: SourceConnectionKind, scope: string, remote_account: string, mail_connection_id: string | null, sync_enabled: boolean, poll_interval_seconds: number, };
+export type SourceConnection = { id: string, collection_id: string, name: string, kind: SourceConnectionKind, adapter_version: string, scope: string, remote_account: string, mail_connection_id: string | null, config_revision: number, credential_epoch: number, state: string, sync_enabled: boolean, poll_interval_seconds: number, local_sequence: number, last_heartbeat_at: number | null, last_commit_at: number | null, last_completed_at: number | null, next_due_at: number, error: string | null, credential_present: boolean, };
+export type SourceSyncRun = { id: string, generation: number, state: string, started_at: number, heartbeat_at: number, finished_at: number | null, error: string | null,
+/**
+ * A custom producer reports coverage; only the local commits are attested.
+ */
+producer_report: boolean, };
+export type SourceRunOutcome = "completed" | "partial" | "no_change" | "polled" | "failed" | "unknown" | "needs_reconnect";
+export type SourceBatch = { protocol_version: number, request_id: string, config_revision: number, run_id: string, generation: number, expected_sequence: number, checkpoint_before: string | null, checkpoint_after: string | null, entries: Array<SourceInput>, metadata: Array<SourceObjectMetadata>, tombstones: Array<string>, complete_snapshot: boolean, };
+export type SourceBatchReceipt = { request_id: string, run_id: string, sequence: number, committed_at: number, accepted: number, unchanged: number, source_ids: Array<string>, };
+export type SourceIngestStatus = { connection_id: string, config_revision: number, local_sequence: number, checkpoint: string | null, active_run: SourceSyncRun | null, };
+export type SourceProvenance = { connection_id: string, connection_name: string, kind: SourceConnectionKind, scope: string, external_id: string, external_version: string, thread_id: string | null, parent_id: string | null, request_id: string, run_id: string, source_revision: number, received_at: number, };
+export type SourceObjectMetadata = { external_id: string, thread_id: string | null, parent_id: string | null, };
 export type DisconnectMode = "keep" | "delete";
 export type KnowledgeKind = "source" | "memory";
 export type MemoryStatus = "active" | "invalidated";
-export type KnowledgeCollection = { id: string, name: string, scope: string, revision: number, cursor: number, connected: boolean, deleted: boolean, };
+export type KnowledgeCollection = { source_connection_id: string | null, id: string, name: string, scope: string, revision: number, cursor: number, connected: boolean, deleted: boolean, };
 export type SourceInput = { external_id: string, version: string, expected_revision: number | null, title: string, text: string, speaker: string | null, observed_at: number, valid_from: number | null, valid_until: number | null, };
 export type IngestBatch = { request_id: string, expected_cursor: number, next_cursor: number, complete_snapshot: boolean, entries: Array<SourceInput>, };
 export type IngestReceipt = { request_id: string, cursor: number, source_ids: Array<string>, };
 export type SourceSummary = { id: string, collection_id: string, external_id: string, version: string, revision: number, title: string, speaker: string | null, observed_at: number, valid_from: number | null, valid_until: number | null, };
-export type SourceDocument = { source: SourceSummary, text: string, };
+export type SourceDocument = { source: SourceSummary, text: string, provenance: SourceProvenance | null, };
 export type SourcePage = { items: Array<SourceSummary>, next_after: string | null, generation: number, };
 export type EvidenceRef = { source_id: string, source_revision: number, start_byte: number, end_byte: number, quote: string, };
 export type MemoryDraft = { text: string, subject: string, speaker: string | null, valid_from: number | null, valid_until: number | null,

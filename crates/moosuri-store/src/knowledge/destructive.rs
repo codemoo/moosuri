@@ -84,8 +84,11 @@ pub(crate) fn apply(conn: &Connection, record: &knowledge_journal::Record) -> Re
             }
             if (record.action == 3 && !group.deleted) || (record.action == 4 && group.connected) {
                 conn.execute("UPDATE knowledge_collections SET connected=0,deleted=?3,revision=revision+1 WHERE tenant_id=?1 AND id=?2",params![record.tenant,record.target,record.action==3])?;
+                conn.execute("UPDATE source_connections SET state='disconnected',config_revision=config_revision+1,credential_epoch=credential_epoch+1,token_hash=NULL,token_expires=NULL,credential=NULL,sync_enabled=0 WHERE tenant_id=?1 AND collection_id=?2",params![record.tenant,record.target])?;
+                conn.execute("UPDATE source_sync_runs SET state='unknown',error='lease_invalidated',finished_at=?3 WHERE tenant_id=?1 AND connection_id IN (SELECT id FROM source_connections WHERE tenant_id=?1 AND collection_id=?2) AND state='running'",params![record.tenant,record.target,now()?])?;
             }
         }
+        6 => crate::source_connections::revoke_for_journal(conn, &record.tenant, &record.target)?,
         5 => {
             bump(conn, &record.tenant)?;
             memory_commands::apply_journal_forget(conn, &record.tenant, &record.target)?;
@@ -101,7 +104,7 @@ pub(crate) fn apply(conn: &Connection, record: &knowledge_journal::Record) -> Re
     )?;
     Ok(())
 }
-fn destructive(db: &mut Database, tenant: &str, target: &str, action: u8) -> Result<()> {
+pub(crate) fn destructive(db: &mut Database, tenant: &str, target: &str, action: u8) -> Result<()> {
     db.poisoned = true;
     let record = db.knowledge_journal.append(tenant, target, action)?;
     let tx = db
@@ -208,6 +211,9 @@ impl Store {
         self.call(move |db| {
             let user = validate(&db.conn, &user, true, false)?;
             let group = collection(&db.conn, &user.tenant.0, &object)?;
+            if group.source_connection_id.is_some() {
+                return Err(StoreError::Conflict);
+            }
             let complete = match mode {
                 DisconnectMode::Delete => group.deleted,
                 DisconnectMode::Keep => !group.connected,

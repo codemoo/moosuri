@@ -28,6 +28,7 @@ import type {
 } from "../shared/api-types";
 
 const collection: KnowledgeCollection = {
+  source_connection_id: null,
   id: "11111111-1111-4111-8111-111111111111",
   name: "합성 자료 모음",
   scope: "연구 노트",
@@ -37,6 +38,7 @@ const collection: KnowledgeCollection = {
   deleted: false,
 };
 const source: SourceDocument = {
+  provenance: null,
   source: {
     id: "22222222-2222-4222-8222-222222222222",
     collection_id: collection.id,
@@ -193,6 +195,7 @@ function fixture(
         );
         const input = batch.entries[0];
         state.sources.push({
+          provenance: null,
           source: {
             ...source.source,
             ...input,
@@ -327,6 +330,95 @@ beforeEach(() => {
 });
 
 describe("private source material", () => {
+  it("keeps managed collections separate from manual input and opens source receipt provenance", async () => {
+    const test = fixture((call) => {
+      if (
+        call.path ===
+        "/source-connections/managed-connection/receipts/request-a"
+      )
+        return response({
+          request_id: "request-a",
+          run_id: "run-a",
+          sequence: 4,
+          committed_at: 130,
+          accepted: 1,
+          unchanged: 0,
+          source_ids: [source.source.id],
+        });
+    });
+    test.state.collections = [
+      { ...collection, source_connection_id: "managed-connection" },
+    ];
+    test.state.sources = [
+      {
+        ...source,
+        provenance: {
+          connection_id: "managed-connection",
+          connection_name: "연구 Slack",
+          kind: "slack",
+          scope: "C_SYNTHETIC",
+          external_id: "object-a",
+          external_version: "v2",
+          thread_id: "thread-a",
+          parent_id: "parent-a",
+          request_id: "request-a",
+          run_id: "run-a",
+          source_revision: 1,
+          received_at: 130,
+        },
+      },
+    ];
+    open();
+    expect(
+      await screen.findByRole("button", { name: "자료 붙여넣기" }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "모음 연결 해제" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "수집 설정과 연결 해제" }),
+    ).toHaveAttribute(
+      "href",
+      "/settings/sources?connection=managed-connection",
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /합성 원문/ }),
+    );
+    await screen.findByRole("region", { name: "원문 수집 출처" });
+    expect(screen.getByText("연구 Slack · Slack")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("원본과 저장 기록"));
+    expect(screen.getByText("thread-a")).toBeInTheDocument();
+    expect(screen.getByText("parent-a")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "수집 저장 기록 확인" }),
+    );
+    await screen.findByText(/^자료 저장 확인:/);
+    expect(
+      test.calls.some(
+        (call) =>
+          call.path ===
+          "/source-connections/managed-connection/receipts/request-a",
+      ),
+    ).toBe(true);
+    expect(screen.getByRole("button", { name: "원문 삭제" })).toBeEnabled();
+  });
+
+  it("navigates to source settings through the account navigation", async () => {
+    fixture((call) => {
+      if (call.path === "/source-connections")
+        return response({ connections: [], gmail_configured: false });
+    });
+    open();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /자료 수집 연결/ }),
+    );
+    await screen.findByRole("heading", { level: 2, name: "자료 수집 연결" });
+    expect(window.location.pathname).toBe("/settings/sources");
+    expect(
+      screen.getByRole("button", { name: "커스텀 수집 연결 추가" }),
+    ).toBeInTheDocument();
+  });
+
   it("creates a manual collection from its name and pastes one source", async () => {
     const user = userEvent.setup();
     const test = fixture();
@@ -962,6 +1054,7 @@ describe("knowledge lifetime boundaries", () => {
     const user = userEvent.setup();
     const old = deferred<Response>();
     const second = {
+      provenance: null,
       source: {
         ...source.source,
         id: "77777777-7777-4777-8777-777777777777",

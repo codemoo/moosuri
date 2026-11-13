@@ -79,7 +79,7 @@ TS 집계는 `test(...)`/`it(...)`의 literal title 선언을 대상으로 한�
 contract만 남긴다. shared dispatch/config/bridge의 Kakao-specific 분기도 공개 target에서
 제외한다. source hash/bytes/원래 evidence와 manifest는 그대로 보존한다. 기존 운영 파일을
 삭제하지 않는다. [source-connectors](../audit/source-connectors.tsv)와 [수집 계약](data-connections.md)이
-공식/custom 계획과 개인 전용 제외의 정본이다. 현재 추적표의 상태는 planned/excluded만 허용하며,
-구현 완료 상태는 실제 runtime 검증·증적 계약을 추가한 뒤 도입한다. Rust 계획 검증은 분류/배포/상태의
+공식/custom 계획과 개인 전용 제외의 정본이다. 추적표는 planned/implemented/excluded를 구별한다. implemented는 실제 code target과
+별도 검증 기록을 요구하며, 그 기록의 합성/실계정/플랫폼 검증 범위를 구별한다. Rust 계획 검증은 분류/배포/상태의
 일치, feature/scenario 참조, 안전한 상대 target/spec 경로와 카톡 제외를 검사한다. metadata 연결을 검사할 뿐
 수집 runtime/API가 구현됐다고 증명하지 않는다.

@@ -78,13 +78,11 @@ fn registry(
         ensure(
             matches!(
                 (row[1].as_str(), row[2].as_str(), row[3].as_str()),
-                ("official", "bundled", "planned")
-                    | ("custom", "protocol", "planned")
+                ("official", "bundled", "planned" | "implemented")
+                    | ("custom", "protocol", "planned" | "implemented")
                     | ("private", "excluded", "excluded")
             ),
-            format!(
-                "{id}: invalid connector category/distribution/state; runtime completion needs a new evidence contract"
-            ),
+            format!("{id}: invalid connector category/distribution/state"),
         )?;
         ensure(
             references(&row[4], features) && phase(&row[5]) && references(&row[8], scenarios),
@@ -96,10 +94,19 @@ fn registry(
                 && repository_path(root, &row[7], true),
             format!("{id}: missing or unsafe spec path"),
         )?;
-        ensure(
-            row[9] == "-",
-            format!("{id}: planned/excluded connector cannot claim runtime evidence"),
-        )?;
+        if row[3] == "implemented" {
+            ensure(
+                row[9].starts_with("docs/reviews/")
+                    && row[9].ends_with(".md")
+                    && repository_path(root, &row[9], true),
+                format!("{id}: implemented connector requires review evidence"),
+            )?;
+        } else {
+            ensure(
+                row[9] == "-",
+                format!("{id}: planned/excluded connector cannot claim runtime evidence"),
+            )?;
+        }
         if row[3] == "excluded" {
             ensure(
                 row[6] == "-",
@@ -113,7 +120,7 @@ fn registry(
                         (target.starts_with("crates/")
                             || target.starts_with("web/")
                             || target.starts_with("migrations/"))
-                            && repository_path(root, target, false)
+                            && repository_path(root, target, row[3] == "implemented")
                             && !public_kakao_target(target)
                             && targets.insert(target)
                     }),
@@ -121,14 +128,14 @@ fn registry(
             )?;
         }
         let expected = match id.as_str() {
-            "gmail" | "slack" => Some(("official", "bundled", "planned")),
-            "custom_http" => Some(("custom", "protocol", "planned")),
-            "kakao" => Some(("private", "excluded", "excluded")),
+            "gmail" | "slack" => Some(("official", "bundled")),
+            "custom_http" => Some(("custom", "protocol")),
+            "kakao" => Some(("private", "excluded")),
             _ => None,
         };
         if let Some(expected) = expected {
             ensure(
-                (row[1].as_str(), row[2].as_str(), row[3].as_str()) == expected,
+                (row[1].as_str(), row[2].as_str()) == expected,
                 format!("{id}: required connector scope changed"),
             )?;
         }
@@ -226,10 +233,10 @@ mod tests {
             (
                 "gmail",
                 3,
-                "implemented",
-                "runtime completion needs a new evidence contract",
+                "enabled",
+                "invalid connector category/distribution/state",
             ),
-            ("slack", 9, "docs/mail.md", "cannot claim runtime evidence"),
+            ("slack", 9, "docs/mail.md", "requires review evidence"),
             ("gmail", 4, "F23,F999", "invalid feature/phase/scenario"),
             ("gmail", 8, "DATA99", "invalid feature/phase/scenario"),
             (

@@ -1,24 +1,25 @@
 # 공식·커스텀 데이터 수집 연결
 
-2026-11-13 사용자 요구 R29에 따른 구현 계획이다. 카톡 수집기는 공개 제품·이미지·설치 도구에
+2026-11-13 사용자 요구 R29에 따른 수집 연결 구현 계약이다. 실제 실행 검증과 한계는 [현재 상태](status.md)를 따른다. 카톡 수집기는 공개 제품·이미지·설치 도구에
 포함하지 않는다. 사용자가 별도로 운영하는 개인 수집기를 **커스텀 수집 연결**로 붙인다.
 기존 카톡 서비스·cron·DB의 이동이나 변경은 이 계획에 포함하지 않는다.
 
 ## 지원 구분과 현재 상태
 
-| 연결 | 배포·유지보수 책임 | 현재 구현 | 다음 구현 |
+| 연결 | 배포·유지보수 책임 | 현재 구현 | 제한 |
 | --- | --- | --- | --- |
-| Gmail | 공식 지원 adapter, moosuri가 유지보수 | 개인 OAuth와 대화 중 조회·승인 후 발송 | 허용한 메일 범위의 자료 동기화 |
-| Slack | 공식 지원 adapter, moosuri가 유지보수 | 미구현 | 공식 API의 개인 연결·channel/thread 범위 동기화 |
-| 커스텀 HTTP 수집 | moosuri는 수신 프로토콜, 외부 수집기는 사용자 관리 | 미구현 | 사용자별 연결 등록·수집 전용 인증·batch 수신·상태/이력 |
-| 개인 카톡 수집기 | 별도 비공개 프로젝트·별도 프로세스 | 기존 개인 환경만 사용 | 사용자가 generic custom protocol로 변환해 전송 |
+| Gmail | 공식 Rust adapter | 개인 OAuth·허용 라벨/시작 날짜의 초기 수집과 history 동기화·명시적 삭제 | 실계정 승인/검증 별도, 본문·페이지 크기 제한 |
+| Slack | 공식 Rust adapter | auth.test로 검증한 개인 user token, 채널 history·설정 기간의 parent/replies 재확인 | OAuth 앱 자동 생성 없음; 기간 밖 답글·삭제 전체 확인 불가 |
+| 커스텀 HTTP 수집 | Rust 수신부, 외부 producer는 사용자 관리 | 개인 연결·만료 token·batch/status/receipt·실행 이력 | 외부 producer의 설치·운영·내용 진실성은 별도 |
+| 개인 카톡 수집기 | 공개 배포 제외 | 기존 개인 환경 유지 | 개인 producer를 generic custom protocol로 변환하는 작업은 비공개로 별도 진행 |
 
 ‘공식’은 moosuri가 지원할 adapter 분류다. 서비스 제공자의 제휴·보증이나 현재 사용 가능을
 뜻하지 않는다. 연결 UI와 에이전트는 분류, 설치된 adapter 버전, 실제 credential/권한,
 설정 유효성, 검증 상태와 **현재 사용할 수 있는 기능**을 구별한다. 카톡 항목은 공개 adapter
 catalog에 등록하지 않는다. 개인 연결의 표시 이름을 카톡으로 짓는 것은 가능하다.
 
-현재 자료 API는 로그인 세션 기반 수동 입력이다. 비어 있지 않은 최대32개 항목, local i64
+기존 자료 API는 로그인 세션 기반 수동 입력으로 유지한다. 수집 연결 소유의 모음에는 수동 batch와
+수동 disconnect를 적용할 수 없으며, 해당 연결의 API를 거친다. 수동 모음의 batch는 비어 있지 않은 최대32개 항목, local i64
 cursor의 `+1`, incremental batch만 지원한다. `complete_snapshot=true`와 빈 batch는 거절한다.
 이를 곧바로 Slack history cursor, 무변경 동기화, 외부 collector 인증으로 사용하지 않는다.
 
@@ -28,7 +29,7 @@ cursor의 `+1`, incremental batch만 지원한다. `complete_snapshot=true`와 �
 
 `공식 API / 외부 수집기 → 연결·실행 확인 → 정규화/검증 → 원문·색인·영수증·cursor 원자 저장 → 검색·기억의 출처`
 
-- 공식 adapter는 검토한 Rust 코드로 배포한다. Google/Slack OAuth·scope·rate limit·pagination·
+- 공식 adapter는 Rust 코드로 배포한다. Gmail OAuth와 Slack 개인 user token·scope·rate limit·pagination·
   provider 오류를 처리하며 네트워크 IO를 SQLite transaction 밖에서 수행한다.
 - 커스텀 연결은 **외부에서 moosuri로 HTTPS push**를 기본으로 한다. Mac이나 사설 수집기에
   포트를 공개할 필요가 없다. Tailscale-private/일반 HTTPS 모두 앱 인증을 유지한다.
@@ -39,7 +40,8 @@ cursor의 `+1`, incremental batch만 지원한다. `complete_snapshot=true`와 �
 
 ## 연결과 자료 추적
 
-아래는 예정 필드이며 새 migration/DTO 구현 전까지 존재하는 API라고 표시하지 않는다.
+SQLite migration9와 core DTO에 저장한다. 각 연결은 해당 계정에 속한 별도 knowledge collection을 사용한다.
+실행기는 공용이지만 연결·credential·cursor·원문·검색·이력은 사용자별이다.
 
 | 객체 | 저장할 식별·상태 | 의미 |
 | --- | --- | --- |
@@ -70,7 +72,7 @@ provider checkpoint는 tenant/connection/config scope에 묶고 자료·영수�
    서버는 hash만 저장하고 Bearer header로 받는다. URL·일반 로그·채팅·모델에 넣지 않는다.
    회전/철회, 계정 비활성화/보안 epoch 변경, collection disconnect를 매 commit에서 확인한다.
    token은 대화/원문 읽기·메일 발송·관리자 기능·다른 연결에 접근할 수 없다.
-3. versioned envelope에 request ID, config revision, run identity, source entries,
+3. versioned envelope에 request ID, config revision, run identity, source entries와 thread/parent metadata,
    expected local sequence와 opaque checkpoint를 넣는다. 크기/개수/버전/필드와 scope를 검사한다.
    원문·색인·의존 기억 철회·receipt·sequence·checkpoint가 한 transaction에서 확정된다.
 4. 응답 유실은 같은 request와 같은 bytes로 재시도해 기존 receipt를 확인한다. 재시작한
@@ -92,37 +94,73 @@ provider checkpoint는 tenant/connection/config scope에 묶고 자료·영수�
 - 연결당 한 active run, bounded queue, lease/config generation을 사용한다. 오래된 성공/오류/
   heartbeat는 새 run 상태를 덮지 않는다. 429/retry-after·일시 네트워크·인증 필요·invalid batch·
   부분 완료·결과 불명·pause를 구별하고 제한된 재시도/backoff를 사용한다. polling에 LLM을 쓰지 않는다.
-- 기본 delta는 빠진 항목을 삭제하지 않는다. delete event는 같은 namespace의 명시적 tombstone만
-  적용한다. full snapshot retirement는 검증된 완전한 범위/페이지와 generation이 모두 확정된
+- 기본 delta는 빠진 항목을 삭제하지 않는다. `tombstones`의 같은 namespace 외부 ID만 삭제한다.
+  기존 원문의 삭제는 journal에 남고 재수집을 억제한다. 한 번도 저장하지 않은 ID의 삭제는 no-op이며
+  영구 억제 기록을 만들지 않는다. 동일 page의 다른 정상 자료는 계속 반영한다. full snapshot retirement는 검증된 완전한 범위/페이지와 generation이 모두 확정된
   별도 finalize 계약을 구현·검증한 뒤 활성화한다. partial/중단 snapshot은 삭제0이다.
 - disconnect는 수집 중단+자료 보관/삭제 선택이다. 삭제 journal·현재 auth/config epoch를
   commit 순서에 묶고 late batch·오래된 backup이 삭제된 자료와 token을 되살리지 않게 한다.
 - 원문 없는 고정 오류 코드·시각·카운터만 운영 진단으로 내보낸다. source text·credentials·
-  원본 remote cursor·provider 원문 오류는 일반 로그에 남기지 않는다. 기록 보관/정리도 bounded다.
+  원본 remote cursor·provider 원문 오류는 일반 로그에 남기지 않는다. 일반 실행 목록은64개, 참조되지 않는 receipt는1024개로 제한한다. 살아 있는 원문 revision이
+  참조하는 receipt와 최소 run 정보는 보존해 오래된 자료의 출처 연결이 끊기지 않게 한다.
 
-## 구현 순서와 코드 좌표
+## 이용 방법과 지원 범위
 
-[OpenSpec 작업 목록](../openspec/changes/build-source-connections/tasks.md)이 구현 backlog다.
-[연결 추적표](../audit/source-connectors.tsv)는 종류/배포 범위·현재 상태·목표 코드·검증 연결을
-담으며 Rust `xtask verify-plan`이 누락·중복·잘못된 완료 표기와 카톡 public target 재등장을 검사한다.
-예정 파일을 만든 것만으로 아래 단계의 완료를 체크하지 않는다.
+사용자는 `/settings/sources`의 **자료 연결**에서 자기 연결만 관리한다. 개인 설정과 원문은 관리자
+화면에 노출하지 않는다. 계정 전환은 진행 중 요청과 일회 표시 token을 폐기한다.
 
-아래 Rust 경로는 repository의 `crates/moosuri-` 접두사를 생략한다. 정확한 경로는 연결 추적표에 둔다.
+- **Gmail:** [메일 설정](mail.md)의 Google 연결을 먼저 마친 뒤 계정·라벨 ID·시작 날짜·주기를 선택한다.
+  기본 연결만으로 자동 backfill하지 않는다. 최초 범위는 최근366일 이내이며, 본문 하나64KiB와
+  page 전체256KiB 제한을 초과하면 checkpoint를 진행하지 않고 범위 조정이 필요한 오류를 표시한다.
+  Gmail의 SPAM/TRASH도 명시한 라벨 범위에 포함할 수 있다. history 만료는 자동 삭제/전환 대신
+  `checkpoint_invalid`로 알리고 **동기화 다시 시작**으로 같은 범위를 다시 읽는다.
+- **Slack:** 필요한 history 권한이 있는 개인 user token과 채널 ID를 입력한다. 고정 `auth.test`에서
+  workspace/user를 확인하며 다른 계정으로의 token 교체를 거절한다. 초기 범위와 스레드 재확인은
+  최대90일이다. 설정 범위의 polling 완료는 `polled`이며 모든 삭제나 임의의 오래된 답글까지
+  확인했다는 뜻이 아니다. 자동 OAuth 앱 설치나 Slack 쓰기 권한은 제공하지 않는다.
+- **커스텀:** 이름/범위를 만들고 만료 가능한 수집 token을 발급한다. token은 한 번만 보이며
+  계정 암호 변경·회전·철회 시 예전 token은 사용할 수 없다. 앱 로그아웃은 별도 동작이다.
+- 일시정지는 진행 중 run을 fence한다. 해제는 **자료 보관** 또는 **자료 삭제**를 고른다.
+  보관 후에도 같은 연결 화면에서 자료를 나중에 삭제할 수 있다. 원문 상세의 **수집 출처**에서
+  연결·원본 thread/parent/version·실행과 저장 영수증을 확인한다.
 
-1. `core/src/source_connections.rs`, `store/src/source_connections.rs`, 새 SQLite migration:
-   연결·scope·run/receipt/provenance 계약. 기존 `knowledge/sources.rs`의 batch 저장을 공통 commit
-   함수로 추출하되 수동 입력 동작과 철회 계약을 유지한다.
-2. `server/src/source_connections.rs`, `connectors/src/source/`:
-   custom 등록/수집 token/ingest/status/receipt API, versioned 합성 fixture와 작은 외부 전송 예제.
-   임의 실행 host가 아닌 독립 HTTP protocol. 실제 개인 카톡 연결은 별도 비공개 작업으로 진행한다.
-3. `connectors/src/source/gmail.rs`, `.../slack.rs`, agent의 수집 supervisor:
-   공식 API 연결·scope 설정·incremental sync·pagination·rate limit·reconnect. Gmail의 기존
-   interactive OAuth를 수집 consent 없이 자동 backfill에 사용하지 않는다.
-4. `web/src/SourceConnections.tsx`, `KnowledgeView`, source evidence DTO:
-   공식/커스텀 추가, 이름/범위/마지막 성공/오류/재연결/일시정지, 상세 run/receipt와 원문 역추적.
-   tenant/account 전환 시 늦은 결과와 일회 token을 폐기한다.
-5. DATA01~DATA03·DATA06~DATA08과 source delete/forget·기존 chat evidence 회귀,
-   독립 경계 검토·Linux 실제 HTTP/SQLite·제한된 opt-in provider 검증 후 각각 출시 상태를 갱신한다.
+수집기는5초마다 due 연결을 확인하고 LLM을 호출하지 않는다. 연결별 one-active-run, page budget,
+300초 lease와 heartbeat, rate-limit/backoff로 작업을 제한한다. 정상 pagination은 partial로 이어가며
+실패와 구별한다. 서버 재시작/lease 만료는 unknown으로 남긴다. 메일 발송 승인 계약은 그대로다.
 
-이 변경의 완료는 **계획·OpenSpec·전수 조사 target·Rust 계획 검증**까지다. 공식 자동 동기화,
-외부 custom token/ingest API, 연결 관리 화면은 후속 구현 task이며 현재 동작한다고 표시하지 않는다.
+## 외부 producer HTTP 프로토콜
+
+모든 경로의 접두사는 `/api/v1/source-ingest`다. HTTPS와 `Authorization: Bearer <token>`을 사용하며
+Cookie/Origin 또는 사용자 세션을 혼용하지 않는다. Tailscale도 앱 인증을 생략하지 않는다.
+
+| 메서드·경로 | 동작 |
+| --- | --- |
+| `GET /status` | 자기 connection/config/local sequence/private checkpoint와 active run 확인 |
+| `POST /runs` | 서버 run ID/generation 발급; 한 연결에서 동시에 하나만 실행 |
+| `POST /heartbeat` | `{run_id,generation}` 생존 확인, 자료/sequence/checkpoint 변경 없음 |
+| `POST /batches` | version1 envelope의 원문·metadata·명시적 tombstone·checkpoint 원자 반영 |
+| `GET /receipts/{request_id}` | 자기 요청의 안전한 receipt 조회; 원문 읽기 권한은 없음 |
+| `POST /finish` | run ID/generation·outcome·고정 error·선택 retry_after_seconds로 보고 |
+
+`SourceBatch`는 `protocol_version`, UUID `request_id`, `config_revision`, `run_id`, `generation`,
+`expected_sequence`, `checkpoint_before/after`, `entries`, `tombstones`, `metadata`,
+`complete_snapshot:false`를 받는다. 빈 entries는 독립 no-change receipt를 만들 수 있지만
+heartbeat는 아니다. 한 번에 upsert/delete 합계32개, decoded text256KiB, JSON512KiB까지다.
+같은 요청은 **저장해 둔 동일 envelope**로 재시도한다. payload 변경은 conflict이며, 늦은
+완료·옛 token·다른 계정의 receipt 조회는 허용하지 않는다. full snapshot은 계속 거절한다.
+
+[작은 Rust producer 예제](../crates/moosuri-connectors/examples/custom_source_sender.rs)는 합성 note만
+보내며, private state 파일에 envelope를 먼저 fsync하여 응답 유실 후 같은 요청을 재시도한다.
+[source adapter README](../crates/moosuri-connectors/src/source/README.md)의 실행·복구 절차를 따른다.
+개인 카톡 source/DB/설치 프로그램은 이 예제나 공개 패키지에 포함하지 않는다.
+
+## 코드와 검증 추적
+
+[OpenSpec](../openspec/changes/build-source-connections/tasks.md), [연결 추적표](../audit/source-connectors.tsv),
+[검증 기록](reviews/2026-11-13-source-connections.md)을 함께 관리한다. 구현은 core/store/server/agent의
+`source_connections.rs`, connectors의 `source/{gmail,slack,transport}.rs`, React의
+`SourceConnections.tsx`와 `SourceProvenance.tsx`에 있다. 계획 검증기는 target/spec/evidence의 존재와
+참조를 확인하며, 파일 존재를 runtime 품질이나 실계정 검증으로 대신하지 않는다.
+
+합성 SQLite·HTTP·React와 Linux 검증은 실제 Google/Slack 계정 승인을 대신하지 않는다.
+실계정 opt-in 검증과 운영 배포는 그 증거가 있을 때만 따로 기록한다.

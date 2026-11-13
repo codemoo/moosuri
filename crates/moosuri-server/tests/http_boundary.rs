@@ -518,3 +518,6 @@ mod memory_command;
 
 #[path = "cases/mail.rs"]
 mod mail;
+
+#[path = "cases/source_connections.rs"]
+mod source_connections;

@@ -1,17 +1,22 @@
 # Private sources and explicit memories
 
 The knowledge screens let each account manage text sources and editable facts.
-They are a manual management foundation. Tool-verified models can search and read
-them in chat; see [knowledge agent](knowledge-agent.md). Automatic extraction,
-official/custom external collection and document/goal editing remain upcoming features.
-[Data connections](data-connections.md) defines the next ingestion/provenance contract;
-Kakao collection remains an independently operated private producer.
+Tool-verified models can search and read them in chat; see
+[knowledge agent](knowledge-agent.md). [Data connections](data-connections.md) add
+account-owned Gmail/Slack sync and custom HTTP ingestion with per-revision provenance.
+Automatic extraction and document/goal editing remain upcoming features. Kakao
+collection remains an independently operated private producer outside this distribution.
 
 ## Sources
 
 Open `/app/knowledge`, name a collection and paste text. The browser assigns its
 stable scope identity within your account; it is not a field you need to manage. There is no
-arbitrary path/URL fetch, binary upload or connection to production collectors.
+arbitrary path/URL fetch or binary upload. Configure external collection separately
+in `/settings/sources`; connecting Gmail for interactive mail alone does not start sync.
+
+Connection-owned collections show their origin and sync status. Their ingestion and
+disconnect controls belong to the connection; manual batch/disconnect cannot bypass
+that grant. Source detail links each imported revision to its connection and receipt.
 
 Repeating an active collection creation with the same scope and name returns the
 same collection. A changed name under that scope conflicts, and disconnected/deleted

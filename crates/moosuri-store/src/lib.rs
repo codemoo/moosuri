@@ -1,5 +1,7 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
+mod source_connections;
+pub use source_connections::*;
 mod agent_execution;
 mod chat;
 mod knowledge;
@@ -280,7 +282,7 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if !matches!(version, 1..=8) {
+        } else if !matches!(version, 1..=9) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {
@@ -342,6 +344,13 @@ impl Store {
                 include_str!("../../../migrations/assistant/0008_browser_workspaces.sql")
             ))?;
         }
+        if version < 9 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0009_source_connections.sql")
+            ))?;
+        }
+        source_connections::restart(&conn)?;
         browser::restart(&conn)?;
         conn.execute("UPDATE mail_actions SET version=version+1,state='outcome_unknown',raw=NULL,content=NULL WHERE state='dispatch_committed'",[])?;
         let provider_key = providers::open_key(&conn, &dir)?;

@@ -53,6 +53,15 @@ supports direct assertions, exact source evidence, correction/history and forget
 [The knowledge agent](knowledge-agent.md) explains tool verification, run limits and
 revocation of answers derived from withdrawn evidence.
 
+Use `/settings/sources` for account-owned [data connections](data-connections.md):
+opt-in Gmail sync, Slack user-token sync and custom HTTP producers. Configure the
+operator's [Google OAuth app](mail.md) once; each member then connects their own
+Google account and selects collection scope. Slack currently uses a personal user
+token, not a managed OAuth setup. The screen exposes pause/disconnect, safe sync
+history, narrow ingest-token rotation and source provenance. The
+[Rust sender example](../crates/moosuri-connectors/examples/custom_source_sender.rs)
+can exercise the custom protocol using synthetic data.
+
 ## HTTPS reverse proxy
 
 The process listens on loopback. Production needs a TLS reverse proxy and an

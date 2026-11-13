@@ -341,26 +341,45 @@ connector credential이며 사용자 키 볼트와 같은 보호를 주장하지
 [수락 기록](reviews/2026-11-13-browser-workspaces.md)에 남긴다. 범용 자동 폼·vault 자동 로그인·
 장기 profile 복구는 후속이며, 메일 최종 미리보기와 명시적인 발송 허락은 유지한다.
 
-## 수집 계획 변경: 공식 지원과 외부 커스텀 연결
+## 공식 Gmail·Slack과 커스텀 수집 연결
 
-R29에 따라 카톡 수집기는 공개 코드·이미지·설치 범위에서 제외했다. 기존 개인 수집기는 별도
-프로젝트/프로세스로 유지하고 F70의 generic custom HTTP protocol로 연결할 계획이다.
-Gmail·Slack은 공식 adapter, 개인 수집기는 custom producer로 분류하며 같은 원문 저장·
-provenance·sync 상태/receipt 계약을 적용한다. F38은 공개 배포 제외로 남겨 과거 요구를 추적한다.
+R29/F70의 계정별 수집 연결을 구현했다. 카톡 수집기는 F38 공개 배포 제외로 유지하며,
+기존 개인 프로젝트·서비스·cron·DB는 변경하지 않았다. 별도 개인 producer를 generic HTTP
+protocol로 연결할 수 있고, 공개 서버가 그 수집기의 코드나 설치 도구를 실행하지 않는다.
 
-이 변경에서 완료한 것은 [계획](data-connections.md), R/F·source target·새 평가 사례·
-[OpenSpec backlog](../openspec/changes/build-source-connections/tasks.md)와 Rust 계획 검증이다.
-수집 token/ingest endpoint, 자동 Gmail·Slack sync, React 연결 추적 화면은 아직 구현하지 않았다.
-기존 Gmail 대화 조회/승인 발송과 수동 자료 batch API를 자동 수집 완료로 표시하지 않는다.
+- SQLite migration9와 Rust core/store/server/agent에 개인 연결·고정 범위·credential epoch,
+  실행 lease·heartbeat·원자 batch/영수증/checkpoint·원문 revision별 출처를 연결했다.
+  로그인 세션을 가장하지 않는 background credential carrier를 사용한다.
+- Gmail은 기존 개인 OAuth와 명시한 라벨/시작 날짜로 backfill/history를 읽는다. Slack은
+  검증한 개인 user token으로 채널과 제한된 기간의 thread를 재확인한다. Slack의 polling 완료와
+  커스텀 producer의 완료 보고를 전체 원격 자료 수집 보증으로 표시하지 않는다.
+- 외부 수집기는 연결 하나의 만료 token으로 batch/status/receipt만 사용한다. 토큰 회전·철회,
+  pause·disconnect, 계정 변경과 늦은 commit을 검사한다. 같은 요청의 재시도는 같은 영수증을
+  반환한다. 부분 페이지에서 빠진 자료는 삭제하지 않으며 full snapshot은 계속 거절한다.
+- `/settings/sources`에서 개인 연결과 이력을 관리하고 원문에서 연결/저장 영수증을 추적한다.
+  원문 삭제는 의존 기억·근거를 철회하며 재수집으로 부활하지 않는다. 연결 해제 후 보관한
+  자료도 나중에 삭제할 수 있다. source가 참조하는 receipt/run 메타데이터는 보존한다.
+- macOS·Linux x86_64에서 **Rust318개 통과, 실모델 opt-in1개 제외**. React **113개**,
+  타입/production build·생성 DTO·fmt/all-target clippy를 확인했다. source-specific 새 검증은
+  Store14·provider9·HTTP2이며, 실제 CLI 시험에는 설정 화면 직접 접속을 추가했다.
+- Linux 실제 loopback HTTP 여정 **12/12**: Rust producer2회 실행의 같은 영수증/sequence1,
+  검색·출처, 계정 격리, pause/revoke, token/checkpoint 비노출을 확인했다. 종료 후 시험
+  컨테이너·네트워크는0개다. 실제 Google/Slack/모델 호출과 운영 배포는 수행하지 않았다.
+- 별도 macOS 서버 강제 종료→재시작 시험6개도 통과했다. 완료 전 run은 unknown으로 남고,
+  이미 저장한 자료·출처·영수증·cursor는 유지되며 동일 요청을 다시 보내도 중복 저장하지 않는다.
+- 독립 검토에서 권한 없는 앞쪽 연결이 후속 작업을 막는 스케줄러, 원문이 참조하는 영수증 삭제,
+  Gmail SPAM/TRASH 범위 누락을 찾아 수정·재검토했다. 실제 브라우저에서 발견한 설정 주소404도
+  수정하고 설치 회귀 시험을 추가했다. CI는 계속 비활성이다.
 
-Rust xtask의 2개 회귀 검사는 잘못된 완료/분류·끊긴 참조·카톡 target 재등장을 거절했다.
-fmt·clippy와 계획 검증(R29/F70·70개 시나리오·4개 연결 범위), OpenSpec strict 22개를
-통과했다. 이 수치는 계획 도구 검증이며 수집 runtime의 품질/보안 성적이 아니다.
+설치자와 계정별 Google 연결 절차는 [mail](mail.md), 프로토콜/현재 제한은
+[data connections](data-connections.md), 구체적인 검증은
+[수락 기록](reviews/2026-11-13-source-connections.md)에 있다. 공용 OAuth 중계 서비스와
+Slack OAuth 앱 자동 설치는 제공하지 않는다. 실계정 opt-in 시험은 별도 미완료 항목으로 남긴다.
 
 ## 아직 구현하지 않은 범위
 
 구독 인증·개인 provider 연결, 자동 기억 추출·문서/목표·평가, 예약·캘린더·알림·푸시,
-첨부·녹음·PWA, 공식 Gmail·Slack 자동 수집·custom HTTP 수신/상태 추적, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
+첨부·녹음·PWA, 공용 OAuth 연결 서비스·Slack OAuth 앱 설치, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
 community 설치·업데이트·제안 카드, 독립 볼트·TOTP·credential broker,
 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
 연결 여부만 선택 사항이다. 이번 웹·브라우저·Gmail 구현을 전체 비서 완성으로 표시하지 않는다.

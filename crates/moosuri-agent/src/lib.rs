@@ -6,6 +6,7 @@ pub mod mail;
 mod mail_tools;
 mod memory_intent;
 mod runner;
+mod source_connections;
 mod web;
 mod web_tools;
 
@@ -31,7 +32,7 @@ const MAIL_DRAIN: Duration = Duration::from_secs(2);
 const BROWSER_DRAIN: Duration = Duration::from_secs(7);
 // Enclose both sequential supervisor drains, with time to publish completion.
 // In particular, do not abort independently owned browser cleanup at five seconds.
-const SUPERVISOR_WAIT: Duration = Duration::from_secs(16);
+const SUPERVISOR_WAIT: Duration = Duration::from_secs(19);
 
 /// Constructs a connection without DNS or IO. Hosted secrets cannot be retargeted.
 pub fn model_client(
@@ -281,6 +282,9 @@ async fn supervise(
     web: web::Service,
 ) {
     let mut mail_worker = tokio::spawn(mail.clone().worker(signals.stop.clone()));
+    let mut source_worker = tokio::spawn(
+        source_connections::Service::new(store.clone(), mail.clone(), signals.clone()).worker(),
+    );
     let workspace = web.workspaces().expect("runtime workspace service");
     let mut browser_worker = tokio::spawn(async move { workspace.maintenance().await });
     let mut tasks = JoinSet::new();
@@ -299,6 +303,13 @@ async fn supervise(
             _ = signals.wake.notified() => (),
         }
         settle_retired(&mut retired, &store, &signals).await;
+        if source_worker.is_finished() {
+            let _ = (&mut source_worker).await;
+            source_worker = tokio::spawn(
+                source_connections::Service::new(store.clone(), mail.clone(), signals.clone())
+                    .worker(),
+            );
+        }
         while tasks.len() + retired.len() < 2 && !signals.stop.is_cancelled() {
             match store.claim_agent_run().await {
                 Ok(Some(claimed)) => {
@@ -350,6 +361,13 @@ async fn supervise(
     {
         browser_worker.abort();
         let _ = browser_worker.await;
+    }
+    if tokio::time::timeout(MAIL_DRAIN, &mut source_worker)
+        .await
+        .is_err()
+    {
+        source_worker.abort();
+        let _ = source_worker.await;
     }
     done.send_replace(true);
 }

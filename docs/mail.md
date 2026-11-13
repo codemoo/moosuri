@@ -3,6 +3,18 @@
 Gmail 연결은 사용자별이다. 공용 LLM 설정과 분리하며, 관리자가 다른 사용자의
 메일함이나 초안을 열 수 없다. 구현·시험 범위의 정본은 [현재 상태](status.md)다.
 
+## 설치자와 사용자
+
+독립 셀프호스팅은 설치자가 OAuth 웹 앱을 한 번 준비한다. 같은 설치의 가족·친구는
+각자 **Google 계정 연결**에서 로그인·승인하면 되며 Google Cloud 프로젝트를 따로 만들지 않는다.
+현재 moosuri는 공용 OAuth 중계 서비스를 운영하지 않는다. n8n도 [Cloud의 managed OAuth와
+셀프호스팅의 custom OAuth](https://docs.n8n.io/integrations/builtin/credentials/google/oauth-single-service/)를
+구별한다. [Manus의 연결 화면](https://help.manus.im/en/articles/12231777-how-can-i-use-manus-connectors)은
+서비스가 준비한 커넥터에 사용자가 로그인하는 방식이다. 이 차이를 설치 안내에서 명시한다.
+
+Google 연결 뒤 [자료 연결](data-connections.md)을 따로 설정하면 허용한 메일 범위를 자동 수집한다.
+연결 자체로 과거 메일 전체를 자동 수집하지 않는다.
+
 ## 연결 준비
 
 운영자가 Google Cloud에서 Gmail API와 OAuth **웹 애플리케이션** client를 준비한다.

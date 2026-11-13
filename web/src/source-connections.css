@@ -1,0 +1,115 @@
+.source-connections {
+  max-width: 1040px;
+}
+.source-connections .admin-card {
+  margin-block: 18px;
+}
+.source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-block: 16px;
+}
+.source-form {
+  max-width: 620px;
+  margin-block: 16px;
+}
+.source-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.source-form label {
+  display: grid;
+  gap: 8px;
+}
+.source-form input,
+.source-form select {
+  width: 100%;
+}
+.source-check {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+}
+.source-check input {
+  width: auto;
+  flex-shrink: 0;
+}
+.source-list,
+.source-runs {
+  padding: 0;
+  list-style: none;
+}
+.source-list li + li,
+.source-runs li + li {
+  border-top: 1px solid var(--line, #ddd);
+}
+.source-list button {
+  display: grid;
+  text-align: start;
+  gap: 8px;
+  width: 100%;
+  padding: 16px;
+  background: transparent;
+}
+.source-list button[aria-pressed="true"] {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+.source-list small,
+.source-runs small {
+  color: var(--muted, #595f65);
+}
+.source-times {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
+}
+.source-times dt {
+  font-size: 0.85rem;
+  color: var(--muted, #595f65);
+}
+.source-times dd {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.source-runs li {
+  padding-block: 16px;
+}
+.source-runs p {
+  font-size: 0.85rem;
+}
+.source-secret,
+.source-confirm {
+  padding: 20px;
+  border: 1px solid var(--line, #ddd);
+  border-radius: 12px;
+  margin-block: 16px;
+}
+.source-secret input {
+  width: 100%;
+  font-family: monospace;
+}
+.source-provenance {
+  margin-block: 20px;
+  padding-block: 12px;
+  border-block: 1px solid var(--line, #ddd);
+  overflow-wrap: anywhere;
+}
+.source-provenance dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+}
+.source-provenance dd {
+  margin: 0;
+}
+@media (max-width: 600px) {
+  .source-provenance dl {
+    grid-template-columns: 1fr;
+  }
+}

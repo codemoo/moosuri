@@ -20,6 +20,7 @@ import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
 import { MailConnections } from "./MailConnections";
+import { SourceConnections } from "./SourceConnections";
 import { UsageView } from "./UsageView";
 import { KnowledgeView } from "./KnowledgeView";
 import { initialKnowledgeDrafts } from "./KnowledgeState";
@@ -685,6 +686,7 @@ function Workspace({
   const providerAdmin = path === "/admin/providers";
   const personalModel = path === "/settings/model";
   const personalMail = path === "/settings/mail";
+  const personalSources = path === "/settings/sources";
   const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -829,7 +831,7 @@ function Workspace({
         ) : (
           threads.map((thread) => (
             <div
-              className={`thread-row ${thread.id === selected && !admin && !personalModel && !personalUsage && !knowledgeOpen ? "active" : ""}`}
+              className={`thread-row ${thread.id === selected && !admin && !personalModel && !personalUsage && !personalSources && !knowledgeOpen ? "active" : ""}`}
               key={thread.id}
             >
               <button
@@ -844,6 +846,7 @@ function Workspace({
                   !admin &&
                   !personalModel &&
                   !personalUsage &&
+                  !personalSources &&
                   !knowledgeOpen
                     ? "page"
                     : undefined
@@ -908,6 +911,16 @@ function Workspace({
           {personalModel ? "← 대화로 돌아가기" : "내 모델"}
           <span aria-hidden="true">↗</span>
         </button>
+        <button
+          className={`nav-link ${personalSources ? "chosen" : ""}`}
+          aria-current={personalSources ? "page" : undefined}
+          onClick={() => {
+            navigate("/settings/sources");
+            setDrawer(false);
+          }}
+        >
+          자료 수집 연결<span aria-hidden="true">↗</span>
+        </button>
         <button className={`nav-link ${personalMail ? "chosen" : ""}`} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
         <button
           className={`nav-link ${personalUsage ? "chosen" : ""}`}
@@ -966,7 +979,7 @@ function Workspace({
           </button>
           <div>
             <span className="eyebrow">
-              {knowledgeOpen
+              {personalSources ? "내 연결" : knowledgeOpen
                 ? "나의 기록"
                 : admin
                   ? "INSTALLATION"
@@ -975,7 +988,7 @@ function Workspace({
                     : "YOUR SPACE"}
             </span>
             <h1>
-              {knowledgeOpen
+              {personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
                   ? "기억"
                   : "자료"
@@ -1034,7 +1047,9 @@ function Workspace({
             </button>
           </nav>
         )}
-        {personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected}/> : knowledgeOpen ? (
+        {personalSources ? (
+          <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
+        ) : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected}/> : knowledgeOpen ? (
           <KnowledgeView
             accountId={session.user.id}
             mode={memoryPage ? "memory" : "source"}

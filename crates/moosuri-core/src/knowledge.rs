@@ -22,6 +22,7 @@ pub enum MemoryStatus {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct KnowledgeCollection {
+    pub source_connection_id: Option<String>,
     pub id: String,
     pub name: String,
     pub scope: String,
@@ -88,6 +89,7 @@ pub struct SourceSummary {
 pub struct SourceDocument {
     pub source: SourceSummary,
     pub text: String,
+    pub provenance: Option<crate::SourceProvenance>,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct SourcePage {

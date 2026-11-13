@@ -30,6 +30,7 @@ import {
   type KnowledgeDrafts,
 } from "./KnowledgeState";
 import "./knowledge.css";
+import { SourceProvenance } from "./SourceProvenance";
 
 type Mode = "source" | "memory";
 type Resource = { id: string; revision: number };
@@ -117,8 +118,9 @@ export function KnowledgeView({
   }, [mode]);
   useEffect(() => {
     if (!target || target.kind !== mode) return;
-    if (target.kind === "source") setSource({id: target.id, revision: target.revision});
-    else setMemory({id: target.id, revision: target.revision});
+    if (target.kind === "source")
+      setSource({ id: target.id, revision: target.revision });
+    else setMemory({ id: target.id, revision: target.revision });
     onTargetConsumed?.();
   }, [target, mode]);
   useEffect(() => {
@@ -546,7 +548,11 @@ export function KnowledgeView({
                   .map((collection) => (
                     <option value={collection.id} key={collection.id}>
                       {collection.name}
-                      {collection.connected ? "" : " · 보관됨"}
+                      {collection.source_connection_id
+                        ? " · 수집 연결"
+                        : collection.connected
+                          ? ""
+                          : " · 보관됨"}
                     </option>
                   ))}
               </select>
@@ -575,7 +581,9 @@ export function KnowledgeView({
             <button
               className="primary"
               disabled={
-                busy || (!drafts.paste && !currentCollection?.connected)
+                busy ||
+                !!currentCollection?.source_connection_id ||
+                (!drafts.paste && !currentCollection?.connected)
               }
               onClick={() => {
                 if (drafts.paste) {
@@ -586,7 +594,10 @@ export function KnowledgeView({
                       ? { ...current.paste, open: true }
                       : null,
                   }));
-                } else if (currentCollection)
+                } else if (
+                  currentCollection &&
+                  !currentCollection.source_connection_id
+                )
                   updateDrafts((current) => ({
                     ...current,
                     paste: startPaste(currentCollection),
@@ -618,21 +629,32 @@ export function KnowledgeView({
           {!currentCollection.connected && (
             <p>자료 추가가 중단된 모음입니다.</p>
           )}
-          <button
-            className={currentCollection.connected ? "text-button" : "danger"}
-            disabled={busy}
-            onClick={() => {
-              setError("");
-              setDanger({
-                kind: "collection",
-                collection: currentCollection,
-              });
-            }}
-          >
-            {currentCollection.connected
-              ? "모음 연결 해제"
-              : "보관된 모음 삭제"}
-          </button>
+          {currentCollection.source_connection_id ? (
+            <p>
+              수집 연결에서 관리하는 자료 모음입니다.{" "}
+              <a
+                href={`/settings/sources?connection=${encodeURIComponent(currentCollection.source_connection_id)}`}
+              >
+                수집 설정과 연결 해제
+              </a>
+            </p>
+          ) : (
+            <button
+              className={currentCollection.connected ? "text-button" : "danger"}
+              disabled={busy}
+              onClick={() => {
+                setError("");
+                setDanger({
+                  kind: "collection",
+                  collection: currentCollection,
+                });
+              }}
+            >
+              {currentCollection.connected
+                ? "모음 연결 해제"
+                : "보관된 모음 삭제"}
+            </button>
+          )}
         </div>
       )}
       {mode === "source" && drafts.collection?.open && (
@@ -858,13 +880,19 @@ export function KnowledgeView({
                   }
                 >
                   <strong>{item.title}</strong>
-                  <span>{item.speaker ?? "직접 붙여넣은 자료"}</span>
+                  <span>
+                    {item.speaker ??
+                      (currentCollection?.source_connection_id
+                        ? "연결에서 수집한 자료"
+                        : "직접 붙여넣은 자료")}
+                  </span>
                 </button>
               ))
             ) : (
               <p className="knowledge-empty">
-                저장된 자료가 없습니다. 모음을 선택하고 텍스트를 붙여넣어
-                주세요.
+                {currentCollection?.source_connection_id
+                  ? "아직 수집된 자료가 없습니다. 수집 연결의 실행 이력을 확인하세요."
+                  : "저장된 자료가 없습니다. 모음을 선택하고 텍스트를 붙여넣어 주세요."}
               </p>
             )
           ) : memories?.items.length ? (
@@ -1028,6 +1056,13 @@ function SourceDetail({
       )}
       {document ? (
         <>
+          {document.provenance && (
+            <SourceProvenance
+              accountId={accountId}
+              provenance={document.provenance}
+              onExpired={onExpired}
+            />
+          )}
           <label>
             원문 텍스트
             <textarea
@@ -1348,7 +1383,10 @@ function KnowledgeConfirm({
         </p>
       )}
       {(danger.kind !== "collection" || retained || mode === "delete") && (
-        <p>이 자료나 기억을 참고한 채팅 답변도 지워집니다. 내가 보낸 질문은 유지됩니다.</p>
+        <p>
+          이 자료나 기억을 참고한 채팅 답변도 지워집니다. 내가 보낸 질문은
+          유지됩니다.
+        </p>
       )}
       {error && (
         <p className="notice" role="alert">

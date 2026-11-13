@@ -4,6 +4,7 @@ mod chat;
 mod knowledge;
 mod mail;
 mod providers;
+mod source_connections;
 use axum::{
     Json, Router,
     extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
@@ -293,6 +294,8 @@ pub fn router_with_runtime(
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
         .nest("/api/v1/knowledge", knowledge::routes())
         .nest("/api/v1/mail", mail::routes())
+        .nest("/api/v1/source-connections", source_connections::routes())
+        .nest("/api/v1/source-ingest", source_connections::ingest_routes())
         .merge(browser::routes())
         .route("/api/v1/usage", get(chat::usage))
         .route("/api/v1/admin/usage", get(chat::account_usage))
@@ -310,10 +313,19 @@ async fn boundary(State(state): State<AppState>, request: Request, next: Next) -
     if host != Some(state.config.authority.as_str()) {
         return failure(StatusCode::MISDIRECTED_REQUEST, "invalid_host");
     }
-    if !matches!(
-        *request.method(),
-        Method::GET | Method::HEAD | Method::OPTIONS
-    ) {
+    let collector = request.uri().path().starts_with("/api/v1/source-ingest/");
+    if collector
+        && (request.headers().contains_key(header::COOKIE)
+            || request.headers().contains_key(header::ORIGIN))
+    {
+        return failure(StatusCode::FORBIDDEN, "collector_bearer_required");
+    }
+    if !collector
+        && !matches!(
+            *request.method(),
+            Method::GET | Method::HEAD | Method::OPTIONS
+        )
+    {
         let origin = request
             .headers()
             .get(header::ORIGIN)

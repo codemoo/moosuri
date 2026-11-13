@@ -111,6 +111,42 @@ impl MailService {
         let b = self.store.mail_binding(user, id.into()).await?;
         self.refresh_binding(b, cancel, None).await
     }
+    /// Background collection uses a durable source grant, never a fabricated browser session.
+    /// Share the mailbox refresh lock with interactive reads and approved dispatches.
+    pub(crate) async fn source_credentials(
+        &self,
+        cap: &moosuri_store::SourceIngestCapability,
+        cancel: &CancellationToken,
+    ) -> Result<moosuri_store::SourceGmailCredentials, StoreError> {
+        let first = self.store.source_mail_credentials(cap).await?;
+        let lock = self.lock(&first.mail_connection_id).await;
+        drop(first);
+        let _guard = lock.lock().await;
+        let mut credentials = self.store.source_mail_credentials(cap).await?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| StoreError::Unavailable)?
+            .as_secs() as i64;
+        if credentials.expires_at <= now + 60 {
+            let client = self.oauth.as_ref().ok_or(StoreError::Unavailable)?;
+            let tokens = self
+                .client
+                .refresh(client, &credentials.refresh_token, cancel)
+                .await
+                .map_err(|error| {
+                    if matches!(error, GmailError::Http(400 | 401 | 403)) {
+                        StoreError::Unauthorized
+                    } else {
+                        StoreError::Unavailable
+                    }
+                })?;
+            self.store
+                .save_source_mail_refresh(cap, credentials.revision, tokens)
+                .await?;
+            credentials = self.store.source_mail_credentials(cap).await?;
+        }
+        Ok(credentials)
+    }
     pub async fn read(
         &self,
         user: &UserContext,

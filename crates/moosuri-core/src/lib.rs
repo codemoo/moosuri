@@ -1,6 +1,8 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
 mod automatic_memory;
 pub use automatic_memory::*;
+mod artifacts;
+pub use artifacts::*;
 mod community_skills;
 pub use community_skills::*;
 mod google_setup;
@@ -82,6 +84,24 @@ pub fn typescript_contract() -> String {
         MemoryExtractionChange::decl(),
         MemoryExtractionStatus::decl(),
         MemoryExtractionOrigin::decl(),
+        ArtifactKind::decl(),
+        ArtifactStatus::decl(),
+        GoalLifecycle::decl(),
+        FollowupKind::decl(),
+        FollowupLifecycle::decl(),
+        FollowupProgress::decl(),
+        ArtifactDate::decl(),
+        ArtifactPayload::decl(),
+        ArtifactDependencyKind::decl(),
+        ArtifactDependency::decl(),
+        ArtifactDraft::decl(),
+        ArtifactWrite::decl(),
+        ArtifactDelete::decl(),
+        ArtifactSummary::decl(),
+        ArtifactVersion::decl(),
+        ArtifactReceipt::decl(),
+        ArtifactPage::decl(),
+        ArtifactHistory::decl(),
         CommunitySkillCard::decl(),
         CommunitySkillMutation::decl(),
         GoogleSetupStatus::decl(),

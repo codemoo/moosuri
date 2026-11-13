@@ -17,6 +17,8 @@ use moosuri_store::{
 };
 use std::{collections::BTreeMap, time::Duration};
 
+#[path = "artifact_intent.rs"]
+mod artifact_intent;
 mod memory;
 
 const MAX_OUTPUT: usize = 256 * 1024;
@@ -455,6 +457,7 @@ fn typed_input(
             KnowledgeToolInput::DecimalCalculate { calculation }
         }
         Invocation::External(request) => KnowledgeToolInput::External { request },
+        Invocation::Artifact(request) => KnowledgeToolInput::Artifact { request },
         Invocation::InvalidArguments => KnowledgeToolInput::InvalidArguments,
     };
     // Even well-formed JSON can exceed the private slot bound. Record a small
@@ -600,6 +603,7 @@ pub(crate) async fn execute(
         messages,
         mut context,
         tool_profile,
+        mut artifact_profile,
     } = claimed;
     if signals.stopping().is_cancelled() {
         finish(
@@ -635,7 +639,7 @@ pub(crate) async fn execute(
     if model.function_tools {
         messages[0].text = knowledge_tools::system(tool_profile.as_ref());
     }
-    let request = TextRequest {
+    let mut request = TextRequest {
         model: binding.model.clone(),
         effort: binding.effort.clone(),
         messages,
@@ -691,12 +695,28 @@ pub(crate) async fn execute(
             protocol,
             capabilities: &capabilities,
         };
-        let Some(next) = memory::run(&planning, context, current_text).await else {
+        let Some((next, next_profile)) =
+            artifact_intent::plan(&planning, context, artifact_profile, current_text).await
+        else {
             return;
         };
-        context = next;
+        artifact_profile = next_profile;
+        if artifact_profile.as_ref().is_some_and(|p| p.write) {
+            context = next;
+        } else {
+            let Some(next) = memory::run(&planning, next, current_text).await else {
+                return;
+            };
+            context = next;
+        }
     }
-    let definitions = knowledge_tools::definitions(tool_profile.as_ref());
+    request.messages[0]
+        .text
+        .push_str(&crate::artifact_tools::system(artifact_profile.as_ref()));
+    let mut definitions = knowledge_tools::definitions(tool_profile.as_ref());
+    definitions.extend(crate::artifact_tools::definitions(
+        artifact_profile.as_ref(),
+    ));
     let tool_capability = ToolCapabilities {
         function_tools: true,
     };
@@ -750,7 +770,7 @@ pub(crate) async fn execute(
             &checkpoint,
             &lease,
             total_bytes,
-            true,
+            !artifact_profile.as_ref().is_some_and(|p| p.write),
         )
         .await
         {
@@ -827,6 +847,19 @@ pub(crate) async fn execute(
             }
         };
         signals.changed();
+        if artifact_profile.as_ref().is_some_and(|p| p.write) && calls.is_empty() {
+            let _=store.append_agent_output(&step,vec![OutputPatch::Append{item:"artifact-not-saved".into(),text:"기록을 저장하지 못했습니다. 저장 영수증이 없으므로 완료로 표시하지 않습니다. 문서 편집기에서 내용을 확인할 수 있습니다.".into(),phase:Some(MessagePhase::FinalAnswer),refusal:false}]).await;
+            finish(
+                &store,
+                &lease,
+                Some(&step),
+                RunState::Incomplete,
+                Some(RunFailure::ProtocolFailed),
+                &signals,
+            )
+            .await;
+            return;
+        }
         if outcome != FinishOutcome::ContinuationRequired || calls.is_empty() {
             let (state, error) = match outcome {
                 FinishOutcome::Completed if observed.pending.has_text && calls.is_empty() => {
@@ -873,6 +906,17 @@ pub(crate) async fn execute(
         };
         results.clear();
         for call in &calls {
+            let artifact_write = matches!(
+                &call.input,
+                KnowledgeToolInput::Artifact {
+                    request: moosuri_core::ArtifactToolRequest::Write { .. }
+                }
+            );
+            let _artifact_delivery = if artifact_write {
+                Some(signals.delivery.write().await)
+            } else {
+                None
+            };
             let value =
                 match execute_tool(&store, &step, call, &mail, &web, signals.stopping()).await {
                     Ok(value) => value,
@@ -882,6 +926,29 @@ pub(crate) async fn execute(
                         return;
                     }
                 };
+            if artifact_write
+                && matches!(&value,KnowledgeToolResult::External(v) if v["error"]=="external_provenance_unavailable")
+            {
+                let _=store.append_agent_output(&step,vec![OutputPatch::Append{item:"artifact-external-context".into(),text:"이 대화의 메일·웹·브라우저 근거는 아직 기록의 철회 연결로 보관할 수 없습니다. 근거를 자료에 저장하거나 새 대화에서 작성해 주세요. 기록을 변경하지 않았습니다.".into(),phase:Some(MessagePhase::FinalAnswer),refusal:false}]).await;
+                finish(
+                    &store,
+                    &lease,
+                    Some(&step),
+                    RunState::Incomplete,
+                    Some(RunFailure::ProtocolFailed),
+                    &signals,
+                )
+                .await;
+                return;
+            }
+            if artifact_write
+                && matches!(&value,KnowledgeToolResult::External(v) if v.get("request_id").is_some()&&v.get("url").is_some())
+            {
+                // Store atomically committed the receipt, final text and Completed.
+                // Do not make another model or mutation call after a lost ACK.
+                signals.changed();
+                return;
+            }
             let output = match serde_json::to_string(&value) {
                 Ok(output) => output,
                 Err(_) => {

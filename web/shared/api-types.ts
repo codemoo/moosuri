@@ -8,6 +8,24 @@ export type MemoryExtractionChange = { expected_revision: number, enabled: boole
 reported_speaker: string, daily_calls: number, daily_input_bytes: number, daily_output_tokens: number, };
 export type MemoryExtractionStatus = { revision: number, enabled: boolean, attribution_mode: string, reported_speaker: string, daily_calls: number, daily_input_bytes: number, daily_output_tokens: number, state: string, reason: string | null, saved_count: number, };
 export type MemoryExtractionOrigin = { model: string, provider_revision: number, source_id: string, source_revision: number, policy_revision: string, reported_speaker: string, };
+export type ArtifactKind = "document" | "goal" | "followup";
+export type ArtifactStatus = "active" | "withdrawn" | "deleted";
+export type GoalLifecycle = "active" | "paused" | "achieved" | "cancelled";
+export type FollowupKind = "request" | "promise" | "waiting_for_reply";
+export type FollowupLifecycle = "requested" | "committed" | "waiting" | "resolved" | "cancelled";
+export type FollowupProgress = "none" | "partial" | "delegated";
+export type ArtifactDate = { utc: number, timezone: string, };
+export type ArtifactPayload = { "kind": "document" } | { "kind": "goal", outcome: string, success_criteria: string, progress: string, lifecycle: GoalLifecycle, } | { "kind": "followup", record_kind: FollowupKind, person: string, lifecycle: FollowupLifecycle, progress: FollowupProgress, muted: boolean, due: ArtifactDate | null, review: ArtifactDate | null, snooze: ArtifactDate | null, };
+export type ArtifactDependencyKind = "source" | "memory" | "artifact";
+export type ArtifactDependency = { kind: ArtifactDependencyKind, id: string, revision: number, };
+export type ArtifactDraft = { title: string, body: string, payload: ArtifactPayload, references: Array<ArtifactDependency>, };
+export type ArtifactWrite = { request_id: string, id: string | null, expected_revision: number | null, draft: ArtifactDraft, };
+export type ArtifactDelete = { request_id: string, expected_revision: number, };
+export type ArtifactSummary = { id: string, kind: ArtifactKind, revision: number, status: ArtifactStatus, title: string, updated_at: number, };
+export type ArtifactVersion = { artifact: ArtifactSummary, draft: ArtifactDraft | null, };
+export type ArtifactReceipt = { request_id: string, id: string, revision: number, status: ArtifactStatus, url: string, };
+export type ArtifactPage = { items: Array<ArtifactSummary>, next_after: string | null, coverage_complete: boolean, };
+export type ArtifactHistory = { items: Array<ArtifactVersion>, next_before: number | null, };
 export type CommunitySkillCard = { id: string, name: string, description: string, source: string, source_commit: string, version: string, digest: string, license: string, capabilities: Array<string>, installed_version: string | null, installed_digest: string | null, enabled: boolean, hidden: boolean, revision: number, can_rollback: boolean, readiness: string, missing: Array<string>, github?: GitHubSkillLocation, };
 export type CommunitySkillMutation = { action: string, expected_revision: number, expected_digest: string | null, };
 export type GoogleSetupStatus = { revision: number, mode: string, configured: boolean, client_id: string | null, redirect_uri: string, saved_redirect_uri: string | null, redirect_matches: boolean, personal_connections: Array<MailConnection>, };
@@ -65,7 +83,7 @@ export type RunView = { id: string, request_id: string, thread_id: string, attem
 /**
  * Fixed application error category, never provider text.
  */
-error: string | null, usage: RunUsage, evidence: Array<ChatEvidence>, web_evidence?: Array<WebEvidence>, can_retry: boolean, can_cancel: boolean, created_at: number, };
+error: string | null, usage: RunUsage, evidence: Array<ChatEvidence>, web_evidence?: Array<WebEvidence>, artifact_receipts?: Array<ArtifactReceipt>, can_retry: boolean, can_cancel: boolean, created_at: number, };
 export type ChatTurn = { sequence: number, user_text: string, assistant: Array<AssistantMessage>, run: RunView, };
 export type ChatPage = { thread_id: string,
 /**

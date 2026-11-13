@@ -13,7 +13,7 @@ fn draft(text: &str) -> MemoryDraft {
 }
 fn downgrade_to_legacy(root: &Path) {
     let conn = Connection::open(root.join("assistant.sqlite")).unwrap();
-    conn.execute_batch("DROP TABLE destructive_journal_meta; PRAGMA user_version=14;")
+    conn.execute_batch("DROP TABLE personal_artifact_run_profiles; DROP TABLE personal_artifact_run_dependencies; DROP TABLE personal_artifact_command_plans; DROP TABLE personal_artifact_mutations; DROP TABLE personal_artifact_dependencies; DROP TABLE personal_artifact_versions; DROP TABLE personal_artifacts; DROP TABLE destructive_journal_meta; PRAGMA user_version=14;")
         .unwrap();
     drop(conn);
     std::fs::remove_file(root.join(FILE_NAME)).unwrap();

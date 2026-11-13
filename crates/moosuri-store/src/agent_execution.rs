@@ -47,6 +47,9 @@ pub enum KnowledgeToolInput {
     External {
         request: moosuri_core::ExternalToolRequest,
     },
+    Artifact {
+        request: moosuri_core::ArtifactToolRequest,
+    },
     InvalidArguments,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -114,6 +117,7 @@ pub struct AgentClaim {
     pub messages: Vec<ContextMessage>,
     pub context: AgentContext,
     pub tool_profile: Option<moosuri_core::RunToolProfile>,
+    pub artifact_profile: Option<moosuri_core::ArtifactRunProfile>,
 }
 /// One model dispatch capability. Its receipt nonce also permits late accounting,
 /// even after the user deleted the content. It cannot be constructed by callers.
@@ -257,7 +261,7 @@ pub(super) fn inherit_dependencies(
     prior: &str,
 ) -> Result<()> {
     let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
+        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
         params![tenant, prior],
         |r| r.get(0),
     )?;
@@ -265,6 +269,7 @@ pub(super) fn inherit_dependencies(
         return Ok(());
     }
     let generation = knowledge::generation(conn, tenant)?;
+    conn.execute("INSERT OR IGNORE INTO personal_artifact_run_dependencies SELECT tenant_id,?2,artifact_id,revision FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     conn.execute("INSERT OR IGNORE INTO agent_execution(tenant_id,run_id,agent,generation) VALUES(?1,?2,0,?3)",params![tenant,run,generation])?;
     conn.execute("INSERT OR IGNORE INTO mail_run_dependencies SELECT tenant_id,?2,connection_id,epoch FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     conn.execute("INSERT OR IGNORE INTO agent_dependencies SELECT tenant_id,?2,kind,object_id,revision FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
@@ -279,6 +284,7 @@ pub(super) fn invalidate_object(
     object: &str,
     revision: Option<i64>,
 ) -> Result<()> {
+    crate::artifacts::invalidate_dependency(conn, tenant, kind, object, revision)?;
     let runs=conn.prepare("SELECT DISTINCT run_id FROM agent_dependencies WHERE tenant_id=?1 AND kind=?2 AND object_id=?3 AND (?4 IS NULL OR revision=?4)")?
       .query_map(params![tenant,kind,object,revision],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     purge_runs(conn, tenant, runs)
@@ -297,6 +303,10 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
     for id in &ids {
         let run = chat::load_run(conn, tenant, id)?;
         crate::mail::purge_run(conn, tenant, id)?;
+        conn.execute(
+            "DELETE FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2",
+            params![tenant, id],
+        )?;
         threads.insert(run.thread);
         conn.execute(
             "DELETE FROM chat_output WHERE tenant_id=?1 AND run_id=?2",
@@ -435,6 +445,9 @@ fn read_tool(
     input: &KnowledgeToolInput,
 ) -> Result<KnowledgeToolResult> {
     let read = match input {
+        KnowledgeToolInput::Artifact { request } => {
+            crate::artifacts::agent::tool(conn, run, request).map(KnowledgeToolResult::External)
+        }
         KnowledgeToolInput::SkillRead { pin } => Ok(skills::read(conn, run, pin)),
         KnowledgeToolInput::DecimalCalculate { calculation } => {
             if run
@@ -639,8 +652,9 @@ impl Store {
                 chat::transition(&tx,&run,RunState::Running,None)?;
                 let lease=RunLease{tenant:tenant.clone(),run:id.clone(),attempt:run.attempt,nonce:n,epoch:run.epoch};
                 let context=context(&tx,&tenant,&id)?;
+                let artifact_profile=crate::artifacts::agent::profile(&tx,&run.tenant,&run.id)?;
                 tx.commit()?;
-                return Ok(Some(AgentClaim{lease,binding,model:run.model,messages,context,tool_profile:run.tool_profile}));
+                return Ok(Some(AgentClaim{lease,binding,model:run.model,messages,context,tool_profile:run.tool_profile,artifact_profile}));
             }
             tx.commit()?;Ok(None)
         }).await
@@ -727,10 +741,16 @@ impl Store {
             if let Some(saved)=saved {let result=decoded(&saved)?;tx.commit()?;return Ok(result)}
             let used: i64=tx.query_row("SELECT tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
             if used>=12 {return Err(StoreError::BudgetExhausted)}
-            let input=decoded(&input)?;let result=read_tool(&tx,&run,&input)?;
+            let input:KnowledgeToolInput=decoded(&input)?;
+            if matches!(&input,KnowledgeToolInput::Artifact{request:moosuri_core::ArtifactToolRequest::Write{..}}) && tx.query_row("SELECT count(*) FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get::<_,i64>(0))?!=1{return Err(StoreError::InvalidInput)}
+            let result=read_tool(&tx,&run,&input)?;
             let generation=knowledge::generation(&tx,&run.tenant)?;
             tx.execute("UPDATE agent_execution SET tool_calls=tool_calls+1,checkpoint_seq=checkpoint_seq+1,generation=?3 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,generation])?;
             tx.execute("UPDATE agent_tool_slots SET result=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id,encoded(&result)?])?;
+            if matches!(&input,KnowledgeToolInput::Artifact{request:moosuri_core::ArtifactToolRequest::Write{..}})
+                && matches!(&result,KnowledgeToolResult::External(v) if v.get("request_id").is_some() && v.get("url").is_some()) {
+                crate::artifacts::agent::finish_confirmation(&tx,&run)?;
+            }
             tx.commit()?;Ok(result)
         }).await
     }

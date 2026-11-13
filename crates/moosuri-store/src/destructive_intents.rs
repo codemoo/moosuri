@@ -33,6 +33,11 @@ pub(crate) enum Effect {
         effective_revision: i64,
         command: String,
     },
+    DeleteArtifact {
+        target: String,
+        request: String,
+        revision: i64,
+    },
     DeleteThread {
         target: String,
     },
@@ -61,6 +66,17 @@ fn validate(tenant: &str, effect: &Effect) -> Result<()> {
         | Effect::DisconnectCollection { target }
         | Effect::RevokeSource { target }
         | Effect::DeleteThread { target } => id(target)?,
+        Effect::DeleteArtifact {
+            target,
+            request,
+            revision,
+        } => {
+            id(target)?;
+            id(request)?;
+            if !(1..=128).contains(revision) {
+                return Err(StoreError::InvalidInput);
+            }
+        }
         Effect::ForgetCommand {
             target,
             revision,
@@ -259,6 +275,19 @@ pub(crate) fn apply(conn: &Connection, record: &Record) -> Result<()> {
                 *effective_revision,
             )?;
         }
+        Effect::DeleteArtifact {
+            target,
+            request,
+            revision,
+        } => artifacts::apply_delete(
+            conn,
+            &record.tenant,
+            target,
+            &moosuri_core::ArtifactDelete {
+                request_id: request.clone(),
+                expected_revision: *revision,
+            },
+        )?,
         Effect::DeleteThread { target } => {
             mail::purge_thread(conn, &record.tenant, target)?;
             conn.execute(

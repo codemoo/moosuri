@@ -33,6 +33,7 @@ import "./chat.css";
 export type PendingSend = {
   request_id: string;
   text: string;
+  artifact_target?:{id:string;revision:number};
   status: "sending" | "accepted" | "uncertain";
 };
 export type ChatMemory = {
@@ -59,6 +60,9 @@ type Props = {
   onThreadUpdated: () => void;
   openSettings: () => void;
   onOpenEvidence?: (reference: ChatEvidence) => void;
+  artifactTarget?:{id:string;revision:number;title:string}|null;
+  clearArtifactTarget?:()=>void;
+  openArtifact?:(id:string)=>void;
 };
 const labels: Record<RunView["state"], string> = {
   queued: "대기 중",
@@ -620,7 +624,7 @@ export function ChatPanel(props: Props) {
       const result = await sendScope.request<unknown>(
         `/threads/${encodeURIComponent(thread)}/messages`,
         "POST",
-        { request_id: value.request_id, text: value.text },
+        { request_id: value.request_id, text: value.text,...(value.artifact_target?{artifact_target:value.artifact_target}:{}) },
         controller.signal,
       );
       if (
@@ -699,6 +703,7 @@ export function ChatPanel(props: Props) {
     const value: PendingSend = {
       request_id: resubmit?.request_id ?? crypto.randomUUID(),
       text,
+      artifact_target:resubmit?resubmit.artifact_target:(callbacks.current.artifactTarget?{id:callbacks.current.artifactTarget.id,revision:callbacks.current.artifactTarget.revision}:undefined),
       status: "sending",
     };
     callbacks.current.onPending(originalSlot, value, resubmit?.request_id);
@@ -808,6 +813,7 @@ export function ChatPanel(props: Props) {
           기록 새로고침
         </button>
       </div>
+      {props.artifactTarget&&<p>선택한 기록: {props.artifactTarget.title} · v{props.artifactTarget.revision} <button onClick={props.clearArtifactTarget}>선택 해제</button></p>}
       <BrowserWorkspace
         accountId={accountId}
         threadId={threadId}
@@ -943,6 +949,7 @@ export function ChatPanel(props: Props) {
                     ))}
                   </div>
                 )}
+                {turn.run.artifact_receipts?.map(r=><button key={r.request_id} onClick={()=>props.openArtifact?.(r.id)}>저장한 기록 · 버전 {r.revision} ↗</button>)}
                 <WebEvidence observations={turn.run.web_evidence}/>
                 <details className="run-model">
                   <summary>실행 정보</summary>

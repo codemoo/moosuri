@@ -22,6 +22,7 @@ import { ChatPanel, type ChatMemory } from "./ChatPanel";
 import { PwaInstallButton } from "./PwaInstallButton";
 import { MailConnections } from "./MailConnections";
 import { GoogleSetup } from "./GoogleSetup";
+import { Artifacts, type ArtifactDrafts } from "./Artifacts";
 import { CommunitySkills } from "./CommunitySkills";
 import { SourceConnections } from "./SourceConnections";
 import { UsageView } from "./UsageView";
@@ -668,6 +669,9 @@ function Workspace({
   const [knowledgeDrafts, setKnowledgeDrafts] = useState(
     initialKnowledgeDrafts,
   );
+  const [artifactTarget,setArtifactTarget]=useState<{id:string;revision:number;title:string}|null>(null);
+  const [artifactKind,setArtifactKind]=useState<import("../shared/api-types").ArtifactKind>("document");
+  const [artifactDrafts,setArtifactDrafts]=useState<ArtifactDrafts>({});
   const [knowledgeTarget, setKnowledgeTarget] = useState<ChatEvidence | null>(null);
   const [chatMemory, setChatMemory] = useState<ChatMemory>({
     drafts: {},
@@ -700,6 +704,7 @@ function Workspace({
   const personalMail = path === "/settings/mail";
   const personalSources = path === "/settings/sources";
   const communitySkills = path === "/app/skills";
+  const artifactPage=path==="/app/artifacts"||path.startsWith("/app/artifacts/");
   const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -935,6 +940,7 @@ function Workspace({
         >
           자료 수집 연결<span aria-hidden="true">↗</span>
         </button>
+        <button className={`nav-link ${artifactPage?"chosen":""}`} onClick={()=>{navigate("/app/artifacts");setDrawer(false)}}>문서 · 목표 · 요청<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${communitySkills ? "chosen" : ""}`} onClick={()=>{navigate("/app/skills");setDrawer(false)}}>제안 · 할 수 있는 일<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${personalMail ? "chosen" : ""}`} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
         <button
@@ -994,7 +1000,7 @@ function Workspace({
           </button>
           <div>
             <span className="eyebrow">
-              {communitySkills ? "제안" : personalSources ? "내 연결" : knowledgeOpen
+              {artifactPage ? "나의 기록" : communitySkills ? "제안" : personalSources ? "내 연결" : knowledgeOpen
                 ? "나의 기록"
                 : admin
                   ? "INSTALLATION"
@@ -1003,7 +1009,7 @@ function Workspace({
                     : "YOUR SPACE"}
             </span>
             <h1>
-              {communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
+              {artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
                   ? "기억"
                   : "자료"
@@ -1067,7 +1073,7 @@ function Workspace({
             </button>
           </nav>
         )}
-        {personalSources ? (
+        {artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
         ) : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
           setSelected(null);
@@ -1126,6 +1132,9 @@ function Workspace({
         ) : (
           <ChatPanel
             accountId={session.user.id}
+            artifactTarget={artifactTarget}
+            clearArtifactTarget={()=>setArtifactTarget(null)}
+            openArtifact={id=>navigate(`/app/artifacts/${id}`)}
             name={session.user.name}
             threadId={selected}
             memory={chatMemory}
@@ -1498,3 +1507,5 @@ function Admin({
     </main>
   );
 }
+
+function namesForArtifact(kind:import("../shared/api-types").ArtifactKind){return kind==="document"?"문서":kind==="goal"?"목표":"요청 기록"}

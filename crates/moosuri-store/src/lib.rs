@@ -2,6 +2,7 @@
 //! Authentication capabilities can only be created here and are revalidated on every use.
 mod automatic_memory;
 pub use automatic_memory::{ExtractionClaim, ExtractionLease, ExtractionUnit};
+mod artifacts;
 mod community_skills;
 pub use community_skills::author as skill_author;
 mod google_setup;
@@ -165,7 +166,7 @@ struct LoginAccount {
     recovery: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 15;
+const CURRENT_SCHEMA_VERSION: i64 = 16;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -403,6 +404,12 @@ impl Store {
             &mut knowledge_journal,
             version < 15,
         )?;
+        if version < 16 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0016_personal_artifacts.sql")
+            ))?;
+        }
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;
         browser::restart(&conn)?;

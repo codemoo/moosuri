@@ -55,7 +55,10 @@ async fn model_round(
     assert_eq!(
         tools,
         [
+            "artifact_read",
+            "artifact_search",
             "decimal_calculate",
+            "followup_briefing",
             "knowledge_read_memory",
             "knowledge_read_source",
             "knowledge_search",

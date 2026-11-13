@@ -424,10 +424,10 @@ OAuth 서비스나 실계정 검증 완료를 주장하지 않는다. 운영 배
 
 ## 아직 구현하지 않은 범위
 
-구독 인증·개인 provider 연결, 문서/목표·실모델 평가, 예약·캘린더·알림·푸시,
+구독 인증·개인 provider 연결, 실모델 평가, 예약·캘린더·알림·푸시,
 첨부·녹음·PWA 공유받기, 공용 OAuth 연결 서비스·Slack OAuth 앱 설치, 인증된 사이트의 자동 조작·장기 브라우저 프로필 복구·배송/예약/전화/거래,
-외부 Git 스킬 설치·개인 학습 공유·자동 catalog 갱신, 독립 볼트·TOTP·credential broker,
-백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
+개인 학습 공유·자동 catalog 갱신, 독립 볼트·TOTP·credential broker,
+운영 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
 연결 여부만 선택 사항이다. 이번 웹·브라우저·Gmail 구현을 전체 비서 완성으로 표시하지 않는다.
 
 계정 복구 단위는 macOS·Linux x86_64 Rust340개(실모델 opt-in1개 제외)를 통과했고 독립 검토에서 발견한 초기화 부작용을 수정·재검토했다.
@@ -514,3 +514,16 @@ fixture 파일 권한1건을 수정한 뒤 영향받는 검사와 doc-tests도 �
 `moosuri skills init <slug> [--output DIRECTORY]`와 `moosuri skills check DIRECTORY`로 설치 없이 네 파일 instruction template 작성과 호환성 검사를 제공한다. 합성 정상/지원 불가 예제와 Apache-2.0 전문을 생성하고 installer의 기존 content validator를 그대로 공유한다. 일반 repository 작성은 허용하며 기존 목적지·링크·special/executable 파일·크기 초과·app-data 경로를 거절한다. init은 완성된 staging을 no-replace로 게시하고 알 수 없는 tree를 정리하지 않는다.
 
 이 단위는 source 작성·호환성 검사다. contributor의 편집·검토·commit/push는 명시적 별도 행동이며 설치 UI의 immutable GitHub pin과 native 도구 권한은 그대로다. release/catalog generator·private-learning export·설치본 직접 수정·GC는 미구현이다. 실제 합성 검사와 제한은 [검증 기록](reviews/2026-11-13-community-authoring.md)에 남긴다. 독립 검토와 macOS 통합 CLI5개, Linux Store3개·CLI13개(참조 도구 opt-in1개 제외)를 통과했다. Linux no-replace 게시·동시 init·기존 backup/recovery/설치 경로도 확인했다.
+
+## 개인 문서·목표·요청 기록
+
+[개인 기록](artifacts.md)을 schema16으로 통합했다. 같은 ID의 편집·버전·저장 영수증,
+대화에서 현재 지시로 작성/수정, 근거 철회와 삭제 복구를 제공한다. 저장과 고정 완료
+메시지를 한 transaction으로 묶어 중단 후 문서를 다시 생성하지 않는다. 편집 초안은
+충돌 시 보존하며 날짜는 기기의 현지 시각으로 입력한다.
+
+독립 검토와 수정 재검토, 최종 Store10·agent4·HTTP2, Linux 관련25개 검사와 실제
+Chromium의 생성/수정/현지 날짜/모바일 스크롤을 확인했다. React 관련48개와 최종
+화면 수정 후27개가 통과했다. 합성 검사와 실제 모델의 문서 품질 평가는 구별한다.
+이 단위는 F15와 F28의 기록/briefing 부분이다. 미래 예약·알림·자동 약속 감지는
+[검증 기록](reviews/2026-11-13-personal-artifacts.md)의 후속 범위로 남는다.

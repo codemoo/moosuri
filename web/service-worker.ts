@@ -11,7 +11,7 @@ const publicAssets = new Set(MOOSURI_SHELL_ASSETS);
 const navigationPaths = new Set([
   "/", "/app", "/login", "/admin", "/admin/providers", "/admin/google", "/admin/usage",
   "/settings/model", "/settings/mail", "/settings/sources", "/settings/usage",
-  "/app/knowledge", "/app/memory", "/app/skills",
+  "/app/knowledge", "/app/memory", "/app/skills", "/app/artifacts",
 ]);
 
 self.addEventListener("install", (event) => {
@@ -41,7 +41,8 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
-  if (request.mode === "navigate" && navigationPaths.has(url.pathname)) {
+  const artifactPage = /^\/app\/artifacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(url.pathname);
+  if (request.mode === "navigate" && (navigationPaths.has(url.pathname) || artifactPage)) {
     event.respondWith((async () => {
       try { return await fetch(request); }
       catch {

@@ -22,6 +22,8 @@ pub(super) struct EventQuery {
 pub(super) struct SubmitInput {
     request_id: String,
     text: String,
+    #[serde(default)]
+    artifact_target: Option<moosuri_core::ArtifactTarget>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +52,13 @@ pub(super) async fn submit(
     }
     let turn = state
         .store
-        .submit_turn(&user, id, input.request_id, input.text)
+        .submit_turn_with_artifact(
+            &user,
+            id,
+            input.request_id,
+            input.text,
+            input.artifact_target,
+        )
         .await?;
     state.runtime.wake();
     Ok((StatusCode::CREATED, Json(turn)).into_response())

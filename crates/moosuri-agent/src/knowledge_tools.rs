@@ -182,11 +182,17 @@ pub(super) enum Invocation {
     SkillRead(SkillPin),
     DecimalCalculate(DecimalCalculation),
     External(moosuri_core::ExternalToolRequest),
+    Artifact(moosuri_core::ArtifactToolRequest),
     InvalidArguments,
 }
 pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
     if arguments.len() > 16 * 1024 {
         return Invocation::InvalidArguments;
+    }
+    if name.starts_with("artifact_") || name == "followup_briefing" {
+        return crate::artifact_tools::parse(name, arguments)
+            .map(Invocation::Artifact)
+            .unwrap_or(Invocation::InvalidArguments);
     }
     if name.starts_with("web_") || name.starts_with("browser_") {
         return crate::web_tools::parse(name, arguments)

@@ -96,7 +96,10 @@ async fn scripted_response(
             "knowledge_read_source",
             "knowledge_read_memory",
             "skill_read",
-            "decimal_calculate"
+            "decimal_calculate",
+            "artifact_search",
+            "artifact_read",
+            "followup_briefing"
         ])
     );
     state.requests.lock().await.push(body.clone());

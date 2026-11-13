@@ -247,6 +247,10 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             let refs = crate::web::evidence(conn, &run.tenant, &run.id)?;
             (!refs.is_empty()).then_some(refs)
         },
+        artifact_receipts: {
+            let r = crate::artifacts::agent::receipts(conn, &run.tenant, &run.id)?;
+            (!r.is_empty()).then_some(r)
+        },
         can_retry: !run.state.active()
             && run.state != RunState::Completed
             && run.attempt < 32
@@ -783,6 +787,28 @@ pub(super) fn submit_turn_in(
     request_id: String,
     text: String,
 ) -> Result<ChatTurn> {
+    submit_turn_artifact_in(
+        tx,
+        provider_key,
+        web_profile,
+        user,
+        thread_id,
+        request_id,
+        text,
+        None,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn submit_turn_artifact_in(
+    tx: &Connection,
+    provider_key: &[u8; 32],
+    web_profile: &moosuri_core::WebToolProfile,
+    user: UserContext,
+    thread_id: String,
+    request_id: String,
+    text: String,
+    target: Option<moosuri_core::ArtifactTarget>,
+) -> Result<ChatTurn> {
     let user = validate(tx, &user, true, false)?;
     thread_exists(tx, &user, &thread_id)?;
     if text.trim().is_empty() || text.len() > 8192 {
@@ -791,7 +817,11 @@ pub(super) fn submit_turn_in(
     let request_id = Uuid::parse_str(&request_id)
         .map_err(|_| StoreError::InvalidInput)?
         .to_string();
-    let payload: [u8; 32] = Sha256::digest(json(&(&thread_id, &text))?.as_bytes()).into();
+    let payload: [u8; 32] = if target.is_some() {
+        Sha256::digest(json(&(&thread_id, &text, &target))?.as_bytes()).into()
+    } else {
+        Sha256::digest(json(&(&thread_id, &text))?.as_bytes()).into()
+    };
     let existing: Option<(String, Vec<u8>)> = tx
         .query_row(
             "SELECT id,payload_digest FROM chat_runs WHERE tenant_id=?1 AND request_id=?2",
@@ -804,6 +834,12 @@ pub(super) fn submit_turn_in(
             return Err(StoreError::Conflict);
         }
         return turn(tx, &load_run(tx, &user.tenant.0, &id)?);
+    }
+    if let Some(t) = &target {
+        let v = crate::artifacts::version(tx, &user.tenant.0, &t.id, None)?;
+        if v.artifact.revision != t.revision || v.draft.is_none() {
+            return Err(StoreError::Conflict);
+        }
     }
     queue_capacity(tx, &user.tenant.0)?;
     let choice = providers::selected_choice(tx, &user)?;
@@ -835,6 +871,17 @@ pub(super) fn submit_turn_in(
     let order = next_order(tx)?;
     tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(||crate::web::admitted_profile(tx,&user,web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
     let run = load_run(tx, &user.tenant.0, &id)?;
+    if run.tool_profile.is_some() {
+        tx.execute(
+            "INSERT INTO personal_artifact_run_profiles VALUES(?1,?2,1,?3,?4,0)",
+            params![
+                user.tenant.0,
+                id,
+                target.as_ref().map(|t| &t.id),
+                target.as_ref().map(|t| t.revision)
+            ],
+        )?;
+    }
     let result = turn(tx, &run)?;
     emit(
         tx,
@@ -1119,4 +1166,35 @@ fn account_usage_inner(db: &mut Database, user: UserContext) -> Result<AccountUs
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(AccountUsageResponse { accounts })
+}
+
+impl Store {
+    pub async fn submit_turn_with_artifact(
+        &self,
+        user: &UserContext,
+        thread: String,
+        request: String,
+        text: String,
+        target: Option<moosuri_core::ArtifactTarget>,
+    ) -> Result<ChatTurn> {
+        let user = user.clone();
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let result = submit_turn_artifact_in(
+                &tx,
+                &db.provider_key,
+                &db.web_profile,
+                user,
+                thread,
+                request,
+                text,
+                target,
+            )?;
+            tx.commit()?;
+            Ok(result)
+        })
+        .await
+    }
 }

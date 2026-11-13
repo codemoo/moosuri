@@ -1,5 +1,6 @@
 //! Supervised, bounded assistant execution. No browser owns a model task.
 //! Watch notifications contain only a monotonic counter, never private identifiers.
+mod artifact_tools;
 mod automatic_memory;
 pub mod browser;
 mod knowledge_tools;

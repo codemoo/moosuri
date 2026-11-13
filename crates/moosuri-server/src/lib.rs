@@ -1,4 +1,5 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
+mod artifacts;
 mod automatic_memory;
 mod browser;
 mod chat;
@@ -275,6 +276,7 @@ pub fn router_with_runtime(
         .route("/api/v1/runs/{id}/cancel", post(chat::cancel))
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
         .nest("/api/v1/community-skills", community_skills::routes())
+        .nest("/api/v1/artifacts", artifacts::routes())
         .nest("/api/v1/knowledge", knowledge::routes())
         .nest("/api/v1/mail", mail::routes())
         .nest("/api/v1/admin/google", google_setup::routes())
@@ -329,10 +331,12 @@ async fn boundary(State(state): State<AppState>, request: Request, next: Next) -
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
     );
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
-    );
+    // Private download handlers can supply a stricter sandbox policy.
+    headers
+        .entry(header::CONTENT_SECURITY_POLICY)
+        .or_insert(HeaderValue::from_static(
+            "default-src 'none'; frame-ancestors 'none'",
+        ));
     response
 }
 

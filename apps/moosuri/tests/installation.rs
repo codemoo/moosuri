@@ -149,6 +149,8 @@ fn cli_init_embedded_app_http_session_and_restart_work_together() {
         "/app/knowledge",
         "/app/memory",
         "/app/skills",
+        "/app/artifacts",
+        "/app/artifacts/00000000-0000-4000-8000-000000000001",
         "/settings/sources",
         "/admin/google",
     ] {

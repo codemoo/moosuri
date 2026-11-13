@@ -120,3 +120,7 @@ its expected-account header. Unknown input fields and invalid/stale revisions fa
 The ingest HTTP envelope allows 2 MiB and memory envelopes 128 KiB to cover JSON escaping;
 decoded Store limits remain stricter. See generated Rust/TypeScript DTOs for fields,
 and [status](status.md) for the actual validation stage and remaining assistant work.
+
+문서·목표·요청은 [personal artifacts](artifacts.md)의 별도 versioned family다.
+source/memory를 읽어 생성한 기록은 전체 전이 evidence를 유지하며 철회 시 내용과
+runtime 파생값을 지운다. 새 독립 작성 기록은 자동 ingestion/extraction 대상이 아니다.

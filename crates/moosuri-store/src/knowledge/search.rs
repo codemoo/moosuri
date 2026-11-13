@@ -9,10 +9,19 @@ pub(super) fn search(
 pub(crate) fn search_limit(
     conn: &Connection,
     user: UserContext,
-    mut query: KnowledgeQuery,
+    query: KnowledgeQuery,
     limit: usize,
 ) -> Result<KnowledgeSearch> {
     let user = validate(conn, &user, true, false)?;
+    search_owner(conn, &user.tenant.0, query, limit)
+}
+// Private caller has already checked its execution grant in the writer transaction.
+pub(crate) fn search_owner(
+    conn: &Connection,
+    tenant: &str,
+    mut query: KnowledgeQuery,
+    limit: usize,
+) -> Result<KnowledgeSearch> {
     // An exact empty string is an explicit read-only memory browse. Whitespace
     // and empty source searches retain the ordinary query validation.
     let browse = query.kind == KnowledgeKind::Memory && query.text.is_empty();
@@ -25,7 +34,7 @@ pub(crate) fn search_limit(
     }
     if let Some(collection) = &mut query.collection_id {
         *collection = id(collection)?;
-        let group = super::collection(conn, &user.tenant.0, collection)?;
+        let group = super::collection(conn, tenant, collection)?;
         if group.deleted {
             return Err(StoreError::NotFound);
         }
@@ -45,8 +54,8 @@ pub(crate) fn search_limit(
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
     );
-    let generation_value = generation(conn, &user.tenant.0)?;
-    let (offset, time) = match uncurs(&user.tenant.0, &scope, generation_value, incoming)? {
+    let generation_value = generation(conn, tenant)?;
+    let (offset, time) = match uncurs(tenant, &scope, generation_value, incoming)? {
         Some(position) => {
             serde_json::from_str::<(i64, i64)>(&position).map_err(|_| StoreError::InvalidInput)?
         }
@@ -72,7 +81,7 @@ pub(crate) fn search_limit(
     } else {
         "SELECT m.id,v.revision,json_extract(v.draft,'$.subject') AS title,json_extract(v.draft,'$.text') AS text,json_extract(v.draft,'$.subject') AS subject,json_extract(v.draft,'$.speaker') AS speaker,json_extract(v.draft,'$.valid_from') AS valid_from,json_extract(v.draft,'$.valid_until') AS valid_until FROM knowledge_memories m JOIN knowledge_memory_versions v ON v.tenant_id=m.tenant_id AND v.memory_id=m.id AND v.revision=(SELECT max(v2.revision) FROM knowledge_memory_timeline v2 WHERE v2.tenant_id=m.tenant_id AND v2.memory_id=m.id AND (v2.valid_from IS NULL OR v2.valid_from<=?5)) WHERE m.tenant_id=?1 AND m.status!='forgotten' AND v.status='active' AND ?2 IS NULL AND (?3 IS NULL OR json_extract(v.draft,'$.subject')=?3) AND (?4 IS NULL OR json_extract(v.draft,'$.speaker')=?4) AND (json_extract(v.draft,'$.valid_from') IS NULL OR json_extract(v.draft,'$.valid_from')<=?5) AND (json_extract(v.draft,'$.valid_until') IS NULL OR json_extract(v.draft,'$.valid_until')>?5)"
     };
-    let key = tenant_key(&user.tenant.0);
+    let key = tenant_key(tenant);
     let fts = normalized.chars().count() >= 3;
     let matching = format!(
         "tenant_key : \"{}\" AND normalized : \"{}\"",
@@ -93,7 +102,7 @@ pub(crate) fn search_limit(
         let count: i64 = conn.query_row(
             &format!("SELECT count(*) FROM (SELECT id FROM ({base}) ORDER BY id LIMIT 1001)"),
             params![
-                user.tenant.0,
+                tenant,
                 query.collection_id,
                 query.subject,
                 query.speaker,
@@ -117,7 +126,7 @@ pub(crate) fn search_limit(
     let mut hits = statement
         .query_map(
             params![
-                user.tenant.0,
+                tenant,
                 query.collection_id,
                 query.subject,
                 query.speaker,
@@ -148,7 +157,7 @@ pub(crate) fn search_limit(
     hits.truncate(limit);
     let next_cursor = if more {
         Some(cursor(
-            &user.tenant.0,
+            tenant,
             &scope,
             generation_value,
             &encode(&(offset + limit as i64, time))?,

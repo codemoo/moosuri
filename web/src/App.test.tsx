@@ -827,3 +827,15 @@ it.each(["", "검토 중인 초안\n예산은 10만 원"])(
     expect(window.location.pathname).toBe("/app");
   },
 );
+
+it("opens explicit missions and returns without sending or losing the chat draft",async()=>{
+ const calls=server(path=>path==="/missions"?response([]):response({threads:[]}));
+ const user=userEvent.setup();render(<App/>);
+ const composer=await screen.findByRole("textbox",{name:"메시지"});
+ await user.type(composer,"확인 중인 채팅 초안");
+ await user.click(screen.getByRole("button",{name:/맡긴 일/}));
+ await screen.findByRole("heading",{name:"맡긴 일",level:2});
+ await user.click(screen.getByRole("button",{name:"← 대화로"}));
+ expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("확인 중인 채팅 초안");
+ expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);
+});

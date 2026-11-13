@@ -1,6 +1,9 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
 mod push;
 pub use push::*;
+
+mod missions;
+pub use missions::*;
 mod schedules;
 pub use schedules::*;
 mod accounts;
@@ -119,6 +122,15 @@ pub fn typescript_contract() -> String {
         MemoryExtractionChange::decl(),
         MemoryExtractionStatus::decl(),
         MemoryExtractionOrigin::decl(),
+        MissionMode::decl(),
+        MissionCheck::decl(),
+        MissionCreate::decl(),
+        MissionControl::decl(),
+        MissionAction::decl(),
+        MissionEvidence::decl(),
+        MissionCandidate::decl(),
+        MissionView::decl(),
+        MissionReceipt::decl(),
         ArtifactKind::decl(),
         ArtifactStatus::decl(),
         GoalLifecycle::decl(),

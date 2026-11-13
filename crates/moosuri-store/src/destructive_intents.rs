@@ -42,6 +42,9 @@ pub(crate) enum Effect {
         target: String,
         account: String,
     },
+    DeleteMission {
+        target: String,
+    },
     DeleteThread {
         target: String,
     },
@@ -69,6 +72,7 @@ fn validate(tenant: &str, effect: &Effect) -> Result<()> {
         | Effect::DeleteCollection { target }
         | Effect::DisconnectCollection { target }
         | Effect::RevokeSource { target }
+        | Effect::DeleteMission { target }
         | Effect::DeleteThread { target } => id(target)?,
         Effect::DeleteArtifact {
             target,
@@ -299,6 +303,9 @@ pub(crate) fn apply(conn: &Connection, record: &Record) -> Result<()> {
         )?,
         Effect::DeleteMedia { target, account } => {
             crate::media::apply_delete(conn, &record.tenant, account, target)?
+        }
+        Effect::DeleteMission { target } => {
+            crate::missions::apply_delete(conn, &record.tenant, target)?;
         }
         Effect::DeleteThread { target } => {
             mail::purge_thread(conn, &record.tenant, target)?;

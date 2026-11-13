@@ -584,6 +584,7 @@ fn revoke(conn: &Connection, user: &UserContext, id: &str) -> Result<()> {
             "UPDATE agent_execution SET invalidated=1 WHERE tenant_id=?1 AND run_id=?2",
             params![user.tenant.0, id],
         )?;
+        conn.execute("UPDATE missions SET grant_enabled=0,candidate=NULL,round_text=NULL,plan='[]',state='quarantined' WHERE tenant_id=?1 AND run_id=?2 AND state!='deleted'",params![user.tenant.0,id])?;
         let run = chat::load_run(conn, &user.tenant.0, &id)?;
         if run.state.active() {
             chat::transition(conn, &run, moosuri_core::RunState::Cancelled, None)?;

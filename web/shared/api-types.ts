@@ -35,6 +35,15 @@ export type MemoryExtractionChange = { expected_revision: number, enabled: boole
 reported_speaker: string, daily_calls: number, daily_input_bytes: number, daily_output_tokens: number, };
 export type MemoryExtractionStatus = { revision: number, enabled: boolean, attribution_mode: string, reported_speaker: string, daily_calls: number, daily_input_bytes: number, daily_output_tokens: number, state: string, reason: string | null, saved_count: number, };
 export type MemoryExtractionOrigin = { model: string, provider_revision: number, source_id: string, source_revision: number, policy_revision: string, reported_speaker: string, };
+export type MissionMode = "current_session" | "durable";
+export type MissionCheck = { "kind": "decimal_equals", expected: string, } | { "kind": "source_quote", id: string, revision: number, quote: string, } | { "kind": "output_contains", text: string, } | { "kind": "user_review", description: string, };
+export type MissionCreate = { request_id: string, task: string, constraints: string, checks: Array<MissionCheck>, execution_mode: MissionMode, };
+export type MissionControl = { request_id: string, expected_revision: number, action: MissionAction, };
+export type MissionAction = { "kind": "pause" } | { "kind": "resume" } | { "kind": "cancel" } | { "kind": "steer", instruction: string, };
+export type MissionEvidence = { step: number, call_id: string, };
+export type MissionCandidate = { text: string, evidence: Array<MissionEvidence>, };
+export type MissionView = { id: string, revision: number, state: string, request: MissionCreate, steering: Array<string>, plan: Array<string>, completed_steps: number, result: MissionCandidate | null, receipts: Array<MissionReceipt>, report: Array<string>, uncertain: boolean, expires_at_ms: number, };
+export type MissionReceipt = { label: string, detail: string, };
 export type ArtifactKind = "document" | "goal" | "followup";
 export type ArtifactStatus = "active" | "withdrawn" | "deleted";
 export type GoalLifecycle = "active" | "paused" | "achieved" | "cancelled";

@@ -235,7 +235,10 @@ impl MailService {
         let ExternalToolRequest::Mail(request) = permit.request() else {
             return KnowledgeToolResult::Error(ToolReadError::Unavailable);
         };
-        match self.read(permit.user(), request, cancel).await {
+        let Some(user) = permit.user() else {
+            return KnowledgeToolResult::Error(ToolReadError::Unavailable);
+        };
+        match self.read(user, request, cancel).await {
             Ok(mut value) => {
                 fn trim(value: &mut serde_json::Value) {
                     if let Some(text) = value

@@ -766,7 +766,7 @@ mod tombstone_quota_tests {
         let user = admin(&store).await.user;
         drop(store);
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-        conn.execute_batch("DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media; DROP TABLE media_run_dependencies; DROP TABLE media_objects; DROP TABLE provider_vision_probes; CREATE TABLE provider_vision_probes(conflict INTEGER); PRAGMA user_version=20;").unwrap();
+        conn.execute_batch("DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media; DROP TABLE media_run_dependencies; DROP TABLE media_objects; DROP TABLE provider_vision_probes; CREATE TABLE provider_vision_probes(conflict INTEGER); PRAGMA user_version=20;").unwrap();
         drop(conn);
         assert!(Store::open(dir.path()).is_err());
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

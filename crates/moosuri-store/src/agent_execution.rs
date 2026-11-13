@@ -200,6 +200,11 @@ pub(super) fn evidence(
 type RetryBounds = (bool, i64, i64, Option<i64>, Option<i64>);
 type ExecutionFence = (bool, Option<i64>, Option<i64>, Option<i64>);
 pub(super) fn retry_allowed(conn: &Connection, tenant: &str, run: &str) -> Result<bool> {
+    retry_fences(conn, tenant, run, true)
+}
+// Local recovery does not reserve another remote/tool dispatch. All other retry
+// fences still apply; ordinary chat and explicit retries keep their capacity gate.
+fn retry_fences(conn: &Connection, tenant: &str, run: &str, needs_capacity: bool) -> Result<bool> {
     if conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM community_run_revocations WHERE tenant_id=?1 AND run_id=?2)",
         params![tenant, run],
@@ -213,8 +218,7 @@ pub(super) fn retry_allowed(conn: &Connection, tenant: &str, run: &str) -> Resul
     };
     let clock = millis()?;
     Ok(!invalid
-        && remote < 6
-        && tools < 12
+        && (!needs_capacity || remote < 6 && tools < 12)
         && deadline.is_none_or(|d| clock < d)
         && last.is_none_or(|v| clock >= v))
 }
@@ -309,6 +313,7 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
             "DELETE FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2",
             params![tenant, id],
         )?;
+        conn.execute("UPDATE missions SET candidate=NULL,round_text=NULL,plan='[]',grant_enabled=0,state='quarantined' WHERE tenant_id=?1 AND run_id=?2 AND state!='deleted'",params![tenant,id])?;
         threads.insert(run.thread);
         conn.execute(
             "DELETE FROM chat_output WHERE tenant_id=?1 AND run_id=?2",
@@ -446,6 +451,11 @@ fn read_tool(
     run: &Run,
     input: &KnowledgeToolInput,
 ) -> Result<KnowledgeToolResult> {
+    if crate::missions::is_mission(conn, &run.tenant, &run.id)?
+        && !crate::missions::tool_allowed(input)
+    {
+        return Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable));
+    }
     let read = match input {
         KnowledgeToolInput::Artifact { request } => {
             crate::artifacts::agent::tool(conn, run, request).map(KnowledgeToolResult::External)
@@ -513,8 +523,8 @@ fn read_tool(
             // Authority and outer run-generation fences remain execution errors.
             // A cursor reused with different search fields is a repairable tool
             // input mistake, not evidence that the user's authority was revoked.
-            let user = chat::authority(conn, run)?;
-            knowledge::search::search_limit(conn, user, query.clone(), 5)
+            chat::execution_authority(conn, run)?;
+            knowledge::search::search_owner(conn, &run.tenant, query.clone(), 5)
                 .map(KnowledgeToolResult::Search)
                 .map_err(|error| match error {
                     StoreError::Conflict if query.cursor.is_some() => StoreError::InvalidInput,
@@ -632,13 +642,14 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let running: i64=tx.query_row("SELECT count(*) FROM chat_runs WHERE state='running'",[],|r|r.get(0))?;
             if running>=2 {return Ok(None)}
-            let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND tenant_id NOT IN(SELECT tenant_id FROM chat_runs WHERE state='running') ORDER BY admitted_order LIMIT 64")?
+            let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND tenant_id NOT IN(SELECT tenant_id FROM chat_runs WHERE state='running') AND (NOT EXISTS(SELECT 1 FROM missions m WHERE m.tenant_id=chat_runs.tenant_id AND m.run_id=chat_runs.id) OR NOT EXISTS(SELECT 1 FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE r.state='running')) ORDER BY admitted_order LIMIT 64")?
               .query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
             for (tenant,id) in queued {
                 let run=chat::load_run(&tx,&tenant,&id)?;
-                if chat::authority(&tx,&run).is_err(){chat::transition(&tx,&run,RunState::Cancelled,Some(RunFailure::AuthorityRevoked))?;continue}
+                if chat::execution_authority(&tx,&run).is_err(){chat::transition(&tx,&run,RunState::Cancelled,Some(RunFailure::AuthorityRevoked))?;continue}
                 let binding=match providers::binding_for_choice(&tx,&db.provider_key,&run.model){Ok(v)=>v,Err(_)=>{chat::transition(&tx,&run,RunState::Failed,Some(RunFailure::ProviderUnavailable))?;continue}};
-                if !retry_allowed(&tx,&tenant,&id)? {chat::transition(&tx,&run,RunState::Incomplete,Some(RunFailure::BudgetExhausted))?;continue}
+                let local_final = crate::missions::local_final_recovery(&tx, &tenant, &id)?;
+                if !retry_fences(&tx,&tenant,&id,!local_final)? {chat::transition(&tx,&run,RunState::Incomplete,Some(RunFailure::BudgetExhausted))?;continue}
                 match guard_execution(&tx,&run) {Ok(())=>{},Err(StoreError::Conflict|StoreError::BudgetExhausted)=>continue,Err(e)=>return Err(e)}
                 let messages=chat::context(&tx,&run)?;
                 tx.execute("INSERT INTO agent_execution(tenant_id,run_id,agent) VALUES(?1,?2,1) ON CONFLICT(tenant_id,run_id) DO UPDATE SET agent=1",params![tenant,id])?;
@@ -722,6 +733,7 @@ impl Store {
             }else{
                 let used: i64=tx.query_row("SELECT tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
                 if used+calls.len() as i64>12{return Err(StoreError::BudgetExhausted)}
+                crate::missions::record_round(&tx,&run,lease.step,&checkpoint.bytes)?;
                 tx.execute("UPDATE agent_steps SET state='completed',completion_digest=?4,checkpoint=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step,digest.as_slice(),checkpoint.bytes])?;
                 for call in calls {tx.execute("INSERT INTO agent_tool_slots(tenant_id,run_id,step,call_id,input) VALUES(?1,?2,?3,?4,?5)",params![run.tenant,run.id,lease.step,call.call_id,encoded(&call.input)?])?;}
                 tx.execute("UPDATE agent_execution SET checkpoint_seq=checkpoint_seq+1 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id])?;

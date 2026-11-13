@@ -9,6 +9,7 @@ mod google_setup;
 mod knowledge;
 mod mail;
 mod media;
+mod missions;
 mod providers;
 mod push;
 mod schedules;
@@ -330,6 +331,7 @@ pub fn router_with_runtime(
         .nest("/api/v1/source-ingest", source_connections::ingest_routes())
         .merge(browser::routes())
         .merge(schedules::routes())
+        .merge(missions::routes())
         .route("/api/v1/usage", get(chat::usage))
         .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })

@@ -505,3 +505,5 @@ mod skills;
 mod mail;
 
 mod web;
+
+mod missions;

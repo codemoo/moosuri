@@ -21,7 +21,7 @@ pub(crate) fn profile() -> RunToolProfile {
     }
 }
 
-pub(super) fn read(conn: &Connection, run: &Run, requested: &SkillPin) -> KnowledgeToolResult {
+pub(crate) fn read(conn: &Connection, run: &Run, requested: &SkillPin) -> KnowledgeToolResult {
     let available = run.tool_profile.as_ref().is_some_and(|profile| {
         matches!(profile.version, 1..=5) && profile.skills.contains(requested)
     });

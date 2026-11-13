@@ -650,7 +650,7 @@ async fn static_asset(uri: Uri) -> Response {
         "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/admin/google"
         | "/settings/model" | "/settings/mail" | "/settings/sources" | "/settings/usage"
         | "/app/knowledge" | "/app/memory" | "/app/skills" | "/app/artifacts"
-        | "/app/schedules" | "/login" => "/index.html",
+        | "/app/schedules" | "/app/missions" | "/login" => "/index.html",
         path if path.starts_with("/app/artifacts/")
             && !path[15..].is_empty()
             && !path[15..].contains('/') =>
@@ -686,20 +686,23 @@ async fn static_asset(uri: Uri) -> Response {
 mod schedule_route_tests {
     use super::*;
     #[tokio::test]
-    async fn local_schedule_deep_link_serves_public_shell_without_caching_inbox_data() {
-        let response = static_asset(Uri::from_static("/app/schedules")).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers()[header::CONTENT_TYPE],
-            "text/html; charset=utf-8"
-        );
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
-        assert_eq!(
-            static_asset(Uri::from_static("/api/v1/notifications"))
-                .await
-                .status(),
-            StatusCode::NOT_FOUND
-        );
+    async fn private_page_deep_links_serve_only_public_shell_without_caching_user_data() {
+        for (page, api) in [
+            ("/app/schedules", "/api/v1/notifications"),
+            ("/app/missions", "/api/v1/missions"),
+        ] {
+            let response = static_asset(page.parse().unwrap()).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                "text/html; charset=utf-8"
+            );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+            assert_eq!(
+                static_asset(api.parse().unwrap()).await.status(),
+                StatusCode::NOT_FOUND
+            );
+        }
     }
 }
 

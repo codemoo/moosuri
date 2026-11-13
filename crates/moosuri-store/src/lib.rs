@@ -1,6 +1,9 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
 pub mod push;
+
+mod missions;
+pub use missions::{MissionExecution, MissionPendingRound};
 mod schedules;
 pub mod vault_authority;
 pub use schedules::ReminderLease;
@@ -175,7 +178,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 24;
+const CURRENT_SCHEMA_VERSION: i64 = 25;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -477,6 +480,13 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 25 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0025_missions.sql"),
+                "COMMIT;"
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         media::quarantine(&conn)?;
         schedules::restart(&conn)?;
@@ -729,7 +739,7 @@ impl Store {
     pub async fn list_threads(&self, user: &UserContext) -> Result<Vec<ThreadSummary>> {
         let user = user.clone();
         self.call(move |db| { let current=validate(&db.conn,&user,true,false)?;
-            let mut stmt=db.conn.prepare("SELECT id,title,created_at,updated_at FROM threads WHERE tenant_id=?1 ORDER BY updated_at DESC,id")?;
+            let mut stmt=db.conn.prepare("SELECT id,title,created_at,updated_at FROM threads WHERE tenant_id=?1 AND mission_internal=0 ORDER BY updated_at DESC,id")?;
             let rows=stmt.query_map([current.tenant.0], |r| Ok(ThreadSummary { id:r.get(0)?,title:r.get(1)?,created_at:r.get(2)?,updated_at:r.get(3)? }))?.collect::<std::result::Result<Vec<_>,_>>()?; Ok(rows)
         }).await
     }

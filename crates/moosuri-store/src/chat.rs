@@ -133,7 +133,7 @@ fn phase_value(phase: Option<String>) -> Result<Option<MessagePhase>> {
 }
 fn thread_exists(conn: &Connection, user: &UserContext, thread: &str) -> Result<()> {
     if !conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM threads WHERE tenant_id=?1 AND id=?2)",
+        "SELECT EXISTS(SELECT 1 FROM threads WHERE tenant_id=?1 AND id=?2 AND mission_internal=0)",
         params![user.tenant.0, thread],
         |r| r.get::<_, bool>(0),
     )? {
@@ -325,6 +325,7 @@ pub(super) fn transition(
             run.id
         ],
     )?;
+    crate::missions::carrier_transition(conn, run, state)?;
     let current = load_run(conn, &run.tenant, &run.id)?;
     emit(
         conn,
@@ -344,6 +345,13 @@ pub(super) fn authority(conn: &Connection, run: &Run) -> Result<UserContext> {
         return Err(StoreError::Unauthorized);
     }
     Ok(user)
+}
+pub(super) fn execution_authority(conn: &Connection, run: &Run) -> Result<()> {
+    if crate::missions::is_mission(conn, &run.tenant, &run.id)? {
+        crate::missions::authority(conn, run)
+    } else {
+        authority(conn, run).map(|_| ())
+    }
 }
 pub(super) fn queue_capacity(conn: &Connection, tenant: &str) -> Result<()> {
     let (personal,global):(i64,i64)=conn.query_row("SELECT sum(CASE WHEN tenant_id=?1 THEN 1 ELSE 0 END),count(*) FROM chat_runs WHERE state='queued'",[tenant],|r|Ok((r.get::<_,Option<i64>>(0)?.unwrap_or(0),r.get(1)?)))?;
@@ -386,7 +394,7 @@ pub(super) fn guard(conn: &Connection, key: &[u8; 32], lease: &RunLease) -> Resu
     if run.attempt != lease.attempt || run.state != RunState::Running || run.epoch != lease.epoch {
         return Err(StoreError::Conflict);
     }
-    if authority(conn, &run).is_err() {
+    if execution_authority(conn, &run).is_err() {
         transition(
             conn,
             &run,
@@ -738,6 +746,7 @@ fn usage(conn: &Connection, tenant: &str) -> Result<UsageSummary> {
 }
 pub(super) fn restart(conn: &mut Connection) -> Result<()> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    crate::missions::restart(&tx)?;
     tx.execute(
         "UPDATE agent_steps SET state='unknown' WHERE state='dispatched'",
         [],

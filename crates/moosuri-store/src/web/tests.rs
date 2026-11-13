@@ -305,7 +305,7 @@ async fn actual_completed_slots_expose_only_scoped_observation_metadata_and_purg
         .unwrap();
     store.delete_source(&user, source, 1).await.unwrap();
     let current = store
-        .conversation(permit.user(), thread, None)
+        .conversation(permit.user().expect("session HTTP fixture"), thread, None)
         .await
         .unwrap();
     assert!(current.turns[0].run.web_evidence.is_none());

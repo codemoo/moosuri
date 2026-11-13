@@ -20,6 +20,7 @@ use std::{collections::BTreeMap, time::Duration};
 #[path = "artifact_intent.rs"]
 mod artifact_intent;
 mod memory;
+mod mission;
 
 const MAX_OUTPUT: usize = 256 * 1024;
 const MAX_PATCH: usize = 8 * 1024;
@@ -101,6 +102,7 @@ struct Pending {
     terminal: Option<FinishOutcome>,
     identity: bool,
     has_text: bool,
+    private_text: String,
 }
 impl Pending {
     fn item(&mut self, key: String, refusal: bool) -> Result<&mut Item, RunFailure> {
@@ -345,6 +347,12 @@ async fn observe(
 ) -> Result<(), RunFailure> {
     if allow_output && pending.patches.len() >= 14 {
         flush(checkpoint, pending).await?;
+    }
+    if let ModelEvent::TextDelta { text, .. } = &value {
+        if pending.private_text.len().saturating_add(text.len()) > MAX_OUTPUT {
+            return Err(RunFailure::OutputLimit);
+        }
+        pending.private_text.push_str(text);
     }
     match value {
         ModelEvent::TextDelta {
@@ -596,6 +604,14 @@ pub(crate) async fn execute(
     mail: crate::mail::MailService,
     web: crate::web::Service,
 ) {
+    match store.mission_execution(&claimed.lease).await {
+        Ok(Some(_)) => {
+            mission::execute(store, claimed, signals, mail, web).await;
+            return;
+        }
+        Ok(None) => {}
+        Err(_) => return,
+    }
     let AgentClaim {
         lease,
         mut binding,
@@ -1024,16 +1040,19 @@ async fn execute_tool(
                     moosuri_core::ExternalToolRequest::Mail(_) => {
                         mail.external(&permit, &io_cancel).await
                     }
-                    moosuri_core::ExternalToolRequest::Web(request) => {
-                        web.execute(
-                            request,
-                            permit.user(),
-                            permit.thread_id(),
-                            permit.browser_pin(),
-                            &io_cancel,
-                        )
-                        .await
-                    }
+                    moosuri_core::ExternalToolRequest::Web(request) => match permit.user() {
+                        Some(user) => {
+                            web.execute(
+                                request,
+                                user,
+                                permit.thread_id(),
+                                permit.browser_pin(),
+                                &io_cancel,
+                            )
+                            .await
+                        }
+                        None => web.public_http(request, &io_cancel).await,
+                    },
                 }
             };
             tokio::pin!(operation);

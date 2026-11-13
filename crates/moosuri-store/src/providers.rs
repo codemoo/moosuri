@@ -474,6 +474,7 @@ impl Store {
             tx.execute("INSERT INTO provider_revisions(provider_id,revision,name,config,enabled,credential) VALUES (?1,?2,?3,?4,?5,?6)",params![id,revision,name_valid(change.name,200)?,config_bytes(&change.config)?,change.enabled,cipher])?;
             tx.execute("UPDATE providers SET current_revision=?1 WHERE id=?2 AND current_revision=?3",params![revision,id,expected_revision])?;
             tx.execute("UPDATE provider_revisions SET credential=NULL WHERE provider_id=?1 AND revision<>?2 AND credential IS NOT NULL",params![id,revision])?;
+            tx.execute("UPDATE missions SET grant_enabled=0,candidate=NULL,round_text=NULL,plan='[]',state='quarantined' WHERE state!='deleted' AND EXISTS(SELECT 1 FROM chat_runs r WHERE r.tenant_id=missions.tenant_id AND r.id=missions.run_id AND json_extract(r.model,'$.provider_id')=?1)",[&id])?;
             let result=summary(&tx,load_revision(&tx,&id)?)?; tx.commit()?; Ok(result)
         }).await
     }

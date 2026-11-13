@@ -59,6 +59,17 @@ impl Service {
             fixture: Some(fixture),
         }
     }
+    pub(crate) async fn public_http(
+        &self,
+        request: &WebToolRequest,
+        cancel: &CancellationToken,
+    ) -> KnowledgeToolResult {
+        #[cfg(test)]
+        if let Some(f) = &self.fixture {
+            return f(request.clone(), cancel.clone()).await;
+        }
+        execute(self.client.as_deref(), request, cancel).await
+    }
     pub(crate) async fn execute(
         &self,
         request: &WebToolRequest,

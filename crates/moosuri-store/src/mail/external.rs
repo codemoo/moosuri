@@ -12,7 +12,7 @@ pub struct ExternalToolPermit {
     call_id: String,
     nonce: Vec<u8>,
     request: Box<ExternalToolRequest>,
-    user: UserContext,
+    user: Option<UserContext>,
     browser_pin: Option<String>,
     thread_id: String,
 }
@@ -28,8 +28,8 @@ impl ExternalToolPermit {
     pub fn browser_pin(&self) -> Option<&str> {
         self.browser_pin.as_deref()
     }
-    pub fn user(&self) -> &UserContext {
-        &self.user
+    pub fn user(&self) -> Option<&UserContext> {
+        self.user.as_ref()
     }
 }
 
@@ -99,10 +99,10 @@ impl Store {
             if used>=12{
                 return Err(StoreError::BudgetExhausted)}
 
-            let user=crate::chat::authority(&tx,&run)?;
+            let user=if crate::missions::is_mission(&tx,&run.tenant,&run.id)? {None}else{Some(crate::chat::authority(&tx,&run)?)};
 
-            let valid=match &request {
-                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|connection(&tx,&user,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email)),
+            let valid=(!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
+                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
             };
 
@@ -151,9 +151,9 @@ impl Store {
                     tx.commit()?;
                     return Err(e)}
             };
-            let user=crate::chat::authority(&tx,&run)?;
-            let valid=match &request {
-                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|connection(&tx,&user,&pin.id).is_ok_and(|c|c.epoch==pin.epoch&&c.email==pin.email&&c.status=="active")),
+            let user=if crate::missions::is_mission(&tx,&run.tenant,&run.id)? {None}else{Some(crate::chat::authority(&tx,&run)?)};
+            let valid=(!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
+                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.epoch==pin.epoch&&c.email==pin.email&&c.status=="active"))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
             };
             if !valid {

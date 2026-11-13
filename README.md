@@ -65,4 +65,7 @@ The exact boundary and build gates are in [architecture](docs/architecture.md).
 
 Licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), at your option.
 
-개인 기록의 범위와 한계: [문서·목표·요청](docs/artifacts.md).
+개인 기록의 범위와 한계: [문서·목표·요청](docs/artifacts.md).Fixed local [reminders and inbox](docs/schedules.md) are available at `/app/schedules`;
+recurring agent missions and Web Push remain in development.
+
+

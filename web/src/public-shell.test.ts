@@ -63,7 +63,7 @@ it("installs only an anonymous public build and never forces a tab update", asyn
 
 it("keeps API, private files, screenshots, shares, foreign origins and mutations out of caching", async () => {
   const w = worker(); await w.lifecycle("install");
-  for (const path of ["/api/v1/auth/session", "/api/v1/threads", "/api/v1/browser/frame", "/files/private.png", "/share", "/assets/unknown.js", "/assets/app-fixed.js?private=1", "https://other.example.test/index.html"]) {
+  for (const path of ["/api/v1/auth/session", "/api/v1/schedules", "/api/v1/notifications", "/api/v1/threads", "/api/v1/browser/frame", "/files/private.png", "/share", "/assets/unknown.js", "/assets/app-fixed.js?private=1", "https://other.example.test/index.html"]) {
     expect(w.fetchEvent(path)).toBeUndefined();
     expect(w.fetchEvent(path, "navigate")).toBeUndefined();
   }
@@ -78,6 +78,7 @@ it("online navigation never stores a credential-bearing response; offline uses o
   expect(await (await w.fetchEvent("/app?thread=opaque", "navigate")!).text()).toBe("PRIVATE-CANARY");
   w.network.mockRejectedValue(new TypeError("offline"));
   expect(await (await w.fetchEvent("/app?thread=opaque", "navigate")!).text()).toBe("public-shell");
+  expect(await (await w.fetchEvent("/app/schedules", "navigate")!).text()).toBe("public-shell");
   expect(await (await w.fetchEvent("/assets/app-fixed.js")!).text()).toBe("public-asset");
   expect([...w.entries.values()].every(data => !data.has("/app"))).toBe(true);
 });

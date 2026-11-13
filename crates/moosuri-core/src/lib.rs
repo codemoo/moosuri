@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod schedules;
+pub use schedules::*;
 mod automatic_memory;
 pub use automatic_memory::*;
 mod artifacts;
@@ -79,6 +81,20 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        ScheduleRule::decl(),
+        ScheduleDraft::decl(),
+        ScheduleCreate::decl(),
+        ScheduleEdit::decl(),
+        ScheduleControl::decl(),
+        ScheduleView::decl(),
+        SchedulePreview::decl(),
+        ScheduleOccurrence::decl(),
+        ScheduleSkippedRange::decl(),
+        ScheduleHistory::decl(),
+        QuietHours::decl(),
+        QuietHoursChange::decl(),
+        LocalNotification::decl(),
+        NotificationPage::decl(),
         GitHubSkillLocation::decl(),
         GitHubSkillPreviewInput::decl(),
         MemoryExtractionChange::decl(),

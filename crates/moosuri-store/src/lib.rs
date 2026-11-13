@@ -1,5 +1,7 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
+mod schedules;
+pub use schedules::ReminderLease;
 mod automatic_memory;
 pub use automatic_memory::{ExtractionClaim, ExtractionLease, ExtractionUnit};
 mod artifacts;
@@ -166,7 +168,7 @@ struct LoginAccount {
     recovery: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 16;
+const CURRENT_SCHEMA_VERSION: i64 = 17;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -410,6 +412,14 @@ impl Store {
                 include_str!("../../../migrations/assistant/0016_personal_artifacts.sql")
             ))?;
         }
+        if version < 17 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0017_schedules.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        schedules::restart(&conn)?;
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;
         browser::restart(&conn)?;

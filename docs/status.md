@@ -527,3 +527,16 @@ Chromium의 생성/수정/현지 날짜/모바일 스크롤을 확인했다. Rea
 화면 수정 후27개가 통과했다. 합성 검사와 실제 모델의 문서 품질 평가는 구별한다.
 이 단위는 F15와 F28의 기록/briefing 부분이다. 미래 예약·알림·자동 약속 감지는
 [검증 기록](reviews/2026-11-13-personal-artifacts.md)의 후속 범위로 남는다.
+
+## 로컬 알림 예약·소식함
+
+고정 내용을 계정 소식함에 전달하는 예약을 schema17으로 통합했다. UTC 일회·고정
+기준 간격·IANA 시간대 매일 규칙, 일시 정지/다시 시작/편집/삭제, 회차·알림 영수증
+중복 방지, 읽음/숨김·조용한 시간 상태와5초 worker를 제공한다. 모델 호출 없이
+실행하며 대화 초안을 유지하고 예약 화면으로 이동할 수 있다.
+
+독립 검토와 통합 macOS·Linux 검사에서 Store9·migration7·agent59·HTTP worker/reopen1을
+통과했다. Linux 설치1, React/App/public-shell32, 타입/build·DTO·clippy도 통과했다.
+실제 자연어 예약·매주 규칙·모델 업무·변경만 알림·Push는 후속 범위다. 계정 정지와
+복원 기능에는 별도 상태 검사와 quarantine hook을 연결한다.
+[현재 범위](schedules.md)와 [검증 기록](reviews/2026-11-13-local-reminders.md)을 따른다.

@@ -11,7 +11,7 @@ const publicAssets = new Set(MOOSURI_SHELL_ASSETS);
 const navigationPaths = new Set([
   "/", "/app", "/login", "/admin", "/admin/providers", "/admin/google", "/admin/usage",
   "/settings/model", "/settings/mail", "/settings/sources", "/settings/usage",
-  "/app/knowledge", "/app/memory", "/app/skills", "/app/artifacts",
+  "/app/knowledge", "/app/memory", "/app/skills", "/app/artifacts", "/app/schedules",
 ]);
 
 self.addEventListener("install", (event) => {

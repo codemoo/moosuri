@@ -8,6 +8,7 @@ mod google_setup;
 mod knowledge;
 mod mail;
 mod providers;
+mod schedules;
 mod source_connections;
 use axum::{
     Json, Router,
@@ -283,6 +284,7 @@ pub fn router_with_runtime(
         .nest("/api/v1/source-connections", source_connections::routes())
         .nest("/api/v1/source-ingest", source_connections::ingest_routes())
         .merge(browser::routes())
+        .merge(schedules::routes())
         .route("/api/v1/usage", get(chat::usage))
         .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })

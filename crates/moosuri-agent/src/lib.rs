@@ -9,6 +9,7 @@ mod mail_tools;
 mod memory_intent;
 mod memory_target;
 mod runner;
+mod schedules;
 mod source_connections;
 mod web;
 mod web_tools;
@@ -35,7 +36,7 @@ const MAIL_DRAIN: Duration = Duration::from_secs(2);
 const BROWSER_DRAIN: Duration = Duration::from_secs(7);
 // Enclose both sequential supervisor drains, with time to publish completion.
 // In particular, do not abort independently owned browser cleanup at five seconds.
-const SUPERVISOR_WAIT: Duration = Duration::from_secs(22);
+const SUPERVISOR_WAIT: Duration = Duration::from_secs(24);
 
 /// Constructs a connection without DNS or IO. Hosted secrets cannot be retargeted.
 pub fn model_client(
@@ -310,6 +311,7 @@ async fn supervise(
 ) {
     let mut extraction_worker =
         tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
+    let mut schedule_worker = tokio::spawn(schedules::worker(store.clone(), signals.clone()));
     let mut mail_worker = tokio::spawn(mail.clone().worker(signals.stop.clone()));
     let mut source_worker = tokio::spawn(
         source_connections::Service::new(store.clone(), mail.clone(), signals.clone()).worker(),
@@ -332,6 +334,10 @@ async fn supervise(
             _ = signals.wake.notified() => (),
         }
         settle_retired(&mut retired, &store, &signals).await;
+        if schedule_worker.is_finished() {
+            let _ = (&mut schedule_worker).await;
+            schedule_worker = tokio::spawn(schedules::worker(store.clone(), signals.clone()));
+        }
         if extraction_worker.is_finished() {
             let _ = (&mut extraction_worker).await;
             extraction_worker =
@@ -409,6 +415,13 @@ async fn supervise(
     {
         extraction_worker.abort();
         let _ = extraction_worker.await;
+    }
+    if tokio::time::timeout(MAIL_DRAIN, &mut schedule_worker)
+        .await
+        .is_err()
+    {
+        schedule_worker.abort();
+        let _ = schedule_worker.await;
     }
     done.send_replace(true);
 }

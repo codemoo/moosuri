@@ -101,13 +101,41 @@ remaining unusable locator is replaced at the next login, so a delayed logout
 response cannot erase another tab's newer login. Private requests assert their expected account ID;
 this is compared with session authority, never used to create authority.
 Password changes revoke previous sessions. A narrow journal-before-DB crash
-window locks the affected account for future operator recovery; that recovery
-command is not implemented and this is not a production-ready release.
+window locks the affected account. A local operator can enroll a fresh temporary
+credential using the stopped-installation command below. This is not an encrypted
+backup/restore workflow or a production-ready release.
 
 `moosuri doctor` checks a **stopped** installation. A running installation holds
 its writer lock and correctly rejects another writer. Normal shutdown drains the
 writer before releasing the lock. Backup/restore, upgrades and legacy migration
 remain unavailable; copying a live DB is not a supported backup.
+
+## Recovering a journal-locked account
+
+Stop the installation, use its existing account UUID, and explicitly choose the
+current role. Supply a new password of 12–256 UTF-8 bytes, different from the revoked password, through an owner-only
+regular file belonging to the current OS user (one hard link, no symlink). No
+password value belongs in command arguments or logs.
+
+```sh
+moosuri --data-dir /absolute/private/data recover-account \
+  --account-id ACCOUNT_UUID --role member \
+  --password-file /absolute/private/new-password
+```
+
+Use `--role admin` only when explicitly enrolling an administrator. The command
+only accepts an existing account marked `recovery_required` by auth-journal
+replay; it cannot reset a healthy account or initialize a missing installation.
+It issues no session. Log in using the supplied temporary password within
+24 hours, then change it before using private APIs. Previous sessions and old
+execution/connector authority remain revoked. Other accounts are unchanged.
+
+An interruption after the new journal record but before the SQLite commit locks
+the account again on restart; repeat enrollment with a new credential. If commit
+succeeded but the response was lost, the supplied temporary credential remains
+valid and repeating recovery is rejected with `account_not_recovery_required`.
+Do not clear journal files or flip the recovery flag manually. Encrypted archives,
+off-host latest journals and restored-installation enrollment remain unavailable.
 
 ## Local verification
 

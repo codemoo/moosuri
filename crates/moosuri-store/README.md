@@ -41,8 +41,10 @@ the current actor, so it refuses further work until reopened.
 
 At startup, a journal ahead of the DB advances the account epoch, removes its
 sessions and sets `recovery_required`. Its old password hash remains unusable
-for new logins. The foundation intentionally has no recovery/unlock API: a
-crash in this narrow gap requires a future explicit recovery workflow. A
+for new logins. A trusted local `recover-account` CLI can enroll a new temporary credential and
+explicit role in a stopped installation; it cannot reset healthy accounts. The
+recovery record is fsynced before its credential/session/head transaction, and
+an interrupted transaction requires another enrollment after replay. A
 partial record, invalid checksum, missing required record or mismatched DB
 watermark prevents startup. The checksum chain detects damage and truncation
 against the DB watermark; it is not an authenticated defense against a malicious
@@ -52,7 +54,7 @@ off-host latest-head/backup service and is not a backup or restore implementatio
 ## Explicitly outside this unit
 
 There are no messages, model runs, streams, files, user-key vault,
-account disable/delete/reset/role-change APIs, operator recovery, backup/restore,
+account disable/delete/general-reset/role-change APIs, backup/restore,
 independent usage ledger or restore activation. Deleting a thread deletes only
 an empty-thread row. Future personal child objects must use composite tenant
 foreign keys. Rate limits, cookies, CSRF/origin checks and HTTP setup protection

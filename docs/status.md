@@ -422,7 +422,9 @@ community 설치·업데이트·제안 카드, 독립 볼트·TOTP·credential b
 백업·복원·데이터 이전·일반 설치 패키지는 남아 있다. 볼트는 v1 제공 범위이며 사용자
 연결 여부만 선택 사항이다. 이번 웹·브라우저·Gmail 구현을 전체 비서 완성으로 표시하지 않는다.
 
-현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 이를 해제할 operator 복구 경로와 백업/복원은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. `doctor`는 중지된 설치에만 사용한다.
+계정 복구 단위는 macOS·Linux x86_64 Rust340개(실모델 opt-in1개 제외)를 통과했고 독립 검토에서 발견한 초기화 부작용을 수정·재검토했다.
+
+현재 auth journal과 DB 사이 crash gap은 해당 계정을 `recovery_required`로 잠근다. 중지한 설치의 로컬 `recover-account`는 계정 UUID·역할·새 비밀번호 파일을 명시해24시간 임시 credential로 재등록하며 최초 변경과 기존 세션 철회를 강제한다. 정상 계정의 임의 재설정이나 백업/복원 기능은 아니다. 암호화 백업·최신 독립 journal·빈 설치 복원은 아직 없으므로 운영 계정·자료를 이 개발 프리뷰로 옮기지 않는다. [사용법](development.md#recovering-a-journal-locked-account)과 [합성 검증 범위](reviews/2026-11-13-operator-account-recovery.md)를 따르며 `doctor`도 중지된 설치에만 사용한다.
 
 ## 다음 작업
 

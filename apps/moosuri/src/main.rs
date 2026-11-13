@@ -3,7 +3,7 @@ use axum::{
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use moosuri_store::Store;
 use rand::{Rng, distributions::Alphanumeric};
 use std::{
@@ -28,8 +28,25 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 }
+#[derive(Clone, ValueEnum)]
+enum RecoveryRole {
+    Admin,
+    Member,
+}
+
 #[derive(Subcommand)]
 enum Command {
+    /// Recover one journal-locked account in a stopped installation.
+    RecoverAccount {
+        #[arg(long)]
+        account_id: String,
+        /// Explicit current role; the old role is never inferred.
+        #[arg(long, value_enum)]
+        role: RecoveryRole,
+        /// Owner-only file containing a new temporary password; never printed.
+        #[arg(long)]
+        password_file: PathBuf,
+    },
     /// Create one administrator. Password input is hidden; blank generates a temporary one.
     Init {
         #[arg(long)]
@@ -91,6 +108,30 @@ async fn run(cli: Cli) -> Result<(), String> {
         return Err("data_directory_must_be_absolute".into());
     }
     match cli.command {
+        Command::RecoverAccount {
+            account_id,
+            role,
+            password_file,
+        } => {
+            let password = read_password_file(&password_file)?;
+            moosuri_store::recover_account(
+                &data,
+                account_id,
+                match role {
+                    RecoveryRole::Admin => moosuri_core::Role::Admin,
+                    RecoveryRole::Member => moosuri_core::Role::Member,
+                },
+                password,
+            )
+            .await
+            .map_err(|e| match e {
+                moosuri_store::StoreError::Conflict => "account_not_recovery_required".into(),
+                _ => e.to_string(),
+            })?;
+            println!(
+                "Account recovered. Log in with the supplied temporary password and change it within 24 hours. Old sessions remain revoked."
+            );
+        }
         Command::Init {
             name,
             email,
@@ -255,19 +296,28 @@ fn default_data_dir() -> Option<PathBuf> {
     }
 }
 fn read_password_file(path: &Path) -> Result<String, String> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let mut file = OpenOptions::new()
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
         .map_err(|_| "password_file_unreadable")?;
     let info = file.metadata().map_err(|_| "password_file_unreadable")?;
-    if !info.is_file() || info.permissions().mode() & 0o077 != 0 || info.len() > 1024 {
+    if !info.is_file()
+        || info.uid() != unsafe { libc::geteuid() }
+        || info.nlink() != 1
+        || info.permissions().mode() & 0o077 != 0
+        || info.len() > 1024
+    {
         return Err("password_file_must_be_private_regular_and_small".into());
     }
     let mut password = String::new();
-    file.read_to_string(&mut password)
+    file.take(1025)
+        .read_to_string(&mut password)
         .map_err(|_| "password_file_unreadable")?;
+    if password.len() > 1024 {
+        return Err("password_file_must_be_private_regular_and_small".into());
+    }
     if password.ends_with('\n') {
         password.pop();
         if password.ends_with('\r') {
@@ -415,6 +465,37 @@ mod web_key_tests {
         fs::{PermissionsExt, symlink},
         net::UnixListener,
     };
+    #[test]
+    fn password_file_rejects_links_permissions_special_files_and_unbounded_reads() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let path = dir.path().join("password");
+        std::fs::write(&path, "Synthetic-password-canary\r\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            read_password_file(&path).unwrap(),
+            "Synthetic-password-canary"
+        );
+        let link = dir.path().join("link");
+        symlink(&path, &link).unwrap();
+        assert!(read_password_file(&link).is_err());
+        let hard = dir.path().join("hard");
+        std::fs::hard_link(&path, &hard).unwrap();
+        assert!(read_password_file(&path).is_err());
+        std::fs::remove_file(hard).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(read_password_file(&path).is_err());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&path, "x".repeat(1025)).unwrap();
+        assert!(read_password_file(&path).is_err());
+        let socket = dir.path().join("socket");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        assert!(read_password_file(&socket).is_err());
+        assert!(read_password_file(dir.path()).is_err());
+        let fifo = dir.path().join("fifo");
+        let fifo_path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
+        assert!(read_password_file(&fifo).is_err());
+    }
     #[test]
     fn browser_file_is_bounded_owner_only_regular_and_never_follows_links() {
         let dir = tempfile::tempdir_in(std::env::temp_dir()).unwrap();

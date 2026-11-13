@@ -26,11 +26,13 @@ mod web;
 pub use browser::BrowserAccess;
 pub use mail::*;
 mod providers;
+mod recovery;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use fs2::FileExt;
 use moosuri_core::{AccountSummary, Role, ThreadSummary};
 pub use providers::{CredentialChange, ProviderBinding, ProviderChange};
 use rand::{RngCore, rngs::OsRng};
+pub use recovery::recover_account;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 use std::{
@@ -155,6 +157,7 @@ struct LoginAccount {
     recovery: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
+const CURRENT_SCHEMA_VERSION: i64 = 10;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -288,7 +291,7 @@ impl Store {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
             ))?;
-        } else if !matches!(version, 1..=10) {
+        } else if !(1..=CURRENT_SCHEMA_VERSION).contains(&version) {
             return Err(StoreError::Corrupt);
         }
         if version < 2 {

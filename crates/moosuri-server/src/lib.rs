@@ -82,6 +82,7 @@ pub struct ServerConfig {
     web: Option<Arc<moosuri_connectors::web::WebClient>>,
     browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
     vault_origin: Option<String>,
+    pdf_extractor: Option<std::path::PathBuf>,
 }
 impl ServerConfig {
     pub fn new(origin: &str, allow_http_loopback: bool) -> Result<Self, &'static str> {
@@ -120,7 +121,19 @@ impl ServerConfig {
             web: None,
             browser: None,
             vault_origin: None,
+            pdf_extractor: None,
         })
+    }
+    /// Fixed deployment-owned Moosuri executable. Never accepted from HTTP/model input.
+    pub fn with_pdf_extractor(
+        mut self,
+        executable: std::path::PathBuf,
+    ) -> Result<Self, &'static str> {
+        if !executable.is_absolute() || !executable.is_file() {
+            return Err("pdf_extractor_unavailable");
+        }
+        self.pdf_extractor = Some(executable);
+        Ok(self)
     }
     pub fn with_vault_origin(mut self, origin: &str, dev: bool) -> Result<Self, &'static str> {
         let other = Self::new(origin, dev)?;

@@ -83,7 +83,15 @@ export class RequestScope {
           return;
         }
         if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new ApiFailure(xhr.status, "media_upload_failed"));
+          let code = "media_upload_failed";
+          try {
+            if (xhr.responseText.length <= 1024) {
+              const body: unknown = JSON.parse(xhr.responseText);
+              const value = body && typeof body === "object" && "code" in body ? body.code : undefined;
+              if (typeof value === "string" && ["pdf_encrypted", "pdf_no_text", "pdf_unsupported_content", "pdf_extraction_limit", "pdf_extraction_timeout", "pdf_extractor_unavailable", "pdf_invalid"].includes(value)) code = value;
+            }
+          } catch { /* Unknown error bodies keep the fixed generic failure. */ }
+          reject(new ApiFailure(xhr.status, code));
           return;
         }
         try {

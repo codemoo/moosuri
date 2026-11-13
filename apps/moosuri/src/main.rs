@@ -37,6 +37,8 @@ enum RecoveryRole {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(hide = true, name = "internal-pdf-text")]
+    InternalPdfText,
     /// Author or check local instruction packages without an installation.
     Skills {
         #[command(subcommand)]
@@ -149,9 +151,22 @@ enum BackupCommand {
     },
 }
 
-#[tokio::main]
-async fn main() {
-    if let Err(code) = run(Cli::parse()).await {
+fn main() {
+    let cli = Cli::parse();
+    if matches!(cli.command, Command::InternalPdfText) {
+        std::process::exit(moosuri_documents::child_main());
+    }
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            eprintln!("moosuri: runtime_unavailable");
+            std::process::exit(1);
+        }
+    };
+    if let Err(code) = runtime.block_on(run(cli)) {
         eprintln!("moosuri: {code}");
         std::process::exit(1);
     }
@@ -180,6 +195,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         return Err("data_directory_must_be_absolute".into());
     }
     match cli.command {
+        Command::InternalPdfText => unreachable!("PDF extraction does not open installation state"),
         Command::Skills { .. } => unreachable!("skills authoring runs without installation state"),
         Command::Backup { command } => match command {
             BackupCommand::Keygen { .. } => unreachable!("keygen runs without installation state"),
@@ -348,8 +364,12 @@ async fn run(cli: Cli) -> Result<(), String> {
             if !bind.ip().is_loopback() {
                 return Err("loopback_bind_required_use_a_tls_proxy".into());
             }
-            let mut config =
-                moosuri_server::ServerConfig::new(&origin, dev).map_err(str::to_owned)?;
+            let mut config = moosuri_server::ServerConfig::new(&origin, dev)
+                .map_err(str::to_owned)?
+                .with_pdf_extractor(
+                    std::env::current_exe().map_err(|_| "pdf_extractor_unavailable")?,
+                )
+                .map_err(str::to_owned)?;
             if let Some(proxy) = trusted_proxy {
                 config = config
                     .with_trusted_proxy(proxy, &client_ip_header)

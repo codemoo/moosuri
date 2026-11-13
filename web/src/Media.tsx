@@ -119,6 +119,22 @@ function ImagePreview({
     </>
   );
 }
+const documentAccept = ".txt,.md,.markdown,.csv,.json,.pdf";
+function validDocument(file: File) {
+  return /\.(txt|md|markdown|csv|json|pdf)$/i.test(file.name) && file.size > 0 &&
+    file.size <= (/\.pdf$/i.test(file.name) ? 2 * 1024 * 1024 : 24576);
+}
+const documentHelp = "텍스트 파일은 24KiB 이하, PDF는 2MiB 이하를 선택하세요. PDF는 암호가 없고 텍스트를 선택할 수 있는 문서여야 합니다.";
+const pdfErrors: Record<string, string> = {
+  pdf_encrypted: "암호로 보호된 PDF입니다. 암호를 해제한 사본을 선택하세요.",
+  pdf_no_text: "PDF에서 읽을 수 있는 텍스트를 찾지 못했습니다. 스캔본이라면 필요한 페이지를 이미지로 첨부하세요.",
+  pdf_unsupported_content: "이 PDF에는 아직 읽지 못하는 글꼴이나 문서 구조가 있습니다. 텍스트로 내보내거나 필요한 페이지를 이미지로 첨부하세요.",
+  pdf_extraction_limit: "이 PDF는 현재 읽을 수 있는 분량을 넘었습니다. 필요한 부분만 나눠서 첨부하세요.",
+  pdf_extraction_timeout: "PDF를 읽는 데 시간이 너무 오래 걸렸습니다. 필요한 부분만 나눠서 첨부하세요.",
+  pdf_extractor_unavailable: "PDF 읽기 기능을 시작하지 못했습니다. 서버 상태를 확인한 뒤 다시 시도하세요.",
+  pdf_invalid: "PDF를 읽지 못했습니다. 다른 프로그램에서 PDF로 다시 저장한 사본을 선택하세요.",
+};
+
 type Upload = {
   id: string;
   selection: string;
@@ -172,12 +188,14 @@ export function useMediaUploads(accountId: string, slot: string) {
         update(item.selection, {
           status: "failed",
           error:
-            e instanceof ApiFailure && e.status === 503
+            e instanceof ApiFailure && pdfErrors[e.code]
+              ? pdfErrors[e.code]
+              : e instanceof ApiFailure && e.status === 503
               ? "업로드가 처리 중이거나 보관함 한도에 도달했습니다. 보관함 사용량을 확인하고 잠시 뒤 같은 파일로 다시 시도하세요."
               : e instanceof ApiFailure && e.status === 409
                 ? "이 업로드는 취소·삭제되었거나 내용이 다릅니다. 파일을 새로 선택하세요."
                 : e instanceof ApiFailure && e.status === 400
-                  ? (item.filename ? "파일은 24KiB 이하의 유효한 UTF-8 TXT/Markdown/CSV/JSON이어야 합니다. PDF·음성·Office·바이너리는 지원하지 않습니다." : "이미지를 확인하지 못했습니다. PNG/JPEG/WebP와 준비된 2MiB·2400px 한도를 확인한 뒤 작은 파일을 다시 선택하세요.")
+                  ? (item.filename ? documentHelp : "이미지를 확인하지 못했습니다. PNG/JPEG/WebP와 준비된 2MiB·2400px 한도를 확인한 뒤 작은 파일을 다시 선택하세요.")
                   : "업로드를 확인하지 못했습니다. 같은 파일로 다시 시도하세요.",
         });
     }
@@ -200,7 +218,7 @@ export function useMediaUploads(accountId: string, slot: string) {
       setItems((all) => [...all, item]);
       const prepare = async () => {
         try {
-          if (document && (!/\.(txt|md|markdown|csv|json)$/i.test(file.name) || file.size === 0 || file.size > 24576)) throw new PreparationError("파일은 24KiB 이하의 TXT/Markdown/CSV/JSON만 지원합니다. PDF·음성·Office는 아직 지원하지 않습니다.");
+          if (document && !validDocument(file)) throw new PreparationError(documentHelp);
           const blob = document ? file : await prepareImage(file);
           if (!alive.current || item.controller.signal.aborted) return;
           item.blob = blob;
@@ -326,11 +344,11 @@ export function useMediaUploads(accountId: string, slot: string) {
         <label className="media-file-button">
           <span aria-hidden="true">＋</span>
           파일 첨부
-          <input aria-label="파일 첨부" type="file" accept=".txt,.md,.markdown,.csv,.json" multiple disabled={visible.length>=4} onChange={e=>{add(e.target.files,true);e.target.value="";}}/>
+          <input aria-label="파일 첨부" type="file" accept={documentAccept} multiple disabled={visible.length>=4} onChange={e=>{add(e.target.files,true);e.target.value="";}}/>
         </label>
         </div>
         <span className="media-limit">
-          이미지 · TXT · Markdown · CSV · JSON
+          이미지 · PDF · 텍스트 파일
         </span>
         <div className="media-upload-list">
           {visible.map((item) => (
@@ -447,8 +465,8 @@ export function MediaLibraryView({
   }
   async function resume(media: MediaSummary, original: File | undefined) {
     if (!original || retries.current.has(media.id) || deletedIds.current.has(media.id)) return;
-    if (!/\.(txt|md|markdown|csv|json)$/i.test(original.name) || original.size === 0 || original.size > 24576) {
-      setError("24KiB 이하의 원래 UTF-8 TXT/Markdown/CSV/JSON 파일을 선택하세요.");
+    if (!validDocument(original)) {
+      setError(documentHelp);
       return;
     }
     const before = generation.current;
@@ -539,7 +557,7 @@ export function MediaLibraryView({
               <>
                 <span>완료되지 않은 업로드 · 원본을 다시 선택하세요</span>
                 {media.filename && <label>원본 다시 선택
-                  <input aria-label={`원본 다시 선택: ${media.filename}`} type="file" accept=".txt,.md,.markdown,.csv,.json"
+                  <input aria-label={`원본 다시 선택: ${media.filename}`} type="file" accept={documentAccept}
                     disabled={retryProgress[media.id] !== undefined}
                     onChange={event => {void resume(media,event.target.files?.[0]);event.target.value="";}}/>
                 </label>}

@@ -105,11 +105,11 @@ export function PrivateFile({ accountId, media }: {
         <p>완료되지 않은 업로드 · 원본을 다시 선택하세요</p>
       ) : (
         <>
-          <button type="button" onClick={() => void preview()}>원문 미리보기</button>
+          <button type="button" onClick={() => void preview()}>{media.media_type === "application/pdf" ? "텍스트 미리보기" : "원문 미리보기"}</button>
           <button type="button" onClick={() => void download()}>원본 다운로드</button>
           {text !== undefined && (
             <details open>
-              <summary>원문 · 읽기 전용 자료</summary>
+              <summary>{media.media_type === "application/pdf" ? "PDF에서 추출한 텍스트 · 스캔 이미지 제외" : "원문 · 읽기 전용 자료"}</summary>
               <pre className="private-file-text">{text}</pre>
             </details>
           )}

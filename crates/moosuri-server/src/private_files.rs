@@ -21,10 +21,18 @@ pub(super) async fn upload(
 ) -> HttpResult {
     let user = current(&state, &headers).await?;
     let (_, mime) = private_files::filename(&name.filename)?;
+    let pdf = mime == "application/pdf";
+    let extractor = state.config.pdf_extractor.clone();
+    if pdf && extractor.is_none() {
+        return Ok(failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "pdf_extractor_unavailable",
+        ));
+    }
     let _permit = UPLOADS.try_acquire().map_err(|_| StoreError::Busy)?;
     let bytes = tokio::time::timeout(
         Duration::from_secs(30),
-        to_bytes(body, private_files::MAX_FILE_BYTES),
+        to_bytes(body, private_files::upload_limit(&mime)),
     )
     .await
     .map_err(|_| StoreError::InvalidInput)?
@@ -38,24 +46,64 @@ pub(super) async fn upload(
         UploadAdmission::Ready(value) => Ok(Json(value).into_response()),
         UploadAdmission::Process(upload) => {
             let store = state.store.clone();
-            tokio::spawn(async move {
-                let (result, _permit) = tokio::task::spawn_blocking(move || {
-                    (private_files::extract(bytes.to_vec(), &mime), _permit)
-                })
-                .await
-                .map_err(|_| StoreError::Unavailable)?;
+            let outcome = tokio::spawn(async move {
+                let _permit = _permit;
+                let result = if pdf {
+                    match moosuri_documents::extract_pdf(
+                        extractor.as_deref().ok_or(StoreError::Unavailable)?,
+                        &bytes,
+                    )
+                    .await
+                    {
+                        Ok(value) => private_files::extracted_pdf(bytes.to_vec(), value.text)
+                            .map_err(|_| moosuri_documents::PdfError::Invalid),
+                        Err(error) => Err(error),
+                    }
+                } else {
+                    tokio::task::spawn_blocking(move || {
+                        private_files::extract(bytes.to_vec(), &mime)
+                    })
+                    .await
+                    .map_err(|_| StoreError::Unavailable)?
+                    .map_err(|_| moosuri_documents::PdfError::Invalid)
+                };
                 match result {
-                    Ok(file) => store.file_finish(upload, Some(file)).await,
-                    Err(_) => {
-                        let _ = store.file_finish(upload, None).await;
-                        Err(StoreError::InvalidInput)
+                    Ok(file) => store.file_finish(upload, Some(file)).await.map(Ok),
+                    Err(error) => {
+                        store.file_finish(upload, None).await?;
+                        Ok(Err(error))
                     }
                 }
             })
             .await
-            .map_err(|_| StoreError::Unavailable)?
-            .map(|v| Json(v).into_response())
-            .map_err(Into::into)
+            .map_err(|_| StoreError::Unavailable)??;
+            match outcome {
+                Ok(value) => Ok(Json(value).into_response()),
+                Err(error) => {
+                    use moosuri_documents::PdfError;
+                    let code = if !pdf {
+                        "invalid_file"
+                    } else {
+                        match error {
+                            PdfError::Encrypted => "pdf_encrypted",
+                            PdfError::NoText => "pdf_no_text",
+                            PdfError::Unsupported => "pdf_unsupported_content",
+                            PdfError::TooLarge => "pdf_extraction_limit",
+                            PdfError::TimedOut => "pdf_extraction_timeout",
+                            PdfError::Unavailable => "pdf_extractor_unavailable",
+                            PdfError::Invalid => "pdf_invalid",
+                        }
+                    };
+                    Ok(failure(
+                        if error == PdfError::Unavailable {
+                            StatusCode::SERVICE_UNAVAILABLE
+                        } else {
+                            StatusCode::BAD_REQUEST
+                        },
+                        code,
+                    ))
+                }
+            }
         }
     }
 }
@@ -85,15 +133,18 @@ pub(super) async fn content(
     let _delivery = state.delivery.read().await;
     let user = current(&state, &headers).await?;
     // Reject image IDs on this route; original bytes are immutable and account owned.
-    state.store.file_preview(&user, id.clone()).await?;
-    let bytes = state.store.file_bytes(&user, id).await?;
+    let (bytes, mime) = state.store.file_download(&user, id).await?;
     Ok((
         [
             (header::CONTENT_TYPE, "application/octet-stream"),
             (header::CACHE_CONTROL, "no-store"),
             (
                 header::CONTENT_DISPOSITION,
-                "attachment; filename=\"document.txt\"",
+                if mime == "application/pdf" {
+                    "attachment; filename=\"document.pdf\""
+                } else {
+                    "attachment; filename=\"document.txt\""
+                },
             ),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],

@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+moosuri-documents = { path = "../moosuri-documents" }
 subtle = "=2.6.1"
 moosuri-vault-protocol = { path = "../moosuri-vault-protocol" }
 moosuri-core = { path = "../moosuri-core" }

@@ -132,8 +132,8 @@ F27의 일회성 명시 요청·계획·읽기·영수증 검증 범위는 [맡�
 F37의 현재 기본 캘린더 읽기·직접 양식 쓰기 범위는 [내 Google Calendar](calendar.md)에 설명한다. 일반 대화/agent Calendar 실행·반복/참석자 일정 변경은 포함하지 않는다.
 
 
-F10/F14의 제한된 UTF-8 파일 경로는 [개인 파일](private-files.md)을 따른다.
-원본·정확한 revision/digest/byte 근거와 채팅 재시도를 연결하며 PDF/STT/일반
+F10/F14의 제한된 UTF-8 파일과 PDF 텍스트 경로는 [개인 파일](private-files.md)을 따른다.
+원본·정확한 revision/digest/추출 텍스트 byte 근거와 채팅 재시도를 연결하며 STT/일반
 바이너리는 여전히 미구현이다. 전체 F14/P7 완료를 뜻하지 않는다.
 
 

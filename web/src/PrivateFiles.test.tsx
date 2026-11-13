@@ -25,8 +25,23 @@ it("uploads a document independently of pending image preparation and sending te
 it("keeps original id and bytes through unknown ACK retry, cancellation fences a late ACK",async()=>{
  vi.mocked(fetch).mockResolvedValue(new Response(null,{status:204}));render(<Harness/>);const original=new File(["amount,37"],"sample.csv");fireEvent.change(screen.getByLabelText("파일 첨부"),{target:{files:[original]}});await waitFor(()=>expect(Upload.jobs).toHaveLength(1));const first=Upload.jobs[0];act(()=>first.onerror?.());fireEvent.click(await screen.findByText("같은 파일 재시도"));await waitFor(()=>expect(Upload.jobs).toHaveLength(2));expect(Upload.jobs[1].url).toBe(first.url);expect(Upload.jobs[1].body).toBe(first.body);fireEvent.click(screen.getByText("취소"));await act(async()=>Upload.jobs[1].finish());expect(screen.getByText("Send 0 ready attachments")).toBeInTheDocument();expect(screen.queryByText("sample.csv")).not.toBeInTheDocument();expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/v1/media/"),expect.objectContaining({method:"DELETE"}));
 });
-it("rejects unsupported binary/PDF and oversize documents before upload",async()=>{
- render(<Harness/>);for(const item of [new File(["%PDF"],"report.pdf"),new File(["x".repeat(24577)],"huge.txt")]){fireEvent.change(screen.getByLabelText("파일 첨부"),{target:{files:[item]}});}await screen.findAllByText(/PDF·음성·Office는 아직 지원하지 않습니다/);expect(Upload.jobs).toHaveLength(0);
+it("rejects unsupported formats and oversize text/PDF before upload",async()=>{
+ render(<Harness/>);for(const item of [new File(["binary"],"report.docx"),new File(["x".repeat(24577)],"huge.txt"),new File([new Uint8Array(2*1024*1024+1)],"huge.pdf")]){fireEvent.change(screen.getByLabelText("파일 첨부"),{target:{files:[item]}});}await screen.findAllByText(/텍스트 파일은 24KiB 이하/);expect(Upload.jobs).toHaveLength(0);
+});
+
+it("uploads PDF as an independent original and explains an image-only PDF without erasing the draft",async()=>{
+ render(<Harness/>);const pdf=new File(["%PDF-1.5\nsynthetic transport"],"receipt.pdf",{type:"application/pdf"});
+ fireEvent.change(screen.getByLabelText("파일 첨부"),{target:{files:[pdf]}});await waitFor(()=>expect(Upload.jobs).toHaveLength(1));
+ expect(Upload.jobs[0].body).toBe(pdf);expect(Upload.jobs[0].url).toContain("filename=receipt.pdf");expect(prepareImage).not.toHaveBeenCalled();
+ fireEvent.change(screen.getByLabelText("Message"),{target:{value:"이 영수증 정리해줘"}});Upload.jobs[0].status=400;Upload.jobs[0].responseText=JSON.stringify({code:"pdf_no_text"});
+ await act(async()=>Upload.jobs[0].finish());await screen.findByText(/스캔본이라면 필요한 페이지를 이미지로 첨부/);expect(screen.getByLabelText("Message")).toHaveValue("이 영수증 정리해줘");
+ fireEvent.click(screen.getByText("같은 파일 재시도"));await waitFor(()=>expect(Upload.jobs).toHaveLength(2));expect(Upload.jobs[1].body).toBe(pdf);expect(Upload.jobs[1].url).toBe(Upload.jobs[0].url);
+});
+
+it("labels PDF text extraction honestly and renders document markup as inert text",async()=>{
+ vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify("[Page 1]\n<script>source only</script>"),{headers:{"content-type":"application/json"}}));
+ const view=render(<PrivateFile accountId="account-a" media={{...file,filename:"receipt.pdf",media_type:"application/pdf"}}/>);
+ fireEvent.click(screen.getByText("텍스트 미리보기"));await screen.findByText(/PDF에서 추출한 텍스트/);expect(view.container.querySelector("script")).toBeNull();expect(screen.getByText(/source only/)).toBeInTheDocument();
 });
 it("renders markup as text and deletion blocks a pending original download and late preview",async()=>{
  let previewResolve!:(v:Response)=>void;let downloadResolve!:(v:Response)=>void;vi.mocked(fetch).mockImplementation((url)=>String(url).endsWith("/preview")?new Promise(r=>{previewResolve=r;}):new Promise(r=>{downloadResolve=r;}));const view=render(<PrivateFile accountId="account-a" media={file}/>);

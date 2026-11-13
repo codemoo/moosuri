@@ -385,7 +385,7 @@ async fn owner_upload_original_preview_actual_source_answer_retry_and_withdrawal
     .await;
     assert_eq!(preview.as_str().unwrap().as_bytes(), text);
     for (name, bytes) in [
-        ("binary.pdf", b"%PDF unsupported".to_vec()),
+        ("binary.docx", b"unsupported office binary".to_vec()),
         ("broken.json", b"{bad".to_vec()),
         ("control.txt", b"bad\x01text".to_vec()),
         ("binary.txt", vec![255]),

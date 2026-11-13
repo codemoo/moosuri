@@ -69,6 +69,7 @@ export function validRun(value: unknown): value is RunView {
     (value.error === null ||
       (typeof value.error === "string" && value.error.length <= 128)) &&
     validUsage(value.usage) &&
+    (value.mission_receipt===undefined||value.mission_receipt===null||(object(value.mission_receipt)&&id(value.mission_receipt.request_id)&&typeof value.mission_receipt.action==="string"&&typeof value.mission_receipt.state==="string"&&(value.mission_receipt.target===null||validMissionTarget(value.mission_receipt.target))&&Array.isArray(value.mission_receipt.candidates)&&value.mission_receipt.candidates.length<=8&&value.mission_receipt.candidates.every(c=>object(c)&&validMissionTarget(c.target)&&typeof c.title==="string"&&c.title.length<=160)&&(value.mission_receipt.next_local_slot===null||typeof value.mission_receipt.next_local_slot==="string"))) &&
     (value.schedule_receipts===undefined || value.schedule_receipts===null ||
       (Array.isArray(value.schedule_receipts)&&value.schedule_receipts.length<=1&&value.schedule_receipts.every(r=>object(r)&&id(r.request_id)&&id(r.id)&&integer(r.revision,1)&&["create","edit","pause","resume","revoke"].includes(String(r.action))&&typeof r.state==="string"&&typeof r.title==="string"&&r.title.length<=160&&typeof r.timezone==="string"&&r.timezone.length<=64&&r.url==="/app/schedules"&&(r.next_local_slot===null||typeof r.next_local_slot==="string")))) &&
     Array.isArray(value.evidence) && value.evidence.length <= 12 &&
@@ -291,3 +292,5 @@ export function applyEvents(
     needsSnapshot,
   };
 }
+
+function validMissionTarget(v:unknown):boolean {return object(v)&&["one_off","recurring"].includes(String(v.kind))&&id(v.id)&&integer(v.revision,1)}

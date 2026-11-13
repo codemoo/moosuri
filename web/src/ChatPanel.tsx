@@ -1,3 +1,4 @@
+import type {MissionChatContext,MissionChatTarget} from "../shared/api-types";
 import {useMediaUploads,MediaLibraryView,PrivateImage} from "./Media";
 import { WebEvidence } from "./WebEvidence";
 import { BrowserWorkspace } from "./BrowserWorkspace";
@@ -33,6 +34,17 @@ import {
 import { StreamFailure } from "./event-stream";
 import "./chat.css";
 
+function missionReceiptLabel(state: string): string {
+  const labels: Record<string, string> = {
+    active: "예약됨", queued: "접수됨", running: "진행 중", paused: "일시 정지",
+    completed: "완료", cancelled: "취소됨", revoked: "취소됨", expired: "실행 기간 만료",
+    incomplete: "미완료", needs_review: "결과 검토 필요", outcome_unknown: "결과 확인 필요",
+    clarify: "추가 정보 필요", unsupported: "지원 범위 확인", unavailable: "현재 상태 확인",
+    quarantined: "다시 연결 필요", failed: "실행 실패",
+  };
+  return labels[state] ?? "상태 확인";
+}
+
 export type PendingSend = {
   request_id: string;
   text: string;
@@ -40,6 +52,7 @@ export type PendingSend = {
   attachment_selections?:string[];
   artifact_target?:{id:string;revision:number};
   schedule_context?:ScheduleChatContext;
+  mission_context?:MissionChatContext;
   status: "sending" | "accepted" | "uncertain";
 };
 export type ChatMemory = {
@@ -137,10 +150,18 @@ export function ChatPanel(props: Props) {
   const pending = memory.pending[slot];
   const pendingRef = useRef(memory.pending);
   pendingRef.current = memory.pending;
+  const [missionTarget,setMissionTarget]=useState<MissionChatTarget|null>(null);
+  const missionCommand=useRef<{request:string;target:MissionChatTarget}|null>(null);
+  useEffect(()=>{setMissionTarget(null);missionCommand.current=null},[accountId,threadId]);
   const [scheduleTarget,setScheduleTarget]=useState<ScheduleChatReceipt|null>(null);
   useEffect(()=>setScheduleTarget(null),[accountId,threadId]);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const turnsRef = useRef<ChatTurn[]>([]);
+  useEffect(()=>{const sent=missionCommand.current;if(!sent)return;const receipt=turns.find(t=>t.run.request_id===sent.request)?.run.mission_receipt;if(!receipt)return;
+   const current=receipt.target;
+   if(current&&current.id===sent.target.id&&current.kind===sent.target.kind&&current.revision>sent.target.revision){setMissionTarget(v=>v?.id===sent.target.id&&v.kind===sent.target.kind&&v.revision===sent.target.revision?current:v);missionCommand.current=null;}
+   else if(receipt.state==="revoked"){setMissionTarget(v=>v?.id===sent.target.id&&v.revision===sent.target.revision?null:v);missionCommand.current=null;}
+  },[turns]);
   const historyEpoch = useRef(0);
   const [loading, setLoading] = useState(!!threadId);
   const [historyReady, setHistoryReady] = useState(!threadId);
@@ -177,6 +198,9 @@ export function ChatPanel(props: Props) {
 
   function acknowledgeSchedule(thread:string,value:PendingSend,turn:ChatTurn) {
     if(currentThread.current!==thread)return;
+    const selected=value.mission_context?.target;const applied=turn.run.mission_receipt?.target;
+    if(selected&&applied&&selected.id===applied.id&&selected.kind===applied.kind&&applied.revision>selected.revision){setMissionTarget(current=>current?.id===selected.id&&current.kind===selected.kind&&current.revision===selected.revision?applied:current);}
+    if(selected&&turn.run.mission_receipt?.state==="revoked"){setMissionTarget(current=>current?.id===selected.id&&current.revision===selected.revision?null:current);}
     const sent=value.schedule_context?.target;
     if(!sent)return;
     const receipt=turn.run.schedule_receipts?.find(r=>r.request_id===value.request_id&&r.id===sent.id&&r.revision>sent.revision);
@@ -646,7 +670,7 @@ export function ChatPanel(props: Props) {
       const result = await sendScope.request<unknown>(
         `/threads/${encodeURIComponent(thread)}/messages`,
         "POST",
-        { request_id: value.request_id, text: value.text,...(value.artifact_target?{artifact_target:value.artifact_target}:{}),...(value.attachments?.length?{attachments:value.attachments}:{}),...(value.schedule_context?{schedule_context:value.schedule_context}:{}) },
+        { request_id: value.request_id, text: value.text,...(value.artifact_target?{artifact_target:value.artifact_target}:{}),...(value.attachments?.length?{attachments:value.attachments}:{}),...(value.schedule_context?{schedule_context:value.schedule_context}:{}),...(value.mission_context?{mission_context:value.mission_context}:{}) },
         controller.signal,
       );
       if (
@@ -730,9 +754,11 @@ export function ChatPanel(props: Props) {
       request_id: resubmit?.request_id ?? crypto.randomUUID(),
       text,
       artifact_target:resubmit?resubmit.artifact_target:(callbacks.current.artifactTarget?{id:callbacks.current.artifactTarget.id,revision:callbacks.current.artifactTarget.revision}:undefined),
-      schedule_context:resubmit?resubmit.schedule_context:{timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC",target:!callbacks.current.artifactTarget&&scheduleTarget?{id:scheduleTarget.id,revision:scheduleTarget.revision}:null},
+      schedule_context:resubmit?resubmit.schedule_context:{timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC",target:!callbacks.current.artifactTarget&&!missionTarget&&scheduleTarget?{id:scheduleTarget.id,revision:scheduleTarget.revision}:null},
+      mission_context:resubmit?resubmit.mission_context:(!callbacks.current.artifactTarget&&missionTarget?{target:missionTarget}:undefined),
       status: "sending",
     };
+    if(value.mission_context?.target)missionCommand.current={request:value.request_id,target:value.mission_context.target};
     callbacks.current.onPending(originalSlot, value, resubmit?.request_id);
     if (!resubmit) callbacks.current.onDraft(originalSlot, "");
     let thread = currentThread.current;
@@ -842,7 +868,8 @@ export function ChatPanel(props: Props) {
         </button>
       </div>
       {props.artifactTarget&&<p>선택한 기록: {props.artifactTarget.title} · v{props.artifactTarget.revision} <button onClick={props.clearArtifactTarget}>선택 해제</button></p>}
-      {scheduleTarget&&!props.artifactTarget&&<p>선택한 알림: {scheduleTarget.title} <button onClick={()=>setScheduleTarget(null)}>알림 선택 해제</button></p>}
+      {missionTarget&&!props.artifactTarget&&<p>선택한 {missionTarget.kind==="recurring"?"반복 업무":"맡긴 일"} <button onClick={()=>setMissionTarget(null)}>업무 선택 해제</button></p>}
+      {scheduleTarget&&!props.artifactTarget&&!missionTarget&&<p>선택한 알림: {scheduleTarget.title} <button onClick={()=>setScheduleTarget(null)}>알림 선택 해제</button></p>}
       <BrowserWorkspace
         accountId={accountId}
         threadId={threadId}
@@ -980,7 +1007,8 @@ export function ChatPanel(props: Props) {
                   </div>
                 )}
                 {turn.run.artifact_receipts?.map(r=><button key={r.request_id} onClick={()=>props.openArtifact?.(r.id)}>저장한 기록 · 버전 {r.revision} ↗</button>)}
-                {turn.run.schedule_receipts?.map(r=><div key={r.request_id}><a href={r.url}>알림 · {r.title} ↗</a>{r.state!=="revoked"&&<button onClick={()=>{props.clearArtifactTarget?.();setScheduleTarget(r)}}>이 알림 선택</button>}</div>)}
+                {turn.run.mission_receipt&&<div><a href="/app/missions">맡긴 일 · {missionReceiptLabel(turn.run.mission_receipt.state)} ↗</a>{turn.run.mission_receipt.target&&<button onClick={()=>{props.clearArtifactTarget?.();setScheduleTarget(null);setMissionTarget(turn.run.mission_receipt!.target!)}}>이 업무 선택</button>}{turn.run.mission_receipt.next_local_slot&&<p>다음 실행: {turn.run.mission_receipt.next_local_slot}</p>}{turn.run.mission_receipt.candidates.map(c=><button key={c.target.id} onClick={()=>{props.clearArtifactTarget?.();setScheduleTarget(null);setMissionTarget(c.target)}}>{c.title} 선택</button>)}</div>}
+                {turn.run.schedule_receipts?.map(r=><div key={r.request_id}><a href={r.url}>알림 · {r.title} ↗</a>{r.state!=="revoked"&&<button onClick={()=>{props.clearArtifactTarget?.();setMissionTarget(null);setScheduleTarget(r)}}>이 알림 선택</button>}</div>)}
                 <WebEvidence observations={turn.run.web_evidence}/>
                 <details className="run-model">
                   <summary>실행 정보</summary>

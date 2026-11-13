@@ -736,6 +736,7 @@ impl Store {
                 let used: i64=tx.query_row("SELECT tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
                 if used+calls.len() as i64>12{return Err(StoreError::BudgetExhausted)}
                 crate::missions::record_round(&tx,&run,lease.step,&checkpoint.bytes)?;
+                crate::missions::chat::record(&tx,&run,&checkpoint.bytes)?;
                 tx.execute("UPDATE agent_steps SET state='completed',completion_digest=?4,checkpoint=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step,digest.as_slice(),checkpoint.bytes])?;
                 for call in calls {tx.execute("INSERT INTO agent_tool_slots(tenant_id,run_id,step,call_id,input) VALUES(?1,?2,?3,?4,?5)",params![run.tenant,run.id,lease.step,call.call_id,encoded(&call.input)?])?;}
                 tx.execute("UPDATE agent_execution SET checkpoint_seq=checkpoint_seq+1 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id])?;

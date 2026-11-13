@@ -127,7 +127,7 @@ F17의 기기 등록·일반 payload·계정/멀티탭 수명·소식함 연결�
 [검증 기록](reviews/2026-11-13-web-push.md)에서 실제 합성/브라우저 범위를 확인한다.
 실제 휴대폰 수신 검증과 topic mute/전체 제안 정책은 별도 미완료 항목이다.
 
-F27의 일회성 명시 요청·계획·읽기·영수증 검증 범위는 [맡긴 일](missions.md)에 설명한다. schema28의 직접 반복 읽기 업무는 아래 검증한 범위를 따른다. 대화 자동 등록·범위 확장은 아직 완료가 아니다.
+F27의 일회성 명시 요청·계획·읽기·영수증 검증 범위는 [맡긴 일](missions.md)에 설명한다. schema28의 직접 반복 읽기 업무는 아래 검증한 범위를 따른다. 대화의 제한된 읽기 업무 등록은 아래 schema29 범위를 따르며 일반적인 실행 범위 확장은 미완료다.
 
 F37의 현재 기본 캘린더 읽기·직접 양식 쓰기 범위는 [내 Google Calendar](calendar.md)에 설명한다. 일반 대화/agent Calendar 실행·반복/참석자 일정 변경은 포함하지 않는다.
 
@@ -150,3 +150,13 @@ Calendar26/private-files27 integration and final gates are recorded in the
 release claim. See [current status](status.md),
 [missions](missions.md) and the unarchived
 [bounded change](../openspec/changes/recurring-read-only-missions/proposal.md).
+
+### Conversational read-only mission slice (schema29)
+
+F27/F29/F30 now connect candidate current Korean/English task/control interpretations
+to actual existing mission/template operations with one isolated decision, atomic
+model acknowledgement/typed plan and current session/CAS validation. Noncandidate
+chat adds no mission classifier. Literal reminders retain exact body behavior.
+Missing clock/target clarifies without routine approval; unknown/budget/restore and
+source withdrawal remain existing boundaries. Synthetic protocol behavior is not a
+real-model language-understanding/latency success claim. See [missions](missions.md).

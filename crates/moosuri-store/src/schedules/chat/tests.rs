@@ -547,19 +547,14 @@ async fn unsupported_and_ordinary_messages_do_not_mutate_or_claim_mission_succes
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
     let u = configured(&store).await;
+    semantic_tools(&store, &u).await;
     let t = store
         .create_thread(&u, "Synthetic".into())
         .await
         .unwrap()
         .id;
     let unsupported = send(&store, &u, &t, "매일 뉴스 조사해줘", None).await;
-    assert_eq!(unsupported.run.state, RunState::Completed);
-    assert!(
-        unsupported.assistant[0]
-            .text
-            .contains("아직 실행하지 않습니다")
-    );
-    assert!(store.claim_run().await.unwrap().is_none());
+    deferred(&store, &u, &unsupported).await;
     assert!(store.schedules(&u).await.unwrap().is_empty());
     let ordinary = send(
         &store,
@@ -921,11 +916,13 @@ async fn everyday_korean_on_off_controls_preserve_one_owned_reminder() {
 
 // SC2/SC3: known task requests are unsupported, while reminder-message bodies are literal data.
 #[tokio::test]
-async fn repair_one_off_missions_are_declined_and_literal_meta_words_still_save_reminders() {
+async fn scheduled_missions_defer_to_isolated_planner_and_literal_meta_words_still_save_reminders()
+{
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
     let u = configured(&store).await;
+    semantic_tools(&store, &u).await;
     store
         .call(|_| {
             TEST_TIME.with(|v| v.set(Some(ts("2027-01-04T00:00:00Z"))));
@@ -946,12 +943,7 @@ async fn repair_one_off_missions_are_declined_and_literal_meta_words_still_save_
         "매일 메일 보내줘",
     ] {
         let turn = send(&store, &u, &thread, text, None).await;
-        assert_eq!(turn.run.state, RunState::Completed, "{text}");
-        assert!(turn.run.schedule_receipts.is_none(), "{text}");
-        assert!(
-            turn.assistant[0].text.contains("아직 실행하지 않습니다"),
-            "{text}"
-        );
+        deferred(&store, &u, &turn).await;
         assert!(store.schedules(&u).await.unwrap().is_empty(), "{text}");
         assert!(store.claim_run().await.unwrap().is_none(), "{text}");
     }
@@ -1041,6 +1033,7 @@ async fn sc4_iso_date_korean_store_receipt_and_invalid_meta_conditional_guards()
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
     let u = configured(&store).await;
+    semantic_tools(&store, &u).await;
     store
         .call(|_| {
             TEST_TIME.with(|v| v.set(Some(ts("2027-01-04T00:00:00Z"))));
@@ -1086,9 +1079,7 @@ async fn sc4_iso_date_korean_store_receipt_and_invalid_meta_conditional_guards()
         "2027-01-05 오전 9시에 뉴스 검색해줘",
     ] {
         let mission = send(&store, &u, &thread, text, None).await;
-        assert_eq!(mission.run.state, RunState::Completed);
-        assert!(mission.run.schedule_receipts.is_none());
-        assert!(mission.assistant[0].text.contains("아직 실행하지 않습니다"));
+        deferred(&store, &u, &mission).await;
         assert!(store.claim_run().await.unwrap().is_none());
     }
     let selected = Some(ScheduleTarget {
@@ -1125,4 +1116,32 @@ async fn sc4_iso_date_korean_store_receipt_and_invalid_meta_conditional_guards()
         assert_eq!(rows[0].revision, 1, "{text}");
         assert_eq!(rows[0].state, "active", "{text}");
     }
+}
+
+async fn semantic_tools(store: &Store, u: &UserContext) {
+    let p = store.list_providers(u).await.unwrap().providers.remove(0);
+    store
+        .record_tool_probe(u, p.id, 1, "synthetic-model".into(), None)
+        .await
+        .unwrap();
+}
+async fn deferred(store: &Store, u: &UserContext, turn: &moosuri_core::ChatTurn) {
+    assert_eq!(turn.run.state, RunState::Queued);
+    assert!(turn.run.schedule_receipts.is_none());
+    let id = turn.run.id.clone();
+    store
+        .call(move |db| {
+            assert_eq!(
+                db.conn.query_row(
+                    "SELECT state FROM mission_chat_plans WHERE run_id=?1",
+                    [id],
+                    |r| r.get::<_, String>(0)
+                )?,
+                "awaiting"
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+    store.cancel_run(u, turn.run.id.clone(), 1).await.unwrap();
 }

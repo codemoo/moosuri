@@ -581,7 +581,11 @@ fn weekdays(v: &str) -> Option<Vec<u8>> {
     days.dedup();
     (!days.is_empty()).then_some(days)
 }
-fn rule<'a>(spec: &'a str, tz: Option<&str>, now: i64) -> Result<(ScheduleRule, &'a str)> {
+pub(crate) fn rule<'a>(
+    spec: &'a str,
+    tz: Option<&str>,
+    now: i64,
+) -> Result<(ScheduleRule, &'a str)> {
     let original = spec.trim();
     let lower = original.to_ascii_lowercase();
     let (rule, tail) = rule_lower(&lower, tz, now)?;

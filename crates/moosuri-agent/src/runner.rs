@@ -12,8 +12,9 @@ use moosuri_connectors::model::{
 };
 use moosuri_core::{MessagePhase, ProviderKind, RunState, RunUsage};
 use moosuri_store::{
-    AgentClaim, ContextMessage, ContextRole, KnowledgeToolInput, KnowledgeToolResult, OutputPatch,
-    PendingKnowledgeCall, PrivateCheckpoint, RunFailure, RunLease, StepLease, Store, StoreError,
+    AgentClaim, AgentContext, ContextMessage, ContextRole, KnowledgeToolInput, KnowledgeToolResult,
+    OutputPatch, PendingKnowledgeCall, PrivateCheckpoint, RunFailure, RunLease, StepLease, Store,
+    StoreError,
 };
 use std::{collections::BTreeMap, time::Duration};
 
@@ -21,6 +22,7 @@ use std::{collections::BTreeMap, time::Duration};
 mod artifact_intent;
 mod memory;
 mod mission;
+mod mission_chat;
 
 const MAX_OUTPUT: usize = 256 * 1024;
 const MAX_PATCH: usize = 8 * 1024;
@@ -636,6 +638,19 @@ pub(crate) async fn execute(
         .await;
         return;
     }
+    // A completed typed intent resumes before any classifier or ordinary capsule handling.
+    match store.apply_mission_chat(&lease).await {
+        Ok(Some(true)) => {
+            signals.changed();
+            signals.wake.notify_one();
+            return;
+        }
+        Ok(Some(false)) => {
+            context.checkpoint = None;
+        }
+        Ok(None) => {}
+        Err(_) => return,
+    }
     // Explicit retry starts a new attempt. Unknown remote work is never resumed
     // merely because a private checkpoint exists in a previous attempt.
     if context.checkpoint.is_some() || !context.calls.is_empty() {
@@ -754,6 +769,10 @@ pub(crate) async fn execute(
             protocol,
             capabilities: &capabilities,
         };
+        let Some(next) = mission_chat::run(&planning, context, current_text).await else {
+            return;
+        };
+        context = next;
         let Some((next, next_profile)) =
             artifact_intent::plan(&planning, context, artifact_profile, current_text).await
         else {

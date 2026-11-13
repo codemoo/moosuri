@@ -4,7 +4,7 @@ use crate::{PendingKnowledgeCall, PrivateCheckpoint, StepLease};
 use moosuri_core::*;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-async fn setup() -> (tempfile::TempDir, Store, UserContext) {
+pub(crate) async fn setup() -> (tempfile::TempDir, Store, UserContext) {
     let d = directory();
     let s = Store::open_with_web(
         d.path(),
@@ -53,7 +53,7 @@ async fn setup() -> (tempfile::TempDir, Store, UserContext) {
     .unwrap();
     (d, s, u)
 }
-fn input(mode: MissionMode) -> MissionCreate {
+pub(crate) fn input(mode: MissionMode) -> MissionCreate {
     MissionCreate {
         request_id: Uuid::new_v4().to_string(),
         task: "Compute the synthetic total from 0.1 and 0.2".into(),
@@ -1445,7 +1445,7 @@ async fn migration25_rolls_back_late_failure_and_preserves_prior_authority_table
     let dir = crate::tests::directory();
     drop(Store::open(dir.path()).unwrap());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    conn.execute_batch("DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal; CREATE TABLE mission_controls(conflict INTEGER); PRAGMA user_version=24;").unwrap();
+    conn.execute_batch("DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal; CREATE TABLE mission_controls(conflict INTEGER); PRAGMA user_version=24;").unwrap();
     drop(conn);
     assert!(Store::open(dir.path()).is_err());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

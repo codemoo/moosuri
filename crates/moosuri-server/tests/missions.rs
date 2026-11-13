@@ -238,4 +238,51 @@ async fn mission_http_owner_admission_deduplication_controls_and_scope() {
     assert_eq!(paused["schedule"]["state"], "paused");
     assert!(s.list_threads(&u.user).await.unwrap().is_empty());
     assert_eq!(s.usage_summary(&u.user).await.unwrap().dispatched_calls, 0);
+    let config = ServerConfig::new("https://assistant.example.test", false).unwrap();
+    let runtime = config.start_runtime(s.clone());
+    let app = router_with_runtime(s.clone(), config, runtime.clone());
+    let thread = s
+        .create_thread(&u.user, "Synthetic semantic controls".into())
+        .await
+        .unwrap();
+    let path = format!("/api/v1/threads/{}/messages", thread.id);
+    let command = json!({"request_id":"00000000-0000-4000-8000-000000000020","text":"그 업무 멈춰 줘","schedule_context":{"timezone":"Asia/Seoul","target":null},"mission_context":{"target":{"kind":"recurring","id":id,"revision":2}}});
+    let (status, accepted) = send(
+        &app,
+        "POST",
+        &path,
+        Some(&u.token),
+        Some(&u.user.account().id),
+        command.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{accepted}");
+    assert_eq!(accepted["run"]["state"], "queued");
+    let (status, retry) = send(
+        &app,
+        "POST",
+        &path,
+        Some(&u.token),
+        Some(&u.user.account().id),
+        command.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(retry["run"]["id"], accepted["run"]["id"]);
+    let mut changed = command;
+    changed["mission_context"]["target"]["revision"] = json!(99);
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path,
+            Some(&u.token),
+            Some(&u.user.account().id),
+            changed
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    runtime.shutdown().await;
 }

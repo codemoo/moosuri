@@ -4,12 +4,13 @@ use crate::chat::{self as conversation, Run};
 use moosuri_core::{MessagePhase, RunState};
 #[cfg(test)]
 mod integration_tests;
-mod parser;
+pub(crate) mod parser;
 #[cfg(test)]
 mod tests;
 pub(crate) fn validate_timezone(value: &str) -> Result<()> {
     time::zone(value).map(|_| ())
 }
+#[allow(dead_code)]
 const MISSION: &str = "현재 예약은 정해진 문구를 개인 소식함에 남기는 알림만 지원합니다. 조사·검색·메일 발송 같은 예약 작업은 아직 실행하지 않습니다. 알림 문구를 지정해 주세요.";
 fn target(
     conn: &Connection,
@@ -79,6 +80,7 @@ pub(crate) fn finish(
     let (message, receipt) = match decision {
         parser::Decision::None => return Ok(false),
         parser::Decision::Clarify(text) => (text.to_owned(), None),
+        parser::Decision::Mission if run.tool_profile.is_some() => return Ok(false),
         parser::Decision::Mission => (MISSION.into(), None),
         parser::Decision::Command(command) => {
             if crate::media::has_context(conn, &run.tenant, &run.id)? {

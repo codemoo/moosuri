@@ -396,6 +396,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0028_recurring_missions.sql"
         ))?;
     }
+    if captured < 29 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0029_mission_chat.sql"
+        ))?;
+    }
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -468,6 +473,10 @@ fn quarantine(
         [],
     )?;
     crate::schedules::quarantine_for_restore(&tx)?;
+    tx.execute(
+        "UPDATE mission_chat_plans SET state='quarantined' WHERE state IN('awaiting','decided')",
+        [],
+    )?;
     crate::push::quarantine_for_restore(&tx)?;
     tx.execute_batch("DELETE FROM vault_handoffs; DELETE FROM vault_grants;")?;
     crate::media::quarantine(&tx)?;

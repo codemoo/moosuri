@@ -506,4 +506,5 @@ mod mail;
 
 mod web;
 
+mod mission_chat;
 mod missions;

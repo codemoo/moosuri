@@ -9,6 +9,7 @@ pub mod mail;
 mod mail_tools;
 mod memory_intent;
 mod memory_target;
+mod mission_intent;
 mod push;
 mod runner;
 mod schedules;

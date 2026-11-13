@@ -158,7 +158,7 @@ or fabricated session. Existing epoch/revision/quarantine checks continue to
 fence later background publication. Mail/browser execution remains outside this reminder grant.
 [Web Push](web-push.md) is separately implemented with account/device binding. Schema28
 scheduled read-only missions and narrow exact comparison are separately implemented
-below; conversational model-task capture, semantic comparison and topic mute remain open.
+below; schema29 conversational capture is described at the end. Semantic comparison and topic mute remain open.
 
 Migration0022 adds the versioned chat receipt sidecar atomically after
 recovery19/20 and media21. Confirmation uses the saved outcome and local date/time;
@@ -198,4 +198,11 @@ Notifications contain only status and a mission-history link. Narrow exact succe
 decimal/source result comparison is described in [missions](missions.md); other
 receipt types and semantic prose comparison remain outside that filter. Schema0028
 adds sidecars and uses the same sealed-restore schedule quarantine. Conversational
-capture of recurring model tasks remains a separate explicit follow-up.
+capture uses the separate schema29 current-request path below.
+
+Schema29 adds a separate current-user semantic decision path for natural scheduled
+read-only tasks; literal reminder shells retain their existing zero-model behavior.
+Natural task candidates use one bounded isolated decision and actual existing
+mission/template primitives. Missing time or ambiguous target clarifies only that
+field; no routine approval screen is added. See [missions](missions.md) for quote,
+current-session, receipt, restore and honest language-evaluation limitations.

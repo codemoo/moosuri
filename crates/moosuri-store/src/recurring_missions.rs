@@ -78,28 +78,10 @@ impl Store {
         self.call(move |db| {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let u=validate(&tx,&user,true,false)?;
-            Uuid::parse_str(&input.request_id).map_err(|_|StoreError::InvalidInput)?;
-            crate::missions::validate_input(&input.template)?;
-            if !matches!(input.template.execution_mode,MissionMode::Durable) { return Err(StoreError::InvalidInput); }
             let digest=Sha256::digest(encode(&input)?.as_bytes()).to_vec();
-            if let Some((id,old))=tx.query_row("SELECT schedule_id,payload_digest FROM recurring_missions WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",params![u.tenant.0,u.account.id,input.request_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?))).optional()? {
-                if old!=digest{return Err(StoreError::Conflict)}
-                return view(&tx,&u,&id)
-            }
-            let choice=providers::selected_choice(&tx,&u)?;
-            if !choice.function_tools { return Err(StoreError::InvalidInput); }
-            providers::binding_for_choice(&tx,&db.provider_key,&choice)?;
-            let mut profile=crate::web::admitted_profile(&tx,&u,&db.web_profile)?;
-            profile.mail_connections.clear();if let Some(w)=&mut profile.web {w.browser_pin=None;}
-            profile.version=if profile.web.is_some(){3}else{1};
-            let mut model=serde_json::to_value(choice).map_err(|_|StoreError::InvalidInput)?;
-            model["agent_profile"]=serde_json::to_value(profile).map_err(|_|StoreError::InvalidInput)?;
-            // Titles/messages of the scheduler sidecar never contain mission or source content.
-            let mut draft=input.schedule;
-            draft.message="예약한 읽기 업무".into();
-            let schedule=crate::schedules::create_in(&tx,&u,&ScheduleCreate{request_id:Uuid::new_v4().to_string(),draft},now()?)?;
-            tx.execute("INSERT INTO recurring_missions VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![u.tenant.0,schedule.id,u.account.id,input.request_id,digest,encode(&input.template)?,encode(&model)?,input.changes_only])?;
-            let out=view(&tx,&u,&schedule.id)?;tx.commit()?;Ok(out)
+            if let Some((id,old))=tx.query_row("SELECT schedule_id,payload_digest FROM recurring_missions WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",params![u.tenant.0,u.account.id,input.request_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?))).optional()?{if old!=digest{return Err(StoreError::Conflict)}return view(&tx,&u,&id)}
+            let choice=providers::selected_choice(&tx,&u)?;let profile=crate::web::admitted_profile(&tx,&u,&db.web_profile)?;
+            let out=create_owner_in(&tx,&db.provider_key,&u,input,choice,profile)?;tx.commit()?;Ok(out)
         }).await
     }
     pub async fn recurring_missions(
@@ -121,15 +103,7 @@ impl Store {
                 .conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
             let u = validate(&tx, &user, true, false)?;
-            let old = view(&tx, &u, &id)?;
-            if input.action == "resume" {
-                providers::binding_for_choice(&tx, &db.provider_key, &old.model)?;
-            }
-            let changed = crate::schedules::control_recurring_in(&tx, &u, &id, &input, now()?)?;
-            if changed.revision != old.schedule.revision {
-                fence_children(&tx, &u.tenant.0, &id)?;
-            }
-            let out = view(&tx, &u, &id)?;
+            let out = control_owner_in(&tx, &db.provider_key, &u, &id, input)?;
             tx.commit()?;
             Ok(out)
         })
@@ -139,7 +113,7 @@ impl Store {
         &self,
         user: &UserContext,
         id: String,
-        mut input: ScheduleEdit,
+        input: ScheduleEdit,
     ) -> Result<RecurringMissionView> {
         let user = user.clone();
         self.call(move |db| {
@@ -147,12 +121,7 @@ impl Store {
                 .conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
             let u = validate(&tx, &user, true, false)?;
-            let old = view(&tx, &u, &id)?;
-            providers::binding_for_choice(&tx, &db.provider_key, &old.model)?;
-            input.draft.message = "예약한 읽기 업무".into();
-            crate::schedules::edit_recurring_in(&tx, &u, &id, &input, now()?)?;
-            fence_children(&tx, &u.tenant.0, &id)?;
-            let out = view(&tx, &u, &id)?;
+            let out = edit_owner_in(&tx, &db.provider_key, &u, &id, input)?;
             tx.commit()?;
             Ok(out)
         })
@@ -316,4 +285,93 @@ fn publish_results(c: &Connection, time: i64) -> Result<()> {
         c.execute("UPDATE reminder_schedules SET state='completed',reason=NULL,updated_at=?3 WHERE tenant_id=?1 AND id=?2 AND state='active' AND next_due IS NULL",params![t,schedule,time])?;
     }
     Ok(())
+}
+
+pub(crate) fn create_owner_in(
+    tx: &Connection,
+    key: &[u8; 32],
+    u: &UserContext,
+    input: RecurringMissionCreate,
+    choice: ModelChoice,
+    profile: RunToolProfile,
+) -> Result<RecurringMissionView> {
+    Uuid::parse_str(&input.request_id).map_err(|_| StoreError::InvalidInput)?;
+    crate::missions::validate_input(&input.template)?;
+    if !matches!(input.template.execution_mode, MissionMode::Durable) {
+        return Err(StoreError::InvalidInput);
+    }
+    let digest = Sha256::digest(encode(&input)?.as_bytes()).to_vec();
+    if let Some((id,old))=tx.query_row("SELECT schedule_id,payload_digest FROM recurring_missions WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",params![u.tenant.0,u.account.id,input.request_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?))).optional()? {
+                if old!=digest{return Err(StoreError::Conflict)}
+                return view(tx,u,&id)
+            }
+    if !choice.function_tools {
+        return Err(StoreError::InvalidInput);
+    }
+    providers::binding_for_choice(tx, key, &choice)?;
+    let profile = crate::missions::read_profile(profile);
+    let mut model = serde_json::to_value(choice).map_err(|_| StoreError::InvalidInput)?;
+    model["agent_profile"] = serde_json::to_value(profile).map_err(|_| StoreError::InvalidInput)?;
+    // Titles/messages of the scheduler sidecar never contain mission or source content.
+    let mut draft = input.schedule;
+    draft.message = "예약한 읽기 업무".into();
+    let schedule = crate::schedules::create_in(
+        tx,
+        u,
+        &ScheduleCreate {
+            request_id: Uuid::new_v4().to_string(),
+            draft,
+        },
+        now()?,
+    )?;
+    tx.execute(
+        "INSERT INTO recurring_missions VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        params![
+            u.tenant.0,
+            schedule.id,
+            u.account.id,
+            input.request_id,
+            digest,
+            encode(&input.template)?,
+            encode(&model)?,
+            input.changes_only
+        ],
+    )?;
+    let out = view(tx, u, &schedule.id)?;
+    Ok(out)
+}
+
+pub(crate) fn control_owner_in(
+    tx: &Connection,
+    key: &[u8; 32],
+    u: &UserContext,
+    id: &str,
+    input: ScheduleControl,
+) -> Result<RecurringMissionView> {
+    let old = view(tx, u, id)?;
+    if input.action == "resume" {
+        providers::binding_for_choice(tx, key, &old.model)?;
+    }
+    let changed = crate::schedules::control_recurring_in(tx, u, id, &input, now()?)?;
+    if changed.revision != old.schedule.revision {
+        fence_children(tx, &u.tenant.0, id)?;
+    }
+    let out = view(tx, u, id)?;
+    Ok(out)
+}
+
+pub(crate) fn edit_owner_in(
+    tx: &Connection,
+    key: &[u8; 32],
+    u: &UserContext,
+    id: &str,
+    mut input: ScheduleEdit,
+) -> Result<RecurringMissionView> {
+    let old = view(tx, u, id)?;
+    providers::binding_for_choice(tx, key, &old.model)?;
+    input.draft.message = "예약한 읽기 업무".into();
+    crate::schedules::edit_recurring_in(tx, u, id, &input, now()?)?;
+    fence_children(tx, &u.tenant.0, id)?;
+    let out = view(tx, u, id)?;
+    Ok(out)
 }

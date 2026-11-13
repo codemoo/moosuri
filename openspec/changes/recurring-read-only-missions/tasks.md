@@ -12,6 +12,6 @@
 
 ## Explicit follow-up; keep unarchived
 
-- [ ] Conversational owner capture for recurring tasks with explicit scope and typed intent.
+- [x] Bounded conversational owner capture with explicit scope and typed intent through conversational-read-only-missions (schema29); broader language/clarification quality remains follow-up.
 - [ ] Deliberately scoped normalization of other evidence types if required; no semantic equality claim.
 - [ ] Opt-in live provider/device evaluation, separately authorized and budgeted.

@@ -865,7 +865,7 @@ async fn recurring_schema28_late_failure_rolls_back_the_complete_new_authority_u
     let d = directory();
     drop(Store::open(d.path()).unwrap());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;CREATE TABLE recurring_mission_occurrences(conflict INTEGER);PRAGMA user_version=27;").unwrap();
+    c.execute_batch("DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;CREATE TABLE recurring_mission_occurrences(conflict INTEGER);PRAGMA user_version=27;").unwrap();
     drop(c);
     assert!(Store::open(d.path()).is_err());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();

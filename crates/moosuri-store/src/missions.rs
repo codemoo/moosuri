@@ -1,6 +1,7 @@
 //! Mission authority and deterministic verification live in the SQLite writer.
 //! A durable grant is never converted to a session UserContext.
 use super::*;
+pub(crate) mod chat;
 use crate::agent_execution::{KnowledgeToolInput, KnowledgeToolResult};
 use crate::chat::Run;
 use moosuri_core::{
@@ -454,20 +455,34 @@ impl Store {
         input: MissionCreate,
     ) -> Result<MissionView> {
         let u = u.clone();
-        self.call(move|db|{
- let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&u,true,false)?;
- validate_input(&input)?;
- let payload=json(&input)?;let digest=Sha256::digest(payload.as_bytes()).to_vec();
- if let Some((id,old))=tx.query_row("SELECT id,payload_digest FROM missions WHERE tenant_id=?1 AND request_id=?2",params![u.tenant.0,input.request_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?))).optional()?{if old!=digest{return Err(StoreError::Conflict)}return view(&tx,&u.tenant.0,&id)}
- let active:i64=tx.query_row("SELECT count(*) FROM missions WHERE tenant_id=?1 AND state IN('queued','planning','executing','verifying','paused')",[&u.tenant.0],|r|r.get(0))?;if active>=1{return Err(StoreError::Busy)}
- let global:i64=tx.query_row("SELECT count(*) FROM missions WHERE state IN('queued','planning','executing','verifying')",[],|r|r.get(0))?;if global>=16{return Err(StoreError::Busy)}
- let choice=providers::selected_choice(&tx,&u)?;if !choice.function_tools{return Err(StoreError::InvalidInput)}providers::binding_for_choice(&tx,&db.provider_key,&choice)?;
- let mut profile=crate::web::admitted_profile(&tx,&u,&db.web_profile)?;profile.mail_connections.clear();if let Some(w)=&mut profile.web{w.browser_pin=None;}profile.version=if profile.web.is_some(){3}else{1};
- let mut model=serde_json::to_value(choice).map_err(|_|StoreError::InvalidInput)?;model["agent_profile"]=serde_json::to_value(profile).map_err(|_|StoreError::InvalidInput)?;
- let expiry=clock()?.checked_add(86400000).ok_or(StoreError::Unavailable)?;
- let id=create_pinned_in(&tx,&u.tenant.0,&u.account.id,u.epoch,u.digest.as_slice(),&input,&model,expiry,now()?)?;
- let result=view(&tx,&u.tenant.0,&id)?;tx.commit()?;Ok(result)
- }).await
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let u = validate(&tx, &u, true, false)?;
+            let payload = json(&input)?;
+            let digest = Sha256::digest(payload.as_bytes()).to_vec();
+            if let Some((id, old)) = tx
+                .query_row(
+                    "SELECT id,payload_digest FROM missions WHERE tenant_id=?1 AND request_id=?2",
+                    params![u.tenant.0, input.request_id],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)),
+                )
+                .optional()?
+            {
+                if old != digest {
+                    return Err(StoreError::Conflict);
+                }
+                return view(&tx, &u.tenant.0, &id);
+            }
+            let choice = providers::selected_choice(&tx, &u)?;
+            let profile = crate::web::admitted_profile(&tx, &u, &db.web_profile)?;
+            let id = create_owner_in(&tx, &db.provider_key, &u, input, choice, profile)?;
+            let result = view(&tx, &u.tenant.0, &id)?;
+            tx.commit()?;
+            Ok(result)
+        })
+        .await
     }
     pub async fn missions(&self, u: &UserContext) -> Result<Vec<MissionView>> {
         let u = u.clone();
@@ -480,28 +495,16 @@ impl Store {
         input: MissionControl,
     ) -> Result<MissionView> {
         let u = u.clone();
-        self.call(move|db|{
- let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&u,true,false)?;Uuid::parse_str(&input.request_id).map_err(|_|StoreError::InvalidInput)?;let payload=json(&input)?;
- if let Some((old,response))=tx.query_row("SELECT payload,response FROM mission_controls WHERE tenant_id=?1 AND mission_id=?2 AND request_id=?3",params![u.tenant.0,id,input.request_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional()?{if old!=payload{return Err(StoreError::Conflict)}let _=response;return view(&tx,&u.tenant.0,&id)}
- let current=view(&tx,&u.tenant.0,&id)?;if current.revision!=input.expected_revision{return Err(StoreError::Conflict)}
- let run:String=tx.query_row("SELECT run_id FROM missions WHERE tenant_id=?1 AND id=?2 AND account_id=?3",params![u.tenant.0,id,u.account.id],|r|r.get(0)).optional()?.ok_or(StoreError::NotFound)?;
- let dispatched:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='dispatched') OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",params![u.tenant.0,run],|r|r.get(0))?;
- match &input.action {
- MissionAction::Pause|MissionAction::Cancel=>{if !matches!(current.state.as_str(),"queued"|"planning"|"executing"|"verifying"|"paused"){return Err(StoreError::Conflict)}let state=if matches!(input.action,MissionAction::Pause){"paused"}else{"cancelled"};tx.execute("UPDATE missions SET state=?3,uncertain=max(uncertain,?4),revision=revision+1,grant_enabled=CASE WHEN ?3='cancelled' THEN 0 ELSE grant_enabled END WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,state,dispatched])?;tx.execute("UPDATE chat_runs SET state='cancelled' WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,run])?;},
- MissionAction::Resume|MissionAction::Steer{..}=>{
- if current.uncertain||dispatched||current.expires_at_ms<=clock()?||!matches!(current.state.as_str(),"paused"|"queued"){return Err(StoreError::Conflict)}
- let carrier=crate::chat::load_run(&tx,&u.tenant.0,&run)?;if carrier.epoch!=u.epoch{return Err(StoreError::Unauthorized)}providers::binding_for_choice(&tx,&db.provider_key,&carrier.model)?;crate::agent_execution::guard_execution(&tx,&carrier)?;
- let mut steering=current.steering;
- if let MissionAction::Steer{instruction}=&input.action{if instruction.trim().is_empty()||instruction.len()>2000||steering.len()>=8{return Err(StoreError::InvalidInput)}steering.push(instruction.clone());tx.execute("UPDATE missions SET round_text=NULL WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id])?;}
- requeue_stable(&tx,&u.tenant.0,&run)?;
- if tx.execute("UPDATE missions SET state='queued',revision=revision+1,steering=?3,candidate=NULL,report='[]' WHERE tenant_id=?1 AND id=?2 AND grant_enabled=1",params![u.tenant.0,id,json(&steering)?])?!=1{return Err(StoreError::Conflict)}
- if matches!(current.request.execution_mode,MissionMode::CurrentSession){tx.execute("UPDATE chat_runs SET session_digest=?3 WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,run,u.digest.as_slice()])?;}
- }
- }
- let result=view(&tx,&u.tenant.0,&id)?;
- tx.execute("INSERT INTO mission_revisions VALUES(?1,?2,?3,?4,?5)",params![u.tenant.0,id,result.revision,input.request_id,payload])?;
- tx.execute("INSERT INTO mission_controls VALUES(?1,?2,?3,?4,?5)",params![u.tenant.0,id,input.request_id,payload,"{}"])?;tx.commit()?;Ok(result)
- }).await
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let u = validate(&tx, &u, true, false)?;
+            let result = control_owner_in(&tx, &db.provider_key, &u, &id, input)?;
+            tx.commit()?;
+            Ok(result)
+        })
+        .await
     }
     pub async fn mission_execution(
         &self,
@@ -641,4 +644,195 @@ pub(crate) fn create_pinned_in(
         params![tenant, run, expiry],
     )?;
     Ok(id)
+}
+
+pub(crate) fn read_profile(
+    mut profile: moosuri_core::RunToolProfile,
+) -> moosuri_core::RunToolProfile {
+    profile.mail_connections.clear();
+    if let Some(w) = &mut profile.web {
+        w.browser_pin = None;
+    }
+    profile.version = if profile.web.is_some() { 3 } else { 1 };
+    profile
+}
+pub(crate) fn create_owner_in(
+    tx: &Connection,
+    key: &[u8; 32],
+    u: &UserContext,
+    input: MissionCreate,
+    choice: moosuri_core::ModelChoice,
+    profile: moosuri_core::RunToolProfile,
+) -> Result<String> {
+    if !choice.function_tools {
+        return Err(StoreError::InvalidInput);
+    }
+    validate_input(&input)?;
+    let payload = json(&input)?;
+    let digest = Sha256::digest(payload.as_bytes()).to_vec();
+    if let Some((id, old)) = tx
+        .query_row(
+            "SELECT id,payload_digest FROM missions WHERE tenant_id=?1 AND request_id=?2",
+            params![u.tenant.0, input.request_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional()?
+    {
+        if old != digest {
+            return Err(StoreError::Conflict);
+        }
+        return view(tx, &u.tenant.0, &id).map(|v| v.id);
+    }
+    let active:i64=tx.query_row("SELECT count(*) FROM missions WHERE tenant_id=?1 AND state IN('queued','planning','executing','verifying','paused')",[&u.tenant.0],|r|r.get(0))?;
+    if active >= 1 {
+        return Err(StoreError::Busy);
+    }
+    let global: i64 = tx.query_row(
+        "SELECT count(*) FROM missions WHERE state IN('queued','planning','executing','verifying')",
+        [],
+        |r| r.get(0),
+    )?;
+    if global >= 16 {
+        return Err(StoreError::Busy);
+    }
+    providers::binding_for_choice(tx, key, &choice)?;
+    let profile = read_profile(profile);
+    let mut model = serde_json::to_value(choice).map_err(|_| StoreError::InvalidInput)?;
+    model["agent_profile"] = serde_json::to_value(profile).map_err(|_| StoreError::InvalidInput)?;
+    let expiry = clock()?
+        .checked_add(86400000)
+        .ok_or(StoreError::Unavailable)?;
+    let id = create_pinned_in(
+        tx,
+        &u.tenant.0,
+        &u.account.id,
+        u.epoch,
+        u.digest.as_slice(),
+        &input,
+        &model,
+        expiry,
+        now()?,
+    )?;
+    Ok(id)
+}
+
+/// Settle execution-only fences before a conversational action savepoint. No control is applied.
+pub(crate) fn preflight_control_guard(
+    tx: &Connection,
+    key: &[u8; 32],
+    u: &UserContext,
+    target: &moosuri_core::MissionChatTarget,
+) -> Result<()> {
+    let current = view(tx, &u.tenant.0, &target.id)?;
+    if current.revision != target.revision
+        || current.uncertain
+        || !matches!(current.state.as_str(), "paused" | "queued")
+    {
+        return Err(StoreError::Conflict);
+    }
+    let run: String = tx.query_row(
+        "SELECT run_id FROM missions WHERE tenant_id=?1 AND id=?2 AND account_id=?3 AND auth_epoch=?4 AND grant_enabled=1",
+        params![u.tenant.0,target.id,u.account.id,u.epoch], |row| row.get(0)
+    ).optional()?.ok_or(StoreError::Unauthorized)?;
+    let dispatched: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",
+        params![u.tenant.0,run], |row| row.get(0))?;
+    if dispatched {
+        return Err(StoreError::Conflict);
+    }
+    let carrier = crate::chat::load_run(tx, &u.tenant.0, &run)?;
+    if carrier.epoch != u.epoch {
+        return Err(StoreError::Unauthorized);
+    }
+    providers::binding_for_choice(tx, key, &carrier.model)?;
+    crate::agent_execution::guard_execution(tx, &carrier)
+}
+pub(crate) fn control_owner_in(
+    tx: &Connection,
+    key: &[u8; 32],
+    u: &UserContext,
+    id: &str,
+    input: MissionControl,
+) -> Result<MissionView> {
+    Uuid::parse_str(&input.request_id).map_err(|_| StoreError::InvalidInput)?;
+    let payload = json(&input)?;
+    if let Some((old,response))=tx.query_row("SELECT payload,response FROM mission_controls WHERE tenant_id=?1 AND mission_id=?2 AND request_id=?3",params![u.tenant.0,id,input.request_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional()?{if old!=payload{return Err(StoreError::Conflict)}let _=response;return view(tx,&u.tenant.0,id)}
+    let current = view(tx, &u.tenant.0, id)?;
+    if current.revision != input.expected_revision {
+        return Err(StoreError::Conflict);
+    }
+    let run: String = tx
+        .query_row(
+            "SELECT run_id FROM missions WHERE tenant_id=?1 AND id=?2 AND account_id=?3",
+            params![u.tenant.0, id, u.account.id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(StoreError::NotFound)?;
+    let dispatched:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='dispatched') OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",params![u.tenant.0,run],|r|r.get(0))?;
+    match &input.action {
+        MissionAction::Pause | MissionAction::Cancel => {
+            if !matches!(
+                current.state.as_str(),
+                "queued" | "planning" | "executing" | "verifying" | "paused"
+            ) {
+                return Err(StoreError::Conflict);
+            }
+            let state = if matches!(input.action, MissionAction::Pause) {
+                "paused"
+            } else {
+                "cancelled"
+            };
+            tx.execute("UPDATE missions SET state=?3,uncertain=max(uncertain,?4),revision=revision+1,grant_enabled=CASE WHEN ?3='cancelled' THEN 0 ELSE grant_enabled END WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,state,dispatched])?;
+            tx.execute(
+                "UPDATE chat_runs SET state='cancelled' WHERE tenant_id=?1 AND id=?2",
+                params![u.tenant.0, run],
+            )?;
+        }
+        MissionAction::Resume | MissionAction::Steer { .. } => {
+            if current.uncertain
+                || dispatched
+                || current.expires_at_ms <= clock()?
+                || !matches!(current.state.as_str(), "paused" | "queued")
+            {
+                return Err(StoreError::Conflict);
+            }
+            let carrier = crate::chat::load_run(tx, &u.tenant.0, &run)?;
+            if carrier.epoch != u.epoch {
+                return Err(StoreError::Unauthorized);
+            }
+            providers::binding_for_choice(tx, key, &carrier.model)?;
+            crate::agent_execution::guard_execution(tx, &carrier)?;
+            let mut steering = current.steering;
+            if let MissionAction::Steer { instruction } = &input.action {
+                if instruction.trim().is_empty() || instruction.len() > 2000 || steering.len() >= 8
+                {
+                    return Err(StoreError::InvalidInput);
+                }
+                steering.push(instruction.clone());
+                tx.execute(
+                    "UPDATE missions SET round_text=NULL WHERE tenant_id=?1 AND id=?2",
+                    params![u.tenant.0, id],
+                )?;
+            }
+            requeue_stable(tx, &u.tenant.0, &run)?;
+            if tx.execute("UPDATE missions SET state='queued',revision=revision+1,steering=?3,candidate=NULL,report='[]' WHERE tenant_id=?1 AND id=?2 AND grant_enabled=1",params![u.tenant.0,id,json(&steering)?])?!=1{return Err(StoreError::Conflict)}
+            if matches!(current.request.execution_mode, MissionMode::CurrentSession) {
+                tx.execute(
+                    "UPDATE chat_runs SET session_digest=?3 WHERE tenant_id=?1 AND id=?2",
+                    params![u.tenant.0, run, u.digest.as_slice()],
+                )?;
+            }
+        }
+    }
+    let result = view(tx, &u.tenant.0, id)?;
+    tx.execute(
+        "INSERT INTO mission_revisions VALUES(?1,?2,?3,?4,?5)",
+        params![u.tenant.0, id, result.revision, input.request_id, payload],
+    )?;
+    tx.execute(
+        "INSERT INTO mission_controls VALUES(?1,?2,?3,?4,?5)",
+        params![u.tenant.0, id, input.request_id, payload, "{}"],
+    )?;
+    Ok(result)
 }

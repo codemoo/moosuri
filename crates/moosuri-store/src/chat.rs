@@ -251,6 +251,7 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             let r = crate::artifacts::agent::receipts(conn, &run.tenant, &run.id)?;
             (!r.is_empty()).then_some(r)
         },
+        mission_receipt: crate::missions::chat::receipt(conn, &run.tenant, &run.id)?,
         schedule_receipts: {
             let r = crate::schedules::chat::receipts(conn, &run.tenant, &run.id)?;
             (!r.is_empty()).then_some(r)
@@ -841,6 +842,7 @@ pub(super) fn submit_turn_artifact_in(
         target,
         vec![],
         None,
+        None,
     )
 }
 #[allow(clippy::too_many_arguments)]
@@ -855,6 +857,7 @@ fn submit_turn_context_in(
     target: Option<moosuri_core::ArtifactTarget>,
     attachments: Vec<moosuri_core::MediaRef>,
     context: Option<moosuri_core::ScheduleChatContext>,
+    mission: Option<moosuri_core::MissionChatContext>,
 ) -> Result<ChatTurn> {
     let user = validate(tx, &user, true, false)?;
     thread_exists(tx, &user, &thread_id)?;
@@ -879,7 +882,26 @@ fn submit_turn_context_in(
             return Err(StoreError::InvalidInput);
         }
     }
-    let payload: [u8; 32] = if context.is_some() {
+    if mission.as_ref().and_then(|m| m.target.as_ref()).is_some()
+        && (target.is_some() || context.as_ref().and_then(|c| c.target.as_ref()).is_some())
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    let payload: [u8; 32] = if mission.is_some() {
+        Sha256::digest(
+            json(&(
+                "turn-context-v2",
+                &thread_id,
+                &text,
+                &target,
+                &attachments,
+                &context,
+                &mission,
+            ))?
+            .as_bytes(),
+        )
+        .into()
+    } else if context.is_some() {
         Sha256::digest(
             json(&(
                 "turn-context-v1",
@@ -993,6 +1015,18 @@ fn submit_turn_context_in(
         )?;
     }
     crate::schedules::chat::finish(tx, &user, &run, context.as_ref())?;
+    let current = load_run(tx, &run.tenant, &run.id)?;
+    if current.state == RunState::Queued
+        && target.is_none()
+        && context.as_ref().and_then(|c| c.target.as_ref()).is_none()
+    {
+        crate::missions::chat::admit(
+            tx,
+            &current,
+            context.as_ref().map(|c| c.timezone.as_str()),
+            mission.as_ref(),
+        )?;
+    }
     let run = load_run(tx, &run.tenant, &run.id)?;
     let result = turn(tx, &run)?;
     emit(
@@ -1128,6 +1162,7 @@ fn retry_run_inner(
     {
         return Err(StoreError::Conflict);
     }
+    crate::missions::chat::retry_authority(&tx, &run)?;
     queue_capacity(&tx, &user.tenant.0)?;
     providers::binding_for_choice(&tx, &db.provider_key, &run.model)?;
     let order = next_order(&tx)?;
@@ -1352,6 +1387,30 @@ impl Store {
         attachments: Vec<moosuri_core::MediaRef>,
         context: Option<moosuri_core::ScheduleChatContext>,
     ) -> Result<ChatTurn> {
+        self.submit_turn_with_mission_context(
+            user,
+            thread,
+            request,
+            text,
+            target,
+            attachments,
+            context,
+            None,
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_turn_with_mission_context(
+        &self,
+        user: &UserContext,
+        thread: String,
+        request: String,
+        text: String,
+        target: Option<moosuri_core::ArtifactTarget>,
+        attachments: Vec<moosuri_core::MediaRef>,
+        context: Option<moosuri_core::ScheduleChatContext>,
+        mission: Option<moosuri_core::MissionChatContext>,
+    ) -> Result<ChatTurn> {
         let user = user.clone();
         self.call(move |db| {
             let tx = db
@@ -1368,6 +1427,7 @@ impl Store {
                 target,
                 attachments,
                 context,
+                mission,
             )?;
             tx.commit()?;
             Ok(result)

@@ -7,6 +7,8 @@ use moosuri_connectors::gmail::{FrozenMail, MailContent, ReplyContext, SecretStr
 use moosuri_core::*;
 
 mod external;
+mod reconcile;
+pub use reconcile::{MailReconcileCredentials, MailReconcilePermit};
 
 pub use external::{ExternalToolPermit, ExternalToolStart};
 
@@ -166,7 +168,7 @@ fn binding(conn: &Connection, key: &[u8; 32], user: &UserContext, id: &str) -> R
 
 fn action(conn: &Connection, user: &UserContext, id: &str) -> Result<MailAction> {
     conn.query_row("SELECT id,revision,connection_id,content,digest,state,expires_at,message_id,provider_message,provider_thread,origin_thread,version FROM mail_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get::<_,Option<String>>(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?))).optional()?.ok_or(StoreError::NotFound).and_then(|r|Ok(MailAction{
-        id:r.0,version:r.11,revision:r.1,connection_id:r.2,content:r.3.map(|s|parse(&s)).transpose()?,digest:r.4,state:r.5,expires_at:r.6,message_id:r.7,provider_message_id:r.8,provider_thread_id:r.9,origin_thread_id:r.10}
+        id:r.0,version:r.11,revision:r.1,connection_id:r.2,content:r.3.map(|s|parse(&s)).transpose()?,digest:r.4,state:r.5,expires_at:r.6,message_id:r.7,provider_message_id:r.8,provider_thread_id:r.9,origin_thread_id:r.10,reconciliation:reconcile::status(conn,user,id)?}
     ))
 }
 
@@ -247,12 +249,14 @@ pub(crate) fn draft(
 }
 
 pub(super) fn purge_run(conn: &Connection, tenant: &str, run: &str) -> Result<()> {
+    conn.execute("UPDATE mail_send_evidence SET withdrawn=1 WHERE tenant_id=?1 AND action_id IN(SELECT id FROM mail_actions WHERE tenant_id=?1 AND origin_run=?2)",params![tenant,run])?;
     conn.execute("UPDATE mail_actions SET version=version+1,state=CASE WHEN state IN('pending_approval','approved') THEN 'cancelled' ELSE state END,content=NULL,raw=NULL WHERE tenant_id=?1 AND origin_run=?2",params![tenant,run])?;
 
     Ok(())
 }
 
 pub(super) fn purge_thread(conn: &Connection, tenant: &str, thread: &str) -> Result<()> {
+    conn.execute("UPDATE mail_send_evidence SET withdrawn=1 WHERE tenant_id=?1 AND action_id IN(SELECT id FROM mail_actions WHERE tenant_id=?1 AND origin_thread=?2)",params![tenant,thread])?;
     conn.execute("UPDATE mail_actions SET version=version+1,state=CASE WHEN state IN('pending_approval','approved') THEN 'cancelled' ELSE state END,content=NULL,raw=NULL WHERE tenant_id=?1 AND origin_thread=?2",params![tenant,thread])?;
 
     Ok(())
@@ -689,6 +693,7 @@ impl Store {
             let nonce=hash(&random()?);
             let frozen=FrozenMail::restore(raw,digest_bytes(&digest)?,reply).map_err(|_|StoreError::Corrupt)?;
 
+            reconcile::freeze(&tx,&user,&id,&nonce,&frozen)?;
             tx.execute("UPDATE mail_actions SET version=version+1,state='dispatch_committed',dispatch_nonce=?3,raw=NULL WHERE tenant_id=?1 AND id=?2 AND state='approved'",params![tenant,id,nonce])?;
             tx.commit()?;
             Ok(Some(MailDispatch{
@@ -738,7 +743,7 @@ impl Store {
                 else{
                     "outcome_unknown"}
                 ,None,None)};
-            if db.conn.execute("UPDATE mail_actions SET version=version+1,state=?4,provider_message=?5,provider_thread=?6,raw=NULL WHERE tenant_id=?1 AND id=?2 AND dispatch_nonce=?3 AND state IN('dispatch_committed','outcome_unknown')",params![tenant,id,nonce,state,message,thread])?!=1{
+            if db.conn.execute("UPDATE mail_actions SET version=version+1,state=?4,provider_message=?5,provider_thread=?6,raw=NULL,content=CASE WHEN ?4='outcome_unknown' THEN NULL ELSE content END WHERE tenant_id=?1 AND id=?2 AND dispatch_nonce=?3 AND state IN('dispatch_committed','outcome_unknown')",params![tenant,id,nonce,state,message,thread])?!=1{
                 return Err(StoreError::Conflict)}
             Ok(())}
         ).await

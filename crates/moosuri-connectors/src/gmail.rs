@@ -6,6 +6,8 @@
 //! lost response must be reconciled, never blindly retried. Google acceptance is
 //! not proof of recipient delivery. No model-facing raw send tool belongs here.
 mod mime;
+mod reconcile;
+pub use reconcile::{SentCandidate, SentObservation, SentSearch, reconciliation_fingerprint};
 #[cfg(test)]
 mod tests;
 pub(crate) mod transport;
@@ -182,6 +184,19 @@ impl GmailClient {
         Self {
             transport: transport::Transport::google(),
         }
+    }
+    /// Synthetic cross-crate acceptance only. Not part of the default build.
+    #[cfg(feature = "test-fixtures")]
+    #[doc(hidden)]
+    pub fn synthetic_loopback(address: std::net::SocketAddr) -> Result<Self, GmailError> {
+        if address.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+            || address.port() == 0
+        {
+            return Err(GmailError::DestinationDenied);
+        }
+        Ok(Self {
+            transport: transport::Transport::fixture(format!("http://{address}"), 1024 * 1024),
+        })
     }
     /// CSRF state and PKCE verifier storage/one-use callback handling remain the
     /// application's responsibility. S256 only. This helper never starts OAuth.
@@ -558,4 +573,27 @@ fn validate_redirect(s: &str) -> Result<(), GmailError> {
 }
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, GmailError> {
     serde_json::from_slice(bytes).map_err(|_| GmailError::InvalidResponse)
+}
+
+#[cfg(all(test, feature = "test-fixtures"))]
+mod synthetic_fixture_boundary_tests {
+    use super::*;
+    #[test]
+    fn synthetic_constructor_accepts_only_exact_ipv4_localhost_and_nonzero_port() {
+        assert!(GmailClient::synthetic_loopback("127.0.0.1:1234".parse().unwrap()).is_ok());
+        for address in [
+            "127.0.0.1:0",
+            "127.0.0.2:1234",
+            "[::1]:1234",
+            "192.0.2.1:1234",
+        ] {
+            assert!(
+                matches!(
+                    GmailClient::synthetic_loopback(address.parse().unwrap()),
+                    Err(GmailError::DestinationDenied)
+                ),
+                "{address}"
+            );
+        }
+    }
 }

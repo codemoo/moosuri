@@ -105,3 +105,10 @@ idempotency key로 보장하지 않는다. 결과 0개는 색인 지연일 수 �
 - [Gmail send](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send), [검색](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list), [draft 수명](https://developers.google.com/workspace/gmail/api/guides/drafts), [thread](https://developers.google.com/workspace/gmail/api/guides/threads).
 - [Chromium proxy](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md), [Linux sandbox](https://chromium.googlesource.com/chromium/src.git/+/refs/heads/main/sandbox/linux), [CDP Target](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Target.pdl).
 - [Brave search API](https://api-dashboard.search.brave.com/app/documentation/web-search), [reqwest transport](https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html), [Agent Skills](https://agentskills.io/specification).
+
+
+## Unknown Gmail send observations
+
+Schema31 stores a bounded v1 fingerprint of the actual frozen supported MIME before dispatch drops raw bytes. A separately leased, current-account/connection/readonly-scope check can perform fixed users/me Sent search and one raw candidate fetch. Automatic attempts persist at +0/15/120/600 seconds (max4); authenticated owner manual POST checks are limited to one per minute per action. Read leases do not grant send authority or require another permission prompt.
+
+A complete unique supported fingerprint match records `matching_sent_observed` beside immutable `outcome_unknown`; it is not a synchronous send response or delivery receipt. Missing/ambiguous/incomplete/mismatching evidence remains unknown, including legacy rows with no original oracle. Late revoked or withdrawn observations are discarded, original send-response receipts win, and restored lookup authority is quarantined. No network IO runs inside SQLite. See [mail](mail.md), [delta](../openspec/changes/reconcile-unknown-gmail-send/design.md) and [synthetic evidence](reviews/2026-11-14-gmail-reconciliation.md).

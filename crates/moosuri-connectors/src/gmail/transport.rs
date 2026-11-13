@@ -20,21 +20,21 @@ pub(crate) enum Body<'a> {
 }
 #[derive(Clone)]
 pub(crate) struct Transport {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     test_base: Option<String>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub(crate) test_limit: Option<usize>,
 }
 impl Transport {
     pub(crate) fn google() -> Self {
         Self {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-fixtures"))]
             test_base: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-fixtures"))]
             test_limit: None,
         }
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub(crate) fn fixture(base: String, limit: usize) -> Self {
         Self {
             test_base: Some(base),
@@ -52,7 +52,7 @@ impl Transport {
         {
             return Err(GmailError::InvalidInput);
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-fixtures"))]
         if let Some(base) = &self.test_base {
             return Url::parse(&format!("{base}/{path}")).map_err(|_| GmailError::InvalidInput);
         }
@@ -73,9 +73,9 @@ impl Transport {
         let port = url
             .port_or_known_default()
             .ok_or(GmailError::DestinationDenied)?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-fixtures"))]
         let fixture = self.test_base.is_some();
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-fixtures")))]
         let fixture = false;
         if !fixture
             && (url.scheme() != "https"
@@ -207,7 +207,7 @@ impl Transport {
             Endpoint::Token => 64 * 1024,
             Endpoint::Gmail | Endpoint::Calendar => 1024 * 1024,
         };
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-fixtures"))]
         let limit = self.test_limit.unwrap_or(limit).min(limit);
         if response.content_length().is_some_and(|n| n > limit as u64) {
             return Err(GmailError::LimitExceeded);

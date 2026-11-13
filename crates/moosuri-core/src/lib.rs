@@ -188,6 +188,7 @@ pub fn typescript_contract() -> String {
         MailDraftContent::decl(),
         MailDraftInput::decl(),
         MailAction::decl(),
+        MailReconciliation::decl(),
         MailApproval::decl(),
         Role::decl(),
         AccountSummary::decl(),

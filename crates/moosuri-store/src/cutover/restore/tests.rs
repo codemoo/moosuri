@@ -169,6 +169,9 @@ async fn fixture() -> Fixture {
   db.conn.execute("UPDATE accounts SET status='suspended' WHERE id=?1",[bb])?;
   db.conn.execute("INSERT INTO mail_connections(tenant_id,account_id,id,email,status,credential,expires_at,scopes) VALUES(?1,?2,'synthetic','other@example.test','active',X'01',1,'[]')",params![tenant,aa])?;
   for (n,state) in [(1,"pending_approval"),(2,"approved"),(3,"dispatch_committed"),(4,"sent")] { db.conn.execute("INSERT INTO mail_actions(tenant_id,account_id,id,revision,connection_id,connection_epoch,auth_epoch,content,raw,digest,message_id,state,expires_at) VALUES(?1,?2,?3,1,'synthetic',1,0,'private draft',X'01','digest','message',?4,1)",params![tenant,aa,format!("action-{n}"),state])?; }
+  db.conn.execute("UPDATE mail_actions SET dispatch_nonce=X'01' WHERE tenant_id=?1 AND id='action-3'",[&tenant])?;
+  db.conn.execute("INSERT INTO mail_send_evidence(tenant_id,action_id,account_id,revision,digest,connection_id,connection_epoch,auth_epoch,dispatch_nonce,message_id,committed_at,oracle_version,fingerprint) VALUES(?1,'action-3',?2,1,'digest','synthetic',1,0,X'01','message',1,1,printf('%064d',1))",params![tenant,aa])?;
+  db.conn.execute("INSERT INTO mail_reconciliations(tenant_id,action_id,next_due,lease_nonce,lease_until) VALUES(?1,'action-3',0,X'02',9999999999)",[&tenant])?;
   Ok(())
  }).await.unwrap();
     drop(store);
@@ -289,7 +292,7 @@ async fn exact_restore_requires_enrollment_preserves_tenants_withdrawal_and_quar
     );
     let account = f.account.clone();
     let other = f.other.clone();
-    store.call(move|db|{let (locked,epoch,revision):(bool,i64,i64)=db.conn.query_row("SELECT recovery_required,auth_epoch,management_revision FROM accounts WHERE id=?1",[account],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;assert!(locked);assert!(epoch>0);assert_eq!(revision,2);assert_eq!(db.conn.query_row("SELECT status FROM accounts WHERE id=?1",[other],|r|r.get::<_,String>(0))?,"suspended");assert_eq!(db.conn.query_row("SELECT count(*) FROM sessions",[],|r|r.get::<_,i64>(0))?,0);assert_eq!(db.conn.query_row("SELECT count(*) FROM mail_actions WHERE state IN('pending_approval','approved','dispatch_committed')",[],|r|r.get::<_,i64>(0))?,0);assert_eq!(db.conn.query_row("SELECT state FROM mail_actions WHERE id='action-3'",[],|r|r.get::<_,String>(0))?,"outcome_unknown");assert_eq!(db.conn.query_row("SELECT state FROM mail_actions WHERE id='action-4'",[],|r|r.get::<_,String>(0))?,"sent");assert_eq!(db.conn.query_row("SELECT count(*) FROM mail_connections WHERE credential IS NOT NULL OR status='active'",[],|r|r.get::<_,i64>(0))?,0);Ok(())}).await.unwrap();
+    store.call(move|db|{let (locked,epoch,revision):(bool,i64,i64)=db.conn.query_row("SELECT recovery_required,auth_epoch,management_revision FROM accounts WHERE id=?1",[account],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;assert!(locked);assert!(epoch>0);assert_eq!(revision,2);assert_eq!(db.conn.query_row("SELECT status FROM accounts WHERE id=?1",[other],|r|r.get::<_,String>(0))?,"suspended");assert_eq!(db.conn.query_row("SELECT count(*) FROM sessions",[],|r|r.get::<_,i64>(0))?,0);assert_eq!(db.conn.query_row("SELECT count(*) FROM mail_actions WHERE state IN('pending_approval','approved','dispatch_committed')",[],|r|r.get::<_,i64>(0))?,0);assert_eq!(db.conn.query_row("SELECT state FROM mail_actions WHERE id='action-3'",[],|r|r.get::<_,String>(0))?,"outcome_unknown");assert_eq!(db.conn.query_row("SELECT state FROM mail_actions WHERE id='action-4'",[],|r|r.get::<_,String>(0))?,"sent");assert_eq!(db.conn.query_row("SELECT count(*) FROM mail_connections WHERE credential IS NOT NULL OR status='active'",[],|r|r.get::<_,i64>(0))?,0);assert_eq!(db.conn.query_row("SELECT count(*) FROM mail_reconciliations WHERE quarantined=1 AND lease_nonce IS NULL AND next_due IS NULL",[],|r|r.get::<_,i64>(0))?,1);Ok(())}).await.unwrap();
     assert!(store.claim_agent_run().await.unwrap().is_none());
     store.call(|db|{for sql in ["SELECT count(*) FROM provider_revisions WHERE credential IS NOT NULL","SELECT count(*) FROM provider_model_probes","SELECT count(*) FROM source_connections WHERE sync_enabled=1 OR token_hash IS NOT NULL OR credential IS NOT NULL","SELECT count(*) FROM automatic_memory_grants WHERE enabled=1","SELECT count(*) FROM automatic_memory_jobs WHERE state IN('queued','acquired','dispatched')"] {assert_eq!(db.conn.query_row(sql,[],|r|r.get::<_,i64>(0))?,0)}assert_eq!(db.conn.query_row("SELECT count(*) FROM model_call_receipts",[],|r|r.get::<_,i64>(0))?,1);assert_eq!(db.conn.query_row("SELECT calls FROM automatic_memory_budget",[],|r|r.get::<_,i64>(0))?,1);Ok(())}).await.unwrap();
     drop(store);
@@ -635,7 +638,7 @@ async fn supported_predecessor_migrates_offline_and_repeated_restore_keeps_journ
         .write_all(&items[1].1)
         .unwrap();
     let conn = Connection::open(&db).unwrap();
-    conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;").unwrap();
+    conn.execute_batch("DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;").unwrap();
     conn.execute(
         "UPDATE installation_cutover SET seal=?1",
         [String::from_utf8(encode(&manifest.seal, 16384).unwrap()).unwrap()],
@@ -691,6 +694,51 @@ async fn supported_predecessor_migrates_offline_and_repeated_restore_keeps_journ
     .await
     .unwrap();
     assert!(Store::open(&f.dest).is_err());
+}
+
+#[tokio::test]
+async fn schema29_and30_restore_upgrades31_and_quarantines_legacy_lookup_authority() {
+    let _g = TEST_LOCK.lock().await;
+    for captured in [29, 30] {
+        let f = fixture().await;
+        let mut items = unpack(&f);
+        let mut manifest = decode_manifest(&items[0].1).unwrap();
+        manifest.seal.schema = captured;
+        let db = f.kit.join("prior.sqlite");
+        files::create_file(&db)
+            .unwrap()
+            .write_all(&items[1].1)
+            .unwrap();
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch("DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
+            .unwrap();
+        if captured == 29 {
+            conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;").unwrap();
+        }
+        conn.execute_batch("DROP TRIGGER installation_cutover_monotonic;")
+            .unwrap();
+        conn.execute(
+            "UPDATE installation_cutover SET seal=?1",
+            [String::from_utf8(encode(&manifest.seal, 16384).unwrap()).unwrap()],
+        )
+        .unwrap();
+        conn.execute_batch(&format!("CREATE TRIGGER installation_cutover_monotonic BEFORE UPDATE ON installation_cutover WHEN NOT ((OLD.phase='active' AND NEW.phase='sealed' AND NEW.singleton=1) OR (OLD.phase='sealed' AND NEW.phase='checkpoint_ready' AND NEW.singleton=1 AND NEW.seal=OLD.seal)) BEGIN SELECT RAISE(ABORT,'cutover transition forbidden'); END; PRAGMA user_version={captured};")).unwrap();
+        drop(conn);
+        items[1].1 = fs::read(db).unwrap();
+        items[5].1 = encode(&manifest.seal, 16384).unwrap();
+        manifest.seal_sha256 = hash(&items[5].1);
+        for (entry, (_, bytes)) in manifest.entries.iter_mut().zip(items.iter().skip(1)) {
+            entry.sha256 = hash(bytes);
+            entry.size = bytes.len() as u64;
+        }
+        items[0].1 = encode(&manifest, 32768).unwrap();
+        let (cipher, head) = repack(&f, &items, |_| {});
+        restore(&cipher, &head, &f.identity, &f.dest).unwrap();
+        let store = Store::open(&f.dest).unwrap();
+        assert!(store.next_mail_reconciliation().await.unwrap().is_none());
+        assert!(store.next_mail_dispatch().await.unwrap().is_none());
+        store.call(|db|{assert_eq!(db.conn.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0))?,31);assert_eq!(db.conn.query_row("SELECT count(*) FROM mail_reconciliations WHERE quarantined=0 OR lease_nonce IS NOT NULL OR next_due IS NOT NULL",[],|r|r.get::<_,i64>(0))?,0);Ok(())}).await.unwrap();
+    }
 }
 
 #[tokio::test]

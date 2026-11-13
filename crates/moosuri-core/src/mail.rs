@@ -59,6 +59,20 @@ pub struct MailAction {
     pub provider_message_id: Option<String>,
     pub provider_thread_id: Option<String>,
     pub origin_thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reconciliation: Option<MailReconciliation>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct MailReconciliation {
+    pub status: String,
+    pub last_result: String,
+    #[ts(type = "number | null")]
+    pub last_checked_at: Option<i64>,
+    pub candidate_count: u32,
+    pub automatic_attempts: u32,
+    #[ts(type = "number")]
+    pub manual_after: i64,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]

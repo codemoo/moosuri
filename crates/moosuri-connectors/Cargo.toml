@@ -6,6 +6,11 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# Synthetic loopback transport for cross-crate acceptance tests only.
+test-fixtures = []
+
 [dependencies]
 moosuri-core = { path = "../moosuri-core" }
 uuid.workspace = true

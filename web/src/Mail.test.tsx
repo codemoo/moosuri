@@ -64,6 +64,10 @@ beforeEach(() => {
         });
       if (path.endsWith("/actions") && method === "GET")
         return Response.json({ actions: [action] });
+      if (path.endsWith("/check-sent")) {
+        action = {...action, version: action.version+1, reconciliation: {status:"matching_sent_observed",last_result:"matching_sent_observed",last_checked_at:1700000000,candidate_count:1,automatic_attempts:1,manual_after:Math.floor(Date.now()/1000)+60}};
+        return Response.json(action);
+      }
       if (path.endsWith("/approve")) {
         expect(body).toEqual({ revision: 1, digest: "immutable-digest" });
         action = { ...action, version: action.version + 1, state: "approved" };
@@ -317,4 +321,18 @@ it("purged action from polling clears editor plaintext and prevents stale editin
     screen.queryByRole("button", { name: "수정본 저장하고 다시 확인" }),
   ).toBeNull();
   expect(screen.queryByRole("button", { name: "허락하고 보내기" })).toBeNull();
+});
+
+it("checks unknown Sent evidence through owner POST without another approval or send", async () => {
+  action = {...fixture,state:"outcome_unknown",content:null,reconciliation:{status:"no_candidates",last_result:"no_candidates",last_checked_at:1700000000,candidate_count:0,automatic_attempts:1,manual_after:0}};
+  render(<MailConnections accountId="owner" onExpired={() => {}} back={() => {}} originThreadId={null} />);
+  await userEvent.click(await screen.findByRole("button", {name:/메일 작업 · outcome_unknown/}));
+  expect(screen.queryByRole("button", {name:"허락하고 보내기"})).not.toBeInTheDocument();
+  expect(screen.getByText(/발송 실패를 뜻하지 않습니다/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", {name:"보낸편지함 다시 확인"}));
+  expect(await screen.findByText(/원래 발송 내용과 일치하는 메일 하나/)).toBeInTheDocument();
+  expect(screen.getByRole("button", {name:"보낸편지함 다시 확인"})).toBeDisabled();
+  const checks=requests.filter(r=>r.path.endsWith("/check-sent"));
+  expect(checks).toHaveLength(1); expect(checks[0].method).toBe("POST"); expect(checks[0].account).toBe("owner");
+  expect(requests.some(r=>r.path.endsWith("/approve") || r.path.endsWith("/send"))).toBe(false);
 });

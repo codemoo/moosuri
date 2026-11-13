@@ -49,6 +49,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/actions/{id}", get(action).put(edit))
         .route("/actions/{id}/approve", post(approve))
         .route("/actions/{id}/reject", post(reject))
+        .route("/actions/{id}/check-sent", post(check_sent))
         .layer(DefaultBodyLimit::max(64 * 1024))
 }
 async fn connections(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
@@ -314,4 +315,27 @@ async fn reject(
 ) -> HttpResult {
     let u = current(&s, &headers).await?;
     Ok(Json(s.store.decide_mail(&u, id, input, false).await?).into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SentCheck {}
+async fn check_sent(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(_input): Json<SentCheck>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    Ok(Json(
+        s.mail
+            .check_unknown(&u, id, &CancellationToken::new())
+            .await?,
+    )
+    .into_response())
 }

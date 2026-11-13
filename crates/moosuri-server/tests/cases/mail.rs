@@ -271,3 +271,67 @@ async fn disconnect_waits_for_held_delivery_and_notifies_after_local_purge() {
     );
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn unknown_sent_check_is_authenticated_post_rate_limited_and_never_approves_again() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, store, app) = fixture(false).await;
+    let cookie = login(&app, "admin@example.test", PASSWORD).await;
+    let connection = seed_mail(&store, &cookie).await;
+    let response=send(&app,"POST","/api/v1/mail/actions",Some(&cookie),json!({"connection_id":connection,"content":{"from":"sender@example.test","to":["recipient@example.test"],"subject":"Synthetic","text":"Complete body","reply":null},"origin_thread_id":null})).await;
+    let a = value(response).await;
+    let id = a["id"].as_str().unwrap();
+    let approve = format!("/api/v1/mail/actions/{id}/approve");
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &approve,
+            Some(&cookie),
+            json!({"revision":a["revision"],"digest":a["digest"]})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let d = store.next_mail_dispatch().await.unwrap().unwrap();
+    store.finish_mail_dispatch(&d, None, false).await.unwrap();
+    let path = format!("/api/v1/mail/actions/{id}/check-sent");
+    assert_eq!(
+        send(&app, "POST", &path, None, json!({})).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send(&app, "GET", &path, Some(&cookie), json!({}))
+            .await
+            .status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &path,
+            Some(&cookie),
+            json!({"message_id":"forged@example.test"})
+        )
+        .await
+        .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let checked = send(&app, "POST", &path, Some(&cookie), json!({})).await;
+    assert_eq!(checked.status(), StatusCode::OK);
+    let checked = value(checked).await;
+    assert_eq!(checked["state"], "outcome_unknown");
+    assert_eq!(checked["reconciliation"]["status"], "lookup_unavailable");
+    assert!(checked.get("raw").is_none());
+    assert!(checked.get("fingerprint").is_none());
+    assert!(checked["content"].is_null());
+    assert_eq!(
+        send(&app, "POST", &path, Some(&cookie), json!({}))
+            .await
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(store.next_mail_dispatch().await.unwrap().is_none());
+}

@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
+mod reconcile;
 type MailLocks = Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>;
 #[derive(Clone)]
 pub struct MailService {
@@ -285,6 +286,9 @@ impl MailService {
             }
             if let Ok(Some(dispatch)) = self.store.next_mail_dispatch().await {
                 self.dispatch(dispatch, &stop).await;
+            }
+            if let Ok(Some(permit)) = self.store.next_mail_reconciliation().await {
+                self.reconcile(permit, &stop).await;
             }
         }
     }

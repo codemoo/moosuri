@@ -7,7 +7,8 @@ Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes iso
 accounts, durable chat, private knowledge and memories, editable records, bounded
 read-only missions from chat or forms, personal Gmail, bounded Calendar actions from chat or forms, browser workspaces, local reminders,
 opt-in Web Push, private images/UTF-8 files/text PDFs and a separate encrypted vault.
-Every mail send needs the user's explicit approval of its final preview.
+Every mail send needs the user's explicit approval of its final preview. Unknown sends
+have conservative read-only Sent checks and are never automatically resent.
 
 This is the public development repository [codemoo/moosuri](https://github.com/codemoo/moosuri),
 not a stable release or a migration of the existing private deployment. Its source

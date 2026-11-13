@@ -486,6 +486,14 @@ export function MailConnections({
             action={action}
             disabled={uncertain || busy || !!editing}
             decide={decide}
+            checkSent={async () => {
+              if (busy || action.state !== "outcome_unknown") return;
+              setBusy(true);
+              try {
+                const checked = await scope.request<MailAction>(`/mail/actions/${encodeURIComponent(action.id)}/check-sent`, "POST", {});
+                setActions((v) => adopt(v, v.map((x) => x.id === checked.id ? checked : x)));
+              } catch (e) { fail(e); } finally { setBusy(false); }
+            }}
             edit={() => {
               if (action.content) {
                 setEditing(action);

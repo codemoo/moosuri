@@ -182,7 +182,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 30;
+const CURRENT_SCHEMA_VERSION: i64 = 31;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -526,6 +526,13 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 31 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0031_mail_reconciliation.sql"),
+                "COMMIT;"
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         calendar::restart(&conn)?;
         media::quarantine(&conn)?;
@@ -535,6 +542,7 @@ impl Store {
         source_connections::restart(&conn)?;
         browser::restart(&conn)?;
         conn.execute("UPDATE mail_actions SET version=version+1,state='outcome_unknown',raw=NULL,content=NULL WHERE state='dispatch_committed'",[])?;
+        conn.execute("UPDATE mail_actions SET version=version+1,raw=NULL,content=NULL WHERE state='outcome_unknown' AND (raw IS NOT NULL OR content IS NOT NULL)",[])?;
         let provider_key = providers::open_key(&conn, &dir)?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
         if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {

@@ -16,6 +16,7 @@ serde_json.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+moosuri-connectors = { path = "../moosuri-connectors", features = ["test-fixtures"] }
 tokio = { workspace = true, features = ["test-util"] }
 axum = { version = "0.8", features = ["http1", "tokio"] }
 tempfile.workspace = true

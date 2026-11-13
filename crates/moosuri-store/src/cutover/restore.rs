@@ -406,6 +406,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0030_calendar_conversation.sql"
         ))?;
     }
+    if captured < 31 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0031_mail_reconciliation.sql"
+        ))?;
+    }
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -468,6 +473,7 @@ fn quarantine(
         params![last.seq, last.hash.as_slice()],
     )?;
     tx.execute_batch("UPDATE missions SET grant_enabled=0,state=CASE WHEN state IN('queued','planning','executing','verifying','paused') THEN 'quarantined' ELSE state END; DELETE FROM calendar_oauth_sessions; UPDATE calendar_connections SET status='needs_reconnect',credential=NULL,epoch=epoch+1,credential_revision=credential_revision+1; UPDATE calendar_actions SET state=CASE WHEN state IN('dispatch_committed','outcome_unknown') THEN 'quarantined' ELSE state END,payload=NULL,event=NULL; DELETE FROM sessions; DELETE FROM agent_run_leases; UPDATE agent_execution SET invalidated=1; UPDATE agent_steps SET checkpoint=NULL,completion_digest=NULL,state=CASE WHEN state='dispatched' THEN 'unknown' ELSE state END; UPDATE agent_tool_slots SET input=NULL; DELETE FROM memory_command_plans; DELETE FROM memory_target_plans; DELETE FROM memory_command_slots WHERE state='prepared'; UPDATE chat_runs SET state=CASE WHEN state='running' THEN 'outcome_unknown' ELSE 'cancelled' END,error='interrupted',version=version+1 WHERE state IN('queued','running');
+    UPDATE mail_reconciliations SET quarantined=1,lease_nonce=NULL,lease_until=NULL,next_due=NULL,status='restore_quarantined';
     DELETE FROM mail_oauth_sessions; UPDATE mail_actions SET state='outcome_unknown',raw=NULL,content=NULL,version=version+1 WHERE state='dispatch_committed'; UPDATE mail_actions SET state='cancelled',raw=NULL,content=NULL,version=version+1 WHERE state IN('pending_approval','approved'); UPDATE mail_connections SET status='needs_reconnect',credential=NULL,epoch=epoch+1,credential_revision=credential_revision+1;
     UPDATE browser_workspaces SET state='closed',reason='restore_quarantine',revision=revision+1,control_hash=NULL,control_session=NULL,control_until=NULL,resume_request=NULL,resumed_request=NULL;
     UPDATE source_connections SET state='needs_reconnect',sync_enabled=0,token_hash=NULL,token_expires=NULL,credential=NULL,credential_epoch=credential_epoch+1,run_generation=run_generation+1,error='restore_quarantine'; UPDATE source_sync_runs SET state='unknown',error='restore_quarantine' WHERE state='running';

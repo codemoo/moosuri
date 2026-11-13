@@ -924,7 +924,7 @@ mod migration_tests {
         let user = admin(&store).await.user;
         drop(store);
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-        conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;ALTER TABLE media_objects ADD COLUMN extracted_text TEXT;PRAGMA user_version=26;").unwrap();
+        conn.execute_batch("DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;ALTER TABLE media_objects ADD COLUMN extracted_text TEXT;PRAGMA user_version=26;").unwrap();
         drop(conn);
         assert!(Store::open(dir.path()).is_err());
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

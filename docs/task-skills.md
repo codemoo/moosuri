@@ -35,13 +35,13 @@
 | 요청 결과 | 현재 범위 | 다음 연결 |
 | --- | --- | --- |
 | 저장 자료로 브리핑·회의 준비·비교 | 내장 절차 + 계정별 검색/조회 + 정확한 계산 | 실계정 품질/회귀 검증은 별도 |
-| 연결한 Gmail 읽기·답장 준비·승인 후 발송 | 개인 OAuth, 검색·본문/thread·로컬 초안·최종 승인·발송 영수증 | 라벨 변경·Gmail 초안함·첨부·Microsoft와 자동 불명 결과 조회 |
-| 공개 웹 조사·가격/조건 읽기 | HTTP 읽기·설정한 Brave 검색·별도 검증한 Chromium의 렌더링 읽기, 실제 관측 출처 표시 | 인증 인계·클릭/폼·전용 배송/예약 adapter |
-| 일정 조율·등록·변경 | 캘린더 도구 없음; 계획 문안과 구별 | availability/event API, 시간대, 참석자/충돌 확인 |
+| 연결한 Gmail 읽기·답장 준비·승인 후 발송 | 개인 OAuth, 검색·본문/thread·thread identity를 유지한 로컬 답장 초안·최종 승인·발송 영수증 | 라벨 변경·Gmail provider 초안 CRUD·첨부·Microsoft와 자동 불명 결과 조회 |
+| 공개 웹 조사·가격/조건 읽기 | HTTP/Brave·검증한 Chromium 읽기, workspace·사람의 로그인/조작 인계·같은 페이지 후속 대화 | 인증된 자동 클릭/폼·장기 profile 복구·전용 배송 adapter; 자동 구매/웹 예약은 현재 기본 계약 밖 |
+| 일정 조율·등록·변경 | 개인 Calendar 기본 읽기·primary solo-event 직접 양식 쓰기; agent Calendar 도구는 없음 | 대화/미션 도구 admission·모호한 시간/대상 해석; 반복/종일/참석자/보조 캘린더 변경은 별도 범위 |
 | 배송 현재 상태·주문/취소 | 실시간 배송·쇼핑 도구 없음 | carrier/store adapter 또는 격리된 브라우저, 조회시각·상태 영수증 |
-| 주기적 감시·변경 알림 | scheduler/push 없음 | durable 회차·중복 방지·pause/edit/restart·알림 |
+| 주기적 감시·변경 알림 | 고정 알림·회차·pause/edit/restart·inbox·opt-in Push 구현; schema28 직접 반복 읽기 업무·좁은 정확 일치 알림 생략 구현 | 대화 복합 업무 capture·일반 의미상 변경 비교·topic mute·실기기; [현재 상태](status.md)가 수락 정본 |
 | 전화·결제·정부 서류 제출 | 해당 실행 도구 없음 | 공급자/사이트별 실행·인증 인계·결과 조회 |
-| 커뮤니티 설치·업데이트·자동 개인 학습 | 배포판에 포함한 여섯 스킬만 실행 | [community lifecycle](community-skills.md)의 개인 설치와 검증 |
+| 커뮤니티 설치·업데이트·자동 개인 학습 | 여섯 내장 절차와 개인 curated/public GitHub pin·update/rollback/disable/remove·로컬 작성/check | typed 성공 절차 학습·독립 proof·합성 export·catalog/예약 lifecycle 등 [남은 계약](community-skills.md) |
 
 없는 기능은 연결 필요와 현재 지원 안 함을 구별한다. 실행 불가능한 작업을 수락해 놓고
 뒤에서 조용히 사라지게 하지 않는다. 대신 가능한 자료 정리나 초안이 실제로 도움이 될
@@ -65,7 +65,7 @@ run 누적 한도를 늘리지 않는다. 스킬 실행 이후의 retry가 기�
 
 ## 새 업무 도구의 공통 계약
 
-향후 메일·일정·배송·예약에도 다음 계약을 적용한다.
+현재 지원 도구와 앞으로 추가하는 일정·배송 adapter에도 다음 계약을 적용한다. 구체적 지원과 남은 일은 [현재 상태](status.md)를 따른다.
 
 - **입력:** 의도, 대상, 범위, 시간대, 제약과 원하는 산출물. 이미 주어진 정보나 유효한
   credential binding을 다시 묻지 않는다. 중요한 모호함만 짧게 확인한다.

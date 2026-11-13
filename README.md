@@ -2,74 +2,54 @@
 
 A self-hosted assistant for individuals, families and friends.
 
-**Status: early development. The Rust/React app supports isolated accounts, durable chat, private sources and memories, editable documents and goals, public HTTP research, isolated Chromium workspaces with human takeover and same-page continuation, and personal Gmail with explicit approval before every send. Source memory extraction is opt-in; fixed local reminders from chat or forms, weekly schedules, an inbox, opt-in Web Push and private image attachments with previews are available.**
-The existing private deployment remains the behavioral reference; its source history,
-accounts, data, infrastructure settings and experimental runtimes are not copied here.
+**Early development preview. Start with [current support and remaining work](docs/status.md).**
+Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
+accounts, durable chat, private knowledge and memories, editable records, bounded
+read-only missions, personal Gmail and Calendar, browser workspaces, local reminders,
+opt-in Web Push, private images/UTF-8 files and a separate encrypted vault.
+Every mail send needs the user's explicit approval of its final preview.
 
-- [홈 화면에 설치하기](docs/pwa.md): 공개 화면 오프라인 지원과 업데이트
-- [이미지 첨부·미리보기·보관함](docs/media.md): 독립 업로드와 이미지 지원 모델 연결
-- [개인 텍스트 파일](docs/private-files.md): TXT·Markdown·CSV·JSON 첨부와 원본 미리보기
-- [현재 상태와 다음 작업](docs/status.md)
-- [재작성 계획](docs/plan.md): 목표·순서·완료 조건
-- [설계](docs/architecture.md): Rust 경계·실행·저장·복구
-- [요구사항](docs/requirements.md): 사용자 지시 29개와 검증 추적
-- [설치·관리자](docs/onboarding.md): 초기 설정·초대·대시보드·접속 방식
-- [계정 관리](docs/account-management.md): 정지·재개·역할·임시 암호 재발급·모든 기기 로그아웃
-- [사용자 격리](docs/accounts-isolation.md): 각자의 세션·실행 환경·사용량
-- [모델 연결](docs/providers.md): OpenAI·Anthropic·OpenRouter·로컬 LLM
-- [볼트 보안](docs/vault-security.md): 사용자 키·관리자 경계·복원
-- [평가·테스트 계획](docs/testing.md): 메모리·대화·미션·스킬 검증과 기존 테스트 선별
-- [구체적 검증 예제](docs/test-examples.md)와 [시나리오 표](audit/evaluation-scenarios.tsv)
-- [공동 개발](CONTRIBUTING.md)과 [OpenSpec](openspec/README.md)
-- [커뮤니티 스킬](docs/community-skills.md): GitHub 공유와 기존 제안 카드
-- [업무 스킬](docs/task-skills.md): 자료 브리핑·회의 준비·근거 비교와 정확한 계산
-- [외부 업무 스킬](docs/external-task-recipes.md): 웹 조사·메일 브리핑·승인 대기 답장 초안
-- [개인 비서 업무 사례](docs/research/personal-agent-tasks-2026-11-13.md): Muse 중심의 공개 근거와 구현 범위
-- [웹·이메일 실행 계약](docs/external-work.md): 브라우저 격리·개인 연결·발송 전 최종 승인
-- [내 Google Calendar](docs/calendar.md): 별도 개인 연결·기본 캘린더 읽기·직접 일정 관리
-- [개인 Gmail](docs/mail.md)·[웹 조사](docs/web-research.md)·[격리 브라우저](docs/browser-chat.md): 연결 설정·사용법·지원 범위
-- [개인 작업 브라우저](docs/browser-workspaces.md): 같은 로그인 세션·화면 보기·직접 조작·대화 이어가기
-- [뮤즈·피클 브라우저 조사](docs/research/browser-workspaces-2026-11-13.md): 공식 근거와 채택 범위
-- [credential 자동 사용](docs/credential-use.md): 볼트 연결·재사용·잠금/철회 처리
-- [데이터 수집 연결](docs/data-connections.md): 공식 Gmail·Slack과 커스텀 수집, 출처·동기화 추적
-- [기능별 이전표](docs/features.md): 유지할 동작과 검증 기준
-- [이전 순서](docs/migration.md): 코드·데이터·운영 전환
-- [전수 조사와 제외 목록](docs/audit.md): 파일별 판정과 근거
-- [공개 배포](docs/public-release.md): 설치·기여·공개 범위
-- [검토한 공식 자료](docs/references.md)
+This is the public development repository [codemoo/moosuri](https://github.com/codemoo/moosuri),
+not a stable release or a migration of the existing private deployment. Its source
+history, accounts, raw communications, credentials, operating data and infrastructure
+are preserved separately. Public examples and evidence use synthetic data.
+GitHub Actions/automatic CI remain disabled; contributors run relevant checks locally.
 
-This repository contains the reviewed plan and source audit, a Rust account/API/CLI foundation, a React interface, shared model settings, durable chat with private knowledge retrieval, editable memories and a protocol/transport library, pinned OpenSpec tooling and contributor scaffolding. The public development repository is [codemoo/moosuri](https://github.com/codemoo/moosuri). It does not contain a model key or copied production data.
+## Start
 
-GitHub Actions/CI are disabled during initial development. Contributors run relevant checks locally and commit/push each coherent work unit. Personal coding-agent instructions are ignored; shared contracts live in OpenSpec and CONTRIBUTING.
+- [Development quickstart](docs/development.md): build, init, shared API/local model settings and run the embedded web app. LLM configuration can be skipped while setting up accounts.
+- [Current status](docs/status.md): implemented bounds, evidence and next work. Optional vault/broker packages are still required v1 deliverables; the full product is not complete.
+- [Requirements](docs/requirements.md) · [feature contracts](docs/features.md) · [rewrite plan](docs/plan.md) · [migration order](docs/migration.md).
 
-Build and run the development preview with [the quickstart](docs/development.md). It includes hidden-password initialization, account login, local invitations and separate conversations. Administrators can configure shared connections, discover and verify models, and users can select model/effort in [model settings](docs/provider-settings.md). [Text chat](docs/chat.md) supports streaming, cancellation, retry and reconnect. [Private knowledge](docs/knowledge.md) supports text sources, exact evidence, editable memories and scoped deletion. [The knowledge agent](docs/knowledge-agent.md) connects verified tools and revocable source references to chat. [Conversational memory](docs/conversational-memory.md) adds explicit remember/correct/forget requests. [Source memory extraction](docs/automatic-memory.md) processes opted-in collections with literal evidence, bounded background work and exact-quote forget suppression. [Bundled task skills](docs/task-skills.md) add briefing, meeting preparation and comparisons using saved evidence and exact decimal arithmetic. Three [external task recipes](docs/external-task-recipes.md) add public research, inbox briefings and response drafts with mandatory final send approval. [Public HTTP research](docs/web-research.md) reads pages and searches with an optional Brave key. Optional [Linux Chromium capsules](docs/browser-chat.md) read rendered public pages with a separately verified deployment. [Browser workspaces](docs/browser-workspaces.md) keep one isolated page/profile per conversation, let the user watch and take control for login, then continue in the same conversation from that page. Automatic authenticated form actions and long-term profile recovery remain pending. [Personal Gmail](docs/mail.md) reads mail and prepares local drafts; sending requires the user's final approval of the complete preview. [Private images](docs/media.md) support independent uploads, chat/library previews and verified image-capable model input. A separate [encrypted vault service and browser client](docs/vault-service-client.md) supports private items, TOTP, local CSV import and key changes. Explicit one-time and recurring read-only [owner missions](docs/missions.md) add plans, read tools, stored evidence and pause/resume controls. [Personal Google Calendar](docs/calendar.md) adds separate consent, primary-calendar reads and direct solo-event forms with ETag checks and lookup-only uncertain recovery. [Private UTF-8 files](docs/private-files.md) support exact original previews, independent upload and bounded chat context. [Encrypted vault archives](docs/vault-archive.md) support authenticated export and import with a source password or recovery key. Credential execution, standalone vault service restore, conversational Calendar actions and conversational mission admission remain in development. Bounded Korean/English chat requests can create and control fixed reminders; daily and weekly schedules are supported.
+## Use and configure
 
-[Live ChatGPT evaluation](docs/reviews/2026-11-13-live-chatgpt-quality.md) used the existing official login with `gpt-6.1-terra` / `high`. The earlier repeated development corpus matched36/36 live intent labels; end-to-end scenarios passed7/10. [Memory-target corrections](docs/reviews/2026-11-13-memory-target-resolution.md) subsequently passed synthetic checks, but the new12-case live holdout remains unattempted after connection-probe failures. These are limited development results, not a shipped subscription connection or an overall assistant quality score.
+- [Accounts](docs/account-management.md) · [onboarding](docs/onboarding.md) · [isolation](docs/accounts-isolation.md) · [model settings](docs/provider-settings.md) · [provider support](docs/providers.md).
+- [Chat](docs/chat.md) · [private knowledge](docs/knowledge.md) · [conversational memory](docs/conversational-memory.md) · [automatic extraction](docs/automatic-memory.md) · [documents, goals and followups](docs/artifacts.md).
+- [Task skills](docs/task-skills.md) · [community packages](docs/community-skills.md) · [missions](docs/missions.md) · [reminders/inbox](docs/schedules.md) · [Web Push](docs/web-push.md).
+- [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [public web research](docs/web-research.md) · [private browser workspaces](docs/browser-workspaces.md).
+- [Images](docs/media.md) · [UTF-8 files](docs/private-files.md) · [PWA](docs/pwa.md) · [vault service/client](docs/vault-service-client.md) · [encrypted vault archive](docs/vault-archive.md) · [credential broker contract](docs/credential-use.md).
+- [Stopped encrypted export](docs/backup.md) · [sealed-current restore](docs/restore.md) · [release/installation contracts](docs/public-release.md). Ongoing historical/off-host recovery and general update/uninstall are still pending.
 
-Validate planning metadata with Rust 1.89 or newer:
+Account-owned Gmail/Slack collection and generic custom ingest expose scope, sync
+receipts and provenance. The operator configures one Google OAuth app; each member
+grants their own account access. Slack uses a personal user token. Synthetic acceptance
+does not establish live-provider readiness. Kakao collection is private and excluded
+from public code/packages; independent producers can use the custom protocol.
+
+The model adapters support configured API/compatible/local endpoints with actual
+capability probes. Development live ChatGPT evaluation does not ship a subscription
+adapter. Real device/provider acceptance and implementation limits remain bounded by
+[current status](docs/status.md); a model name or connection label does not prove support.
+
+## Develop
+
+[CONTRIBUTING](CONTRIBUTING.md) · [OpenSpec](openspec/README.md) · [architecture](docs/architecture.md) ·
+[testing](docs/testing.md) · [source audit](docs/audit.md) · [public release](docs/public-release.md).
+Personal coding-agent instructions are ignored; shared behavior and decisions belong
+in the canonical documents. Validate planning metadata with Rust1.89 or newer:
 
 ```sh
 cargo run --locked -p xtask -- verify-plan
 ```
 
-The application stack is **Rust backend/agent/CLI + React/TypeScript web + SQLite**.
-All user, admin, vault and PWA screens use React. Shared model connections serve
-separate user environments. Linux is the deployment target; Tailscale-private and
-ordinary HTTPS self-hosting are supported design paths. PostgreSQL is future work.
-Account-owned Gmail/Slack collection and a generic custom HTTP ingest protocol are implemented.
-Each user opts into a bounded source scope and can inspect sync history and provenance
-in `/settings/sources`. Gmail uses the operator's OAuth app, configured once in the
-[Google setup wizard](docs/mail.md) at `/admin/google`; every member grants their own
-Google account access. Slack accepts a
-personal user token. Synthetic Linux acceptance does not replace live-account setup.
-Kakao collection is privately operated and excluded from public packages; its data
-can use the custom protocol. [Scope and implementation tracking](docs/data-connections.md).
-This does not claim that every transitive dependency is implemented in Rust.
-The exact boundary and build gates are in [architecture](docs/architecture.md).
-
 Licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), at your option.
-
-개인 기록의 범위와 한계: [문서·목표·요청](docs/artifacts.md).
-
-Fixed local [reminders and inbox](docs/schedules.md) are available at `/app/schedules`;
-Korean/English chat capture and weekly rules are supported. Opt-in [Web Push](docs/web-push.md) is available; direct recurring read-only missions are available through the missions screen. Actual phone delivery/background behavior still requires device validation.

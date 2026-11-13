@@ -6,4 +6,6 @@
 ## 2. Verification
 - [x] 2.1 Freeze native vector/attack tests, clippy/fmt/dependency/plan/spec evidence.
 - [x] 2.2 Complete independent core review and root integration.
-- [ ] 2.3 Complete separate v1 compatibility, WASM/Worker/UI/service/journal/archive and broker gates before vault support claims.
+- [x] 2.3a Complete the separate WASM/Worker/UI/ciphertext service/journal integration; [service/client evidence](../../../docs/reviews/2026-11-13-vault-service-client.md).
+- [x] 2.3b Complete bounded authenticated client archive export/import; [archive evidence](../../../docs/reviews/2026-11-13-vault-archive.md).
+- [ ] 2.3c Complete old-v1 compatibility/migration, standalone service backup/restore and trusted-device broker gates before full v1 vault support claims. The implemented slices do not complete this aggregate contract.

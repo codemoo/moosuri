@@ -17,7 +17,7 @@
 
 ## 쉬운 설치의 완료 조건
 
-Linux x86_64/arm64에 signed/checksummed binary와 내장 React assets를 배포한다. 설치 경로는 standalone binary를 우선하고 OCI/Compose는 같은 private volume 설정의 선택지다. 기본 실행에 Python·Node·PostgreSQL·Redis·외부 vector DB가 없어야 한다. 현재 개발판의 `moosuri init/serve/doctor/export-types`는 실행 가능하며 [개발 안내](development.md)에 사용법/한계를 둔다. 중지된 설치의 `backup setup/create`는 [암호화 export](backup.md)를 제공한다. 독립 최신 journal·과거 복원·미디어 복원은 미구현이며 `restore/update/uninstall`도 미구현이다. signed release/installer가 완성됐다고 안내하지 않는다.
+Linux x86_64/arm64에 signed/checksummed binary와 내장 React assets를 배포한다. 설치 경로는 standalone binary를 우선하고 OCI/Compose는 같은 private volume 설정의 선택지다. 기본 실행에 Python·Node·PostgreSQL·Redis·외부 vector DB가 없어야 한다. 현재 개발판의 `moosuri init/serve/doctor/export-types`는 실행 가능하며 [개발 안내](development.md)에 사용법/한계를 둔다. 중지된 설치의 `backup setup/create`는 [암호화 export](backup.md)를 제공한다. [봉인된 현재 checkpoint 복원](restore.md)은 새 root에서 SQLite의 보존 이미지·UTF-8 파일·문서와 삭제 기록을 복원하고 계정/작업/credential을 격리한다. 이는 원본을 봉인하는 정확한 현재 상태 cutover이며, 독립 최신 off-host journal·과거 export replay·unattended backup·PDF 복원 지원은 미구현이다. 일반 `update/uninstall`과 signed release/installer도 미구현이다. [현재 상태](status.md)가 bounded 지원과 최종 수락의 정본이다.
 
 init은 admin 하나·password 입력/skip·LLM/API/지원 구독/local·default model/effort·Google sender 선택·접속 mode를 묻는다. 외부 연결을 건너뛰어도 관리 화면은 열리고 추가 계정은 필요할 때만 만든다. 설정/비밀을 stdout/log/URL/argv로 노출하지 않는다. 최초 임시 비밀번호는 인증된 setup UI/controlling TTY에 한 번 표시하는 [설치 계약](onboarding.md)을 따른다. 최소 bootstrap script가 필요하면 release 검증/실행만 하며 제품 비즈니스 로직은 Rust에 둔다. optional gws/Claude CLI는 별도 설치와 지원 범위를 표시한다.
 
@@ -45,6 +45,6 @@ Tailscale Serve는 tailnet 접근, ordinary HTTPS는 공개 주소 접근이다.
 
 [CONTRIBUTING](../CONTRIBUTING.md), [SECURITY](../SECURITY.md), issue/PR 템플릿과 고정 OpenSpec CLI를 준비한다. 사용자 지시로 초기 GitHub Actions/자동 CI를 비활성화한다. workflow는 tools/ci/check.yml.disabled에 보관하며 로컬 계획/spec/구현 검증을 작업 단위마다 실행한다. 재활성화는 별도 지시를 따른다. 제품 runtime/React/모델 시험을 실행한 것처럼 표시하지 않는다. maintainer는 @codemoo이며 비활성 CI를 필수 branch check로 설정하지 않는다. GitHub private vulnerability reporting을 공개 저장소에 활성화한다.
 
-community source는 같은 Git repository의 `community/skills/`에서 시작한다. trusted release가 검증한 정적 catalog를 생성하고 사용자는 기존 제안/할 수 있는 일 카드에서 추가·연결·실행한다. package source/version/hash/license/capability를 추적하며 외부 Git URL은 고급 경로다. [상세 배포 설계](community-skills.md)에 따른다. 별도 marketplace 계정/서버·자동 코드 실행·private learned trace 업로드는 도입하지 않는다.
+community source는 같은 Git repository의 `community/skills/`에서 시작한다. 정적 catalog/release generator는 남은 계약이다. 현재 사용자는 curated 목록과 직접 지정한 공개 GitHub 원본의 검증된 immutable pin을 개인 카드에서 추가·update/rollback/disable/remove한다. 설치가 작업을 실행하지는 않는다. package source/version/hash/license/capability를 추적하며 외부 Git URL은 고급 경로다. [상세 배포 설계](community-skills.md)에 따른다. 별도 marketplace 계정/서버·자동 코드 실행·private learned trace 업로드는 도입하지 않는다.
 
 출시 평가는 [testing](testing.md)의 새 시나리오·독립 판정·paired 비교·실제 기기/연결 증거를 따른다. credential 지원은 [credential-use](credential-use.md)의 strong-device와 명시적 server-token 경계를 구별해 표시한다.

@@ -10,4 +10,7 @@
 - [x] Finish focused Store/HTTP/UI/App checks and own web/type/DTO/fmt/clippy/plan/strict OpenSpec gates; freeze exact source/log evidence.
 - [x] Independent review, integration with personal artifacts0016, and focused Linux acceptance.
 - [x] Integrate account active-status and the suspend/resume/held-claim regression with account lifecycle18.
-- [ ] Integrate restore quarantine when restoration lands; model missions and Push remain separate work.
+- [x] Integrate sealed-current restore quarantine: restored schedules stay paused and fresh account enrollment does not resume them; [restore contract](../../../docs/restore.md) and [integrated evidence](../../../docs/reviews/2026-11-13-sealed-restore.md).
+- [x] Add separately authorized opt-in Web Push in schema23; [Push evidence](../../../docs/reviews/2026-11-13-web-push.md). Fixed reminder grants still do not execute model tasks.
+- [x] Accept schema28 recurring read-only mission integration through its [own change](../recurring-read-only-missions/tasks.md) and [integrated evidence](../../../docs/reviews/2026-11-13-recurring-missions.md).
+- [ ] Complete conversational model-task capture and the remaining F29–F32 contracts.

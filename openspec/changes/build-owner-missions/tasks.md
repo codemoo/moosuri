@@ -7,8 +7,10 @@
 - [x] Verify synthetic multi-step model/knowledge/recipe/calculation completion and deliberate failures.
 - [x] Root: integrate schema25 after push23/vault24 and independently review authority/recovery.
 - [x] Root: bounded Linux and actual Chrome verification; documented preview scope.
-- [ ] Release: recurring missions, real providers/devices and deployment gates.
-- [ ] Future: recurring mission execution, changes-only comparison and conversational capture.
+- [x] Integration: schema28 direct recurring read-only execution and narrow exact successful decimal/source result comparison passed root integration/review/platform acceptance; [evidence](../../../docs/reviews/2026-11-13-recurring-missions.md) and the [recurring change](../recurring-read-only-missions/tasks.md) preserve the exact scope.
+- [ ] Remaining v1 work: conversational mission capture/control and broader contracted tool support; the read-only recurring slice does not complete F27/F29–F31.
+- [ ] Release: applicable real-provider/device, deployment and full evaluation gates.
+- [ ] Additional scope: general semantic result equivalence and unsupported external actions need their own bounded contracts; they are not implied by recurring read-only execution.
 
 ## Bounded independent-review repair
 - [x] Repair exact-capacity acknowledged-final local recovery; reopen regressions at models6/tools1and models2/tools12plus unfinished-tool refusal, with unchanged dispatch counters.

@@ -10,7 +10,7 @@ schedules are allowed per account; deleting releases a slot and preserves receip
 This is the first F29/F30/F32 slice. A reminder delivers the saved text to the local
 inbox; it does not execute the requested text as an agent task, send mail, run a
 browser task or call a provider. Bounded conversational capture and weekly rules are implemented;
-direct recurring read-only model tasks and narrow exact comparison are described below; topic mute remains next work.
+schema28 direct recurring read-only model tasks and narrow exact comparison are described below; accepted bounds are in [status](status.md). Topic mute remains next work.
 Optional [Web Push](web-push.md) uses a separate account/device binding and requests
 browser permission only from its explicit settings action.
 
@@ -155,8 +155,10 @@ transaction; a failed confirmation rolls all of them back. A command committed
 before cancellation/logout remains committed. Logout/suspension/recovery before
 admission rejects the stale user grant. There is no deferred schedule-write lease
 or fabricated session. Existing epoch/revision/quarantine checks continue to
-fence later background publication. Mail, browser and scheduled model missions,
-changes-only comparison, topic mute and Push remain separate work.
+fence later background publication. Mail/browser execution remains outside this reminder grant.
+[Web Push](web-push.md) is separately implemented with account/device binding. Schema28
+scheduled read-only missions and narrow exact comparison are separately implemented
+below; conversational model-task capture, semantic comparison and topic mute remain open.
 
 Migration0022 adds the versioned chat receipt sidecar atomically after
 recovery19/20 and media21. Confirmation uses the saved outcome and local date/time;
@@ -182,7 +184,8 @@ See [SC1–SC3 narrow parser repair evidence](reviews/2026-11-13-conversational-
 
 ## Separate recurring read-only missions
 
-The direct **Missions → Schedule a task** form now saves immutable read-only mission
+The accepted schema0028 slice ([evidence](reviews/2026-11-13-recurring-missions.md))
+adds a direct **Missions → Schedule a task** form that saves immutable read-only mission
 templates through `/api/v1/recurring-missions`. This uses the same occurrence/time
 oracle and latest-only queue while granting separate pinned model execution.
 Generic reminder lists, selected chat reminder IDs, mutations, claims and fixed-text

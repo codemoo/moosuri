@@ -10,5 +10,6 @@
 - [x] 2.1 Root independent crypto/service/client review, two finding repairs and schema24 integration.
 - [x] 2.2 Targeted Linux and actual Chrome integration gates.
 - [ ] 2.5 Separate-UID/proxy deployment and real mobile gates before a release claim.
-- [ ] 2.3 Complete client archive, standalone vault backup/restore, old-v1 migration and signed-client distribution.
+- [x] 2.3a Complete authenticated client archive export/import; [bounded archive evidence](../../../docs/reviews/2026-11-13-vault-archive.md).
+- [ ] 2.3b Complete standalone vault service backup/restore, old-v1 migration and signed-client distribution. Client archive support does not complete these contracts.
 - [ ] 2.4 Complete account deletion/outbox and trusted-device credential broker as separate increments.

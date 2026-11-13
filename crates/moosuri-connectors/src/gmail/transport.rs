@@ -8,24 +8,25 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 use zeroize::Zeroizing;
 
-pub(super) enum Endpoint {
+pub(crate) enum Endpoint {
     Token,
     Gmail,
+    Calendar,
 }
-pub(super) enum Body<'a> {
+pub(crate) enum Body<'a> {
     Empty,
     Form(Vec<(&'a str, &'a str)>),
     Json(serde_json::Value),
 }
 #[derive(Clone)]
-pub(super) struct Transport {
+pub(crate) struct Transport {
     #[cfg(test)]
     test_base: Option<String>,
     #[cfg(test)]
-    pub(super) test_limit: Option<usize>,
+    pub(crate) test_limit: Option<usize>,
 }
 impl Transport {
-    pub(super) fn google() -> Self {
+    pub(crate) fn google() -> Self {
         Self {
             #[cfg(test)]
             test_base: None,
@@ -34,13 +35,13 @@ impl Transport {
         }
     }
     #[cfg(test)]
-    pub(super) fn fixture(base: String, limit: usize) -> Self {
+    pub(crate) fn fixture(base: String, limit: usize) -> Self {
         Self {
             test_base: Some(base),
             test_limit: Some(limit),
         }
     }
-    pub(super) fn target(&self, endpoint: &Endpoint, path: &str) -> Result<Url, GmailError> {
+    pub(crate) fn target(&self, endpoint: &Endpoint, path: &str) -> Result<Url, GmailError> {
         // `path` is assembled exclusively by typed methods, never passed by a
         // public caller; reject an accidental absolute or parent-relative path.
         if path.starts_with('/')
@@ -57,6 +58,9 @@ impl Transport {
         }
         match endpoint {
             Endpoint::Token if path.is_empty() => Url::parse("https://oauth2.googleapis.com/token"),
+            Endpoint::Calendar => {
+                Url::parse(&format!("https://www.googleapis.com/calendar/v3/{path}"))
+            }
             Endpoint::Gmail => Url::parse(&format!(
                 "https://gmail.googleapis.com/gmail/v1/users/me/{path}"
             )),
@@ -76,7 +80,10 @@ impl Transport {
         if !fixture
             && (url.scheme() != "https"
                 || port != 443
-                || !matches!(host, "oauth2.googleapis.com" | "gmail.googleapis.com"))
+                || !matches!(
+                    host,
+                    "oauth2.googleapis.com" | "gmail.googleapis.com" | "www.googleapis.com"
+                ))
         {
             return Err(GmailError::DestinationDenied);
         }
@@ -105,7 +112,7 @@ impl Transport {
             .build()
             .map_err(|_| GmailError::Transport)
     }
-    pub(super) async fn request(
+    pub(crate) async fn request(
         &self,
         endpoint: Endpoint,
         method: Method,
@@ -121,8 +128,19 @@ impl Transport {
         tokio::select! {
             biased;
             _=cancel.cancelled()=>Err(GmailError::Cancelled),
-            result=tokio::time::timeout(Duration::from_secs(30),self.inner(endpoint,method,path,token,body))=>result.map_err(|_|GmailError::Timeout)?,
+            result=tokio::time::timeout(Duration::from_secs(30),self.inner(endpoint,method,path,token,body,None))=>result.map_err(|_|GmailError::Timeout)?.map(|v|v.2),
         }
+    }
+    pub(crate) async fn calendar(
+        &self,
+        method: Method,
+        path: &str,
+        token: &SecretString,
+        body: Body<'_>,
+        etag: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<(u16, Option<String>, Zeroizing<Vec<u8>>), GmailError> {
+        tokio::select! {biased;_=cancel.cancelled()=>Err(GmailError::Cancelled),result=tokio::time::timeout(Duration::from_secs(30),self.inner(Endpoint::Calendar,method,path,Some(token),body,etag))=>result.map_err(|_|GmailError::Timeout)?,}
     }
     async fn inner(
         &self,
@@ -131,7 +149,8 @@ impl Transport {
         path: &str,
         token: Option<&SecretString>,
         body: Body<'_>,
-    ) -> Result<Zeroizing<Vec<u8>>, GmailError> {
+        etag: Option<&str>,
+    ) -> Result<(u16, Option<String>, Zeroizing<Vec<u8>>), GmailError> {
         let url = self.target(&endpoint, path)?;
         let client = self.client(&url).await?;
         let mut request = client
@@ -156,9 +175,24 @@ impl Transport {
             }
             Body::Json(value) => request.json(&value),
         };
+        if let Some(etag) = etag {
+            if etag.len() > 512 || etag.chars().any(char::is_control) {
+                return Err(GmailError::InvalidInput);
+            }
+            request = request.header(header::IF_MATCH, etag);
+        }
         let mut response = request.send().await.map_err(network)?;
         if !response.status().is_success() {
             return Err(GmailError::Http(response.status().as_u16()));
+        }
+        let status = response.status().as_u16();
+        let etag = response
+            .headers()
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        if status == 204 && matches!(endpoint, Endpoint::Calendar) {
+            return Ok((status, etag, Zeroizing::new(Vec::new())));
         }
         let content_type = response
             .headers()
@@ -171,7 +205,7 @@ impl Transport {
         }
         let limit = match endpoint {
             Endpoint::Token => 64 * 1024,
-            Endpoint::Gmail => 1024 * 1024,
+            Endpoint::Gmail | Endpoint::Calendar => 1024 * 1024,
         };
         #[cfg(test)]
         let limit = self.test_limit.unwrap_or(limit).min(limit);
@@ -189,7 +223,7 @@ impl Transport {
             }
             bytes.extend_from_slice(&chunk);
         }
-        Ok(bytes)
+        Ok((status, etag, bytes))
     }
 }
 fn network(error: reqwest::Error) -> GmailError {

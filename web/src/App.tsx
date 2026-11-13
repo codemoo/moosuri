@@ -31,6 +31,7 @@ import { GoogleSetup } from "./GoogleSetup";
 import { Artifacts, type ArtifactDrafts } from "./Artifacts";
 import { CommunitySkills } from "./CommunitySkills";
 import { Missions } from "./Missions";
+import { Calendar } from "./Calendar";
 import { Schedules } from "./Schedules";
 import { SourceConnections } from "./SourceConnections";
 import { UsageView } from "./UsageView";
@@ -715,6 +716,7 @@ function Workspace({
   const knowledgeOpen = knowledgePage || memoryPage;
   const providerAdmin = path === "/admin/providers";
   const personalModel = path === "/settings/model";
+  const calendarPage = path === "/settings/calendar";
   const personalMail = path === "/settings/mail";
   const personalSources = path === "/settings/sources";
   const communitySkills = path === "/app/skills";
@@ -960,6 +962,7 @@ function Workspace({
         <button className={`nav-link ${communitySkills ? "chosen" : ""}`} onClick={()=>{navigate("/app/skills");setDrawer(false)}}>제안 · 할 수 있는 일<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${missionsPage?"chosen":""}`} onClick={()=>{navigate("/app/missions");setDrawer(false)}}>맡긴 일<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${schedulesPage ? "chosen" : ""}`} aria-current={schedulesPage?"page":undefined} onClick={()=>{navigate("/app/schedules");setDrawer(false)}}>예약 · 소식<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${calendarPage?"chosen":""}`} onClick={()=>{navigate("/settings/calendar");setDrawer(false)}}>내 Calendar<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${personalMail ? "chosen" : ""}`} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
         <button
           className={`nav-link ${personalUsage ? "chosen" : ""}`}
@@ -1019,7 +1022,7 @@ function Workspace({
           </button>
           <div>
             <span className="eyebrow">
-              {missionsPage ? "계획과 결과" : schedulesPage ? "로컬 알림" : artifactPage ? "나의 기록" : communitySkills ? "제안" : personalSources ? "내 연결" : knowledgeOpen
+              {calendarPage ? "내 Google 연결" : missionsPage ? "계획과 결과" : schedulesPage ? "로컬 알림" : artifactPage ? "나의 기록" : communitySkills ? "제안" : personalSources ? "내 연결" : knowledgeOpen
                 ? "나의 기록"
                 : admin
                   ? "INSTALLATION"
@@ -1028,7 +1031,7 @@ function Workspace({
                     : "YOUR SPACE"}
             </span>
             <h1>
-              {missionsPage ? "맡긴 일" : schedulesPage ? "예약 · 소식" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
+              {calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : schedulesPage ? "예약 · 소식" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
                   ? "기억"
                   : "자료"
@@ -1094,7 +1097,7 @@ function Workspace({
         )}
         {missionsPage ? <Missions accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : schedulesPage ? <Schedules accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
-        ) : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
+        ) : calendarPage ? <Calendar accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} setup={allowedAdmin?()=>navigate("/admin/google"):undefined}/> : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
           setSelected(null);
           setChatMemory(current => ({
             ...current,

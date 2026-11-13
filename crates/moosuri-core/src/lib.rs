@@ -6,6 +6,8 @@ mod missions;
 pub use missions::*;
 mod schedules;
 pub use schedules::*;
+mod calendar;
+pub use calendar::*;
 mod accounts;
 pub use accounts::*;
 mod automatic_memory;
@@ -109,6 +111,17 @@ pub fn typescript_contract() -> String {
         QuietHoursChange::decl(),
         LocalNotification::decl(),
         NotificationPage::decl(),
+        CalendarConnection::decl(),
+        CalendarConnections::decl(),
+        CalendarInfo::decl(),
+        CalendarList::decl(),
+        CalendarFields::decl(),
+        CalendarEvent::decl(),
+        CalendarEvents::decl(),
+        CalendarRange::decl(),
+        CalendarMutation::decl(),
+        CalendarChange::decl(),
+        CalendarAction::decl(),
         AccountStatus::decl(),
         ManagedAccount::decl(),
         AccountManagementAction::decl(),

@@ -12,6 +12,11 @@ pub(crate) const COVERAGE_SCHEMA: i64 = 15;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Effect {
+    DisconnectCalendar {
+        target: String,
+        epoch: i64,
+        revision: i64,
+    },
     ForgetMemory {
         target: String,
     },
@@ -67,6 +72,16 @@ fn validate(tenant: &str, effect: &Effect) -> Result<()> {
     }
     id(tenant)?;
     match effect {
+        Effect::DisconnectCalendar {
+            target,
+            epoch,
+            revision,
+        } => {
+            id(target)?;
+            if *epoch <= 0 || *revision <= 0 {
+                return Err(StoreError::InvalidInput);
+            }
+        }
         Effect::ForgetMemory { target }
         | Effect::DeleteSource { target }
         | Effect::DeleteCollection { target }
@@ -314,6 +329,11 @@ pub(crate) fn apply(conn: &Connection, record: &Record) -> Result<()> {
                 params![record.tenant, target],
             )?;
         }
+        Effect::DisconnectCalendar {
+            target,
+            epoch,
+            revision,
+        } => crate::calendar::disconnect(conn, &record.tenant, target, *epoch, *revision)?,
         Effect::DisconnectMail {
             target,
             epoch,

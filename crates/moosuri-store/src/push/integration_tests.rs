@@ -144,7 +144,7 @@ async fn schema23_failure_rolls_back_and_retries_without_creating_signing_author
     let dir = directory();
     drop(Store::open(dir.path()).unwrap());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    conn.execute_batch(&format!("DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;{DROP_PUSH} CREATE TABLE push_enrollment_receipts(conflict INTEGER); PRAGMA user_version=22;")).unwrap();
+    conn.execute_batch(&format!("DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;{DROP_PUSH} CREATE TABLE push_enrollment_receipts(conflict INTEGER); PRAGMA user_version=22;")).unwrap();
     drop(conn);
     assert!(Store::open(dir.path()).is_err());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

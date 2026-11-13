@@ -8,7 +8,7 @@
 mod mime;
 #[cfg(test)]
 mod tests;
-mod transport;
+pub(crate) mod transport;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 pub use mime::{FrozenMail, MailContent, ParsedMail, ReplyContext, parse_mail};
@@ -191,6 +191,24 @@ impl GmailClient {
         state: &str,
         verifier: &str,
     ) -> Result<String, GmailError> {
+        Self::authorization_url_scoped(client_id, redirect_uri, state, verifier, &MINIMAL_SCOPES)
+    }
+    /// Explicit separate consent; never unions an existing Gmail grant.
+    pub fn authorization_url_scoped(
+        client_id: &str,
+        redirect_uri: &str,
+        state: &str,
+        verifier: &str,
+        scopes: &[&str],
+    ) -> Result<String, GmailError> {
+        if scopes.is_empty()
+            || scopes.len() > 8
+            || scopes
+                .iter()
+                .any(|s| !s.starts_with("https://www.googleapis.com/auth/") || s.len() > 200)
+        {
+            return Err(GmailError::InvalidInput);
+        }
         validate_atom(client_id, 1024)?;
         validate_redirect(redirect_uri)?;
         if state.len() < 32 || state.len() > 256 || !state.bytes().all(unreserved) {
@@ -203,7 +221,8 @@ impl GmailClient {
             ("client_id", client_id),
             ("redirect_uri", redirect_uri),
             ("response_type", "code"),
-            ("scope", &MINIMAL_SCOPES.join(" ")),
+            ("scope", &scopes.join(" ")),
+            ("include_granted_scopes", "false"),
             ("state", state),
             ("access_type", "offline"),
             ("code_challenge", &challenge),

@@ -3,6 +3,7 @@ mod accounts;
 mod artifacts;
 mod automatic_memory;
 mod browser;
+mod calendar;
 mod chat;
 mod community_skills;
 mod google_setup;
@@ -332,6 +333,7 @@ pub fn router_with_runtime(
         .merge(browser::routes())
         .merge(schedules::routes())
         .merge(missions::routes())
+        .merge(calendar::routes())
         .route("/api/v1/usage", get(chat::usage))
         .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })

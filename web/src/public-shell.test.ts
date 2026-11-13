@@ -79,6 +79,8 @@ it("online navigation never stores a credential-bearing response; offline uses o
   w.network.mockRejectedValue(new TypeError("offline"));
   expect(await (await w.fetchEvent("/app?thread=opaque", "navigate")!).text()).toBe("public-shell");
   expect(await (await w.fetchEvent("/app/schedules", "navigate")!).text()).toBe("public-shell");
+  expect(await (await w.fetchEvent("/app/missions", "navigate")!).text()).toBe("public-shell");
+  expect(await (await w.fetchEvent("/settings/calendar", "navigate")!).text()).toBe("public-shell");
   expect(await (await w.fetchEvent("/assets/app-fixed.js")!).text()).toBe("public-asset");
   expect([...w.entries.values()].every(data => !data.has("/app"))).toBe(true);
 });

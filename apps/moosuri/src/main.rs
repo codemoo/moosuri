@@ -648,9 +648,9 @@ async fn shutdown_signal() {
 async fn static_asset(uri: Uri) -> Response {
     let path = match uri.path() {
         "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/admin/google"
-        | "/settings/model" | "/settings/mail" | "/settings/sources" | "/settings/usage"
-        | "/app/knowledge" | "/app/memory" | "/app/skills" | "/app/artifacts"
-        | "/app/schedules" | "/app/missions" | "/login" => "/index.html",
+        | "/settings/model" | "/settings/calendar" | "/settings/mail" | "/settings/sources"
+        | "/settings/usage" | "/app/knowledge" | "/app/memory" | "/app/skills"
+        | "/app/artifacts" | "/app/schedules" | "/app/missions" | "/login" => "/index.html",
         path if path.starts_with("/app/artifacts/")
             && !path[15..].is_empty()
             && !path[15..].contains('/') =>
@@ -793,5 +793,16 @@ mod web_key_tests {
         let socket = dir.path().join("socket");
         let _listener = UnixListener::bind(&socket).unwrap();
         assert!(read_web_search_key_file(&socket).is_err());
+    }
+    #[tokio::test]
+    async fn calendar_shell_navigation_returns_the_public_app_entry() {
+        let response = static_asset(Uri::from_static("/settings/calendar")).await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert!(
+            response.headers()[axum::http::header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/html")
+        );
     }
 }

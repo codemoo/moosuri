@@ -8,7 +8,7 @@ pub struct GoogleSetupRecord {
     pub client_id: String,
     pub redirect_uri: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GoogleAppPin {
     pub revision: Option<i64>,
     pub client_id: String,
@@ -120,11 +120,11 @@ impl Store {
             let old=record(&tx)?;
             if old.as_ref().map_or(0,|r|r.revision)!=expected_revision {return Err(StoreError::Conflict)}
             let time=now()?;
-            if tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_oauth_sessions WHERE expires_at>?1)",[time],|r|r.get::<_,bool>(0))? {return Err(StoreError::GoogleAuthorizationInProgress)}
+            if tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_oauth_sessions WHERE expires_at>?1) OR EXISTS(SELECT 1 FROM calendar_oauth_sessions WHERE expires_at>?1)",[time],|r|r.get::<_,bool>(0))? {return Err(StoreError::GoogleAuthorizationInProgress)}
             let identity_changed=old.as_ref().is_none_or(|r|r.client_id!=client.client_id);
             let redirect_changed=old.as_ref().is_some_and(|r|r.redirect_uri!=client.redirect_uri);
-            if redirect_changed && tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_connections WHERE status!='disconnected')",[],|r|r.get::<_,bool>(0))? {return Err(StoreError::GoogleConnectionsInUse)}
-            if identity_changed && tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_connections WHERE status!='disconnected' AND (oauth_client_id IS NULL OR oauth_client_id!=?1))",[&client.client_id],|r|r.get::<_,bool>(0))? {return Err(StoreError::GoogleConnectionsInUse)}
+            if redirect_changed && tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_connections WHERE status!='disconnected') OR EXISTS(SELECT 1 FROM calendar_connections WHERE status!='disconnected')",[],|r|r.get::<_,bool>(0))? {return Err(StoreError::GoogleConnectionsInUse)}
+            if identity_changed && tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_connections WHERE status!='disconnected' AND (oauth_client_id IS NULL OR oauth_client_id!=?1)) OR EXISTS(SELECT 1 FROM calendar_connections WHERE status!='disconnected' AND client_id!=?1)",[&client.client_id],|r|r.get::<_,bool>(0))? {return Err(StoreError::GoogleConnectionsInUse)}
             let next=GoogleSetupRecord{revision:expected_revision.checked_add(1).ok_or(StoreError::InvalidInput)?,client_id:client.client_id,redirect_uri:client.redirect_uri};
             let secret=providers::encrypt(&db.provider_key,client.client_secret.expose().as_bytes(),&secret_aad(&next)?)?;
             tx.execute("INSERT INTO google_setup(singleton,revision,client_id,redirect_uri,secret) VALUES(1,?1,?2,?3,?4) ON CONFLICT(singleton) DO UPDATE SET revision=excluded.revision,client_id=excluded.client_id,redirect_uri=excluded.redirect_uri,secret=excluded.secret",params![next.revision,next.client_id,next.redirect_uri,secret])?;

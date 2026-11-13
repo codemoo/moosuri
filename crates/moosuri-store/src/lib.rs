@@ -7,6 +7,8 @@ pub use missions::{MissionExecution, MissionPendingRound};
 mod schedules;
 pub mod vault_authority;
 pub use schedules::ReminderLease;
+mod calendar;
+pub use calendar::*;
 mod accounts;
 pub use accounts::{AccountManagementResult, PreparedAccountManagement};
 mod automatic_memory;
@@ -178,7 +180,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 25;
+const CURRENT_SCHEMA_VERSION: i64 = 26;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -487,7 +489,15 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 26 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0026_calendar.sql"),
+                "COMMIT;"
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
+        calendar::restart(&conn)?;
         media::quarantine(&conn)?;
         schedules::restart(&conn)?;
         push::restart(&conn)?;

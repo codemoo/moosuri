@@ -54,3 +54,7 @@ Google 소셜 로그인은 초기 필수 기능으로 가정하지 않는다. Go
 ## 로컬 LLM 연결 UX
 
 Ollama·LM Studio·vLLM preset과 generic base URL을 제공한다. server가 실행되는 기기의 `localhost`는 사용자의 브라우저 PC가 아님을 설명한다. container 사용자는 host gateway 또는 LAN/Tailscale URL을 지정한다. 로컬 endpoint가 꺼졌을 때 클라우드로 몰래 우회하지 않는다. endpoint reachability→model list→text/stream/tool probe 순서로 확인하며 유료 probe는 짧게 명시한다.
+
+## 개인 Google Calendar 연결
+
+설치 Google OAuth 웹 앱과 callback은 한 번 준비한다. Calendar를 쓰면 같은 프로젝트에서 Google Calendar API도 사용 설정한다. 각 사용자는 [내 Google Calendar](calendar.md)에서 별도 scope로 동의한다. 기존 Gmail 연결이 Calendar 허용을 뜻하지 않으며 Gmail token을 재사용하지 않는다. 모델 연결 없이도 직접 양식으로 사용한다.

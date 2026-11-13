@@ -1,0 +1,10 @@
+- [x] Separate Calendar OAuth scopes/credential lifecycle with shared configured Google callback.
+- [x] Implement fixed-origin bounded Calendar metadata/primary event connector and ETag writes.
+- [x] Implement direct-owner dispatch ledger, receipts, exact retries and lookup-only uncertainty.
+- [x] Implement primary/event eligibility, no-attendee/email boundary and account/app/revision fences.
+- [x] Implement disconnect journal and actual encrypted restore quarantine.
+- [x] Implement React connection/primary form/partial reads/history/unknown lookup and draft lifetimes.
+- [x] Add synthetic connector/store/HTTP/React behavior verification and docs.
+- [x] Independent boundary review, both reproduced repairs and combined migration26 after missions25.
+- [x] Root Linux and rendered browser verification; publication allowlist and secret scan required per repository policy.
+- [ ] Future agent/conversational admission, recurrence/all-day/secondary writes and attendee support.

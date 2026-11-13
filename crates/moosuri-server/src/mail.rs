@@ -108,6 +108,9 @@ pub(super) async fn start_for(s: &AppState, user: &UserContext, setup_return: bo
     Ok(Json(serde_json::json!({"authorization_url":url})).into_response())
 }
 async fn callback(State(s): State<AppState>, Query(input): Query<Callback>) -> HttpResult {
+    if input.state.starts_with("cal.") {
+        return crate::calendar::callback(&s, input.state, input.code, input.error.is_some()).await;
+    }
     let _ = (input.scope, input.authuser, input.prompt);
     if input.error.is_some() {
         let setup = s.store.cancel_mail_oauth_state(input.state).await?;

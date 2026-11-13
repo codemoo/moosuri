@@ -23,6 +23,7 @@ const navigationPaths = new Set([
   "/admin/usage",
   "/settings/model",
   "/settings/mail",
+  "/settings/calendar",
   "/settings/sources",
   "/settings/usage",
   "/app/knowledge",
@@ -30,6 +31,7 @@ const navigationPaths = new Set([
   "/app/skills",
   "/app/artifacts",
   "/app/schedules",
+  "/app/missions",
 ]);
 
 self.addEventListener("install", (event) => {

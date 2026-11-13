@@ -839,3 +839,5 @@ it("opens explicit missions and returns without sending or losing the chat draft
  expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("확인 중인 채팅 초안");
  expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);
 });
+
+it("opens Calendar and returns with the unsent chat draft intact",async()=>{const calls=server(path=>path==="/calendar/connections"?response({configured:false,connections:[]}):path==="/calendar/actions"?response([]):response({threads:[]}));const user=userEvent.setup();render(<App/>);const composer=await screen.findByRole("textbox",{name:"메시지"});await user.type(composer,"달력 확인 전 초안");await user.click(screen.getByRole("button",{name:/내 Calendar/}));await screen.findByRole("heading",{name:"내 Google Calendar"});await user.click(screen.getByRole("button",{name:"← 대화로"}));expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("달력 확인 전 초안");expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);});

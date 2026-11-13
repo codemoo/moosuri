@@ -607,3 +607,6 @@ async fn community_catalog_lifecycle_requires_current_account_and_does_not_admit
 
 #[path = "cases/github_skills.rs"]
 mod github_skills_tests;
+
+#[path = "cases/accounts.rs"]
+mod account_management_tests;

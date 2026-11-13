@@ -9,6 +9,8 @@ use std::{
 use uuid::Uuid;
 const SIZE: usize = 104;
 const MAGIC: &[u8; 8] = b"MSAUTH01";
+#[cfg(test)]
+thread_local! { static FAIL_OPEN_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 #[derive(Clone)]
 pub(crate) struct Record {
     pub seq: i64,
@@ -55,6 +57,13 @@ impl Journal {
             });
             previous = hash;
         }
+        // A failed append fsync can leave complete readable bytes. Reopening is
+        // authority to replay them, so validation alone cannot adopt that tail.
+        #[cfg(test)]
+        if FAIL_OPEN_SYNC.get() {
+            return Err(StoreError::Unavailable);
+        }
+        file.sync_all().map_err(|_| StoreError::Unavailable)?;
         Ok(Self { file, records })
     }
     pub fn append(&mut self, account: &str, epoch: i64) -> Result<Record> {
@@ -86,5 +95,26 @@ impl Journal {
         };
         self.records.push(record.clone());
         Ok(record)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn reopening_a_complete_tail_requires_successful_sync_before_adoption() {
+        let dir = crate::tests::directory();
+        let path = dir.path().join("auth.journal");
+        let mut journal = Journal::open(&path).unwrap();
+        journal.append(&Uuid::new_v4().to_string(), 1).unwrap();
+        drop(journal);
+        let bytes = std::fs::read(&path).unwrap();
+        FAIL_OPEN_SYNC.set(true);
+        let result = Journal::open(&path);
+        FAIL_OPEN_SYNC.set(false);
+        assert!(matches!(result, Err(StoreError::Unavailable)));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(Journal::open(&path).unwrap().records.len(), 1);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 }

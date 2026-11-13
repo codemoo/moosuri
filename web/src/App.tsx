@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useId,
   useMemo,
   useRef,
@@ -9,6 +10,7 @@ import {
 } from "react";
 import type {
   AccountSummary,
+  ManagedAccount,
   ChatEvidence,
   SessionView,
   SystemStatus,
@@ -16,6 +18,7 @@ import type {
   ThreadsResponse,
   UsersResponse,
 } from "../shared/api-types";
+import { AccountControls } from "./AccountControls";
 import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
@@ -1263,30 +1266,44 @@ function Admin({
   const scope = useScope(accountId);
   const invitationOpener = useRef<HTMLButtonElement>(null);
   const [users, setUsers] = useState<AccountSummary[]>([]);
+  const [management, setManagement] = useState<ManagedAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [invitation, setInvitation] = useState<{
+  const [issuedInvitation, setInvitation] = useState<{
     user: AccountSummary;
     temporary_password: string;
+    owner_id: string;
+    revision: number | null;
+    request_id: string | null;
+    reset?: boolean;
   } | null>(null);
+  const knownTarget=issuedInvitation ? management.find(m=>m.user.id===issuedInvitation.user.id) : undefined;
+  const invitation=issuedInvitation && issuedInvitation.owner_id===accountId &&
+    !(issuedInvitation.revision!==null && knownTarget && knownTarget.revision>issuedInvitation.revision)
+    ? issuedInvitation : null;
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState("");
+  useLayoutEffect(()=>{
+    if(issuedInvitation && !invitation){setInvitation(null);setCopied(false);setCopyError("");}
+  },[issuedInvitation,invitation]);
   function fail(e: unknown) {
     if (isAborted(e)) return;
     if (e instanceof ApiFailure && e.status === 401) onExpired();
     else setError(errorText(e));
   }
   useEffect(() => {
-    setLoading(true);
+    setLoading(users.length === 0);
     setError("");
+    const controller=new AbortController();
     void scope
-      .request<UsersResponse>("/admin/users")
+      .request<UsersResponse & { management?: ManagedAccount[] }>("/admin/users","GET",undefined,controller.signal)
       .then((result) => {
         setUsers(result.users);
+        setManagement(result.management ?? []);
         setLoading(false);
       })
       .catch((e) => {
@@ -1295,6 +1312,7 @@ function Admin({
           setLoading(false);
         }
       });
+    return ()=>controller.abort();
   }, [scope, retry]);
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -1304,9 +1322,11 @@ function Admin({
       const result = await scope.request<{
         user: AccountSummary;
         temporary_password: string;
+        management?: ManagedAccount;
       }>("/admin/users", "POST", { name, email });
       setUsers((current) => [...current, result.user]);
-      setInvitation(result);
+      if(result.management)setManagement(current=>[...current,result.management!]);
+      setInvitation({...result,owner_id:accountId,revision:result.management?.revision??null,request_id:null});
       setName("");
       setEmail("");
       setCopied(false);
@@ -1324,7 +1344,7 @@ function Admin({
   // Clipboard is browser-owned. We never persist a credential or silently clear
   // an unrelated clipboard value later; the recipient chooses where to paste it.
   const invitationLifetime = useRef(0);
-  useEffect(() => {
+  useLayoutEffect(() => {
     invitationLifetime.current += 1;
     return () => {
       invitationLifetime.current += 1;
@@ -1448,10 +1468,11 @@ function Admin({
                   {user.role === "admin" ? "ADMIN" : "MEMBER"}
                 </span>
                 <span className="user-state">
-                  {user.must_change_password
+                  {management.find((m)=>m.user.id===user.id)?.recovery_required ? "Recovery needed" : management.find((m)=>m.user.id===user.id)?.status==="suspended" ? "Suspended" : user.must_change_password
                     ? "Password change needed"
                     : "Active"}
                 </span>
+                {management.filter((m)=>m.user.id===user.id).map((target)=><AccountControls key={target.user.id} accountId={accountId} target={target} onExpired={onExpired} onChanged={()=>setRetry(n=>n+1)} onPassword={(password,receipt)=>{setInvitation({user,temporary_password:password,owner_id:accountId,revision:receipt.revision,request_id:receipt.request_id,reset:true});setCopied(false);setCopyError("");}}/>)}
               </li>
             ))}
           </ul>
@@ -1459,7 +1480,7 @@ function Admin({
       </section>
       {invitation && (
         <Modal
-          title="An invitation, just once."
+          title={invitation.reset ? "A new password, just once." : "An invitation, just once."}
           returnFocus={invitationOpener.current}
           close={() => {
             setInvitation(null);
@@ -1468,8 +1489,8 @@ function Admin({
           }}
         >
           <p>
-            The account for <strong>{invitation.user.name}</strong> is created.
-            No email was sent. Share this password through a private channel.
+            {invitation.reset ? <>A new temporary password was issued for <strong>{invitation.user.name}</strong>. Account suspension stays unchanged.</> : <>The account for <strong>{invitation.user.name}</strong> is created.</>}
+            {" "}No email was sent. Share this password through a private channel.
           </p>
           <label className="temporary-label">
             Temporary password

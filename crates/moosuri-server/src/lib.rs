@@ -1,4 +1,5 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
+mod accounts;
 mod artifacts;
 mod automatic_memory;
 mod browser;
@@ -18,7 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
-use moosuri_core::{ApiError, SessionView, SystemStatus, ThreadsResponse, UsersResponse};
+use moosuri_core::{ApiError, SessionView, SystemStatus, ThreadsResponse};
 use moosuri_store::{Store, StoreError, UserContext};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -238,6 +239,7 @@ pub fn router_with_runtime(
         .route("/api/v1/auth/password", post(change_password))
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/admin/users", get(users).post(create_user))
+        .route("/api/v1/admin/users/{id}/manage", post(accounts::manage))
         .route(
             "/api/v1/admin/providers",
             get(providers::list).post(providers::create),
@@ -595,8 +597,10 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> HttpResult
 }
 async fn users(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
     let user = current(&state, &headers).await?;
-    Ok(Json(UsersResponse {
-        users: state.store.list_users(&user).await?,
+    let management = state.store.managed_accounts(&user).await?;
+    Ok(Json(accounts::ManagedUsersResponse {
+        users: management.iter().map(|m| m.user.clone()).collect(),
+        management,
     })
     .into_response())
 }
@@ -608,6 +612,7 @@ struct CreateUserRequest {
 }
 #[derive(Serialize)]
 struct InvitationResponse {
+    management: moosuri_core::ManagedAccount,
     user: moosuri_core::AccountSummary,
     temporary_password: String,
 }
@@ -624,6 +629,7 @@ async fn create_user(
     Ok((
         StatusCode::CREATED,
         Json(InvitationResponse {
+            management: result.management,
             user: result.user,
             temporary_password: result.temporary_password,
         }),

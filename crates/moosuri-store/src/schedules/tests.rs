@@ -860,3 +860,118 @@ async fn stored_daily_gap_and_fold_receipts_match_exact_utc_without_second_fold(
         0
     );
 }
+
+#[tokio::test]
+async fn account_suspend_resume_fences_claim_and_requires_explicit_owner_reactivation() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let a = admin(&store).await;
+    let b = member(&store, &a.user, "reminder-member@example.test").await;
+    let t = ts("2027-01-01T00:00:00Z");
+    set_clock(&store, t).await;
+    let reminder = store
+        .create_schedule(
+            &b.user,
+            input(ScheduleRule::Interval {
+                anchor: t,
+                seconds: 60,
+            }),
+        )
+        .await
+        .unwrap();
+    store.enqueue_scheduled_reminders_at(t + 60).await.unwrap();
+    let held = store
+        .claim_scheduled_reminder_at(t + 60)
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = store
+        .managed_accounts(&a.user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|row| row.user.id == b.user.account.id)
+        .unwrap()
+        .revision;
+    let prepared = store
+        .prepare_account_management(
+            &a.user,
+            b.user.account.id.clone(),
+            AccountManagementInput {
+                request_id: Uuid::new_v4().to_string(),
+                expected_revision: revision,
+                action: AccountManagementAction::Suspend,
+            },
+        )
+        .await
+        .unwrap();
+    let suspended = store.apply_account_management(prepared).await.unwrap();
+    assert!(
+        store
+            .finish_scheduled_reminder_at(&held, t + 60)
+            .await
+            .is_err()
+    );
+    assert!(store.schedules(&b.user).await.is_err());
+    set_clock(&store, t + 61).await;
+    let other = store
+        .create_schedule(&a.user, input(ScheduleRule::Once { at: t + 120 }))
+        .await
+        .unwrap();
+    assert_eq!(deliver(&store, t + 120).await.schedule_id, other.id);
+    let prepared = store
+        .prepare_account_management(
+            &a.user,
+            b.user.account.id.clone(),
+            AccountManagementInput {
+                request_id: Uuid::new_v4().to_string(),
+                expected_revision: suspended.receipt.revision,
+                action: AccountManagementAction::Resume,
+            },
+        )
+        .await
+        .unwrap();
+    store.apply_account_management(prepared).await.unwrap();
+    assert!(store.authenticate(b.token).await.is_err());
+    let fresh = store
+        .login(
+            "reminder-member@example.test".into(),
+            crate::tests::PASSWORD.into(),
+        )
+        .await
+        .unwrap();
+    let paused = store.schedules(&fresh.user).await.unwrap().remove(0);
+    assert_eq!(paused.state, "paused");
+    assert!(
+        store
+            .notifications(&fresh.user, None, false)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    set_clock(&store, t + 120).await;
+    let resumed = store
+        .control_schedule(
+            &fresh.user,
+            reminder.id.clone(),
+            ScheduleControl {
+                expected_revision: paused.revision,
+                action: "resume".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(resumed.next_fire_at, Some(t + 180));
+    assert_eq!(deliver(&store, t + 180).await.schedule_id, reminder.id);
+    assert_eq!(
+        store
+            .notifications(&fresh.user, None, false)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+}

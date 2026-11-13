@@ -91,10 +91,9 @@ fn owned(conn: &Connection, user: &UserContext, id: &str) -> Result<Schedule> {
     }
     Ok(s)
 }
-// Account lifecycle integration adds accounts.status='active' here. auth_epoch is
-// already pinned/rechecked at every enqueue/claim/publication boundary.
+// Current account state and auth_epoch are checked at enqueue, claim and publication.
 fn eligible(conn: &Connection, tenant: &str, s: &Schedule, now: i64) -> Result<bool> {
-    Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE tenant_id=?1 AND id=?2 AND auth_epoch=?3 AND recovery_required=0 AND must_change_password=0 AND (temporary_expires_at IS NULL OR temporary_expires_at>?4))",params![tenant,s.account,s.epoch,now],|r|r.get(0))?)
+    Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE tenant_id=?1 AND id=?2 AND auth_epoch=?3 AND status='active' AND recovery_required=0 AND must_change_password=0 AND (temporary_expires_at IS NULL OR temporary_expires_at>?4))",params![tenant,s.account,s.epoch,now],|r|r.get(0))?)
 }
 fn owner_view(conn: &Connection, tenant: &str, mut s: Schedule) -> Result<ScheduleView> {
     let time = clock()?;

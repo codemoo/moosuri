@@ -537,6 +537,24 @@ Chromium의 생성/수정/현지 날짜/모바일 스크롤을 확인했다. Rea
 
 독립 검토와 통합 macOS·Linux 검사에서 Store9·migration7·agent59·HTTP worker/reopen1을
 통과했다. Linux 설치1, React/App/public-shell32, 타입/build·DTO·clippy도 통과했다.
-실제 자연어 예약·매주 규칙·모델 업무·변경만 알림·Push는 후속 범위다. 계정 정지와
-복원 기능에는 별도 상태 검사와 quarantine hook을 연결한다.
+실제 자연어 예약·매주 규칙·모델 업무·변경만 알림·Push는 후속 범위다. 계정 정지는 현재 active 상태와 auth epoch로 차단한다.
+복원 기능에는 별도 quarantine hook을 연결한다.
 [현재 범위](schedules.md)와 [검증 기록](reviews/2026-11-13-local-reminders.md)을 따른다.
+
+## 계정 관리 수명
+
+People의 Manage에서 정지·재개·역할 변경·24시간 임시 암호 재발급·전체 기기
+로그아웃을 제공한다. 각 변경은 현재 관리자와 대상 revision을 다시 검사하고
+auth epoch·세션 철회·내용 없는 영수증을 함께 저장한다. 재개해도 이전 세션이나
+background 권한은 되살리지 않는다. 저장된 개인 내용은 보존하며 관리자에게
+열람 API를 주지 않는다. 암호 해싱은 전달 잠금 밖에서 진행한다.
+
+동일 요청 재시도는 저장한 영수증만 돌려주며 암호를 중복 생성하거나 다시 표시하지
+않는다. 독립 암호 변경·관리자 강등·계정 전환·동시 클릭·이전 목록 응답을 검사한다.
+저장 중단의 auth journal replay는 계정을 잠그며, 검증된 기록도 fsync 뒤에만
+재생 권한으로 사용한다. 자세한 범위는 [계정 관리](account-management.md)에 있다.
+
+schema18로 통합하고 독립 검토의 임시 비밀번호 표시 경합을 수정·재검증했다.
+macOS Store204와 추가 예약/정지 회귀1, HTTP33·CLI7·React36·타입/build·clippy를
+통과했고 Linux 관련64개 검사가 통과했다. [검증 기록](reviews/2026-11-13-account-management.md)에
+범위를 남겼다. 전체 계정 삭제·초대 메일·볼트 철회는 후속 작업이다.

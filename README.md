@@ -12,6 +12,7 @@ accounts, data, infrastructure settings and experimental runtimes are not copied
 - [설계](docs/architecture.md): Rust 경계·실행·저장·복구
 - [요구사항](docs/requirements.md): 사용자 지시 29개와 검증 추적
 - [설치·관리자](docs/onboarding.md): 초기 설정·초대·대시보드·접속 방식
+- [계정 관리](docs/account-management.md): 정지·재개·역할·임시 암호 재발급·모든 기기 로그아웃
 - [사용자 격리](docs/accounts-isolation.md): 각자의 세션·실행 환경·사용량
 - [모델 연결](docs/providers.md): OpenAI·Anthropic·OpenRouter·로컬 LLM
 - [볼트 보안](docs/vault-security.md): 사용자 키·관리자 경계·복원

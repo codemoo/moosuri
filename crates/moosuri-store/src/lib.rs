@@ -2,6 +2,8 @@
 //! Authentication capabilities can only be created here and are revalidated on every use.
 mod schedules;
 pub use schedules::ReminderLease;
+mod accounts;
+pub use accounts::{AccountManagementResult, PreparedAccountManagement};
 mod automatic_memory;
 pub use automatic_memory::{ExtractionClaim, ExtractionLease, ExtractionUnit};
 mod artifacts;
@@ -126,6 +128,7 @@ pub struct LoginResult {
 }
 /// The generated credential is returned once; deliberately does not implement Debug.
 pub struct Invitation {
+    pub management: moosuri_core::ManagedAccount,
     pub user: AccountSummary,
     pub temporary_password: String,
 }
@@ -166,9 +169,10 @@ struct LoginAccount {
     epoch: i64,
     temporary_expiry: Option<i64>,
     recovery: bool,
+    suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 17;
+const CURRENT_SCHEMA_VERSION: i64 = 18;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -419,6 +423,13 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 18 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0018_account_management.sql"),
+                "COMMIT;"
+            ))?;
+        }
         schedules::restart(&conn)?;
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;
@@ -551,6 +562,7 @@ impl Store {
             if current.epoch != candidate.epoch
                 || current.hash != candidate.hash
                 || current.recovery
+                || current.suspended
                 || current
                     .temporary_expiry
                     .is_some_and(|expires| expires <= now().unwrap_or(i64::MAX))
@@ -589,7 +601,7 @@ impl Store {
             db.poisoned = true;
             let record = db.journal.append(&current.account.id, next_epoch)?;
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let changed = tx.execute("UPDATE accounts SET password_hash=?1, must_change_password=0, temporary_expires_at=NULL, auth_epoch=?2 WHERE id=?3 AND auth_epoch=?4 AND recovery_required=0", params![hash, next_epoch, current.account.id, current.epoch])?;
+            let changed = tx.execute("UPDATE accounts SET password_hash=?1, must_change_password=0, temporary_expires_at=NULL, auth_epoch=?2, management_revision=management_revision+1 WHERE id=?3 AND auth_epoch=?4 AND recovery_required=0", params![hash, next_epoch, current.account.id, current.epoch])?;
             if changed != 1 { return Err(StoreError::Unauthorized); }
             tx.execute("DELETE FROM sessions WHERE tenant_id=?1 AND account_id=?2", params![current.tenant.0, current.account.id])?;
             tx.execute("UPDATE store_meta SET journal_seq=?1, journal_head=?2 WHERE singleton=1", params![record.seq, record.hash.as_slice()])?;
@@ -631,8 +643,10 @@ impl Store {
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
             validate(&tx, &user, true, true)?;
             let account = insert_account(&tx, name, email, hash, Role::Member, true)?;
+            let management = accounts::target(&tx, &account.id)?;
             tx.commit()?;
             Ok(Invitation {
+                management,
                 user: account,
                 temporary_password: temporary_password.to_string(),
             })
@@ -709,7 +723,7 @@ fn summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountSummary> {
     })
 }
 fn load_login(conn: &Connection, email: &str) -> Result<Option<LoginAccount>> {
-    Ok(conn.query_row("SELECT id,name,email,role,must_change_password,tenant_id,password_hash,auth_epoch,temporary_expires_at,recovery_required FROM accounts WHERE email=?1", [email], |r| Ok(LoginAccount { summary:summary_row(r)?,tenant:TenantId(r.get(5)?),hash:r.get(6)?,epoch:r.get(7)?,temporary_expiry:r.get(8)?,recovery:r.get(9)? })).optional()?)
+    Ok(conn.query_row("SELECT id,name,email,role,must_change_password,tenant_id,password_hash,auth_epoch,temporary_expires_at,recovery_required,status FROM accounts WHERE email=?1", [email], |r| Ok(LoginAccount { summary:summary_row(r)?,tenant:TenantId(r.get(5)?),hash:r.get(6)?,epoch:r.get(7)?,temporary_expiry:r.get(8)?,recovery:r.get(9)?,suspended:r.get::<_,String>(10)? != "active" })).optional()?)
 }
 fn insert_account(
     conn: &Connection,
@@ -754,7 +768,7 @@ fn issue_session(conn: &Connection, account: LoginAccount) -> Result<LoginResult
 }
 fn load_context(conn: &Connection, digest: [u8; 32], renew: bool) -> Result<UserContext> {
     let time = now()?;
-    let result=conn.query_row("SELECT a.id,a.name,a.email,a.role,a.must_change_password,a.tenant_id,a.auth_epoch,s.password_change_only FROM sessions s JOIN accounts a ON a.tenant_id=s.tenant_id AND a.id=s.account_id WHERE s.digest=?1 AND s.auth_epoch=a.auth_epoch AND a.recovery_required=0 AND s.expires_at>?2 AND s.password_change_only=a.must_change_password AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?2)",params![digest.as_slice(),time],|r| Ok(UserContext { account:summary_row(r)?,tenant:TenantId(r.get(5)?),epoch:r.get(6)?,restricted:r.get(7)?,digest })).optional()?.ok_or(StoreError::Unauthorized)?;
+    let result=conn.query_row("SELECT a.id,a.name,a.email,a.role,a.must_change_password,a.tenant_id,a.auth_epoch,s.password_change_only FROM sessions s JOIN accounts a ON a.tenant_id=s.tenant_id AND a.id=s.account_id WHERE s.digest=?1 AND s.auth_epoch=a.auth_epoch AND a.recovery_required=0 AND a.status='active' AND s.expires_at>?2 AND s.password_change_only=a.must_change_password AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?2)",params![digest.as_slice(),time],|r| Ok(UserContext { account:summary_row(r)?,tenant:TenantId(r.get(5)?),epoch:r.get(6)?,restricted:r.get(7)?,digest })).optional()?.ok_or(StoreError::Unauthorized)?;
     if renew && !result.restricted {
         conn.execute(
             "UPDATE sessions SET expires_at=?1 WHERE digest=?2",

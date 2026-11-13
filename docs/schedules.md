@@ -49,7 +49,7 @@ auth_epoch and schedule revision; it never fabricates a login session. Account
 eligibility and current revision/state are checked before enqueue, claim and final
 publication. Logout leaves this separate grant active. Password/recovery/account
 epoch changes fence it and require an explicit current-owner resume/edit. Account
-suspension integration also requires the current active-status check.
+suspension is checked independently of the pinned auth epoch.
 
 Claim alone creates no delivery authority. The same SQLite transaction rechecks
 the grant, inserts the immutable notification, marks the occurrence delivered and

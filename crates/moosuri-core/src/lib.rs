@@ -1,6 +1,8 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
 mod schedules;
 pub use schedules::*;
+mod accounts;
+pub use accounts::*;
 mod automatic_memory;
 pub use automatic_memory::*;
 mod artifacts;
@@ -95,6 +97,11 @@ pub fn typescript_contract() -> String {
         QuietHoursChange::decl(),
         LocalNotification::decl(),
         NotificationPage::decl(),
+        AccountStatus::decl(),
+        ManagedAccount::decl(),
+        AccountManagementAction::decl(),
+        AccountManagementInput::decl(),
+        AccountManagementReceipt::decl(),
         GitHubSkillLocation::decl(),
         GitHubSkillPreviewInput::decl(),
         MemoryExtractionChange::decl(),

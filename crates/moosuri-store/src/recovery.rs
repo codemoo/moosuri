@@ -190,7 +190,7 @@ fn apply(db: &mut Database, account: &str, role: Role, hash: String) -> Result<(
         .conn
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
     let changed = tx.execute(
-        "UPDATE accounts SET role=?1,password_hash=?2,must_change_password=1,temporary_expires_at=?3,auth_epoch=?4,recovery_required=0 WHERE id=?5 AND auth_epoch=?6 AND recovery_required=1",
+        "UPDATE accounts SET role=?1,password_hash=?2,must_change_password=1,temporary_expires_at=?3,auth_epoch=?4,recovery_required=0,management_revision=management_revision+1 WHERE id=?5 AND auth_epoch=?6 AND recovery_required=1",
         params![if role == Role::Admin { "admin" } else { "member" }, hash, expiry, epoch, account, previous],
     )?;
     if changed != 1 {

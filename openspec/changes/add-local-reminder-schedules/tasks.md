@@ -9,4 +9,5 @@
 
 - [x] Finish focused Store/HTTP/UI/App checks and own web/type/DTO/fmt/clippy/plan/strict OpenSpec gates; freeze exact source/log evidence.
 - [x] Independent review, integration with personal artifacts0016, and focused Linux acceptance.
-- [ ] Integrate account active-status and restore quarantine when their respective features land; model missions and Push remain separate work.
+- [x] Integrate account active-status and the suspend/resume/held-claim regression with account lifecycle18.
+- [ ] Integrate restore quarantine when restoration lands; model missions and Push remain separate work.

@@ -1,0 +1,8 @@
+.user-list li:has(.account-controls) { flex-wrap: wrap; }
+.account-controls { flex: 1 0 100%; margin-top: .5rem; color: var(--muted, #68645c); font-size: .88rem; }
+.account-controls summary { cursor: pointer; width: fit-content; color: var(--ink, #272822); padding: .45rem 0; }
+.account-controls p { max-width: 52rem; line-height: 1.6; }
+.account-action-buttons { display: flex; flex-wrap: wrap; gap: .5rem; }
+.account-action-buttons button { padding: .6rem .85rem; border: 1px solid var(--line, #d7d6cd); border-radius: .6rem; background: transparent; color: inherit; }
+.account-action-buttons button:disabled { opacity: .5; }
+.account-controls :focus-visible { outline: 2px solid var(--accent, #73846e); outline-offset: 3px; }

@@ -16,6 +16,7 @@ use std::{
 };
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+mod skills;
 
 #[derive(Parser)]
 #[command(
@@ -36,6 +37,11 @@ enum RecoveryRole {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Author or check local instruction packages without an installation.
+    Skills {
+        #[command(subcommand)]
+        command: skills::Command,
+    },
     /// Recover one journal-locked account in a stopped installation.
     RecoverAccount {
         #[arg(long)]
@@ -122,6 +128,9 @@ async fn main() {
     }
 }
 async fn run(cli: Cli) -> Result<(), String> {
+    if let Command::Skills { command } = &cli.command {
+        return skills::run(command);
+    }
     if let Command::Backup {
         command: BackupCommand::Keygen { output },
     } = &cli.command
@@ -142,6 +151,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         return Err("data_directory_must_be_absolute".into());
     }
     match cli.command {
+        Command::Skills { .. } => unreachable!("skills authoring runs without installation state"),
         Command::Backup { command } => match command {
             BackupCommand::Keygen { .. } => unreachable!("keygen runs without installation state"),
             BackupCommand::Setup {

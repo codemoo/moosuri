@@ -1,5 +1,6 @@
 //! Trusted, repository-owned instruction packages. No network, shell or executable loading.
 use super::*;
+pub mod author;
 pub(crate) mod external;
 use moosuri_core::{CommunitySkillCard, CommunitySkillMutation, SkillPin};
 use serde::{Deserialize, Serialize};
@@ -96,28 +97,29 @@ fn validate_package(package: Package) -> Result<Validated> {
     validate_contents(package)
 }
 fn validate_contents(package: Package) -> Result<Validated> {
+    compatible_contents(package).map_err(|_| StoreError::InvalidInput)
+}
+fn compatible_contents(package: Package) -> std::result::Result<Validated, author::Error> {
+    use author::Error;
     if package.commit.len() != 40
         || !package
             .commit
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-        || package.slug.is_empty()
-        || package.slug.len() > 64
-        || !package
-            .slug
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        || !author::valid_slug(&package.slug)
         || package.files.len() != 4
         || !FILES.iter().all(|f| package.files.contains_key(*f))
         || package
             .files
             .values()
-            .any(|v| v.len() > 32 * 1024 || v.contains('\0'))
-        || package.files.values().map(String::len).sum::<usize>() > 64 * 1024
+            .any(|v| v.len() > author::FILE_LIMIT || v.contains('\0'))
+        || package.files.values().map(String::len).sum::<usize>() > author::TOTAL_LIMIT
     {
-        return Err(StoreError::InvalidInput);
+        return Err(Error(
+            "package identity/files: use a matching 1-64 character lowercase/digit/hyphen name, exactly four UTF-8 files, no NUL, at most32KiB each/64KiB total",
+        ));
     }
-    let metadata = sidecar(&package.files["moosuri.toml"])?;
+    let metadata = sidecar(&package.files["moosuri.toml"]).map_err(|_| Error("moosuri.toml: expected unique documented keys and single-line JSON scalar/string-array values"))?;
     let known = [
         "knowledge_search",
         "knowledge_read_source",
@@ -145,37 +147,49 @@ fn validate_contents(package: Package) -> Result<Validated> {
             .any(|c| !known.contains(&c.as_str()))
         || !package.files["LICENSE"].contains("Apache License, Version 2.0")
     {
-        return Err(StoreError::InvalidInput);
+        return Err(Error(
+            "moosuri.toml/LICENSE: require format_version1, mode instructions, numeric x.y.z version, Apache-2.0 license and 1-9 documented capabilities",
+        ));
     }
     let document = &package.files["SKILL.md"];
     let front = document
         .strip_prefix("---\n")
         .and_then(|s| s.split_once("\n---\n"))
-        .ok_or(StoreError::InvalidInput)?;
+        .ok_or(Error(
+            "SKILL.md: require LF frontmatter delimited by --- lines",
+        ))?;
     let mut name = None;
     let mut description = None;
     for line in front.0.lines() {
         if let Some(v) = line.strip_prefix("name: ") {
             if name.replace(v).is_some() {
-                return Err(StoreError::InvalidInput);
+                return Err(Error("SKILL.md: duplicate name field"));
             }
         } else if let Some(v) = line.strip_prefix("description: ") {
             if description.replace(v).is_some() {
-                return Err(StoreError::InvalidInput);
+                return Err(Error("SKILL.md: duplicate description field"));
             }
         } else {
-            return Err(StoreError::InvalidInput);
+            return Err(Error(
+                "SKILL.md: frontmatter supports only name and description",
+            ));
         }
     }
     let description = description
         .filter(|v| !v.is_empty() && v.len() <= 512)
-        .ok_or(StoreError::InvalidInput)?
+        .ok_or(Error(
+            "SKILL.md: require a nonempty description of at most512 bytes",
+        ))?
         .to_owned();
     if name != Some(package.slug.as_str()) || front.1.trim().is_empty() {
-        return Err(StoreError::InvalidInput);
+        return Err(Error(
+            "SKILL.md: name must match package slug and instructions must be nonempty",
+        ));
     }
-    let examples: Examples = serde_json::from_str(&package.files["examples.json"])
-        .map_err(|_| StoreError::InvalidInput)?;
+    let examples: Examples =
+        serde_json::from_str(&package.files["examples.json"]).map_err(|_| {
+            Error("examples.json: require provenance and examples with kind/request/expected only")
+        })?;
     if !examples.provenance.contains("synthetic")
         || examples.examples.len() < 2
         || examples.examples.len() > 8
@@ -188,7 +202,9 @@ fn validate_contents(package: Package) -> Result<Validated> {
                 || e.expected.len() > 2048
         })
     {
-        return Err(StoreError::InvalidInput);
+        return Err(Error(
+            "examples.json: require synthetic provenance, 2-8 examples including normal and unsupported/failure, and nonempty request/expected up to2048 bytes",
+        ));
     }
     // Length framing prevents filename/content concatenation ambiguity. Source,
     // subdirectory and commit are part of identity as well as all package bytes.

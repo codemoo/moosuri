@@ -3,6 +3,7 @@
 mod automatic_memory;
 pub use automatic_memory::{ExtractionClaim, ExtractionLease, ExtractionUnit};
 mod community_skills;
+pub use community_skills::author as skill_author;
 mod google_setup;
 pub use google_setup::*;
 mod source_connections;

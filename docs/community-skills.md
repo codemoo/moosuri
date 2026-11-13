@@ -58,7 +58,7 @@ package identity는 정규화한 repository+subdirectory이고 표시 이름은 
 
 disable/remove는 새 사용을 막고 종속 예약을 needs_skill로 멈춘다. 진행 중 외부 effect/receipt는 지우거나 재발송하지 않는다. 사용자 삭제/철회는 run generation을 올리고 늦은 발행을 막되 실제 완료한 영수증은 보존한다. 한 사용자의 삭제가 다른 사용자의 설치본을 없애지 않게 reference count/GC를 사용한다. curated catalog에서 철회된 악성/손상 revision은 새 사용을 차단하고 이유를 표시하며 자동으로 다른 제작자 패키지로 바꾸지 않는다.
 
-예정 CLI는 `moosuri skills install <github-url>`, `list`, `check`, `update [id]`, `rollback <id>`, `disable <id>`, `remove <id>`다. 일반 사용자는 UI 카드만으로 같은 기능을 수행한다. CLI는 server 인증한 user scope를 쓰고 arbitrary `--user`로 타인 설치를 바꾸지 않는다. 아직 실행 가능한 명령으로 문서화하지 않는다.
+설치 관리용 예정 CLI는 `moosuri skills install <github-url>`, `list`, `update [id]`, `rollback <id>`, `disable <id>`, `remove <id>`다. 로컬 파일 작성·검사는 아래의 별도 native 명령으로 지원한다. 일반 사용자는 UI 카드만으로 같은 기능을 수행한다. CLI는 server 인증한 user scope를 쓰고 arbitrary `--user`로 타인 설치를 바꾸지 않는다. 아직 실행 가능한 명령으로 문서화하지 않는다.
 
 ## 개인 학습에서 공유용 스킬 만들기
 
@@ -97,3 +97,16 @@ Git subprocess·archive·redirect 대신 고정 `api.github.com`의 commit/tree/
 외부 envelope2와 stable opaque ID는 정규화한 repository+directory를 포함한다. 같은 표시 이름을 고른 다른 제작자나 다른 하위 경로가 서로 덮어쓰지 않는다. 외부 원본은 bundled 절차를 대체하지 않는다. 기존 curated envelope/hash/pin은 재작성하지 않으며, 이미 admit된 run은 원래 package bytes·metadata·tool profile을 유지한다. 다운로드는 SQLite writer 밖에서 수행하고 download 뒤와 activation 때 각각 currentUserContext를 다시 검증한다. 새 schema migration은 없다. 사용자당64개 외부 identity(tombstone 포함)까지만 보관하며 공개 staging cache의 GC는 후속이다.
 
 private GitHub 인증·범용 SKILL import·archive·스크립트·자동 갱신/정적 release 생성·개인 학습 export·cache GC는 아직 지원하지 않는다.
+
+
+## 로컬 작성 CLI
+
+`moosuri skills init <slug> [--output DIRECTORY]`는 새 디렉터리에 SKILL.md/moosuri.toml/examples.json/LICENSE 네 파일을 만든다. 기본 경로는 현재 위치 아래 `<slug>`이며 지정한 parent는 이미 있어야 한다. slug는 소문자 ASCII·숫자·하이픈1–64자다. 원래 합성 자료 요약 절차, 정상/지원하지 않는 요청 예제와 표준 Apache-2.0 전문을 제공하며 기존 개인 자료·학습 이력·설치본은 읽지 않는다.
+
+`moosuri skills check DIRECTORY`는 installer와 같은 content validator로 호환성을 확인한다. LF `---` frontmatter의 name/description, 비어 있지 않은 본문, format_version1·instructions·숫자 x.y.z version·Apache-2.0 sidecar와 LICENSE 표식, 합성 provenance와2–8개 정상/실패 예제를 검사한다. 파일당32KiB/합계64KiB, 정확히 네 UTF-8 regular nonexecutable single-link 파일만 허용하며 symlink·special file·추가 파일을 거절한다. 패키지 이름은 디렉터리명이 아니라 SKILL.md의 name이며 GitHub installer와 같은 matching-name 검사를 거친다.
+
+현재 capability 이름은 `knowledge_search`, `knowledge_read_source`, `knowledge_read_memory`, `decimal_calculate`, `mail_search`, `mail_read`, `mail_thread`, `mail_prepare_draft`, `web_read`다. sidecar는 기존 계약의 single-line JSON scalar/array 부분 문법을 쓰며 unknown key·capability는 거절한다. 확인 결과는 파일 형식·호환성일 뿐 안전성·저작권·작업 성공 인증이 아니다. 진단은 파일/규칙을 설명하고 원문·credential을 출력하지 않는다.
+
+두 명령은 data-dir 해석과 Store open 전에 실행하므로 설치·계정·서버가 필요 없다. 저장소 안의 일반 작성 경로는 허용하지만 `..`·symlink 경로·app-data marker가 있는 경로/하위 경로는 거절하며 다른 tree의 권한을 바꾸지 않는다. init은 새 sibling staging에 네 파일을 완성·sync한 뒤 Linux/macOS no-replace rename으로 게시하고 parent를 sync한다. 기존 목적지는 덮어쓰지 않는다. 실패 정리는 만든 inode가 같은 파일만 제거하며 모르는 내용은 보존한다. 게시 후 parent sync 오류에서는 완성된 목적지가 이미 있을 수 있으므로 검사한다.
+
+작성자는 파일을 직접 편집·검토하고 원하는 commit/PR/push를 수행한다. 이 CLI는 Git subprocess·network·설치·실행·자동 게시를 하지 않는다. 이후 사용자는 기존 GitHub UI에서 exact commit snapshot을 선택하며 기존 도구 권한은 늘지 않는다. release/catalog generator·private-learning export·설치 snapshot 직접 수정·GC는 계속 후속이다. [작성 안내](../community/README.md)와 [합성 검증 기록](reviews/2026-11-13-community-authoring.md)을 따른다.

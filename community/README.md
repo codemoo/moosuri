@@ -4,7 +4,7 @@ Contributors submit skills to this repository. Users can inspect and add the six
 
 The runtime pins each bundled recipe's revision and content digest when accepting a run. The model sees a short description and reads the full procedure only when relevant. See [task skills](../docs/task-skills.md) for capabilities, limits and acceptance evidence. A manifest cannot install new tools or grant authority.
 
-Use `skills/<slug>/SKILL.md`, a small `moosuri.toml`, synthetic `examples.json`, and a redistribution LICENSE. The first installer accepts exactly these four files, at most 32 KiB per file and 64 KiB total. Optional references/assets and external archives remain future work and are rejected by this installer. A future `moosuri skills init <slug>` command can generate the boilerplate; it is not implemented yet. Until then create the files using the sample shape in [the design](../docs/community-skills.md).
+Use `skills/<slug>/SKILL.md`, a small `moosuri.toml`, synthetic `examples.json`, and a redistribution LICENSE. The first installer accepts exactly these four files, at most 32 KiB per file and 64 KiB total. Optional references/assets and external archives remain future work and are rejected by this installer. Use `moosuri skills init <slug>` to create a new template directory, or `moosuri skills init <slug> --output community/skills/<slug>` when the parent already exists. Edit the four files and run `moosuri skills check DIRECTORY` before your normal review/commit/PR workflow. Both commands work without a server or data directory and never install or execute the recipe. See [local authoring](../docs/community-skills.md#로컬-작성-cli).
 
 A good recipe has one clear job, says when to use it, names the existing capabilities it needs, and describes how to verify the result. Include a normal example and the most consequential failure/unsupported-input example. More tests are justified by new failure modes, not by copying the old test tree.
 
@@ -18,7 +18,7 @@ See [CONTRIBUTING](../CONTRIBUTING.md), [distribution and user experience](../do
 
 The initial `catalog-pins.json` covers the exact four-file bytes from source commit `7f91c0ad8ef38049c5e0e601658da9b99b5f824e`. SHA-256 uses big-endian u64 byte-length framing for repository, commit, slug, then sorted filename/content pairs. The Rust catalog checks this manifest before exposing cards. Updating upstream files alone cannot silently activate a new package. A future trusted release generator must resolve a new committed source snapshot and produce a new manifest; no release job or automatic download is implemented here.
 
-SQLite is authoritative for install/update/rollback/enable/disable/remove and hidden suggestions. Updates validate and stage immutable bytes in the same transaction as the active pointer; interruption retains the old pointer. Disable excludes the package from new runs. Remove also cancels and invalidates already admitted runs and blocks retries while retaining public package snapshots and completed receipts. Per-user activation and hiding never affect another account. Private-learning export, local package edits, dependent schedules, HTTP archive caches and lockfile portability remain unimplemented.
+SQLite is authoritative for install/update/rollback/enable/disable/remove and hidden suggestions. Updates validate and stage immutable bytes in the same transaction as the active pointer; interruption retains the old pointer. Disable excludes the package from new runs. Remove also cancels and invalidates already admitted runs and blocks retries while retaining public package snapshots and completed receipts. Per-user activation and hiding never affect another account. Private-learning export, editing installed package snapshots, dependent schedules, HTTP archive caches and lockfile portability remain unimplemented. Local source-file authoring is supported by the commands below; it does not modify an installed snapshot.
 
 ## Public GitHub acquisition
 
@@ -27,3 +27,19 @@ The UI now accepts a public GitHub repository root, package directory and ref th
 External version2 envelopes/opaque IDs include canonical repository and directory. They do not replace bundled twins or rewrite existing curated hashes/pins. Native tool/connection authority remains separate. A manual update retains old run snapshots and uses current-user revision CAS. The current compatibility contract still supports only the documented four-file, instruction-mode, Apache-2.0 subset. Private GitHub, generic imports, scripts/assets, automatic refresh, export and GC remain future work.
 
 For a read-only public adapter probe: `cargo run --locked -p moosuri-connectors --example inspect_public_skill -- https://github.com/codemoo/moosuri community/skills/source-briefing 7f91c0ad8ef38049c5e0e601658da9b99b5f824e`. This prints only public source identity/file counts and does not install anything.
+
+## Local authoring
+
+```sh
+moosuri skills init synthetic-summary
+# Edit synthetic-summary/SKILL.md, moosuri.toml and examples.json; review LICENSE.
+moosuri skills check synthetic-summary
+```
+
+The template contains an original synthetic saved-source procedure, normal and unsupported examples, existing knowledge capabilities and the full standard Apache-2.0 license. Replace the example job and examples deliberately; include only material you have the right to share. No private knowledge, installed package, model trace or credential is copied.
+
+`init` requires a new destination with an existing parent. Relative paths and ordinary repositories are accepted; `..`, symlink components, existing destinations and installation-data paths are rejected. It writes and syncs a complete sibling staging directory before atomic non-replacing publication on Linux/macOS. A failure does not overwrite an existing tree. Cleanup removes only tracked owned files; unexpected contents are left for the author to inspect. After publication, a directory-sync error may mean the complete destination already exists: inspect/check it instead of deleting another tree or forcing overwrite.
+
+`check` reads exactly four UTF-8 regular, nonexecutable, single-link files through nofollow descriptors, at most32KiB each/64KiB total. Its content validator is shared with the installer: narrow sidecar keys, matching frontmatter name, description/instructions, Apache-2.0 declaration and license marker, current capability names and synthetic examples. It does not certify safety, redistribution rights, semantic quality or successful execution. Unknown keys/capabilities and extra files fail with compatibility diagnostics; source text is never echoed.
+
+Git editing, review, commit and publishing remain contributor actions. After a contributor publishes a public GitHub commit, users can inspect and install its immutable pinned version in the existing UI. These commands add no release/catalog generator, automatic publishing, private-learning export, installed-package editing or garbage collection.

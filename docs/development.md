@@ -138,6 +138,20 @@ valid and repeating recovery is rejected with `account_not_recovery_required`.
 Do not clear journal files or flip the recovery flag manually. Historical restore,
 off-host latest journals and restored-installation enrollment remain unavailable.
 
+## Local instruction-package authoring
+
+These commands work before `--data-dir` handling and need no installation or server:
+
+```sh
+./target/debug/moosuri skills init synthetic-summary
+# Edit the four files and review their job, examples and redistribution rights.
+./target/debug/moosuri skills check synthetic-summary
+# To create inside a repository, provide a new destination with an existing parent:
+./target/debug/moosuri skills init synthetic-summary --output community/skills/synthetic-summary
+```
+
+Ordinary repository paths are allowed. Existing destinations, `..`, symlink components and installation-data paths are rejected. `check` accepts exactly the documented four bounded regular nonexecutable files and reports compatibility, not safety or task-quality certification. It performs no install, model call, Git operation or publishing. Follow your normal edit/review/commit/PR process; existing curated pins are unchanged. See [community authoring](../community/README.md#local-authoring).
+
 ## Local verification
 
 CI/Actions are disabled at the owner's request. Run locally before committing a

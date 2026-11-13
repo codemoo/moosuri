@@ -508,3 +508,9 @@ migration0015부터 설치 UUID와 동결된 MSKNOW01 끝을 묶는 MSDSTR01을 
 합친 schema15의 macOS·Linux 검사와 독립 검토를 마쳤다. Linux 최초 실행의
 fixture 파일 권한1건을 수정한 뒤 영향받는 검사와 doc-tests도 통과했다. 과거
 복원·외부 최신 checkpoint·기존 미기록 삭제의 소급 복구는 구현하지 않았다.
+
+## Community 로컬 작성 CLI
+
+`moosuri skills init <slug> [--output DIRECTORY]`와 `moosuri skills check DIRECTORY`로 설치 없이 네 파일 instruction template 작성과 호환성 검사를 제공한다. 합성 정상/지원 불가 예제와 Apache-2.0 전문을 생성하고 installer의 기존 content validator를 그대로 공유한다. 일반 repository 작성은 허용하며 기존 목적지·링크·special/executable 파일·크기 초과·app-data 경로를 거절한다. init은 완성된 staging을 no-replace로 게시하고 알 수 없는 tree를 정리하지 않는다.
+
+이 단위는 source 작성·호환성 검사다. contributor의 편집·검토·commit/push는 명시적 별도 행동이며 설치 UI의 immutable GitHub pin과 native 도구 권한은 그대로다. release/catalog generator·private-learning export·설치본 직접 수정·GC는 미구현이다. 실제 합성 검사와 제한은 [검증 기록](reviews/2026-11-13-community-authoring.md)에 남긴다. 독립 검토와 macOS 통합 CLI5개, Linux Store3개·CLI13개(참조 도구 opt-in1개 제외)를 통과했다. Linux no-replace 게시·동시 init·기존 backup/recovery/설치 경로도 확인했다.

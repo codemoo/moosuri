@@ -81,3 +81,11 @@ A post-publication retry preserves subsequent destination enrollment and work st
 it does not apply quarantine a second time. An unrelated occupied destination is
 never overwritten. There is no cleanup or
 physical erasure claim for old inputs, exports or interrupted staging residue.
+
+
+For schema23 Web Push, restore preserves nonsecret receipt/order metadata and local
+inbox history, removes endpoint/key/session carriers, quarantines unfinished push
+delivery and retires the public signing marker. No signing file is imported or
+created by restore/runtime open. Fresh authenticated configuration may create a
+new signing key; old devices remain `restore_required` until explicit enrollment.
+Neither re-enrollment of the account nor a new key resumes historical delivery.

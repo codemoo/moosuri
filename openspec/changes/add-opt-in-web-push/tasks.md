@@ -1,0 +1,12 @@
+## Implementation
+- [x] Add strict push-service transport, maintained encryption and fixed ES256 signing.
+- [x] Add private enrollment, bounded fair queue, idempotent receipts and lifecycle fences.
+- [x] Add supervised sender and authenticated passive display authorization.
+- [x] Add gesture-only settings, ID-only local binding and generic SW display/navigation.
+- [x] Add key inventory validation and staged export/restore retirement hooks.
+- [x] Add synthetic crypto/HTTP/worker/Store/React/SW lifecycle tests.
+- [x] Complete focused final build/type/DTO/fmt/clippy/plan/spec and synthetic UI verification.
+- [x] Repair immediate off/on and durably order same-device on/off across browser, request and ACK races.
+- [x] Serialize shared browser subscription mutations/reuse with Web Locks and fail unsupported when absent.
+- [x] Integrate schema23 and strict export/restore hooks; pass independent review, Linux and synthetic Chrome account/device flows.
+- [ ] Verify real iOS/Android permission, installation and background display on devices.

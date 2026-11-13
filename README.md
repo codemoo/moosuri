@@ -2,7 +2,7 @@
 
 A self-hosted assistant for individuals, families and friends.
 
-**Status: early development. The Rust/React app supports isolated accounts, durable chat, private sources and memories, editable documents and goals, public HTTP research, isolated Chromium workspaces with human takeover and same-page continuation, and personal Gmail with explicit approval before every send. Source memory extraction is opt-in; fixed local reminders from chat or forms, weekly schedules, an inbox and private image attachments with previews are available.**
+**Status: early development. The Rust/React app supports isolated accounts, durable chat, private sources and memories, editable documents and goals, public HTTP research, isolated Chromium workspaces with human takeover and same-page continuation, and personal Gmail with explicit approval before every send. Source memory extraction is opt-in; fixed local reminders from chat or forms, weekly schedules, an inbox, opt-in Web Push and private image attachments with previews are available.**
 The existing private deployment remains the behavioral reference; its source history,
 accounts, data, infrastructure settings and experimental runtimes are not copied here.
 
@@ -70,4 +70,4 @@ Licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), at your optio
 개인 기록의 범위와 한계: [문서·목표·요청](docs/artifacts.md).
 
 Fixed local [reminders and inbox](docs/schedules.md) are available at `/app/schedules`;
-Korean/English chat capture and weekly rules are supported. Recurring agent missions and Web Push remain in development.
+Korean/English chat capture and weekly rules are supported. Opt-in [Web Push](docs/web-push.md) is available; recurring agent missions remain in development. Actual phone delivery/background behavior still requires device validation.

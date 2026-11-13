@@ -108,6 +108,7 @@ pub(crate) fn stopped_lock(root: &Path) -> Result<(PathBuf, File)> {
         "knowledge-invalidations.journal",
         "destructive-intents.journal",
         "provider-secrets.key",
+        crate::push::KEY_FILE,
         crate::cutover::MARKER,
         crate::cutover::STAGING,
     ];
@@ -126,6 +127,7 @@ pub(crate) fn stopped_lock(root: &Path) -> Result<(PathBuf, File)> {
         }
     })?;
     crate::cutover::sync_parent_before_admission(&root)?;
+    crate::push::validate_optional_file(&root)?;
     // Provider key is deliberately not required or opened: export never decrypts
     // server credentials and future recovery must require re-registration.
     Ok((root, lock))

@@ -1,3 +1,4 @@
+import {activatePushAccount,clearBrowserPushBinding} from "./push-binding";
 import {
   useEffect,
   useLayoutEffect,
@@ -169,7 +170,10 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     logoutScope.current?.close();
     logoutScope.current = null;
   }
+  useEffect(()=>{if(session)void activatePushAccount(session.user.id).catch(()=>{});},[session?.user.id]);
+  useEffect(()=>{const listener=(event:MessageEvent)=>{if(event.data?.type==="moosuri-open-schedules"&&session)navigate("/app/schedules");};navigator.serviceWorker?.addEventListener("message",listener);return()=>navigator.serviceWorker?.removeEventListener("message",listener);},[session?.user.id]);
   function revalidate() {
+    if(session)void clearBrowserPushBinding(session.user.id);
     // Synchronously fence every old response before React unmounts its UI.
     clearLifetimes();
     authMutation.current = null;
@@ -269,6 +273,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
             setSession(current);
           } catch (e) {
             if (!(e instanceof ApiFailure && e.status === 401)) throw e;
+            void clearBrowserPushBinding();
             setSession(null);
           }
         }
@@ -304,6 +309,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   async function logout() {
     const expectedAccount = session?.user.id ?? logoutIdentity.current;
     if (!expectedAccount || logoutScope.current) return;
+    void clearBrowserPushBinding(expectedAccount);
     logoutIdentity.current = expectedAccount;
     focusScope.current?.close();
     focusScope.current = null;

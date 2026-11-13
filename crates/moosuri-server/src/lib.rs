@@ -10,6 +10,7 @@ mod knowledge;
 mod mail;
 mod media;
 mod providers;
+mod push;
 mod schedules;
 mod source_connections;
 use axum::{
@@ -277,6 +278,16 @@ pub fn router_with_runtime(
         )
         .route("/api/v1/media/{id}/content", get(media::content))
         .route("/api/v1/media/{id}/thumbnail", get(media::thumbnail))
+        .route(
+            "/api/v1/notifications/push",
+            get(push::configuration).post(push::enroll),
+        )
+        .route(
+            "/api/v1/notifications/push/authorize",
+            post(push::authorize),
+        )
+        .route("/api/v1/notifications/push/{id}", delete(push::disable))
+        .route("/api/v1/notifications/push/disable", post(push::deactivate))
         .route("/api/v1/threads", get(threads).post(create_thread))
         .route("/api/v1/threads/{id}", delete(delete_thread))
         .route(

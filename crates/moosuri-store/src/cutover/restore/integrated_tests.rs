@@ -391,6 +391,26 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
     assert_eq!(reminder.run.state, RunState::Completed);
     let reminder_receipt = reminder.run.schedule_receipts.clone().unwrap();
     assert_eq!(reminder_receipt.len(), 1);
+    let push_device = Uuid::new_v4().to_string();
+    let (_, p256dh) = moosuri_connectors::push::generate_vapid().unwrap();
+    let push_binding = store
+        .enroll_push(
+            &a,
+            crate::push::PushEnrollment {
+                request_id: Uuid::new_v4().to_string(),
+                device_id: push_device.clone(),
+                operation_revision: 1,
+                subscription: moosuri_connectors::push::PushSubscription {
+                    endpoint: format!("https://fcm.googleapis.com/fcm/send/{}", Uuid::new_v4()),
+                    p256dh,
+                    auth: "_ordMnz7uTCmrpBTeUV4Bw".into(), // gitleaks:allow -- synthetic Web Push fixture, not a live subscription
+                },
+            },
+            "https://push-owner.example.test".into(),
+        )
+        .await
+        .unwrap();
+    let original_push_key = fs::read(data.join(crate::push::KEY_FILE)).unwrap();
     let at = crate::now().unwrap() + 60;
     let schedule = store
         .create_schedule(
@@ -420,6 +440,10 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         .finish_scheduled_reminder_at(&delivered_lease, at)
         .await
         .unwrap();
+    store.poll_push_queue().await.unwrap();
+    let push_claim = store.claim_push().await.unwrap().unwrap();
+    store.commit_push_dispatch(&push_claim.lease).await.unwrap();
+    drop(push_claim); // Only a synthetic committed receipt; no network request is made.
     store.enqueue_scheduled_reminders_at(at + 60).await.unwrap();
     let old_claim = store
         .claim_scheduled_reminder_at(at + 60)
@@ -470,8 +494,37 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
     let before_db = fs::read(data.join("assistant.sqlite")).unwrap();
     restore(&cipher, &trusted, &identity, &dest).unwrap();
     assert_eq!(before_db, fs::read(data.join("assistant.sqlite")).unwrap());
+    assert_eq!(
+        fs::read(data.join(crate::push::KEY_FILE)).unwrap(),
+        original_push_key
+    );
+    assert!(!dest.join(crate::push::KEY_FILE).exists());
     assert!(Store::open(&data).is_err());
     let conn = Connection::open(dest.join("assistant.sqlite")).unwrap();
+    assert_eq!(conn.query_row("SELECT count(*) FROM push_subscriptions WHERE binding_id=?1 AND state='restore_required' AND credentials IS NULL AND endpoint_hash IS NULL AND session_digest IS NULL", [&push_binding.binding_id], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM push_queue WHERE state='quarantined' AND nonce IS NULL",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT retired FROM push_vapid_meta", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT count(*) FROM push_enrollment_receipts", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        1
+    );
     assert_eq!(artifact_state(&conn, false).unwrap(), expected);
     assert_eq!(
         conn.query_row("SELECT count(*) FROM provider_vision_probes", [], |r| r
@@ -588,6 +641,22 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         .await
         .unwrap()
         .user;
+    assert!(!dest.join(crate::push::KEY_FILE).exists());
+    let push_configuration = store
+        .push_configuration(
+            &current,
+            push_device,
+            "https://push-owner.example.test".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(push_configuration.device.unwrap().state, "restore_required");
+    assert_ne!(
+        fs::read(dest.join(crate::push::KEY_FILE)).unwrap(),
+        original_push_key
+    );
+    store.poll_push_queue().await.unwrap();
+    assert!(store.claim_push().await.unwrap().is_none());
     assert_eq!(
         store
             .artifact(&current, retained.id.clone(), None)

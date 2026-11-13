@@ -120,3 +120,9 @@ Kakao 발송·전화 발신·Slack 쓰기·reply-all·첨부 메일 발송·미�
 이미지 연결은 provider revision/model/effort별 임의4×4 색상 probe를 실제 통과해야 한다. 이름으로 vision을 추정하지 않는다. 미지원 조합은 입력/선택을 보존하고 관리자 설정의 이미지 연결 확인으로 안내한다. 현재 turn의 이미지만 전송하며, 이전 이미지에서 파생된 대화는 직접 새 이미지를 본 것과 구분한다. 이미지 및 이를 상속한 대화는 모든 tool/메모리/기록 쓰기를 비활성화한다. 이미지 유래 기록 저장, 일반 파일 텍스트/PDF/STT/오디오/동영상/공유는 후속 단위이며 업로드 완료를 해당 처리 완료로 표시하지 않는다.
 
 삭제는 typed destructive journal의 tombstone과 의존 답변·checkpoint·evidence 철회를 함께 처리한다. 처리 중/응답 중 늦은 완료는 복구하지 못하며, restart/restore의 미완료 처리는 재선택 필요 상태로 격리된다. 합성 HTTP→픽셀을 읽는 loopback provider→retry/reload/library 및 소유권·tombstone·object URL 수명 검증은 `crates/moosuri-server/tests/media.rs`, `store::media::tests`, `web/src/Media.test.tsx`에 있다.
+
+
+F17의 기기 등록·일반 payload·계정/멀티탭 수명·소식함 연결과 F32의 quiet hours
+푸시 억제를 schema23에 구현했다. [Web Push](web-push.md) 및
+[검증 기록](reviews/2026-11-13-web-push.md)에서 실제 합성/브라우저 범위를 확인한다.
+실제 휴대폰 수신 검증과 topic mute/전체 제안 정책은 별도 미완료 항목이다.

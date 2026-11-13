@@ -552,6 +552,7 @@ pub fn checkpoint(root: &Path, output: &Path, head_output: &Path) -> Result<Chec
                     }
                 }
             }
+            crate::push::strip_for_export(&dest)?;
             if !matches!(state(&dest)?, State::Sealed(_))
                 || dest.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))? != "ok"
                 || dest.prepare("PRAGMA foreign_key_check")?.exists([])?

@@ -9,9 +9,10 @@ schedules are allowed per account; deleting releases a slot and preserves receip
 
 This is the first F29/F30/F32 slice. A reminder delivers the saved text to the local
 inbox; it does not execute the requested text as an agent task, send mail, run a
-browser task or call a provider. Bounded conversational capture and weekly rules are implemented; actual
-model tasks, changes-only result comparison (F31/AUTO03), topic mute and WebPush
-remain next work. No browser notification permission is requested.
+browser task or call a provider. Bounded conversational capture and weekly rules are implemented;
+model tasks, changes-only comparison (F31/AUTO03) and topic mute remain next work.
+Optional [Web Push](web-push.md) uses a separate account/device binding and requests
+browser permission only from its explicit settings action.
 
 ## Clock and occurrence policy
 

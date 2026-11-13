@@ -4,7 +4,8 @@ This command permanently retires a stopped source installation and produces one
 self-contained age-encrypted cutover snapshot. It is for a deliberate migration
 handoff. The matching [restore command](restore.md), independent storage/auth
 review and integrated Linux checks are complete for this bounded path, including
-schema21 image storage and forward migration from19/20. [Validation and limits](reviews/2026-11-13-sealed-restore.md) distinguish
+schema21 image storage, schema22 conversational receipts and schema23 Web Push,
+with forward migration from19/20. [Validation and limits](reviews/2026-11-13-sealed-restore.md) distinguish
 synthetic acceptance from operating a real migration.
 
 First configure and retain an independent recovery identity as described in
@@ -100,3 +101,9 @@ Bounds:1GiB DB/WAL/snapshot,64MiB per journal,32KiB manifest,16KiB seal,64KiB re
 or fsync timeout. Every failure remains explicit, with no truncation or plaintext
 fallback. Private plaintext temporary capture cleanup is best effort after failures
 or process death.
+
+
+Push signing keys are runtime-only and never included in the sealed archive. The
+staged DB retains safe receipt ordering and inbox history while removing push
+subscription carriers and quarantining unfinished delivery. The sealed source's
+key and database remain unchanged by this export projection.

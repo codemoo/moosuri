@@ -1,0 +1,34 @@
+.push-settings {
+  border: 1px solid var(--border, #d7ded5);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px 0;
+  background: var(--surface, #fff);
+}
+.push-settings h2 {
+  margin: 0 0 8px;
+}
+.push-settings p {
+  max-width: 68ch;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.push-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.push-actions button {
+  min-height: 36px;
+}
+@media (max-width: 600px) {
+  .push-settings {
+    padding: 12px;
+  }
+  .push-actions {
+    align-items: stretch;
+  }
+  .push-actions button {
+    flex: 1 1 140px;
+  }
+}

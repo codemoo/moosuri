@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod push;
+pub use push::*;
 mod schedules;
 pub use schedules::*;
 mod accounts;
@@ -85,6 +87,8 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        PushDeviceView::decl(),
+        PushConfiguration::decl(),
         ScheduleRule::decl(),
         ScheduleTarget::decl(),
         ScheduleChatContext::decl(),

@@ -73,6 +73,7 @@ fn runtime_inner(root: &Path) -> Result<Option<RuntimeAdmission>> {
     // live SQLite opening is allowed before it, including callers holding None.
     inspect_if_present(&root)?;
     sync_parent_before_admission(&root)?;
+    crate::push::validate_optional_file(&root).map_err(|_| Error::Integrity)?;
     crate::files::prepare_dir(&root).map_err(|_| Error::InvalidInput)?;
     lock.set_permissions(fs::Permissions::from_mode(0o600))
         .map_err(|_| Error::Unavailable)?;
@@ -123,6 +124,7 @@ fn runtime_directory(path: &Path) -> Result<PathBuf> {
     }
     const NAMES: &[&str] = &[
         "provider-secrets.key",
+        crate::push::KEY_FILE,
         "knowledge-invalidations.journal",
         "destructive-intents.journal",
         "writer.lock",

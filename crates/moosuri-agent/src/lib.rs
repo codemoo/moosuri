@@ -8,6 +8,7 @@ pub mod mail;
 mod mail_tools;
 mod memory_intent;
 mod memory_target;
+mod push;
 mod runner;
 mod schedules;
 mod source_connections;
@@ -312,6 +313,7 @@ async fn supervise(
     let mut extraction_worker =
         tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
     let mut schedule_worker = tokio::spawn(schedules::worker(store.clone(), signals.clone()));
+    let mut push_worker = tokio::spawn(push::worker(store.clone(), signals.clone()));
     let mut mail_worker = tokio::spawn(mail.clone().worker(signals.stop.clone()));
     let mut source_worker = tokio::spawn(
         source_connections::Service::new(store.clone(), mail.clone(), signals.clone()).worker(),
@@ -334,6 +336,10 @@ async fn supervise(
             _ = signals.wake.notified() => (),
         }
         settle_retired(&mut retired, &store, &signals).await;
+        if push_worker.is_finished() {
+            let _ = (&mut push_worker).await;
+            push_worker = tokio::spawn(push::worker(store.clone(), signals.clone()));
+        }
         if schedule_worker.is_finished() {
             let _ = (&mut schedule_worker).await;
             schedule_worker = tokio::spawn(schedules::worker(store.clone(), signals.clone()));
@@ -415,6 +421,13 @@ async fn supervise(
     {
         extraction_worker.abort();
         let _ = extraction_worker.await;
+    }
+    if tokio::time::timeout(MAIL_DRAIN, &mut push_worker)
+        .await
+        .is_err()
+    {
+        push_worker.abort();
+        let _ = push_worker.await;
     }
     if tokio::time::timeout(MAIL_DRAIN, &mut schedule_worker)
         .await

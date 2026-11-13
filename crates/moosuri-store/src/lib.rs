@@ -1,5 +1,6 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
+pub mod push;
 mod schedules;
 pub use schedules::ReminderLease;
 mod accounts;
@@ -173,7 +174,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 22;
+const CURRENT_SCHEMA_VERSION: i64 = 23;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -462,9 +463,16 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 23 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../../../migrations/assistant/0023_web_push.sql")
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         media::quarantine(&conn)?;
         schedules::restart(&conn)?;
+        push::restart(&conn)?;
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;
         browser::restart(&conn)?;

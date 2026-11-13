@@ -34,9 +34,10 @@ export default defineConfig({
         }
         if (!paths.includes("/index.html")) throw new Error("Public shell is missing index.html");
         const worker = readFileSync(resolve(root, "service-worker.ts"), "utf8");
-        hash.update(worker);
+        const binding = readFileSync(resolve(root,"src/push-state.ts"),"utf8");
+        hash.update(worker).update(binding);
         const prefix = `const MOOSURI_SHELL_VERSION=${JSON.stringify(hash.digest("hex").slice(0, 24))};\nconst MOOSURI_SHELL_ASSETS=${JSON.stringify(paths)};\n`;
-        const compiled = ts.transpileModule(worker, {
+        const compiled = ts.transpileModule(binding.replace(/^export\s+/gm, "") + "\n" + worker.replace(/import\s*\{[^}]*\}\s*from\s*["']\.\/src\/push-state["'];?\s*/m, ""), {
           compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
         }).outputText.replace(/^export \{\};?\s*$/m, "");
         this.emitFile({ type: "asset", fileName: "service-worker.js", source: prefix + compiled });

@@ -169,3 +169,12 @@ historical exports and ongoing independently latest recovery remain unsupported.
 The combined schema19/20 implementation passed independent review and integrated
 Linux checks. See the [evidence and limits](reviews/2026-11-13-sealed-restore.md);
 this does not establish ongoing disaster recovery or authorize migration of a real installation.
+
+
+Opt-in Web Push adds an optional runtime-only `web-push-vapid.key`. Stopped inventory
+validates an existing private regular file and never generates one. The signing
+key is excluded from both ordinary exports and sealed checkpoints. Push endpoint/
+subscription/session carriers are stripped only from the staged database; the
+source installation and inbox are unchanged. Missing runtime signing authority
+does not prevent export. Malformed/link/public-mode files and unexpected private
+crash temporaries are rejected instead of silently copied.

@@ -2,7 +2,7 @@
 
 A self-hosted assistant for individuals, families and friends.
 
-**Status: early development. The Rust/React app supports isolated accounts, durable chat, private sources and memories, editable documents and goals, public HTTP research, isolated Chromium workspaces with human takeover and same-page continuation, and personal Gmail with explicit approval before every send. Source memory extraction is opt-in; scheduling is still being built.**
+**Status: early development. The Rust/React app supports isolated accounts, durable chat, private sources and memories, editable documents and goals, public HTTP research, isolated Chromium workspaces with human takeover and same-page continuation, and personal Gmail with explicit approval before every send. Source memory extraction is opt-in; fixed local reminder schedules and an inbox are available.**
 The existing private deployment remains the behavioral reference; its source history,
 accounts, data, infrastructure settings and experimental runtimes are not copied here.
 
@@ -65,7 +65,7 @@ The exact boundary and build gates are in [architecture](docs/architecture.md).
 
 Licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), at your option.
 
-개인 기록의 범위와 한계: [문서·목표·요청](docs/artifacts.md).Fixed local [reminders and inbox](docs/schedules.md) are available at `/app/schedules`;
+개인 기록의 범위와 한계: [문서·목표·요청](docs/artifacts.md).
+
+Fixed local [reminders and inbox](docs/schedules.md) are available at `/app/schedules`;
 recurring agent missions and Web Push remain in development.
-
-

@@ -20,7 +20,7 @@ async fn calendar_schema26_late_failure_preserves_prior_schema_and_retries_atomi
         .unwrap();
     drop(store);
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    conn.execute_batch("ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions; DROP TABLE calendar_oauth_sessions; DROP TABLE calendar_connections; CREATE TABLE calendar_actions(conflict INTEGER); PRAGMA user_version=25;").unwrap();
+    conn.execute_batch("DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions; DROP TABLE calendar_oauth_sessions; DROP TABLE calendar_connections; CREATE TABLE calendar_actions(conflict INTEGER); PRAGMA user_version=25;").unwrap();
     drop(conn);
     assert!(Store::open(dir.path()).is_err());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

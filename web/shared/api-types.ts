@@ -16,7 +16,11 @@ export type ScheduleSkippedRange = { from_slot: string, to_slot: string, count: 
 export type ScheduleHistory = { occurrences: Array<ScheduleOccurrence>, skipped_ranges: Array<ScheduleSkippedRange>, };
 export type QuietHours = { revision: number, enabled: boolean, timezone: string, start_minute: number, end_minute: number, };
 export type QuietHoursChange = { expected_revision: number, enabled: boolean, timezone: string, start_minute: number, end_minute: number, };
-export type LocalNotification = { id: string, schedule_id: string, occurrence_id: string, title: string, message: string, scheduled_for: number, delivered_at: number, delayed: boolean, quiet: boolean, read: boolean, dismissed: boolean, };
+export type LocalNotification = {
+/**
+ * Resolved from current owned mission state, never copied result text.
+ */
+mission_id?: string, id: string, schedule_id: string, occurrence_id: string, title: string, message: string, scheduled_for: number, delivered_at: number, delayed: boolean, quiet: boolean, read: boolean, dismissed: boolean, };
 export type NotificationPage = { items: Array<LocalNotification>, next_cursor: string | null, };
 export type CalendarConnection = { id: string, primary_id: string, title: string, time_zone: string, epoch: number, revision: number, status: string, };
 export type CalendarConnections = { configured: boolean, connections: Array<CalendarConnection>, };
@@ -55,6 +59,9 @@ export type MissionEvidence = { step: number, call_id: string, };
 export type MissionCandidate = { text: string, evidence: Array<MissionEvidence>, };
 export type MissionView = { id: string, revision: number, state: string, request: MissionCreate, steering: Array<string>, plan: Array<string>, completed_steps: number, result: MissionCandidate | null, receipts: Array<MissionReceipt>, report: Array<string>, uncertain: boolean, expires_at_ms: number, };
 export type MissionReceipt = { label: string, detail: string, };
+export type RecurringMissionCreate = { request_id: string, template: MissionCreate, schedule: ScheduleDraft, changes_only: boolean, };
+export type RecurringMissionView = { schedule: ScheduleView, template: MissionCreate, model: ModelChoice, changes_only: boolean, recent: Array<RecurringMissionOccurrence>, history: ScheduleHistory, };
+export type RecurringMissionOccurrence = { occurrence_id: string, mission_id: string, state: string, notification_id: string | null, exact_unchanged: boolean, scheduled_for: number, };
 export type ArtifactKind = "document" | "goal" | "followup";
 export type ArtifactStatus = "active" | "withdrawn" | "deleted";
 export type GoalLifecycle = "active" | "paused" | "achieved" | "cancelled";

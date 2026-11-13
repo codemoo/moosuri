@@ -1445,7 +1445,7 @@ async fn migration25_rolls_back_late_failure_and_preserves_prior_authority_table
     let dir = crate::tests::directory();
     drop(Store::open(dir.path()).unwrap());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    conn.execute_batch("ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal; CREATE TABLE mission_controls(conflict INTEGER); PRAGMA user_version=24;").unwrap();
+    conn.execute_batch("DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal; CREATE TABLE mission_controls(conflict INTEGER); PRAGMA user_version=24;").unwrap();
     drop(conn);
     assert!(Store::open(dir.path()).is_err());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
@@ -1497,4 +1497,525 @@ async fn migration25_rolls_back_late_failure_and_preserves_prior_authority_table
 async fn restored_final_with_freeform_constraints_remains_reviewable_at_capacity() {
     let _g = TEST_LOCK.lock().await;
     recover_final_at_capacity(6, 1, false, 32, true).await;
+}
+
+#[tokio::test]
+async fn mission_expiry_distinguishes_safe_pending_prior_uncertainty_and_known_final() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    let queued = s
+        .create_mission(&u, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    s.call(|db| {
+        db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let partial = s.missions(&u).await.unwrap().remove(0);
+    assert_eq!(partial.id, queued.id);
+    assert_eq!(partial.state, "partial");
+    assert!(!partial.uncertain);
+    s.call(|db| {
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state FROM chat_runs", [], |r| r.get::<_, String>(0))?,
+            "incomplete"
+        );
+        assert_eq!(
+            db.conn
+                .query_row("SELECT grant_enabled FROM missions", [], |r| r
+                    .get::<_, i64>(0))?,
+            0
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let done = s
+        .create_mission(&u, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let st = begin(&s, &claim.lease, vec![calc()]).await;
+    s.execute_knowledge_tool(&st, "sum".into()).await.unwrap();
+    assert!(
+        s.mission_verify(
+            &st,
+            MissionCandidate {
+                text: "0.3".into(),
+                evidence: vec![MissionEvidence {
+                    step: st.step(),
+                    call_id: "sum".into()
+                }]
+            }
+        )
+        .await
+        .unwrap()
+    );
+    s.call(|db| {
+        db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let final_view = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.id == done.id)
+        .unwrap();
+    assert_eq!(final_view.state, "achieved");
+    assert_eq!(final_view.result.unwrap().text, "0.3");
+    assert!(!final_view.uncertain);
+    let prior = s
+        .create_mission(&u, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    let id = prior.id.clone();
+    s.call(move |db| {
+        db.conn.execute(
+            "UPDATE missions SET state='paused',uncertain=1,expires_ms=1 WHERE id=?1",
+            [id],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let unknown = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.id == prior.id)
+        .unwrap();
+    assert_eq!(unknown.state, "unknown");
+    assert!(unknown.uncertain);
+    assert!(
+        s.control_mission(&u, prior.id, ctl(unknown.revision, MissionAction::Resume))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn mission_list_expiry_is_atomic_preserves_unsettled_accounting_and_fences_late_model_result()
+{
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    let m = s
+        .create_mission(&u, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let ctx = s.agent_context(&claim.lease).await.unwrap();
+    let dispatched = s
+        .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    s.call(|db|{db.conn.execute("UPDATE missions SET expires_ms=1",[])?;db.conn.execute_batch("CREATE TRIGGER fail_expiry BEFORE UPDATE OF state ON chat_runs WHEN NEW.state='outcome_unknown' BEGIN SELECT RAISE(ABORT,'synthetic expiry failure'); END;")?;Ok(())}).await.unwrap();
+    assert!(s.missions(&u).await.is_err());
+    s.call(|db| {
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state,grant_enabled FROM missions", [], |r| Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?
+                )))?,
+            ("planning".into(), 1)
+        );
+        db.conn.execute_batch("DROP TRIGGER fail_expiry;")?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let unknown = s.missions(&u).await.unwrap().remove(0);
+    assert_eq!(unknown.state, "unknown");
+    assert!(unknown.uncertain);
+    assert!(
+        s.commit_agent_step(&dispatched, checkpoint(), vec![])
+            .await
+            .is_err()
+    );
+    s.update_agent_step_usage(
+        &dispatched,
+        RunUsage {
+            input_tokens: Some(9),
+            output_tokens: Some(3),
+            ..RunUsage::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        s.control_mission(&u, m.id, ctl(unknown.revision, MissionAction::Resume))
+            .await
+            .is_err()
+    );
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+    s.call(|db| {
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state,error FROM chat_runs", [], |r| Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?
+                )))?,
+            ("outcome_unknown".into(), "budget_exhausted".into())
+        );
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state FROM agent_steps", [], |r| r
+                    .get::<_, String>(0))?,
+            "dispatched"
+        );
+        assert_eq!(
+            db.conn
+                .query_row("SELECT count(*) FROM model_call_receipts", [], |r| r
+                    .get::<_, i64>(0))?,
+            1
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let after = s.missions(&u).await.unwrap().remove(0);
+    assert_eq!(after.state, "unknown");
+    assert!(after.uncertain);
+    assert!(after.result.is_none());
+    assert_eq!(s.usage_summary(&u).await.unwrap().reported_input_tokens, 9);
+}
+
+#[tokio::test]
+async fn mission_expiry_with_started_http_is_unknown_even_after_model_acknowledgement() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    s.create_mission(&u, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let step = begin(
+        &s,
+        &claim.lease,
+        vec![PendingKnowledgeCall {
+            call_id: "expiring-http".into(),
+            input: KnowledgeToolInput::External {
+                request: ExternalToolRequest::Web(WebToolRequest::Read {
+                    url: "https://example.test/synthetic-expiry".into(),
+                }),
+            },
+        }],
+    )
+    .await;
+    let permit = match s
+        .prepare_external_tool(&step, "expiring-http".into())
+        .await
+        .unwrap()
+    {
+        crate::ExternalToolStart::Dispatch(p) => p,
+        _ => panic!("synthetic HTTP must be admitted"),
+    };
+    s.call(|db| {
+        db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let m = s.missions(&u).await.unwrap().remove(0);
+    assert_eq!(m.state, "unknown");
+    assert!(m.uncertain);
+    assert!(
+        s.complete_external_tool(
+            &permit,
+            KnowledgeToolResult::External(
+                serde_json::json!({"web_page":{"text":"late synthetic result"}})
+            )
+        )
+        .await
+        .is_err()
+    );
+    s.call(|db| {
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state FROM agent_steps", [], |r| r
+                    .get::<_, String>(0))?,
+            "completed"
+        );
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state FROM external_tool_dispatches", [], |r| r
+                    .get::<_, String>(
+                    0
+                ))?,
+            "started"
+        );
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state FROM chat_runs", [], |r| r.get::<_, String>(0))?,
+            "outcome_unknown"
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn mission_expiry_guard_rejects_old_and_foreign_leases_before_exact_current_run_mutation() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    let other = member(&s, &u, "expiry-other@example.test").await.user;
+    let mine = s
+        .create_mission(&u, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    let original = s.claim_agent_run().await.unwrap().unwrap();
+    begin(&s, &original.lease, vec![]).await;
+    s.control_mission(&u, mine.id.clone(), ctl(1, MissionAction::Pause))
+        .await
+        .unwrap();
+    s.control_mission(&u, mine.id.clone(), ctl(2, MissionAction::Resume))
+        .await
+        .unwrap();
+    let current = s.claim_agent_run().await.unwrap().unwrap();
+    let theirs = s
+        .create_mission(&other, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    let their_run = theirs.id.clone();
+    s.call(|db| {
+        db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(s.check_run(&original.lease).await.is_err());
+    let mut foreign = current.lease.clone();
+    foreign.tenant = other.tenant.0.clone();
+    foreign.run = s
+        .call(move |db| {
+            Ok(db.conn.query_row(
+                "SELECT run_id FROM missions WHERE id=?1",
+                [their_run],
+                |r| r.get::<_, String>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert!(s.check_run(&foreign).await.is_err());
+    s.call(|db|{assert_eq!(db.conn.query_row("SELECT count(*) FROM missions WHERE grant_enabled=1 AND state IN('queued','planning','executing')",[],|r|r.get::<_,i64>(0))?,2);Ok(())}).await.unwrap();
+    assert!(matches!(
+        s.check_run(&current.lease).await,
+        Err(StoreError::BudgetExhausted)
+    ));
+    let mine_id = mine.id;
+    let theirs_id = theirs.id;
+    s.call(move |db| {
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state FROM missions WHERE id=?1", [mine_id], |r| {
+                    r.get::<_, String>(0)
+                })?,
+            "partial"
+        );
+        assert_eq!(
+            db.conn.query_row(
+                "SELECT state,grant_enabled FROM missions WHERE id=?1",
+                [theirs_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+            )?,
+            ("queued".into(), true)
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn mission_guard_rejection_commits_expiry_for_every_transactional_mission_caller() {
+    let _g = TEST_LOCK.lock().await;
+    for operation in ["save_plan", "verify", "tool_failure", "clear_round"] {
+        let (_d, s, u) = setup().await;
+        s.create_mission(&u, input(MissionMode::Durable))
+            .await
+            .unwrap();
+        let claim = s.claim_agent_run().await.unwrap().unwrap();
+        let ctx = s.agent_context(&claim.lease).await.unwrap();
+        let step = s
+            .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
+            .await
+            .unwrap();
+        s.call(|db| {
+            db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let result = match operation {
+            "save_plan" => {
+                s.mission_save_plan(&step, vec!["Must not save after expiry".into()])
+                    .await
+            }
+            "verify" => s
+                .mission_verify(
+                    &step,
+                    MissionCandidate {
+                        text: "Must not publish after expiry".into(),
+                        evidence: vec![],
+                    },
+                )
+                .await
+                .map(|_| ()),
+            "tool_failure" => s.mission_tool_failure(&step).await.map(|_| ()),
+            "clear_round" => s.mission_clear_round(&step).await,
+            _ => unreachable!(),
+        };
+        assert!(
+            matches!(result, Err(StoreError::BudgetExhausted)),
+            "{operation}"
+        );
+        // No listing/poll is allowed before checking committed writer state.
+        s.call(move|db|{let(mission,uncertain,grant,carrier,repairs,plan):(String,bool,bool,String,i64,String)=db.conn.query_row("SELECT m.state,m.uncertain,m.grant_enabled,r.state,m.repairs,m.plan FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;assert_eq!(mission,"unknown","{operation}");assert!(uncertain);assert!(!grant);assert_eq!(carrier,"outcome_unknown");assert_eq!(repairs,0);assert_eq!(plan,"[]");Ok(())}).await.unwrap();
+        s.update_agent_step_usage(
+            &step,
+            RunUsage {
+                input_tokens: Some(23),
+                ..RunUsage::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.usage_summary(&u).await.unwrap().reported_input_tokens, 23);
+        assert!(s.claim_agent_run().await.unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn mission_acknowledged_final_proposal_expiry_commits_safe_partial_without_losing_receipts() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    s.create_mission(&u, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let first = begin(&s, &claim.lease, vec![calc()]).await;
+    s.execute_knowledge_tool(&first, "sum".into())
+        .await
+        .unwrap();
+    let ctx = s.agent_context(&claim.lease).await.unwrap();
+    let final_step = s
+        .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    let candidate = MissionCandidate {
+        text: "0.3".into(),
+        evidence: vec![MissionEvidence {
+            step: first.step(),
+            call_id: "sum".into(),
+        }],
+    };
+    s.commit_agent_step(&final_step,PrivateCheckpoint{bytes:serde_json::to_vec(&serde_json::json!({"kind":"mission_round","planning":false,"text":serde_json::to_string(&candidate).unwrap()})).unwrap()},vec![]).await.unwrap();
+    s.call(|db| {
+        db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        s.mission_verify(&final_step, candidate).await,
+        Err(StoreError::BudgetExhausted)
+    ));
+    s.call(|db|{let(state,uncertain,grant,candidate,round,carrier):(String,bool,bool,Option<String>,Option<String>,String)=db.conn.query_row("SELECT m.state,m.uncertain,m.grant_enabled,m.candidate,m.round_text,r.state FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;assert_eq!(state,"partial");assert!(!uncertain);assert!(!grant);assert!(candidate.is_none());assert!(round.is_some());assert_eq!(carrier,"incomplete");assert_eq!(db.conn.query_row("SELECT count(*) FROM model_call_receipts",[],|r|r.get::<_,i64>(0))?,2);assert_eq!(db.conn.query_row("SELECT count(*) FROM agent_tool_slots WHERE result IS NOT NULL",[],|r|r.get::<_,i64>(0))?,1);Ok(())}).await.unwrap();
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn mission_guard_commit_does_not_commit_postguard_invalid_work_or_weaken_stale_lease() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    let mission = s
+        .create_mission(&u, input(MissionMode::Durable))
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let step = begin(&s, &claim.lease, vec![]).await;
+    assert!(matches!(
+        s.mission_save_plan(&step, vec![]).await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert!(matches!(
+        s.mission_verify(
+            &step,
+            MissionCandidate {
+                text: String::new(),
+                evidence: vec![]
+            }
+        )
+        .await,
+        Err(StoreError::InvalidInput)
+    ));
+    s.control_mission(&u, mission.id.clone(), ctl(1, MissionAction::Pause))
+        .await
+        .unwrap();
+    s.control_mission(&u, mission.id, ctl(2, MissionAction::Resume))
+        .await
+        .unwrap();
+    let _current = s.claim_agent_run().await.unwrap().unwrap();
+    s.call(|db| {
+        db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(s.mission_clear_round(&step).await.is_err());
+    s.call(|db| {
+        let (grant, state, repairs, plan): (bool, String, i64, String) = db.conn.query_row(
+            "SELECT grant_enabled,state,repairs,plan FROM missions",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        assert!(grant);
+        assert_eq!(state, "planning");
+        assert_eq!(repairs, 0);
+        assert_eq!(plan, "[]");
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn mission_transactional_guard_keeps_current_session_revocation_as_cancellation() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    s.create_mission(&u, input(MissionMode::CurrentSession))
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let step = begin(&s, &claim.lease, vec![]).await;
+    s.logout(&u).await.unwrap();
+    assert!(matches!(
+        s.mission_clear_round(&step).await,
+        Err(StoreError::Unauthorized)
+    ));
+    s.call(|db| {
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state FROM missions", [], |r| r.get::<_, String>(0))?,
+            "cancelled"
+        );
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state,error FROM chat_runs", [], |r| Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?
+                )))?,
+            ("cancelled".into(), "authority_revoked".into())
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
 }

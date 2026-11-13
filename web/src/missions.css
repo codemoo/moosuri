@@ -7,3 +7,8 @@
 .missions details{font-size:12px;line-height:1.8}.missions summary{cursor:pointer;color:#485344}.missions details[open]>summary{margin-bottom:10px}.missions [role=status]{font-size:12px;color:var(--green)}.missions [role=alert]{padding:12px;border:1px solid #ddccb4;border-radius:9px;line-height:1.8}
 .missions ol,.missions ul{padding-left:20px;font-size:13px;line-height:1.8;margin:0}.mission-result{white-space:pre-wrap;padding:16px;background:#f1f4ec;border-radius:10px}.missions pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:6px 0 14px}
 @media(max-width:760px){.missions{padding:18px 16px calc(22px + env(safe-area-inset-bottom))}.missions>header{margin-bottom:18px}.missions h2{font-size:20px}.missions form,.missions article{padding:18px;gap:14px}}
+.missions select{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid #d9dcd0;border-radius:9px;background:#fffefb;color:var(--ink);font:inherit}
+.missions label:has(input[type=checkbox]){display:flex;align-items:center;gap:10px;min-height:44px}
+.missions fieldset{display:flex;flex-wrap:wrap;gap:6px 14px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:9px}
+.missions button{min-height:44px}.missions select:focus-visible{outline:2px solid #aa783e;outline-offset:3px}
+@media(max-width:760px){.missions input:not([type=checkbox]),.missions textarea,.missions select{font-size:16px}}

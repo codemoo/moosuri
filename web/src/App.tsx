@@ -259,7 +259,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   }
   function navigate(next: string) {
     window.history.pushState(null, "", next);
-    setPath(next);
+    setPath(window.location.pathname);
   }
   useEffect(() => {
     const scope = new RequestScope();
@@ -1095,7 +1095,7 @@ function Workspace({
             </button>
           </nav>
         )}
-        {missionsPage ? <Missions accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : schedulesPage ? <Schedules accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
+        {missionsPage ? <Missions accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : schedulesPage ? <Schedules accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} openMission={id=>navigate(`/app/missions#mission-${id}`)}/> : artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
         ) : calendarPage ? <Calendar accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} setup={allowedAdmin?()=>navigate("/admin/google"):undefined}/> : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
           setSelected(null);

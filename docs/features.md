@@ -127,7 +127,7 @@ F17의 기기 등록·일반 payload·계정/멀티탭 수명·소식함 연결�
 [검증 기록](reviews/2026-11-13-web-push.md)에서 실제 합성/브라우저 범위를 확인한다.
 실제 휴대폰 수신 검증과 topic mute/전체 제안 정책은 별도 미완료 항목이다.
 
-F27의 일회성 명시 요청·계획·읽기·영수증 검증 범위는 [맡긴 일](missions.md)에 설명한다. 반복 실행·대화 자동 추출·범위 확장은 아직 완료가 아니다.
+F27의 일회성 명시 요청·계획·읽기·영수증 검증 범위는 [맡긴 일](missions.md)에 설명한다. 직접 예약하는 읽기 업무는 아래 schema28 범위를 따르며 대화 자동 추출·범위 확장은 아직 완료가 아니다.
 
 F37의 현재 기본 캘린더 읽기·직접 양식 쓰기 범위는 [내 Google Calendar](calendar.md)에 설명한다. 일반 대화/agent Calendar 실행·반복/참석자 일정 변경은 포함하지 않는다.
 
@@ -135,3 +135,15 @@ F37의 현재 기본 캘린더 읽기·직접 양식 쓰기 범위는 [내 Googl
 F10/F14의 제한된 UTF-8 파일 경로는 [개인 파일](private-files.md)을 따른다.
 원본·정확한 revision/digest/byte 근거와 채팅 재시도를 연결하며 PDF/STT/일반
 바이너리는 여전히 미구현이다. 전체 F14/P7 완료를 뜻하지 않는다.
+
+
+### Explicit recurring read-only mission slice (schema0028)
+
+F29/F30 now have direct authenticated recurring mission templates, shared IANA/UTC
+occurrence semantics, due-based deadlines, bounded fair admission, parent/epoch/restore
+fences and actual mission history. Fixed reminders/chat reminder controls remain
+separate. F31 has narrow exact achieved body+decimal/source receipt equality only;
+unknown/failure/review and incomparable evidence notify. This does not establish
+semantic prose equality, conversational mission capture or full F29–F31 evaluation.
+See [missions](missions.md) and the unarchived
+[bounded change](../openspec/changes/recurring-read-only-missions/proposal.md).

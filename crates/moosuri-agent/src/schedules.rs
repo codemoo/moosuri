@@ -8,6 +8,10 @@ pub(crate) async fn worker(store: Store, signals: Signals) {
         if store.enqueue_scheduled_reminders().await.is_err() {
             continue;
         }
+        if store.poll_recurring_missions().await.is_ok() {
+            signals.changed();
+            signals.wake.notify_one();
+        }
         for _ in 0..32 {
             if signals.stop.is_cancelled() {
                 return;

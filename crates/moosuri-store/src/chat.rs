@@ -394,6 +394,13 @@ pub(super) fn guard(conn: &Connection, key: &[u8; 32], lease: &RunLease) -> Resu
     if run.attempt != lease.attempt || run.state != RunState::Running || run.epoch != lease.epoch {
         return Err(StoreError::Conflict);
     }
+    // Expiry is not a causal owner cancellation. Classify only this validated
+    // current mission/run before the generic authority-revocation transition.
+    if crate::missions::is_mission(conn, &run.tenant, &run.id)?
+        && crate::missions::expire_run(conn, &run)?
+    {
+        return Err(StoreError::BudgetExhausted);
+    }
     if execution_authority(conn, &run).is_err() {
         transition(
             conn,

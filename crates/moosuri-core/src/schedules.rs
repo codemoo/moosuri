@@ -131,6 +131,10 @@ pub struct QuietHoursChange {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct LocalNotification {
+    /// Resolved from current owned mission state, never copied result text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mission_id: Option<String>,
     pub id: String,
     pub schedule_id: String,
     pub occurrence_id: String,

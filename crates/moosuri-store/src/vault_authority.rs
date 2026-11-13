@@ -301,7 +301,7 @@ mod tests {
         let dir = directory();
         drop(Store::open(dir.path()).unwrap());
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-        conn.execute_batch("ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs; DROP TABLE vault_grants; DROP TABLE vault_operation_commitments; CREATE TABLE vault_operation_commitments(conflict INTEGER); PRAGMA user_version=23;").unwrap();
+        conn.execute_batch("DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs; DROP TABLE vault_grants; DROP TABLE vault_operation_commitments; CREATE TABLE vault_operation_commitments(conflict INTEGER); PRAGMA user_version=23;").unwrap();
         drop(conn);
         assert!(Store::open(dir.path()).is_err());
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

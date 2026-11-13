@@ -68,3 +68,40 @@ it("a changed steering instruction is a new intent rather than a retry of the ol
  vi.stubGlobal("fetch",vi.fn(async(_url,init)=>{if(init?.method==="POST"){commands.push(JSON.parse(String(init.body)));if(commands.length===1)throw new TypeError("synthetic steering ACK lost");item={...item,state:"queued",revision:3};return new Response(JSON.stringify(item))}return new Response(JSON.stringify([item]))}));
  render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);const input=await screen.findByLabelText("추가 지시");fireEvent.change(input,{target:{value:"Synthetic first instruction"}});fireEvent.click(screen.getByRole("button",{name:"추가 지시하고 진행"}));await screen.findByRole("alert");fireEvent.change(input,{target:{value:"Synthetic new instruction"}});fireEvent.click(screen.getByRole("button",{name:"추가 지시하고 진행"}));await screen.findByText("차례를 기다리는 중");expect(commands[1].action.instruction).toBe("Synthetic new instruction");expect(commands[1].request_id).not.toBe(commands[0].request_id);
 });
+
+const recurringFixture={schedule:{id:"scheduled",revision:1,title:"Synthetic recurring template",message:"예약한 읽기 업무",state:"active",reason:null,rule:{kind:"daily",time:"09:00",timezone:"Asia/Seoul"},next_fire_at:1800000000,next_local_slot:null,valid_until:null,timezone_db:"fixture",created_at:0,updated_at:0},template:{...mission.request,task:"Synthetic recurring calculation"},model:{provider_id:"provider",provider_revision:1,provider_name:"Synthetic provider",kind:"compatible",model:"synthetic",effort:null,verified_at:0,function_tools:true},changes_only:true,recent:[],history:{occurrences:[],skipped_ranges:[]}};
+it("saves an explicit immutable recurring template and retries its exact uncertain payload without clearing draft",async()=>{
+ const sent:any[]=[];let saved=false;
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>{
+  if(String(url).endsWith("/recurring-missions")&&init?.method==="POST"){sent.push(JSON.parse(String(init.body)));if(sent.length===1)throw new TypeError("synthetic lost ACK");saved=true;return new Response(JSON.stringify(recurringFixture))}
+  return new Response(JSON.stringify(String(url).endsWith("/recurring-missions")&&saved?[recurringFixture]:[]));
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ fireEvent.click(screen.getByText("예약해서 맡기기"));
+ fireEvent.change(screen.getByLabelText("예약할 일"),{target:{value:"Compute scheduled synthetic total"}});
+ fireEvent.change(screen.getByLabelText("예약 계산의 정확한 예상값"),{target:{value:"0.3"}});
+ fireEvent.click(screen.getByRole("button",{name:"업무 예약 저장"}));await screen.findByRole("alert");
+ expect((screen.getByLabelText("예약할 일") as HTMLTextAreaElement).value).toBe("Compute scheduled synthetic total");
+ fireEvent.click(screen.getByRole("button",{name:"업무 예약 저장"}));await waitFor(()=>expect(sent).toHaveLength(2));expect(sent[1]).toEqual(sent[0]);
+ expect(sent[0]).toMatchObject({template:{execution_mode:"durable",checks:[{kind:"decimal_equals",expected:"0.3"}]},schedule:{rule:{kind:"daily",time:"09:00"}}});
+ await screen.findByText("Synthetic recurring template");expect((screen.getByLabelText("예약할 일") as HTMLTextAreaElement).value).toBe("");
+});
+it("controls only the recurring grant and preserves unsaved form while polling updates its revision",async()=>{
+ const commands:any[]=[];let item=structuredClone(recurringFixture);
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>{
+  if(String(url).endsWith("/recurring-missions/scheduled/control")){commands.push(JSON.parse(String(init?.body)));item={...item,schedule:{...item.schedule,revision:2,state:"paused"}};return new Response(JSON.stringify(item))}
+  return new Response(JSON.stringify(String(url).endsWith("/recurring-missions")?[item]:[]));
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);fireEvent.click(screen.getByText("예약해서 맡기기"));
+ fireEvent.change(screen.getByLabelText("예약할 일"),{target:{value:"Keep this unsaved recurring draft"}});
+ fireEvent.click(await screen.findByRole("button",{name:"예약 멈추기"}));await screen.findByRole("button",{name:"다음 회차부터 재개"});
+ expect(commands).toEqual([{action:"pause",expected_revision:1}]);expect((screen.getByLabelText("예약할 일") as HTMLTextAreaElement).value).toBe("Keep this unsaved recurring draft");
+ fireEvent.click(screen.getByRole("button",{name:"예약 시간 변경"}));expect(screen.getByLabelText("예약할 일")).toBeDisabled();expect(screen.getByLabelText("정확히 같은 확인 결과는 소식함 알림 생략")).toBeDisabled();
+});
+it("discards a previous account recurring list and clears its draft on account lifetime change",async()=>{
+ let resolve!:(r:Response)=>void;const late=new Promise<Response>(r=>resolve=r);
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>String(url).endsWith("/recurring-missions")&&init?.headers["X-Moosuri-Account"]==="first"?late:new Response("[]")));
+ const {rerender}=render(<Missions accountId="first" onExpired={vi.fn()} back={vi.fn()}/>);fireEvent.click(screen.getByText("예약해서 맡기기"));fireEvent.change(screen.getByLabelText("예약할 일"),{target:{value:"First owner private draft"}});
+ rerender(<Missions accountId="second" onExpired={vi.fn()} back={vi.fn()}/>);resolve(new Response(JSON.stringify([recurringFixture])));
+ await waitFor(()=>expect(screen.queryByText("Synthetic recurring template")).toBeNull());expect((screen.getByLabelText("예약할 일") as HTMLTextAreaElement).value).toBe("");
+});

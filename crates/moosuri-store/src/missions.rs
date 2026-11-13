@@ -40,6 +40,7 @@ pub(crate) fn authority(c: &Connection, r: &Run) -> Result<()> {
     if mode == "current_session" {
         crate::chat::authority(c, r)?;
     }
+    crate::recurring_missions::authority(c, r)?;
     // Pinned instruction skill withdrawals fence even proposals that did not read the pin yet.
     if let Some(p) = &r.tool_profile {
         for pin in &p.skills {
@@ -123,6 +124,52 @@ pub(crate) fn restart(c: &Connection) -> Result<()> {
     )?;
     Ok(())
 }
+/// Expire only unfinished missions within the caller's writer transaction.
+/// Some(tenant) is an authenticated owner listing; None is recurring-only polling.
+/// Dispatch/accounting receipts remain intact: expiry cannot settle remote outcomes.
+pub(crate) fn expire(c: &Connection, time_ms: i64, tenant: Option<&str>) -> Result<()> {
+    expire_scoped(c, time_ms, tenant, None).map(|_| ())
+}
+/// Called only after the guard has validated the exact current run lease.
+/// A savepoint also keeps bare-connection guard callers atomic.
+pub(crate) fn expire_run(c: &Connection, run: &Run) -> Result<bool> {
+    let time = clock()?;
+    c.execute_batch("SAVEPOINT mission_expiry_guard")?;
+    let result = expire_scoped(c, time, Some(&run.tenant), Some(&run.id));
+    match result {
+        Ok(count) => {
+            if let Err(error) = c.execute_batch("RELEASE mission_expiry_guard") {
+                let _ = c
+                    .execute_batch("ROLLBACK TO mission_expiry_guard;RELEASE mission_expiry_guard");
+                return Err(error.into());
+            }
+            Ok(count != 0)
+        }
+        Err(error) => {
+            c.execute_batch("ROLLBACK TO mission_expiry_guard;RELEASE mission_expiry_guard")?;
+            Err(error)
+        }
+    }
+}
+fn expire_scoped(
+    c: &Connection,
+    time_ms: i64,
+    tenant: Option<&str>,
+    run: Option<&str>,
+) -> Result<usize> {
+    let rows=c.prepare("SELECT m.tenant_id,m.id,m.run_id,m.uncertain OR r.state='outcome_unknown' OR EXISTS(SELECT 1 FROM agent_steps s WHERE s.tenant_id=m.tenant_id AND s.run_id=m.run_id AND s.state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches d WHERE d.tenant_id=m.tenant_id AND d.run_id=m.run_id AND d.state='started') FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE m.state IN('queued','planning','executing','verifying','paused') AND m.expires_ms<=?1 AND ((?2 IS NOT NULL AND m.tenant_id=?2) OR (?2 IS NULL AND EXISTS(SELECT 1 FROM recurring_mission_occurrences o WHERE o.tenant_id=m.tenant_id AND o.mission_id=m.id))) AND (?3 IS NULL OR m.run_id=?3) LIMIT 64")?.query_map(params![time_ms,tenant,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,bool>(3)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let count = rows.len();
+    for (tenant, id, run, uncertain) in rows {
+        let report = if uncertain {
+            "The original execution period expired with an unresolved dispatched outcome. Create a new task."
+        } else {
+            "The original execution period expired. Review the result or create a new task."
+        };
+        c.execute("UPDATE missions SET state=?3,uncertain=max(uncertain,?4),grant_enabled=0,report=?5 WHERE tenant_id=?1 AND id=?2",params![tenant,id,if uncertain{"unknown"}else{"partial"},uncertain,json(&vec![report])?])?;
+        c.execute("UPDATE chat_runs SET state=?3,error='budget_exhausted',version=version+1 WHERE tenant_id=?1 AND id=?2",params![tenant,run,if uncertain{"outcome_unknown"}else{"incomplete"}])?;
+    }
+    Ok(count)
+}
 type MissionRow = (
     String,
     i64,
@@ -136,7 +183,7 @@ type MissionRow = (
     i64,
     String,
 );
-fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
+pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
     let raw:MissionRow=c.query_row("SELECT id,revision,state,payload,steering,plan,candidate,report,uncertain,expires_ms,run_id FROM missions WHERE tenant_id=?1 AND id=?2",params![t,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::NotFound)?;
     // Withdrawal erases derived visible text even for a historical achieved outcome.
     if raw.2 == "deleted" {
@@ -344,11 +391,14 @@ pub(crate) fn apply_delete(c: &Connection, t: &str, id: &str) -> Result<()> {
     Ok(())
 }
 impl Store {
+    // Each transactional guard is the first operation after BEGIN. Its rejection
+    // can persist expiry/revocation, so commit that guard-only state before returning.
+    // Validation and mission writes after a successful guard still roll back on error.
     pub async fn mission_tool_failure(&self, lease: &crate::StepLease) -> Result<bool> {
         let lease = lease.clone();
         self.call(move |db| {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let run=crate::agent_execution::guard_step(&tx,&db.provider_key,&lease)?;
+            let run=match crate::agent_execution::guard_step(&tx,&db.provider_key,&lease){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};
             let repairs:i64=tx.query_row("SELECT repairs FROM missions WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
             let inputs=tx.prepare("SELECT input FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3")?.query_map(params![run.tenant,run.id,lease.step],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
             let unsupported=inputs.iter().map(|raw|parse::<KnowledgeToolInput>(raw)).collect::<Result<Vec<_>>>()?.iter().any(|input|!matches!(input,KnowledgeToolInput::InvalidArguments) && !tool_allowed(input));
@@ -368,7 +418,13 @@ impl Store {
             let tx = db
                 .conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let run = crate::agent_execution::guard_step(&tx, &db.provider_key, &lease)?;
+            let run = match crate::agent_execution::guard_step(&tx, &db.provider_key, &lease) {
+                Ok(run) => run,
+                Err(error) => {
+                    tx.commit()?;
+                    return Err(error);
+                }
+            };
             tx.execute(
                 "UPDATE missions SET round_text=NULL WHERE tenant_id=?1 AND run_id=?2",
                 params![run.tenant, run.id],
@@ -400,31 +456,22 @@ impl Store {
         let u = u.clone();
         self.call(move|db|{
  let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&u,true,false)?;
- Uuid::parse_str(&input.request_id).map_err(|_|StoreError::InvalidInput)?;
- if input.task.trim().is_empty()||input.task.len()>8000||input.constraints.len()>4000||input.checks.is_empty()||input.checks.len()>12||json(&input)?.len()>16000{return Err(StoreError::InvalidInput)}
- for check in &input.checks {let valid=match check{MissionCheck::DecimalEquals{expected}=>!expected.is_empty()&&expected.len()<=128,MissionCheck::SourceQuote{id,revision,quote}=>Uuid::parse_str(id).is_ok()&&*revision>0&&!quote.is_empty()&&quote.len()<=4096,MissionCheck::OutputContains{text}=>!text.is_empty()&&text.len()<=1000,MissionCheck::UserReview{description}=>!description.trim().is_empty()&&description.len()<=1000};if !valid{return Err(StoreError::InvalidInput)}}
+ validate_input(&input)?;
  let payload=json(&input)?;let digest=Sha256::digest(payload.as_bytes()).to_vec();
  if let Some((id,old))=tx.query_row("SELECT id,payload_digest FROM missions WHERE tenant_id=?1 AND request_id=?2",params![u.tenant.0,input.request_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?))).optional()?{if old!=digest{return Err(StoreError::Conflict)}return view(&tx,&u.tenant.0,&id)}
  let active:i64=tx.query_row("SELECT count(*) FROM missions WHERE tenant_id=?1 AND state IN('queued','planning','executing','verifying','paused')",[&u.tenant.0],|r|r.get(0))?;if active>=1{return Err(StoreError::Busy)}
  let global:i64=tx.query_row("SELECT count(*) FROM missions WHERE state IN('queued','planning','executing','verifying')",[],|r|r.get(0))?;if global>=16{return Err(StoreError::Busy)}
  let choice=providers::selected_choice(&tx,&u)?;if !choice.function_tools{return Err(StoreError::InvalidInput)}providers::binding_for_choice(&tx,&db.provider_key,&choice)?;
  let mut profile=crate::web::admitted_profile(&tx,&u,&db.web_profile)?;profile.mail_connections.clear();if let Some(w)=&mut profile.web{w.browser_pin=None;}profile.version=if profile.web.is_some(){3}else{1};
- let id=Uuid::new_v4().to_string();let thread=Uuid::new_v4().to_string();let run=Uuid::new_v4().to_string();let time=now()?;
- tx.execute("INSERT INTO threads(tenant_id,id,account_id,title,created_at,updated_at,mission_internal) VALUES(?1,?2,?4,'Mission',?3,?3,1)",params![u.tenant.0,thread,time,u.account.id])?;
- tx.execute("UPDATE chat_admission_counter SET value=value+1 WHERE singleton=1",[])?;
- let order:i64=tx.query_row("SELECT value FROM chat_admission_counter WHERE singleton=1",[],|r|r.get(0))?;
  let mut model=serde_json::to_value(choice).map_err(|_|StoreError::InvalidInput)?;model["agent_profile"]=serde_json::to_value(profile).map_err(|_|StoreError::InvalidInput)?;
- tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES(?1,?2,?3,?4,?5,?6,1,?7,?8,?9,?10,1,'queued',1,?11,?12)",params![u.tenant.0,run,u.account.id,thread,Uuid::new_v4().to_string(),digest,payload,json(&model)?,u.digest.as_slice(),u.epoch,time,order])?;
  let expiry=clock()?.checked_add(86400000).ok_or(StoreError::Unavailable)?;
- tx.execute("INSERT INTO missions(tenant_id,id,account_id,run_id,thread_id,request_id,payload,payload_digest,mode,auth_epoch,expires_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![u.tenant.0,id,u.account.id,run,thread,input.request_id,payload,digest,match input.execution_mode{MissionMode::Durable=>"durable",MissionMode::CurrentSession=>"current_session"},u.epoch,expiry])?;
- tx.execute("INSERT INTO mission_revisions VALUES(?1,?2,1,?3,?4)",params![u.tenant.0,id,input.request_id,payload])?;
- tx.execute("INSERT INTO agent_execution(tenant_id,run_id,agent,deadline_ms) VALUES(?1,?2,1,?3)",params![u.tenant.0,run,expiry])?;
+ let id=create_pinned_in(&tx,&u.tenant.0,&u.account.id,u.epoch,u.digest.as_slice(),&input,&model,expiry,now()?)?;
  let result=view(&tx,&u.tenant.0,&id)?;tx.commit()?;Ok(result)
  }).await
     }
     pub async fn missions(&self, u: &UserContext) -> Result<Vec<MissionView>> {
         let u = u.clone();
-        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;db.conn.execute("UPDATE missions SET state='partial',grant_enabled=0,report='[\"The original execution period expired. Review the result or create a new task.\"]' WHERE tenant_id=?1 AND state IN('queued','planning','executing','verifying','paused') AND expires_ms<=?2",params![u.tenant.0,clock()?])?;let ids=db.conn.prepare("SELECT id FROM missions WHERE tenant_id=?1 AND account_id=?2 AND state!='deleted' ORDER BY rowid DESC LIMIT 100")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;ids.iter().map(|id|view(&db.conn,&u.tenant.0,id)).collect()}).await
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&u,true,false)?;expire(&tx,clock()?,Some(&u.tenant.0))?;let ids=tx.prepare("SELECT id FROM missions WHERE tenant_id=?1 AND account_id=?2 AND state!='deleted' ORDER BY rowid DESC LIMIT 100")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;let out=ids.iter().map(|id|view(&tx,&u.tenant.0,id)).collect::<Result<Vec<_>>>()?;tx.commit()?;Ok(out)}).await
     }
     pub async fn control_mission(
         &self,
@@ -471,7 +518,7 @@ impl Store {
         plan: Vec<String>,
     ) -> Result<()> {
         let l = lease.clone();
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=crate::agent_execution::guard_step(&tx,&db.provider_key,&l)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
     }
     /// Evidence references are resolved exclusively against this run's committed typed slots.
     pub async fn mission_verify(
@@ -481,7 +528,7 @@ impl Store {
     ) -> Result<bool> {
         let l = lease.clone();
         self.call(move|db|{
- let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=crate::agent_execution::guard_step(&tx,&db.provider_key,&l)?;
+ let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};
  if candidate.text.trim().is_empty()||candidate.text.len()>24000||candidate.evidence.len()>12{return Err(StoreError::InvalidInput)}
  let(id,payload,repairs):(String,String,i64)=tx.query_row("SELECT id,payload,repairs FROM missions WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;let input:MissionCreate=parse(&payload)?;
  let mut evidence=Vec::new();let mut report=Vec::new();let mut unknown=false;
@@ -514,3 +561,84 @@ if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} 
 }
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn validate_input(input: &MissionCreate) -> Result<()> {
+    Uuid::parse_str(&input.request_id).map_err(|_| StoreError::InvalidInput)?;
+    if input.task.trim().is_empty()
+        || input.task.len() > 8000
+        || input.constraints.len() > 4000
+        || input.checks.is_empty()
+        || input.checks.len() > 12
+        || json(&input)?.len() > 16000
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    for check in &input.checks {
+        let valid = match check {
+            MissionCheck::DecimalEquals { expected } => {
+                !expected.is_empty() && expected.len() <= 128
+            }
+            MissionCheck::SourceQuote {
+                id,
+                revision,
+                quote,
+            } => {
+                Uuid::parse_str(id).is_ok()
+                    && *revision > 0
+                    && !quote.is_empty()
+                    && quote.len() <= 4096
+            }
+            MissionCheck::OutputContains { text } => !text.is_empty() && text.len() <= 1000,
+            MissionCheck::UserReview { description } => {
+                !description.trim().is_empty() && description.len() <= 1000
+            }
+        };
+        if !valid {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    Ok(())
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_pinned_in(
+    tx: &Connection,
+    tenant: &str,
+    account: &str,
+    epoch: i64,
+    session_digest: &[u8],
+    input: &MissionCreate,
+    model: &serde_json::Value,
+    expiry: i64,
+    admitted_at: i64,
+) -> Result<String> {
+    validate_input(input)?;
+    let payload = json(input)?;
+    let digest = Sha256::digest(payload.as_bytes()).to_vec();
+    let id = Uuid::new_v4().to_string();
+    let thread = Uuid::new_v4().to_string();
+    let run = Uuid::new_v4().to_string();
+    let time = admitted_at;
+    tx.execute("INSERT INTO threads(tenant_id,id,account_id,title,created_at,updated_at,mission_internal) VALUES(?1,?2,?4,'Mission',?3,?3,1)",params![tenant,thread,time,account])?;
+    tx.execute(
+        "UPDATE chat_admission_counter SET value=value+1 WHERE singleton=1",
+        [],
+    )?;
+    let order: i64 = tx.query_row(
+        "SELECT value FROM chat_admission_counter WHERE singleton=1",
+        [],
+        |r| r.get(0),
+    )?;
+
+    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES(?1,?2,?3,?4,?5,?6,1,?7,?8,?9,?10,1,'queued',1,?11,?12)",params![tenant,run,account,thread,Uuid::new_v4().to_string(),digest,payload,json(&model)?,session_digest,epoch,time,order])?;
+
+    tx.execute("INSERT INTO missions(tenant_id,id,account_id,run_id,thread_id,request_id,payload,payload_digest,mode,auth_epoch,expires_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![tenant,id,account,run,thread,input.request_id,payload,digest,match input.execution_mode{MissionMode::Durable=>"durable",MissionMode::CurrentSession=>"current_session"},epoch,expiry])?;
+    tx.execute(
+        "INSERT INTO mission_revisions VALUES(?1,?2,1,?3,?4)",
+        params![tenant, id, input.request_id, payload],
+    )?;
+    tx.execute(
+        "INSERT INTO agent_execution(tenant_id,run_id,agent,deadline_ms) VALUES(?1,?2,1,?3)",
+        params![tenant, run, expiry],
+    )?;
+    Ok(id)
+}

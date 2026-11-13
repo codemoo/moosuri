@@ -162,6 +162,80 @@ async fn mission_http_owner_admission_deduplication_controls_and_scope() {
         2
     );
     assert_eq!(send(&app,"POST",&control,Some(&u.token),Some("00000000-0000-4000-8000-000000000099"),json!({"request_id":"00000000-0000-4000-8000-000000000003","expected_revision":2,"action":{"kind":"resume"}})).await.0,StatusCode::UNAUTHORIZED);
+    let recurring = json!({"request_id":"00000000-0000-4000-8000-000000000010","template":{"request_id":"00000000-0000-4000-8000-000000000011","task":"Compute synthetic total","constraints":"","checks":[{"kind":"decimal_equals","expected":"0.3"}],"execution_mode":"durable"},"schedule":{"title":"Synthetic scheduled task","message":"Not notification content","rule":{"kind":"daily","time":"09:00","timezone":"Asia/Seoul"},"valid_until":null},"changes_only":true});
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/recurring-missions",
+            None,
+            None,
+            recurring.clone()
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/recurring-missions",
+            Some(&u.token),
+            Some("wrong-account"),
+            recurring.clone()
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, r) = send(
+        &app,
+        "POST",
+        "/api/v1/recurring-missions",
+        Some(&u.token),
+        Some(&u.user.account().id),
+        recurring.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    let (_, same) = send(
+        &app,
+        "POST",
+        "/api/v1/recurring-missions",
+        Some(&u.token),
+        Some(&u.user.account().id),
+        recurring,
+    )
+    .await;
+    assert_eq!(same["schedule"]["id"], r["schedule"]["id"]);
+    let id = r["schedule"]["id"].as_str().unwrap();
+    let generic = format!("/api/v1/schedules/{id}/control");
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &generic,
+            Some(&u.token),
+            Some(&u.user.account().id),
+            json!({"expected_revision":1,"action":"pause"})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let path = format!("/api/v1/recurring-missions/{id}/control");
+    let (status, paused) = send(
+        &app,
+        "POST",
+        &path,
+        Some(&u.token),
+        Some(&u.user.account().id),
+        json!({"expected_revision":1,"action":"pause"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(paused["schedule"]["state"], "paused");
     assert!(s.list_threads(&u.user).await.unwrap().is_empty());
     assert_eq!(s.usage_summary(&u.user).await.unwrap().dispatched_calls, 0);
 }

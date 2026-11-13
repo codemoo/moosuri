@@ -91,3 +91,82 @@ async fn mission_model_plan_two_tools_and_deterministic_result_survive_reopen() 
     assert_eq!(count.load(Ordering::SeqCst), 4);
     upstream.abort();
 }
+
+#[tokio::test]
+async fn recurring_worker_is_idle_before_due_then_executes_and_publishes_actual_mission() {
+    let _guard = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let counted = count.clone();
+    let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{let count=counted.clone();async move{
+        let n=count.fetch_add(1,Ordering::SeqCst);
+        let(delta,reason)=match n{
+            0=>(json!({"role":"assistant","content":"{\"steps\":[\"Calculate the exact synthetic total\",\"Verify the actual receipt\"]}"}),"stop"),
+            1=>{assert!(body["tools"].as_array().unwrap().iter().all(|d|!d["function"]["name"].as_str().unwrap().contains("mail")));(json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"scheduled-total".into(),"decimal_calculate",json!({"operation":"sum","operands":["0.1","0.2"]}))]}),"tool_calls")},
+            2=>(json!({"role":"assistant","content":json!({"text":"Scheduled exact total: 0.3","evidence":[{"step":2,"call_id":"scheduled-total"}]}).to_string()}),"stop"),
+            _=>panic!("scheduled occurrence was replayed"),
+        };
+        let content=frame(json!({"id":format!("scheduled-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}))+&frame(json!({"id":format!("scheduled-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";
+        Response::builder().header("content-type","text/event-stream").body(Body::from(content)).unwrap()
+    }}));
+    let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_d, s, u, _thread) = knowledge::tool_configured(&base).await;
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        + 2;
+    s.create_recurring_mission(
+        &u,
+        moosuri_core::RecurringMissionCreate {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            template: MissionCreate {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task: "Calculate scheduled 0.1 plus 0.2".into(),
+                constraints: String::new(),
+                checks: vec![MissionCheck::DecimalEquals {
+                    expected: "0.3".into(),
+                }],
+                execution_mode: MissionMode::Durable,
+            },
+            schedule: moosuri_core::ScheduleDraft {
+                title: "Scheduled synthetic calculation".into(),
+                message: "Never copy evidence".into(),
+                rule: moosuri_core::ScheduleRule::Once { at },
+                valid_until: None,
+            },
+            changes_only: true,
+        },
+    )
+    .await
+    .unwrap();
+    let runtime = Runtime::start(s.clone());
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    let notice = tokio::time::timeout(Duration::from_secs(16), async {
+        loop {
+            let items = s.notifications(&u, None, false).await.unwrap().items;
+            if let Some(notice) = items.into_iter().next() {
+                break notice;
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await
+        }
+    })
+    .await
+    .unwrap();
+    let result = s.missions(&u).await.unwrap().remove(0);
+    assert_eq!(result.state, "achieved");
+    assert_eq!(notice.mission_id.as_deref(), Some(result.id.as_str()));
+    assert!(!notice.message.contains("0.3"));
+    assert!(!notice.message.contains("Calculate scheduled"));
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        s.recurring_missions(&u).await.unwrap()[0].schedule.state,
+        "completed"
+    );
+    assert_eq!(s.poll_recurring_missions().await.unwrap(), 0);
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+    runtime.shutdown().await;
+    upstream.abort();
+}

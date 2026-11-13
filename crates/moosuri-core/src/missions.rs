@@ -86,3 +86,32 @@ pub struct MissionView {
     #[ts(type = "number")]
     pub expires_at_ms: i64,
 }
+
+/// A saved immutable mission template and separately authorized schedule.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct RecurringMissionCreate {
+    pub request_id: String,
+    pub template: MissionCreate,
+    pub schedule: crate::ScheduleDraft,
+    pub changes_only: bool,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct RecurringMissionView {
+    pub schedule: crate::ScheduleView,
+    pub template: MissionCreate,
+    pub model: crate::ModelChoice,
+    pub changes_only: bool,
+    pub recent: Vec<RecurringMissionOccurrence>,
+    pub history: crate::ScheduleHistory,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct RecurringMissionOccurrence {
+    pub occurrence_id: String,
+    pub mission_id: String,
+    pub state: String,
+    pub notification_id: Option<String>,
+    pub exact_unchanged: bool,
+    #[ts(type = "number")]
+    pub scheduled_for: i64,
+}

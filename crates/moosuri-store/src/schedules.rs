@@ -86,6 +86,9 @@ fn load(conn: &Connection, tenant: &str, id: &str) -> Result<Schedule> {
 }
 fn owned(conn: &Connection, user: &UserContext, id: &str) -> Result<Schedule> {
     uuid(id)?;
+    if crate::recurring_missions::is_recurring(conn, &user.tenant.0, id)? {
+        return Err(StoreError::NotFound);
+    }
     let s = load(conn, &user.tenant.0, id)?;
     if s.account != user.account.id {
         return Err(StoreError::NotFound);
@@ -236,7 +239,7 @@ fn enqueue(conn: &Connection, now: i64) -> Result<u32> {
 }
 fn claim(conn: &Connection, now: i64) -> Result<Option<ReminderLease>> {
     // Persistent round-robin owner order; account IDs never act as credentials.
-    let rows=conn.prepare("SELECT o.tenant_id,o.id,o.schedule_id,o.account_id FROM reminder_occurrences o JOIN reminder_owners f ON f.tenant_id=o.tenant_id AND f.account_id=o.account_id WHERE o.state='queued' AND NOT EXISTS(SELECT 1 FROM reminder_occurrences a WHERE a.tenant_id=o.tenant_id AND a.schedule_id=o.schedule_id AND a.state='claimed') ORDER BY f.last_claim,o.scheduled_for,o.id LIMIT 128")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let rows=conn.prepare("SELECT o.tenant_id,o.id,o.schedule_id,o.account_id FROM reminder_occurrences o JOIN reminder_owners f ON f.tenant_id=o.tenant_id AND f.account_id=o.account_id WHERE o.state='queued' AND NOT EXISTS(SELECT 1 FROM recurring_missions x WHERE x.tenant_id=o.tenant_id AND x.schedule_id=o.schedule_id) AND NOT EXISTS(SELECT 1 FROM reminder_occurrences a WHERE a.tenant_id=o.tenant_id AND a.schedule_id=o.schedule_id AND a.state='claimed') ORDER BY f.last_claim,o.scheduled_for,o.id LIMIT 128")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for (tenant, occurrence, schedule, account) in rows {
         let s = load(conn, &tenant, &schedule)?;
         let revision: i64 = conn.query_row(
@@ -283,10 +286,15 @@ fn notification(
     account: &str,
     id: &str,
 ) -> Result<LocalNotification> {
-    conn.query_row("SELECT id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,is_read,dismissed FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(LocalNotification{id:r.get(0)?,schedule_id:r.get(1)?,occurrence_id:r.get(2)?,title:r.get(3)?,message:r.get(4)?,scheduled_for:r.get(5)?,delivered_at:r.get(6)?,delayed:r.get(7)?,quiet:r.get(8)?,read:r.get(9)?,dismissed:r.get(10)?})).optional()?.ok_or(StoreError::NotFound)
+    let mission_id: Option<String>=conn.query_row("SELECT m.id FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN reminder_schedules s ON s.tenant_id=o.tenant_id AND s.id=o.schedule_id JOIN accounts a ON a.tenant_id=m.tenant_id AND a.id=m.account_id WHERE o.tenant_id=?1 AND o.notification_id=?2 AND m.account_id=?3 AND m.state NOT IN('deleted','quarantined') AND s.state IN('active','completed') AND s.revision=o.schedule_revision AND s.auth_epoch=m.auth_epoch AND a.auth_epoch=m.auth_epoch AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?4) AND (s.valid_until IS NULL OR s.valid_until>?4)",params![tenant,id,account,now()?],|r|r.get(0)).optional()?;
+    conn.query_row("SELECT id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,is_read,dismissed FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(LocalNotification{mission_id:mission_id.clone(),id:r.get(0)?,schedule_id:r.get(1)?,occurrence_id:r.get(2)?,title:r.get(3)?,message:r.get(4)?,scheduled_for:r.get(5)?,delivered_at:r.get(6)?,delayed:r.get(7)?,quiet:r.get(8)?,read:r.get(9)?,dismissed:r.get(10)?})).optional()?.ok_or(StoreError::NotFound)
 }
+
 fn finish(conn: &Connection, lease: &ReminderLease, now: i64) -> Result<LocalNotification> {
     let(schedule,revision,state,deadline,id,title,message,at,delayed):(String,i64,String,Option<i64>,Option<String>,String,String,i64,bool)=conn.query_row("SELECT schedule_id,revision,state,deadline,notification_id,title,message,scheduled_for,delayed FROM reminder_occurrences WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND nonce=?4",params![lease.tenant,lease.account,lease.occurrence,lease.nonce],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?))).optional()?.ok_or(StoreError::Conflict)?;
+    if crate::recurring_missions::is_recurring(conn, &lease.tenant, &schedule)? {
+        return Err(StoreError::Forbidden);
+    }
     if state == "delivered" {
         return notification(
             conn,
@@ -357,7 +365,7 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             let u=validate(&db.conn,&user,true,false)?;
-            let ids=db.conn.prepare("SELECT id FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' ORDER BY created_at DESC,id")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+            let ids=db.conn.prepare("SELECT id FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' AND NOT EXISTS(SELECT 1 FROM recurring_missions x WHERE x.tenant_id=reminder_schedules.tenant_id AND x.schedule_id=reminder_schedules.id) ORDER BY created_at DESC,id")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
             ids.iter().map(|id| owner_view(&db.conn,&u.tenant.0,load(&db.conn,&u.tenant.0,id)?)).collect()
         }).await
     }
@@ -513,6 +521,9 @@ pub(super) fn create_in(
         if old != digest {
             return Err(StoreError::Conflict);
         }
+        if crate::recurring_missions::is_recurring(conn, &user.tenant.0, &id)? {
+            return Err(StoreError::Conflict);
+        }
         return owner_view(conn, &user.tenant.0, load(conn, &user.tenant.0, &id)?);
     }
     draft(&input.draft, time)?;
@@ -531,14 +542,25 @@ pub(super) fn create_in(
     Ok(out)
 }
 
-pub(super) fn edit_in(
+fn edit_scoped(
     conn: &Connection,
     user: &UserContext,
     id: &str,
     input: &ScheduleEdit,
     time: i64,
+    recurring: bool,
 ) -> Result<ScheduleView> {
-    let s = owned(conn, user, id)?;
+    let s = if recurring {
+        let s = load(conn, &user.tenant.0, id)?;
+        if s.account != user.account.id
+            || !crate::recurring_missions::is_recurring(conn, &user.tenant.0, id)?
+        {
+            return Err(StoreError::NotFound);
+        }
+        s
+    } else {
+        owned(conn, user, id)?
+    };
     if s.view.revision != input.expected_revision || s.view.state == "revoked" {
         return Err(StoreError::Conflict);
     }
@@ -551,14 +573,25 @@ pub(super) fn edit_in(
     Ok(out)
 }
 
-pub(super) fn control_in(
+fn control_scoped(
     conn: &Connection,
     user: &UserContext,
     id: &str,
     input: &ScheduleControl,
     time: i64,
+    recurring: bool,
 ) -> Result<ScheduleView> {
-    let s = owned(conn, user, id)?;
+    let s = if recurring {
+        let s = load(conn, &user.tenant.0, id)?;
+        if s.account != user.account.id
+            || !crate::recurring_missions::is_recurring(conn, &user.tenant.0, id)?
+        {
+            return Err(StoreError::NotFound);
+        }
+        s
+    } else {
+        owned(conn, user, id)?
+    };
     let target = match input.action.as_str() {
         "pause" => "paused",
         "resume" => "active",
@@ -642,4 +675,73 @@ pub(super) fn control_in(
     let out = load(conn, &user.tenant.0, id)?.view;
 
     Ok(out)
+}
+
+pub(super) fn edit_in(
+    conn: &Connection,
+    user: &UserContext,
+    id: &str,
+    input: &ScheduleEdit,
+    time: i64,
+) -> Result<ScheduleView> {
+    edit_scoped(conn, user, id, input, time, false)
+}
+pub(super) fn edit_recurring_in(
+    conn: &Connection,
+    user: &UserContext,
+    id: &str,
+    input: &ScheduleEdit,
+    time: i64,
+) -> Result<ScheduleView> {
+    edit_scoped(conn, user, id, input, time, true)
+}
+
+pub(super) fn control_in(
+    conn: &Connection,
+    user: &UserContext,
+    id: &str,
+    input: &ScheduleControl,
+    time: i64,
+) -> Result<ScheduleView> {
+    control_scoped(conn, user, id, input, time, false)
+}
+pub(super) fn control_recurring_in(
+    conn: &Connection,
+    user: &UserContext,
+    id: &str,
+    input: &ScheduleControl,
+    time: i64,
+) -> Result<ScheduleView> {
+    control_scoped(conn, user, id, input, time, true)
+}
+
+pub(super) fn recurring_view(
+    conn: &Connection,
+    user: &UserContext,
+    id: &str,
+) -> Result<ScheduleView> {
+    let s = load(conn, &user.tenant.0, id)?;
+    if s.account != user.account.id
+        || !crate::recurring_missions::is_recurring(conn, &user.tenant.0, id)?
+    {
+        return Err(StoreError::NotFound);
+    }
+    owner_view(conn, &user.tenant.0, s)
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn publish_mission_notice(
+    conn: &Connection,
+    tenant: &str,
+    account: &str,
+    schedule: &str,
+    occurrence: &str,
+    at: i64,
+    time: i64,
+    message: &str,
+) -> Result<String> {
+    let settings = quiet_settings(conn, tenant, account)?;
+    let quiet = time::quiet(&settings, time)?;
+    let id = Uuid::new_v4().to_string();
+    conn.execute("INSERT INTO local_notifications(tenant_id,id,account_id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,quiet_revision) VALUES(?1,?2,?3,?4,?5,'예약한 일의 실행 기록',?6,?7,?8,?9,?10,?11)",params![tenant,id,account,schedule,occurrence,message,at,time,time-at>5,quiet,settings.revision])?;
+    Ok(id)
 }

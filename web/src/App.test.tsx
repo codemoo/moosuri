@@ -841,3 +841,17 @@ it("opens explicit missions and returns without sending or losing the chat draft
 });
 
 it("opens Calendar and returns with the unsent chat draft intact",async()=>{const calls=server(path=>path==="/calendar/connections"?response({configured:false,connections:[]}):path==="/calendar/actions"?response([]):response({threads:[]}));const user=userEvent.setup();render(<App/>);const composer=await screen.findByRole("textbox",{name:"메시지"});await user.type(composer,"달력 확인 전 초안");await user.click(screen.getByRole("button",{name:/내 Calendar/}));await screen.findByRole("heading",{name:"내 Google Calendar"});await user.click(screen.getByRole("button",{name:"← 대화로"}));expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("달력 확인 전 초안");expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);});
+
+it("opens a typed inbox mission link in the app without losing the chat draft",async()=>{
+ const id="00000000-0000-4000-8000-000000000001";
+ const calls=server(path=>path.startsWith("/notifications?")?response({items:[{id:"notice",title:"예약한 일의 실행 기록",message:"실행 상태: achieved",mission_id:id,scheduled_for:1,delivered_at:1,read:false,dismissed:false,quiet:false,delayed:false}],next_cursor:null}):path==="/notifications/settings"?response({revision:1,enabled:false,timezone:"UTC",start_minute:1320,end_minute:420}):["/missions","/recurring-missions","/schedules"].includes(path)?response([]):response({threads:[]}));
+ const user=userEvent.setup();render(<App/>);
+ await user.type(await screen.findByRole("textbox",{name:"메시지"}),"소식함 확인 후 이어 쓸 초안");
+ await user.click(screen.getByRole("button",{name:/예약 · 소식/}));
+ await user.click(await screen.findByRole("link",{name:"맡긴 일의 실행 기록"}));
+ await screen.findByRole("heading",{name:"맡긴 일",level:2});
+ expect(window.location.pathname).toBe("/app/missions");expect(window.location.hash).toBe(`#mission-${id}`);
+ await user.click(screen.getByRole("button",{name:"← 대화로"}));
+ expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("소식함 확인 후 이어 쓸 초안");
+ expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);
+});

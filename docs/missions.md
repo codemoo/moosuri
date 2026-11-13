@@ -35,7 +35,7 @@ API는 `POST/GET /api/v1/missions`, `POST /api/v1/missions/{id}/control`,
 사용한다. 제어 재시도는 현재의 철회 상태를 반영하여 과거 비공개 결과를 다시 노출하지 않는다.
 삭제는 기존 파괴적 작업 저널에 영구 기록하며 재시도·복원으로 삭제한 결과를 되살리지 않는다.
 
-이 범위에는 반복 예약된 복합 작업, 변경점 비교, 대화에서 작업 자동 추출, 실행 범위 확장,
+일회성 단위 자체에는 반복 예약된 복합 작업, 변경점 비교, 대화에서 작업 자동 추출, 실행 범위 확장,
 메일/브라우저 읽기, 의미 판단 자동 완료가 포함되지 않는다. F27 전체 완료를 의미하지 않는다.
 
 ## Acknowledged recovery and control retries
@@ -45,3 +45,41 @@ A stable acknowledged final proposal can finish local receipt verification after
 An uncertain owner control retains its UUID/payload only for an explicit retry of the same mission and exact action. Polling/current-state reads retire stale control revisions; a later Cancel or another card/instruction gets its own current revision and fresh UUID. A racing CAS rejection reconciles state and retries only that newly requested intent once. A failed current-state read stops the control instead of replaying an older action. No additional approval UI is introduced.
 
 Stable mission controls and restarts cannot strand execution at the shared chat attempt32 boundary. Within the same writer transaction, mission continuations retire the old run lease and use a fresh nonce on claim; no old run/step capability can change the resumed result. Step accounting receipts remain available for late usage, and original model/tool/time limits remain unchanged. Ordinary chat retries retain their existing limit. Unknown dispatches never enter this path.
+
+## 명시적으로 예약하는 읽기 업무
+
+**예약해서 맡기기**에서 일·조건·계산 확인값과 한 번/간격/매일/매주 시간을 직접 저장한다.
+저장한 업무 본문·확인 기준·당시 검증된 모델/effort·읽기 범위는 고정된다. 시간 규칙과
+이름은 바꿀 수 있으며 업무 내용이나 모델을 바꾸려면 새 예약으로 저장한다. 메일·브라우저·
+볼트·외부 쓰기는 예약할 수 없다. 일반 대화/자료/모델 출력은 이 예약 권한이 아니다.
+
+기존 알림과 같은 IANA/DST gap/fold·UTC anchor·latest-only 정책을 사용한다.5초마다
+DB만 확인하며 유휴 모델 호출은 없다. 한 회차당 실제 맡긴 일 하나만 원자적으로 저장하고
+기존 사용자당 하나·전체16개 대기·동시 미션 하나 한도를 유지한다. 바쁜 사용자의 예약이
+다른 사용자의 접수를 가리지 않도록 소유자별 한 회차를 공정 순서로 확인한다. 회차 한도는
+예정 UTC부터 최대 하루와 설정한 유효기간의 이른 쪽이다. 늦게 접수하거나 재시도해도
+시간·모델/도구 한도를 새로 주지 않는다. 오래된 일회 예약은 만료 기록만 남긴다.
+
+예약 정지·시간 변경·삭제는 미완료 하위 실행을 은퇴시킨다. 시작된 모델/HTTP가 있으면
+결과 불명으로 남기며 재실행하지 않는다. 재개는 다음 미래 회차부터다. 별도 실행 허용은
+로그아웃 후에도 남지만 계정 세대 변경·정지·연결 철회에는 자동 재허용하지 않는다. 복원은
+예약을 정지하고 미완료 실행을 격리한다. 계정 재등록만으로 예약이 다시 켜지지 않는다.
+
+각 회차의 실제 결과·근거는 맡긴 일 기록에 남는다. 소식함에는 고정된 실행 상태와 해당
+기록 링크만 보관하며 업무 본문·출력·출처 제목/인용문을 복사하지 않는다. 근거 철회 뒤
+링크를 열어도 철회한 결과가 다시 나타나지 않는다. 기존 Push 정책은 별도 기기 설정을 따른다.
+
+‘정확히 같은 확인 결과는 소식함 알림 생략’은 **성공한 본문과 실제 계산/원문 영수증의
+정확한 일치**만 비교한다. 원문 ID·revision·반환 본문은 비교하고 호출/단계 ID·관측 시간은
+제외한다. 문장이 달라지면 의미가 같아도 알림을 남긴다. 검색·기억·웹·스킬 근거는 현재
+비교하지 않으며 항상 알린다. 검토 필요·실패·결과 불명·철회된 이전 결과는 생략 기준이
+아니다. 바로 이전 회차와 같은 예약 revision/인증 세대 안에서만 비교하므로 정지/재개·편집
+후 첫 결과도 알린다. 생략한 경우에도 실행 기록과 정확한 일치 상태는 남긴다.
+
+API는 `/api/v1/recurring-missions`(GET/POST), `/{id}`(PUT 시간 규칙),
+`/{id}/control`(POST pause/resume/revoke)이다. 일반 `/schedules`와 대화 알림 선택/제어는
+이 예약을 읽거나 바꾸거나 고정 알림으로 발행할 수 없다. 회차20개·시간 이력/건너뛴 범위
+각50개를 반환한다. 대화에서 복합 작업 예약을 추출하는 기능과 일반적인 의미상 변경 비교는
+후속 범위이며 F29/F30/F31 전체 품질 완료 주장이 아니다.
+
+통합된 schema26/27/28과 실제 화면 검증은 [예약 업무 검증 기록](reviews/2026-11-13-recurring-missions.md)을 따른다.

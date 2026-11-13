@@ -10,7 +10,7 @@ schedules are allowed per account; deleting releases a slot and preserves receip
 This is the first F29/F30/F32 slice. A reminder delivers the saved text to the local
 inbox; it does not execute the requested text as an agent task, send mail, run a
 browser task or call a provider. Bounded conversational capture and weekly rules are implemented;
-model tasks, changes-only comparison (F31/AUTO03) and topic mute remain next work.
+direct recurring read-only model tasks and narrow exact comparison are described below; topic mute remains next work.
 Optional [Web Push](web-push.md) uses a separate account/device binding and requests
 browser permission only from its explicit settings action.
 
@@ -179,3 +179,20 @@ See [SC1–SC3 narrow parser repair evidence](reviews/2026-11-13-conversational-
 봉인된 현재 스냅샷을 복원하면 대화의 저장 영수증은 과거 결과로 보존하지만 모든
 알림은 정지 상태다. 새 계정 등록만으로 재개되지 않는다. 주간 알림은 선택한 ISO
 요일과 IANA 시간대에 따라 다음 미래 회차부터 계산한다.
+
+## Separate recurring read-only missions
+
+The direct **Missions → Schedule a task** form now saves immutable read-only mission
+templates through `/api/v1/recurring-missions`. This uses the same occurrence/time
+oracle and latest-only queue while granting separate pinned model execution.
+Generic reminder lists, selected chat reminder IDs, mutations, claims and fixed-text
+publication exclude these templates. Literal reminders remain provider-free.
+
+Each admitted occurrence links to an actual mission under its original due+24hour
+window (capped by validity), original budgets and current owner/provider fences.
+Pause/edit/revoke retires unfinished child authority; resume permits future slots.
+Notifications contain only status and a mission-history link. Narrow exact successful
+decimal/source result comparison is described in [missions](missions.md); other
+receipt types and semantic prose comparison remain outside that filter. Schema0028
+adds sidecars and uses the same sealed-restore schedule quarantine. Conversational
+capture of recurring model tasks remains a separate explicit follow-up.

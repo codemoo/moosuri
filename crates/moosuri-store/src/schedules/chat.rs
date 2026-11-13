@@ -28,7 +28,7 @@ fn target(
             _ => None,
         });
     }
-    let ids=conn.prepare("SELECT id FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' ORDER BY id LIMIT 65")?.query_map(params![user.tenant.0,user.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let ids=conn.prepare("SELECT id FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' AND NOT EXISTS(SELECT 1 FROM recurring_missions x WHERE x.tenant_id=reminder_schedules.tenant_id AND x.schedule_id=reminder_schedules.id) ORDER BY id LIMIT 65")?.query_map(params![user.tenant.0,user.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     if ids.len() > 64 {
         return Err(StoreError::Conflict);
     }

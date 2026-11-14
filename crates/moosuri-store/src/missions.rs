@@ -635,6 +635,7 @@ pub(crate) fn create_pinned_in(
     )?;
 
     tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES(?1,?2,?3,?4,?5,?6,1,?7,?8,?9,?10,1,'queued',1,?11,?12)",params![tenant,run,account,thread,Uuid::new_v4().to_string(),digest,payload,json(&model)?,session_digest,epoch,time,order])?;
+    crate::run_timings::admit(tx, tenant, &run, 1)?;
 
     tx.execute("INSERT INTO missions(tenant_id,id,account_id,run_id,thread_id,request_id,payload,payload_digest,mode,auth_epoch,expires_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![tenant,id,account,run,thread,input.request_id,payload,digest,match input.execution_mode{MissionMode::Durable=>"durable",MissionMode::CurrentSession=>"current_session"},epoch,expiry])?;
     tx.execute(

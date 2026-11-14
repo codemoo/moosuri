@@ -91,11 +91,13 @@ struct Item {
     key: String,
     phase: Option<MessagePhase>,
     emitted: bool,
+    body_seen: bool,
 }
 #[derive(Default)]
 struct Pending {
     prefix: String,
     patches: Vec<OutputPatch>,
+    body_marks: Vec<(String, moosuri_store::TimingMark)>,
     bytes: usize,
     total_bytes: usize,
     items: BTreeMap<(String, bool), Item>,
@@ -117,6 +119,7 @@ impl Pending {
             key: format!("{}assistant-{next}", self.prefix),
             phase,
             emitted: false,
+            body_seen: false,
         }))
     }
     fn metadata(&mut self, key: String, next: Option<MessagePhase>) -> Result<(), RunFailure> {
@@ -210,11 +213,12 @@ async fn write_usage(checkpoint: &Checkpoint<'_>, usage: &RunUsage) -> Result<()
 async fn write_output(
     checkpoint: &Checkpoint<'_>,
     patches: &[OutputPatch],
+    marks: &[(String, moosuri_store::TimingMark)],
 ) -> Result<(), StoreError> {
     for retry in 0..5 {
         match checkpoint
             .store
-            .append_agent_output(checkpoint.lease, copy_patches(patches))
+            .append_agent_output_timed(checkpoint.lease, copy_patches(patches), marks.to_vec())
             .await
         {
             Err(StoreError::Busy) if retry < 4 => {
@@ -239,10 +243,12 @@ async fn flush(checkpoint: &Checkpoint<'_>, pending: &mut Pending) -> Result<(),
     if !pending.patches.is_empty() {
         let patches = std::mem::take(&mut pending.patches);
         pending.bytes = 0;
-        let result = write_output(checkpoint, &patches).await;
+        let marks = std::mem::take(&mut pending.body_marks);
+        let result = write_output(checkpoint, &patches, &marks).await;
         signals.changed();
         if let Err(error) = result {
             if !fenced(&error) && error != StoreError::BudgetExhausted {
+                pending.body_marks = marks;
                 pending.patches = patches;
                 pending.bytes = pending
                     .patches
@@ -298,6 +304,7 @@ async fn append_event(
     checkpoint: &Checkpoint<'_>,
     pending: &mut Pending,
 ) -> Result<(), RunFailure> {
+    let arrived = moosuri_store::timing_mark();
     if text.is_empty() {
         return Ok(());
     }
@@ -325,6 +332,11 @@ async fn append_event(
         item.emitted = true;
         let phase = item.phase;
         let item_key = item.key.clone();
+        let first_body = !item.body_seen && !refusal && !piece.trim().is_empty();
+        item.body_seen |= first_body;
+        if first_body {
+            pending.body_marks.push((item_key.clone(), arrived));
+        }
         pending.patches.push(OutputPatch::Append {
             item: item_key,
             text: piece.into(),
@@ -540,6 +552,7 @@ async fn stream_round(
     prior_bytes: usize,
     visible_output: bool,
 ) -> Result<Observation, (RunState, RunFailure)> {
+    let model_started = std::time::Instant::now();
     let cancellation = CancellationToken::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
     let capability = ToolCapabilities {
@@ -599,6 +612,11 @@ async fn stream_round(
             result = &mut operation => break result,
         }
     };
+    let model_ms = model_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    let _ = checkpoint
+        .store
+        .record_model_duration(checkpoint.lease, model_ms)
+        .await;
     while let Ok(value) = rx.try_recv() {
         if let Err(error) = observe(
             value,
@@ -1247,6 +1265,25 @@ pub(crate) async fn execute_with_calendar(
 }
 
 async fn execute_tool(
+    store: &Store,
+    step: &StepLease,
+    call: &PendingKnowledgeCall,
+    mail: &crate::mail::MailService,
+    web: &crate::web::Service,
+    cancel: &CancellationToken,
+) -> Result<KnowledgeToolResult, StoreError> {
+    let started = std::time::Instant::now();
+    let _ = store
+        .record_tool_timing(step, call.call_id.clone(), None)
+        .await;
+    let result = execute_tool_inner(store, step, call, mail, web, cancel).await;
+    let elapsed = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    let _ = store
+        .record_tool_timing(step, call.call_id.clone(), Some(elapsed))
+        .await;
+    result
+}
+async fn execute_tool_inner(
     store: &Store,
     step: &StepLease,
     call: &PendingKnowledgeCall,

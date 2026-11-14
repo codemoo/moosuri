@@ -2,6 +2,8 @@
 //! Authentication capabilities can only be created here and are revalidated on every use.
 pub mod audio;
 pub mod push;
+mod run_timings;
+pub use run_timings::{TimingMark, timing_mark};
 
 mod conversation_recall;
 pub mod credential_chat;
@@ -714,6 +716,7 @@ impl Store {
         knowledge::replay(&mut database)?;
         destructive_intents::replay(&mut database)?;
         accounts::finish_deletions(&mut database.conn)?;
+        run_timings::restart(&database.conn)?;
         chat::restart(&mut database.conn)?;
         let dummy_hash = DUMMY_HASH.to_owned();
         let (sender, mut receiver) = mpsc::channel::<Command>(64);

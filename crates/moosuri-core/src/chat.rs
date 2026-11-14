@@ -62,6 +62,9 @@ pub struct ChatEvidence {
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct RunView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub timings: Option<crate::RunTimings>,
     pub id: String,
     pub request_id: String,
     pub thread_id: String,
@@ -162,6 +165,9 @@ pub struct ChatEvents {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
 pub struct UsageSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub timings: Option<crate::RunTimingAggregate>,
     #[ts(type = "number")]
     pub dispatched_calls: i64,
     #[ts(type = "number")]

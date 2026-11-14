@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod run_timings;
+pub use run_timings::*;
 mod conversation_recall;
 pub use conversation_recall::*;
 mod audio;
@@ -104,6 +106,9 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        RunTimings::decl(),
+        LatencySamples::decl(),
+        RunTimingAggregate::decl(),
         ConversationScope::decl(),
         ConversationHit::decl(),
         ConversationSearch::decl(),

@@ -714,7 +714,10 @@ impl Store {
                 let local_final = crate::missions::local_final_recovery(&tx, &tenant, &id)?;
                 if !retry_fences(&tx,&tenant,&id,!local_final)? {chat::transition(&tx,&run,RunState::Incomplete,Some(RunFailure::BudgetExhausted))?;continue}
                 match guard_execution(&tx,&run) {Ok(())=>{},Err(StoreError::Conflict|StoreError::BudgetExhausted)=>continue,Err(e)=>return Err(e)}
+                crate::run_timings::claim(&tx,&run)?;
+                let started=std::time::Instant::now();
                 let messages=chat::context(&tx,&run)?;
+                crate::run_timings::context(&tx,&run,started)?;
                 tx.execute("INSERT INTO agent_execution(tenant_id,run_id,agent) VALUES(?1,?2,1) ON CONFLICT(tenant_id,run_id) DO UPDATE SET agent=1",params![tenant,id])?;
                 let legacy:(i64,Option<i64>)=tx.query_row("SELECT count(*),min(dispatched_at)*1000 FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND step=0",params![tenant,id],|r|Ok((r.get(0)?,r.get(1)?)))?;
                 if legacy.0>=6 {tx.execute("UPDATE agent_execution SET remote_calls=6 WHERE tenant_id=?1 AND run_id=?2",params![tenant,id])?;chat::transition(&tx,&run,RunState::Incomplete,Some(RunFailure::BudgetExhausted))?;continue}
@@ -774,6 +777,7 @@ impl Store {
             tx.execute("UPDATE agent_execution SET remote_calls=?3,checkpoint_seq=checkpoint_seq+1,started_ms=coalesce(started_ms,?4),deadline_ms=coalesce(deadline_ms,?4+120000),last_clock_ms=?4 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,step,clock])?;
             tx.execute("INSERT INTO agent_steps(tenant_id,run_id,step,attempt,nonce,state) VALUES(?1,?2,?3,?4,?5,'dispatched')",params![run.tenant,run.id,step,run.attempt,n.as_slice()])?;
             tx.execute("INSERT INTO model_call_receipts(tenant_id,account_id,run_id,attempt,step,nonce,usage,dispatched_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![run.tenant,run.account,run.id,run.attempt,step,n.as_slice(),encoded(&RunUsage::default())?,now()?])?;
+            crate::run_timings::dispatch(&tx,&run,step)?;
             tx.commit()?;Ok(StepLease{run:lease,step,nonce:n})
         }).await
     }
@@ -845,9 +849,17 @@ impl Store {
         lease: &StepLease,
         patches: Vec<OutputPatch>,
     ) -> Result<()> {
+        self.append_agent_output_timed(lease, patches, vec![]).await
+    }
+    pub async fn append_agent_output_timed(
+        &self,
+        lease: &StepLease,
+        patches: Vec<OutputPatch>,
+        marks: Vec<(String, crate::TimingMark)>,
+    ) -> Result<()> {
         let lease = lease.clone();
         self.call(move |db| {
-            if patches.is_empty() || patches.len() > 128 {
+            if marks.len() > 128 || patches.is_empty() || patches.len() > 128 {
                 return Err(StoreError::InvalidInput);
             }
             let tx = db
@@ -866,6 +878,9 @@ impl Store {
                 return Err(StoreError::Conflict);
             }
             chat::apply_patches(&tx, &run, patches)?;
+            for (item, mark) in marks {
+                crate::run_timings::body(&tx, &run, &item, mark)?;
+            }
             tx.commit()?;
             Ok(())
         })

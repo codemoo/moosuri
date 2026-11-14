@@ -233,6 +233,7 @@ fn is_latest(conn: &Connection, run: &Run) -> Result<bool> {
 }
 pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
     Ok(RunView {
+        timings: crate::run_timings::view(conn, run)?,
         id: run.id.clone(),
         request_id: run.request.clone(),
         thread_id: run.thread.clone(),
@@ -320,6 +321,7 @@ pub(super) fn transition(
     state: RunState,
     error: Option<RunFailure>,
 ) -> Result<()> {
+    crate::run_timings::terminal(conn, run, state)?;
     conn.execute(
         "UPDATE chat_runs SET state=?1,error=?2,version=version+1 WHERE tenant_id=?3 AND id=?4",
         params![
@@ -705,6 +707,9 @@ pub(super) fn apply_patches(conn: &Connection, run: &Run, patches: Vec<OutputPat
                 let phase = phase.or(phase_value(old_phase)?);
                 let encoded_phase = phase_name(phase)?;
                 conn.execute("UPDATE chat_output SET text=text||?1,phase=?2,refusal=?6 WHERE tenant_id=?3 AND run_id=?4 AND item=?5",params![text,encoded_phase,run.tenant,run.id,item,refusal])?;
+                if old_length == 0 && !refusal && !text.trim().is_empty() {
+                    crate::run_timings::body(conn, run, &item, crate::timing_mark())?;
+                }
                 emit(
                     conn,
                     run,
@@ -742,7 +747,10 @@ pub(super) fn apply_patches(conn: &Connection, run: &Run, patches: Vec<OutputPat
     Ok(())
 }
 fn usage(conn: &Connection, tenant: &str) -> Result<UsageSummary> {
-    let mut result = UsageSummary::default();
+    let mut result = UsageSummary {
+        timings: Some(crate::run_timings::aggregate(conn, tenant)?),
+        ..Default::default()
+    };
     let mut statement = conn.prepare("SELECT usage FROM model_call_receipts WHERE tenant_id=?1")?;
     let rows = statement.query_map([tenant], |r| r.get::<_, String>(0))?;
     for row in rows {
@@ -1025,6 +1033,7 @@ fn submit_turn_context_in(
     }
     let order = next_order(tx)?;
     tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(||crate::web::admitted_profile(tx,&user,web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
+    crate::run_timings::admit(tx, &user.tenant.0, &id, 1)?;
     for (ordinal, media) in attachments.iter().enumerate() {
         tx.execute(
             "INSERT INTO chat_media VALUES(?1,?2,?3,?4,?5)",
@@ -1212,6 +1221,7 @@ fn retry_run_inner(
     agent_execution::reset_attempt(&tx, &run.tenant, &run.id)?;
     tx.execute("UPDATE chat_runs SET attempt=attempt+1,state='queued',version=version+1,error=NULL,session_digest=?1,auth_epoch=?2,admitted_order=?3 WHERE tenant_id=?4 AND id=?5",params![user.digest.as_slice(),user.epoch,order,run.tenant,run.id])?;
     let current = load_run(&tx, &run.tenant, &run.id)?;
+    crate::run_timings::admit(&tx, &current.tenant, &current.id, current.attempt)?;
     let result = turn(&tx, &current)?;
     emit(
         &tx,
@@ -1259,12 +1269,16 @@ fn claim_run_inner(db: &mut Database) -> Result<Option<ClaimedRun>> {
                 continue;
             }
         };
+        crate::run_timings::claim(&tx, &run)?;
+        let started = std::time::Instant::now();
         let messages = context(&tx, &run)?;
+        crate::run_timings::context(&tx, &run, started)?;
         let mut nonce = [0; 32];
         OsRng
             .try_fill_bytes(&mut nonce)
             .map_err(|_| StoreError::Unavailable)?;
         tx.execute("INSERT INTO model_call_receipts(tenant_id,account_id,run_id,attempt,nonce,usage,dispatched_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",params![run.tenant,run.account,run.id,run.attempt,nonce.as_slice(),json(&RunUsage::default())?,now()?])?;
+        crate::run_timings::dispatch(&tx, &run, 0)?;
         transition(&tx, &run, RunState::Running, None)?;
         let lease = RunLease {
             tenant: run.tenant,

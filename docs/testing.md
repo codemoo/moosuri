@@ -137,3 +137,16 @@ flaky는 rerun으로 숨기지 않는다. 원인·owner·수리 기한과 첫 �
 근거: [평가 참고 자료](references.md), [구체적인 대화 예제](test-examples.md), [시나리오 표](../audit/evaluation-scenarios.tsv). 외부 benchmark의 문제/코드를 그대로 도입하지 않고 유효한 측정 관점을 가져온다.
 
 초기 private baseline은 일반 OSS 설치·PR CI의 의존성이 아니다. 첫 비교 보고에는 code의 공개 여부와 재현 한계를 밝히고 공개 가능한 fixture·설정 digest·oracle·집계만 제공한다. 실제 원본 source/trace를 공개 artifact에 복사하지 않는다. 이후 공개 moosuri tag를 기준으로 같은 검증 경로를 재현할 수 있게 한다.
+
+## 운영 경로의 숫자 시간 관측
+
+실제 실행은 [실행 시간 관측](run-timings.md)의 content-free 숫자만 기존 run/usage API로
+제공한다. 접수 기록부터 worker 대기·문맥 구성·모델 dispatch intent·모델 스트림·도구 처리·
+완료한 명시적 최종 본문·종료를 구분한다. 첫 모델 호출 시각은 제공업체 수락 증거가 아니며
+문맥 구성은 HTTP 접수나 전체 준비 시간을 대신하지 않는다. commentary·도구 결과·phase
+없는 출력·부분/실패 결과는 첫 최종 본문 표본이 아니다.
+
+최근 보관 실행128개의 attempt별 표본/누락과 고정 outcome 분모를 표시하며 구버전·잘린
+span·직접 SQL 종료·재개방의 관측 공백을0으로 채우지 않는다. 이 수집 경로의 작은 합성
+검사는 정확한 수집/분모를 검증할 뿐 위의 부하 목표·실제 모델 품질·browser DOM/입력
+왕복 성능을 입증하지 않는다. 모델/effort를 몰래 낮추거나 추적 때문에 호출을 추가하지 않는다.

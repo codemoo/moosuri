@@ -69,8 +69,8 @@ gold·관측 DB·upstream ledger를 읽는 도구는 없다. 공개 정답이므
 시간은 monotonic HTTP 접수와 10ms polling terminal 관측이며 준비/workflow 시간을 분리한다.
 관측 admission/terminal/workflow의 nearest-rank p50/p95와 sample 수를 제공하지만, 작은 공개
 회귀 사례를 성능 부하 결과로 해석하지 않는다. 실패/timeout에도 관측한 workflow 시간·dispatch
-수·DB usage를 보존한다. terminal usage가 없으면 token은 null이다. 가격·queue/context·
-first-final-body·DOM·RSS/CPU는 측정하지 않아 null이다. polling 지연은 TTFT가 아니다.
+수·DB usage를 보존한다. terminal usage가 없으면 token은 null이다. 평가 보고서 자체의 가격·queue/context·
+first-final-body·DOM·RSS/CPU는 아직 채우지 않아 null이다. polling 지연은 TTFT가 아니다.
 기존 run의 6 model/12 tool 한도, provider 세계당32회, 준비/실행 각각40초를 적용하고 shutdown은
 기존 Runtime의 bounded drain을 따른다.
 
@@ -104,3 +104,14 @@ model profile/non-inferiority는 모두 `not_run`이다. 이전 실행기는 SQL
 Python과 PostgreSQL의 실제 시간을 함께 사용하므로 공통 fake clock도 아직 없다.
 정확 계산 도구가 없는 이전 실행기에 새 calculator receipt를 요구해서는 안 된다.
 초기 공통 범위는 시간에 무관한 기억 조회/사용자 입력 계산부터 별도로 고정해야 한다.
+
+
+## 제품 경로의 서버 시간과 평가 보고서
+
+현재 제품의 run/usage API는 [서버 실행 시간](run-timings.md)을 숫자로 관측한다. 원래
+attempt·모델/effort·예산을 바꾸지 않으며 실제 수집된 queue/context/model/tool/final-body/
+terminal 표본만 제공한다. 기존 이 평가기의 HTTP/polling 보고서는 별도 관측 경로다.
+새 숫자를 evaluator report의 비어 있던 필드에 소급 복사하거나 작은 회귀 결과를
+provider/기기 성능 표본으로 합치지 않는다. phase 부재·실패·재시작·직접 SQL 전이의
+누락과 원래 outcome 분모를 유지한다. 실제 성능 비교는 사전에 고정한 부하/표본 계획과
+서버·브라우저 각각의 관측이 추가로 필요하다.

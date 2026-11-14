@@ -63,6 +63,8 @@ fn query(text: &str) -> KnowledgeQuery {
         collection_id: None,
         subject: None,
         speaker: None,
+        observed_from: None,
+        observed_until: None,
         valid_at: None,
         cursor: None,
     }

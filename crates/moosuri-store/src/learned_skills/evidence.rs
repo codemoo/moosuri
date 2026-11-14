@@ -196,6 +196,8 @@ fn resolve(
         || q.subject.is_some()
         || q.speaker.is_some()
         || q.valid_at.is_some()
+        || q.observed_from.is_some()
+        || q.observed_until.is_some()
         || page.hits.len() != 1
         || page.next_cursor.is_some()
         || page.truncated

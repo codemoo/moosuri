@@ -257,6 +257,14 @@ evidence: Array<EvidenceRef>, };
 export type MemoryDocument = { extraction_origin?: MemoryExtractionOrigin, id: string, revision: number, status: MemoryStatus, draft: MemoryDraft, created_at: number, updated_at: number, };
 export type MemoryPage = { items: Array<MemoryDocument>, next_after: string | null, generation: number, };
 export type MemoryHistory = { items: Array<MemoryDocument>, next_before: number | null, };
-export type KnowledgeQuery = { kind: KnowledgeKind, text: string, collection_id: string | null, subject: string | null, speaker: string | null, valid_at: number | null, cursor: string | null, };
+export type KnowledgeQuery = { kind: KnowledgeKind, text: string, collection_id: string | null, subject: string | null, speaker: string | null, valid_at: number | null,
+/**
+ * Source observation time, inclusive. Independent from assertion validity.
+ */
+observed_from?: number | null,
+/**
+ * Source observation time, exclusive; unsupported for memory queries.
+ */
+observed_until?: number | null, cursor: string | null, };
 export type KnowledgeHit = { kind: KnowledgeKind, id: string, revision: number, title: string, snippet: string, subject: string | null, speaker: string | null, valid_from: number | null, valid_until: number | null, };
 export type KnowledgeSearch = { hits: Array<KnowledgeHit>, next_cursor: string | null, truncated: boolean, generation: number, };

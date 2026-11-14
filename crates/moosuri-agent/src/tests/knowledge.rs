@@ -916,6 +916,8 @@ async fn broad_personal_recall_browses_scoped_pages_and_forget_revokes_grounded_
         collection_id: None,
         subject: None,
         speaker: None,
+        observed_from: None,
+        observed_until: None,
         valid_at: None,
         cursor: None,
     };

@@ -47,6 +47,8 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
                 "subject":nullable_text("Exact memory subject filter, otherwise null."),
                 "speaker":nullable_text("Exact speaker filter, otherwise null; never infer a speaker."),
                 "valid_at":{"type":["integer","null"],"description":"Unix seconds only when the user requested a historical date, otherwise null for now."},
+                "observed_from":{"type":["integer","null"],"description":"Source-only observation timestamp lower bound, inclusive Unix seconds. Use only for an explicitly requested source record period; otherwise null. Separate from valid_at. Never apply to memories."},
+                "observed_until":{"type":["integer","null"],"description":"Source-only observation timestamp upper bound, exclusive Unix seconds; otherwise null. Keep exact range on pagination. Never infer dates or use validity as observation time."},
                 "cursor":nullable_text("Null initially; then only the next_cursor actually returned for the unchanged query. Do not invent cursors.")
             })),
         },
@@ -229,6 +231,8 @@ struct Search {
     subject: Option<String>,
     speaker: Option<String>,
     valid_at: Option<i64>,
+    observed_from: Option<i64>,
+    observed_until: Option<i64>,
     cursor: Option<String>,
 }
 #[derive(Deserialize)]
@@ -378,6 +382,8 @@ pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
                     collection_id: value.collection_id,
                     subject: value.subject,
                     speaker: value.speaker,
+                    observed_from: value.observed_from,
+                    observed_until: value.observed_until,
                     valid_at: value.valid_at,
                     cursor: value.cursor,
                 })
@@ -412,6 +418,30 @@ mod tests {
         tools::{ToolCapabilities, ToolRequest, encode_tool_request},
     };
 
+    #[test]
+    fn source_observation_tool_arguments_keep_old_wire_and_separate_memory_validity() {
+        let old = json!({"kind":"source","text":"meeting","collection_id":null,"subject":null,"speaker":null,"valid_at":null,"cursor":null});
+        let Invocation::Search(q) = parse("knowledge_search", &old.to_string()) else {
+            panic!("legacy search rejected")
+        };
+        assert!(q.observed_from.is_none() && q.observed_until.is_none());
+        assert_eq!(
+            serde_json::to_value(&q).unwrap(),
+            old,
+            "absent fields retain old cursor/proof serialization"
+        );
+        let mut dated = old;
+        dated["observed_from"] = json!(100);
+        dated["observed_until"] = json!(200);
+        dated["valid_at"] = json!(300);
+        let Invocation::Search(q) = parse("knowledge_search", &dated.to_string()) else {
+            panic!("dated source search rejected")
+        };
+        assert_eq!(
+            (q.observed_from, q.observed_until, q.valid_at),
+            (Some(100), Some(200), Some(300))
+        );
+    }
     #[test]
     fn learned_parcel_arguments_are_narrow_and_old_source_wire_remains_compatible() {
         let pin = json!({"id":"private:synthetic","revision":"2","digest":"a".repeat(64)});

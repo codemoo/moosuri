@@ -159,6 +159,14 @@ pub struct KnowledgeQuery {
     pub speaker: Option<String>,
     #[ts(type = "number | null")]
     pub valid_at: Option<i64>,
+    /// Source observation time, inclusive. Independent from assertion validity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number | null")]
+    pub observed_from: Option<i64>,
+    /// Source observation time, exclusive; unsupported for memory queries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number | null")]
+    pub observed_until: Option<i64>,
     pub cursor: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]

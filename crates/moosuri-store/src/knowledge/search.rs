@@ -40,11 +40,15 @@ pub(crate) fn search_owner(
         }
     }
     if (query.kind == KnowledgeKind::Source && query.subject.is_some())
-        || (query.kind == KnowledgeKind::Memory && query.collection_id.is_some())
+        || (query.kind == KnowledgeKind::Memory
+            && (query.collection_id.is_some()
+                || query.observed_from.is_some()
+                || query.observed_until.is_some()))
     {
         return Err(StoreError::InvalidInput);
     }
     validity(query.valid_at, None)?;
+    validity(query.observed_from, query.observed_until)?;
     let incoming = query.cursor.take();
     let digest = hash(&query)?;
     let scope = format!(
@@ -77,9 +81,9 @@ pub(crate) fn search_owner(
     // Choose the newest begun memory revision first, then apply expiry.
     // A newer expired or purged revision is not permission to revive an older assertion.
     let base = if query.kind == KnowledgeKind::Source {
-        "SELECT s.id,s.revision,v.title,v.text,NULL AS subject,v.speaker,v.valid_from,v.valid_until FROM knowledge_sources s JOIN knowledge_source_versions v ON v.tenant_id=s.tenant_id AND v.source_id=s.id AND v.revision=s.revision JOIN knowledge_collections c ON c.tenant_id=s.tenant_id AND c.id=s.collection_id WHERE s.tenant_id=?1 AND s.deleted=0 AND c.deleted=0 AND (?2 IS NULL OR s.collection_id=?2) AND ?3 IS NULL AND (?4 IS NULL OR v.speaker=?4) AND (v.valid_from IS NULL OR v.valid_from<=?5) AND (v.valid_until IS NULL OR v.valid_until>?5)"
+        "SELECT s.id,s.revision,v.title,v.text,NULL AS subject,v.speaker,v.valid_from,v.valid_until FROM knowledge_sources s JOIN knowledge_source_versions v ON v.tenant_id=s.tenant_id AND v.source_id=s.id AND v.revision=s.revision JOIN knowledge_collections c ON c.tenant_id=s.tenant_id AND c.id=s.collection_id WHERE s.tenant_id=?1 AND s.deleted=0 AND c.deleted=0 AND (?2 IS NULL OR s.collection_id=?2) AND ?3 IS NULL AND (?4 IS NULL OR v.speaker=?4) AND (v.valid_from IS NULL OR v.valid_from<=?5) AND (v.valid_until IS NULL OR v.valid_until>?5) AND (?6 IS NULL OR v.observed_at>=?6) AND (?7 IS NULL OR v.observed_at<?7)"
     } else {
-        "SELECT m.id,v.revision,json_extract(v.draft,'$.subject') AS title,json_extract(v.draft,'$.text') AS text,json_extract(v.draft,'$.subject') AS subject,json_extract(v.draft,'$.speaker') AS speaker,json_extract(v.draft,'$.valid_from') AS valid_from,json_extract(v.draft,'$.valid_until') AS valid_until FROM knowledge_memories m JOIN knowledge_memory_versions v ON v.tenant_id=m.tenant_id AND v.memory_id=m.id AND v.revision=(SELECT max(v2.revision) FROM knowledge_memory_timeline v2 WHERE v2.tenant_id=m.tenant_id AND v2.memory_id=m.id AND (v2.valid_from IS NULL OR v2.valid_from<=?5)) WHERE m.tenant_id=?1 AND m.status!='forgotten' AND v.status='active' AND ?2 IS NULL AND (?3 IS NULL OR json_extract(v.draft,'$.subject')=?3) AND (?4 IS NULL OR json_extract(v.draft,'$.speaker')=?4) AND (json_extract(v.draft,'$.valid_from') IS NULL OR json_extract(v.draft,'$.valid_from')<=?5) AND (json_extract(v.draft,'$.valid_until') IS NULL OR json_extract(v.draft,'$.valid_until')>?5)"
+        "SELECT m.id,v.revision,json_extract(v.draft,'$.subject') AS title,json_extract(v.draft,'$.text') AS text,json_extract(v.draft,'$.subject') AS subject,json_extract(v.draft,'$.speaker') AS speaker,json_extract(v.draft,'$.valid_from') AS valid_from,json_extract(v.draft,'$.valid_until') AS valid_until FROM knowledge_memories m JOIN knowledge_memory_versions v ON v.tenant_id=m.tenant_id AND v.memory_id=m.id AND v.revision=(SELECT max(v2.revision) FROM knowledge_memory_timeline v2 WHERE v2.tenant_id=m.tenant_id AND v2.memory_id=m.id AND (v2.valid_from IS NULL OR v2.valid_from<=?5)) WHERE m.tenant_id=?1 AND m.status!='forgotten' AND v.status='active' AND ?2 IS NULL AND (?3 IS NULL OR json_extract(v.draft,'$.subject')=?3) AND (?4 IS NULL OR json_extract(v.draft,'$.speaker')=?4) AND (json_extract(v.draft,'$.valid_from') IS NULL OR json_extract(v.draft,'$.valid_from')<=?5) AND (json_extract(v.draft,'$.valid_until') IS NULL OR json_extract(v.draft,'$.valid_until')>?5) AND ?6 IS NULL AND ?7 IS NULL"
     };
     let key = tenant_key(tenant);
     let fts = normalized.chars().count() >= 3;
@@ -91,7 +95,7 @@ pub(crate) fn search_owner(
     let (sql, work_truncated) = if fts {
         (
             format!(
-                "SELECT b.id,b.revision,b.title,substr(b.text,1,512),b.subject,b.speaker,b.valid_from,b.valid_until FROM ({base}) b WHERE (b.id,b.revision) IN (SELECT object_id,cast(revision AS INTEGER) FROM knowledge_fts WHERE knowledge_fts MATCH ?7 AND tenant_key=?8 AND kind=?9) ORDER BY b.id LIMIT ?11 OFFSET ?10"
+                "SELECT b.id,b.revision,b.title,substr(b.text,1,512),b.subject,b.speaker,b.valid_from,b.valid_until FROM ({base}) b WHERE (b.id,b.revision) IN (SELECT object_id,cast(revision AS INTEGER) FROM knowledge_fts WHERE knowledge_fts MATCH ?9 AND tenant_key=?10 AND kind=?11) ORDER BY b.id LIMIT ?13 OFFSET ?12"
             ),
             false,
         )
@@ -106,18 +110,20 @@ pub(crate) fn search_owner(
                 query.collection_id,
                 query.subject,
                 query.speaker,
-                time
+                time,
+                query.observed_from,
+                query.observed_until
             ],
             |r| r.get(0),
         )?;
         let literal_filter = if browse {
             ""
         } else {
-            " AND instr((SELECT normalized FROM knowledge_fts WHERE tenant_key=?8 AND kind=?9 AND object_id=b.id AND revision=b.revision LIMIT 1),?6)>0"
+            " AND instr((SELECT normalized FROM knowledge_fts WHERE tenant_key=?10 AND kind=?11 AND object_id=b.id AND revision=b.revision LIMIT 1),?8)>0"
         };
         (
             format!(
-                "WITH candidates AS MATERIALIZED (SELECT id FROM ({base}) ORDER BY id LIMIT 1000) SELECT b.id,b.revision,b.title,substr(b.text,1,512),b.subject,b.speaker,b.valid_from,b.valid_until FROM ({base}) b WHERE b.id IN (SELECT id FROM candidates){literal_filter} ORDER BY b.id LIMIT ?11 OFFSET ?10"
+                "WITH candidates AS MATERIALIZED (SELECT id FROM ({base}) ORDER BY id LIMIT 1000) SELECT b.id,b.revision,b.title,substr(b.text,1,512),b.subject,b.speaker,b.valid_from,b.valid_until FROM ({base}) b WHERE b.id IN (SELECT id FROM candidates){literal_filter} ORDER BY b.id LIMIT ?13 OFFSET ?12"
             ),
             count > 1000,
         )
@@ -131,6 +137,8 @@ pub(crate) fn search_owner(
                 query.subject,
                 query.speaker,
                 time,
+                query.observed_from,
+                query.observed_until,
                 normalized,
                 matching,
                 key,

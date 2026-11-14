@@ -770,6 +770,8 @@ async fn retrieved_knowledge_and_nonliteral_or_oversized_plans_cannot_authorize_
         collection_id: None,
         subject: None,
         speaker: None,
+        observed_from: None,
+        observed_until: None,
         valid_at: None,
         cursor: None,
     };
@@ -1211,6 +1213,8 @@ async fn effective_past_revision_and_second_current_match_remain_ambiguous_witho
                 collection_id: None,
                 subject: None,
                 speaker: None,
+                observed_from: None,
+                observed_until: None,
                 valid_at: None,
                 cursor: None,
             },
@@ -1522,6 +1526,8 @@ async fn texts_at(store: &Store, user: &UserContext, at: i64) -> Vec<String> {
                 subject: None,
                 speaker: None,
                 valid_at: Some(at),
+                observed_from: None,
+                observed_until: None,
                 cursor: None,
             },
         )

@@ -805,6 +805,13 @@ async fn learned_source_example(
     user: &UserContext,
     text: &str,
 ) -> (AgentClaim, String) {
+    learned_source_example_query(store, user, query(text)).await
+}
+async fn learned_source_example_query(
+    store: &Store,
+    user: &UserContext,
+    query: KnowledgeQuery,
+) -> (AgentClaim, String) {
     let thread = store
         .create_thread(user, "Private lookup".into())
         .await
@@ -815,7 +822,7 @@ async fn learned_source_example(
         &claim,
         PendingKnowledgeCall {
             call_id: "search".into(),
-            input: KnowledgeToolInput::Search { query: query(text) },
+            input: KnowledgeToolInput::Search { query },
         },
     )
     .await;
@@ -1782,3 +1789,26 @@ async fn compound_graph_rejects_false_edges_replay_proof_and_budget_bypass() {
 }
 
 mod evidence;
+
+#[tokio::test]
+async fn source_observation_filters_decline_fixed_range_learning_and_preserve_unfiltered_proofs() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = enabled(&store).await;
+    source(&store, &user, "observed-alpha source A").await;
+    source(&store, &user, "observed-beta source B").await;
+    for text in ["observed-alpha", "observed-beta"] {
+        let mut q = query(text);
+        q.observed_from = Some(99);
+        q.observed_until = Some(101);
+        learned_source_example_query(&store, &user, q).await;
+    }
+    assert!(store.learned_skills(&user).await.unwrap().is_empty());
+    // Old wire payloads and learned source routes omit both optional arguments.
+    learned_source_example(&store, &user, "observed-alpha").await;
+    learned_source_example(&store, &user, "observed-beta").await;
+    let cards = store.learned_skills(&user).await.unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].readiness, "ready");
+}

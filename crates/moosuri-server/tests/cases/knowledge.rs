@@ -292,3 +292,297 @@ async fn member_knowledge_is_private_and_disconnect_keep_then_delete_is_explicit
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn source_observation_range_http_separates_validity_binds_pages_and_keeps_owner_withdrawal() {
+    use uuid::Uuid;
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, app) = fixture(false).await;
+    let cookie = login(&app, "admin@example.test", PASSWORD).await;
+    let collection = create_collection(&app, &cookie).await;
+    let path = format!(
+        "/api/v1/knowledge/collections/{}/batches",
+        collection["id"].as_str().unwrap()
+    );
+    let entries: Vec<Value> = [199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 299, 300].into_iter().map(|at| json!({"external_id":format!("observed-{at}"),"version":"1","expected_revision":null,"title":format!("Observed {at}"),"text":"source observation fixture 자료","speaker":null,"observed_at":at,"valid_from":1000,"valid_until":2000})).collect();
+    let payload = json!({"request_id":Uuid::new_v4().to_string(),"expected_cursor":0,"next_cursor":1,"complete_snapshot":false,"entries":entries});
+    assert_eq!(
+        send(&app, "POST", &path, Some(&cookie), payload)
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+    let q = json!({"kind":"source","text":"observation","collection_id":null,"subject":null,"speaker":null,"valid_at":1500,"observed_from":200,"observed_until":300,"cursor":null});
+    let first = send(
+        &app,
+        "POST",
+        "/api/v1/knowledge/search",
+        Some(&cookie),
+        q.clone(),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = value(first).await;
+    assert_eq!(first["hits"].as_array().unwrap().len(), 20);
+    let cursor = first["next_cursor"].as_str().unwrap();
+    let mut next = q.clone();
+    next["cursor"] = json!(cursor);
+    let last = value(
+        send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&cookie),
+            next.clone(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(last["hits"].as_array().unwrap().len(), 1);
+    let titles: Vec<&str> = first["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(last["hits"].as_array().unwrap())
+        .map(|h| h["title"].as_str().unwrap())
+        .collect();
+    assert!(titles.contains(&"Observed 200") && titles.contains(&"Observed 299"));
+    assert!(!titles.contains(&"Observed 199") && !titles.contains(&"Observed 300"));
+    for (from, until, title) in [
+        (None, Some(200), "Observed 199"),
+        (Some(300), None, "Observed 300"),
+    ] {
+        let mut one_sided = q.clone();
+        one_sided["observed_from"] = json!(from);
+        one_sided["observed_until"] = json!(until);
+        let page = value(
+            send(
+                &app,
+                "POST",
+                "/api/v1/knowledge/search",
+                Some(&cookie),
+                one_sided,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(page["hits"].as_array().unwrap().len(), 1);
+        assert_eq!(page["hits"][0]["title"], title);
+    }
+    // A changed range cannot reuse the old authenticated cursor.
+    let mut changed = next.clone();
+    changed["observed_from"] = json!(201);
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&cookie),
+            changed
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    for (from, until) in [
+        (300_i64, 300_i64),
+        (301, 300),
+        (-62135596801, 300),
+        (200, 253402300800),
+    ] {
+        let mut invalid = q.clone();
+        invalid["observed_from"] = json!(from);
+        invalid["observed_until"] = json!(until);
+        assert_eq!(
+            send(
+                &app,
+                "POST",
+                "/api/v1/knowledge/search",
+                Some(&cookie),
+                invalid
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let mut memory = q.clone();
+    memory["kind"] = json!("memory");
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&cookie),
+            memory
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let mut mixed = q.clone();
+    mixed["kind"] = json!("all");
+    assert!(
+        !send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&cookie),
+            mixed
+        )
+        .await
+        .status()
+        .is_success()
+    );
+    let mut not_valid = q.clone();
+    not_valid["valid_at"] = json!(999);
+    assert!(
+        value(
+            send(
+                &app,
+                "POST",
+                "/api/v1/knowledge/search",
+                Some(&cookie),
+                not_valid
+            )
+            .await
+        )
+        .await["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let mut short = q.clone();
+    short["text"] = json!("资料"); // no match, short substring SQL path
+    assert!(
+        value(
+            send(
+                &app,
+                "POST",
+                "/api/v1/knowledge/search",
+                Some(&cookie),
+                short.clone()
+            )
+            .await
+        )
+        .await["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    short["text"] = json!("자료");
+    assert_eq!(
+        value(
+            send(
+                &app,
+                "POST",
+                "/api/v1/knowledge/search",
+                Some(&cookie),
+                short
+            )
+            .await
+        )
+        .await["hits"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
+    // Ingestion has no missing-timestamp fallback to now or source validity.
+    let mut missing = batch(&Uuid::new_v4().to_string(), 1, "missing observation");
+    missing["entries"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("observed_at");
+    assert!(
+        !send(&app, "POST", &path, Some(&cookie), missing)
+            .await
+            .status()
+            .is_success()
+    );
+    let context = store
+        .authenticate(cookie.strip_prefix("moosuri_session=").unwrap().into())
+        .await
+        .unwrap();
+    let invite = store
+        .create_user(
+            &context,
+            "Other".into(),
+            "observed-other@example.test".into(),
+        )
+        .await
+        .unwrap();
+    let other = store
+        .login(
+            "observed-other@example.test".into(),
+            invite.temporary_password,
+        )
+        .await
+        .unwrap();
+    let other = store
+        .change_password(&other.user, PASSWORD.into())
+        .await
+        .unwrap();
+    let other_cookie = format!("moosuri_session={}", other.token);
+    assert!(
+        value(
+            send(
+                &app,
+                "POST",
+                "/api/v1/knowledge/search",
+                Some(&other_cookie),
+                q.clone()
+            )
+            .await
+        )
+        .await["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&other_cookie),
+            next.clone()
+        )
+        .await
+        .status()
+        .is_success()
+    );
+    let id = first["hits"][0]["id"].as_str().unwrap();
+    assert_eq!(
+        send(
+            &app,
+            "DELETE",
+            &format!("/api/v1/knowledge/sources/{id}"),
+            Some(&cookie),
+            json!({"expected_revision":1})
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&cookie),
+            next
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let after = value(send(&app, "POST", "/api/v1/knowledge/search", Some(&cookie), q).await).await;
+    assert!(
+        after["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|h| h["id"] != id)
+    );
+}

@@ -1000,6 +1000,28 @@ describe("assertion editing and forgetting", () => {
 });
 
 describe("knowledge lifetime boundaries", () => {
+  it("filters source observation time separately, preserves the range for pages and rejects reversed bounds", async () => {
+    const user = userEvent.setup();
+    const test = fixture(call => call.path === "/knowledge/search" ? response({hits: [], next_cursor: call.body?.cursor ? null : "range-cursor", truncated: false, generation: 1}) : undefined);
+    open();
+    await screen.findByRole("button", {name: /합성 원문/});
+    await user.type(screen.getByLabelText("자료 검색"), "observation");
+    fireEvent.change(screen.getByLabelText("기록 시각 시작 (포함)"), {target: {value: "2026-11-01T00:00:00"}});
+    fireEvent.change(screen.getByLabelText("기록 시각 종료 (미포함)"), {target: {value: "2026-12-01T00:00:00"}});
+    fireEvent.change(screen.getByLabelText("유효 기준 시각 (선택)"), {target: {value: "2026-10-01T12:00:00"}});
+    await user.click(screen.getByRole("button", {name: "검색"}));
+    const next = await screen.findByRole("button", {name: "다음 검색 결과"});
+    await user.click(next);
+    await waitFor(() => expect(test.calls.filter(c => c.path === "/knowledge/search")).toHaveLength(2));
+    const queries = test.calls.filter(c => c.path === "/knowledge/search").map(c => c.body);
+    expect(queries[0]).toMatchObject({observed_from: new Date("2026-11-01T00:00:00").getTime()/1000, observed_until: new Date("2026-12-01T00:00:00").getTime()/1000, valid_at: new Date("2026-10-01T12:00:00").getTime()/1000});
+    expect(queries[1]).toEqual({...queries[0], cursor: "range-cursor"});
+    fireEvent.change(screen.getByLabelText("기록 시각 시작 (포함)"), {target: {value: "2027-01-01T00:00:00"}});
+    await user.click(screen.getByRole("button", {name: "검색"}));
+    await screen.findByText("검색 조건을 확인해 주세요.");
+    expect(test.calls.filter(c => c.path === "/knowledge/search")).toHaveLength(2);
+    expect(screen.getByLabelText("기록 시각 시작 (포함)")).toHaveValue("2027-01-01T00:00");
+  });
   it("does not replace a newer search with a late response to an abandoned query", async () => {
     const user = userEvent.setup();
     const late = deferred<Response>();

@@ -192,6 +192,8 @@ fn proof(conn: &Connection, tenant: &str, account: &str, run_id: &str) -> Result
             && query.subject.is_none()
             && query.speaker.is_none()
             && query.valid_at.is_none()
+            && query.observed_from.is_none()
+            && query.observed_until.is_none()
             && !source.has_more
             && !source.text.trim().is_empty()
             && output.contains(&source.text)
@@ -378,6 +380,8 @@ fn source_route(
         collection_id: None,
         subject: None,
         speaker: None,
+        observed_from: None,
+        observed_until: None,
         valid_at: None,
         cursor: None,
     };

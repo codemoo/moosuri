@@ -75,6 +75,8 @@ export function KnowledgeView({
   const [speaker, setSpeaker] = useState("");
   const [subject, setSubject] = useState("");
   const [validAt, setValidAt] = useState<number | null>(null);
+  const [observedFrom, setObservedFrom] = useState<number | null>(null);
+  const [observedUntil, setObservedUntil] = useState<number | null>(null);
   const [search, setSearch] = useState<KnowledgeSearch | null>(null);
   const [searched, setSearched] = useState<KnowledgeQuery | null>(null);
   const [searching, setSearching] = useState(false);
@@ -107,6 +109,8 @@ export function KnowledgeView({
     setSpeaker("");
     setSubject("");
     setValidAt(null);
+    setObservedFrom(null);
+    setObservedUntil(null);
     setPageStack([null]);
     setSource(null);
     setMemory(null);
@@ -292,7 +296,9 @@ export function KnowledgeView({
     if (
       bytes(speaker) > 200 ||
       bytes(subject) > 200 ||
-      (validAt !== null && !Number.isSafeInteger(validAt))
+      (validAt !== null && !Number.isSafeInteger(validAt)) ||
+      [observedFrom, observedUntil].some(value => value !== null && (!Number.isSafeInteger(value) || value < -62135596800 || value > 253402300799)) ||
+      (observedFrom !== null && observedUntil !== null && observedFrom >= observedUntil)
     ) {
       setError("검색 조건을 확인해 주세요.");
       return;
@@ -311,6 +317,8 @@ export function KnowledgeView({
             subject: mode === "memory" ? subject.trim() || null : null,
             speaker: speaker.trim() || null,
             valid_at: validAt,
+            ...(mode === "source" && observedFrom !== null ? {observed_from: observedFrom} : {}),
+            ...(mode === "source" && observedUntil !== null ? {observed_until: observedUntil} : {}),
             cursor: null,
           };
     setSearching(true);
@@ -816,8 +824,13 @@ export function KnowledgeView({
               }}
             />
           </label>
+          {mode === "source" && <>
+            <p>자료에 기록된 관측 시각으로 좁혀요. 사실의 유효 기준 시각과 별개이며, 입력은 이 기기의 시간대를 사용해요.</p>
+            <label>기록 시각 시작 (포함)<input type="datetime-local" step="1" value={localDate(observedFrom)} onChange={event => {setObservedFrom(dateInput(event.target.value)); clearSearch()}}/></label>
+            <label>기록 시각 종료 (미포함)<input type="datetime-local" step="1" value={localDate(observedUntil)} onChange={event => {setObservedUntil(dateInput(event.target.value)); clearSearch()}}/></label>
+          </>}
           <label>
-            기준 시각 (선택)
+            유효 기준 시각 (선택)
             <input
               type="datetime-local"
               step="1"

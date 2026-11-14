@@ -111,6 +111,8 @@ Kakao 발송·전화 발신·Slack 쓰기·reply-all·첨부 메일 발송·미�
 
 F19의 대화 경로는 메시지 앞의 제한된 절대 날짜 지시를 원래 메시지 시간대에서 해석하여 기존 기억 유효기간으로 저장한다. 미래 시작 전과 종료일 이후의 현재 조회 제외, 날짜를 지정한 정정, 재시도·재시작과 이전 undated 계획 호환을 확인한다. 인식하는 미지원 시각 표현은 편집기로 안내하며 넓은 자연어 시간 이해를 보장하지 않는다. [동작과 예제](conversational-memory.md)·[검증](reviews/2026-11-15-dated-conversational-memory.md).
 
+F22는 [자료 기록 시각 필터](source-time-filter.md)를 API·읽기 도구·화면에서 지원한다. 시작은 포함하고 종료는 제외하며 원문 관측 시각과 사실 유효 시각을 구분한다. 현재 학습 절차에는 날짜 매개변수가 없으므로 기간을 고정한 조회는 공유/학습 근거로 쓰지 않는다. [검증](reviews/2026-11-15-source-time-filter.md).
+
 ## 시험 선정 규칙
 
 원본에서 정적으로 확인한 Python test 함수772개와 TypeScript test 선언215개는 전체 source 표면의 정적 수다. parametrize·dynamic tests·skip·과거 릴리스 실행 수와 같지 않다. 기존 backend1,121·UI150을 새 Rust 통과 수로 쓰지 않는다. 파일별 test 목록은 `audit/test-surfaces.tsv`에 역사적 근거로만 둔다. 기존112 test/support 파일은108 reference·4 exclude이며 자동 이식 대상은0개다. 새 검사는 [평가 계획](testing.md)과 [시나리오](../audit/evaluation-scenarios.tsv)의 사용자 결과·실제 결함·독립 oracle로 선정한다. 구현을 따라 쓴 검사·동일 CRUD 중복·고정 prompt 문구·폐기한 framework 검사는 버린다. F ID 연결은 누락 탐지이며 테스트 개수나 품질 증명이 아니다.

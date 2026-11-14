@@ -2219,6 +2219,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "moosuri-eval"
+version = "0.1.0-dev.1"
+dependencies = [
+ "axum",
+ "moosuri-agent",
+ "moosuri-core",
+ "moosuri-server",
+ "moosuri-store",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tower",
+ "uuid",
+]
+
+[[package]]
 name = "moosuri-server"
 version = "0.1.0-dev.1"
 dependencies = [

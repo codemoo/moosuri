@@ -73,7 +73,7 @@
 | F51 | 볼트 backup·복원·복제 · 선택 패키지 | `vault/{backup,journal,offhost}.py`, `deploy/vault/` | vault/CLI · P8/P9 | ciphertext도 별도 운영자 recipient로 outer encryption·old identity 보관·개인 master와 분리, 독립 latest journal, nonce/envelope 예약 복원, staged state 없으면 recovery_required, 실패 restore quarantine 유지 |
 | F52 | 비서 journal·backup·restore · 기본 | `journal.py`, `backup.py`, `offhost_backup.py`, `recovery.py` | store/CLI · P1/P9 | fsync/hashchain/head, snapshot watermark, offline backup identity/key ID·교체 전후 복원·key 누락 오류, encrypted pipe, SQLite online backup·WAL·필수 blob manifest/pin/암호화, 빈 data_dir 복원·누락/변조 거절, fresh quarantine DB, sessions/jobs/effects 격리, 최신 삭제 우선 |
 | F53 | 배포·drain·업데이트·제거 · 기본 | `deploy/linux/`, macOS installers, `services.py` | CLI/deploy · P0/P9/P10 | manifest/hash, 하나의 writer, DB 종료 확인·forced wrapper lock, forward schema, 코드 rollback/DB rollback 구분, 제거 기본은 data 보존 |
-| F54 | 진단·측정·평가 · 기본 | `metrics.py`, `agent/evaluations/`, all tests | test-support/xtask · P0~P10 | 단계 지연·사용량·실패 분모, synthetic/live/device 구분, disabled tracing, 원문 없는 export diagnostics, skipped DB tests를 통과로 세지 않음 |
+| F54 | 진단·측정·평가 · 기본 | `metrics.py`, `agent/evaluations/`, all tests | tools/moosuri-eval/xtask · P0~P10 | 단계 지연·사용량·실패 분모, synthetic/live/device 구분, disabled tracing, 원문 없는 export diagnostics, skipped DB tests를 통과로 세지 않음 |
 | F55 | 공개·기여·라이선스·재현 · 기본 | 기존 docs/locks/asset provenance | docs/xtask/deploy · P10 | 새 Git 이력·허용목록·비밀/권리 검사, signed release/checksum/SBOM, clean install/update/restore, 지원 범위·오류 보고 템플릿 |
 
 ## 추가 설치·다중 사용자·provider 계약

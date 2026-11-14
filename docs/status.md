@@ -23,6 +23,19 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·broker 실제 adapter/사용 흐름·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
+## 최근 수락한 단위 · 합성 결과 평가 실행기
+
+`cargo run --locked -p moosuri-eval`이 인증 HTTP → 실제 Runtime → 새 SQLite를 통과한다.
+메모리 정정/망각/재시작, 채팅 재접속과 중단, 저장 근거 계산·스킬 사용, durable 미션의
+계획/검증/재시작을 독립 상태·영수증으로 판정한다. 업무 완료·실패 처리·판정기 검증을
+별도로 집계하며 준비 실패·timeout과 미상 사용량을 숨기지 않는다.
+
+독립 검토에서 음수 결과를 양수로 인정하는 문제와 미션의 필수 인용 누락을 발견했다.
+원래 판정기에서 새 실패 검사를 재현하고 수정 후 재검토·Linux6개 공개 사례·16개
+판정기 대조 검사·Clippy·실제 CLI 보고서가 통과했다. 가짜 모델 회귀 검사이며 실제 모델
+품질·독립 holdout·이전 비서와의 동등성·32세계 pilot 성적은 아니다.
+[사용법](agent-evaluation.md)·[검증](reviews/2026-11-14-agent-evaluation.md).
+
 ## 최근 수락한 단위 · 볼트 credential broker 기반
 
 기기 연결·서명 인증, 계정별 제한된 로컬 권한, 원래 요청의 실행 확정/철회/영수증,
@@ -197,7 +210,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 
 | 계획 단계 | 현재 구현 | 아직 닫지 못한 종료 조건 |
 | --- | --- | --- |
-| P0 공개 기반 | 공개 저장소·Rust/React/Linux 빌드·기여/OpenSpec | 고정 비교 baseline·독립 평가 runner/grader |
+| P0 공개 기반 | 공개 저장소·Rust/React/Linux 빌드·기여/OpenSpec·합성 결과 runner/독립 grader | 고정 비교 baseline·넓은 사례/실모델·통계 평가 |
 | P1 영속 상태 | SQLite 격리·실행/외부 영수증·journal·봉인된 현재 복원 | ongoing/off-host journal·과거 복원 |
 | P2 대화 | 계정·설정·스트림·취소/재시도·개인 ChatGPT | 지원 구독의 전체 실행 범위·실계정 검증 |
 | P3 자료·기억 | 출처·기억 정정/망각·제한 추출·문서 | 장기/시간 사실·추출 품질의 독립 검증 |
@@ -210,8 +223,8 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P10 출시 | 개발 프리뷰와 공개 문서 | 간편 설치/update/uninstall·서명/SBOM·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
-두 단위의 수락 범위를 유지하며 남아 있는 P0 평가 기준과 P4 업무·학습 검증부터 의존순서대로
-진행한다. 새로운 내부 작업명을 제품 계획의 P 번호로 사용하지 않는다.
+P0 합성 결과 실행기·독립 판정기를 수락했고, 고정 비교 baseline과 넓은 품질 평가는 남는다.
+P4 업무·학습 검증을 이어서 진행한다. 새로운 내부 작업명을 제품 계획의 P 번호로 사용하지 않는다.
 CI는 사용자 지시에 따라 계속 비활성이다.
 
 ## 다음 구현과 출시까지 남은 일
@@ -220,7 +233,8 @@ CI는 사용자 지시에 따라 계속 비활성이다.
 닫는다. `선택` 연결/볼트 패키지도 v1 제공 대상이며 사용자의 설치 선택을 뜻한다.
 
 1. **P0 평가 기준·P1/P2 기초의 남은 계약**: source/config를 고정한 격리 baseline과
-   독립 상태/영수증 grader, 실패를 포함한 latency/usage 집계를 먼저 연결한다.
+   공통 fixture adapter를 구현한다. 초기 독립 상태/영수증 grader와 실패를 포함한 관측
+   latency/usage 집계는 구현했으며 넓은 사례·실모델·단계별 계측으로 확장한다.
    ongoing/off-host journal·과거 복구, 계정 삭제/outbox·지원 구독 실행 범위·gws 초대는
    해당 저장/연결 의존성과 함께 닫는다.
 2. **P3/P4 기억·학습·업무 수행**: 메모리/대화/미션/스킬의 독립 평가,

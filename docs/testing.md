@@ -1,10 +1,10 @@
 # 테스트·비서 능력 평가 계획
 
-현재는 검증 설계다. 아래 제품 테스트·모델 평가는 아직 실행하지 않았다. 실행 가능한 `xtask verify-plan`은 문서/추적 표만 검사한다. 기존 Python772/TS215 선언은 전수조사의 역사적 수이며 새 테스트 목표가 아니다. 기존 테스트를 그대로 옮기지 않는다.
+이 문서는 검증 방법과 전체 출시 평가 계획이다. 실제 Rust/React 계약 시험과 제한된 모델 관측은 [현재 상태](status.md)의 소스별 기록을 따른다. [합성 결과 실행기](agent-evaluation.md)는 실제 HTTP/Runtime/SQLite의 공개 회귀 세계와 독립 판정을 제공한다. 아래 전체 모델 평가·32세계 pilot·holdout·baseline 비열등 비교를 완료했다는 뜻은 아니다. `xtask verify-plan`은 문서/추적 표만 검사한다. 기존 Python772/TS215 선언은 전수조사의 역사적 수이며 새 테스트 목표가 아니다. 기존 테스트를 그대로 옮기지 않는다.
 
 ## 무엇을 남기고 무엇을 버릴지
 
-테스트는 **사용자에게 중요한 동작·발생 가능한 장애·실패를 판정할 독립 근거**가 있을 때만 만든다. 각 [시나리오](../audit/evaluation-scenarios.tsv)는 목적, 입력, 기대 결과, 실패 주입, 측정치, 관련 기능을 갖는다. 한 행은 시나리오 묶음이며 테스트 함수 수를 뜻하지 않는다. 모든 행은 planned다.
+테스트는 **사용자에게 중요한 동작·발생 가능한 장애·실패를 판정할 독립 근거**가 있을 때만 만든다. 각 [시나리오](../audit/evaluation-scenarios.tsv)는 목적, 입력, 기대 결과, 실패 주입, 측정치, 관련 기능을 갖는다. 한 행은 시나리오 묶음이며 테스트 함수 수를 뜻하지 않는다. 표의 planned는 전체 묶음의 수락 전 상태다. 부분 구현의 실제 증거는 현재 상태와 해당 검증 기록에서 구분한다.
 
 | 기존 테스트 유형 | 새 계획의 결정 |
 | --- | --- |
@@ -130,7 +130,7 @@ flaky는 rerun으로 숨기지 않는다. 원인·owner·수리 기한과 첫 �
 | P8~P9 | v1 vault/broker·crypto/restore·계정/provider/accounting 복원·host-local secret 없이 명시한 복구 입력만으로 key 교체 전후·필수 파일 복원·migration·실제 kill |
 | P10 | 가치 있는 regression 전부 + frozen holdout/성능 + clean install/기여/제안 카드 시나리오 |
 
-구현 후 예정 명령은 `cargo xtask test-contracts`, `eval --suite ... --profile ... --budget ...`, `bench --profile ...` 같은 단일 진입점으로 제공한다. 아직 명령을 구현했다고 안내하지 않는다. React는 typecheck/component/대표 browser suite를 연결한다. CI는 변경 경계의 빠른 검사를 실행하고 유료 모델/실계정은 제한된 trusted job에서 분리한다.
+현재 합성 회귀 진입점은 `cargo run --locked -p moosuri-eval -- --report /absolute/new-report.json`이다. 고정한 loopback provider·공개 세계·예산만 지원한다. `cargo xtask test-contracts`, 일반 `eval --suite ... --profile ... --budget ...`, `bench --profile ...`는 향후 통합안이며 구현한 명령으로 안내하지 않는다. React는 typecheck/component/대표 browser suite를 사용한다. CI는 사용자 지시로 꺼져 있다. 향후 CI를 다시 켜더라도 유료 모델/실계정은 별도 허용한 경로에서만 실행한다.
 
 결과는 run/source/fixture/evaluator digest, profile, 적용·제외 이유, planned/executed/pass/fail/not-run, 단계별 postcondition, violations, paired 구간, p50/p95, usage/cost unknown, artifacts digest를 담는다. raw 모델/개인 내용·credential/hidden reasoning을 일반 로그나 공개 artifact에 넣지 않는다. 합성 replay도 기본 metadata report를 공개하고 필요한 실패 trace만 권리/비밀 검토 후 제한적으로 보존한다. `docs/status.md`가 실제 구현/시험 결과의 정본이며 이 문서는 방법의 정본이다.
 

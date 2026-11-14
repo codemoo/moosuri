@@ -146,6 +146,15 @@ These commands work before `--data-dir` handling and need no installation or ser
 
 Ordinary repository paths are allowed. Existing destinations, `..`, symlink components and installation-data paths are rejected. `check` accepts exactly the documented four bounded regular nonexecutable files and reports compatibility, not safety or task-quality certification. It performs no install, model call, Git operation or publishing. Follow your normal edit/review/commit/PR process; existing curated pins are unchanged. See [community authoring](../community/README.md#local-authoring).
 
+## Synthetic outcome evaluation
+
+`cargo run --locked -p moosuri-eval -- --report /absolute/new-report.json` runs
+fresh synthetic HTTP/Runtime/SQLite worlds and an independent state/receipt grader.
+It needs no model login or production data. Missing output/receipt, ownership errors
+and failed setup remain visible; task completion and expected failure handling have
+separate denominators. This is a public contract regression, not real-model quality,
+a blind holdout or the legacy comparison baseline. See [evaluation](agent-evaluation.md).
+
 ## Local verification
 
 CI/Actions are disabled at the owner's request. Run locally before committing a

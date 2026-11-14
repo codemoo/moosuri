@@ -19,4 +19,4 @@ None.
 
 ## Impact
 
-R23/R24, F54 and all feature-to-scenario links. See [testing](../../../docs/testing.md), [examples](../../../docs/test-examples.md) and [scenario catalog](../../../audit/evaluation-scenarios.tsv). Only the planning/checker artifacts are implemented in this preparation; the evaluation runtime remains pending.
+R23/R24, F54 and all feature-to-scenario links. See [testing](../../../docs/testing.md), [examples](../../../docs/test-examples.md) and [scenario catalog](../../../audit/evaluation-scenarios.tsv). The initial `moosuri-eval` runtime executes a bounded public regression subset through authenticated HTTP, Runtime and fresh SQLite, with independent state/receipt grading and negative controls. It does not establish the legacy baseline, semantic quality,32-world pilot, non-inferiority or full scenario acceptance. See [runtime scope](../../../docs/agent-evaluation.md).

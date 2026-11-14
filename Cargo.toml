@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "tools/moosuri-eval",
   "crates/moosuri-credential-broker",
   "crates/moosuri-documents",
   "crates/moosuri-vault-wasm",

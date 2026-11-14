@@ -156,6 +156,20 @@ pub fn router(db: database::Database, adapter: Adapter, config: Config) -> Route
         config,
         jobs: Arc::new(tokio::sync::Semaphore::new(2)),
     };
+    let delivery = Arc::downgrade(&state.db);
+    let adapter = state.adapter.clone();
+    // One bounded event per tick. Lost ACKs replay the exact durable event on
+    // restart; an unavailable assistant leaves delivery pending, never complete.
+    tokio::spawn(async move {
+        loop {
+            let Some(db) = delivery.upgrade() else {
+                break;
+            };
+            let _ = deliver_lifecycle(&db, &adapter).await;
+            drop(db);
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
     Router::new()
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
         .route("/public/config", get(public_config))
@@ -174,6 +188,27 @@ pub fn router(db: database::Database, adapter: Adapter, config: Config) -> Route
         .layer(DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn_with_state(state.clone(), boundary))
         .with_state(state)
+}
+pub async fn deliver_lifecycle(
+    db: &Arc<Mutex<database::Database>>,
+    adapter: &Adapter,
+) -> Result<()> {
+    let event = adapter.call(&AuthorityRequest::LifecycleNext).await?;
+    let id = event.operation.ok_or(Error::Unavailable)?;
+    let action = event.digest.ok_or(Error::Unavailable)?;
+    db.lock()
+        .map_err(|_| Error::Unavailable)?
+        .lifecycle(id, &event.owner, &action)?;
+    let ack = adapter
+        .call(&AuthorityRequest::LifecycleAck { event: id })
+        .await?;
+    if ack.owner != event.owner
+        || ack.operation != Some(id)
+        || ack.digest.as_deref() != Some(&action)
+    {
+        return Err(Error::Unavailable);
+    }
+    Ok(())
 }
 async fn boundary(State(s): State<Service>, request: Request, next: Next) -> Response {
     if request

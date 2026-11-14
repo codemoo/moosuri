@@ -4,7 +4,7 @@ The separate ciphertext service supports an **offline, destructive cutover of it
 exact current checkpoint**. Stop the service first. This is distinct from the
 [user-local encrypted item archive](vault-archive.md), the assistant's backup,
 and general disaster recovery. Historical rollback, an independently current
-off-host journal, unattended backup, old-v1 migration, account deletion/outbox,
+off-host journal, unattended backup, old-v1 migration,
 credential broker and independent signed-client distribution remain separate.
 No user master password, recovery key, decrypted item or assistant adapter key is
 needed or exported.
@@ -37,7 +37,7 @@ and exact journal are encrypted with age0.11.5 X25519 using the existing library
 The version1 binary plaintext framing has a fixed magic, bounded manifest and
 two fixed length-delimited files, SQLite followed by journal; it contains no
 caller-selected paths or tar entries. The manifest binds source/checkpoint UUID,
-schema1 journal sequence/head and exact file byte sizes/SHA256. Header/item
+schema2 journal sequence/head and exact file byte sizes/SHA256. Header/item
 ciphertext, historical receipts, deleted-item tombstones, nonce reservations and
 encrypted pending candidate bodies are retained. Outer encryption also protects
 metadata and session digests inside the snapshot. Unlock secrets, private backup
@@ -68,7 +68,7 @@ fixed framing/bounds and every file hash. It rejects missing, ahead, truncated o
 mismatched journal/DB evidence, unsupported schema or unexpected SQLite schema.
 It runs SQLite integrity/FK checks, then recomputes every Prepare/Adopt/Cancel
 through the actual storage CAS/nonce APIs and compares every ciphertext/history,
-operation receipt/status and nonce reservation row. Session-close journal entries
+operation receipt/status and nonce reservation row. Lifecycle journal entries are semantically replayed and owner deletion tombstones survive restore; older ciphertext cannot be adopted for a deleted owner. Historical encrypted intent/checkpoint bytes remain subject to retention. Session-close journal entries
 are checked by the journal chain but carry no restored execution authority.
 Owners without ciphertext remain non-authoritative namespace anchors. Semantic replay uses private ciphertext staging after the source seal; a detected semantic inconsistency therefore leaves that source retired and preserves its original evidence.
 

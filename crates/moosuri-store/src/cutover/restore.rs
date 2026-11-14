@@ -456,6 +456,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0040_mail_workflows.sql"
         ))?;
     }
+    if captured < 41 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0041_account_deletion.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -502,6 +507,11 @@ fn quarantine(
     }
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     migrate(&tx, m.seal.schema)?;
+    for record in &auth.records {
+        if record.delete {
+            crate::accounts::mark_deleted(&tx, &record.account, record.epoch)?;
+        }
+    }
     for (id, epoch, _) in &epochs {
         tx.execute(
             "UPDATE accounts SET auth_epoch=?1,recovery_required=1 WHERE id=?2",

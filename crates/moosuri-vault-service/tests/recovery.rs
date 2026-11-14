@@ -26,7 +26,8 @@ fn empty_inventory() -> String {
         .collect()
 }
 fn setup(db: &mut Database, o: &Owner) -> moosuri_vault_core::ActiveVault {
-    db.create_session("synthetic-cookie", o).unwrap();
+    db.create_session(&format!("synthetic-cookie-{}", o.account), o)
+        .unwrap();
     let binding = Binding {
         owner_id: o.account,
         tenant_id: o.tenant,
@@ -145,7 +146,10 @@ fn exact_restore_quarantines_pending_sessions_preserves_receipts_tombstones_and_
     ];
     restore(&destination, &k).unwrap();
     let mut db = Database::open(&destination).unwrap();
-    assert!(db.session("synthetic-cookie").is_err());
+    assert!(
+        db.session(&format!("synthetic-cookie-{}", o.account))
+            .is_err()
+    );
     assert_eq!(
         serde_json::to_vec(&db.state(&o).unwrap().header).unwrap(),
         source_state
@@ -455,4 +459,43 @@ fn reserved_stage_destination_is_rejected_before_publication_and_preserves_input
     for (path, bytes) in [&k.archive, &k.head, &k.identity].into_iter().zip(inputs) {
         assert_eq!(fs::read(path).unwrap(), bytes);
     }
+}
+
+#[test]
+fn sealed_restore_replays_owner_deletion_without_restoring_ciphertext_or_authority() {
+    let tmp = tempfile::tempdir().unwrap();
+    let k = kit(tmp.path());
+    let source = tmp.path().join("source");
+    let dest = tmp.path().join("destination");
+    let mut db = Database::open(&source).unwrap();
+    let mut a = owner();
+    let b = owner();
+    setup(&mut db, &a);
+    setup(&mut db, &b);
+    let retained = serde_json::to_vec(&db.state(&b).unwrap().header).unwrap();
+    a.epoch += 1;
+    let event = Uuid::new_v4();
+    db.lifecycle(event, &a, "delete").unwrap();
+    drop(db);
+    capture(&source, &k).unwrap();
+    restore(&dest, &k).unwrap();
+    let mut db = Database::open(&dest).unwrap();
+    a.epoch += 30;
+    assert!(matches!(
+        db.create_session("synthetic-new-session", &a),
+        Err(Error::Unauthorized)
+    ));
+    assert_eq!(
+        serde_json::to_vec(&db.state(&b).unwrap().header).unwrap(),
+        retained
+    );
+    db.lifecycle(
+        event,
+        &Owner {
+            epoch: a.epoch - 30,
+            ..a.clone()
+        },
+        "delete",
+    )
+    .unwrap();
 }

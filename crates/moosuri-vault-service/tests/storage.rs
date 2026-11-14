@@ -20,7 +20,8 @@ fn empty_inventory() -> String {
         .collect()
 }
 fn setup(db: &mut Database, o: &Owner) -> moosuri_vault_core::ActiveVault {
-    db.create_session("synthetic-cookie", o).unwrap();
+    db.create_session(&format!("synthetic-cookie-{}", o.account), o)
+        .unwrap();
     let binding = Binding {
         owner_id: o.account,
         tenant_id: o.tenant,
@@ -375,4 +376,67 @@ fn cancelled_and_lost_ack_rotations_keep_old_state_until_exact_restart_commit() 
             .open_item(&before.items[0])
             .is_err()
     );
+}
+
+#[test]
+fn lifecycle_deletion_is_owner_scoped_idempotent_and_fences_late_adoptions_after_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("vault");
+    let mut db = Database::open(&path).unwrap();
+    let a = owner();
+    let b = owner();
+    let mut v = setup(&mut db, &a);
+    setup(&mut db, &b);
+    let state = db.state(&a).unwrap();
+    let id = Uuid::new_v4();
+    let operation = Operation::Put {
+        id,
+        expected_header: state.header_sha256,
+        expected_revision: 0,
+        item: v
+            .seal_item(Uuid::new_v4(), 1, &fields(), &mut OsEntropy)
+            .unwrap(),
+    };
+    let receipt = db.prepare(&a, operation).unwrap();
+    let event = Uuid::new_v4();
+    let mut deleted = a.clone();
+    deleted.epoch += 1;
+    db.lifecycle(event, &deleted, "delete").unwrap();
+    db.lifecycle(event, &deleted, "delete").unwrap();
+    assert!(db.lifecycle(event, &b, "delete").is_err());
+    assert!(matches!(
+        db.commit(&a, id, &receipt.payload_sha256),
+        Err(Error::Unauthorized)
+    ));
+    assert!(db.state(&a).is_err());
+    assert!(db.state(&b).unwrap().header.is_some());
+    let conn = rusqlite::Connection::open(path.join("vault.sqlite")).unwrap();
+    for table in [
+        "vaults",
+        "headers",
+        "items",
+        "item_versions",
+        "operations",
+        "nonce_ledger",
+        "sessions",
+    ] {
+        assert_eq!(
+            conn.query_row(
+                &format!("SELECT count(*) FROM {table} WHERE tenant=?1 AND owner=?2"),
+                rusqlite::params![a.tenant.to_string(), a.account.to_string()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+    drop(conn);
+    drop(db);
+    let mut db = Database::open(&path).unwrap();
+    deleted.epoch += 20;
+    assert!(matches!(
+        db.create_session("new-cookie-with-old-owner", &deleted),
+        Err(Error::Unauthorized)
+    ));
+    assert!(db.state(&b).unwrap().header.is_some());
 }

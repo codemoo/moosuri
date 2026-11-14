@@ -8,6 +8,7 @@ use std::{
 };
 use uuid::Uuid;
 const SIZE: usize = 104;
+const DELETE_MAGIC: &[u8; 8] = b"MSAUTH02";
 const MAGIC: &[u8; 8] = b"MSAUTH01";
 #[cfg(test)]
 thread_local! { static FAIL_OPEN_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
@@ -16,6 +17,7 @@ pub(crate) struct Record {
     pub seq: i64,
     pub account: String,
     pub epoch: i64,
+    pub delete: bool,
     pub hash: [u8; 32],
 }
 pub(crate) struct Journal {
@@ -39,7 +41,7 @@ impl Journal {
             let seq = i64::from_be_bytes(bytes[8..16].try_into().unwrap());
             let epoch = i64::from_be_bytes(bytes[32..40].try_into().unwrap());
             let hash: [u8; 32] = Sha256::digest(&bytes[..72]).into();
-            if &bytes[..8] != MAGIC
+            if (&bytes[..8] != MAGIC && &bytes[..8] != DELETE_MAGIC)
                 || seq <= 0
                 || seq as u64 != index + 1
                 || epoch <= 0
@@ -54,6 +56,7 @@ impl Journal {
                 account,
                 epoch,
                 hash,
+                delete: &bytes[..8] == DELETE_MAGIC,
             });
             previous = hash;
         }
@@ -67,9 +70,15 @@ impl Journal {
         Ok(Self { file, records })
     }
     pub fn append(&mut self, account: &str, epoch: i64) -> Result<Record> {
+        self.append_kind(account, epoch, false)
+    }
+    pub fn append_delete(&mut self, account: &str, epoch: i64) -> Result<Record> {
+        self.append_kind(account, epoch, true)
+    }
+    fn append_kind(&mut self, account: &str, epoch: i64, delete: bool) -> Result<Record> {
         let mut bytes = [0; SIZE];
         let seq = i64::try_from(self.records.len()).map_err(|_| StoreError::Corrupt)? + 1;
-        bytes[..8].copy_from_slice(MAGIC);
+        bytes[..8].copy_from_slice(if delete { DELETE_MAGIC } else { MAGIC });
         bytes[8..16].copy_from_slice(&seq.to_be_bytes());
         bytes[16..32].copy_from_slice(
             Uuid::parse_str(account)
@@ -91,6 +100,7 @@ impl Journal {
             seq,
             account: account.to_owned(),
             epoch,
+            delete,
             hash,
         };
         self.records.push(record.clone());

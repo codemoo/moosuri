@@ -210,7 +210,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 40;
+const CURRENT_SCHEMA_VERSION: i64 = 41;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -624,6 +624,13 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 41 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0041_account_deletion.sql"),
+                "COMMIT;"
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         audio::restart(&conn)?;
         calendar::restart(&conn)?;
@@ -654,6 +661,7 @@ impl Store {
         database.replay_journal()?;
         knowledge::replay(&mut database)?;
         destructive_intents::replay(&mut database)?;
+        accounts::finish_deletions(&mut database.conn)?;
         chat::restart(&mut database.conn)?;
         let dummy_hash = DUMMY_HASH.to_owned();
         let (sender, mut receiver) = mpsc::channel::<Command>(64);
@@ -821,6 +829,7 @@ impl Store {
             let changed = tx.execute("UPDATE accounts SET password_hash=?1, must_change_password=0, temporary_expires_at=NULL, auth_epoch=?2, management_revision=management_revision+1 WHERE id=?3 AND auth_epoch=?4 AND recovery_required=0", params![hash, next_epoch, current.account.id, current.epoch])?;
             if changed != 1 { return Err(StoreError::Unauthorized); }
             tx.execute("DELETE FROM sessions WHERE tenant_id=?1 AND account_id=?2", params![current.tenant.0, current.account.id])?;
+            accounts::enqueue_lifecycle(&tx, &current.account.id, next_epoch, false)?;
             tx.execute("UPDATE store_meta SET journal_seq=?1, journal_head=?2 WHERE singleton=1", params![record.seq, record.hash.as_slice()])?;
             let account = load_login(&tx, &current.account.email)?.ok_or(StoreError::Corrupt)?;
             let result = issue_session(&tx, account)?;
@@ -1075,6 +1084,9 @@ impl Database {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         for record in self.journal.records.iter().skip(seq as usize) {
+            if record.delete {
+                accounts::mark_deleted(&tx, &record.account, record.epoch)?;
+            }
             if tx.execute("UPDATE accounts SET auth_epoch=MAX(auth_epoch,?1), recovery_required=1 WHERE id=?2",params![record.epoch,record.account])?!=1 { return Err(StoreError::Corrupt); }
             tx.execute(
                 "DELETE FROM sessions WHERE account_id=?1",
@@ -1084,6 +1096,14 @@ impl Database {
                 "UPDATE store_meta SET journal_seq=?1,journal_head=?2 WHERE singleton=1",
                 params![record.seq, record.hash.as_slice()],
             )?;
+        }
+        // Reapply every deletion, including one reflected in an older snapshot's
+        // watermark. New revocation records must never make a deleted user live.
+        for record in &self.journal.records {
+            if record.delete {
+                accounts::mark_deleted(&tx, &record.account, record.epoch)?;
+            }
+            accounts::enqueue_lifecycle(&tx, &record.account, record.epoch, record.delete)?;
         }
         tx.commit()?;
         Ok(())

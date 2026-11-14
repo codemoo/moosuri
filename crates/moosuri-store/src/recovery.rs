@@ -135,7 +135,7 @@ pub async fn recover_account(
 fn locked_epoch(conn: &Connection, account: &str) -> Result<i64> {
     let row: Option<(i64, bool)> = conn
         .query_row(
-            "SELECT auth_epoch,recovery_required FROM accounts WHERE id=?1",
+            "SELECT auth_epoch,recovery_required FROM accounts WHERE id=?1 AND deleted=0",
             [account],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -198,6 +198,7 @@ fn apply(db: &mut Database, account: &str, role: Role, hash: String) -> Result<(
         return Err(StoreError::Conflict);
     }
     tx.execute("DELETE FROM sessions WHERE account_id=?1", [account])?;
+    crate::accounts::enqueue_lifecycle(&tx, account, epoch, false)?;
     tx.execute(
         "UPDATE store_meta SET journal_seq=?1,journal_head=?2 WHERE singleton=1",
         params![record.seq, record.hash.as_slice()],

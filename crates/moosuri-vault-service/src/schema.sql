@@ -8,5 +8,6 @@ CREATE TABLE items(tenant TEXT NOT NULL,owner TEXT NOT NULL,item TEXT NOT NULL,r
 CREATE TABLE item_versions(tenant TEXT NOT NULL,owner TEXT NOT NULL,item TEXT NOT NULL,revision INTEGER NOT NULL,ciphertext BLOB NOT NULL,PRIMARY KEY(tenant,owner,item,revision),FOREIGN KEY(tenant,owner,item) REFERENCES items(tenant,owner,item) DEFERRABLE INITIALLY DEFERRED) STRICT;
 CREATE TABLE operations(tenant TEXT NOT NULL,owner TEXT NOT NULL,id TEXT NOT NULL,epoch INTEGER NOT NULL,body BLOB NOT NULL,receipt BLOB NOT NULL,status TEXT NOT NULL CHECK(status IN('pending','committed','conflict','aborted')),PRIMARY KEY(tenant,owner,id),FOREIGN KEY(tenant,owner) REFERENCES owners(tenant,owner)) STRICT;
 CREATE TABLE nonce_ledger(tenant TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,domain TEXT NOT NULL,nonce TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(tenant,owner,generation,domain,nonce),FOREIGN KEY(tenant,owner) REFERENCES owners(tenant,owner)) STRICT;
-PRAGMA user_version=1;
+CREATE TABLE lifecycle(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,owner TEXT NOT NULL,installation TEXT NOT NULL,epoch INTEGER NOT NULL,action TEXT NOT NULL CHECK(action IN('revoke','delete'))) STRICT;
+PRAGMA user_version=2;
 COMMIT;

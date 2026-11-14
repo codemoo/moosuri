@@ -137,6 +137,7 @@ pub fn typescript_contract() -> String {
         CalendarAction::decl(),
         AccountStatus::decl(),
         ManagedAccount::decl(),
+        AccountDeletionStatus::decl(),
         AccountManagementAction::decl(),
         AccountManagementInput::decl(),
         AccountManagementReceipt::decl(),

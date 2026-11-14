@@ -15,6 +15,11 @@ pub struct Owner {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AuthorityRequest {
+    /// Service-only durable lifecycle delivery; never admits secret work.
+    LifecycleNext,
+    LifecycleAck {
+        event: Uuid,
+    },
     Exchange {
         handoff: String,
         vault_origin: String,

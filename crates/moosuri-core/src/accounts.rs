@@ -19,6 +19,19 @@ pub struct ManagedAccount {
     pub recovery_required: bool,
     #[ts(type = "number | null")]
     pub temporary_expires_at: Option<i64>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deletion: Option<AccountDeletionStatus>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault_delivery: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct AccountDeletionStatus {
+    pub local_complete: bool,
+    pub vault_acknowledged: bool,
+    pub encrypted_history_retained: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -29,6 +42,7 @@ pub enum AccountManagementAction {
     ChangeRole { role: Role },
     ResetPassword,
     EndSessions,
+    Delete,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

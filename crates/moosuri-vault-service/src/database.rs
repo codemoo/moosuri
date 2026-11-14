@@ -39,10 +39,69 @@ pub(crate) enum Intent {
         operation: Operation,
         digest: String,
     },
+    Lifecycle {
+        event: uuid::Uuid,
+        owner: Owner,
+        action: String,
+    },
     Close {
         session: String,
     },
 }
+fn apply_lifecycle(
+    tx: &Connection,
+    event: uuid::Uuid,
+    owner: &Owner,
+    action: &str,
+    next: (i64, [u8; 32]),
+) -> Result<()> {
+    tx.execute_batch("PRAGMA defer_foreign_keys=ON;")?;
+    let (t, a) = owner_key(owner);
+    tx.execute(
+        "INSERT INTO lifecycle VALUES(?1,?2,?3,?4,?5,?6)",
+        params![
+            event.to_string(),
+            t,
+            a,
+            owner.installation.to_string(),
+            owner.epoch,
+            action
+        ],
+    )?;
+    tx.execute(
+        "DELETE FROM sessions WHERE tenant=?1 AND owner=?2 AND (epoch<?3 OR ?4='delete')",
+        params![t, a, owner.epoch, action],
+    )?;
+    if action == "delete" {
+        for table in [
+            "item_versions",
+            "items",
+            "headers",
+            "vaults",
+            "operations",
+            "nonce_ledger",
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE tenant=?1 AND owner=?2"),
+                params![t, a],
+            )?;
+        }
+    } else {
+        let pending=tx.prepare("SELECT id,receipt FROM operations WHERE tenant=?1 AND owner=?2 AND epoch<?3 AND status='pending'")?.query_map(params![t,a,owner.epoch],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        for (id, bytes) in pending {
+            let mut receipt: Receipt =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Unavailable)?;
+            receipt.state = "aborted".into();
+            tx.execute("UPDATE operations SET status='aborted',receipt=?1 WHERE tenant=?2 AND owner=?3 AND id=?4",params![json(&receipt)?,t,a,id])?;
+        }
+    }
+    tx.execute(
+        "UPDATE meta SET sequence=?1,head=?2",
+        params![next.0, next.1.as_slice()],
+    )?;
+    Ok(())
+}
+
 fn private_file(path: &Path, create: bool) -> Result<File> {
     let mut opts = OpenOptions::new();
     opts.read(true)
@@ -174,6 +233,10 @@ impl Database {
             if db_id != id.to_string() {
                 return Err(Error::Unavailable);
             }
+            let mut tail = Vec::new();
+            if db_seq < 0 || (db_seq == 0 && db_head != [0; 32]) {
+                return Err(Error::Unavailable);
+            }
             loop {
                 let mut len = [0; 4];
                 let n = journal.read(&mut len)?;
@@ -198,16 +261,54 @@ impl Database {
                 if got != want {
                     return Err(Error::Unavailable);
                 }
-                let _: Intent = serde_json::from_slice(&bytes).map_err(|_| Error::Unavailable)?;
+                let intent: Intent =
+                    serde_json::from_slice(&bytes).map_err(|_| Error::Unavailable)?;
                 head = got;
                 sequence = sequence.checked_add(1).ok_or(Error::Limit)?;
+                if sequence == db_seq && db_head != head {
+                    return Err(Error::Unavailable);
+                }
+                if sequence > db_seq {
+                    if !matches!(intent, Intent::Lifecycle { .. }) || tail.len() >= 4096 {
+                        return Err(Error::Unavailable);
+                    }
+                    tail.push((sequence, head, intent));
+                }
             }
-            if db_seq != sequence || db_head != head {
+            if db_seq > sequence || (db_seq == sequence && db_head != head) {
                 return Err(Error::Unavailable);
             }
             let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-            if version != 1 {
+            if version == 1 {
+                conn.execute_batch(concat!(
+                    "BEGIN IMMEDIATE;",
+                    include_str!("lifecycle.sql"),
+                    "COMMIT;"
+                ))?;
+            } else if version != 2 {
                 return Err(Error::Unavailable);
+            }
+            // General ciphertext crash gaps still fail closed. Lifecycle intents
+            // are unambiguous monotonic revocations and are safe to finish before
+            // admission; a lost ACK never loses its durable erasure fence.
+            if !tail
+                .iter()
+                .all(|(_, _, i)| matches!(i, Intent::Lifecycle { .. }))
+            {
+                return Err(Error::Unavailable);
+            }
+            journal.sync_all()?;
+            for (seq, head, intent) in tail {
+                if let Intent::Lifecycle {
+                    event,
+                    owner,
+                    action,
+                } = intent
+                {
+                    let tx = conn.unchecked_transaction()?;
+                    apply_lifecycle(&tx, event, &owner, &action, (seq, head))?;
+                    tx.commit()?;
+                }
             }
         }
         if let Some(parent) = path.parent() {
@@ -221,6 +322,55 @@ impl Database {
             _lock: lock,
             poisoned: false,
         })
+    }
+    fn ready_owner(&self, owner: &Owner) -> Result<()> {
+        self.ready()?;
+        let fenced: bool = self.conn.query_row("SELECT EXISTS(SELECT 1 FROM lifecycle WHERE tenant=?1 AND owner=?2 AND (action='delete' OR epoch>?3))",params![owner.tenant.to_string(),owner.account.to_string(),owner.epoch],|r|r.get(0))?;
+        if fenced {
+            Err(Error::Unauthorized)
+        } else {
+            Ok(())
+        }
+    }
+    /// The journal fsync precedes deletion and ACK. Exact retries reuse the
+    /// durable event; neither admin nor adapter receives any decrypt capability.
+    pub fn lifecycle(&mut self, event: uuid::Uuid, owner: &Owner, action: &str) -> Result<()> {
+        self.ready()?;
+        if event.is_nil() || !matches!(action, "revoke" | "delete") {
+            return Err(Error::Invalid);
+        }
+        let previous: Option<(String, String, String, i64, String)> = self
+            .conn
+            .query_row(
+                "SELECT tenant,owner,installation,epoch,action FROM lifecycle WHERE id=?1",
+                [event.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?;
+        let expected = (
+            owner.tenant.to_string(),
+            owner.account.to_string(),
+            owner.installation.to_string(),
+            owner.epoch,
+            action.to_string(),
+        );
+        if let Some(old) = previous {
+            return if old == expected {
+                Ok(())
+            } else {
+                Err(Error::Conflict)
+            };
+        }
+        let next = self.append(&Intent::Lifecycle {
+            event,
+            owner: owner.clone(),
+            action: action.into(),
+        })?;
+        let tx = self.conn.transaction()?;
+        apply_lifecycle(&tx, event, owner, action, next)?;
+        tx.commit()?;
+        self.adopt_head(next);
+        Ok(())
     }
     fn ready(&self) -> Result<()> {
         if self.poisoned {
@@ -260,7 +410,7 @@ impl Database {
         self.poisoned = false;
     }
     pub fn create_session(&mut self, cookie: &str, owner: &Owner) -> Result<()> {
-        self.ready()?;
+        self.ready_owner(owner)?;
         self.conn
             .execute("DELETE FROM sessions WHERE expires_at<?1", [now()?])?;
         self.conn.execute(
@@ -310,7 +460,7 @@ impl Database {
     }
     /// Read the admitted key lifetime without loading the encrypted inventory.
     pub fn head(&self, owner: &Owner) -> Result<protocol::VaultHead> {
-        self.ready()?;
+        self.ready_owner(owner)?;
         let (tenant, account) = owner_key(owner);
         let row: Option<(String, Vec<u8>)> = self
             .conn
@@ -344,7 +494,7 @@ impl Database {
         }
     }
     pub fn state(&self, owner: &Owner) -> Result<VaultState> {
-        self.ready()?;
+        self.ready_owner(owner)?;
         let (tenant, account) = owner_key(owner);
         let row: Option<(String, Vec<u8>)> = self
             .conn
@@ -390,7 +540,7 @@ impl Database {
         })
     }
     pub fn operation(&self, owner: &Owner, id: uuid::Uuid) -> Result<(Operation, Receipt)> {
-        self.ready()?;
+        self.ready_owner(owner)?;
         let (t, a) = owner_key(owner);
         let (body, receipt): (Vec<u8>, Vec<u8>) = self
             .conn
@@ -844,4 +994,42 @@ fn item_nonces(
         hash(&item.to_json().map_err(|_| Error::Invalid)?),
     ));
     Ok(())
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    #[test]
+    fn fsynced_lifecycle_tail_is_replayed_before_admission_after_a_crash_gap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("vault");
+        let mut db = Database::open(&root).unwrap();
+        let owner = Owner {
+            account: uuid::Uuid::new_v4(),
+            tenant: uuid::Uuid::new_v4(),
+            installation: uuid::Uuid::new_v4(),
+            epoch: 1,
+        };
+        db.create_session("synthetic-cookie", &owner).unwrap();
+        let event = uuid::Uuid::new_v4();
+        db.append(&Intent::Lifecycle {
+            event,
+            owner: owner.clone(),
+            action: "delete".into(),
+        })
+        .unwrap();
+        drop(db);
+        let mut restarted = Database::open(&root).unwrap();
+        assert!(matches!(
+            restarted.session("synthetic-cookie"),
+            Err(Error::Unauthorized)
+        ));
+        assert!(matches!(
+            restarted.create_session("new-cookie", &owner),
+            Err(Error::Unauthorized)
+        ));
+        restarted.lifecycle(event, &owner, "delete").unwrap();
+        drop(restarted);
+        Database::open(&root).unwrap();
+    }
 }

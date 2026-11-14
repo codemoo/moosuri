@@ -306,3 +306,83 @@ async fn online_actual_session_cookie_origin_owner_and_unavailable_authority_fai
         .unwrap();
     assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[tokio::test]
+async fn exact_lifecycle_delivery_ack_retries_and_unavailable_vault_stays_pending() {
+    use moosuri_vault_service::http::deliver_lifecycle;
+    use std::sync::{Arc, Mutex};
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(&tmp.path().join("assistant")).unwrap();
+    let password = "Synthetic lifecycle admin password";
+    store
+        .bootstrap(
+            "Synthetic admin".into(),
+            "lifecycle-admin@example.test".into(),
+            password.into(),
+            false,
+        )
+        .await
+        .unwrap();
+    let admin = store
+        .login("lifecycle-admin@example.test".into(), password.into())
+        .await
+        .unwrap()
+        .user;
+    let invited = store
+        .create_user(
+            &admin,
+            "Synthetic deleted".into(),
+            "lifecycle-member@example.test".into(),
+        )
+        .await
+        .unwrap();
+    let managed = store
+        .managed_accounts(&admin)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.user.id == invited.user.id)
+        .unwrap();
+    let input=serde_json::from_value(json!({"request_id":uuid::Uuid::new_v4(),"expected_revision":managed.revision,"action":{"kind":"delete"}})).unwrap();
+    let prepared = store
+        .prepare_account_management(&admin, invited.user.id.clone(), input)
+        .await
+        .unwrap();
+    store.apply_account_management(prepared).await.unwrap();
+    let vault = Arc::new(Mutex::new(
+        Database::open(&tmp.path().join("vault")).unwrap(),
+    ));
+    let unavailable = Adapter::new("http://127.0.0.1:1/internal/v1/vault", KEY.into()).unwrap();
+    assert!(deliver_lifecycle(&vault, &unavailable).await.is_err());
+    assert!(
+        !store
+            .managed_accounts(&admin)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|m| m.user.id == invited.user.id)
+            .unwrap()
+            .deletion
+            .unwrap()
+            .vault_acknowledged
+    );
+    let internal = moosuri_server::vault::adapter_router(store.clone(), KEY).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, internal).await.unwrap() });
+    let adapter = Adapter::new(&format!("http://{address}/internal/v1/vault"), KEY.into()).unwrap();
+    deliver_lifecycle(&vault, &adapter).await.unwrap();
+    assert!(
+        store
+            .managed_accounts(&admin)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|m| m.user.id == invited.user.id)
+            .unwrap()
+            .deletion
+            .unwrap()
+            .vault_acknowledged
+    );
+    server.abort();
+}

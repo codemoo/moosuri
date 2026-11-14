@@ -41,3 +41,13 @@ it("synchronous repeated clicks own one request even before React renders busy",
   let resolve!:(r:Response)=>void;const fetch=vi.fn(()=>new Promise<Response>(r=>resolve=r));vi.stubGlobal("fetch",fetch);render(<AccountControls {...props()}/>);open();
   const button=screen.getByRole("button",{name:"Reset password"});act(()=>{button.click();button.click();});expect(fetch).toHaveBeenCalledTimes(1);await act(async()=>resolve(result("synthetic-new-password")));
 });
+it("shows irreversible deletion scope and never reports an offline vault as deleted",async()=>{
+ const fetch=vi.fn(async(_path:RequestInfo|URL,_input?:RequestInit)=>result());vi.stubGlobal("fetch",fetch);const p=props();const view=render(<AccountControls {...p}/>);open();
+ fireEvent.click(screen.getByRole("button",{name:"Delete account"}));expect(fetch).not.toHaveBeenCalled();
+ expect(screen.getByRole("group",{name:"Permanent account deletion"})).toHaveTextContent(/private conversations, sources, files and saved credentials/);
+ fireEvent.click(screen.getByRole("button",{name:"Permanently delete account"}));await waitFor(()=>expect(p.onChanged).toHaveBeenCalled());
+ expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).action.kind).toBe("delete");
+ view.rerender(<AccountControls {...p} target={{...target,revision:3,recovery_required:true,deletion:{local_complete:true,vault_acknowledged:false,encrypted_history_retained:true}}}/>);
+ expect(screen.getByText(/Separate vault deletion:/)).toHaveTextContent(/pending/);expect(screen.queryByRole("button",{name:"Resume account"})).not.toBeInTheDocument();
+ expect(screen.getByText(/Encrypted historical journals/)).toBeInTheDocument();
+});

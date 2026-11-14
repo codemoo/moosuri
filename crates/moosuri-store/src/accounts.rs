@@ -1,8 +1,8 @@
 //! Administrator mutations are serialized with authentication-epoch adoption.
 use super::*;
 use moosuri_core::{
-    AccountManagementAction, AccountManagementInput, AccountManagementReceipt, AccountStatus,
-    ManagedAccount,
+    AccountDeletionStatus, AccountManagementAction, AccountManagementInput,
+    AccountManagementReceipt, AccountStatus, ManagedAccount,
 };
 
 /// A generated password is returned once and never retained in a receipt or log.
@@ -32,11 +32,21 @@ fn managed_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedAccount> {
         revision: row.get(6)?,
         recovery_required: row.get(7)?,
         temporary_expires_at: row.get(8)?,
+        deletion: if row.get::<_, bool>(9)? {
+            Some(AccountDeletionStatus {
+                local_complete: row.get(10)?,
+                vault_acknowledged: row.get(11)?,
+                encrypted_history_retained: true,
+            })
+        } else {
+            None
+        },
+        vault_delivery: row.get(12)?,
     })
 }
 
 pub(super) fn target(conn: &Connection, id: &str) -> Result<ManagedAccount> {
-    conn.query_row("SELECT id,name,email,role,must_change_password,status,management_revision,recovery_required,temporary_expires_at FROM accounts WHERE id=?1", [id], managed_row)
+    conn.query_row("SELECT id,name,email,role,must_change_password,status,management_revision,recovery_required,temporary_expires_at,deleted,coalesce((SELECT local_state='complete' FROM account_deletions d WHERE d.account_id=accounts.id),0),EXISTS(SELECT 1 FROM vault_lifecycle_outbox o WHERE o.account_id=accounts.id AND o.action='delete' AND o.acknowledged=1),(SELECT CASE WHEN acknowledged=1 THEN 'acknowledged' ELSE 'pending' END FROM vault_lifecycle_outbox o WHERE o.account_id=accounts.id AND o.auth_epoch=accounts.auth_epoch ORDER BY action='delete' DESC LIMIT 1) FROM accounts WHERE id=?1", [id], managed_row)
         .optional()?.ok_or(StoreError::NotFound)
 }
 
@@ -68,7 +78,10 @@ fn check_target(
     input: &AccountManagementInput,
 ) -> Result<ManagedAccount> {
     let current = target(conn, id)?;
-    if current.recovery_required || current.revision != input.expected_revision {
+    if current.deletion.is_some()
+        || current.recovery_required
+        || current.revision != input.expected_revision
+    {
         return Err(StoreError::Conflict);
     }
     if current.user.id == actor.account.id
@@ -93,6 +106,7 @@ fn check_target(
         && matches!(
             input.action,
             AccountManagementAction::Suspend
+                | AccountManagementAction::Delete
                 | AccountManagementAction::ChangeRole { role: Role::Member }
                 | AccountManagementAction::ResetPassword
         )
@@ -110,7 +124,7 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             validate(&db.conn, &user, true, true)?;
-            let mut stmt = db.conn.prepare("SELECT id,name,email,role,must_change_password,status,management_revision,recovery_required,temporary_expires_at FROM accounts ORDER BY email")?;
+            let mut stmt = db.conn.prepare("SELECT id,name,email,role,must_change_password,status,management_revision,recovery_required,temporary_expires_at,deleted,coalesce((SELECT local_state='complete' FROM account_deletions d WHERE d.account_id=accounts.id),0),EXISTS(SELECT 1 FROM vault_lifecycle_outbox o WHERE o.account_id=accounts.id AND o.action='delete' AND o.acknowledged=1),(SELECT CASE WHEN acknowledged=1 THEN 'acknowledged' ELSE 'pending' END FROM vault_lifecycle_outbox o WHERE o.account_id=accounts.id AND o.auth_epoch=accounts.auth_epoch ORDER BY action='delete' DESC LIMIT 1) FROM accounts ORDER BY email")?;
             Ok(stmt.query_map([], managed_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
         }).await
     }
@@ -189,6 +203,7 @@ impl Store {
         self.call(move |db| {
             let actor = validate(&db.conn, &user, true, true)?;
             if let Some(receipt) = prior(&db.conn, &actor.account.id, &account_id, &input, &hash)? {
+                let _ = finish_deletions(&mut db.conn);
                 return Ok(AccountManagementResult { receipt, temporary_password: None });
             }
             let target = check_target(&db.conn, &actor, &account_id, &input)?;
@@ -200,28 +215,138 @@ impl Store {
             // Crash after this durable revocation cannot restore old authority:
             // existing startup replay locks the target for local recovery.
             db.poisoned = true;
-            let record = db.journal.append(&account_id, epoch)?;
+            let record = if matches!(input.action, AccountManagementAction::Delete) { db.journal.append_delete(&account_id, epoch)? } else { db.journal.append(&account_id, epoch)? };
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             match &input.action {
                 AccountManagementAction::Suspend => { tx.execute("UPDATE accounts SET status='suspended' WHERE id=?1", [&account_id])?; }
                 AccountManagementAction::Resume => { tx.execute("UPDATE accounts SET status='active' WHERE id=?1", [&account_id])?; }
                 AccountManagementAction::ChangeRole { role } => { tx.execute("UPDATE accounts SET role=?1 WHERE id=?2", params![if *role==Role::Admin {"admin"} else {"member"}, account_id])?; }
                 AccountManagementAction::ResetPassword => { tx.execute("UPDATE accounts SET password_hash=?1,must_change_password=1,temporary_expires_at=?2 WHERE id=?3", params![password_hash.ok_or(StoreError::Corrupt)?, expires, account_id])?; }
-                AccountManagementAction::EndSessions => (),
+                AccountManagementAction::EndSessions | AccountManagementAction::Delete => (),
             }
             let changed = tx.execute("UPDATE accounts SET auth_epoch=?1,management_revision=?2 WHERE id=?3 AND auth_epoch=?4 AND management_revision=?5 AND recovery_required=0",params![epoch,revision,account_id,old_epoch,target.revision])?;
             if changed != 1 { return Err(StoreError::Conflict); }
+            if matches!(input.action, AccountManagementAction::Delete) { mark_deleted(&tx, &account_id, epoch)?; }
+            enqueue_lifecycle(&tx, &account_id, epoch, matches!(input.action, AccountManagementAction::Delete))?;
             tx.execute("DELETE FROM sessions WHERE tenant_id=?1 AND account_id=?2", params![tenant,account_id])?;
             tx.execute("INSERT INTO account_management_receipts(actor_id,request_id,target_id,request_digest,resulting_revision,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![actor.account.id,input.request_id,account_id,hash.as_slice(),revision,time])?;
             tx.execute("UPDATE store_meta SET journal_seq=?1,journal_head=?2 WHERE singleton=1",params![record.seq,record.hash.as_slice()])?;
             tx.commit()?;
             db.poisoned = false;
+            // Deactivation/tombstone is durable even if physical content cleanup
+            // fails. Status remains explicitly pending and restart retries it.
+            if matches!(input.action, AccountManagementAction::Delete) { let _ = finish_deletions(&mut db.conn); }
             Ok(AccountManagementResult {
                 receipt: AccountManagementReceipt { request_id: input.request_id, account_id, revision },
                 temporary_password: temporary,
             })
         }).await
     }
+}
+
+/// Opaque durable outbox; adapter authentication is not vault decryption authority.
+pub(crate) fn enqueue_lifecycle(
+    conn: &Connection,
+    id: &str,
+    epoch: i64,
+    delete: bool,
+) -> Result<()> {
+    conn.execute("INSERT OR IGNORE INTO vault_lifecycle_outbox(id,account_id,tenant_id,installation_id,auth_epoch,action) SELECT ?1,a.id,a.tenant_id,b.installation_id,?2,?3 FROM accounts a CROSS JOIN backup_installation b WHERE a.id=?4 AND b.singleton=1", params![Uuid::new_v4().to_string(), epoch, if delete { "delete" } else { "revoke" }, id])?;
+    Ok(())
+}
+pub(crate) fn mark_deleted(conn: &Connection, id: &str, epoch: i64) -> Result<()> {
+    conn.execute("INSERT OR IGNORE INTO account_deletions SELECT id,tenant_id,?1,'pending' FROM accounts WHERE id=?2", params![now()?,id])?;
+    conn.execute("UPDATE accounts SET deleted=1,status='suspended',recovery_required=1,role='member',name='Deleted account',email=?1,password_hash='deleted',must_change_password=0,temporary_expires_at=NULL,auth_epoch=MAX(auth_epoch,?2) WHERE id=?3",params![format!("deleted-{id}@invalid.invalid"),epoch,id])?;
+    conn.execute("DELETE FROM sessions WHERE account_id=?1", [id])?;
+    enqueue_lifecycle(conn, id, epoch, true)
+}
+
+/// Purge only the target tenant. Schema-derived scope covers private tables as
+/// they evolve; global provider revisions/cache/other tenants are never selected.
+/// No caller input becomes an SQL identifier. Unscoped children are handled first.
+pub(crate) fn finish_deletions(conn: &mut Connection) -> Result<()> {
+    let owners = conn
+        .prepare("SELECT account_id,tenant_id FROM account_deletions")?
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if owners.is_empty() {
+        return Ok(());
+    }
+    let tables = conn
+        .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut scoped = Vec::new();
+    for table in tables {
+        if [
+            "accounts",
+            "account_deletions",
+            "vault_lifecycle_outbox",
+            "model_call_receipts",
+            "automatic_memory_budget",
+        ]
+        .contains(&table.as_str())
+        {
+            continue;
+        }
+        let quoted = format!("\"{}\"", table.replace('"', "\"\""));
+        let cols = conn
+            .prepare(&format!("PRAGMA table_info({quoted})"))?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if cols.iter().any(|c| c == "tenant_id") {
+            scoped.push(quoted);
+        }
+    }
+    for (account, tenant) in owners {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch("PRAGMA defer_foreign_keys=ON;")?;
+        // Keep minimal non-authorizing dispatch evidence, never MIME, provider
+        // identifiers, target details or credentials. Unknown stays unknown.
+        tx.execute("INSERT OR IGNORE INTO deleted_account_effects SELECT account_id,id,'mail',state FROM mail_actions WHERE tenant_id=?1 AND state IN('dispatch_committed','sent','outcome_unknown')",[&tenant])?;
+        tx.execute("INSERT OR IGNORE INTO deleted_account_effects SELECT account_id,id,'calendar',state FROM calendar_actions WHERE tenant_id=?1 AND state IN('dispatch_committed','applied','outcome_unknown','quarantined')",[&tenant])?;
+        let broker=tx.prepare("SELECT run_id,step,call_id,invocation_nonce,receipt IS NOT NULL FROM credential_broker_commitments WHERE tenant_id=?1")?.query_map([&tenant],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,bool>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        for (run, step, call, nonce, receipt) in broker {
+            let id: String = Sha256::digest(
+                serde_json::to_vec(&(run, step, call, nonce)).map_err(|_| StoreError::Corrupt)?,
+            )
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+            tx.execute(
+                "INSERT OR IGNORE INTO deleted_account_effects VALUES(?1,?2,'broker',?3)",
+                params![
+                    account,
+                    id,
+                    if receipt {
+                        "receipt_recorded"
+                    } else {
+                        "outcome_unknown"
+                    }
+                ],
+            )?;
+        }
+        tx.execute("DELETE FROM credential_broker_auth WHERE device_id IN(SELECT id FROM credential_broker_devices WHERE tenant_id=?1)",[&tenant])?;
+        tx.execute("DELETE FROM credential_broker_bindings WHERE device_id IN(SELECT id FROM credential_broker_devices WHERE tenant_id=?1)",[&tenant])?;
+        tx.execute(
+            "DELETE FROM knowledge_fts WHERE tenant_key=?1",
+            [format!("t{}", tenant.replace('-', ""))],
+        )?;
+        for table in &scoped {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE tenant_id=?1"),
+                [&tenant],
+            )?;
+        }
+        // Receipt rows contain only opaque IDs/digests and may reference a deleted
+        // target, so other administrators can reconcile the same request.
+        tx.execute(
+            "UPDATE account_deletions SET local_state='complete' WHERE account_id=?1",
+            [&account],
+        )?;
+        tx.commit()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

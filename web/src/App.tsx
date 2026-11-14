@@ -1565,7 +1565,7 @@ function Admin({
                   {user.role === "admin" ? "ADMIN" : "MEMBER"}
                 </span>
                 <span className="user-state">
-                  {management.find((m)=>m.user.id===user.id)?.recovery_required ? "Recovery needed" : management.find((m)=>m.user.id===user.id)?.status==="suspended" ? "Suspended" : user.must_change_password
+                  {management.find((m)=>m.user.id===user.id)?.deletion ? "Deleted" : management.find((m)=>m.user.id===user.id)?.recovery_required ? "Recovery needed" : management.find((m)=>m.user.id===user.id)?.status==="suspended" ? "Suspended" : user.must_change_password
                     ? "Password change needed"
                     : "Active"}
                 </span>

@@ -70,3 +70,5 @@ Push payload는 private 본문 없이 opaque ID만 갖는다. endpoint의 소유
 community package bytes는 공개 immutable cache로 공유할 수 있지만 설치 여부·선택 버전·개인 수정·dismiss/mute·학습 proof·일정 의존성은 tenant별이다. 배포자나 다른 사용자의 성공 기록을 자신의 학습 proof로 승계하지 않는다. credential binding·device pairing·grant·대기 run/effect도 tenant에 귀속하며 admin role로 다른 사용자의 vault handle을 해석할 수 없다. [community](community-skills.md), [credential-use](credential-use.md)의 lifecycle을 SEC01/CRED03/COMM02에서 함께 검사한다.
 
 remote broker도 계정 epoch/철회와 [dispatch commitment](credential-use.md)의 순서를 따른다. 계정 정지는 아직 committed되지 않은 새 작업을 막지만 이미 committed된 외부 작업은 in-flight/unknown으로 남을 수 있다. 기기 ACK가 없으면 local 철회까지 완료했다고 표시하지 않는다. 이 경계는 볼트 평문 비노출과 별도로 검증한다.
+
+현재 영구 계정 삭제와 별도 vault lifecycle 전달/ACK의 구체적 범위·보관 예외는 [account-management](account-management.md)를 따른다. 삭제한 tenant는 재사용하지 않으며 현재 서비스의 논리 삭제와 과거 암호화 backup/매체의 물리 폐기는 구분한다.

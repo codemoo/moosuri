@@ -279,6 +279,13 @@ fn verify_semantics(db: &Database, journal_path: &Path, parent: &Path) -> Result
                 }
                 rebuilt.cancel(&owner, operation.id(), operation)?;
             }
+            Intent::Lifecycle {
+                event,
+                owner,
+                action,
+            } => {
+                rebuilt.lifecycle(event, &owner, &action)?;
+            }
             Intent::Close { .. } => (),
         }
     }
@@ -290,6 +297,7 @@ fn verify_semantics(db: &Database, journal_path: &Path, parent: &Path) -> Result
         ("item_versions", 5),
         ("operations", 7),
         ("nonce_ledger", 6),
+        ("lifecycle", 6),
     ] {
         let order = (1..=columns)
             .map(|n| n.to_string())

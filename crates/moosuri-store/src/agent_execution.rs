@@ -487,7 +487,9 @@ pub(crate) fn read_tool(
         KnowledgeToolInput::Artifact { request } => {
             crate::artifacts::agent::tool(conn, run, request).map(KnowledgeToolResult::External)
         }
-        KnowledgeToolInput::SkillRead { pin } => Ok(skills::read(conn, run, pin)),
+        KnowledgeToolInput::SkillRead { pin } => {
+            crate::recurring_missions::read_skill(conn, run, pin)
+        }
         KnowledgeToolInput::DecimalCalculate { calculation } => {
             if run
                 .tool_profile

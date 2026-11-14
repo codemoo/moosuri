@@ -1,6 +1,7 @@
 //! Trusted, repository-owned instruction packages. No network, shell or executable loading.
 use super::*;
 pub mod author;
+mod lifecycle;
 mod runtime_catalog;
 pub use runtime_catalog::*;
 pub(crate) mod external;
@@ -571,6 +572,8 @@ fn apply(
         _ => return Err(StoreError::InvalidInput),
     }
     tx.execute("INSERT INTO community_installs(tenant_id,package_id,active_digest,previous_digest,enabled,hidden,revision,managed) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(tenant_id,package_id) DO UPDATE SET active_digest=excluded.active_digest,previous_digest=excluded.previous_digest,enabled=excluded.enabled,hidden=excluded.hidden,revision=excluded.revision,managed=excluded.managed",params![user.tenant.0,entry.id(),active,previous,enabled,hidden,revision+1,managed])?;
+    crate::recurring_missions::reconcile_skills(&tx, Some(&user.tenant.0))?;
+    lifecycle::collect(&tx, Some(&entry.digest))?;
     tx.commit()?;
     cards(&db.conn, &user, &db.web_profile)
 }
@@ -578,7 +581,16 @@ fn apply(
 // and retries. Exact run snapshots and accounting/effect receipts are retained.
 fn revoke(conn: &Connection, user: &UserContext, id: &str) -> Result<()> {
     let runs=conn.prepare("SELECT id FROM chat_runs WHERE tenant_id=?1 AND EXISTS (SELECT 1 FROM json_each(chat_runs.model,'$.agent_profile.skills') WHERE json_extract(value,'$.id')=?2)")?.query_map(params![user.tenant.0,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let id_skill = id;
     for id in runs {
+        // Recurring discovery lists are not evidence of use. Their parent and
+        // actual reads are fenced by the scheduled-skill lifecycle instead.
+        if crate::recurring_missions::is_child(conn, &user.tenant.0, &id)? {
+            let used: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND ((json_extract(result,'$.kind')='skill' AND json_extract(result,'$.value.pin.id')=?3) OR (json_extract(input,'$.tool')='skill_read' AND json_extract(input,'$.pin.id')=?3)))",params![user.tenant.0,id,id_skill],|r|r.get(0))?;
+            if !used {
+                continue;
+            }
+        }
         conn.execute(
             "INSERT OR IGNORE INTO community_run_revocations VALUES (?1,?2)",
             params![user.tenant.0, id],
@@ -597,3 +609,20 @@ fn revoke(conn: &Connection, user: &UserContext, id: &str) -> Result<()> {
 }
 #[cfg(test)]
 pub(crate) mod tests;
+
+pub(crate) fn eligible_pin(c: &Connection, tenant: &str, pin: &SkillPin) -> Result<bool> {
+    lifecycle::eligible(c, tenant, pin)
+}
+
+pub(crate) fn pin_label(c: &Connection, pin: &SkillPin) -> Result<String> {
+    if pin.id.starts_with("community:") {
+        let entry = stored(c, &pin.digest)?;
+        let name = if entry.external.is_some() {
+            entry.package.slug.as_str()
+        } else {
+            curated_title(&entry.package.slug)
+        };
+        return Ok(format!("{} · {}", name, entry.metadata.version));
+    }
+    Ok(format!("{} · {}", curated_title(&pin.id), pin.revision))
+}

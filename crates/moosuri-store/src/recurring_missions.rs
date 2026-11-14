@@ -2,6 +2,7 @@
 use super::*;
 use crate::agent_execution::KnowledgeToolResult;
 use moosuri_core::*;
+mod skills;
 #[cfg(test)]
 mod tests;
 fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
@@ -18,6 +19,9 @@ pub(crate) fn is_recurring(c: &Connection, t: &str, id: &str) -> Result<bool> {
     )?)
 }
 pub(crate) fn authority(c: &Connection, r: &crate::chat::Run) -> Result<()> {
+    if !skills::run_eligible(c, r)? {
+        return Err(StoreError::Unauthorized);
+    }
     let row:Option<bool>=c.query_row("SELECT s.state='active' AND s.revision=o.schedule_revision AND s.auth_epoch=?3 AND (s.valid_until IS NULL OR s.valid_until>?4) FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN reminder_schedules s ON s.tenant_id=o.tenant_id AND s.id=o.schedule_id WHERE m.tenant_id=?1 AND m.run_id=?2",params![r.tenant,r.id,r.epoch,now()?],|r|r.get(0)).optional()?;
     if row == Some(false) {
         return Err(StoreError::Unauthorized);
@@ -31,6 +35,7 @@ fn view(c: &Connection, u: &UserContext, id: &str) -> Result<RecurringMissionVie
     let occurrences=c.prepare("SELECT id,revision,scheduled_for,local_slot,state,reason,notification_id,delayed,coalesce((SELECT source_suppressed FROM local_notifications n WHERE n.tenant_id=reminder_occurrences.tenant_id AND n.id=reminder_occurrences.notification_id),0) FROM reminder_occurrences WHERE tenant_id=?1 AND schedule_id=?2 ORDER BY created_at DESC,id DESC LIMIT 50")?.query_map(params![u.tenant.0,id],|r|Ok(ScheduleOccurrence{id:r.get(0)?,revision:r.get(1)?,scheduled_for:r.get(2)?,local_slot:r.get(3)?,state:r.get(4)?,reason:r.get(5)?,notification_id:r.get(6)?,delayed:r.get(7)?,notification_suppressed:r.get(8)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let skipped_ranges=c.prepare("SELECT from_slot,to_slot,count,reason,revision FROM reminder_skipped_ranges WHERE tenant_id=?1 AND schedule_id=?2 ORDER BY created_at DESC,id DESC LIMIT 50")?.query_map(params![u.tenant.0,id],|r|Ok(ScheduleSkippedRange{from_slot:r.get(0)?,to_slot:r.get(1)?,count:r.get(2)?,reason:r.get(3)?,revision:r.get(4)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;
     Ok(RecurringMissionView {
+        missing_skills: skills::missing(c, &u.tenant.0, &model)?,
         schedule,
         template: decode(&template)?,
         model: decode(&model)?,
@@ -155,6 +160,7 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
     for (t, id) in stale {
         fence_children(c, &t, &id)?;
     }
+    skills::reconcile(c, None, time)?;
     publish_results(c, time)?;
     // Owner fairness is persisted with the existing scheduling round-robin counter.
     let rows=c.prepare("WITH owners AS (SELECT o.tenant_id,o.id,o.schedule_id,o.account_id,o.revision,o.auth_epoch,o.scheduled_for,x.template,x.model,f.last_claim,row_number() OVER(PARTITION BY o.tenant_id,o.account_id ORDER BY o.scheduled_for,o.id) AS position FROM reminder_occurrences o JOIN recurring_missions x ON x.tenant_id=o.tenant_id AND x.schedule_id=o.schedule_id JOIN reminder_owners f ON f.tenant_id=o.tenant_id AND f.account_id=o.account_id WHERE o.state='queued') SELECT tenant_id,id,schedule_id,account_id,revision,auth_epoch,scheduled_for,template,model FROM owners WHERE position=1 ORDER BY last_claim,scheduled_for,id LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?,r.get::<_,i64>(6)?,r.get::<_,String>(7)?,r.get::<_,String>(8)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
@@ -173,6 +179,9 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
             c.execute("UPDATE reminder_schedules SET state='expired',reason='mission_window_expired' WHERE tenant_id=?1 AND id=?2 AND next_due IS NULL",params![t,schedule])?;
             continue;
         }
+        if !skills::admit_eligible(c, &t, &schedule, time)? {
+            continue;
+        }
         let choice: ModelChoice = decode(&model)?;
         if providers::binding_for_choice(c, key, &choice).is_err() {
             c.execute("UPDATE reminder_schedules SET state='paused',reason='provider_unavailable',revision=revision+1 WHERE tenant_id=?1 AND id=?2",params![t,schedule])?;
@@ -186,7 +195,7 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
         }
         let mut input: MissionCreate = decode(&template)?;
         input.request_id = occurrence.clone();
-        let model: serde_json::Value = decode(&model)?;
+        let model = skills::admission_model(c, &t, &model)?;
         // A zero digest is a non-session marker; durable authority never uses chat session auth.
         let id = crate::missions::create_pinned_in(
             c,
@@ -350,6 +359,7 @@ pub(crate) fn control_owner_in(
 ) -> Result<RecurringMissionView> {
     let old = view(tx, u, id)?;
     if input.action == "resume" {
+        skills::resume_eligible(tx, &u.tenant.0, id)?;
         providers::binding_for_choice(tx, key, &old.model)?;
     }
     let changed = crate::schedules::control_recurring_in(tx, u, id, &input, now()?)?;
@@ -368,10 +378,25 @@ pub(crate) fn edit_owner_in(
     mut input: ScheduleEdit,
 ) -> Result<RecurringMissionView> {
     let old = view(tx, u, id)?;
+    skills::resume_eligible(tx, &u.tenant.0, id)?;
     providers::binding_for_choice(tx, key, &old.model)?;
     input.draft.message = "예약한 읽기 업무".into();
     crate::schedules::edit_recurring_in(tx, u, id, &input, now()?)?;
     fence_children(tx, &u.tenant.0, id)?;
     let out = view(tx, u, id)?;
     Ok(out)
+}
+
+pub(crate) fn is_child(c: &Connection, tenant: &str, run: &str) -> Result<bool> {
+    Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id WHERE m.tenant_id=?1 AND m.run_id=?2)",params![tenant,run],|r|r.get(0))?)
+}
+pub(crate) fn reconcile_skills(c: &Connection, tenant: Option<&str>) -> Result<()> {
+    skills::reconcile(c, tenant, now()?)
+}
+pub(crate) fn read_skill(
+    c: &Connection,
+    run: &crate::chat::Run,
+    pin: &SkillPin,
+) -> Result<KnowledgeToolResult> {
+    skills::read(c, run, pin)
 }

@@ -1215,3 +1215,218 @@ async fn source_mute_recurring_tasks_execute_keep_history_and_only_future_notice
         1
     );
 }
+
+#[tokio::test]
+async fn scheduled_skill_lifecycle_uses_actual_reads_fences_children_and_collects_only_orphans() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    let other = member(&s, &u, "scheduled-skill-other@example.test")
+        .await
+        .user;
+    let card = s
+        .community_skills(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == "source-briefing")
+        .unwrap();
+    let mutate = |action: &str, revision, digest| CommunitySkillMutation {
+        action: action.into(),
+        expected_revision: revision,
+        expected_digest: digest,
+    };
+    for user in [&u, &other] {
+        s.mutate_community_skill(
+            user,
+            card.id.clone(),
+            mutate("install", 0, Some(card.digest.clone())),
+        )
+        .await
+        .unwrap();
+    }
+    let at = now().unwrap() + 60;
+    let dependent = s.create_recurring_mission(&u, input(at)).await.unwrap();
+    let unrelated = s
+        .create_recurring_mission(&u, input(at + 600))
+        .await
+        .unwrap();
+    let other_schedule = s
+        .create_recurring_mission(&other, input(at + 600))
+        .await
+        .unwrap();
+    assert_eq!(due(&s, at).await, 1);
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let pin = claim
+        .tool_profile
+        .as_ref()
+        .unwrap()
+        .skills
+        .iter()
+        .find(|p| p.id == "community:source-briefing")
+        .unwrap()
+        .clone();
+    let ctx = s.agent_context(&claim.lease).await.unwrap();
+    let step = s
+        .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &step,
+        PrivateCheckpoint {
+            bytes: br#"{"v":1}"#.to_vec(),
+        },
+        vec![PendingKnowledgeCall {
+            call_id: "actual-skill-read".into(),
+            input: crate::KnowledgeToolInput::SkillRead { pin: pin.clone() },
+        }],
+    )
+    .await
+    .unwrap();
+    s.mission_save_plan(&step, vec!["Read original recipe".into()])
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.execute_knowledge_tool(&step, "actual-skill-read".into())
+            .await
+            .unwrap(),
+        KnowledgeToolResult::Skill(_)
+    ));
+    let run = claim.lease.run_id().to_owned();
+    let tenant = u.tenant.0.clone();
+    let run_check = run.clone();
+    let budget=s.call(move|db|Ok(db.conn.query_row("SELECT remote_calls,tool_calls,deadline_ms FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![tenant,run_check],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?)))?)).await.unwrap();
+    // Updating retains the old previous snapshot; discovery alone never stops the other schedule.
+    let owner = u.clone();
+    s.call(move |db| crate::community_skills::tests::activate_v2(db, owner))
+        .await
+        .unwrap();
+    assert!(s.agent_context(&claim.lease).await.is_ok());
+    s.mutate_community_skill(&u, card.id.clone(), mutate("rollback", 2, None))
+        .await
+        .unwrap();
+    let orphan = s
+        .call(crate::community_skills::tests::stage_unreferenced)
+        .await
+        .unwrap();
+    s.mutate_community_skill(&u, card.id.clone(), mutate("disable", 3, None))
+        .await
+        .unwrap();
+    let parents = s.recurring_missions(&u).await.unwrap();
+    let paused = parents
+        .iter()
+        .find(|p| p.schedule.id == dependent.schedule.id)
+        .unwrap();
+    assert_eq!(paused.schedule.reason.as_deref(), Some("needs_skill"));
+    assert_eq!(paused.schedule.state, "paused");
+    assert_eq!(
+        paused.missing_skills.as_ref().unwrap(),
+        &vec!["모아 둔 자료 정리 · 1.0.0".to_owned()]
+    );
+    assert_eq!(
+        parents
+            .iter()
+            .find(|p| p.schedule.id == unrelated.schedule.id)
+            .unwrap()
+            .schedule
+            .state,
+        "active"
+    );
+    assert_eq!(
+        s.recurring_missions(&other).await.unwrap()[0].schedule.id,
+        other_schedule.schedule.id
+    );
+    assert_eq!(
+        s.recurring_missions(&other).await.unwrap()[0]
+            .schedule
+            .state,
+        "active"
+    );
+    assert!(s.agent_context(&claim.lease).await.is_err());
+    assert!(
+        s.control_recurring_mission(
+            &u,
+            dependent.schedule.id.clone(),
+            ScheduleControl {
+                expected_revision: paused.schedule.revision,
+                action: "resume".into()
+            }
+        )
+        .await
+        .is_err()
+    );
+    let tenant = u.tenant.0.clone();
+    let run_check = run.clone();
+    let digest = card.digest.clone();
+    s.call(move|db|{assert_eq!(db.conn.query_row("SELECT count(*) FROM community_packages WHERE digest=?1",[orphan],|r|r.get::<_,i64>(0))?,0);assert_eq!(db.conn.query_row("SELECT count(*) FROM community_packages WHERE digest=?1",[digest],|r|r.get::<_,i64>(0))?,1);assert_eq!(db.conn.query_row("SELECT remote_calls,tool_calls,deadline_ms FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![tenant,run_check],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?)))?,budget);Ok(())}).await.unwrap();
+    s.mutate_community_skill(&u, card.id.clone(), mutate("enable", 4, None))
+        .await
+        .unwrap();
+    let paused = s
+        .recurring_missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|p| p.schedule.id == dependent.schedule.id)
+        .unwrap();
+    assert_eq!(paused.schedule.state, "paused");
+    let resumed = s
+        .control_recurring_mission(
+            &u,
+            dependent.schedule.id.clone(),
+            ScheduleControl {
+                expected_revision: paused.schedule.revision,
+                action: "resume".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(resumed.schedule.next_fire_at.unwrap() > now().unwrap());
+    // A queued occurrence is retired on remove, and old pins remain historical GC roots.
+    s.enqueue_scheduled_reminders_at(at).await.unwrap();
+    s.mutate_community_skill(&u, card.id.clone(), mutate("remove", 5, None))
+        .await
+        .unwrap();
+    let parents = s.recurring_missions(&u).await.unwrap();
+    assert_eq!(
+        parents
+            .iter()
+            .find(|p| p.schedule.id == dependent.schedule.id)
+            .unwrap()
+            .schedule
+            .reason
+            .as_deref(),
+        Some("needs_skill")
+    );
+    assert_eq!(due(&s, at + 600).await, 2);
+    let t = u.tenant.0.clone();
+    let sid = unrelated.schedule.id.clone();
+    let original = pin.clone();
+    s.call(move |db| {
+        let text: String = db.conn.query_row(
+            "SELECT model FROM recurring_missions WHERE tenant_id=?1 AND schedule_id=?2",
+            params![t, sid],
+            |r| r.get(0),
+        )?;
+        let admitted:String=db.conn.query_row("SELECT r.model FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE o.tenant_id=?1 AND o.schedule_id=?2",params![t,sid],|r|r.get(0))?;
+        let model:serde_json::Value=serde_json::from_str(&admitted).unwrap();
+        let p: RunToolProfile = serde_json::from_value(model["agent_profile"].clone()).unwrap();
+        assert!(!p.skills.contains(&original));
+        assert!(text.contains(&original.digest));
+        Ok(())
+    })
+    .await
+    .unwrap();
+    // The other owner still has the exact original install, unaffected by removal.
+    assert!(
+        s.community_skills(&other)
+            .await
+            .unwrap()
+            .iter()
+            .any(|c| c.id == card.id && c.enabled)
+    );
+    s.mutate_community_skill(&other, card.id.clone(), mutate("remove", 1, None))
+        .await
+        .unwrap();
+    let digest = card.digest.clone();
+    s.call(move|db|{assert_eq!(db.conn.query_row("SELECT count(*) FROM community_packages WHERE digest=?1",[digest],|r|r.get::<_,i64>(0))?,1);assert_eq!(db.conn.query_row("SELECT count(*) FROM community_installs WHERE managed=1 AND active_digest IS NULL AND previous_digest IS NULL",[],|r|r.get::<_,i64>(0))?,2);Ok(())}).await.unwrap();
+}

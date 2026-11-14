@@ -98,6 +98,9 @@ pub struct RecurringMissionCreate {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct RecurringMissionView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub missing_skills: Option<Vec<String>>,
     pub schedule: crate::ScheduleView,
     pub template: MissionCreate,
     pub model: crate::ModelChoice,

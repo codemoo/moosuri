@@ -105,3 +105,17 @@ it("discards a previous account recurring list and clears its draft on account l
  rerender(<Missions accountId="second" onExpired={vi.fn()} back={vi.fn()}/>);resolve(new Response(JSON.stringify([recurringFixture])));
  await waitFor(()=>expect(screen.queryByText("Synthetic recurring template")).toBeNull());expect((screen.getByLabelText("예약할 일") as HTMLTextAreaElement).value).toBe("");
 });
+it("shows exact skill recovery without automatic resume or losing the draft",async()=>{
+ const paused={...structuredClone(recurringFixture),missing_skills:["자료 요약 · 1.0.0"],schedule:{...recurringFixture.schedule,state:"paused",reason:"needs_skill",revision:2}};
+ const commands:any[]=[];
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>{
+  if(String(url).endsWith("/recurring-missions/scheduled/control")){commands.push(JSON.parse(String(init?.body)));return new Response(JSON.stringify(paused))}
+  return new Response(JSON.stringify(String(url).endsWith("/recurring-missions")?[paused]:[]));
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);fireEvent.click(screen.getByText("예약해서 맡기기"));
+ await screen.findByText(/필요한 스킬이 꺼져 있거나 원래 버전을 사용할 수 없음/);
+ expect(commands).toHaveLength(0);expect(screen.getByText(/자료 요약 · 1.0.0/)).toBeInTheDocument();expect(screen.getByText(/놓친 회차는 다시 실행하지 않습니다/)).toBeInTheDocument();
+ fireEvent.change(screen.getByLabelText("예약할 일"),{target:{value:"Keep this draft while recovering"}});
+ fireEvent.click(screen.getByRole("button",{name:"다음 회차부터 재개"}));await waitFor(()=>expect(commands).toEqual([{action:"resume",expected_revision:2}]));
+ expect((screen.getByLabelText("예약할 일") as HTMLTextAreaElement).value).toBe("Keep this draft while recovering");
+});

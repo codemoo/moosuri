@@ -76,3 +76,7 @@ provider/인프라 실패·취소·자료 없음·schema 무효화는 이 실패
 자기 계정의 현재 도구와 연결로 실행하며, 원래 사용자의 학습 증거나 자동 실행 권한을 얻지 않는다.
 이 경로는 일반적인 임의 복합 스킬 export나 기존 private 코드 공개가 아니다.
 [구현·검증](reviews/2026-11-14-private-skill-sharing.md).
+
+예약 지침 의존성·공개 snapshot 정리는 [스킬 lifecycle](community-skills.md#예약-의존성과-참조-없는-snapshot-정리)에
+연결했다. 이는 개인 learned executable route의 예약 실행을 허용하지 않으며 개인 proof나
+삭제 tombstone을 GC하지 않는다. 기존 미션 profile의 private route 제외를 유지한다.

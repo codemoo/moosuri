@@ -82,9 +82,9 @@ disable/remove는 새 사용을 막고 종속 예약을 needs_skill로 멈춘다
 
 현재 여섯 패키지는 공개 저장소 `7f91c0ad8ef38049c5e0e601658da9b99b5f824e`의 실제 네 파일과 `community/catalog-pins.json`에 고정했다. Rust는 경로 집합·파일당32KiB/전체64KiB·frontmatter·엄격한 sidecar 부분 문법·allowlist capability·SPDX/license·정상/실패 합성 예제를 검증한다. format1은 현재 typed capability 계약1을 뜻한다. repository/commit/slug/정렬한 파일명과 원문을 길이로 구분해 SHA-256을 기록한다. 해시는 안전성 인증이 아니다. 네 파일 밖의 scripts/hooks/assets와 지원하지 않는 key/capability는 거부한다. 외부 파일·archive를 받는 경로는 없다.
 
-SQLite0011은 immutable 공개 snapshot과 사용자별 active/previous pointer, enabled/hidden/revision을 저장한다. snapshot staging과 pointer 변경은 같은 SQLite transaction으로 원자적이다. 활성판 변경은 새 run에만 적용되며 기존 run의 exact pin과 기존 tool profile은 유지한다. disable은 새 admission을 막는다. remove는 해당 사용자에게 이미 admit된 관련 run을 취소하고 agent 상태를 invalidate하며 durable retry 철회를 남긴다. 늦은 실행·출력은 기존 lease/state fence로 막고 외부 receipt나 완료한 effect는 삭제하지 않는다. 공개 snapshot은 진행 run의 identity를 위해 유지하며 GC는 아직 없다.
+SQLite0011은 immutable 공개 snapshot과 사용자별 active/previous pointer, enabled/hidden/revision을 저장한다. snapshot staging과 pointer 변경은 같은 SQLite transaction으로 원자적이다. 활성판 변경은 새 run에만 적용되며 기존 run의 exact pin과 기존 tool profile은 유지한다. disable은 새 admission을 막는다. remove는 해당 사용자에게 이미 admit된 관련 run을 취소하고 agent 상태를 invalidate하며 durable retry 철회를 남긴다. 늦은 실행·출력은 기존 lease/state fence로 막고 외부 receipt나 완료한 effect는 삭제하지 않는다. 참조된 공개 snapshot은 진행·과거 run identity를 위해 유지하며 참조 없는 bytes만 아래의 bounded GC로 정리한다.
 
-예약 needs_skill·수정본 fork·portable lockfile·개인 학습 재구성/export는 후속이다. 명시적으로 설정한 정적 catalog 발견/갱신은 아래 runtime 단위이며 자동 설치/업데이트는 포함하지 않는다.
+예약 needs_skill은 아래 lifecycle 경로에서 지원한다. 수정본 fork·portable lockfile·일반 복합 개인 학습 재구성/export는 후속이다. 명시적으로 설정한 정적 catalog 발견/갱신은 아래 runtime 단위이며 자동 설치/업데이트는 포함하지 않는다.
 
 같은 이름의 bundled 절차는 최초 managed 설치 시 단일 community pin으로 대체한다. disable/remove tombstone은 이후 새 run에서 bundled twin까지 discovery에서 제외하며 native 도구 권한 자체는 바꾸지 않는다. 다시 추가하면 복구한다. 버전이 바뀌어도 tombstone/숨김은 source+subdirectory identity로 유지한다.
 
@@ -96,9 +96,9 @@ Git subprocess·archive·redirect 대신 고정 `api.github.com`의 commit/tree/
 
 현재는 정확히 SKILL.md/moosuri.toml/examples.json/LICENSE 네 regular100644 파일과 기존 instruction 형식1/Apache-2.0/allowlisted capability만 지원한다. symlink/submodule/executable·scripts/hooks·references/assets·다른 파일은 거절한다. 파일당32KiB/전체64KiB, 디렉터리6단계, 최대12요청/30초/응답합계2MiB 등 bounded tree/blob 검사를 적용한다. Git blob SHA-1은 길이로 구분한 Git object identity와 bytes 일관성을 확인하고, 앱 snapshot은 별도 SHA-256을 쓴다. 어느 해시도 안전성·license 진실성·실행 성공을 보증하지 않는다.
 
-외부 envelope2와 stable opaque ID는 정규화한 repository+directory를 포함한다. 같은 표시 이름을 고른 다른 제작자나 다른 하위 경로가 서로 덮어쓰지 않는다. 외부 원본은 bundled 절차를 대체하지 않는다. 기존 curated envelope/hash/pin은 재작성하지 않으며, 이미 admit된 run은 원래 package bytes·metadata·tool profile을 유지한다. 다운로드는 SQLite writer 밖에서 수행하고 download 뒤와 activation 때 각각 currentUserContext를 다시 검증한다. 새 schema migration은 없다. 사용자당64개 외부 identity(tombstone 포함)까지만 보관하며 공개 staging cache의 GC는 후속이다.
+외부 envelope2와 stable opaque ID는 정규화한 repository+directory를 포함한다. 같은 표시 이름을 고른 다른 제작자나 다른 하위 경로가 서로 덮어쓰지 않는다. 외부 원본은 bundled 절차를 대체하지 않는다. 기존 curated envelope/hash/pin은 재작성하지 않으며, 이미 admit된 run은 원래 package bytes·metadata·tool profile을 유지한다. 다운로드는 SQLite writer 밖에서 수행하고 download 뒤와 activation 때 각각 currentUserContext를 다시 검증한다. 새 schema migration은 없다. 사용자당64개 외부 identity(tombstone 포함)까지만 보관하며 공개 staging cache는 아래의 참조 보존 GC를 따른다.
 
-private GitHub 인증·범용 SKILL import·archive·스크립트·자동 설치판 갱신/정적 release 게시·개인 학습 export·cache GC는 아직 지원하지 않는다.
+private GitHub 인증·범용 SKILL import·archive·스크립트·자동 설치판 갱신/정적 release 게시·일반 복합 개인 학습 export는 아직 지원하지 않는다.
 
 
 ## 로컬 작성 CLI
@@ -111,7 +111,7 @@ private GitHub 인증·범용 SKILL import·archive·스크립트·자동 설치
 
 init/check와 catalog는 data-dir 해석과 Store open 전에 실행하므로 설치·계정·서버가 필요 없다. 저장소 안의 일반 작성 경로는 허용하지만 `..`·symlink 경로·app-data marker가 있는 경로/하위 경로는 거절하며 다른 tree의 권한을 바꾸지 않는다. 기존 ancestor는 모두 root 또는 현재 effective UID 소유여야 하고 group/world writable이면 sticky여야 한다. root/current-user 소유 sticky temp 아래에서도 각 child 소유권을 계속 확인하며 다른 UID 소유 sticky 디렉터리는 허용하지 않는다. pinned ancestor descriptor chain을 유지하고 게시·실패 정리 전에 다시 검사한다. root/같은 UID의 동시 경로·권한 변경은 신뢰한 운영자 경계다. macOS는 deny-only ACL만 지원하고 grant ACL은 거절한다. Linux는 extended/default/NFSv4 ACL이 검출되면 지원하지 않는 경로로 거절하며 ACL 조회 실패도 진단한다. 알려진 로컬 Unix 소유권·mode/ACL 정책 밖의 filesystem 권한을 포괄적으로 인증하지 않는다. init은 새 sibling staging에 네 파일을 완성·sync한 뒤 Linux/macOS no-replace rename으로 게시하고 parent를 sync한다. 기존 목적지는 덮어쓰지 않는다. 실패 정리는 만든 inode가 같은 파일만 제거하며 모르는 내용은 보존한다. 게시 후 parent sync 오류에서는 완성된 목적지가 이미 있을 수 있으므로 검사한다.
 
-작성자는 파일을 직접 편집·검토하고 원하는 commit/PR/push를 수행한다. 이 CLI는 Git subprocess·network·설치·실행·자동 게시를 하지 않는다. 이후 사용자는 기존 GitHub UI에서 exact commit snapshot을 선택하며 기존 도구 권한은 늘지 않는다. private-learning export·설치 snapshot 직접 수정·GC는 계속 후속이다. 정적 산출물 생성은 아래 별도 명령을 따른다. [작성 안내](../community/README.md)와 [합성 검증 기록](reviews/2026-11-13-community-authoring.md)을 따른다.
+작성자는 파일을 직접 편집·검토하고 원하는 commit/PR/push를 수행한다. 이 CLI는 Git subprocess·network·설치·실행·자동 게시를 하지 않는다. 이후 사용자는 기존 GitHub UI에서 exact commit snapshot을 선택하며 기존 도구 권한은 늘지 않는다. 일반 복합 private-learning export·설치 snapshot 직접 수정은 계속 후속이다. 정적 산출물 생성은 아래 별도 명령을 따른다. [작성 안내](../community/README.md)와 [합성 검증 기록](reviews/2026-11-13-community-authoring.md)을 따른다.
 
 
 ## 정적 catalog 산출물 생성
@@ -151,7 +151,7 @@ ref는 단순 branch/tag 이름 또는 full commit이며 slash ref는 현재 지
 
 SQLite35에는 공개 index bytes/digest/ETag/시간/짧은 lease만 저장한다. 매 사용 전에 index를 다시 검사하며 offline에서는 마지막 검증 목록과 설치본을 유지하고 오래된 상태를 표시한다. cache 손상은 새 제안에서 제외하고 조건 없는 재취득을 요구한다. 설치판은 사용자가 명시적으로 검증·업데이트하기 전까지 그대로 쓰며 사용자별 hide/enable/version/tombstone과 기존 run pin/receipt 경계를 재사용한다. 목록에서 숨기기는 내용 다운로드 전에도 가능하고 버전이 바뀌어도 유지한다. hash는 기본 카드가 아닌 상세의 접힌 버전 정보에 있다.
 
-설정 source만 자동 발견할 뿐 자동 설치/업데이트·코드/hooks/script·private GitHub·범용 import·개인 학습 export·cache GC·임의 publisher 서명 신뢰·미지원 native adapter는 추가하지 않는다. 다운로드 검증은 byte/source 일치이지 안전성·저작권·사용 성공 인증이 아니다.
+설정 source만 자동 발견할 뿐 자동 설치/업데이트·코드/hooks/script·private GitHub·범용 import·일반 복합 개인 학습 export·임의 publisher 서명 신뢰·미지원 native adapter는 추가하지 않는다. 다운로드 검증은 byte/source 일치이지 안전성·저작권·사용 성공 인증이 아니다.
 
 새 버전을 미리봐도 기존 설치본의 시작 가능 상태를 유지하며, 첫 진입과 일반 새로고침에서도
 목록 연결 상태를 갱신한다. 독립 검토의 두 결함을 실제 실패 검사로 재현·수정하고 Linux와
@@ -162,3 +162,17 @@ SQLite35에는 공개 index bytes/digest/ETag/시간/짧은 lease만 저장한�
 정확 계산·저장 자료 조회 구조만 재구성하며 기존 공개 GitHub 설치/check 경로와 같은 네 파일
 형식을 쓴다. 앞의 일반 private-learning export 미지원 표현은 임의 복합 절차를 뜻하며,
 이 제한된 공유 경로는 현재 지원한다. [공유 검증](reviews/2026-11-14-private-skill-sharing.md).
+
+## 예약 의존성과 참조 없는 snapshot 정리
+
+예약 업무의 실제 읽기 의존성과 중단·복구는 [맡긴 일](missions.md#예약-업무의-스킬-중단과-복구)을
+따른다. 일반 대화의 disable은 이미 접수된 실행 pin을 유지하고 remove는 기존 실행/재시도
+철회 계약을 유지한다. 예약의 발견 목록에만 있던 스킬은 실제 사용으로 간주하지 않는다.
+
+명시적 설치 관리 작업 안에서 참조 없는 공개 snapshot을 최대8개 정리한다. 모든 사용자의
+active/previous 설치, 과거·진행 대화 pin과 tool/checkpoint, 원래 예약 profile·실제 의존성,
+검증 catalog cache의 참조가 하나라도 있으면 보존한다. 보수적인 참조 검사이므로 불확실한
+내용은 더 남을 수 있다. 설치 tombstone·실행 영수증·이력은 지우지 않는다. 삭제 수는
+제한되지만 참조 읽기 비용은 보관 이력에 비례하며 일반 이력 GC나 주기적 LLM 작업은 없다.
+아직 설치하지 않은 uncatalogued preview는 실행 권한이 아니므로 cache에서 정리될 수 있다.
+그 경우 원래 exact 원본을 다시 확인해야 하며 다른 bytes로 대체하여 설치하지 않는다.

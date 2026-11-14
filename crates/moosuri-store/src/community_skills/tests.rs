@@ -231,3 +231,11 @@ pub(crate) fn activate_v2(db: &mut Database, user: UserContext) -> Result<()> {
     apply(db, user, next(), mutation("update", 1, Some(next().digest)))?;
     Ok(())
 }
+
+pub(crate) fn stage_unreferenced(db: &mut Database) -> Result<String> {
+    let mut p = entry().package;
+    p.commit = "d".repeat(40);
+    let entry = validate_package(p)?;
+    stage(&db.conn, &entry)?;
+    Ok(entry.digest)
+}

@@ -3,8 +3,9 @@
 The development CLI restores one retained format2 assistant export using a later,
 complete encrypted journal checkpoint. Publication briefly requires a stopped
 source and leaves it active afterward. This is a manual recovery building block:
-there is no live/unattended publisher, off-host transfer, remote freshness service,
-or independent vault-service historical restore.
+the optional [live SSH receiver](live-journal-publication.md) adds periodic capture
+and independent target retention. Neither path provides zero-loss latest-deletion
+recovery, a remote freshness oracle or independent vault-service historical restore.
 
 Configure and retain the separate age identity using [backup setup](backup.md).
 Keep archives, head files and the independent latest-head record outside the

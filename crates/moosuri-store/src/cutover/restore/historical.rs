@@ -2,31 +2,31 @@
 //! A trusted digest must be retained independently. Local timestamps cannot prove freshness.
 use super::*;
 
-const PURPOSE: &str = "assistant-historical-journal-v1";
+pub(crate) const PURPOSE: &str = "assistant-historical-journal-v1";
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct JournalManifest {
-    format: u32,
-    purpose: String,
-    installation_id: String,
-    checkpoint_id: String,
-    schema: i64,
-    key_epoch: i64,
-    recipient: String,
-    entries: Vec<Entry>,
-    auth_journal: JournalHead,
-    knowledge_journal: JournalHead,
-    coverage: Coverage,
-    export: Entry,
+pub(crate) struct JournalManifest {
+    pub(crate) format: u32,
+    pub(crate) purpose: String,
+    pub(crate) installation_id: String,
+    pub(crate) checkpoint_id: String,
+    pub(crate) schema: i64,
+    pub(crate) key_epoch: i64,
+    pub(crate) recipient: String,
+    pub(crate) entries: Vec<Entry>,
+    pub(crate) auth_journal: JournalHead,
+    pub(crate) knowledge_journal: JournalHead,
+    pub(crate) coverage: Coverage,
+    pub(crate) export: Entry,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LatestHead {
-    format: u32,
-    purpose: String,
-    manifest: JournalManifest,
-    manifest_sha256: String,
-    ciphertext: Entry,
+pub(crate) struct LatestHead {
+    pub(crate) format: u32,
+    pub(crate) purpose: String,
+    pub(crate) manifest: JournalManifest,
+    pub(crate) manifest_sha256: String,
+    pub(crate) ciphertext: Entry,
 }
 pub struct JournalPublication {
     pub checkpoint_id: String,
@@ -95,7 +95,7 @@ fn journal_state(o: &backup::Offline, export: Entry) -> Result<JournalManifest> 
         export,
     })
 }
-fn validate(m: &JournalManifest) -> Result<()> {
+pub(crate) fn validate(m: &JournalManifest) -> Result<()> {
     if m.format != 1
         || m.purpose != PURPOSE
         || !(RESTORE_SCHEMA..=crate::CURRENT_SCHEMA_VERSION).contains(&m.schema)

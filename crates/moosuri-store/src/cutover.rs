@@ -13,7 +13,7 @@ use std::{
 };
 use uuid::Uuid;
 mod admission;
-mod publication;
+pub(crate) mod publication;
 pub(crate) mod restore;
 pub(crate) use admission::{
     RuntimeAdmission, require_active, runtime_admission, sync_parent_before_admission,

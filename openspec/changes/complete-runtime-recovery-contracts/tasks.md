@@ -4,7 +4,8 @@
 ## 2. Implement and verify
 - [ ] 2.1 Complete external authoritative-file publication/manifest/pins and GC protection if bytes move outside SQLite. Current image/UTF-8/artifact bytes are canonical SQLite state; this task is not evidence that current exports omit those bytes.
 - [x] 2.2 Implement public-recipient stopped setup/export and retained key epochs; bounded independent identity inputs verified in [export evidence](../../../docs/reviews/2026-11-13-stopped-encrypted-export.md).
-- [ ] 2.2a Complete independently latest off-host journal/freshness and ongoing recovery without original host-local secrets or restored-vault dependency.
+- [ ] 2.2a Complete independently latest off-host journal/freshness and ongoing recovery without original host-local secrets or restored-vault dependency; periodic accepted checkpoints retain a publication RPO.
+- [x] 2.2b Implement optional live writer capture, fixed SSH receiver and independently retained prefix-checked acceptance ledger; [independent review and native/Linux evidence](../../../docs/reviews/2026-11-15-live-journal-publication.md). Actual SSH deployment and zero-loss/latestness boundaries remain explicit.
 - [x] 2.3 Implement exact sealed-current encrypted checkpoint restore to a new root, including SQLite images/files/artifacts and quarantine; [restore](../../../docs/restore.md) states the bounded contract.
 - [ ] 2.3a Complete continuously latest/off-host historical recovery and remaining attachment/kill fixtures; manual publication and an operator-supplied latestness pin do not complete this aggregate contract.
 - [x] 2.3b Implement manual non-sealing full-journal publication bound to one exact export, separately pinned historical restore, supported target withdrawal and authority quarantine. [Bounded protocol](../../../docs/historical-restore.md) · [evidence and remaining scope](../../../docs/reviews/2026-11-15-manual-historical-recovery.md).

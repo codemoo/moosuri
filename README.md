@@ -45,7 +45,7 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 - [Task skills](docs/task-skills.md) · [private learned routes](docs/learned-skills.md) · [community packages](docs/community-skills.md) · [missions](docs/missions.md) · [reminders/inbox](docs/schedules.md) · [Web Push](docs/web-push.md).
 - [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [selected local work sessions](docs/local-work-sessions.md) · [public web research](docs/web-research.md) · [Japan Post tracking](docs/parcel-tracking.md) · [private browser workspaces](docs/browser-workspaces.md).
 - [Images](docs/media.md) · [files and text PDFs](docs/private-files.md) · [PWA](docs/pwa.md) · [vault service/client](docs/vault-service-client.md) · [encrypted vault archive](docs/vault-archive.md) · [vault service recovery](docs/vault-service-recovery.md) · [credential broker contract](docs/credential-use.md).
-- [Stopped encrypted export](docs/backup.md) · [sealed-current restore](docs/restore.md) · [release/installation contracts](docs/public-release.md). Ongoing historical/off-host recovery and cross-schema updates are still pending.
+- [Stopped encrypted export](docs/backup.md) · [historical restore](docs/historical-restore.md) · [periodic journal receiver](docs/live-journal-publication.md) · [release/installation contracts](docs/public-release.md). Periodic publication retains a recovery-point gap; actual off-host deployment, live full-data backup and updates across multiple schema versions remain pending.
 
 Account-owned Gmail/Slack collection and generic custom ingest expose scope, sync
 receipts and provenance. An explicit once-only CLI can import selected human Codex

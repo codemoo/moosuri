@@ -4,8 +4,8 @@ The development CLI can export its current SQLite data and snapshot journals to 
 age-encrypted archive. It requires a stopped installation and an independently
 held X25519 backup identity. [Manual historical recovery](historical-restore.md) now
 combines a retained export with separately published journals and an independently
-retained head digest. **Live/unattended publication and off-host transfer remain
-unimplemented.** The separate [sealed-current restore](restore.md)
+retained head digest. **Optional live publication now has a separate [SSH receiver path](live-journal-publication.md).
+Zero-loss latest-deletion recovery remains unimplemented.** The separate [sealed-current restore](restore.md)
 supports the exact final snapshot, including ready SQLite image bytes. Do not
 move production accounts or data into this preview on the basis of export support.
 
@@ -182,3 +182,9 @@ subscription/session carriers are stripped only from the staged database; the
 source installation and inbox are unchanged. Missing runtime signing authority
 does not prevent export. Malformed/link/public-mode files and unexpected private
 crash temporaries are rejected instead of silently copied.
+
+## Optional live journal receiver
+
+See [live journal publication](live-journal-publication.md) for optional periodic
+Runtime capture, separately operated SSH receiver, independent ledger and explicit
+RPO/trust limits. Existing manual export and sealed cutover paths remain distinct.

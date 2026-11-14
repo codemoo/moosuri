@@ -823,3 +823,5 @@ fn create_captured(offline: &Offline, output: &Path, started: Instant) -> Result
 
 // Distinct manual journal recovery protocol; never seals the source.
 pub use crate::cutover::restore::historical::{publish_journal, restore_historical};
+
+pub mod live;

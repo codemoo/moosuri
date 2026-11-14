@@ -16,6 +16,7 @@ use std::{
 };
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+mod backup_live;
 mod installation;
 mod skills;
 mod subscriptions;
@@ -124,6 +125,14 @@ enum Command {
         invitation_gws_config: Option<PathBuf>,
         #[arg(long, requires = "invitation_gws")]
         invitation_from: Option<String>,
+        /// Retained baseline export for optional periodic recovery publication (30s cadence).
+        #[arg(long,requires_all=["recovery_ssh_target","recovery_target_id"])]
+        recovery_export: Option<PathBuf>,
+        /// Existing OpenSSH alias with pinned host key and forced receiver command.
+        #[arg(long, requires = "recovery_export")]
+        recovery_ssh_target: Option<String>,
+        #[arg(long, requires = "recovery_export")]
+        recovery_target_id: Option<String>,
         /// Optional owner-only Brave Search key file; public HTTP reading needs no key.
         #[arg(long)]
         web_search_key_file: Option<PathBuf>,
@@ -169,6 +178,29 @@ enum RecoveryBudgetCommand {
 }
 #[derive(Subcommand)]
 enum BackupCommand {
+    /// Initialize an independent receiver from an already copied encrypted baseline.
+    TargetInit {
+        #[arg(long)]
+        target_id: String,
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        export: PathBuf,
+        #[arg(long)]
+        installation_id: String,
+    },
+    /// Read the receiver's independently retained current receipt and recovery paths.
+    TargetStatus {
+        #[arg(long)]
+        target_id: String,
+    },
+    /// Fixed SSH receiver command. Reads bounded opaque journal framing on stdin.
+    ReceiveJournal {
+        #[arg(long)]
+        target_id: String,
+    },
     /// Publish encrypted complete journals for one retained export, without sealing the stopped source.
     Journal {
         #[arg(long)]
@@ -273,6 +305,51 @@ async fn run(cli: Cli) -> Result<(), String> {
         println!("{recipient}");
         return Ok(());
     }
+    if let Command::Backup { command } = &cli.command {
+        match command {
+            BackupCommand::TargetInit {
+                target_id,
+                artifacts,
+                ledger,
+                export,
+                installation_id,
+            } => {
+                let root = backup_live::target_root(target_id, true)?;
+                moosuri_store::backup::live::init_target(
+                    &root,
+                    artifacts,
+                    ledger,
+                    export,
+                    installation_id,
+                )
+                .map_err(|e| e.to_string())?;
+                println!(
+                    "Recovery receiver initialized. Retain independent access to its ledger and the matching offline age identities. Local directory setup alone does not prove off-host storage."
+                );
+                return Ok(());
+            }
+            BackupCommand::TargetStatus { target_id } => {
+                let root = backup_live::target_root(target_id, false)?;
+                let status =
+                    moosuri_store::backup::live::target_status(&root).map_err(|e| e.to_string())?;
+                println!(
+                    "{}",
+                    serde_json::to_string(&status).map_err(|_| "recovery_status_failed")?
+                );
+                return Ok(());
+            }
+            BackupCommand::ReceiveJournal { target_id } => {
+                let root = backup_live::target_root(target_id, false)?;
+                let ack = backup_live::receive_command(&root)?;
+                println!(
+                    "{}",
+                    serde_json::to_string(&ack).map_err(|_| "recovery_ack_failed")?
+                );
+                return Ok(());
+            }
+            _ => (),
+        }
+    }
     if matches!(cli.command, Command::ExportTypes) {
         print!("{}", moosuri_core::typescript_contract());
         return Ok(());
@@ -325,6 +402,11 @@ async fn run(cli: Cli) -> Result<(), String> {
             unreachable!("native helpers run without installation state")
         }
         Command::Backup { command } => match command {
+            BackupCommand::TargetInit { .. }
+            | BackupCommand::TargetStatus { .. }
+            | BackupCommand::ReceiveJournal { .. } => {
+                unreachable!("receiver commands do not admit source installation")
+            }
             BackupCommand::Keygen { .. } => unreachable!("keygen runs without installation state"),
             BackupCommand::Restore {
                 checkpoint,
@@ -428,7 +510,8 @@ async fn run(cli: Cli) -> Result<(), String> {
                 let configured = moosuri_store::backup::setup(&data, &recipient, &identity_file)
                     .map_err(|e| e.to_string())?;
                 println!(
-                    "Encrypted export configured at key epoch {}. Retain all required private identities outside the installation and export directory. This is not an off-host restore test.",
+                    "Installation {}: encrypted export configured at key epoch {}. Retain all required private identities outside the installation and export directory. This is not an off-host restore test.",
+                    configured.installation_id,
                     configured.active_epoch.unwrap_or(0)
                 );
             }
@@ -528,6 +611,9 @@ async fn run(cli: Cli) -> Result<(), String> {
             invitation_gws_credentials,
             invitation_gws_config,
             invitation_from,
+            recovery_export,
+            recovery_ssh_target,
+            recovery_target_id,
             web_search_key_file,
             browser_capsule_file,
             community_catalog_repository,
@@ -606,6 +692,18 @@ async fn run(cli: Cli) -> Result<(), String> {
                 );
             }
             let store = config.open_store(&data).map_err(|e| e.to_string())?;
+            let recovery_worker = if let (Some(export), Some(alias), Some(id)) =
+                (recovery_export, recovery_ssh_target, recovery_target_id)
+            {
+                Some(backup_live::Worker::start(
+                    store.clone(),
+                    &export,
+                    alias,
+                    id,
+                )?)
+            } else {
+                None
+            };
             let runtime = config.start_runtime(store.clone());
             let adapter_router = vault_key
                 .as_ref()
@@ -691,6 +789,9 @@ async fn run(cli: Cli) -> Result<(), String> {
                     match http { Ok(Err(_)) => Err("server_failed"), _ => Ok(()) }
                 }
             };
+            if let Some(worker) = recovery_worker {
+                worker.shutdown().await;
+            }
             if let Some(task) = adapter_task {
                 task.abort();
             }

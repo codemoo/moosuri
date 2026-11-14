@@ -68,3 +68,18 @@ Manual historical recovery MUST bind both retained export and later journal ciph
 #### Scenario: Historical revisions differ from deletion-time revisions
 - **WHEN** a supported withdrawal targets an older snapshot revision or a UUID created after that snapshot
 - **THEN** restore conservatively withdraws matching snapshot content or skips an absent UUID without reconstructing later additions or granting old execution authority
+
+### Requirement: Explicit periodic live publication boundary
+Optional live journal publication MUST capture one complete applied view on the existing writer, release that writer before remote transfer, and obtain a separately operated receiver acceptance receipt before reporting the captured boundary protected. Local writes MUST NOT gain per-action approval steps. Periodic publication MUST expose its recovery-point gap and MUST NOT claim zero-loss latest-deletion recovery.
+
+#### Scenario: Concurrent deletion and live capture
+- **WHEN** a deletion and capture are queued on the writer
+- **THEN** the capture contains either the complete preceding state or complete following journal state, never mixed applied heads
+
+#### Scenario: Receiver commits before transport ACK is lost
+- **WHEN** journal artifacts and independent receipt are durable but the sender receives no ACK
+- **THEN** retry validates exact prefix/content and returns the same accepted receipt without advancing unchanged journals
+
+#### Scenario: Remote target unavailable or rolled-back source publishes
+- **WHEN** the target is unavailable or the source submits an older/forked prefix
+- **THEN** ordinary source work continues, protection reports unavailable/lagging, and independent latest acceptance never rolls backward

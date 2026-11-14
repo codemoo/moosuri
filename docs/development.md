@@ -101,7 +101,9 @@ backup/restore workflow or a production-ready release.
 `moosuri doctor` checks a **stopped** installation. A running installation holds
 its writer lock and correctly rejects another writer. Normal shutdown drains the
 writer before releasing the lock. Stopped encrypted [exports](backup.md) are available after independent recipient
-setup. Historical restore and legacy migration remain unavailable here; managed updates follow the explicit [local installer](local-installation.md) contract, and
+setup. [Historical restore](historical-restore.md) uses an independently pinned deletion journal;
+the optional [live journal receiver](live-journal-publication.md) publishes periodic checkpoints.
+Legacy migration remains unavailable; managed updates follow the explicit [local installer](local-installation.md) contract, and
 copying a live DB is not a supported backup.
 
 ## Recovering a journal-locked account
@@ -129,8 +131,9 @@ the account again on restart; repeat enrollment with a new credential. If commit
 succeeded but the response was lost, the supplied temporary credential remains
 valid and repeating recovery is rejected with `account_not_recovery_required`.
 Do not clear journal files or flip the recovery flag manually. The separate sealed-current
-[restore](restore.md) path supports fresh enrollment; historical restore and independently
-maintained off-host latest journals remain unavailable.
+[restore](restore.md) path supports fresh enrollment. Historical restore also supports
+[explicit forward inference budgets](recovery-forward-budget.md) while keeping past usage
+unknown. Periodic journal publication does not establish zero-loss latestness.
 
 ## Local instruction-package authoring
 

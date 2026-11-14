@@ -24,7 +24,21 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 확인 질문의 다음 답변·직전 일정 지칭·기간을 유지한 날짜 이동을 지원한다. 반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·live-vault rotation·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
-| 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. ongoing/off-host 최신 journal·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+| 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 실행 중 복구 journal 게시
+
+서버의 단일 SQLite writer에서 일관된 삭제·인증 journal을 캡처하고, writer를 놓은 뒤
+별도 Rust CLI receiver로 SSH 전송한다. 수신기는 이전 기록의 정확한 연장인지 확인하고
+암호화 파일·head·독립 영수증을 저장한 뒤 응답한다. 응답 유실 재시도는 같은 영수증을
+돌려주며, 이전/fork 기록으로 최신 상태를 덮어쓰지 않는다. 원본을 봉인하지 않는다.
+
+전송 시도 뒤 30초 간격이며 장애 중 복구 시점의 지연은 제한되지 않는다. 이후의 삭제까지
+항상 보호하는 기능은 아니며, 수신기에는 검증용 비밀이 아닌 UUID/epoch metadata가
+평문으로 남는다. 독립 검토에서 영수증 게시 중 강제 종료로 재시도가 막힐 수 있는 경계를
+수정했다. Linux 실제 Store·receiver/serve worker·SSH 인수, Clippy·빌드를 통과했다.
+합성 pipe/전송 대역 시험이며 실제 SSH 배치·강제 종료/전원 장애 시험은 별도다.
+[설정](live-journal-publication.md) · [검증](reviews/2026-11-15-live-journal-publication.md).
 
 ## 최근 수락한 단위 · 복원 후 새 요청 한도
 
@@ -48,7 +62,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 복원 시점 이후의 사용량을 알 수 없으므로 과거 원장과 불명 상태를 유지하며, 현재는 데이터
 복구 뒤에는 아래의 명시적 새 한도로 새 모델 요청을 허용할 수 있다. 이 기능은 수동으로 중지한 상태의
-발행과 별도 최신 해시 보관을 전제로 하며 live/off-host 자동 백업을 뜻하지 않는다.
+발행과 별도 최신 해시 보관을 전제로 한다. 이후 추가한 live receiver는 위 주기/RPO 경계를 따른다.
 독립 검토와 Linux 실제 과거 복원2·기존 봉인 복원1, Clippy·내장 웹 빌드·계획 검사를 통과했다.
 [사용법](historical-restore.md) · [검증](reviews/2026-11-15-manual-historical-recovery.md).
 
@@ -420,7 +434,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | 계획 단계 | 현재 구현 | 아직 닫지 못한 종료 조건 |
 | --- | --- | --- |
 | P0 공개 기반 | 공개 저장소·Rust/React/Linux 빌드·기여/OpenSpec·합성 결과 runner/독립 grader·실행 단계 시간/실패·누락 집계·기존149개 소스 내용 검사 | 격리 실행 baseline/공통 adapter·넓은 사례/실모델·통계 평가 |
-| P1 영속 상태 | SQLite 격리·실행/외부 영수증·journal·봉인된 현재 복원·수동 pin을 사용한 과거 복원·명시적 새 사용 한도 | ongoing/off-host journal |
+| P1 영속 상태 | SQLite 격리·실행/외부 영수증·journal·봉인된 현재 복원·수동 pin을 사용한 과거 복원·명시적 새 사용 한도 | 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export |
 | P2 대화 | 계정·설정·스트림·취소/재시도·개인 ChatGPT | 지원 구독의 전체 실행 범위·실계정 검증 |
 | P3 자료·기억 | 출처·기억 정정/망각·제한 추출·문서·이전/다른 소유 대화의 근거 검색 | 장기/시간 사실·추출 품질의 독립 검증 |
 | P4 도구·학습 | typed 도구·bounded 실행·Git 스킬·제안·연결 Gmail/Calendar 읽기 미션·예약 스킬 의존성/정리·제한된 개인 학습/두 입력 proof/재사용 | 복합 절차·범용 학습 export·실모델 효용/품질 검증 |
@@ -448,8 +462,8 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    latency/usage 집계와 실제 서버 단계별 계측은 구현했다. 넓은 사례·실모델 평가와
    브라우저 표시 시간·성능 개선은 별도로 이어간다.
    수동 과거 복원과 명시적 새 사용 한도를 수락했다.
-   ongoing/off-host journal과 지원 구독 실행 범위는
-   해당 저장/연결 의존성과 함께 닫는다.
+   주기적 live journal/독립 SSH receiver를 구현했다. 실제 off-host 배치·무손실 최신 삭제와
+   지원 구독 실행 범위는 해당 저장/연결 의존성과 함께 닫는다.
 2. **P3/P4 기억·학습·업무 수행**: 초기 합성 평가와 계산/자료 조회의 typed 학습·
    두 입력 proof는 구현했다. 기억·대화·미션·스킬의 독립 품질 평가와 복합 절차로
    확장하고, 복합 절차의 합성 export/catalog·전체 이력 보존/정리 정책,

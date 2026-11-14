@@ -252,7 +252,7 @@ impl Drop for OwnedTemp {
         }
     }
 }
-pub(super) fn no_replace(temp: &Path, output: &Path) -> Result<()> {
+pub(crate) fn no_replace(temp: &Path, output: &Path) -> Result<()> {
     let parent = output.parent().ok_or(Error::InvalidInput)?;
     let fd = OpenOptions::new()
         .read(true)

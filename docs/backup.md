@@ -2,8 +2,10 @@
 
 The development CLI can export its current SQLite data and snapshot journals to an
 age-encrypted archive. It requires a stopped installation and an independently
-held X25519 backup identity. **Historical restore, unattended backup and an off-host
-latest journal are not implemented.** The separate [sealed-current restore](restore.md)
+held X25519 backup identity. [Manual historical recovery](historical-restore.md) now
+combines a retained export with separately published journals and an independently
+retained head digest. **Live/unattended publication and off-host transfer remain
+unimplemented.** The separate [sealed-current restore](restore.md)
 supports the exact final snapshot, including ready SQLite image bytes. Do not
 move production accounts or data into this preview on the basis of export support.
 
@@ -100,16 +102,16 @@ extracted text are inside the SQLite snapshot. External blob storage remains
 unavailable; PDF support follows the [bounded text-file contract](private-files.md).
 Provider/OAuth/connector ciphertext may remain in the snapshot, but the server
 key, operator identity, external credential files, browser profiles/capsules and
-user vault keys are excluded. Any future restore must purge/re-register server
-credentials and quarantine old authority/work/accounting; this export does not
-implement or bypass those gates.
+user vault keys are excluded. The supported restore paths purge server credentials
+and quarantine old authority/work; export alone does not perform those gates.
 
 The complete output is published without overwrite only after tar and age
 finalization, file fsync and parent-directory fsync. It is owner-only0600.
 Ciphertext/manifest hashes detect corruption; public-recipient encryption does
 not authenticate the writer or prove journal freshness. Snapshot journals are
 not an independently maintained latest recovery checkpoint. Later deletions
-cannot be enforced by an older export without that separate future mechanism.
+require the separate [manual pinned journal path](historical-restore.md) when
+restoring an older export.
 
 Only local filesystems with working file locks/fsync are supported.
 
@@ -166,7 +168,8 @@ and refuse pending journal effects before adoption. After adoption, ordinary set
 exports and runtime/account recovery are blocked, including when output failed.
 A locally written head needs a separately trusted operator handoff. Matching
 [offline restore](restore.md) verifies and quarantines a new installation. Ordinary
-historical exports and ongoing independently latest recovery remain unsupported.
+historical exports use the separate [manual pinned journal path](historical-restore.md);
+ongoing independently latest recovery remains unsupported.
 The combined schema19/20 implementation passed independent review and integrated
 Linux checks. See the [evidence and limits](reviews/2026-11-13-sealed-restore.md);
 this does not establish ongoing disaster recovery or authorize migration of a real installation.

@@ -162,6 +162,7 @@ pub(super) fn binding(
     account: &str,
     choice: &ModelChoice,
 ) -> Result<providers::ProviderBinding> {
+    crate::cutover::restore::historical::require_accounting_known(c)?;
     let b = SubscriptionRef {
         tenant: tenant.into(),
         account: account.into(),
@@ -401,6 +402,7 @@ impl Store {
     ) -> Result<SubscriptionAccess> {
         self.call(move|db|{
             let epoch=authorize(&db.conn,&db.provider_key,&a,&b)?;
+            crate::cutover::restore::historical::require_accounting_known(&db.conn)?;
             if owned(&db.conn,&b)?!="active"{
                 return Err(StoreError::Conflict)}
             let (g,cipher,expires,state,cooldown,until):(i64,Option<Vec<u8>>,i64,String,i64,Option<i64>)=db.conn.query_row("SELECT generation,cipher,expires_at,refresh_state,cooldown_until,refresh_until FROM chatgpt_sessions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND plan_enabled=1",params![b.tenant,b.account,b.id,b.revision],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;
@@ -434,6 +436,7 @@ impl Store {
         );
         self.call(move|db|{
             let epoch=authorize(&db.conn,&db.provider_key,&a,&b)?;
+            crate::cutover::restore::historical::require_accounting_known(&db.conn)?;
             if owned(&db.conn,&b)?!="active"{
                 return Err(StoreError::Conflict)}
             if db.conn.execute("UPDATE chatgpt_sessions SET refresh_state='dispatched' WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND generation=?5 AND refresh_nonce=?6 AND refresh_state='acquired' AND refresh_epoch=?7 AND refresh_until>?8",params![b.tenant,b.account,b.id,b.revision,g,n,epoch,now()?])?!=1{

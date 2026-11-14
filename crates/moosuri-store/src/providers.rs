@@ -269,6 +269,7 @@ fn credential(key: &[u8; 32], row: &Revision) -> Result<Option<Zeroizing<String>
         .transpose()
 }
 pub(super) fn require_binding(conn: &Connection, id: &str, revision: i64) -> Result<Revision> {
+    crate::cutover::restore::historical::require_accounting_known(conn)?;
     let row = load_revision(conn, id)?;
     if row.revision != revision {
         return Err(StoreError::Conflict);

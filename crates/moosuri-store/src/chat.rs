@@ -589,13 +589,18 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             let user = validate(&db.conn, &user, true, false)?;
+            crate::cutover::restore::historical::require_accounting_known(&db.conn)?;
             usage(&db.conn, &user.tenant.0)
         })
         .await
     }
     pub async fn account_usage(&self, user: &UserContext) -> Result<AccountUsageResponse> {
         let user = user.clone();
-        self.call(move |db| account_usage_inner(db, user)).await
+        self.call(move |db| {
+            crate::cutover::restore::historical::require_accounting_known(&db.conn)?;
+            account_usage_inner(db, user)
+        })
+        .await
     }
 }
 pub(super) fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage>> {

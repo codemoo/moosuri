@@ -1,5 +1,7 @@
 # Restore a sealed cutover checkpoint
 
+For retained ordinary exports, use the separate [manual historical recovery](historical-restore.md) protocol.
+
 This development command restores the exact full current-state checkpoint made by
 [sealed checkpoint](checkpoints.md). The combined schema19/20 path passed independent
 storage/auth review and integrated Linux checks; see the [evidence](reviews/2026-11-13-sealed-restore.md).

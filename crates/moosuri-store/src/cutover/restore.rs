@@ -518,11 +518,28 @@ fn accounts(conn: &Connection) -> Result<Vec<EnrollmentAccount>> {
     }
     Ok(rows)
 }
+pub(crate) struct Provenance {
+    pub schema: i64,
+    pub source_installation: String,
+    pub recovery_id: String,
+    pub checkpoint_id: String,
+    pub ciphertext_sha256: String,
+    pub trusted_head: String,
+}
+fn sealed_provenance(m: &Manifest, h: &TrustedHead) -> Result<Provenance> {
+    Ok(Provenance {
+        schema: m.seal.schema,
+        source_installation: m.seal.installation_id.clone(),
+        recovery_id: h.seal_id.clone(),
+        checkpoint_id: h.checkpoint_id.clone(),
+        ciphertext_sha256: h.ciphertext_sha256.clone(),
+        trusted_head: String::from_utf8(encode(h, 8192)?).map_err(|_| Error::Integrity)?,
+    })
+}
 fn quarantine(
     conn: &mut Connection,
     root: &Path,
-    m: &Manifest,
-    h: &TrustedHead,
+    provenance: &Provenance,
     auth: &mut crate::journal::Journal,
     lineage: &str,
 ) -> Result<RestoreSummary> {
@@ -541,7 +558,7 @@ fn quarantine(
         epochs.push((a.account_id.clone(), next, record));
     }
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    migrate(&tx, m.seal.schema)?;
+    migrate(&tx, provenance.schema)?;
     for record in &auth.records {
         if record.delete {
             crate::accounts::mark_deleted(&tx, &record.account, record.epoch)?;
@@ -625,12 +642,12 @@ fn quarantine(
         params![
             restore_id,
             installation_id,
-            m.seal.installation_id,
+            provenance.source_installation,
             lineage,
-            h.seal_id,
-            h.checkpoint_id,
-            h.ciphertext_sha256,
-            String::from_utf8(encode(h, 8192)?).map_err(|_| Error::Integrity)?,
+            provenance.recovery_id,
+            provenance.checkpoint_id,
+            provenance.ciphertext_sha256,
+            provenance.trusted_head,
             crate::now()?
         ],
     )?;
@@ -657,12 +674,23 @@ fn quarantine(
     let _key = crate::providers::open_key(conn, root)?;
     Ok(RestoreSummary {
         installation_id,
-        checkpoint_id: h.checkpoint_id.clone(),
+        checkpoint_id: provenance.checkpoint_id.clone(),
         accounts: users,
         already_published: false,
     })
 }
 fn already_published(dest: &Path, h: &TrustedHead) -> Result<RestoreSummary> {
+    published_provenance(
+        dest,
+        &h.checkpoint_id,
+        std::str::from_utf8(&encode(h, 8192)?).map_err(|_| Error::Integrity)?,
+    )
+}
+fn published_provenance(
+    dest: &Path,
+    checkpoint_id: &str,
+    trusted_head: &str,
+) -> Result<RestoreSummary> {
     let (root, _lock) = files::stopped_lock(dest)?;
     let (_temp, conn) = admission::inspect(&root)?;
     require_active(&conn, &root)?;
@@ -677,9 +705,7 @@ fn already_published(dest: &Path, h: &TrustedHead) -> Result<RestoreSummary> {
             |r| r.get(0),
         )
         .optional()?;
-    if saved.as_deref()
-        != Some(std::str::from_utf8(&encode(h, 8192)?).map_err(|_| Error::Integrity)?)
-    {
+    if saved.as_deref() != Some(trusted_head) {
         return Err(Error::OutputExists);
     }
     for name in [
@@ -698,7 +724,7 @@ fn already_published(dest: &Path, h: &TrustedHead) -> Result<RestoreSummary> {
     files::sync_dir(root.parent().ok_or(Error::Integrity)?)?;
     Ok(RestoreSummary {
         installation_id: installed,
-        checkpoint_id: h.checkpoint_id.clone(),
+        checkpoint_id: checkpoint_id.to_owned(),
         accounts: accounts(&conn)?,
         already_published: true,
     })
@@ -742,8 +768,7 @@ pub fn restore(
     let summary = quarantine(
         &mut conn,
         &stage.path,
-        &m,
-        &h,
+        &sealed_provenance(&m, &h)?,
         &mut auth,
         &destructive.binding.installation,
     )?;
@@ -791,3 +816,5 @@ mod tests;
 
 #[cfg(test)]
 mod integrated_tests;
+
+pub mod historical;

@@ -1,4 +1,4 @@
-//! Stopped-installation encrypted exports. This is not a historical restore API.
+//! Stopped encrypted exports and explicit manual pinned-journal recovery.
 use crate::{CURRENT_SCHEMA_VERSION, StoreError, destructive_intents, journal, knowledge_journal};
 use rusqlite::{Connection, OpenFlags, params};
 use serde::{Deserialize, Serialize};
@@ -254,7 +254,7 @@ pub(crate) struct Offline {
     pub(crate) destructive: destructive_intents::Journal,
 }
 impl Offline {
-    fn open(root: &Path) -> Result<Self> {
+    pub(crate) fn open(root: &Path) -> Result<Self> {
         let offline = Self::for_cutover(root)?;
         crate::cutover::require_active(&offline.conn, &offline.root)?;
         Ok(offline)
@@ -786,7 +786,7 @@ fn create_captured(offline: &Offline, output: &Path, started: Instant) -> Result
         limitations: vec![
             "current_db_only_no_authoritative_media".into(),
             "snapshot_journals_not_independent_latest_checkpoint".into(),
-            "historical_restore_unavailable".into(),
+            "historical_restore_requires_independently_pinned_journal".into(),
             "server_credentials_require_future_re_registration".into(),
         ],
     };
@@ -820,3 +820,6 @@ fn create_captured(offline: &Offline, output: &Path, started: Instant) -> Result
     }
     result
 }
+
+// Distinct manual journal recovery protocol; never seals the source.
+pub use crate::cutover::restore::historical::{publish_journal, restore_historical};

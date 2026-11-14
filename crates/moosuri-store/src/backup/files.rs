@@ -132,7 +132,7 @@ pub(crate) fn stopped_lock(root: &Path) -> Result<(PathBuf, File)> {
     // server credentials and future recovery must require re-registration.
     Ok((root, lock))
 }
-pub(super) fn output_path(root: &Path, output: &Path) -> Result<PathBuf> {
+pub(crate) fn output_path(root: &Path, output: &Path) -> Result<PathBuf> {
     let output = private_output_path(output)?;
     let parent = output.parent().ok_or(Error::InvalidInput)?;
     if parent.starts_with(root) || root.starts_with(parent) {
@@ -162,7 +162,7 @@ pub(super) fn private_output_path(output: &Path) -> Result<PathBuf> {
     }
 }
 
-pub(super) fn publish(partial: &Path, output: &Path) -> Result<()> {
+pub(crate) fn publish(partial: &Path, output: &Path) -> Result<()> {
     // Same-directory hard-link publication is atomic and cannot overwrite.
     fs::hard_link(partial, output).map_err(|e| {
         if e.kind() == io::ErrorKind::AlreadyExists {

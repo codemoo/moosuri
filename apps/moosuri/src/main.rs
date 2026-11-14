@@ -150,6 +150,30 @@ enum Command {
 
 #[derive(Subcommand)]
 enum BackupCommand {
+    /// Publish encrypted complete journals for one retained export, without sealing the stopped source.
+    Journal {
+        #[arg(long)]
+        export: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        head_output: PathBuf,
+    },
+    /// Restore an exact historical export with a separately pinned latest journal head.
+    RestoreHistorical {
+        #[arg(long)]
+        export: PathBuf,
+        #[arg(long)]
+        journal: PathBuf,
+        #[arg(long)]
+        trusted_head: PathBuf,
+        #[arg(long)]
+        latest_head_sha256: String,
+        #[arg(long)]
+        export_identity_file: PathBuf,
+        #[arg(long)]
+        journal_identity_file: PathBuf,
+    },
     /// Restore one matching sealed checkpoint into a new --data-dir. Requires independent trust in the head.
     Restore {
         #[arg(long)]
@@ -282,6 +306,48 @@ async fn run(cli: Cli) -> Result<(), String> {
                     );
                 }
             }
+            BackupCommand::Journal {
+                export,
+                output,
+                head_output,
+            } => {
+                let result =
+                    moosuri_store::backup::publish_journal(&data, &export, &output, &head_output)
+                        .map_err(|e| e.to_string())?;
+                println!(
+                    "Manual journal checkpoint {} locally complete. Independently retain latest head SHA256 {}. Source remains active. No off-host transfer, unattended publication or independent freshness verification was performed.",
+                    result.checkpoint_id, result.trusted_head_sha256
+                );
+            }
+            BackupCommand::RestoreHistorical {
+                export,
+                journal,
+                trusted_head,
+                latest_head_sha256,
+                export_identity_file,
+                journal_identity_file,
+            } => {
+                let result = moosuri_store::backup::restore_historical(
+                    &export,
+                    &journal,
+                    &trusted_head,
+                    &latest_head_sha256,
+                    &export_identity_file,
+                    &journal_identity_file,
+                    &data,
+                )
+                .map_err(|e| e.to_string())?;
+                println!(
+                    "Historical export recovery installation {} through journal checkpoint {} (already published: {}). Accounting is accounting_unknown: all model dispatch, probes and current usage totals remain unavailable until an explicit allocation/reconcile flow is implemented. This is data recovery only. Connections and old work remain quarantined. Source was not sealed; prevent simultaneous operation before enrolling this destination.",
+                    result.installation_id, result.checkpoint_id, result.already_published
+                );
+                for account in result.accounts {
+                    println!(
+                        "For currently eligible account {} (snapshot status: {}), recover-account --account-id {} --role <explicit-current-admin-or-member> --password-file <private-new-password-file>. Latest role and suspension are not reconstructed; suspended snapshot accounts stay suspended.",
+                        account.account_id, account.status, account.account_id
+                    );
+                }
+            }
             BackupCommand::CheckpointStatus => {
                 let s = moosuri_store::cutover::status(&data).map_err(|e| e.to_string())?;
                 println!(
@@ -320,7 +386,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                 let export =
                     moosuri_store::backup::create(&data, &output).map_err(|e| e.to_string())?;
                 println!(
-                    "Encrypted export {} complete at key epoch {}. Historical restore and an independently maintained latest journal remain unavailable.",
+                    "Encrypted export {} complete at key epoch {}. Historical restore requires a separately published journal and an independently retained latest head digest.",
                     export.export_id, export.key_epoch
                 );
             }

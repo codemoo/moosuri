@@ -53,3 +53,18 @@ Encrypted backups MUST have operator-held recovery identities and key-epoch meta
 #### Scenario: Backup identity unavailable
 - **WHEN** the matching recovery identity is missing or decryption fails
 - **THEN** recovery reports backup_key_missing or backup_decryption_failed without plaintext fallback or substituting a user's vault master key
+
+### Requirement: Explicit manual historical recovery trust
+Manual historical recovery MUST bind both retained export and later journal ciphertexts to an independently retained head digest. It MUST verify full auth/predecessor/successor lineage and byte-prefix extension, apply supported withdrawals before publication, and quarantine restored authority. Local files and timestamps MUST NOT be presented as proof of independent latestness or off-host retention.
+
+#### Scenario: Stale journal against the current independently retained pin
+- **WHEN** an older journal/head is supplied with the newer trusted head digest
+- **THEN** restore fails before publication; a caller supplying both a stale head and stale digest is explicitly outside local rollback detection
+
+#### Scenario: Source continues after manual journal publication
+- **WHEN** a stopped active source publishes a complete manual journal checkpoint
+- **THEN** it remains active-capable afterward, while publication failure never advertises a missing head as recovery completion
+
+#### Scenario: Historical revisions differ from deletion-time revisions
+- **WHEN** a supported withdrawal targets an older snapshot revision or a UUID created after that snapshot
+- **THEN** restore conservatively withdraws matching snapshot content or skips an absent UUID without reconstructing later additions or granting old execution authority

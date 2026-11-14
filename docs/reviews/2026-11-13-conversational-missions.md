@@ -52,3 +52,17 @@ React build에는 기존500kB 초과 chunk 경고가 남는다.
 대화의 여러 턴 명확화, 넓은 날짜/숫자/시간대 표현, 실모델 unseen 의미·속도 평가는 후속이다.
 OpenSpec은 이 미완료 범위를 남겨 archive하지 않는다. 운영 서비스·수집기·cron·DB는
 변경하지 않았고 GitHub Actions/자동 CI도 계속 비활성이다.
+
+## 2026-11-14 ordinary polite request routing
+
+A bare Korean politeness cue (`부탁`) unnecessarily sent normal foreground questions
+through the isolated mission classifier before the real answer. Removed that cue;
+explicit scheduling/delegation, selected-task and pending clarification routes keep
+their existing checks. The composed actual Runtime/SQLite test now submits a polite
+ordinary question after a real saved-task receipt and observes exactly one answer
+call, no new task and no control receipt. Timed/delegated polite requests still route.
+
+The four affected mission-chat Runtime/cue checks passed on allowlisted source in
+the isolated Linux environment. This proves removal of one extra model round trip
+for that path, not a live-model speed percentage or general semantic quality score.
+No provider/model/effort setting or mutation authority changed.

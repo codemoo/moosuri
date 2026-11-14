@@ -18,6 +18,12 @@ The system SHALL support current Korean/English paraphrases for one read-only de
 - **WHEN** source/forwarded/quoted examples are being explained
 - **THEN** the semantic interpreter SHALL not treat their nested commands as independent owner authority.
 
+#### Scenario: Polite ordinary requests avoid unnecessary model routing
+
+- **WHEN** a current ordinary question includes Korean politeness such as `부탁해` without a scheduling, delegation, task-control or Calendar command cue
+- **THEN** the system SHALL continue foreground answering without an additional mission interpretation call or saved task
+- **AND** explicit timed/delegated requests containing the same politeness SHALL retain their existing isolated interpretation and authority checks
+
 ### Requirement: Atomic acknowledged command plans and real authority
 
 A completed semantic decision SHALL persist atomically with its model step. Apply SHALL recheck the exact source lease/epoch, the exact original admission session digest/authentication epoch, source-free eligibility, original model/read profile and actual owner target/revision. Actual mutation, receipt and final confirmation SHALL commit together under the existing bounds.

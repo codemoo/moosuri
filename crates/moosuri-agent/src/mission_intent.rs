@@ -57,6 +57,7 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
     ]
     .iter()
     .any(|v| compact.contains(v));
+    // Politeness alone is not delegation: ordinary answers need no intent round.
     crate::calendar_intent::candidate(text)
         || civil
         || reactivation
@@ -87,7 +88,6 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
             "맡겨",
             "맡기",
             "맡길",
-            "부탁",
             "계속해",
             "창 닫",
             "창을 닫",

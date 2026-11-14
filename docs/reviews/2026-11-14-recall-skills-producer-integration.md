@@ -1,7 +1,7 @@
 # Conversation recall, scheduled skills and local producer — 2026-11-14
 
 This joins source-pinned independent reviews of three bounded implementation units:
-[conversation recall](2026-11-14-conversation-recall.md),
+[conversation recall](../chat.md#older-conversation-recall),
 [scheduled skills](2026-11-14-scheduled-skill-lifecycle.md), and
 [local work-session producer](2026-11-14-local-work-session-feed.md).
 The current Store schema is47. No real account, private conversation, live provider,

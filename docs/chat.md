@@ -134,3 +134,9 @@ retry/reopen cannot recover purged output. Recall remains inside the existing
 six-dispatch/twelve-tool/120-second run budgets. Stored old profiles gain no tools,
 background missions exclude recall, and runs carrying recalled evidence cannot
 publish it as a saved artifact.
+
+Ordinary Korean requests such as “한국어 인사말 세 가지 부탁해” no longer add a
+mission-classification model call solely because they contain “부탁”. Explicit
+timing/delegation, selected-task controls and pending clarification keep their
+existing routes. This removes one unnecessary round trip in that case; it is not
+a measured general latency or live-model quality claim.

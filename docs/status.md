@@ -5,6 +5,9 @@
 전체 단계, 아래 날짜별 기록은 해당 소스의 증거다. 공개 개발 저장소는
 [codemoo/moosuri](https://github.com/codemoo/moosuri)이며 안정판·운영 전환은 아직 아니다.
 GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 작업 단위별로 수행한다.
+일반 질문의 “부탁해” 표현만으로 추가하던 업무 분류 모델 호출을 제거했다. 해당 경로의
+호출 수와 기존 예약 해석을 Linux 실제 Runtime에서 확인했으며 실모델 속도 비율을 주장하지 않는다.
+[호출 감소 검증](reviews/2026-11-13-conversational-missions.md#2026-11-14-ordinary-polite-request-routing).
 
 ## 현재 지원하는 개발 프리뷰
 

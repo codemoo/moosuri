@@ -87,6 +87,9 @@ pub struct ServerConfig {
     vault_origin: Option<String>,
     pdf_extractor: Option<std::path::PathBuf>,
     audio: moosuri_connectors::audio::AudioClient,
+    community_catalog: Option<moosuri_connectors::github_catalog::CatalogSource>,
+    #[cfg(feature = "test-fixtures")]
+    community_catalog_fixtures: Option<(String, String)>,
 }
 impl ServerConfig {
     pub fn new(origin: &str, allow_http_loopback: bool) -> Result<Self, &'static str> {
@@ -127,6 +130,9 @@ impl ServerConfig {
             vault_origin: None,
             pdf_extractor: None,
             audio: moosuri_connectors::audio::AudioClient::default(),
+            community_catalog: None,
+            #[cfg(feature = "test-fixtures")]
+            community_catalog_fixtures: None,
         })
     }
     #[cfg(feature = "test-fixtures")]
@@ -144,6 +150,36 @@ impl ServerConfig {
             return Err("pdf_extractor_unavailable");
         }
         self.pdf_extractor = Some(executable);
+        Ok(self)
+    }
+    #[cfg(feature = "test-fixtures")]
+    #[doc(hidden)]
+    pub fn with_community_catalog_fixtures(
+        mut self,
+        raw: &str,
+        github: &str,
+    ) -> Result<Self, &'static str> {
+        moosuri_connectors::github_catalog::CatalogClient::synthetic(raw)
+            .map_err(|_| "invalid_catalog_fixture")?;
+        // Both test-only channels have exactly the same strict loopback policy.
+        moosuri_connectors::github_catalog::CatalogClient::synthetic(github)
+            .map_err(|_| "invalid_catalog_fixture")?;
+        self.community_catalog_fixtures = Some((raw.into(), github.into()));
+        Ok(self)
+    }
+    /// Explicit public artifact source; discovery does not grant user capabilities.
+    pub fn with_community_catalog(
+        mut self,
+        repository: &str,
+        reference: &str,
+        directory: &str,
+    ) -> Result<Self, &'static str> {
+        self.community_catalog = Some(
+            moosuri_connectors::github_catalog::CatalogSource::new(
+                repository, reference, directory,
+            )
+            .map_err(|_| "invalid_public_catalog_source")?,
+        );
         Ok(self)
     }
     pub fn with_vault_origin(mut self, origin: &str, dev: bool) -> Result<Self, &'static str> {

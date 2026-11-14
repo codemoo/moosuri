@@ -973,3 +973,6 @@ async fn incoming_share_origin_pins_actual_current_session_but_allows_unclaimed_
         );
     }
 }
+
+#[path = "cases/catalog_runtime.rs"]
+mod catalog_runtime_tests;

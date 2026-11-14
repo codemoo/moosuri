@@ -19,6 +19,7 @@ pub use automatic_memory::{ExtractionClaim, ExtractionLease, ExtractionUnit};
 mod artifacts;
 mod community_skills;
 pub use community_skills::author as skill_author;
+pub use community_skills::{CatalogPreview, CatalogRefresh};
 mod google_setup;
 pub use google_setup::*;
 mod source_connections;
@@ -207,7 +208,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 34;
+const CURRENT_SCHEMA_VERSION: i64 = 35;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -576,6 +577,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0034_chatgpt_vm_handoff.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 35 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0035_community_catalog_cache.sql"),
                 "COMMIT;"
             ))?;
         }

@@ -100,6 +100,13 @@ enum Command {
         /// Owner-only JSON for an already verified isolated Linux browser deployment.
         #[arg(long)]
         browser_capsule_file: Option<PathBuf>,
+        /// Public GitHub repository hosting contributor-generated static catalog files.
+        #[arg(long,requires_all=["community_catalog_ref","community_catalog_directory"])]
+        community_catalog_repository: Option<String>,
+        #[arg(long, requires = "community_catalog_repository")]
+        community_catalog_ref: Option<String>,
+        #[arg(long, requires = "community_catalog_repository")]
+        community_catalog_directory: Option<String>,
         /// Separate installed vault browser origin; no public default is assumed.
         #[arg(long)]
         vault_origin: Option<String>,
@@ -368,6 +375,9 @@ async fn run(cli: Cli) -> Result<(), String> {
             google_client_file,
             web_search_key_file,
             browser_capsule_file,
+            community_catalog_repository,
+            community_catalog_ref,
+            community_catalog_directory,
             vault_origin,
             vault_adapter_bind,
             vault_adapter_key_file,
@@ -381,6 +391,15 @@ async fn run(cli: Cli) -> Result<(), String> {
                     std::env::current_exe().map_err(|_| "pdf_extractor_unavailable")?,
                 )
                 .map_err(str::to_owned)?;
+            if let (Some(repository), Some(reference), Some(directory)) = (
+                community_catalog_repository,
+                community_catalog_ref,
+                community_catalog_directory,
+            ) {
+                config = config
+                    .with_community_catalog(&repository, &reference, &directory)
+                    .map_err(str::to_owned)?;
+            }
             if let Some(proxy) = trusted_proxy {
                 config = config
                     .with_trusted_proxy(proxy, &client_ip_header)

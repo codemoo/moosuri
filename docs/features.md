@@ -180,3 +180,9 @@ F59의 개인 ChatGPT text 연결에 보호된 native Linux 전달을 추가했�
 권한이 없다. Native/Linux·독립 검토·실제 OpenSSH/Rust/합성 제공업체 네 장애 시나리오와
 저장 대화를 검증했다. [근거](reviews/2026-11-14-chatgpt-vm-handoff.md). 개인 tools/media/background,
 Claude 실행, 실계정/운영 trust와 릴리스 설치까지 완료했다는 뜻은 아니다.
+
+F67/F68의 공개 GitHub 스킬에 설정한 정적 목록의 발견·ETag/offline 캐시·선택 패키지의
+독립 원본 검증을 연결했다. 기존 설치본의 실행 상태와 사용자별 활성판/숨김을 유지하며
+별도 설치 동작 전에는 활성화하지 않는다. Native/Linux·실제 Chrome·독립 검토 및 두 UI
+결함 수정은 [검증 기록](reviews/2026-11-14-community-catalog-runtime.md)을 따른다.
+개인 학습 export·예약 needs_skill·GC·서명/철회 목록과 실제 공개 catalog 운영은 별도다.

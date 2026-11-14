@@ -25,6 +25,9 @@ pub struct CommunitySkillCard {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub github: Option<GitHubSkillLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub catalog: Option<CommunityCatalogOffer>,
 }
 #[derive(Clone, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -47,4 +50,24 @@ pub struct GitHubSkillPreviewInput {
     pub repository: String,
     pub directory: String,
     pub reference: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct CommunityCatalogOffer {
+    pub artifact_sha256: String,
+    pub verified: bool,
+    pub stale: bool,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct CommunityCatalogStatus {
+    pub configured: bool,
+    pub source: Option<String>,
+    pub state: String,
+    #[ts(type = "number | null")]
+    pub verified_at: Option<i64>,
+    #[ts(type = "number | null")]
+    pub checked_at: Option<i64>,
+    pub stale: bool,
 }

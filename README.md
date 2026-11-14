@@ -11,6 +11,10 @@ separate OpenAI API connection, one-use PWA text/link sharing, and a separate en
 Every mail send needs the user's explicit approval of its final preview. Unknown sends
 have conservative read-only Sent checks and are never automatically resent.
 
+Suggestions can discover an explicitly configured public GitHub skill catalog,
+verify selected original packages and keep each user's installations separate.
+See [community skills](docs/community-skills.md) for configuration and remaining limits.
+
 This is the public development repository [codemoo/moosuri](https://github.com/codemoo/moosuri),
 not a stable release or a migration of the existing private deployment. Its source
 history, accounts, raw communications, credentials, operating data and infrastructure

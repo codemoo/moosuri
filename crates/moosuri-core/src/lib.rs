@@ -182,6 +182,8 @@ pub fn typescript_contract() -> String {
         ArtifactPage::decl(),
         ArtifactHistory::decl(),
         CommunitySkillCard::decl(),
+        CommunityCatalogOffer::decl(),
+        CommunityCatalogStatus::decl(),
         CommunitySkillMutation::decl(),
         GoogleSetupStatus::decl(),
         GoogleSetupValidation::decl(),

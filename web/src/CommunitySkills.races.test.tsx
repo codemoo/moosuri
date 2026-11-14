@@ -29,9 +29,12 @@ async function preview() {
 }
 function article(name: string) { return screen.getByRole("heading", { level: 3, name }).closest("article")!; }
 beforeEach(() => vi.restoreAllMocks());
+const disabledStatus=()=>response({configured:false,source:null,state:"disabled",verified_at:null,checked_at:null,stale:false});
+function mockFetch(handler:(path:string,init?:RequestInit)=>Promise<Response>) { return vi.fn((path:string,init?:RequestInit)=>path.endsWith("/catalog/status")?Promise.resolve(disabledStatus()):handler(path,init)); }
+
 it("retains a successful imported card when the older initial catalog arrives afterward", async () => {
   const oldList = deferred<Response>(); const mutations: RequestInit[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+  vi.stubGlobal("fetch", mockFetch(async (path: string, init?: RequestInit) => {
     if (init?.method === "GET") return oldList.promise;
     if (path.endsWith("/preview")) return response(remote);
     mutations.push(init!); return response([installed]);
@@ -48,7 +51,7 @@ it("retains a successful imported card when the older initial catalog arrives af
 });
 it.each(["parent_first", "import_first"])("serializes full catalog lifecycle/import results: %s", async order => {
   const held = deferred<Response>(); let writes = 0;
-  vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+  vi.stubGlobal("fetch", mockFetch(async (path: string, init?: RequestInit) => {
     if (init?.method === "GET") return response([base]);
     if (path.endsWith("/preview")) return response(remote);
     writes++; return writes === 1 ? held.promise : response([installed]);
@@ -74,7 +77,7 @@ it.each(["parent_first", "import_first"])("serializes full catalog lifecycle/imp
 });
 it("does not resurrect a removed card from an older explicit refresh snapshot", async () => {
   const oldList = deferred<Response>(); let reads = 0;
-  vi.stubGlobal("fetch", vi.fn(async (_path: string, init?: RequestInit) => {
+  vi.stubGlobal("fetch", mockFetch(async (_path: string, init?: RequestInit) => {
     if (init?.method === "GET") return ++reads === 1 ? response([base]) : oldList.promise;
     return response([]);
   }));
@@ -88,7 +91,7 @@ it("does not resurrect a removed card from an older explicit refresh snapshot", 
 });
 it("fences an importer mutation result after switching the actual parent account", async () => {
   const held = deferred<Response>();
-  vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+  vi.stubGlobal("fetch", mockFetch(async (path: string, init?: RequestInit) => {
     if (init?.method === "GET") return response([]);
     if (path.endsWith("/preview")) return response(remote);
     return held.promise;

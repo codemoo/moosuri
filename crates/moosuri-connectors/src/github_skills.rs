@@ -473,5 +473,38 @@ pub async fn acquire_github_skill(input: GitHubSkillSource) -> Result<Downloaded
     .await
     .map_err(|_| GitHubSkillError::Timeout)?
 }
+/// Synthetic exact-loopback transport still runs the original object verifier.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub async fn acquire_github_skill_fixture(
+    input: GitHubSkillSource,
+    origin: &str,
+) -> Result<DownloadedGitHubSkill> {
+    let source = input.normalize()?;
+    let base = Url::parse(origin).map_err(|_| GitHubSkillError::InvalidSource)?;
+    if base.scheme() != "http"
+        || base.host_str() != Some("127.0.0.1")
+        || base.port().is_none_or(|p| p == 0)
+        || base.path() != "/"
+        || base.query().is_some()
+        || base.fragment().is_some()
+        || !base.username().is_empty()
+        || base.password().is_some()
+    {
+        return Err(GitHubSkillError::InvalidSource);
+    }
+    tokio::time::timeout(
+        DEADLINE,
+        Acquisition {
+            client: builder().build().map_err(|_| GitHubSkillError::Network)?,
+            base,
+            remaining: 2 * 1024 * 1024,
+            requests: 0,
+        }
+        .acquire(source),
+    )
+    .await
+    .map_err(|_| GitHubSkillError::Timeout)?
+}
 #[cfg(test)]
 mod tests;

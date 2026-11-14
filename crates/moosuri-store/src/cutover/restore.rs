@@ -426,6 +426,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0034_chatgpt_vm_handoff.sql"
         ))?;
     }
+    if captured < 35 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0035_community_catalog_cache.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -487,7 +492,7 @@ fn quarantine(
         "UPDATE store_meta SET journal_seq=?1,journal_head=?2 WHERE singleton=1",
         params![last.seq, last.hash.as_slice()],
     )?;
-    tx.execute_batch("DELETE FROM sessions; DELETE FROM chatgpt_handoffs; DELETE FROM personal_subscription_selections; DELETE FROM chatgpt_auth_attempts; DELETE FROM chatgpt_model_probes; DELETE FROM chatgpt_sessions; UPDATE chatgpt_bindings SET status='needs_reauth',remote_revoke='not_requested'; UPDATE chatgpt_binding_revisions SET identity=NULL,client_id=NULL;")?;
+    tx.execute_batch("DELETE FROM community_catalog_cache; DELETE FROM sessions; DELETE FROM chatgpt_handoffs; DELETE FROM personal_subscription_selections; DELETE FROM chatgpt_auth_attempts; DELETE FROM chatgpt_model_probes; DELETE FROM chatgpt_sessions; UPDATE chatgpt_bindings SET status='needs_reauth',remote_revoke='not_requested'; UPDATE chatgpt_binding_revisions SET identity=NULL,client_id=NULL;")?;
     tx.execute(
         "UPDATE subscription_runtime SET runtime_id=?1,host_id=?2 WHERE singleton=1",
         params![

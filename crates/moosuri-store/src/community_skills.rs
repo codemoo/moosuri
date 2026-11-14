@@ -1,6 +1,8 @@
 //! Trusted, repository-owned instruction packages. No network, shell or executable loading.
 use super::*;
 pub mod author;
+mod runtime_catalog;
+pub use runtime_catalog::*;
 pub(crate) mod external;
 use moosuri_core::{CommunitySkillCard, CommunitySkillMutation, SkillPin};
 use serde::{Deserialize, Serialize};
@@ -439,6 +441,7 @@ fn card(
         .into(),
         missing,
         github: e.external.clone(),
+        catalog: None,
     })
 }
 fn cards(

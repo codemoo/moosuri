@@ -10,7 +10,36 @@ struct Envelope {
     directory: String,
     commit: String,
     slug: String,
+    #[serde(deserialize_with = "unique_files")]
     files: BTreeMap<String, String>,
+}
+fn unique_files<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<BTreeMap<String, String>, D::Error> {
+    struct Unique;
+    impl<'de> serde::de::Visitor<'de> for Unique {
+        type Value = BTreeMap<String, String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("unique package files")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut a: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
+            let mut map = BTreeMap::new();
+            while let Some((key, value)) = a.next_entry::<String, String>()? {
+                if map.insert(key, value).is_some() {
+                    return Err(serde::de::Error::custom("duplicate package file"));
+                }
+            }
+            Ok(map)
+        }
+    }
+    d.deserialize_map(Unique)
+}
+/// Artifact parsing alone creates no GitHub provenance or install authority.
+pub(super) fn decode_catalog_artifact(bytes: &[u8]) -> Result<Validated> {
+    validate(serde_json::from_slice::<Envelope>(bytes).map_err(|_| StoreError::InvalidInput)?)
 }
 pub(super) fn identity(location: &GitHubSkillLocation) -> String {
     let mut hash = Sha256::new();

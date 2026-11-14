@@ -150,3 +150,9 @@ flaky는 rerun으로 숨기지 않는다. 원인·owner·수리 기한과 첫 �
 span·직접 SQL 종료·재개방의 관측 공백을0으로 채우지 않는다. 이 수집 경로의 작은 합성
 검사는 정확한 수집/분모를 검증할 뿐 위의 부하 목표·실제 모델 품질·browser DOM/입력
 왕복 성능을 입증하지 않는다. 모델/effort를 몰래 낮추거나 추적 때문에 호출을 추가하지 않는다.
+
+공개 `moosuri-eval` 회귀 범위에는 chat 명령의 기억·정정/재개방, conversation recall을 통한
+전이 망각과 독립 source 보존, provider 응답 barrier에서의 owner 취소, compound A/B→unseen C
+재사용·proof 철회가 포함된다. 기존 RunView 숫자는 접수 run별 표본/누락과 함께 수집하며
+결과·예산 판정에 latency 기준을 추가하지 않는다. 작은 합성 회귀이며 실제 provider 수락,
+crash/kill 복구, 부하·의미 품질·32세계 pilot의 완료 증거가 아니다. [실행 범위](agent-evaluation.md).

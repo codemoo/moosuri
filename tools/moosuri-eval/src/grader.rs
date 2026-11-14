@@ -5,6 +5,8 @@ use crate::{
 };
 use serde::Serialize;
 use serde_json::Value;
+mod outcomes;
+pub use outcomes::{outcome, outcome_mutations};
 
 #[derive(Clone, Serialize)]
 pub struct Check {
@@ -23,11 +25,18 @@ fn arguments(slot: &Slot) -> Option<&Value> {
         "knowledge_read_source" | "knowledge_read_memory" => None,
         "skill_read" => Some(&slot.input["pin"]),
         "decimal_calculate" => Some(&slot.input["calculation"]),
+        "decimal_workflow" => Some(&slot.input["workflow"]),
+        "learned_skill" => Some(&slot.input["invocation"]),
         _ => None,
     }
 }
 fn linked(slot: &Slot, call: &IssuedCall, step: i64) -> bool {
-    if slot.step != step || slot.call_id != call.id || slot.input["tool"] != call.name {
+    let name = if slot.input["tool"] == "learned_skill" {
+        "learned_skill_execute"
+    } else {
+        slot.input["tool"].as_str().unwrap_or("invalid")
+    };
+    if slot.step != step || slot.call_id != call.id || name != call.name {
         return false;
     }
     let args = if let Some(args) = arguments(slot) {
@@ -57,6 +66,9 @@ pub fn completed(o: &Observation, account: &str) -> Vec<Check> {
             "current_owner",
             o.account == account
                 && o.evidence
+                    .iter()
+                    .all(|e| e.owner.as_deref() == Some(o.tenant.as_str()))
+                && o.history_dependencies
                     .iter()
                     .all(|e| e.owner.as_deref() == Some(o.tenant.as_str())),
         ),
@@ -101,6 +113,10 @@ pub fn completed(o: &Observation, account: &str) -> Vec<Check> {
                         | "knowledge_read_memory"
                         | "skill_read"
                         | "decimal_calculate"
+                        | "decimal_workflow"
+                        | "learned_skill_execute"
+                        | "conversation_search"
+                        | "conversation_read"
                 )
             }),
         ),

@@ -20,3 +20,12 @@
 - [ ] Complete broader2.3 lifecycle/mission/learned-route cases and2.4 real-provider/per-stage measurement. This subset is not the32-world pilot or a semantic quality score.
 
 Commands/report semantics: `docs/agent-evaluation.md`. Integration evidence is source-pinned separately; CI remains disabled.
+
+## Outcome workflow expansion (bounded public regression)
+
+- [x] Add chat remember/correct across real recall and graceful reopen, with command-specific committed receipt/identity grading.
+- [x] Add actual conversation-recall transitive forget, scoped version/FTS/output/checkpoint/event purge and independent source/answer preservation.
+- [x] Add inflight provider-barrier owner cancellation/replay/reopen; classify as handling, preserve uncertainty/accounting and reject late achievement.
+- [x] Add distinct finalized compound A/B proofs, fresh learned-route C, proof withdrawal and fresh D without the withdrawn usable route; independently grade arithmetic and nested receipts.
+- [x] Include existing RunView stage timings and missing/call coverage for admitted runs without changing result/budget acceptance.
+- [ ] Complete broader 2.3/2.4 acceptance: abrupt crash/checkpoint-gap worlds, real-provider bounded profiles, comparative skill efficiency and semantic evaluation remain outside this expansion.

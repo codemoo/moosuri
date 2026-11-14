@@ -20,6 +20,7 @@ pub struct Row {
     pub family_id: String,
     pub status: &'static str,
     pub error: Option<&'static str>,
+    pub run_failures: Vec<String>,
     pub completion_eligible: bool,
     pub task_success: Option<bool>,
     pub mission_eligible: bool,
@@ -30,6 +31,7 @@ pub struct Row {
     pub setup_ms: u64,
     pub workflow_ms: Option<u64>,
     pub timings: Vec<runner::TurnTiming>,
+    pub server_timings: Vec<Option<moosuri_core::RunTimings>>,
     pub provider_calls: usize,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
@@ -72,6 +74,9 @@ fn elapsed(t: Instant) -> u64 {
 fn script(kind: Kind) -> model::Script {
     match kind {
         Kind::Memory => model::Script::Memory,
+        Kind::ChatMemory | Kind::TransitiveForget => model::Script::ChatMemory,
+        Kind::CancelMission => model::Script::CancelMission,
+        Kind::LearnedWorkflow => model::Script::LearnedWorkflow,
         Kind::Disconnect => model::Script::Chat,
         Kind::Truncated => model::Script::Truncated,
         Kind::Calculation => model::Script::Calculation,
@@ -82,23 +87,31 @@ fn script(kind: Kind) -> model::Script {
 fn pending(case: Case) -> Row {
     let completion_eligible = matches!(
         case.kind,
-        Kind::Memory | Kind::Calculation | Kind::SkilledCalculation | Kind::Mission
+        Kind::Memory
+            | Kind::Calculation
+            | Kind::SkilledCalculation
+            | Kind::Mission
+            | Kind::ChatMemory
+            | Kind::TransitiveForget
+            | Kind::LearnedWorkflow
     );
     Row {
         case_id: case.id.into(),
         family_id: case.family_id.into(),
         status: "not_run",
         error: None,
+        run_failures: vec![],
         completion_eligible,
         task_success: None,
         mission_eligible: matches!(case.kind, Kind::Mission),
         mission_success: None,
-        handling_eligible: matches!(case.kind, Kind::Truncated),
+        handling_eligible: matches!(case.kind, Kind::Truncated | Kind::CancelMission),
         handling_success: None,
         checks: vec![],
         setup_ms: 0,
         workflow_ms: None,
         timings: vec![],
+        server_timings: vec![],
         provider_calls: 0,
         input_tokens: None,
         output_tokens: None,
@@ -132,6 +145,9 @@ fn grade(case: Case, out: &runner::Execution) -> Vec<grader::Check> {
     };
     match case.kind {
         Kind::Memory => grader::memory(out),
+        Kind::ChatMemory | Kind::TransitiveForget | Kind::CancelMission | Kind::LearnedWorkflow => {
+            grader::outcome(case.kind, out)
+        }
         Kind::Mission => grader::mission(out),
         Kind::Calculation | Kind::SkilledCalculation => grader::calculation(
             o,
@@ -202,6 +218,14 @@ pub async fn run() -> Report {
             Ok(Ok(out)) => {
                 row.checks = grade(case, &out);
                 let passed = grader::all(&row.checks);
+                row.run_failures = out
+                    .observations
+                    .iter()
+                    .filter_map(|o| o.failure.clone())
+                    .collect();
+                if !passed {
+                    row.error = Some("outcome_postcondition_failed");
+                }
                 row.status = if passed { "pass" } else { "fail" };
                 row.task_success = row.completion_eligible.then_some(passed);
                 row.mission_success = row.mission_eligible.then_some(passed);
@@ -226,6 +250,15 @@ pub async fn run() -> Report {
                 if matches!(case.kind, Kind::Mission) {
                     validation.extend(grader::mission_mutations(&out));
                 }
+                if matches!(
+                    case.kind,
+                    Kind::ChatMemory
+                        | Kind::TransitiveForget
+                        | Kind::CancelMission
+                        | Kind::LearnedWorkflow
+                ) {
+                    validation.extend(grader::outcome_mutations(case.kind, &out));
+                }
                 row.timings = out.timings;
             }
             Ok(Err(e)) => row.error = Some(e),
@@ -234,6 +267,7 @@ pub async fn run() -> Report {
         // Dispatch observations survive workflow errors. Tokens remain unknown
         // unless a complete SQLite observation was obtained, never inferred from
         // the scripted provider's nominal usage.
+        row.server_timings = world.server_timings();
         let ledger = world.provider.ledger();
         row.provider_calls = ledger.len();
         row.request_digests = ledger.into_iter().map(|d| d.request_sha256).collect();
@@ -305,28 +339,45 @@ pub async fn run() -> Report {
         "finalization_interruption_rejected",
         "actual_skill_read_only_claim_rejected",
         "setup_failure_retained_in_denominator",
+        "chat_correction_wrong_identity_rejected",
+        "forget_transitive_checkpoint_residue_rejected",
+        "cancel_late_success_rejected",
+        "learned_duplicate_proof_rejected",
+        "learned_missing_nested_receipts_rejected",
+        "learned_withdrawn_output_residue_rejected",
+        "chat_success_without_command_receipt_rejected",
+        "forget_unrelated_answer_loss_rejected",
+        "cancel_false_certain_outcome_rejected",
+        "learned_foreign_proof_rejected",
+        "learned_stale_nested_arguments_rejected",
     ];
     let validation_pass = grader::all(&validation)
         && required_validations
             .iter()
             .all(|name| validation.iter().any(|c| c.name == *name));
     let success = counts.pass == counts.planned && validation_pass;
-    let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs"))});
+    let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs")),"outcome_script_sha256":digest(include_bytes!("model/outcomes.rs")),"outcome_workflow_sha256":digest(include_bytes!("runner/outcomes.rs"))});
     let observed_latency_ms = latencies(&rows);
     Report {
-        format_version: 1,
+        format_version: 2,
         evidence_class: "public_synthetic_contract_regression",
         source_sha256: env!("MOOSURI_EVAL_SOURCE_SHA256"),
         fixture_sha256: digest(&serde_json::to_vec(&fixture).unwrap()),
         profile_sha256: digest(world::PROFILE.as_bytes()),
-        grader_sha256: digest(include_bytes!("grader.rs")),
+        grader_sha256: digest(
+            &[
+                include_bytes!("grader.rs").as_slice(),
+                include_bytes!("grader/outcomes.rs").as_slice(),
+            ]
+            .concat(),
+        ),
         profile: serde_json::from_str(world::PROFILE).unwrap(),
         rows,
         counts,
         observed_latency_ms,
         validation_checks: validation,
         validation_pass,
-        unavailable: serde_json::json!({"semantic_model_quality":"not_run","blind_holdout":"not_run","legacy_baseline":"not_run","non_inferiority":"not_run","pilot32_worlds":"not_run","live_provider":"not_run","device":"not_run","cost_usd":null,"queue_ms":null,"context_ms":null,"first_final_body_ms":null,"dom_render_ms":null,"rss_bytes":null,"cpu_ms":null,"timing_method":"monotonic in-process HTTP admission and 10ms-polled terminal observation; setup reported separately"}),
+        unavailable: serde_json::json!({"semantic_model_quality":"not_run","blind_holdout":"not_run","legacy_baseline":"not_run","non_inferiority":"not_run","pilot32_worlds":"not_run","live_provider":"not_run","device":"not_run","cost_usd":null,"dom_render_ms":null,"rss_bytes":null,"cpu_ms":null,"timing_method":"monotonic HTTP admission/10ms-polled terminal and separate per-run server RunView.timings; missing fields counted, never filled"}),
         success,
     }
 }
@@ -340,8 +391,37 @@ fn percentiles(mut values: Vec<u64>) -> serde_json::Value {
     };
     serde_json::json!({"observed_samples":values.len(),"p50":value(50),"p95":value(95),"method":"nearest_rank"})
 }
+fn server_latencies(rows: &[Row]) -> serde_json::Value {
+    let turns = rows
+        .iter()
+        .flat_map(|r| r.server_timings.iter())
+        .collect::<Vec<_>>();
+    let mut fields = serde_json::Map::new();
+    type TimingSelector = fn(&moosuri_core::RunTimings) -> Option<u64>;
+    let selectors: [(&str, TimingSelector); 7] = [
+        ("queue_ms", |t| t.queue_ms),
+        ("context_ms", |t| t.context_ms),
+        ("first_dispatch_ms", |t| t.first_dispatch_ms),
+        ("model_ms", |t| t.model_ms),
+        ("tool_ms", |t| t.tool_ms),
+        ("first_final_body_ms", |t| t.first_final_body_ms),
+        ("terminal_ms", |t| t.terminal_ms),
+    ];
+    for (name, select) in selectors {
+        let values = turns
+            .iter()
+            .filter_map(|t| t.as_ref().and_then(select))
+            .collect::<Vec<_>>();
+        let missing = turns.len() - values.len();
+        let mut result = percentiles(values);
+        result["missing"] = serde_json::json!(missing);
+        fields.insert(name.into(), result);
+    }
+    let observed = turns.iter().filter_map(|t| t.as_ref()).collect::<Vec<_>>();
+    serde_json::json!({"run_samples":turns.len(),"missing_run_timings":turns.len()-observed.len(),"clock_discontinuity":observed.iter().filter(|t|t.clock_discontinuity).count(),"model_calls":observed.iter().map(|t|u64::from(t.model_calls)).sum::<u64>(),"measured_model_calls":observed.iter().map(|t|u64::from(t.measured_model_calls)).sum::<u64>(),"tool_calls":observed.iter().map(|t|u64::from(t.tool_calls)).sum::<u64>(),"measured_tool_calls":observed.iter().map(|t|u64::from(t.measured_tool_calls)).sum::<u64>(),"stages":fields,"scope":"admitted runs including failed workflows; missing includes internal missions without a RunView API sample; not load or browser measurement"})
+}
 fn latencies(rows: &[Row]) -> serde_json::Value {
-    serde_json::json!({"admission":percentiles(rows.iter().flat_map(|r|r.timings.iter().map(|t|t.admission_ms)).collect()),"terminal_observed":percentiles(rows.iter().flat_map(|r|r.timings.iter().map(|t|t.terminal_observed_ms)).collect()),"workflow_including_failed":percentiles(rows.iter().filter_map(|r|r.workflow_ms).collect())})
+    serde_json::json!({"server":server_latencies(rows),"admission":percentiles(rows.iter().flat_map(|r|r.timings.iter().map(|t|t.admission_ms)).collect()),"terminal_observed":percentiles(rows.iter().flat_map(|r|r.timings.iter().map(|t|t.terminal_observed_ms)).collect()),"workflow_including_failed":percentiles(rows.iter().filter_map(|r|r.workflow_ms).collect())})
 }
 
 #[cfg(test)]
@@ -391,9 +471,17 @@ mod tests {
                 .map(|c| &c.name)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(report.counts.task_success, 4);
+        assert_eq!(report.counts.task_success, 7);
         assert_eq!(report.counts.mission_success, 1);
-        assert_eq!(report.counts.handling_success, 1);
+        assert_eq!(report.counts.handling_success, 2);
+        let server = &report.observed_latency_ms["server"];
+        assert_eq!(server["run_samples"], 25);
+        for stage in server["stages"].as_object().unwrap().values() {
+            assert_eq!(
+                stage["observed_samples"].as_u64().unwrap() + stage["missing"].as_u64().unwrap(),
+                25
+            );
+        }
         assert!(report.success);
     }
 }

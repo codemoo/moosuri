@@ -86,7 +86,9 @@ struct Proof {
 fn adopted_number(output: &str, exact: &str) -> bool {
     output
         .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+'))
-        .any(|part| part == exact)
+        // A single sentence-final full stop is punctuation, not an extra
+        // decimal component. Never trim repeated dots or a version suffix.
+        .any(|part| part == exact || part.strip_suffix('.') == Some(exact))
 }
 // Strict supported traces: one decimal, or one search followed by one complete
 // first-hit source read; instruction reads do not affect the route. A successful

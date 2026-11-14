@@ -1,5 +1,6 @@
 //! Bounded protocol fixture. Receives actual agent requests; never receives gold.
 use crate::{EvalResult, digest, world};
+mod outcomes;
 use axum::{
     Router,
     body::Body,
@@ -21,12 +22,16 @@ pub enum Script {
     SkilledCalculation,
     SkillOnly,
     Mission,
+    ChatMemory,
+    CancelMission,
+    LearnedWorkflow,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Dispatch {
     pub request_sha256: String,
     pub calls: Vec<IssuedCall>,
     pub terminal: bool,
+    pub private_skill_admitted: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IssuedCall {
@@ -38,11 +43,13 @@ pub struct IssuedCall {
 struct Model {
     script: Script,
     ledger: Arc<Mutex<Vec<Dispatch>>>,
+    barrier: Arc<tokio::sync::Semaphore>,
 }
 pub struct Provider {
     pub base: String,
     ledger: Arc<Mutex<Vec<Dispatch>>>,
     task: JoinHandle<()>,
+    barrier: Arc<tokio::sync::Semaphore>,
 }
 impl Drop for Provider {
     fn drop(&mut self) {
@@ -59,9 +66,11 @@ impl Provider {
             listener.local_addr().map_err(|_| "fixture_address")?
         );
         let ledger = Arc::new(Mutex::new(Vec::new()));
+        let barrier = Arc::new(tokio::sync::Semaphore::new(0));
         let state = Model {
             script,
             ledger: ledger.clone(),
+            barrier: barrier.clone(),
         };
         let app = Router::new()
             .route("/v1/chat/completions", post(round))
@@ -70,7 +79,15 @@ impl Provider {
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
-        Ok(Self { base, ledger, task })
+        Ok(Self {
+            base,
+            ledger,
+            task,
+            barrier,
+        })
+    }
+    pub fn release(&self) {
+        self.barrier.add_permits(1);
     }
     pub fn ledger(&self) -> Vec<Dispatch> {
         self.ledger
@@ -122,6 +139,9 @@ fn skill(input: &Value) -> EvalResult<IssuedCall> {
     ))
 }
 fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<String>)> {
+    if matches!(model.script, Script::ChatMemory | Script::LearnedWorkflow) {
+        return outcomes::next(model, input);
+    }
     let results = tool_results(input)?;
     let names = input["tools"]
         .as_array()
@@ -152,7 +172,7 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
         ));
     }
     match model.script {
-        Script::Mission => {
+        Script::Mission | Script::CancelMission => {
             if input
                 .get("tools")
                 .and_then(Value::as_array)
@@ -182,6 +202,7 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
             let calculation = Model {
                 script: Script::Calculation,
                 ledger: model.ledger.clone(),
+                barrier: model.barrier.clone(),
             };
             let (calls, answer) = next(&calculation, &proxy)?;
             let final_answer = answer.map(|mut text| {
@@ -203,6 +224,7 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
             });
             Ok((calls, final_answer))
         }
+        Script::ChatMemory | Script::LearnedWorkflow => unreachable!(),
         Script::Chat | Script::Truncated => Ok((vec![], Some("Synthetic response body.".into()))),
         Script::Memory => {
             if let Some(memory) = results.iter().find(|r| r["kind"] == "memory") {
@@ -315,7 +337,14 @@ async fn round(State(model): State<Model>, axum::Json(input): axum::Json<Value>)
             request_sha256: digest(&serde_json::to_vec(&input).unwrap()),
             calls: calls.clone(),
             terminal,
+            private_skill_admitted: input["messages"][0]["content"]
+                .as_str()
+                .is_some_and(|s| s.lines().any(|line| line.starts_with("private:"))),
         });
+    if matches!(model.script, Script::CancelMission) {
+        let permit = model.barrier.acquire().await.unwrap();
+        permit.forget();
+    }
     let id = uuid::Uuid::new_v4().to_string();
     let tool_calls = calls.iter().enumerate().map(|(index, c)| json!({"index":index,"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments.to_string()}})).collect::<Vec<_>>();
     let delta = if answer.is_some() {

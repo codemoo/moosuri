@@ -33,6 +33,7 @@ pub struct Observation {
     pub account: String,
     pub run_id: String,
     pub state: String,
+    pub failure: Option<String>,
     pub output: String,
     pub evidence: Vec<Evidence>,
     pub returned_candidates: Vec<Evidence>,
@@ -44,6 +45,9 @@ pub struct Observation {
     pub output_tokens: Option<u64>,
     pub ledger: Vec<Dispatch>,
     pub mission: Option<MissionObservation>,
+    pub command: Option<Value>,
+    pub history_dependencies: Vec<Evidence>,
+    pub learned_receipts: Vec<Value>,
 }
 pub fn open(root: &Path) -> EvalResult<Connection> {
     let conn = Connection::open_with_flags(
@@ -58,11 +62,11 @@ pub fn open(root: &Path) -> EvalResult<Connection> {
 pub fn snapshot(root: &Path, run_id: &str, ledger: Vec<Dispatch>) -> EvalResult<Observation> {
     let mut conn = open(root)?;
     let tx = conn.transaction().map_err(|_| "observer_snapshot")?;
-    let (tenant, account, state): (String, String, String) = tx
+    let (tenant, account, state, failure): (String, String, String, Option<String>) = tx
         .query_row(
-            "SELECT tenant_id,account_id,state FROM chat_runs WHERE id=?1",
+            "SELECT tenant_id,account_id,state,error FROM chat_runs WHERE id=?1",
             [run_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .map_err(|_| "observer_run")?;
     let mut output = tx
@@ -166,11 +170,48 @@ pub fn snapshot(root: &Path, run_id: &str, ledger: Vec<Dispatch>) -> EvalResult<
             .zip(value["output_tokens"].as_u64())
             .map(|(a, b)| a + b);
     }
+    let command = tx.query_row("SELECT state,action,target_id,target_revision,outcome,proof_step,account_id FROM memory_command_slots WHERE tenant_id=?1 AND run_id=?2",params![tenant,run_id],|r|Ok(serde_json::json!({"state":r.get::<_,String>(0)?,"action":r.get::<_,String>(1)?,"target":r.get::<_,Option<String>>(2)?,"target_revision":r.get::<_,Option<i64>>(3)?,"outcome":r.get::<_,Option<String>>(4)?.and_then(|v|serde_json::from_str::<Value>(&v).ok()),"proof_step":r.get::<_,i64>(5)?,"account":r.get::<_,String>(6)?}))).optional().map_err(|_|"observer_command")?;
+    let mut history_dependencies = vec![];
+    let mut statement = tx.prepare("SELECT d.source_run_id,d.source_version,CASE WHEN r.account_id=?3 AND r.state='completed' AND r.version=d.source_version AND coalesce(a.invalidated,0)=0 THEN r.tenant_id END FROM conversation_recall_dependencies d LEFT JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.source_run_id LEFT JOIN agent_execution a ON a.tenant_id=r.tenant_id AND a.run_id=r.id WHERE d.tenant_id=?1 AND d.run_id=?2").map_err(|_|"observer_history")?;
+    for row in statement
+        .query_map(params![tenant, run_id, account], |r| {
+            Ok(Evidence {
+                kind: "conversation".into(),
+                id: r.get(0)?,
+                revision: r.get(1)?,
+                owner: r.get(2)?,
+            })
+        })
+        .map_err(|_| "observer_history")?
+    {
+        history_dependencies.push(row.map_err(|_| "observer_history")?);
+    }
+    // Include every returned history candidate even if no later read cites it.
+    for slot in &slots {
+        if let Some(result) = &slot.result
+            && result["kind"] == "conversation_search"
+            && let Some(hits) = result["value"]["hits"].as_array()
+        {
+            for hit in hits {
+                let id = hit["turn_id"].as_str().unwrap_or("invalid").to_owned();
+                let revision = hit["revision"].as_i64().unwrap_or(0);
+                let owner = tx.query_row("SELECT r.tenant_id FROM chat_runs r LEFT JOIN agent_execution a ON a.tenant_id=r.tenant_id AND a.run_id=r.id WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.id=?3 AND r.version=?4 AND r.state='completed' AND coalesce(a.invalidated,0)=0",params![tenant,account,id,revision],|r|r.get(0)).optional().map_err(|_|"observer_history_candidate")?;
+                returned_candidates.push(Evidence {
+                    kind: "conversation".into(),
+                    id,
+                    revision,
+                    owner,
+                });
+            }
+        }
+    }
+    let learned_receipts = tx.prepare("SELECT step,call_id,ordinal,input,result FROM learned_skill_receipts WHERE tenant_id=?1 AND run_id=?2 ORDER BY step,call_id,ordinal").map_err(|_|"observer_learned_receipts")?.query_map(params![tenant,run_id],|r|Ok(serde_json::json!({"step":r.get::<_,i64>(0)?,"call_id":r.get::<_,String>(1)?,"ordinal":r.get::<_,i64>(2)?,"input":r.get::<_,String>(3)?.parse::<Value>().ok(),"result":r.get::<_,String>(4)?.parse::<Value>().ok()}))).map_err(|_|"observer_learned_receipts")?.collect::<Result<Vec<_>,_>>().map_err(|_|"observer_learned_receipts")?;
     Ok(Observation {
         tenant,
         account,
         run_id: run_id.into(),
         state,
+        failure,
         output,
         evidence,
         returned_candidates,
@@ -182,5 +223,8 @@ pub fn snapshot(root: &Path, run_id: &str, ledger: Vec<Dispatch>) -> EvalResult<
         output_tokens,
         ledger,
         mission,
+        command,
+        history_dependencies,
+        learned_receipts,
     })
 }

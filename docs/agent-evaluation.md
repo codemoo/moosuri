@@ -26,6 +26,10 @@ CI는 사용자 지시로 계속 꺼져 있으며 이 명령은 로컬 검증이
 | 잘린 provider stream | 본문 뒤 terminal frame 없는 EOF | `outcome_unknown`, 완료 step 없음, dispatch 기록 보존; task 완료와 별도 handling 성공 |
 | 저장 견적 계산 | 자신의 원문과 다른 사용자 방해 원문 적재, 실제 검색/원문 읽기/소수 계산 | 정확한 source ID/revision·입력·계산 영수증, 독립 정수 센트 정답, 최종 숫자/통화 사실 |
 | 스킬을 이용한 계산 | 실제 metadata·정확한 본문 읽기와 위 계산 | 본문 읽기 외에 실제 원문/계산 결과 존재 |
+| chat 기억 정정 | 채팅으로 기억→다른 thread 실제 검색/읽기→채팅 정정→재개방 후 회상 | committed 명령 outcome·모델 receipt, 같은 memory ID와 revision, 정정된 현재 사실 |
+| 전이 망각 | memory 답변→실제 conversation_search/read 파생 답변→채팅 망각→재개방 | memory version/FTS·파생 출력/도구/checkpoint/재생 event purge, 새 회상에서 대상 없음; 같은 canary를 가진 독립 source와 답변 보존 |
+| 실행 중 미션 취소 | provider 요청 도착 후 응답 barrier→owner cancel/replay→응답 release→재개방 | cancelled·grant 철회·uncertainty·dispatch accounting 보존, 늦은 achieved/새 dispatch 없음; handling으로만 집계 |
+| 학습된 계산 재사용과 철회 | 다른 A/B 입력의 실제 decimal_workflow→unseen C learned_skill_execute→B thread 삭제→재개방→fresh D | 독립 scaled-integer 정답, candidate/usable·다른 finalized proof와 receipt hash, C의 pin/입력/내부 계산 영수증; proof 1개로 강등·C 출력 철회·D에 usable pin 없음 |
 | durable 미션 | `/api/v1/missions` 명시 요청 → 실제 계획/읽기/계산/검증 → Store 재개방 | 미션 state/mode/plan/candidate, 영수증에 연결된 결과 근거와 achieved 상태 보존, 재dispatch 없음 |
 
 도구 호출의 특정 순서는 oracle이 아니다. 발급 dispatch의 step/call ID·typed arguments와
@@ -48,7 +52,9 @@ source 관측 시각만 고정하며 Runtime 전체 clock은 실제 시각을 �
 미션 결과의 필수 원문 인용·원문 읽기/계산 영수증 누락. 실제 별도 실행에서도
 스킬 본문만 읽고 계산 완료를 주장하는 provider를 거부한다. 이 음성 대조군은 task 성공이나
 추가 표본으로 합산하지 않는다. 준비 실패가 planned/not-run 및 completion 분모에 남는지도
-직접 검증한다.
+직접 검증한다. chat 정정의 다른 memory ID, 전이 망각의 남은 checkpoint,
+취소 뒤 늦은 achieved, 중복 학습 proof, 내부 계산 영수증 누락과 철회 후 C 출력 잔존도
+각 결과 oracle로 거부한다.
 
 정답은 evaluator의 `grader.rs`에 있고 agent 요청 생성 모듈은 이를 import하지 않는다.
 agent에는 사용자 발화·공개 스킬 metadata·실제 tool 결과만 전달된다. filesystem/shell이나
@@ -59,23 +65,30 @@ gold·관측 DB·upstream ledger를 읽는 도구는 없다. 공개 정답이므
 모든 planned 사례의 executed/pass/fail/not-run을 보존한다. 설정 실패는 not-run, 실행 중
 오류·timeout·postcondition 실패는 fail이다. `completion_eligible`/`task_success`는 실행 가능한
 결과의 분모/성공이며, 실제 durable 미션은 별도의 `mission_eligible`/`mission_success`다.
-잘린 stream은 `handling_eligible`/`handling_success`로만 집계한다. 일반 chat continuity와
+잘린 stream과 명시적 owner 취소는 `handling_eligible`/`handling_success`로만 집계한다. 일반 chat continuity와
 음성 대조군이 task 완료율을 높이지 않는다. 가족이 같은 두 계산·미션은 독립 세계 표본이 아니다.
 
 `source_sha256`은 빌드 시 실제 Cargo manifest/lock, crates, migrations, community와 평가 도구의
 소스 bytes를 정렬해 계산한다. dirty tree를 clean HEAD로 표시하지 않는다. fixture/profile/grader와
-실제 요청 digest를 따로 기록하며 원문 요청·응답·credential·DB는 보고서에 넣지 않는다.
+실제 요청 digest를 따로 기록하며(분리된 fixture/grader 하위 모듈도 digest에 포함), 원문 요청·응답·credential·DB는 보고서에 넣지 않는다.
 
 시간은 monotonic HTTP 접수와 10ms polling terminal 관측이며 준비/workflow 시간을 분리한다.
 관측 admission/terminal/workflow의 nearest-rank p50/p95와 sample 수를 제공하지만, 작은 공개
 회귀 사례를 성능 부하 결과로 해석하지 않는다. 실패/timeout에도 관측한 workflow 시간·dispatch
-수·DB usage를 보존한다. terminal usage가 없으면 token은 null이다. 평가 보고서 자체의 가격·queue/context·
-first-final-body·DOM·RSS/CPU는 아직 채우지 않아 null이다. polling 지연은 TTFT가 아니다.
+수·DB usage를 보존한다. terminal usage가 없으면 token은 null이다. format_version 2는 접수된
+각 run의 기존 `RunView.timings`를 별도 `server_timings` 배열로 보존한다. queue/context/최초 dispatch/
+model/tool/최초 최종 본문/terminal의 실제 표본·누락 수와 측정 model/tool 호출 분모를 함께 보고한다.
+진행 중 오류로 workflow 결과를 못 얻어도 이미 접수한 run은 누락 표본으로 남는다. 내부 미션은
+RunView API 표본을 수집하지 않아 누락으로 표시한다. 가격·DOM·RSS/CPU는 null이며 polling 지연은
+TTFT가 아니다. 시간 값·누락 여부는 기존 결과·예산 판정을 바꾸지 않는다.
 기존 run의 6 model/12 tool 한도, provider 세계당32회, 준비/실행 각각40초를 적용하고 shutdown은
 기존 Runtime의 bounded drain을 따른다.
 
 실행 가능한 legacy baseline/공통 adapter, 실제 model profile, calibrated judge/사람 검토,
-통계 비교·holdout·부하·실계정/기기와 SKILL02~05의 실제 학습 proof는 미완료다.
+통계 비교·holdout·부하·실계정/기기와 더 넓은 SKILL02~05 수락은 미완료다. 위의 한 가지 실제
+compound A/B→C·proof 철회 경로는 일반 학습 품질이나 no-skill/discovery/learned 비용 비교를
+입증하지 않는다. 현재 reopen은 정상 종료 후 재개방이며 crash/kill checkpoint-gap world와 실제
+provider 수락·지연 profile은 별도 미완료 범위다.
 [현재 상태](status.md)와 [active change](../openspec/changes/build-agent-evaluation-harness/tasks.md)가
 전체 수락 범위의 정본이다.
 
@@ -110,8 +123,10 @@ Python과 PostgreSQL의 실제 시간을 함께 사용하므로 공통 fake cloc
 
 현재 제품의 run/usage API는 [서버 실행 시간](run-timings.md)을 숫자로 관측한다. 원래
 attempt·모델/effort·예산을 바꾸지 않으며 실제 수집된 queue/context/model/tool/final-body/
-terminal 표본만 제공한다. 기존 이 평가기의 HTTP/polling 보고서는 별도 관측 경로다.
-새 숫자를 evaluator report의 비어 있던 필드에 소급 복사하거나 작은 회귀 결과를
-provider/기기 성능 표본으로 합치지 않는다. phase 부재·실패·재시작·직접 SQL 전이의
+terminal 표본만 제공한다. 보고서 format2는 현재 실행의 RunView 표본을 함께 집계하며,
+HTTP/polling 시간과 서버 내부 시간을 구분한다. 과거 보고서에 소급 복사하거나 작은
+회귀 결과를 provider/기기 성능 표본으로 합치지 않는다. phase 부재·실패·재시작·직접 SQL 전이의
 누락과 원래 outcome 분모를 유지한다. 실제 성능 비교는 사전에 고정한 부하/표본 계획과
 서버·브라우저 각각의 관측이 추가로 필요하다.
+
+[합성 Linux 결과와 평가 중 수정한 결함](reviews/2026-11-15-agent-outcome-workflows.md).

@@ -1,7 +1,7 @@
 //! Public agent-visible inputs only. Gold and grading rules live in grader.rs.
 use serde::Serialize;
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Memory,
@@ -10,6 +10,10 @@ pub enum Kind {
     Calculation,
     SkilledCalculation,
     Mission,
+    ChatMemory,
+    TransitiveForget,
+    CancelMission,
+    LearnedWorkflow,
 }
 #[derive(Clone, Copy, Serialize)]
 pub struct Case {
@@ -18,6 +22,26 @@ pub struct Case {
     pub kind: Kind,
 }
 pub const CASES: &[Case] = &[
+    Case {
+        id: "chat-memory-correct-reopen",
+        family_id: "chat-memory-lifecycle",
+        kind: Kind::ChatMemory,
+    },
+    Case {
+        id: "transitive-forget-reopen",
+        family_id: "chat-memory-lifecycle",
+        kind: Kind::TransitiveForget,
+    },
+    Case {
+        id: "inflight-mission-cancel-reopen",
+        family_id: "mission-owner-control",
+        kind: Kind::CancelMission,
+    },
+    Case {
+        id: "learned-workflow-unseen-C-withdrawal",
+        family_id: "learned-workflow",
+        kind: Kind::LearnedWorkflow,
+    },
     Case {
         id: "memory-lifecycle-reopen",
         family_id: "preference-lifecycle",

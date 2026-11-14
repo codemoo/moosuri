@@ -26,6 +26,19 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 현재 독립 vault 또는 명시한 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver와 실행 중 전체 자료의 암호화된 로컬 export를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export의 실제 운영 수락·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
+## 최근 수락한 단위 · 기억·업무·학습의 실제 결과 평가
+
+합성 결과 실행기에 대화로 기억 저장/정정 후 새 대화·재시작 조회, 대화에서 재인용한
+기억의 망각, 실행 중 업무 취소, 서로 다른 두 계산 사례 학습 후 새 입력 재사용과
+근거 철회를 추가했다. 실제 HTTP·SQLite·Runtime 결과를 독립 상태/영수증 판정기로
+확인하며, 실패한 기준 사례를 변조 검사 성공으로 계산하지 않는다.
+
+평가에서 발견한 문장 끝 마침표 때문에 정확 계산의 학습 근거가 누락되던 결함도 수정했다.
+기존 숫자·부호·버전 성분의 정확 비교는 유지한다. Linux 실제 실행은 10개 사례와
+31개 판정기 검사를 통과했다. 실행 단계 시간은 누락을 포함해 집계하며 합성 결과를
+실모델의 이해력·출시 품질 점수로 사용하지 않는다.
+[평가 실행](agent-evaluation.md) · [검증](reviews/2026-11-15-agent-outcome-workflows.md).
+
 ## 최근 수락한 단위 · 구 시스템 schema23 자료 이전
 
 기존 PostgreSQL 관계를 명시적으로 추출한 파일에서 현재 원문·기억·문서를 새 계정으로
@@ -541,8 +554,9 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    주기적 live journal/독립 SSH receiver와 실행 중 전체 자료의 암호화된 로컬 export를 구현했다. 실제 off-host 배치·무손실 최신 삭제와
    지원 구독 실행 범위는 해당 저장/연결 의존성과 함께 닫는다.
 2. **P3/P4 기억·학습·업무 수행**: 초기 합성 평가와 계산/자료 조회의 typed 학습·
-   두 입력 proof는 구현했다. 기억·대화·미션·스킬의 독립 품질 평가와 복합 절차로
-   확장한다. 정확 계산 그래프의 합성 export는 구현했으며 일반 외부 복합 절차·전체 이력 보존/정리 정책,
+   두 입력 proof와 대화 기억/전이 망각/업무 취소/학습 재사용의 실제 결과 평가를 구현했다.
+   넓은 시간 사실·실모델 이해력·복합 외부 절차의 독립 평가로 확장한다.
+   정확 계산 그래프의 합성 export는 구현했으며 일반 외부 복합 절차·전체 이력 보존/정리 정책,
    구현한 제한된 여러 턴 명확화를 넓은 시간 해석·계획/검증/보완으로 확장한다.
 3. **P5/P6 예약·외부 연결**: 전체 알림/제안 정책,
    구현한 Gmail provider draft·승인된 고정 예약 발송과 Calendar 후속 명확화의 실계정 검증,

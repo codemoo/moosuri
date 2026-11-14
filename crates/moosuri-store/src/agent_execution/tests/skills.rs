@@ -643,6 +643,49 @@ async fn learned_math_example(
     claim
 }
 #[tokio::test]
+async fn learned_exact_numeric_adoption_accepts_sentence_period_not_malformed_or_version_tokens() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = enabled(&store).await;
+    for answer in [
+        "Version 23.2.3.",
+        "Value 23.2..",
+        "Value 23.20.",
+        "Value -23.2.",
+        "Value +23.2.",
+    ] {
+        learned_math_example(&store, &user, &["20", "3.2"], Some(answer)).await;
+        assert!(
+            store.learned_skills(&user).await.unwrap().is_empty(),
+            "{answer}"
+        );
+    }
+    learned_math_example(
+        &store,
+        &user,
+        &["20", "3.2"],
+        Some("Exact current amount: 23.2."),
+    )
+    .await;
+    assert_eq!(
+        store.learned_skills(&user).await.unwrap()[0].readiness,
+        "candidate"
+    );
+    learned_math_example(
+        &store,
+        &user,
+        &["8.5", "1.5"],
+        Some("Exact current amount: 10."),
+    )
+    .await;
+    assert_eq!(
+        store.learned_skills(&user).await.unwrap()[0].readiness,
+        "ready"
+    );
+}
+
+#[tokio::test]
 async fn learned_private_routes_require_independent_adopted_final_receipts_and_bind_fresh_c() {
     let _lock = TEST_LOCK.lock().await;
     let dir = directory();

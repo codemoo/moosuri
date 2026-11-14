@@ -19,6 +19,8 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
+mod outcomes;
+
 const PASSWORD: &str = "Synthetic-evaluation-passphrase-2026";
 const EMAIL: &str = "owner@evaluation.invalid";
 const ORIGIN: &str = "https://moosuri-eval.invalid";
@@ -36,6 +38,7 @@ pub struct Execution {
     pub lifecycle: Option<Lifecycle>,
     pub replay_same_run: bool,
     pub mission_reopen_preserved: bool,
+    pub outcome: Value,
 }
 #[derive(Clone)]
 pub struct Lifecycle {
@@ -53,6 +56,7 @@ pub struct World {
     login: Option<LoginResult>,
     pub provider: Provider,
     dir: tempfile::TempDir,
+    server_timings: std::sync::Mutex<Vec<Option<moosuri_core::RunTimings>>>,
 }
 fn ms(t: Instant) -> u64 {
     t.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
@@ -147,6 +151,7 @@ impl World {
             login: Some(login),
             provider,
             dir,
+            server_timings: std::sync::Mutex::new(vec![]),
         })
     }
     fn store(&self) -> &Store {
@@ -229,6 +234,7 @@ impl World {
         let ledger_offset = self.provider.ledger().len();
         let started = Instant::now();
         let accepted = self.checked("POST", &path, body.clone(), 201).await?;
+        let timing_index = self.admitted_timing();
         let admission_ms = ms(started);
         let run_id = accepted["run"]["id"].as_str().ok_or("admission_run_id")?;
         let mut same_run = false;
@@ -261,6 +267,10 @@ impl World {
                     .into_iter()
                     .skip(ledger_offset)
                     .collect();
+                self.server_timings
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())[timing_index] =
+                    serde_json::from_value(turn["run"]["timings"].clone()).ok();
                 return Ok((
                     observe::snapshot(self.dir.path(), run_id, ledger)?,
                     TurnTiming {
@@ -367,6 +377,21 @@ impl World {
             runtime.shutdown().await;
         }
     }
+    fn admitted_timing(&self) -> usize {
+        let mut samples = self
+            .server_timings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let index = samples.len();
+        samples.push(None);
+        index
+    }
+    pub fn server_timings(&self) -> Vec<Option<moosuri_core::RunTimings>> {
+        self.server_timings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
     pub fn usage_totals(&self) -> Option<(Option<u64>, Option<u64>)> {
         let conn = observe::open(self.dir.path()).ok()?;
         let mut statement = conn.prepare("SELECT usage FROM model_call_receipts").ok()?;
@@ -390,8 +415,15 @@ impl World {
             lifecycle: None,
             replay_same_run: false,
             mission_reopen_preserved: false,
+            outcome: Value::Null,
         };
         match case.kind {
+            Kind::ChatMemory
+            | Kind::TransitiveForget
+            | Kind::CancelMission
+            | Kind::LearnedWorkflow => {
+                self.execute_outcome(case.kind, &mut out).await?;
+            }
             Kind::Memory => {
                 let draft = |text: &str| json!({"text":text,"subject":"preference","speaker":null,"valid_from":null,"valid_until":null,"evidence":[]});
                 let memory = self.checked("POST","/api/v1/knowledge/memories",json!({"request_id":uuid::Uuid::new_v4(),"draft":draft(world::PREFERENCE_A)}),201).await?;
@@ -457,6 +489,7 @@ impl World {
                 // These are explicit user-authored product acceptance checks,
                 // not evaluator gold or hidden grading fields.
                 let admitted=self.checked("POST","/api/v1/missions",json!({"request_id":uuid::Uuid::new_v4(),"task":"Calculate the saved quote amount plus shipping in USD. Do not purchase anything.","constraints":"","checks":[{"kind":"decimal_equals","expected":"24.75"},{"kind":"source_quote","id":source,"revision":1,"quote":world::SOURCE}],"execution_mode":"durable"}),200).await?;
+                self.admitted_timing();
                 let admission_ms = ms(started);
                 let id = value_id(&admitted)?;
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(15);

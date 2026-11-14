@@ -245,3 +245,8 @@ F69/P8의 실험적 native GitHub 조회는 독립 live vault의 현재 항목�
 원래 실행 ID로 정산하며 결과 불명을 자동 재실행하지 않는다. 일반 credential/Google/
 브라우저 adapter·서명 배포·실기기 검증 완료와는 구분한다.
 [지원/한계](native-credential-github.md) · [검증](reviews/2026-11-15-native-live-vault-credential.md).
+
+F52/P1/P9 adds optional live full SQLite/journal capture and encrypted local exports
+without stopping the service. Existing historical restore and independently pinned
+journal requirements remain; no off-host or zero-loss guarantee is implied.
+[Behavior](online-backups.md) · [Acceptance](reviews/2026-11-15-online-full-backups.md).

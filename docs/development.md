@@ -284,3 +284,7 @@ owner login, exact model probe and the current synthetic/live acceptance boundar
 For a selected normalized private source/memory/document export, see
 [private transfer import](legacy-import.md). It creates a new account/data root and
 separate reconciliation reports; it never opens or changes the old installation.
+
+Optional [online full-data snapshots](online-backups.md) use an operator-configured
+private destination and existing recovery recipient; encryption runs outside the
+live writer. Existing journal publication and explicit recovery rules still apply.

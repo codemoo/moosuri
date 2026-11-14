@@ -7,7 +7,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 
 // tempfile defaults follow the process umask. Recovery-kit/export fixtures must
 // meet the same explicit private-directory contract on Linux and macOS.
-fn directory() -> tempfile::TempDir {
+pub(super) fn directory() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("moosuri-backup-")
         .permissions(fs::Permissions::from_mode(0o700))
@@ -15,7 +15,7 @@ fn directory() -> tempfile::TempDir {
         .unwrap()
 }
 
-fn key(parent: &Path, name: &str) -> (age::x25519::Identity, PathBuf) {
+pub(super) fn key(parent: &Path, name: &str) -> (age::x25519::Identity, PathBuf) {
     let identity = age::x25519::Identity::generate();
     let path = parent.join(name);
     let mut file = files::create_file(&path).unwrap();
@@ -24,7 +24,10 @@ fn key(parent: &Path, name: &str) -> (age::x25519::Identity, PathBuf) {
     file.sync_all().unwrap();
     (identity, path)
 }
-fn unpack(archive: &Path, identity: &age::x25519::Identity) -> BTreeMap<String, Vec<u8>> {
+pub(super) fn unpack(
+    archive: &Path,
+    identity: &age::x25519::Identity,
+) -> BTreeMap<String, Vec<u8>> {
     let file = File::open(archive).unwrap();
     let decryptor = age::Decryptor::new(file).unwrap();
     let mut reader = decryptor

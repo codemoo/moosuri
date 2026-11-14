@@ -1,0 +1,6 @@
+- [x] Capture live DB and fully applied journals under existing writer admission
+- [x] Reuse immutable format2 export validation/encryption outside the writer
+- [x] Add optional serial serve worker with private destinations and orderly drain
+- [x] Verify actual live snapshot, later-journal restore, failure and worker lifecycle
+- [x] Independent storage/recovery review and joined Linux build
+- [x] Document snapshot, retention, RPO and receiver baseline limits

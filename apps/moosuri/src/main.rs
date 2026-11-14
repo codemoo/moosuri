@@ -17,6 +17,7 @@ use std::{
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 mod backup_live;
+mod backup_snapshots;
 mod import_private;
 mod installation;
 mod skills;
@@ -134,6 +135,12 @@ enum Command {
         invitation_gws_config: Option<PathBuf>,
         #[arg(long, requires = "invitation_gws")]
         invitation_from: Option<String>,
+        /// Existing private directory for optional live encrypted full-data snapshots.
+        #[arg(long)]
+        backup_directory: Option<PathBuf>,
+        /// Seconds after each snapshot finishes (300..604800; default3600).
+        #[arg(long, requires = "backup_directory")]
+        backup_interval_seconds: Option<u64>,
         /// Retained baseline export for optional periodic recovery publication (30s cadence).
         #[arg(long,requires_all=["recovery_ssh_target","recovery_target_id"])]
         recovery_export: Option<PathBuf>,
@@ -642,6 +649,8 @@ async fn run(cli: Cli) -> Result<(), String> {
             invitation_gws_credentials,
             invitation_gws_config,
             invitation_from,
+            backup_directory,
+            backup_interval_seconds,
             recovery_export,
             recovery_ssh_target,
             recovery_target_id,
@@ -730,6 +739,19 @@ async fn run(cli: Cli) -> Result<(), String> {
                 );
             }
             let store = config.open_store(&data).map_err(|e| e.to_string())?;
+            let snapshot_worker = if let Some(directory) = backup_directory {
+                Some(
+                    backup_snapshots::Worker::start(
+                        store.clone(),
+                        &data,
+                        &directory,
+                        backup_interval_seconds.unwrap_or(3600),
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
             let recovery_worker = if let (Some(export), Some(alias), Some(id)) =
                 (recovery_export, recovery_ssh_target, recovery_target_id)
             {
@@ -827,6 +849,9 @@ async fn run(cli: Cli) -> Result<(), String> {
                     match http { Ok(Err(_)) => Err("server_failed"), _ => Ok(()) }
                 }
             };
+            if let Some(worker) = snapshot_worker {
+                worker.shutdown().await;
+            }
             if let Some(worker) = recovery_worker {
                 worker.shutdown().await;
             }

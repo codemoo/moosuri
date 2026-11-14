@@ -706,134 +706,157 @@ impl MaintenanceGuard {
     }
 }
 fn create_captured(offline: &Offline, output: &Path, started: Instant) -> Result<ExportSummary> {
-    let output = files::output_path(&offline.root, output)?;
-    let config = configuration(&offline.conn)?;
-    let epoch = config.retained_epochs.last().ok_or(Error::Unconfigured)?;
-    let recipient: age::x25519::Recipient =
-        epoch.recipient.parse().map_err(|_| Error::Integrity)?;
-    let snapshot = offline.temp.0.join("snapshot.sqlite");
-    let snapshot_file = files::create_file(&snapshot)?;
-    let mut destination = Connection::open(&snapshot)?;
-    {
-        let backup = rusqlite::backup::Backup::new(&offline.conn, &mut destination)?;
-        loop {
-            check_deadline(started)?;
-            match backup.step(256)? {
-                rusqlite::backup::StepResult::Done => break,
-                rusqlite::backup::StepResult::More => {}
-                _ => return Err(Error::Busy),
+    ExportInput {
+        root: &offline.root,
+        staging: &offline.temp.0,
+        conn: &offline.conn,
+        auth: &offline.auth,
+        knowledge: &offline.knowledge,
+        destructive: &offline.destructive,
+    }
+    .encrypt(output, started)
+}
+struct ExportInput<'a> {
+    root: &'a Path,
+    staging: &'a Path,
+    conn: &'a Connection,
+    auth: &'a journal::Journal,
+    knowledge: &'a knowledge_journal::Journal,
+    destructive: &'a destructive_intents::Journal,
+}
+impl ExportInput<'_> {
+    fn encrypt(&self, output: &Path, started: Instant) -> Result<ExportSummary> {
+        let output = files::output_path(self.root, output)?;
+        let config = configuration(self.conn)?;
+        let epoch = config.retained_epochs.last().ok_or(Error::Unconfigured)?;
+        let recipient: age::x25519::Recipient =
+            epoch.recipient.parse().map_err(|_| Error::Integrity)?;
+        let snapshot = self.staging.join("snapshot.sqlite");
+        let snapshot_file = files::create_file(&snapshot)?;
+        let mut destination = Connection::open(&snapshot)?;
+        {
+            let backup = rusqlite::backup::Backup::new(self.conn, &mut destination)?;
+            loop {
+                check_deadline(started)?;
+                match backup.step(256)? {
+                    rusqlite::backup::StepResult::Done => break,
+                    rusqlite::backup::StepResult::More => {}
+                    _ => return Err(Error::Busy),
+                }
             }
         }
-    }
-    crate::push::strip_for_export(&destination)?;
-    if destination.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))? != "ok"
-        || destination
-            .prepare("PRAGMA foreign_key_check")?
-            .exists([])?
-    {
-        return Err(Error::Integrity);
-    }
-    let (auth, knowledge) = journal_heads(&destination, &offline.auth, &offline.knowledge)?;
-    let (successor_applied, successor_head) =
-        destructive_intents::verify(&destination, &offline.knowledge, &offline.destructive)?;
-    let (successor_complete, complete_head) = offline
-        .destructive
-        .records
-        .last()
-        .map(|r| (r.seq, r.hash))
-        .unwrap_or((0, offline.destructive.binding.header_head));
-    let coverage = Coverage {
-        version: 1,
-        schema_baseline: destructive_intents::COVERAGE_SCHEMA,
-        legacy_sequence: offline.destructive.binding.legacy_sequence,
-        legacy_head: hex(&offline.destructive.binding.legacy_head),
-        successor_format: "MSDSTR01".into(),
-        successor_journal: JournalHead {
-            sequence: successor_complete,
-            head: hex(&complete_head),
-            snapshot_sequence: successor_applied,
-            snapshot_head: hex(&successor_head),
-        },
-    };
-    drop(destination);
-    snapshot_file.sync_all().map_err(|_| Error::Unavailable)?;
-    let mut entries = Vec::new();
-    for (name, path, cap) in [
-        ("assistant.sqlite", snapshot.clone(), DB_LIMIT),
-        (
-            "auth-epochs.journal",
-            offline.temp.0.join("auth-epochs.journal"),
-            JOURNAL_LIMIT,
-        ),
-        (
-            "knowledge-invalidations.journal",
-            offline.temp.0.join("knowledge-invalidations.journal"),
-            JOURNAL_LIMIT,
-        ),
-        (
-            destructive_intents::FILE_NAME,
-            offline.temp.0.join(destructive_intents::FILE_NAME),
-            JOURNAL_LIMIT,
-        ),
-    ] {
-        entries.push(entry(&path, name, cap)?);
-    }
-    let export_id = Uuid::new_v4().to_string();
-    let manifest = ManifestV2 {
-        format: 2,
-        purpose: "assistant-export".into(),
-        installation_id: config.installation_id,
-        export_id: export_id.clone(),
-        schema: offline
-            .conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))?,
-        created_at: now()?,
-        key_epoch: epoch.epoch,
-        recipient: epoch.recipient.clone(),
-        entries,
-        auth_journal: auth,
-        knowledge_journal: knowledge,
-        coverage,
-        authoritative_files: vec![],
-        limitations: vec![
-            "current_db_only_no_authoritative_media".into(),
-            "snapshot_journals_not_independent_latest_checkpoint".into(),
-            "historical_restore_requires_independently_pinned_journal".into(),
-            "server_credentials_require_future_re_registration".into(),
-        ],
-    };
-    let encoded = serde_json::to_vec(&manifest).map_err(|_| Error::Integrity)?;
-    if encoded.len() > 32768 {
-        return Err(Error::LimitExceeded);
-    }
-    let parent = output.parent().ok_or(Error::InvalidInput)?;
-    let partial = parent.join(format!(".moosuri-export-{}.partial", Uuid::new_v4()));
-    let result = (|| {
-        let file = files::create_file(&partial)?;
-        let file = write_archive(
-            file,
-            &recipient,
-            &manifest.entries,
-            &encoded,
-            &snapshot,
-            &offline.temp.0,
-            started,
-        )?;
-        file.sync_all().map_err(|_| Error::Unavailable)?;
-        check_deadline(started)?;
-        files::publish(&partial, &output)?;
-        Ok(ExportSummary {
-            export_id,
+        crate::push::strip_for_export(&destination)?;
+        if destination.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))? != "ok"
+            || destination
+                .prepare("PRAGMA foreign_key_check")?
+                .exists([])?
+        {
+            return Err(Error::Integrity);
+        }
+        let (auth, knowledge) = journal_heads(&destination, self.auth, self.knowledge)?;
+        let (successor_applied, successor_head) =
+            destructive_intents::verify(&destination, self.knowledge, self.destructive)?;
+        let (successor_complete, complete_head) = self
+            .destructive
+            .records
+            .last()
+            .map(|r| (r.seq, r.hash))
+            .unwrap_or((0, self.destructive.binding.header_head));
+        let coverage = Coverage {
+            version: 1,
+            schema_baseline: destructive_intents::COVERAGE_SCHEMA,
+            legacy_sequence: self.destructive.binding.legacy_sequence,
+            legacy_head: hex(&self.destructive.binding.legacy_head),
+            successor_format: "MSDSTR01".into(),
+            successor_journal: JournalHead {
+                sequence: successor_complete,
+                head: hex(&complete_head),
+                snapshot_sequence: successor_applied,
+                snapshot_head: hex(&successor_head),
+            },
+        };
+        drop(destination);
+        snapshot_file.sync_all().map_err(|_| Error::Unavailable)?;
+        let mut entries = Vec::new();
+        for (name, path, cap) in [
+            ("assistant.sqlite", snapshot.clone(), DB_LIMIT),
+            (
+                "auth-epochs.journal",
+                self.staging.join("auth-epochs.journal"),
+                JOURNAL_LIMIT,
+            ),
+            (
+                "knowledge-invalidations.journal",
+                self.staging.join("knowledge-invalidations.journal"),
+                JOURNAL_LIMIT,
+            ),
+            (
+                destructive_intents::FILE_NAME,
+                self.staging.join(destructive_intents::FILE_NAME),
+                JOURNAL_LIMIT,
+            ),
+        ] {
+            entries.push(entry(&path, name, cap)?);
+        }
+        let export_id = Uuid::new_v4().to_string();
+        let manifest = ManifestV2 {
+            format: 2,
+            purpose: "assistant-export".into(),
+            installation_id: config.installation_id,
+            export_id: export_id.clone(),
+            schema: self
+                .conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))?,
+            created_at: now()?,
             key_epoch: epoch.epoch,
-        })
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&partial);
+            recipient: epoch.recipient.clone(),
+            entries,
+            auth_journal: auth,
+            knowledge_journal: knowledge,
+            coverage,
+            authoritative_files: vec![],
+            limitations: vec![
+                "current_db_only_no_authoritative_media".into(),
+                "snapshot_journals_not_independent_latest_checkpoint".into(),
+                "historical_restore_requires_independently_pinned_journal".into(),
+                "server_credentials_require_future_re_registration".into(),
+            ],
+        };
+        let encoded = serde_json::to_vec(&manifest).map_err(|_| Error::Integrity)?;
+        if encoded.len() > 32768 {
+            return Err(Error::LimitExceeded);
+        }
+        let parent = output.parent().ok_or(Error::InvalidInput)?;
+        let partial = parent.join(format!(".moosuri-export-{}.partial", Uuid::new_v4()));
+        let result = (|| {
+            let file = files::create_file(&partial)?;
+            let file = write_archive(
+                file,
+                &recipient,
+                &manifest.entries,
+                &encoded,
+                &snapshot,
+                self.staging,
+                started,
+            )?;
+            file.sync_all().map_err(|_| Error::Unavailable)?;
+            check_deadline(started)?;
+            files::publish(&partial, &output)?;
+            Ok(ExportSummary {
+                export_id,
+                key_epoch: epoch.epoch,
+            })
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&partial);
+        }
+        result
     }
-    result
 }
 
 // Distinct manual journal recovery protocol; never seals the source.
 pub use crate::cutover::restore::historical::{publish_journal, restore_historical};
 
 pub mod live;
+
+pub mod online;

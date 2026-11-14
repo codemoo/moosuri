@@ -152,6 +152,7 @@ The latest accepted receiver checkpoint may predate source writes at failure.
 Data/deletions after that checkpoint are not reconstructed. A future strict mode
 would need remote intent durability before acknowledging every auth/deletion
 operation and would fence those writes during target outages. This periodic worker
-does not implement that mode, live full-DB exports, vault-service recovery or
-zero-loss latest-deletion disaster recovery. No production target is configured or
+does not implement that mode, vault-service recovery or zero-loss latest-deletion
+disaster recovery. Optional [live full-DB snapshots](online-backups.md) now produce
+local exports separately; they do not switch this receiver's pinned baseline. No production target is configured or
 tested merely by installing this preview.

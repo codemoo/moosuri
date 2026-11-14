@@ -1,8 +1,9 @@
 # Encrypted exports of a stopped installation
 
 The development CLI can export its current SQLite data and snapshot journals to an
-age-encrypted archive. It requires a stopped installation and an independently
-held X25519 backup identity. [Manual historical recovery](historical-restore.md) now
+age-encrypted archive. The commands below require a stopped installation and an
+independently held X25519 backup identity. The optional [live snapshot worker](online-backups.md)
+uses the same format after setup without stopping the service. [Manual historical recovery](historical-restore.md) now
 combines a retained export with separately published journals and an independently
 retained head digest. **Optional live publication now has a separate [SSH receiver path](live-journal-publication.md).
 Zero-loss latest-deletion recovery remains unimplemented.** The separate [sealed-current restore](restore.md)

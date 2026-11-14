@@ -1,4 +1,5 @@
 //! Narrow ciphertext/authority protocol. Never accept a master cookie, key or plaintext field.
+pub mod broker;
 pub use moosuri_vault_core::{Binding, EncryptedItem, Header};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

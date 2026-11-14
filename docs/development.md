@@ -234,3 +234,12 @@ delegation, recurring/all-day/attendee/secondary-calendar writes and media remai
 ### Optional public community catalog
 
 The serve flags `--community-catalog-repository`, `--community-catalog-ref` and `--community-catalog-directory` select one already published static GitHub artifact directory. All three are required; no source is enabled by default. See [community catalog runtime](community-skills.md) for publication prerequisites and the example. Cards access opportunistically checks the public index daily with ETag; manual refresh is rate bounded. Only chosen artifacts are downloaded, and the existing exact-commit GitHub adapter independently verifies original package bytes before staging. Public cache schema35 preserves schema34 and user lifecycle state. This unit does not publish artifacts, run an unattended scheduler or automatically activate work.
+
+### Experimental credential-broker foundation
+
+The workspace contains `moosuri-credential-broker`, a native enforcement library.
+The default assistant has no broker HTTP routes or task credential adapter. For
+protocol development only, `cargo build --locked -p moosuri --features moosuri-server/credential-broker-foundation` enables the experimental server routes;
+there is no companion executable or production invocation-minting path. Synthetic
+probe authority exists only in `test-fixtures`. See the [foundation guide](credential-broker-foundation.md)
+and its [verification record](reviews/2026-11-14-credential-broker-foundation.md).

@@ -467,7 +467,7 @@ async fn schema34_to35_preserves_helper_purpose_and_target_host_while_adding_emp
     let token = helper.token;
     s.call(|db| {
         db.conn
-            .execute_batch("ALTER TABLE chatgpt_model_probes DROP COLUMN function_tools;DROP TABLE community_catalog_cache;PRAGMA user_version=34;")?;
+            .execute_batch("ALTER TABLE chatgpt_model_probes DROP COLUMN function_tools;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;PRAGMA user_version=34;")?;
         Ok(())
     })
     .await

@@ -18,6 +18,9 @@ Independent review identified a stranded run after personal disconnect during a
 sealed Calendar resume. The first fresh-classification test passed because that path
 has its own failure finalizer; the review was narrowed before changing behavior. The
 sealed-resume regression then failed on Linux with the original production code.
+These cases invoke the per-run executor directly. The production supervisor can
+later settle a returned active run; immediate retirement and deletion of private
+action payloads must not depend on that later cleanup.
 The repair retires only unfinished Calendar work for the exact personal binding,
 prevents late private settlement, and commits a guard's terminal transition. Completed
 conversation and Calendar history retains its existing behavior. A remote mutation

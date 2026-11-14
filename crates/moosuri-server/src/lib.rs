@@ -7,6 +7,7 @@ mod browser;
 mod calendar;
 mod chat;
 mod community_skills;
+mod credential_broker;
 mod google_setup;
 mod knowledge;
 mod mail;
@@ -314,6 +315,7 @@ pub fn router_with_runtime(
         streams: Arc::new(Mutex::new(HashMap::new())),
     };
     Router::new()
+        .merge(credential_broker::routes())
         .route("/api/v1/settings/chatgpt", get(subscriptions::list))
         .route(
             "/api/v1/settings/chatgpt/handoffs",
@@ -473,7 +475,12 @@ async fn boundary(State(state): State<AppState>, request: Request, next: Next) -
     if host != Some(state.config.authority.as_str()) {
         return failure(StatusCode::MISDIRECTED_REQUEST, "invalid_host");
     }
-    let collector = request.uri().path().starts_with("/api/v1/source-ingest/");
+    let collector = request.uri().path().starts_with("/api/v1/source-ingest/")
+        || (cfg!(feature = "credential-broker-foundation")
+            && request
+                .uri()
+                .path()
+                .starts_with("/api/v1/credential-broker/device/"));
     if collector
         && (request.headers().contains_key(header::COOKIE)
             || request.headers().contains_key(header::ORIGIN))

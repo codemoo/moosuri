@@ -436,6 +436,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0036_personal_chatgpt_tools.sql"
         ))?;
     }
+    if captured < 37 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0037_credential_broker.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -524,6 +529,7 @@ fn quarantine(
     )?;
     crate::push::quarantine_for_restore(&tx)?;
     tx.execute_batch("DELETE FROM vault_handoffs; DELETE FROM vault_grants;")?;
+    crate::credential_broker::quarantine(&tx)?;
     crate::media::quarantine(&tx)?;
     crate::audio::quarantine_restore(&tx)?;
     tx.execute("DELETE FROM provider_vision_probes", [])?;

@@ -20,8 +20,19 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 여러 턴의 자동 명확화·넓은 자연어/시간 해석·Calendar/mail/browser/vault 미션 실행은 미완료. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
 | Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 여러 턴 대상 해석·날짜 간 이동·미션 Calendar·반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·파일/음성 공유·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
-| 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·CredentialBroker·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
+| 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·broker 실제 adapter/사용 흐름·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 볼트 credential broker 기반
+
+기기 연결·서명 인증, 계정별 제한된 로컬 권한, 원래 요청의 실행 확정/철회/영수증,
+프로세스 종료 후 중복 진입 방지와 복원 격리를 구현했다. 기본 빌드에서 HTTP 경로는
+꺼져 있고 실제 vault 항목을 여는 adapter·잠금 대기/자동 재사용 화면은 아직 없다.
+따라서 이 기반을 P8 전체나 실제 credential 사용 완료로 표시하지 않는다.
+
+독립 검토·Native/Linux의 기기/서명·저장소·HTTP·실제 암호화 복원·Clippy·기본 빌드를
+통과했다. Linux 시험용 복원 폴더의 권한을 명시해 host umask 의존도 제거했다.
+[실제 범위](credential-broker-foundation.md)·[검증](reviews/2026-11-14-credential-broker-foundation.md).
 
 ## 최근 수락한 단위 · 개인 ChatGPT Calendar 작업
 
@@ -30,7 +41,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 이어간다. 개인 백그라운드 작업이나 반복/종일/참석자/보조 캘린더 쓰기는 포함하지 않는다.
 
 연결이 없으면 설정으로 안내하며, 이 상태가 대화 전체를 깨뜨리던 웹 파서를 수정했다.
-독립 검토에서 재개한 작업 도중 개인 연결을 끊으면 대화가 진행 중에 남는 문제를 Linux에서
+독립 검토에서 재개한 작업 도중 개인 연결을 끊으면 실행 함수가 종료 상태를 남기지 않는 경로를 Linux에서
 재현했다. 미완료 작업 철회와 늦은 개인 결과 제거를 수정했다. 완료 기록 보존·실제 저장 데이터 제거·
 재연결 후 중복 실행 방지를 검증하고 독립 검토, Linux 관련 저장소/전체 에이전트/HTTP·
 Clippy·기본 빌드와 React 검사를 통과했다.
@@ -194,12 +205,12 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P5 예약·소식 | due loop·반복 회차·알림·quiet hours·Push | 알림 정책/topic mute·실기기 수신·예약 외부 작업 |
 | P6 외부 연결 | Gmail/Calendar·공식/커스텀 수집·공개 웹·브라우저 | provider draft·승인된 예약 발송·gws 초대·배송/통화 feed·실계정 |
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크 공유 | 파일/음성 공유·모바일/접근성·실기기 |
-| P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구 | broker 실제 adapter/사용 흐름·호환 이전·독립 최신 복구 |
+| P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 broker 기반 | broker 실제 adapter/사용 흐름·호환 이전·독립 최신 복구 |
 | P9 이전·전환 | 계약과 제한된 합성 복구 | private importer·대조·drain/cutover/rollback 실증 |
 | P10 출시 | 개발 프리뷰와 공개 문서 | 간편 설치/update/uninstall·서명/SBOM·품질/기기/출시 gate |
 
-진행 중인 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
-이 두 단위를 닫은 뒤 남아 있는 P0 평가 기준과 P4 업무·학습 검증부터 의존순서대로
+수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
+두 단위의 수락 범위를 유지하며 남아 있는 P0 평가 기준과 P4 업무·학습 검증부터 의존순서대로
 진행한다. 새로운 내부 작업명을 제품 계획의 P 번호로 사용하지 않는다.
 CI는 사용자 지시에 따라 계속 비활성이다.
 
@@ -221,7 +232,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    Calendar 미션·반복/종일/참석자/보조 캘린더는 현재 지원 범위에 포함하지 않는다.
 4. **P7 첨부·모바일**: 파일/음성 공유, 실제 음성 인식·OS 공유 메뉴·Push·키보드/스크롤·
    접근성을 지원 기기에서 검증한다.
-5. **P8 볼트와 credential 사용**: 검증 중인 broker 기반에 실제 typed adapter·최초 연결/
+5. **P8 볼트와 credential 사용**: 수락한 broker 기반에 실제 typed adapter·최초 연결/
    잠금 대기/자동 재사용 UX를 연결하고, online commitment/revoke·offline resume·
    secret 비노출·독립 최신 복구·구 v1 호환/이전·계정 삭제 outbox를 검증한다.
 6. **P9/P10 이전·출시**: private importer/대조·제한 cutover·rollback,

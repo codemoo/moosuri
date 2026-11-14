@@ -1,0 +1,23 @@
+[package]
+name = "moosuri-credential-broker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+moosuri-vault-protocol = { path = "../moosuri-vault-protocol" }
+ring = "=0.17.14"
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sha2 = "0.10"
+fs2 = "0.4"
+libc = "0.2"
+thiserror.workspace = true
+zeroize = "1.8"
+url = "2.5"
+
+[dev-dependencies]
+tempfile.workspace = true

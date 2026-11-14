@@ -208,3 +208,8 @@ F37/F59의 제한된 현재 대화 Calendar 생성·같은 날짜 수정·삭제
 영수증을 재사용한다. 구독 연결 해제 시 미완료 작업은 철회하고 완료한 기록은 보존한다.
 연결이 없으면 설정으로 안내하고 새 요청을 받는다. 미션·반복/종일/참석자/보조 캘린더·
 실계정 및 언어 이해 평가는 포함하지 않는다. [검증](reviews/2026-11-14-personal-chatgpt-calendar.md).
+
+F69의 기기 pairing·서명 요청·로컬 grant 한도·온라인 실행 확정/철회·영수증과 복원 격리는
+[실험적 broker 기반](credential-broker-foundation.md)에 구현했다. 기본 경로는 비활성이고,
+실제 vault 해제/typed provider adapter·첫 연결/잠금 대기 화면·서명 배포는 남아 있다.
+F69 전체 완료와 자동 credential 사용을 뜻하지 않는다.

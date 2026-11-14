@@ -6,6 +6,7 @@ pub mod push;
 mod missions;
 mod recurring_missions;
 pub use missions::{MissionExecution, MissionPendingRound};
+pub mod credential_broker;
 mod schedules;
 pub mod vault_authority;
 pub use schedules::ReminderLease;
@@ -208,7 +209,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 36;
+const CURRENT_SCHEMA_VERSION: i64 = 37;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -591,6 +592,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0036_personal_chatgpt_tools.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 37 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0037_credential_broker.sql"),
                 "COMMIT;"
             ))?;
         }

@@ -7,7 +7,9 @@ publish.workspace = true
 license.workspace = true
 
 [features]
-test-fixtures = ["moosuri-connectors/test-fixtures", "moosuri-agent/test-fixtures"]
+default = []
+credential-broker-foundation = []
+test-fixtures = ["moosuri-store/test-fixtures","moosuri-connectors/test-fixtures", "moosuri-agent/test-fixtures"]
 
 [dependencies]
 moosuri-documents = { path = "../moosuri-documents" }
@@ -27,6 +29,7 @@ zeroize = { version = "1.8", features = ["serde"] }
 futures-util = "0.3"
 
 [dev-dependencies]
+moosuri-credential-broker = { path = "../moosuri-credential-broker" }
 tempfile.workspace = true
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

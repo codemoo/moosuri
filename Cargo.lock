@@ -2189,6 +2189,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "moosuri-credential-broker"
+version = "0.1.0-dev.1"
+dependencies = [
+ "fs2",
+ "libc",
+ "moosuri-vault-protocol",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "url",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "moosuri-documents"
 version = "0.1.0-dev.1"
 dependencies = [
@@ -2212,6 +2230,7 @@ dependencies = [
  "moosuri-agent",
  "moosuri-connectors",
  "moosuri-core",
+ "moosuri-credential-broker",
  "moosuri-documents",
  "moosuri-store",
  "moosuri-vault-protocol",
@@ -2241,6 +2260,7 @@ dependencies = [
  "libc",
  "moosuri-connectors",
  "moosuri-core",
+ "moosuri-credential-broker",
  "moosuri-vault-protocol",
  "rand 0.8.8",
  "rusqlite",

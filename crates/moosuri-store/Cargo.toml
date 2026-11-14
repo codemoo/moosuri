@@ -11,6 +11,7 @@ default = []
 test-fixtures = []
 
 [dependencies]
+moosuri-credential-broker = { path = "../moosuri-credential-broker" }
 moosuri-vault-protocol = { path = "../moosuri-vault-protocol" }
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 chrono-tz = "=0.10.4"

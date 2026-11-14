@@ -30,7 +30,7 @@ source catalog는 Git에서 관리하고 `moosuri skills catalog`가 선택한 e
 
 표준 Agent Skills의 `SKILL.md` frontmatter(name/description)와 필요한 references/assets를 기본으로 쓴다. `scripts/`·hooks·dependency installer는 v1에서 실행하지 않는다. script가 필수인 외부 skill은 inspect 가능하지만 실행 미지원으로 표시한다. 파일 형식이 같다는 이유로 Claude/OpenClaw의 도구·계정·권한이 생기지 않는다. `allowed-tools`는 요청 정보일 뿐 moosuri의 실제 권한을 생성하지 않는다.
 
-모두가 편하게 쓸 수 있는 native catalog 항목에는 작은 `moosuri.toml` sidecar를 제공한다. 필수 정보는 format version·skill version·설명/입력·기존 capability 이름과 호환 version·mode다. license는 SPDX 또는 포함한 LICENSE로 명확히 한다. typed route 패키지 형식과 범용 route validator는 아직 구현하지 않았다. 현재 개인 학습의 제한된 정확 계산/저장 원문 찾기는 [별도 실제 지원 범위](learned-skills.md)를 따른다. instructions 패키지 검사를 실행 route 검증으로 표현하지 않는다. plain SKILL.md는 instruction import로 받되 machine-readable 요구가 없으면 호환성 확인 필요 상태이며 바로 실행 가능한 native 기능으로 추천하지 않는다.
+모두가 편하게 쓸 수 있는 native catalog 항목에는 작은 `moosuri.toml` sidecar를 제공한다. 필수 정보는 format version·skill version·설명/입력·기존 capability 이름과 호환 version·mode다. license는 SPDX 또는 포함한 LICENSE로 명확히 한다. typed route 패키지 형식과 범용 route validator는 아직 구현하지 않았다. 현재 개인 학습의 정확 계산/저장 원문 찾기/일본우편 최근 요약은 [별도 실제 지원 범위](learned-skills.md)를 따른다. instructions 패키지 검사를 실행 route 검증으로 표현하지 않는다. plain SKILL.md만 받는 instruction import는 후속 계획이며 현재는 네 파일의 검증된 패키지만 설치한다.
 
 sidecar는 code/SQL/shell/새 endpoint/credential 값을 정의하지 않는다. 필요한 tool이 없다면 Rust connector를 별도 기여한다. 인증은 capability와 [credential binding](credential-use.md)의 handle을 통해서만 제공한다. package가 vault item ID·다른 사용자·임의 host를 골라 secret을 읽게 하지 않는다.
 
@@ -130,7 +130,7 @@ moosuri skills catalog --repository https://github.com/codemoo/moosuri \
 
 패키지별 기존12요청/2MiB/30초·파일32KiB/합계64KiB, 전체16패키지/120초/8MiB 산출물 제한을 적용한다. 모든 취득·검증이 끝난 뒤 init과 같은 trusted ancestor descriptor/no-replace 원자 게시로 완성 디렉터리를 만든다. 기존 init/check도 같은 소유권·writable/sticky·지원 ACL 경로 경계를 적용한다. 실패 시 기존 목적지와 활성 설치본은 유지하며 다운로드 중에는 output을 만들지 않는다. 게시 후 parent sync 실패에서는 완성 목적지가 이미 있을 수 있어 검사한다. 진단은 고정된 규칙·상태만 표시한다.
 
-이 명령은 로컬 release 파일 생성까지만 한다. 사용자가 검토한 파일을 배포하는 GitHub release/job·자동 게시는 없다. 서버 catalog 소비는 아래 별도 설정 단위이며, 기존 GitHub 원본 UI에서도 같은 repository/directory/exact commit을 확인하고 추가할 수 있다. 생성 index를 앱 data-dir에 복사하거나 설치 snapshot/내장 pin을 고쳐 활성화하지 않는다. 개인 학습 재구성/export는 별도 미구현 범위다.
+이 명령은 로컬 release 파일 생성까지만 한다. 사용자가 검토한 파일을 배포하는 GitHub release/job·자동 게시는 없다. 서버 catalog 소비는 아래 별도 설정 단위이며, 기존 GitHub 원본 UI에서도 같은 repository/directory/exact commit을 확인하고 추가할 수 있다. 생성 index를 앱 data-dir에 복사하거나 설치 snapshot/내장 pin을 고쳐 활성화하지 않는다. 지원하는 개인 학습의 구조 재구성/합성 export는 [별도 경로](learned-skills.md#절차-공유하기)로 구현했다. 범용 외부 복합 절차 export는 후속이다.
 
 ## 설정된 정적 catalog를 제안 카드에서 읽기
 

@@ -60,8 +60,10 @@ User artifact deletion SHALL use the existing durable typed destructive journal.
 The system SHALL escape Markdown in preview/HTML export, prohibit active or remote
 content, and reject withdrawn exports. Briefing SHALL return at most five valid
 pending records with continuation/coverage, excluding resolved/cancelled, muted
-and currently snoozed records. A local record SHALL NOT attest a message, future
-monitoring or notification schedule.
+and currently snoozed records. A local record SHALL NOT attest a message or future monitoring. Future followup
+dates explicitly saved by the owner SHALL expose actual fixed reminder receipts
+under the followup date notification contract; a draft date alone SHALL NOT attest
+a schedule.
 
 #### Scenario: Script-like Markdown is printed
 - **WHEN** a stored body includes raw HTML, script links or remote images

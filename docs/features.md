@@ -38,7 +38,7 @@
 | F25 | 일반 절차 catalog · 기본 | `skills.py`, `skill_library/` | agent/resources · P4 | 공개 요구사항으로 재작성, 필요한 본문만 읽기, 입력·한계·실제 도구 명시; private 유래50개 원문 반입0 |
 | F26 | 성공 절차 학습·재사용 · 기본 | `learned_skills.py`, `learned_routes.py`, `learned_usage.py`, migration022 | agent/store · P4 | 9도구/8단계, 실제 linked receipts, 2 distinct inputs, finalization gap, schema drift, owner edit/delete, 실패3회, bounded match |
 | F27 | 복합 작업·계획·검증 · 기본 | `background.py`, `tasks.py`, `task_contract.py`, `workspace.py` | agent/tasks worker · P4 | 원래 조건·acceptance version, 산출물 검증, 최대2repair/같은 예산, pause/resume/steer/extend 분리, 완료 과장0 |
-| F28 | 목표·요청·약속·회신 대기 · 기본 | `obligations.py`, `obligation_context.py`, `proactive.py` | agent/web · P3/P5 | requested/committed/waiting/resolved/cancelled, 부분 완료/위임, mute/snooze, 최신 유효 추적 최대5개 briefing |
+| F28 | 목표·요청·약속·회신 대기 · 기본 | `obligations.py`, `obligation_context.py`, `proactive.py` | agent/web · P3/P5 | requested/committed/waiting/resolved/cancelled, 부분 완료/위임, mute/snooze, 최신 유효 추적 최대5개 briefing, [명시 저장한 미래 날짜→소식함/Push](artifacts.md#요청약속의-날짜-알림-f28f32) |
 | F29 | 자연어 예약·5초 due 조회 · 기본 | `schedules.py`, `task_tools.py`, `maintenance.py` | agent/tasks worker · P5 | 일회·일/주/간격·명시 DST gap/fold·UTC anchor, default task vs alarm, idle LLM0, 최소60초, unique occurrence·latest queue coalescing |
 | F30 | 예약 제어·장애 복구 · 기본 | migration020, `tasks.py`, recurring tests | agent/store/web · P5 | active1+queued1, waiting/pause 유지, resume/수정 회차 보호, 일회 종료·latest-only misfire·pause 기간 skip·edit revision fence, architecture 정책표의 UTC oracle |
 | F31 | 변경 있을 때만 알림 · 기본 | `schedule_results.py`, migrations021/023, `work-cards.tsx` | agent/store/web · P5 | always/changes, 최초/변경/실패/unknown 알림, strict equal만 suppress, 이전 output 비교 fence·resume 승계, 연쇄 의존 누적0 |

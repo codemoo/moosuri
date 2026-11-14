@@ -150,6 +150,9 @@ pub struct NotificationSourceChange {
 pub struct LocalNotification {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub followup: Option<crate::FollowupReminder>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub source: Option<NotificationSource>,
     /// Resolved from current owned mission state, never copied result text.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -21,7 +21,7 @@ export type QuietHours = { revision: number, enabled: boolean, timezone: string,
 export type QuietHoursChange = { expected_revision: number, enabled: boolean, timezone: string, start_minute: number, end_minute: number, };
 export type NotificationSource = { id: string, title: string, kind: string, revision: number, muted: boolean, };
 export type NotificationSourceChange = { expected_revision: number, muted: boolean, };
-export type LocalNotification = { source?: NotificationSource,
+export type LocalNotification = { followup?: FollowupReminder, source?: NotificationSource,
 /**
  * Resolved from current owned mission state, never copied result text.
  */
@@ -89,7 +89,8 @@ export type ArtifactDraft = { title: string, body: string, payload: ArtifactPayl
 export type ArtifactWrite = { request_id: string, id: string | null, expected_revision: number | null, draft: ArtifactDraft, };
 export type ArtifactDelete = { request_id: string, expected_revision: number, };
 export type ArtifactSummary = { id: string, kind: ArtifactKind, revision: number, status: ArtifactStatus, title: string, updated_at: number, };
-export type ArtifactVersion = { artifact: ArtifactSummary, draft: ArtifactDraft | null, };
+export type ArtifactVersion = { reminders?: Array<FollowupReminder>, artifact: ArtifactSummary, draft: ArtifactDraft | null, };
+export type FollowupReminder = { artifact_id: string, artifact_revision: number, date_kind: string, date: ArtifactDate, scheduled_for: number, state: string, };
 export type ArtifactReceipt = { request_id: string, id: string, revision: number, status: ArtifactStatus, url: string, };
 export type ArtifactPage = { items: Array<ArtifactSummary>, next_after: string | null, coverage_complete: boolean, };
 export type ArtifactHistory = { items: Array<ArtifactVersion>, next_before: number | null, };

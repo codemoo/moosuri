@@ -255,3 +255,22 @@ or content edits require another full human approval; source/account/connection
 withdrawal fences it, logout alone leaves its separate approved background grant
 active, and due+5min expires it. Restore cancels/quarantines uncommitted mail authority.
 No recurring mail or due-time content generation is supported. See [mail](mail.md).
+
+## Saved followup dates
+
+[Followup date notifications](artifacts.md#요청약속의-날짜-알림-f28f32) use this same
+five-second fixed-content queue, inbox, quiet hours and opt-in Push. Schema0046 maps
+internal once schedules to a pinned artifact revision/date and a stable record
+notification source. They are edited through the actual record, excluded from
+normal schedule lists/chat controls and the64 general-reminder admission cap.
+No model runs at reminder time. Future due/review dates notify once; equal instants
+merge. Future snooze coalesces earlier dates into its one notice. Offline catch-up
+publishes only the latest elapsed date per saved revision. Old past dates and
+migration history never backfill. Artifact receipts show actual saved schedules.
+
+Each inbox receipt links only a currently valid owned artifact and states its
+saved revision/date kind/instant. Artifact changes and transitive evidence
+withdrawals retire pending occurrences, redact/dismiss old inbox text, and latch
+Push suppression in the same transaction. Source mute persists across the record's
+later dates and revisions. Sealed restore keeps receipts while quarantining
+execution; the owner must save a current record again to arm future dates.

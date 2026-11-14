@@ -472,6 +472,24 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         .unwrap();
     let original_push_key = fs::read(data.join(crate::push::KEY_FILE)).unwrap();
     let at = crate::now().unwrap() + 60;
+    let mut followup_input = record("Retained future followup", vec![]);
+    followup_input.draft.payload = ArtifactPayload::Followup {
+        record_kind: FollowupKind::Request,
+        person: "Synthetic owner".into(),
+        lifecycle: FollowupLifecycle::Requested,
+        progress: FollowupProgress::None,
+        muted: false,
+        due: Some(ArtifactDate {
+            utc: at + 3600,
+            timezone: "UTC".into(),
+        }),
+        review: None,
+        snooze: None,
+    };
+    let followup = store
+        .write_artifact(&a, followup_input.clone())
+        .await
+        .unwrap();
     let schedule = store
         .create_schedule(
             &a,
@@ -838,6 +856,21 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
             .id,
         notification.id
     );
+    let followup_receipts = store
+        .artifact(&current, followup.id.clone(), None)
+        .await
+        .unwrap()
+        .reminders
+        .unwrap();
+    assert_eq!(followup_receipts.len(), 1);
+    assert_eq!(followup_receipts[0].state, "paused");
+    assert_eq!(
+        store
+            .enqueue_scheduled_reminders_at(at + 3600)
+            .await
+            .unwrap(),
+        0
+    );
     let restored_schedules = store.schedules(&current).await.unwrap();
     assert_eq!(restored_schedules.len(), 2);
     assert!(restored_schedules.iter().all(|s| s.state == "paused"));
@@ -953,4 +986,29 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
             .unwrap()
             .is_none()
     );
+    followup_input.request_id = Uuid::new_v4().to_string();
+    followup_input.id = Some(followup.id.clone());
+    followup_input.expected_revision = Some(followup.revision);
+    let saved = reopened
+        .write_artifact(&current, followup_input)
+        .await
+        .unwrap();
+    assert_eq!(saved.revision, 2);
+    assert_eq!(
+        reopened
+            .enqueue_scheduled_reminders_at(at + 3600)
+            .await
+            .unwrap(),
+        1
+    );
+    let lease = reopened
+        .claim_scheduled_reminder_at(at + 3600)
+        .await
+        .unwrap()
+        .unwrap();
+    let notice = reopened
+        .finish_scheduled_reminder_at(&lease, at + 3600)
+        .await
+        .unwrap();
+    assert_eq!(notice.followup.unwrap().artifact_id, followup.id);
 }

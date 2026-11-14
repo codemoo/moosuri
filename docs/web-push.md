@@ -134,3 +134,14 @@ operation races and service-worker generic display/navigation/cache behavior.
 Actual iOS/Android/browser permission, background delivery, installation and display
 policy remain root-owned manual/device gates. Synthetic service acceptance is not
 completion of the entire notifications or PWA/device feature set.
+
+## Followup artifact dates
+
+Schema0046 followup dates publish through the same inbox and opaque Push envelope.
+Artifact title/body/date never enter the lock-screen payload. A record has one
+stable notification source across dates/revisions, so source mute applies to
+future record notices as well. Artifact edit/resolution/cancellation/mute/snooze,
+delete and transitive provenance withdrawal permanently latch old notice Push
+suppression, suppress queued/claimed jobs and remove passive display/retry
+authority. An already dispatched result is retained; an already displayed device
+notice cannot be recalled. See [date policy and receipts](artifacts.md).

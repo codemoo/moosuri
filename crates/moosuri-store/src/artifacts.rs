@@ -113,6 +113,13 @@ pub(crate) fn version(
         None
     };
     Ok(ArtifactVersion {
+        reminders: if k == "followup" && revision == head && state == ArtifactStatus::Active {
+            Some(crate::schedules::followups::receipts(
+                conn, tenant, object, revision,
+            )?)
+        } else {
+            None
+        },
         artifact: ArtifactSummary {
             id: object.into(),
             kind: match k.as_str() {
@@ -350,6 +357,7 @@ fn write_body(
             params![tenant, object, revision, depkind(d.kind), d.id, d.revision],
         )?;
     }
+    crate::schedules::followups::schedule(conn, tenant, &object, revision, &input.draft, time)?;
     knowledge::bump(conn, tenant)?;
     save_receipt(
         conn,
@@ -389,6 +397,7 @@ fn invalidate_inner(
             return Err(StoreError::Corrupt);
         }
         if k == "artifact" {
+            crate::schedules::followups::retire(conn, tenant, &object, revision, now()?)?;
             let runs=conn.prepare("SELECT DISTINCT run_id FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND artifact_id=?2 AND (?3 IS NULL OR revision=?3)")?.query_map(params![tenant,object,revision],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
             agent_execution::purge_runs(
                 conn,

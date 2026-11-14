@@ -135,8 +135,22 @@ pub struct ArtifactSummary {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct ArtifactVersion {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reminders: Option<Vec<FollowupReminder>>,
     pub artifact: ArtifactSummary,
     pub draft: Option<ArtifactDraft>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct FollowupReminder {
+    pub artifact_id: String,
+    #[ts(type = "number")]
+    pub artifact_revision: i64,
+    pub date_kind: String,
+    pub date: ArtifactDate,
+    #[ts(type = "number")]
+    pub scheduled_for: i64,
+    pub state: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct ArtifactReceipt {

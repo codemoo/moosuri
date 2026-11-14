@@ -30,6 +30,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 배포 고지 보충 | 정확한 lock 항목에 공개 원본 고지를 별도 출처로 결합; Rust17개·웹4위치의 보충 근거 확보, 기존21/66 누락과 strict 판정 유지 | [사용법](notice-supplements.md)·[검증](reviews/2026-11-15-notice-supplements.md) |
 | 자료 읽기·정확 계산 학습 | 현재 요청의 문구로 유일한 원문·숫자 항목을 확인해 계산; 독립 두 사례 뒤 새 원문으로 재사용·합성 공유, 기존 학습은 generation3의 새 근거 필요 | [사용법](evidence-calculation.md)·[검증](reviews/2026-11-15-evidence-calculation.md) |
 | 기기 Gmail 미리보기 | 별도로 연결한 계정의 제목·보낸 사람·날짜·짧은 내용 최대5개를 원래 채팅/설정에 표시; 이후 모델 문맥·회상·학습에서 제외 | [사용법](native-google-inbox-preview.md)·[검증](reviews/2026-11-15-native-google-inbox-preview.md) |
 | 알림 후속 대화 | 빠진 시간·내용·제한된 오전/오후·날짜를 다음 답변으로 보완; 제공한 값·시간대·같은 요청 재시도를 유지 | [사용법](reminder-followups.md)·[검증](reviews/2026-11-15-reminder-followups.md) |
@@ -100,7 +101,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체와 native Google INBOX 개수·별도 미리보기 조회도 구현했다. 일반 credential/Google 본문·쓰기 도구는 남는다.
    운영 중 암호화 snapshot/시점 복구도 구현했다. 명시적으로 고정한 이후 journal을 합치는 복구도 구현했다. 구 v1 암호화 파일의 로컬 이전을 구현했다. 주기적 SSH journal publisher/receiver도 구현했다. 실제 off-host 배치·무손실 최신 기록·실제 옛 파일 수락·서명 배포는 남는다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: 정규화 private importer/대조와 schema23 relation adapter를 구현했다. 실제 operator export·제한 cutover·rollback,
-   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결을 공식 artifact·arm64·독립 빌드 증명/완전한 license 검토로 확장하고(Rust·웹 고지 수집기는 구현),
+   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결을 공식 artifact·arm64·독립 빌드 증명/완전한 license 검토로 확장하고(Rust·웹 고지 수집기와 별도 출처 보충은 구현),
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 

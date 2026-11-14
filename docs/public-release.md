@@ -34,6 +34,9 @@ Tailscale Serve는 tailnet 접근, ordinary HTTPS는 공개 주소 접근이다.
 두 React 앱의 lock과 명시한 설치 디렉터리를 대조하며 실제 고지/해시와 미완료 항목을 보존한다.
 현재 Rust21개·웹66개 lock 위치의 근거 보완, OpenSpec/자산 고지·license 선택/소스 제공 의무
 검토는 남아 있다. 웹66개에는 이 기기에 설치하지 않은 다른 플랫폼 선택 패키지62개가 포함된다.
+[별도 고지 보충](notice-supplements.md)은 정확한 lock 항목에 외부 출처·해시·원문을
+함께 보존한다. Rust17개와 웹4위치에 보충 근거를 수집했으며 원래 누락/충돌·엄격
+판정은 유지한다. 이는 배포 원본 인증·권리 판단이나 미설치 플랫폼의 내용 증명이 아니다.
 [offline binary provenance](binary-provenance.md)는 실제 artifact hash/target과
 현재 checkout/compiler의 packager claim, 정확한 inventory bytes를 signed manifest에
 묶고 설치·업데이트 전에 검증한다. 인증된 builder/실제 build 실행이나 최소 binary

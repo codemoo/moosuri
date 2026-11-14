@@ -103,3 +103,9 @@ and [public release gates](public-release.md) retain their distinct purposes.
 
 The [dated verification record](reviews/2026-11-15-web-license-evidence.md) reports
 actual local coverage and remaining gaps. No complete P10/F55 acceptance is claimed.
+
+Optional [`--supplement`](notice-supplements.md) attaches reviewed external text
+to exact name/version/SRI positions with explicit unverified source provenance.
+The bounded demonstration covers4 installed positions from2 identities while all
+66 original gaps and strict failure remain. It does not authenticate platform
+packages, resolve declaration conflicts or replace missing installed metadata.

@@ -52,3 +52,8 @@ The current Linux check collected784 candidate notices (4,085,403 raw text bytes
 for434 registry packages. Twenty-one packages had no selected notice file in the
 supplied vendor archive, so complete release notice acceptance remains open.
 [Evidence](reviews/2026-11-15-rust-license-evidence.md) records that exact scope.
+
+Use optional [`--supplement`](notice-supplements.md) to attach exact external
+source notice text to matching lock identities. This retains original local
+missing fields and strict failure. The bounded demonstration adds separate
+evidence for17 of21 missing Rust components without altering vendor checksums.

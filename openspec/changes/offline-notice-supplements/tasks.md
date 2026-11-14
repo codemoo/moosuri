@@ -1,0 +1,6 @@
+- [x] Implement one shared bounded offline manifest reader and optional input for both collectors.
+- [x] Preserve strict/local evidence and expose unverified supplemental coverage separately.
+- [x] Run three focused identity/hash/preservation/determinism/unsafe-path tests and scoped xtask Clippy/build.
+- [x] Demonstrate actual supplied public research once for Rust/web, retaining strict failure and original gaps.
+- [x] Complete scoped OpenSpec/plan checks and freeze source/commands/hashes for root integration.
+- [x] Root independently reviews/integrates the bounded implementation; complete P10/legal/source-authenticity acceptance stays open.

@@ -124,7 +124,7 @@ fn declaration(value: Option<&toml::Value>) -> Check<Option<String>> {
         }
     }
 }
-fn generate(root: &Path, vendor: &Path) -> Check<Value> {
+pub(super) fn generate(root: &Path, vendor: &Path) -> Check<Value> {
     directory(vendor)?;
     let lock_bytes = read(root, "Cargo.lock", MANIFEST_CAP)?;
     let lock: toml::Value = toml::from_str(text(&lock_bytes)?).map_err(|_| invalid())?;
@@ -241,20 +241,24 @@ fn generate(root: &Path, vendor: &Path) -> Check<Value> {
     )
 }
 pub(super) fn run(root: &Path, args: &[String]) -> Check<()> {
-    if !matches!(args.len(), 3 | 4)
-        || args[1] != "--vendor"
-        || (args.len() == 4 && args[3] != "--require-complete")
-    {
-        return Err("Usage: rust-notices --vendor DIRECTORY [--require-complete]".into());
+    if args.len() < 3 || args[1] != "--vendor" {
+        return Err(
+            "Usage: rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]"
+                .into(),
+        );
     }
-    let result = generate(root, Path::new(&args[2]))?;
+    let (supplement, complete) = super::notice_supplements::options(&args[3..])?;
+    let mut result = generate(root, Path::new(&args[2]))?;
+    if let Some(path) = supplement {
+        super::notice_supplements::attach(&mut result, &path, "cargo")?;
+    }
     let mut bytes = serde_json::to_vec_pretty(&result).map_err(|_| invalid())?;
     bytes.push(b'\n');
     std::io::stdout()
         .lock()
         .write_all(&bytes)
         .map_err(|_| "cannot write Rust notice evidence".to_string())?;
-    if args.len() == 4 && result["components_missing_evidence"] != 0 {
+    if complete && result["components_missing_evidence"] != 0 {
         return Err(
             "Rust dependency declaration or notice evidence is missing; see the emitted report"
                 .into(),

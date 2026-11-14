@@ -99,6 +99,8 @@ The evaluator also includes a [local paired baseline adapter](docs/agent-evaluat
 [Dependency inventory](docs/dependency-inventory.md) provides an offline Rust generator for a CycloneDX source-lock SBOM.
 [Rust notice evidence](docs/rust-license-evidence.md) and [web notice evidence](docs/web-license-evidence.md)
 collect exact attribution from reviewed local sources and identify missing evidence.
+Optional [notice supplements](docs/notice-supplements.md) attach exact upstream
+text with separate source claims and coverage while preserving local evidence gaps.
 [Release provenance](docs/binary-provenance.md) binds executable bytes and that inventory
 to a signed manifest with declared source/compiler metadata. The installer verifies
 the binding before mutation; this does not authenticate the build process itself.

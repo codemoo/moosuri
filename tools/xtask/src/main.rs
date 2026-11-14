@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod notice_supplements;
 mod notices;
 mod release;
 #[path = "../../release/provenance.rs"]
@@ -399,7 +400,7 @@ fn main() {
         })
     {
         eprintln!(
-            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|rust-notices --vendor DIRECTORY [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY>"
+            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY>"
         );
         std::process::exit(2);
     }

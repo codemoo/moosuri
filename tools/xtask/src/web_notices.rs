@@ -276,13 +276,13 @@ fn add_bytes(total: &mut usize, size: usize) -> Check<()> {
     }
     Ok(())
 }
-fn complete(report: &Value) -> Check<()> {
+pub(super) fn complete(report: &Value) -> Check<()> {
     if report["components_missing_evidence"] != 0 {
         return Err("web dependency package metadata, declaration or notice evidence is missing; see the emitted report".into());
     }
     Ok(())
 }
-fn generate(project: &Path, web: &Path, vault: &Path) -> Check<Value> {
+pub(super) fn generate(project: &Path, web: &Path, vault: &Path) -> Check<Value> {
     root(project)?;
     root(web)?;
     root(vault)?;
@@ -425,21 +425,21 @@ fn generate(project: &Path, web: &Path, vault: &Path) -> Check<Value> {
     )
 }
 pub(super) fn run(project: &Path, args: &[String]) -> Check<()> {
-    if !matches!(args.len(), 5 | 6)
-        || args[1] != "--web-node-modules"
-        || args[3] != "--vault-node-modules"
-        || (args.len() == 6 && args[5] != "--require-complete")
-    {
-        return Err("Usage: web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--require-complete]".into());
+    if args.len() < 5 || args[1] != "--web-node-modules" || args[3] != "--vault-node-modules" {
+        return Err("Usage: web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]".into());
     }
-    let report = generate(project, Path::new(&args[2]), Path::new(&args[4]))?;
+    let (supplement, strict) = super::notice_supplements::options(&args[5..])?;
+    let mut report = generate(project, Path::new(&args[2]), Path::new(&args[4]))?;
+    if let Some(path) = supplement {
+        super::notice_supplements::attach(&mut report, &path, "npm")?;
+    }
     let mut bytes = serde_json::to_vec_pretty(&report).map_err(|_| invalid())?;
     bytes.push(b'\n');
     std::io::stdout()
         .lock()
         .write_all(&bytes)
         .map_err(|_| "cannot write web notice evidence".to_owned())?;
-    if args.len() == 6 {
+    if strict {
         complete(&report)?
     }
     Ok(())

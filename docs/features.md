@@ -338,3 +338,7 @@ F26/F67/P4의 [원문 근거 계산](evidence-calculation.md)은 현재 요청�
 연결한다. 서로 다른 원문의 두 최종 채택 후 새 자료 조회로 재사용하며 구조와 새 합성
 예제만 공유한다. generation3는 이전 자격 proof만 재학습하게 하고 원래 대화·영수증은
 보존한다. 여러 자료 결합·의미 추출·단위 변환·외부 쓰기·실모델 품질 수락은 별도다.
+
+F55/P10의 [오프라인 고지 보충](notice-supplements.md)은 정확한 lock identity·digest와
+고지 text/hash를 검증해 별도 출처·coverage로 결합한다. 기존 로컬 누락·충돌·strict
+실패는 유지하며 네트워크/설치/원본 manifest 변경 없이 배포 검토 근거를 보존한다.

@@ -99,6 +99,7 @@ async fn scripted_response(
             "knowledge_read_memory",
             "skill_read",
             "decimal_calculate",
+            "decimal_workflow",
             "artifact_search",
             "artifact_read",
             "followup_briefing"

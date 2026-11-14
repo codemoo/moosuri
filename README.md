@@ -19,6 +19,7 @@ Account deletion clears active private data and delivers durable deletion to the
 Every mail send needs the user's explicit approval of its final preview, including scheduled timing. Unknown sends
 have conservative read-only Sent checks and are never automatically resent.
 
+Private learned skills can reuse verified two-to-four-step exact calculations with fresh inputs and export a structural recipe with new synthetic examples.
 Suggestions can discover an explicitly configured public GitHub skill catalog,
 verify selected original packages and keep each user's installations separate.
 Disabling a used recipe pauses its dependent recurring tasks until the original

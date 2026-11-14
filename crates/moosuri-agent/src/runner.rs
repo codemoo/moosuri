@@ -491,6 +491,7 @@ fn typed_input(
         },
         Invocation::LearnedSkill(invocation) => KnowledgeToolInput::LearnedSkill { invocation },
         Invocation::SkillRead(pin) => KnowledgeToolInput::SkillRead { pin },
+        Invocation::DecimalWorkflow(workflow) => KnowledgeToolInput::DecimalWorkflow { workflow },
         Invocation::DecimalCalculate(calculation) => {
             KnowledgeToolInput::DecimalCalculate { calculation }
         }

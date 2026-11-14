@@ -75,6 +75,16 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
             }
         ]);
     }
+    if profile.is_some_and(|p| matches!(p.version, 2..=5)) {
+        definitions.push(FunctionDefinition {
+            name:"decimal_workflow".into(),
+            description:"Exact local 2..4-operation arithmetic DAG. Fresh inputs are signed decimal strings (six fractional digits maximum); every input and step must contribute to the final result. References explicitly select input index or an earlier result index; never infer dependencies from equal numbers. Supply every numeric amount/rate freshly from the current task, preserve units and state missing evidence. No code, expressions or stored numeric constants. Each operation consumes one tool budget unit.".into(),
+            parameters:object(json!({
+                "inputs":{"type":"array","items":{"type":"string"}},
+                "graph":object(json!({"input_count":{"type":"integer","description":"Declared input slot count,2..32."},"steps":{"type":"array","items":object(json!({"operation":{"type":"string","enum":["sum","difference","product"]},"operands":{"type":"array","items":object(json!({"kind":{"type":"string","enum":["input","result"]},"index":{"type":"integer","description":"Input index0..31 or strictly earlier result index0..3."}}))}}))}}))
+            })),
+        });
+    }
     if profile.is_some_and(|p| {
         matches!(p.version, 1..=5) && p.skills.iter().any(|pin| pin.id.starts_with("private:"))
     }) {
@@ -83,7 +93,7 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
             description: "Execute an admitted private learned route with fresh task parameters. Source lookup uses the first fresh saved-source hit; arithmetic uses the learned exact operation. It grants no new authority. Do not use A/B proof inputs or invent success.".into(),
             parameters: object(json!({
                 "pin":object(json!({"id":{"type":"string"},"revision":{"type":"string"},"digest":{"type":"string"}})),
-                "arguments":object(json!({"kind":{"type":"string","enum":["source","decimal"]},"text":{"type":["string","null"],"description":"Fresh literal source search phrase for source route; null for decimal."},"operands":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh decimal operand strings for decimal route; null for source."}}))
+                "arguments":object(json!({"kind":{"type":"string","enum":["source","decimal","workflow"]},"text":{"type":["string","null"],"description":"Fresh literal source search phrase for source route; null for decimal."},"operands":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh decimal operand strings for decimal route; null otherwise."},"inputs":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh workflow input strings matching the pinned structural graph input slots; null otherwise."}}))
             })),
         });
     }
@@ -151,7 +161,7 @@ pub(super) fn system(profile: Option<&RunToolProfile>) -> String {
     if cfg!(feature = "credential-broker-chat") && profile.is_some_and(|p| p.credential_github) {
         system.push_str(" For a direct request about one exact GitHub owner/repository's metadata, github_repository_metadata is a terminal typed read. Call it alone before any other tool using only the literal current user target. It may suspend this chat while the trusted device is locked/offline, without another model call. Never ask for or receive tokens, passwords or vault items, infer completion, expand to other repos, or retry the old operation. It does not provide Google or arbitrary HTTP credential access.");
     }
-    system.push_str(" Execution has at most six model dispatches and twelve tools total. Reserve a dispatch for the final answer; batch independent reads in one tool round when useful. Search saved memories only when the task needs personal preferences or facts missing from the supplied evidence, not automatically for self-contained source comparisons. If an explicit cost or other required field is absent from the relevant evidence, report it as unknown and explain its effect on the conclusion; unrelated personal-memory searches do not fill it. Do useful work within the remaining budget and deliver a bounded answer with material gaps. Use decimal_calculate for arithmetic that determines a monetary total or recommendation; batch independent calculations. Budget discipline must not skip necessary calculation checks.");
+    system.push_str(" Execution has at most six model dispatches and twelve tools total. Reserve a dispatch for the final answer; batch independent reads in one tool round when useful. Search saved memories only when the task needs personal preferences or facts missing from the supplied evidence, not automatically for self-contained source comparisons. If an explicit cost or other required field is absent from the relevant evidence, report it as unknown and explain its effect on the conclusion; unrelated personal-memory searches do not fill it. Do useful work within the remaining budget and deliver a bounded answer with material gaps. Use decimal_calculate or an explicit decimal_workflow DAG for arithmetic that determines a monetary total or recommendation; batch independent calculations. Use explicit result references for compound dependencies, never equality-based inference. Budget discipline must not skip necessary calculation checks.");
     if profile
         .is_some_and(|p| p.version == 5 && p.web.as_ref().is_some_and(|w| w.browser_pin.is_some()))
     {
@@ -193,6 +203,7 @@ pub(super) enum Invocation {
     ReadMemory(MemoryRead),
     SkillRead(SkillPin),
     DecimalCalculate(DecimalCalculation),
+    DecimalWorkflow(moosuri_core::DecimalWorkflow),
     External(moosuri_core::ExternalToolRequest),
     Artifact(moosuri_core::ArtifactToolRequest),
     LearnedSkill(moosuri_core::LearnedSkillInvocation),
@@ -212,6 +223,7 @@ struct LearnedArgumentsWire {
     kind: String,
     text: Option<String>,
     operands: Option<Vec<String>>,
+    inputs: Option<Vec<String>>,
 }
 fn parse_learned(arguments: &str) -> Option<moosuri_core::LearnedSkillInvocation> {
     let wire: LearnedWire = serde_json::from_str(arguments).ok()?;
@@ -219,10 +231,14 @@ fn parse_learned(arguments: &str) -> Option<moosuri_core::LearnedSkillInvocation
         wire.arguments.kind.as_str(),
         wire.arguments.text,
         wire.arguments.operands,
+        wire.arguments.inputs,
     ) {
-        ("source", Some(text), None) => moosuri_core::LearnedSkillArguments::Source { text },
-        ("decimal", None, Some(operands)) => {
+        ("source", Some(text), None, None) => moosuri_core::LearnedSkillArguments::Source { text },
+        ("decimal", None, Some(operands), None) => {
             moosuri_core::LearnedSkillArguments::Decimal { operands }
+        }
+        ("workflow", None, None, Some(inputs)) => {
+            moosuri_core::LearnedSkillArguments::Workflow { inputs }
         }
         _ => return None,
     };
@@ -268,6 +284,9 @@ pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
             .unwrap_or(Invocation::InvalidArguments),
         "skill_read" => serde_json::from_str::<SkillPin>(arguments)
             .map(Invocation::SkillRead)
+            .unwrap_or(Invocation::InvalidArguments),
+        "decimal_workflow" => serde_json::from_str::<moosuri_core::DecimalWorkflow>(arguments)
+            .map(Invocation::DecimalWorkflow)
             .unwrap_or(Invocation::InvalidArguments),
         "decimal_calculate" => serde_json::from_str::<DecimalCalculation>(arguments)
             .map(Invocation::DecimalCalculate)

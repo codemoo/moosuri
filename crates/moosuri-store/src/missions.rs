@@ -289,7 +289,8 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
                         };
                         ("공개 웹 관측".into(), detail)
                     }
-                    KnowledgeToolResult::ConversationSearch(_)
+                    KnowledgeToolResult::DecimalWorkflow { .. }
+                    | KnowledgeToolResult::ConversationSearch(_)
                     | KnowledgeToolResult::ConversationTurn(_)
                     | KnowledgeToolResult::Error(_) => continue,
                 };

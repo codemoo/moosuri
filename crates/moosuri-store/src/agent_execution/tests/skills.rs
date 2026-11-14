@@ -1080,7 +1080,7 @@ async fn learned_schema_drift_and_attributable_failures_stop_reuse_but_infrastru
     store
         .call(|db| {
             db.conn.execute(
-                "UPDATE learned_skills SET state='usable',failures=0,schema_version=2",
+                "UPDATE learned_skills SET state='usable',failures=0,schema_version=3",
                 [],
             )?;
             Ok(())
@@ -1220,7 +1220,7 @@ async fn learned_schema37_upgrade_preserves_ordinary_thread_deletion() {
         .create_thread(&user, "Existing schema37 thread".into())
         .await
         .unwrap();
-    store.call(|db|{db.conn.execute_batch("DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts; DROP TABLE learned_skill_observations; DROP TABLE learned_skill_uses; DROP TABLE learned_skill_proofs; DROP TABLE learned_skills; PRAGMA user_version=37;")?;Ok(())}).await.unwrap();
+    store.call(|db|{db.conn.execute_batch("DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts; DROP TABLE learned_skill_observations; DROP TABLE learned_skill_uses; DROP TABLE learned_skill_proofs; DROP TABLE learned_skills; PRAGMA user_version=37;")?;Ok(())}).await.unwrap();
     drop(store);
     let store = Store::open(dir.path()).unwrap();
     store.delete_thread(&user, thread.id).await.unwrap();
@@ -1510,4 +1510,230 @@ async fn learned_withdrawal_follows_delivered_context_into_text_only_completed_a
             "another owner is unaffected by withdrawal"
         );
     }
+}
+
+fn compound_graph() -> moosuri_core::DecimalGraph {
+    use moosuri_core::{DecimalGraph, DecimalReference::*, DecimalStep};
+    DecimalGraph {
+        input_count: 5,
+        steps: vec![
+            DecimalStep {
+                operation: DecimalOperation::Product,
+                operands: vec![Input { index: 0 }, Input { index: 1 }],
+            },
+            DecimalStep {
+                operation: DecimalOperation::Product,
+                operands: vec![Input { index: 2 }, Input { index: 3 }],
+            },
+            DecimalStep {
+                operation: DecimalOperation::Sum,
+                operands: vec![Result { index: 0 }, Result { index: 1 }],
+            },
+            DecimalStep {
+                operation: DecimalOperation::Product,
+                operands: vec![Result { index: 2 }, Input { index: 4 }],
+            },
+        ],
+    }
+}
+#[tokio::test]
+async fn compound_graph_rejects_false_edges_replay_proof_and_budget_bypass() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = enabled(&store).await;
+    let thread = store
+        .create_thread(&user, "Equal numbers are not graph edges".into())
+        .await
+        .unwrap();
+    let claim = claimed(&store, &user, &thread.id).await;
+    let step = store
+        .begin_agent_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    store
+        .commit_agent_step(
+            &step,
+            capsule("unlinked computations"),
+            vec![
+                PendingKnowledgeCall {
+                    call_id: "product".into(),
+                    input: KnowledgeToolInput::DecimalCalculate {
+                        calculation: DecimalCalculation {
+                            operation: DecimalOperation::Product,
+                            operands: vec!["2".into(), "3".into()],
+                        },
+                    },
+                },
+                PendingKnowledgeCall {
+                    call_id: "sum".into(),
+                    input: KnowledgeToolInput::DecimalCalculate {
+                        calculation: DecimalCalculation {
+                            operation: DecimalOperation::Sum,
+                            operands: vec!["6".into(), "4".into()],
+                        },
+                    },
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    for id in ["product", "sum"] {
+        store
+            .execute_knowledge_tool(&step, id.into())
+            .await
+            .unwrap();
+    }
+    finish(&store, &claim, "10").await;
+    assert!(store.learned_skills(&user).await.unwrap().is_empty());
+    // A self-reference fails as a tool result and contributes no successful proof.
+    let thread = store
+        .create_thread(&user, "Malformed explicit graph".into())
+        .await
+        .unwrap();
+    let claim = claimed(&store, &user, &thread.id).await;
+    let mut graph = compound_graph();
+    graph.steps[0].operands[0] = moosuri_core::DecimalReference::Result { index: 0 };
+    let step = tool_step(
+        &store,
+        &claim,
+        PendingKnowledgeCall {
+            call_id: "invalid-graph".into(),
+            input: KnowledgeToolInput::DecimalWorkflow {
+                workflow: moosuri_core::DecimalWorkflow {
+                    graph,
+                    inputs: vec!["1".into(); 5],
+                },
+            },
+        },
+    )
+    .await;
+    assert!(matches!(
+        store
+            .execute_knowledge_tool(&step, "invalid-graph".into())
+            .await
+            .unwrap(),
+        KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+    ));
+    finish(&store, &claim, "No valid calculation").await;
+    assert!(store.learned_skills(&user).await.unwrap().is_empty());
+    // Canonical notation replay cannot become the second independent example.
+    for (inputs, answer) in [
+        (vec!["1", "2", "3", "4", "0.5"], "7"),
+        (vec!["1.00", "02", "03.0", "4.00", "0.500000"], "7"),
+        (vec!["2", "3", "4", "5", "0.5"], "13"),
+    ] {
+        let thread = store
+            .create_thread(&user, "Independent graph proof".into())
+            .await
+            .unwrap();
+        let claim = claimed(&store, &user, &thread.id).await;
+        let step = tool_step(
+            &store,
+            &claim,
+            PendingKnowledgeCall {
+                call_id: "graph".into(),
+                input: KnowledgeToolInput::DecimalWorkflow {
+                    workflow: moosuri_core::DecimalWorkflow {
+                        graph: compound_graph(),
+                        inputs: inputs.iter().map(|s| (*s).into()).collect(),
+                    },
+                },
+            },
+        )
+        .await;
+        assert!(
+            matches!(store.execute_knowledge_tool(&step,"graph".into()).await.unwrap(),KnowledgeToolResult::DecimalWorkflow{exact,..} if exact==answer)
+        );
+        finish(&store, &claim, answer).await;
+        assert_eq!(
+            store.learned_skills(&user).await.unwrap()[0].readiness,
+            if answer == "7" { "candidate" } else { "ready" }
+        );
+    }
+    let card = store.learned_skills(&user).await.unwrap().remove(0);
+    let pin = SkillPin {
+        id: card.id,
+        revision: card.installed_version.unwrap(),
+        digest: card.installed_digest.unwrap(),
+    };
+    let thread = store
+        .create_thread(&user, "Compound bounded reuse".into())
+        .await
+        .unwrap();
+    let claim = claimed(&store, &user, &thread.id).await;
+    for round in 0..3 {
+        let context = store.agent_context(&claim.lease).await.unwrap();
+        let step = store
+            .begin_agent_step(&claim.lease, context.checkpoint_seq)
+            .await
+            .unwrap();
+        store
+            .commit_agent_step(
+                &step,
+                capsule("bounded compound continuation"),
+                vec![PendingKnowledgeCall {
+                    call_id: format!("reuse-{round}"),
+                    input: KnowledgeToolInput::LearnedSkill {
+                        invocation: LearnedSkillInvocation {
+                            pin: pin.clone(),
+                            arguments: LearnedSkillArguments::Workflow {
+                                inputs: vec!["6", "1.25", "3", "4.5", "1.1"]
+                                    .into_iter()
+                                    .map(str::to_owned)
+                                    .collect(),
+                            },
+                        },
+                    },
+                }],
+            )
+            .await
+            .unwrap();
+        for _ in 0..2 {
+            assert!(
+                matches!(store.execute_knowledge_tool(&step,format!("reuse-{round}")).await.unwrap(),KnowledgeToolResult::DecimalWorkflow{exact,..} if exact=="23.1")
+            );
+        }
+    }
+    let run = claim.lease.run_id().to_owned();
+    store
+        .call(move |db| {
+            let used: i64 = db.conn.query_row(
+                "SELECT tool_calls FROM agent_execution WHERE run_id=?1",
+                [&run],
+                |r| r.get(0),
+            )?;
+            let receipts: i64 = db.conn.query_row(
+                "SELECT count(*) FROM learned_skill_receipts WHERE run_id=?1",
+                [&run],
+                |r| r.get(0),
+            )?;
+            assert_eq!((used, receipts), (12, 12));
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let context = store.agent_context(&claim.lease).await.unwrap();
+    let step = store
+        .begin_agent_step(&claim.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .commit_agent_step(
+                &step,
+                capsule("over budget"),
+                vec![PendingKnowledgeCall {
+                    call_id: "over".into(),
+                    input: KnowledgeToolInput::DecimalWorkflow {
+                        workflow: moosuri_core::DecimalWorkflow {
+                            graph: compound_graph(),
+                            inputs: vec!["1".into(); 5]
+                        }
+                    }
+                }]
+            )
+            .await,
+        Err(StoreError::BudgetExhausted)
+    ));
 }

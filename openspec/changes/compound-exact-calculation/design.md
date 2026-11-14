@@ -1,0 +1,9 @@
+# Design
+
+`decimal_workflow` accepts fresh decimal input strings and a graph of2–4 typed sum/difference/product steps. Each operand explicitly references an input slot or earlier result slot. All inputs and operations must reach the final result; total operand references are capped at32. External six-fractional-place/i128 bounds remain. Internal coefficient/scale evaluation reuses exact arithmetic and retains generated intermediate precision without allowing arbitrary code or expressions.
+
+Each operation consumes one existing tool budget unit and has a child receipt linked to its parent tool slot. Slot replay is idempotent. Learned execution conservatively requires four units of remaining headroom and charges actual operations, like the existing source-route maximum reservation. Existing6model/12tool/time/owner fences remain.
+
+Existing route TEXT stores a canonical typed graph prefixed `decimal-graph-v1:`. No numeric operands, prompt, source identifiers or training trace enter that structure. At most64 routes including tombstones are retained per account. Finalized proof recomputes every intermediate/final result and requires the final exact number in adopted output. Canonical instantiated-expression hashes normalize numeric notation and commutative operands without inferring causal edges from equal numbers. Two independent finalized run/input proofs are required. The native toolset generation becomes2, invalidating older native learned proofs according to existing schema-drift behavior.
+
+Existing private suggestion cards and structural metadata expose the graph, not training operands. `learned_skill_execute` accepts only fresh inputs for that pin. The existing sharing flow reconstructs structure with generated repository-owned synthetic values and license files; imported instruction packages inherit neither native proofs nor execution authority. Existing deletion/disable/proof withdrawal cascades apply.

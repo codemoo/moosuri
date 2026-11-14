@@ -44,6 +44,9 @@ pub enum KnowledgeToolInput {
     DecimalCalculate {
         calculation: moosuri_core::DecimalCalculation,
     },
+    DecimalWorkflow {
+        workflow: moosuri_core::DecimalWorkflow,
+    },
     External {
         request: moosuri_core::ExternalToolRequest,
     },
@@ -102,6 +105,7 @@ pub enum KnowledgeToolResult {
     Memory(MemoryDocument),
     Skill(moosuri_core::SkillDocument),
     Decimal { exact: String },
+    DecimalWorkflow { results: Vec<String>, exact: String },
     External(serde_json::Value),
     Error(ToolReadError),
 }
@@ -522,6 +526,9 @@ pub(crate) fn read_tool(
         KnowledgeToolInput::SkillRead { pin } => {
             crate::recurring_missions::read_skill(conn, run, pin)
         }
+        KnowledgeToolInput::DecimalWorkflow { .. } => {
+            Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
+        }
         KnowledgeToolInput::DecimalCalculate { calculation } => {
             if run
                 .tool_profile
@@ -694,6 +701,7 @@ pub(crate) fn read_tool(
         | KnowledgeToolResult::External(_)
         | KnowledgeToolResult::Error(_)
         | KnowledgeToolResult::Skill(_)
+        | KnowledgeToolResult::DecimalWorkflow { .. }
         | KnowledgeToolResult::Decimal { .. } => {}
     }
     Ok(result)
@@ -833,6 +841,7 @@ impl Store {
             if matches!(&input,KnowledgeToolInput::Artifact{request:moosuri_core::ArtifactToolRequest::Write{..}}) && tx.query_row("SELECT count(*) FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get::<_,i64>(0))?!=1{return Err(StoreError::InvalidInput)}
             let (result,cost)=match &input {
                 KnowledgeToolInput::LearnedSkill{invocation}=>crate::learned_skills::execute(&tx,&run,invocation,lease.step,&call_id)?,
+                KnowledgeToolInput::DecimalWorkflow{workflow}=>crate::learned_skills::execute_workflow(&tx,&run,workflow,lease.step,&call_id)?,
                 _=>(read_tool(&tx,&run,&input)?,1),
             };
             let generation=knowledge::generation(&tx,&run.tenant)?;

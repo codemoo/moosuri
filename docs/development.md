@@ -152,13 +152,12 @@ Ordinary repository paths are allowed. Existing destinations, `..`, symlink comp
 ## Private learned operations
 
 Foreground chats can learn the documented exact-calculation or saved-source lookup
-route after two distinct finalized owner examples, then bind fresh inputs through the
+route or a bounded two-to-four-step exact calculation graph after two distinct finalized owner examples, then bind fresh inputs through the
 normal durable tool loop. The existing skills screen shows private status and supports
 disable/remove. No permission popup or community publication is added. Schema38 also
 withdraws proofs on deletion and quarantines learning on sealed restore. Actual context
 inheritance carries withdrawal into text-only descendants without granting tool authority.
-See [supported routes and limits](learned-skills.md). Compound/mission learning and
-export remain pending; synthetic round savings are not a real-model speed claim.
+See [supported routes and limits](learned-skills.md). Supported structures can be exported with new synthetic examples. General external workflow/mission learning remains pending; synthetic round savings are not a real-model speed claim.
 
 ## Synthetic outcome evaluation
 

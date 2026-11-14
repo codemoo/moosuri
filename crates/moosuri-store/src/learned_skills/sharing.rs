@@ -8,6 +8,38 @@ use moosuri_core::{SkillShareInput, SkillSharePreview};
 use std::collections::BTreeMap;
 
 fn reconstruct(route: &str) -> Result<SkillSharePreview> {
+    if let Some(graph) = workflow::graph(route) {
+        let inputs = (1..=graph.input_count)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>();
+        let synthetic = moosuri_core::DecimalWorkflow {
+            graph: graph.clone(),
+            inputs,
+        };
+        let calls = crate::agent_execution::arithmetic::workflow(&synthetic)
+            .map_err(|_| StoreError::Corrupt)?;
+        let exact = calls
+            .last()
+            .and_then(|(_, r)| r.as_ref().ok())
+            .ok_or(StoreError::Corrupt)?;
+        let slug = format!("exact-decimal-workflow-{}", &hash(route)[..12]);
+        let procedure = format!(
+            "1. Map fresh current-task decimal values to the input indices in this typed structure. Never reuse example numbers, infer links from equal values or insert missing amounts. Ask for missing inputs/units.\n2. Call decimal_workflow with the following graph and fresh inputs: {}\n3. Report the actual final exact result and units; retain explicit assumptions. No arbitrary code or stored numeric constants are part of this structure.",
+            encode(&graph)?
+        );
+        let request = format!(
+            "Run this repository-owned synthetic example only: {}",
+            encode(&synthetic)?
+        );
+        return package(
+            &slug,
+            "Run an explicit bounded exact arithmetic graph with fresh inputs.",
+            &procedure,
+            vec!["decimal_workflow"],
+            &request,
+            &format!("Use the actual workflow result; this synthetic example yields {exact}."),
+        );
+    }
     let (slug, summary, procedure, capabilities, request, expected) = match route {
         SOURCE => (
             "saved-source-lookup",
@@ -43,6 +75,16 @@ fn reconstruct(route: &str) -> Result<SkillSharePreview> {
         ),
         _ => return Err(StoreError::Unavailable),
     };
+    package(slug, summary, procedure, capabilities, request, expected)
+}
+fn package(
+    slug: &str,
+    summary: &str,
+    procedure: &str,
+    capabilities: Vec<&str>,
+    request: &str,
+    expected: &str,
+) -> Result<SkillSharePreview> {
     let files = BTreeMap::from([
         ("SKILL.md".into(), format!("---\nname: {slug}\ndescription: {summary}\n---\n\n# {summary}\n\n{procedure}\n\nUse only available tools and the current user's request. This package has no stored examples of personal use and grants no extra permissions. It does not send mail, make purchases, create schedules or access credentials. State unsupported requests without claiming execution.\n")),
         ("moosuri.toml".into(), format!("format_version = 1\nversion = \"0.1.0\"\nmode = \"instructions\"\nlicense = \"Apache-2.0\"\ncapabilities = {}\n", encode(&capabilities)?)),

@@ -58,7 +58,13 @@ pub(crate) fn calculate(input: &DecimalCalculation) -> Result<String, ToolReadEr
         .iter()
         .map(|value| decimal(value))
         .collect::<Result<Vec<_>, _>>()?;
-    let (mut coefficient, mut scale) = if matches!(input.operation, DecimalOperation::Product) {
+    Ok(format_value(evaluate(input.operation, values)?))
+}
+fn evaluate(
+    operation: DecimalOperation,
+    values: Vec<(i128, u32)>,
+) -> Result<(i128, u32), ToolReadError> {
+    let (mut coefficient, mut scale) = if matches!(operation, DecimalOperation::Product) {
         (
             values[0]
                 .0
@@ -70,10 +76,18 @@ pub(crate) fn calculate(input: &DecimalCalculation) -> Result<String, ToolReadEr
         let scale = values.iter().map(|v| v.1).max().unwrap_or(0);
         let mut result = 0i128;
         for (index, (value, places)) in values.into_iter().enumerate() {
-            let value = value
-                .checked_mul(10i128.pow(scale - places))
-                .ok_or(ToolReadError::ArithmeticOverflow)?;
-            result = if index > 0 && matches!(input.operation, DecimalOperation::Difference) {
+            let value = if value == 0 {
+                0
+            } else {
+                value
+                    .checked_mul(
+                        10i128
+                            .checked_pow(scale - places)
+                            .ok_or(ToolReadError::ArithmeticOverflow)?,
+                    )
+                    .ok_or(ToolReadError::ArithmeticOverflow)?
+            };
+            result = if index > 0 && matches!(operation, DecimalOperation::Difference) {
                 result.checked_sub(value)
             } else {
                 result.checked_add(value)
@@ -86,15 +100,67 @@ pub(crate) fn calculate(input: &DecimalCalculation) -> Result<String, ToolReadEr
         coefficient /= 10;
         scale -= 1;
     }
+    Ok((coefficient, scale))
+}
+fn format_value((mut coefficient, mut scale): (i128, u32)) -> String {
+    while scale > 0 && coefficient % 10 == 0 {
+        coefficient /= 10;
+        scale -= 1;
+    }
     let sign = if coefficient < 0 { "-" } else { "" };
     let digits = coefficient.unsigned_abs().to_string();
     if scale == 0 {
-        Ok(format!("{sign}{digits}"))
+        format!("{sign}{digits}")
     } else {
         let digits = format!("{:0>width$}", digits, width = scale as usize + 1);
         let (whole, fraction) = digits.split_at(digits.len() - scale as usize);
-        Ok(format!("{sign}{whole}.{fraction}"))
+        format!("{sign}{whole}.{fraction}")
     }
+}
+
+/// External inputs retain the primitive six-place parser. Intermediate values
+/// remain typed coefficient/scale pairs, preserving exact generated precision.
+pub(crate) type WorkflowReceipt = (DecimalCalculation, Result<String, ToolReadError>);
+pub(crate) fn workflow(
+    input: &moosuri_core::DecimalWorkflow,
+) -> Result<Vec<WorkflowReceipt>, ToolReadError> {
+    use moosuri_core::DecimalReference;
+    if !input.graph.valid() || input.inputs.len() != usize::from(input.graph.input_count) {
+        return Err(ToolReadError::InvalidInput);
+    }
+    let inputs = input
+        .inputs
+        .iter()
+        .map(|s| decimal(s))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut values = Vec::new();
+    let mut receipts = Vec::new();
+    for step in &input.graph.steps {
+        let operands = step
+            .operands
+            .iter()
+            .map(|r| match r {
+                DecimalReference::Input { index } => inputs[usize::from(*index)],
+                DecimalReference::Result { index } => values[usize::from(*index)],
+            })
+            .collect::<Vec<_>>();
+        let calculation = DecimalCalculation {
+            operation: step.operation,
+            operands: operands.iter().map(|v| format_value(*v)).collect(),
+        };
+        match evaluate(step.operation, operands) {
+            Ok(value) => {
+                let exact = format_value(value);
+                values.push(value);
+                receipts.push((calculation, Ok(exact)));
+            }
+            Err(error) => {
+                receipts.push((calculation, Err(error)));
+                break;
+            }
+        }
+    }
+    Ok(receipts)
 }
 
 #[cfg(test)]
@@ -180,5 +246,76 @@ mod tests {
             run(DecimalOperation::Product, &["1", "2", "3"]),
             Err(ToolReadError::InvalidInput)
         );
+    }
+}
+
+#[cfg(test)]
+mod workflow_tests {
+    use super::*;
+    use moosuri_core::{DecimalGraph, DecimalReference::*, DecimalStep, DecimalWorkflow};
+    #[test]
+    fn intermediate_precision_is_exact_and_external_limits_and_reference_bounds_remain() {
+        let graph = DecimalGraph {
+            input_count: 3,
+            steps: vec![
+                DecimalStep {
+                    operation: DecimalOperation::Product,
+                    operands: vec![Input { index: 0 }, Input { index: 1 }],
+                },
+                DecimalStep {
+                    operation: DecimalOperation::Sum,
+                    operands: vec![Result { index: 0 }, Input { index: 2 }],
+                },
+            ],
+        };
+        let calls = workflow(&DecimalWorkflow {
+            graph: graph.clone(),
+            inputs: vec!["0.000001".into(), "0.000001".into(), "0.000001".into()],
+        })
+        .unwrap();
+        assert_eq!(calls[1].1, Ok("0.000001000001".into()));
+        assert!(matches!(
+            workflow(&DecimalWorkflow {
+                graph: graph.clone(),
+                inputs: vec!["0.0000001".into(), "1".into(), "1".into()]
+            }),
+            Err(ToolReadError::InvalidInput)
+        ));
+        let tiny = DecimalGraph {
+            input_count: 2,
+            steps: vec![
+                DecimalStep {
+                    operation: DecimalOperation::Product,
+                    operands: vec![Input { index: 0 }, Input { index: 0 }],
+                },
+                DecimalStep {
+                    operation: DecimalOperation::Product,
+                    operands: vec![Result { index: 0 }, Result { index: 0 }],
+                },
+                DecimalStep {
+                    operation: DecimalOperation::Product,
+                    operands: vec![Result { index: 1 }, Result { index: 1 }],
+                },
+                DecimalStep {
+                    operation: DecimalOperation::Sum,
+                    operands: vec![Result { index: 2 }, Input { index: 1 }],
+                },
+            ],
+        };
+        assert_eq!(
+            workflow(&DecimalWorkflow {
+                graph: tiny,
+                inputs: vec!["0.000001".into(), "0".into()]
+            })
+            .unwrap()[3]
+                .1,
+            Ok(format!("0.{}1", "0".repeat(47)))
+        );
+        let mut bad = graph.clone();
+        bad.steps[0].operands[0] = Result { index: 1 };
+        assert!(!bad.valid());
+        let mut unused = graph;
+        unused.input_count = 4;
+        assert!(!unused.valid());
     }
 }

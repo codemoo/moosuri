@@ -518,3 +518,5 @@ mod missions;
 #[cfg(feature = "credential-broker-chat")]
 mod credential_chat;
 mod run_timings;
+
+mod compound_calculation;

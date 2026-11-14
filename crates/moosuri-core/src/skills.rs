@@ -2,7 +2,7 @@
 //! The execution profile is server-generated private state, not a browser DTO.
 use serde::{Deserialize, Serialize};
 
-pub const BUILTIN_TOOLSET_VERSION: u32 = 1;
+pub const BUILTIN_TOOLSET_VERSION: u32 = 2;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

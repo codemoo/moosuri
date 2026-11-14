@@ -27,6 +27,10 @@ Tailscale Serve는 tailnet 접근, ordinary HTTPS는 공개 주소 접근이다.
 
 ## 출시 gate
 
+`cargo run --locked -p xtask -- sbom`으로 [CycloneDX source-lock inventory](dependency-inventory.md)를
+생성한다. 네 개 lock의 전체 dependency·version·digest를 보존한다. 실제 binary 구성 증명,
+license clearance와 취약점 검사는 별도이며 생성 파일을 낡은 상태로 source에 고정하지 않는다.
+
 | 영역 | 필요한 증거 |
 | --- | --- |
 | 공개 파일 | 새 이력·허용 목록·gitleaks 등 secret scan·개인 문자열/원문 수동 검토·asset/license provenance |

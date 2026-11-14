@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod sbom;
 mod source_connections;
 
 type Check<T> = Result<T, String>;
@@ -380,17 +381,23 @@ fn verify(root: &Path) -> Check<()> {
 
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args != ["verify-plan"] {
-        eprintln!("Usage: cargo run --locked -p xtask -- verify-plan");
+    if args != ["verify-plan"] && args != ["sbom"] {
+        eprintln!("Usage: cargo run --locked -p xtask -- <verify-plan|sbom>");
         std::process::exit(2);
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let result = root
         .canonicalize()
         .map_err(|e| e.to_string())
-        .and_then(|root| verify(&root));
+        .and_then(|root| {
+            if args == ["sbom"] {
+                sbom::print(&root)
+            } else {
+                verify(&root)
+            }
+        });
     if let Err(error) = result {
-        eprintln!("Plan verification failed: {error}");
+        eprintln!("{} failed: {error}", args[0]);
         std::process::exit(1);
     }
 }

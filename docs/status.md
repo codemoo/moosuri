@@ -326,7 +326,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 native GitHub credential 조회 | 채팅 waiting/resume·Google adapter·live-vault rotation·호환 이전·독립 최신 복구 |
 | P9 이전·전환 | 계약과 제한된 합성 복구 | private importer·대조·drain/cutover/rollback 실증 |
-| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/같은 schema update/제거 | 공식 서명 배포·arm64·cross-schema update·SBOM·품질/기기/출시 gate |
+| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/같은 schema update/제거·CycloneDX source-lock inventory | 공식 서명 배포·arm64·cross-schema update·binary provenance/license·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기를 수락했고, 고정 비교 baseline과 넓은 품질 평가는 남는다.
@@ -359,7 +359,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    명시적 요청 화면은 구현했다. 채팅 잠금 대기/재개·Google adapter·live-vault rotation,
    독립 최신 복구·구 v1 호환/이전·서명 배포를 이어 구현한다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: private importer/대조·제한 cutover·rollback,
-   수락한 Linux x86_64 로컬 서명 설치/같은 schema update/제거를 공식 artifact·arm64·cross-schema update·SBOM으로 확장하고,
+   수락한 Linux x86_64 로컬 서명 설치/같은 schema update/제거와 source-lock SBOM을 공식 artifact·arm64·cross-schema update·binary provenance/license로 확장하고,
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 

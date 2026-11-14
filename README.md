@@ -67,6 +67,7 @@ and lifecycle checks do not establish live account eligibility. Real device/prov
 
 [CONTRIBUTING](CONTRIBUTING.md) · [OpenSpec](openspec/README.md) · [architecture](docs/architecture.md) ·
 [testing](docs/testing.md) · [synthetic outcome runner](docs/agent-evaluation.md) · [source audit](docs/audit.md) · [public release](docs/public-release.md).
+[Dependency inventory](docs/dependency-inventory.md) provides an offline Rust generator for a CycloneDX source-lock SBOM.
 Personal coding-agent instructions are ignored; shared behavior and decisions belong
 in the canonical documents. Validate planning metadata with Rust1.89 or newer:
 

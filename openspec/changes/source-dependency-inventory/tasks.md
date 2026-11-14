@@ -1,0 +1,4 @@
+- [x] Implement bounded offline Rust generator over four fixed public lock paths.
+- [x] Preserve versions, package identity, source-relative occurrences and lock hashes.
+- [x] Document source-lock, binary-provenance and license distinctions.
+- [x] Linux focused regression, Clippy and actual642-component output pass; official CycloneDX1.6 schema accepts the generated inventory.

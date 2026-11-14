@@ -97,6 +97,9 @@ fn installation_activation_journal_records_old_new_before_atomic_publish_and_ref
         to: new.clone(),
         backup_output: t.path().join("backup.age"),
         export_id: uuid::Uuid::new_v4().to_string(),
+        source_schema: None,
+        target_schema: None,
+        migration_started: false,
     };
     create(&t.path().join("pending.json"), &json(&p).unwrap(), false).unwrap();
     sync(t.path()).unwrap();

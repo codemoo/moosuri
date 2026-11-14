@@ -1,7 +1,7 @@
 # Run the development preview
 
 Build and run the current development preview with the commands below. This is not
-a stable release. The separate [local signed bundle manager](local-installation.md) supports explicitly pinned local previews and stopped same-schema updates. [Current status](status.md) is the canonical map
+a stable release. The separate [local signed bundle manager](local-installation.md) supports explicitly pinned local previews and stopped current/predecessor-schema updates. [Current status](status.md) is the canonical map
 of supported behavior, validation limits and remaining work. Every email send
 requires explicit approval of its final preview.
 
@@ -101,7 +101,7 @@ backup/restore workflow or a production-ready release.
 `moosuri doctor` checks a **stopped** installation. A running installation holds
 its writer lock and correctly rejects another writer. Normal shutdown drains the
 writer before releasing the lock. Stopped encrypted [exports](backup.md) are available after independent recipient
-setup. Historical restore, upgrades and legacy migration remain unavailable;
+setup. Historical restore and legacy migration remain unavailable here; managed updates follow the explicit [local installer](local-installation.md) contract, and
 copying a live DB is not a supported backup.
 
 ## Recovering a journal-locked account

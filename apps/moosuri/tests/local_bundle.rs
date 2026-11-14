@@ -192,6 +192,53 @@ async fn installation_signed_fresh_init_served_shell_stopped_update_recovery_and
     moosuri_store::backup::setup(&data, &recipient, &identity).unwrap();
     let old: serde_json::Value =
         serde_json::from_slice(&fs::read(prefix.join("current.json")).unwrap()).unwrap();
+    #[cfg(feature = "test-fixtures")]
+    {
+        let interrupted_export = exports.join("before-pending-interruption.age");
+        let interrupted = Command::new(env!("CARGO_BIN_EXE_moosuri"))
+            .args([
+                "installation",
+                "update",
+                "--bundle",
+                bundle2.to_str().unwrap(),
+                "--trust-key",
+                pin.to_str().unwrap(),
+                "--prefix",
+                prefix.to_str().unwrap(),
+                "--backup-output",
+                interrupted_export.to_str().unwrap(),
+            ])
+            .env("MOOSURI_INSTALLATION_FAULT", "during_initial_pending_write")
+            .output()
+            .unwrap();
+        assert!(!interrupted.status.success());
+        assert!(
+            String::from_utf8_lossy(&interrupted.stderr).contains("during_initial_pending_write")
+        );
+        assert!(!prefix.join("pending.json").exists());
+        assert!(interrupted_export.is_file());
+        // Old selected binary can still start; a retry uses a fresh output path.
+        success(
+            Command::new(&manager)
+                .args([
+                    "installation",
+                    "run",
+                    "--prefix",
+                    prefix.to_str().unwrap(),
+                    "--",
+                    "doctor",
+                ])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &fs::read(prefix.join("current.json")).unwrap()
+            )
+            .unwrap(),
+            old
+        );
+    }
     success(update());
     assert!(backup.is_file());
     let new: serde_json::Value =

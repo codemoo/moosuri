@@ -13,7 +13,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 영역 | 구현한 범위 | 남은 경계와 사용·증거 |
 | --- | --- | --- |
-| 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/같은 schema의 stopped update/데이터 보존 제거도 구현했다. 공식 release·cross-schema update·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
+| 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/현재·직전 schema의 stopped update/데이터 보존 제거도 구현했다. 공식 release·두 단계 이상 schema update·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
 | 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량·실제 실행 단계 시간/누락 집계, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 오래된/다른 소유 대화의 제한 검색·읽기, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경 | media/background·Claude 실행·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·검색, 직접 기억·정정·망각, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 여섯 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 복합 업무 학습/export·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
@@ -25,6 +25,18 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·live-vault rotation·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · DB 버전이 바뀌는 설치 업데이트
+
+새 서명 bundle의 실행 파일로 직전 DB schema에서 현재 schema로 업데이트한다. 기존 데이터를
+암호화 export한 뒤 같은 writer 잠금을 유지한 채 실제 Store 이전을 실행하고 manager·활성
+바이너리를 바꾼다. 중단 후에는 남아 있는 정확한 새 서명 bundle로 복구하며, 이전 시작 뒤
+옛 DB를 덮어써서 신규 작업을 잃는 rollback은 허용하지 않는다.
+
+독립 검토에서 초기 준비 기록의 부분 쓰기 문제를 수정했다. Linux의 같은 schema 설치와
+실제 schema47 바이너리→schema48 업데이트·단계별 중단/재개·기존/새 작업 보존을 검증했다.
+여러 schema를 한 번에 건너뛰는 업데이트·공식 배포·arm64 수락은 별도다.
+[사용법](local-installation.md) · [검증](reviews/2026-11-15-stopped-schema-updates.md).
 
 ## 최근 수락한 단위 · 수집 시작 응답 유실 복구
 
@@ -99,7 +111,7 @@ People에서 계정 생성/암호 재발급 후 초대 내용을 미리 보고 �
 비서 서버에 전달하지 않는다. 설정 화면과 정확한 저장소를 명시한 채팅 요청을 연결했다. Google·현재
 live-vault 회전 추적·서명 companion 배포는 남는다. 기본 서버에서는 feature가 꺼져 있다.
 
-명시적 공개 키로 신뢰한 로컬 bundle을 설치하고, 서비스를 멈춘 상태에서 같은 DB schema의
+명시적 공개 키로 신뢰한 로컬 bundle을 설치하고, 서비스를 멈춘 상태에서 현재·직전 DB schema를
 새 바이너리로 업데이트한다. 중단된 활성화 복구와 데이터 보존 제거도 제공한다. 독립 검토에서
 ACL 경계·Tailscale 로그인·credential 만료 시각 결함을 수정했다. Linux 실제 설치 생명주기,
 관련 저장/복구/스키마/HTTP와 React 검사를 통과했다. 공식 release나 전체 P8/P10 완료는 아니다.
@@ -391,7 +403,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 native GitHub credential 조회/원래 채팅 대기·완료 | 일반 credential 도구·Google adapter·live-vault rotation·호환 이전·독립 최신 복구 |
 | P9 이전·전환 | 계약과 제한된 합성 복구 | private importer·대조·drain/cutover/rollback 실증 |
-| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/같은 schema update/제거·CycloneDX source-lock inventory | 공식 서명 배포·arm64·cross-schema update·binary provenance/license·품질/기기/출시 gate |
+| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/현재·직전 schema update/제거·CycloneDX source-lock inventory | 공식 서명 배포·arm64·여러 단계 schema update·binary provenance/license·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기를 수락했고, 고정 비교 baseline과 넓은 품질 평가는 남는다.
@@ -427,7 +439,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 일반 credential 도구·Google adapter·live-vault rotation,
    독립 최신 복구·구 v1 호환/이전·서명 배포를 이어 구현한다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: private importer/대조·제한 cutover·rollback,
-   수락한 Linux x86_64 로컬 서명 설치/같은 schema update/제거와 source-lock SBOM을 공식 artifact·arm64·cross-schema update·binary provenance/license로 확장하고,
+   수락한 Linux x86_64 로컬 서명 설치/현재·직전 schema update/제거와 source-lock SBOM을 공식 artifact·arm64·여러 단계 schema update·binary provenance/license로 확장하고,
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 

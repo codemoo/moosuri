@@ -74,14 +74,15 @@ app account authentication remains required. Do not overwrite another service's
 configuration. Unit installation/enabling, actual Tailscale/domain setup and the
 separate vault origin remain operator actions.
 
-## Stopped same-schema update
+## Stopped update and predecessor-schema migration
 
 Stop the user service and wait for shutdown. Configure the existing encrypted
 backup recipient with an independently held identity using `backup keygen/setup`
 ([backup](backup.md)). Then use a new local bundle signed by the **same pinned key**:
 
 ```sh
-moosuri installation update --prefix /absolute/private/runtime \
+/absolute/private/new-bundle/moosuri installation update \
+  --prefix /absolute/private/runtime \
   --bundle /absolute/private/new-bundle \
   --trust-key /absolute/private/release-public-pin \
   --backup-output /absolute/private/exports/before-update.age
@@ -89,36 +90,73 @@ moosuri installation status --prefix /absolute/private/runtime
 ```
 
 The release sequence must increase and SemVer cannot decrease. Target, exact
-binary size/hash, signature, self-reported build metadata/embedded assets and Store
-schema must agree. A running managed process or another data writer rejects the
-update. The existing stopped snapshot verifies integrity and applied journal heads;
-its **same writer lock remains held** while an encrypted SQLite/journal export and
-binary activation finish. An unconfigured backup or pending journal rejects the
-update. The installer does not open/migrate the live DB or start/resume traffic.
-After status succeeds, explicitly start the service and check `/health/ready` and
-`/app`; a failed start is not silently called an accepted update.
+binary size/hash, signature and self-reported build metadata/embedded assets must
+agree. The selected old release's signed schema must match the stopped database.
+The updater supports its own schema and **only the immediately preceding schema**;
+it rejects a newer database, a schema gap, a mismatched old manifest or a target
+schema different from its own build. Use the new bundle's executable for a schema
+upgrade. Its executing bytes must equal the newly staged, pinned signed executable
+before a source export or migration can proceed. Independently verify its public
+pin as described above; no official release or automatic download is implied.
 
-This slice only supports the exact current Store schema. Cross-schema upgrades
-remain unsupported until their concrete recovery contract is implemented. The
-export's existing media and historical-restore limitations remain; it is not a
-full filesystem backup or an arbitrary SQLite snapshot rollback guarantee.
-Immutable previous release directories remain available, but manually running an
-old binary after serving a newer one is not a supported data rollback.
+A running managed process or another data writer rejects the update. The original
+stopped writer lock remains held continuously across source integrity/applied
+journal verification, encrypted SQLite/journal export, product Store migration and
+activation. An unconfigured backup or pending journal rejects before migration.
+The export records the actual source schema. Export limitations remain as described
+in [backup](backup.md); this is not a full filesystem backup or a promise that an
+arbitrary historical export can be restored. Retain existing private files and
+backup identities along with the source export.
 
-A fsynced `pending.json` records old/new binary states before activation. Managed
-startup refuses a pending activation, including a crash after the active pointer
-changed but before that record was retired. While stopped, inspect status and use:
+Before migration, a fsynced `pending.json` preserves the old/new signed releases,
+source/target schemas and export ID/path. A second durable migration-start marker
+precedes opening the real Store migration path. No migration SQL is duplicated in
+the installer. Existing same-schema updates retain their binary-only behavior.
+Cross-schema activation also atomically refreshes the installed `manager` from the
+verified new binary, preserving the service's existing entry point; deployment
+files are not executed. A pending record fences managed startup until migration,
+manager refresh, active-pointer publication and record retirement complete.
+
+The command never starts/resumes the service. After status succeeds, explicitly
+start the service and check `/health/ready` and `/app`; a failed start is not
+silently called an accepted update. Immutable previous release directories remain
+available. No database snapshot is automatically copied back or downgraded.
+
+### Recover an interrupted update
+
+Preserve the new signed bundle, source export and identities. If update reports an
+error or the process stops with `pending.json` retained, keep the service stopped
+and use the **same new signed bundle executable**:
 
 ```sh
-moosuri installation recover --prefix /absolute/private/runtime --choose new
-# Or choose old before restarting, retaining the old binary selection only:
-moosuri installation recover --prefix /absolute/private/runtime --choose old
+/absolute/private/new-bundle/moosuri installation status \
+  --prefix /absolute/private/runtime
+/absolute/private/new-bundle/moosuri installation recover \
+  --prefix /absolute/private/runtime --choose new
 ```
 
-Recovery verifies both signed slots, requires stopped data admission and accepts
-only the recorded old/new current state. It changes binary selection and never
-restores an older database. Preserve the export and retained backup identities.
-Do not delete activation/journal files or force a service start around the guard.
+If interruption occurred before `pending.json` was published, no migration has
+started. Repeat update with a fresh `--backup-output` path and retain any earlier
+export; existing export files are never overwritten.
+
+This is the recovery entry point even if the installed old `manager` rejects the
+new schema/metadata. An interruption before manager refresh leaves that old
+manager in place; an interruption after refresh permits the new installed manager
+to recover too. Recovery verifies both pinned signed slots/current selection,
+reacquires stopped data admission and retries the real Store migration
+idempotently. It refreshes the manager and completes activation. A migration
+failure keeps the pending fence and source export; resolve the reported cause and
+retry `--choose new`. Unreadable/corrupt data remains a manual recovery case; do
+not force startup by deleting metadata or journal files.
+
+For a same-schema pending activation, `--choose old` still selects the old binary
+without changing SQLite. For a cross-schema pending activation, choosing old is
+permitted only before the durable migration-start marker and while the captured
+database still has the exact source schema. Once migration has started it is
+refused conservatively, even if the first transaction failed. New work or
+authority committed after migration is preserved by retry; recovery never restores
+an earlier database, replays an old backup or automatically downgrades a schema.
+
 An interrupted first install before its marker was published remains a partial
 new prefix; inspect it and choose a fresh prefix rather than recursively deleting
 an arbitrary directory.

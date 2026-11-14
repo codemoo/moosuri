@@ -267,6 +267,9 @@ impl Offline {
         Self::capture(root, lock)
     }
     fn capture(root: PathBuf, lock: File) -> Result<Self> {
+        Self::capture_with_floor(root, lock, CURRENT_SCHEMA_VERSION)
+    }
+    fn capture_with_floor(root: PathBuf, lock: File, floor: i64) -> Result<Self> {
         let temp = files::Temporary::new(&root)?;
         files::copy_file(
             &root.join("assistant.sqlite"),
@@ -295,7 +298,7 @@ impl Offline {
         )?;
         conn.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON;")?;
         let schema: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if schema != CURRENT_SCHEMA_VERSION {
+        if !(floor..=CURRENT_SCHEMA_VERSION).contains(&schema) {
             return Err(Error::UnsupportedInstallation);
         }
         let initialized: bool =
@@ -645,7 +648,7 @@ pub fn create(root: &Path, output: &Path) -> Result<ExportSummary> {
 }
 
 /// Verified stopped snapshot retaining the original exclusive writer lock.
-/// Same-schema binary maintenance only; no migration or historical rollback.
+/// Original stopped admission remains held through exports and optional forward migration.
 pub struct MaintenanceGuard {
     offline: Offline,
 }
@@ -655,8 +658,36 @@ impl MaintenanceGuard {
             offline: Offline::open(root)?,
         })
     }
+    /// Only the immediately preceding schema and this build's schema are supported.
+    /// Snapshot validation happens before any live migration or journal replay.
+    pub fn open_for_upgrade(root: &Path) -> Result<Self> {
+        let (root, lock) = files::stopped_lock(root)?;
+        let offline = Offline::capture_with_floor(root, lock, CURRENT_SCHEMA_VERSION - 1)?;
+        crate::cutover::require_active(&offline.conn, &offline.root)?;
+        Ok(Self { offline })
+    }
     pub fn schema_version(&self) -> i64 {
-        CURRENT_SCHEMA_VERSION
+        self.offline
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .expect("validated captured schema")
+    }
+    /// Run the product Store migration using a duplicate of the SAME locked open
+    /// description. Keeping this guard alive retains admission even on failure.
+    /// Callers must durably fence startup before invoking this method.
+    pub fn migrate(&self) -> crate::Result<crate::Store> {
+        crate::Store::open_admitted(
+            &self.offline.root,
+            moosuri_core::WebToolProfile::default(),
+            Some(crate::cutover::RuntimeAdmission {
+                root: self.offline.root.clone(),
+                lock: self
+                    .offline
+                    ._lock
+                    .try_clone()
+                    .map_err(|_| StoreError::Unavailable)?,
+            }),
+        )
     }
     pub fn encrypted_export(&self, output: &Path) -> Result<ExportSummary> {
         create_captured(&self.offline, output, Instant::now())
@@ -741,7 +772,9 @@ fn create_captured(offline: &Offline, output: &Path, started: Instant) -> Result
         purpose: "assistant-export".into(),
         installation_id: config.installation_id,
         export_id: export_id.clone(),
-        schema: CURRENT_SCHEMA_VERSION,
+        schema: offline
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?,
         created_at: now()?,
         key_epoch: epoch.epoch,
         recipient: epoch.recipient.clone(),

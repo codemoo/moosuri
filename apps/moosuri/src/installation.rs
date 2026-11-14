@@ -1,4 +1,4 @@
-//! Local signed bundles and stopped same-schema activation. No network/service mutation.
+//! Local signed bundles and stopped forward-schema activation. No network/service mutation.
 use clap::{Subcommand, ValueEnum};
 use fs2::FileExt;
 use ring::signature;
@@ -52,7 +52,7 @@ pub enum Command {
         #[arg(long, value_enum)]
         network: Network,
     },
-    /// Export under the stopped writer lock, then activate a newer same-schema binary.
+    /// Export under the stopped writer lock, migrate forward if needed, then activate.
     Update {
         #[arg(long)]
         bundle: PathBuf,
@@ -141,6 +141,13 @@ struct Activation {
     to: Release,
     backup_output: PathBuf,
     export_id: String,
+    // Defaults preserve recovery of pre-upgrade same-schema pending records.
+    #[serde(default)]
+    source_schema: Option<i64>,
+    #[serde(default)]
+    target_schema: Option<i64>,
+    #[serde(default)]
+    migration_started: bool,
 }
 struct Bundle {
     manifest: Manifest,
@@ -370,9 +377,23 @@ fn create(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
         .map_err(error)
 }
 fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    atomic_mode(path, bytes, false)
+}
+fn atomic_mode(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
     let parent = path.parent().ok_or("installation_parent_required")?;
     let tmp = parent.join(format!(".activation-{}", uuid::Uuid::new_v4()));
-    create(&tmp, bytes, false)?;
+    #[cfg(feature = "test-fixtures")]
+    if path.file_name().is_some_and(|name| name == "pending.json")
+        && !path.exists()
+        && std::env::var("MOOSURI_INSTALLATION_FAULT").ok().as_deref()
+            == Some("during_initial_pending_write")
+    {
+        // Model an interrupted private temporary-file write. The public pending
+        // marker must remain absent until its complete durable bytes can rename.
+        create(&tmp, &bytes[..bytes.len() / 2], executable)?;
+        return Err("installation_test_interrupted_during_initial_pending_write".into());
+    }
+    create(&tmp, bytes, executable)?;
     fs::rename(&tmp, path).map_err(error)?;
     sync(parent)
 }
@@ -447,8 +468,8 @@ fn validate_manifest(m: &Manifest) -> Result<()> {
     if m.target != own.target {
         return Err("installation_target_mismatch".into());
     }
-    if m.store_schema != own.store_schema {
-        return Err("installation_same_schema_required".into());
+    if m.store_schema < 1 {
+        return Err("installation_schema_invalid".into());
     }
     if m.version.len() > 64 || semver::Version::parse(&m.version).is_err() {
         return Err("installation_version_invalid".into());
@@ -588,12 +609,88 @@ fn no_pending(prefix: &Path) -> Result<()> {
         Ok(())
     }
 }
-fn publish(prefix: &Path, p: &Activation) -> Result<()> {
-    create(&prefix.join("pending.json"), &json(p)?, false)?;
-    sync(prefix)?;
+fn finish_activation(prefix: &Path, p: &Activation) -> Result<()> {
+    if p.source_schema.is_some() && p.source_schema != p.target_schema {
+        // Legacy managers enforce their own schema. Refresh the verified manager
+        // under the same pending fence so the installed service can run the new slot.
+        let mut i = installation(prefix)?;
+        let bytes = read(&verify_release(prefix, &i, &p.to)?, BINARY_CAP, true)?;
+        atomic_mode(&prefix.join("manager"), &bytes, true)?;
+        upgrade_fault("after_manager")?;
+        i.managed.insert("manager".into(), hash(&bytes));
+        atomic(&prefix.join("installation.json"), &json(&i)?)?;
+    }
     atomic(&prefix.join("current.json"), &json(&p.to)?)?;
+    upgrade_fault("after_current")?;
     fs::remove_file(prefix.join("pending.json")).map_err(error)?;
     sync(prefix)
+}
+fn release_schema(prefix: &Path, r: &Release) -> Result<i64> {
+    let m: Manifest = parse(&read(
+        &prefix
+            .join("releases")
+            .join(r.sequence.to_string())
+            .join("manifest.json"),
+        16384,
+        true,
+    )?)?;
+    Ok(m.store_schema)
+}
+fn require_target_updater(prefix: &Path, p: &Activation) -> Result<()> {
+    let own = own_probe();
+    let binary = prefix
+        .join("releases")
+        .join(p.to.sequence.to_string())
+        .join("moosuri");
+    if p.target_schema != Some(own.store_schema)
+        || hash(&read(
+            &std::env::current_exe().map_err(error)?,
+            BINARY_CAP,
+            false,
+        )?) != hash(&read(&binary, BINARY_CAP, true)?)
+    {
+        return Err("installation_run_signed_target_binary_for_upgrade_or_recover".into());
+    }
+    Ok(())
+}
+fn resume_upgrade(
+    prefix: &Path,
+    p: &mut Activation,
+    guard: &moosuri_store::backup::MaintenanceGuard,
+) -> Result<()> {
+    let source = p
+        .source_schema
+        .ok_or("installation_upgrade_record_invalid")?;
+    let target = p
+        .target_schema
+        .ok_or("installation_upgrade_record_invalid")?;
+    if source >= target
+        || guard.schema_version() < source
+        || guard.schema_version() > target
+        || source != own_probe().store_schema - 1
+    {
+        return Err("installation_upgrade_schema_mismatch".into());
+    }
+    require_target_updater(prefix, p)?;
+    // Once this durable marker exists, selecting the old executable is refused
+    // even if a failed migration happened to leave its first transaction unchanged.
+    p.migration_started = true;
+    atomic(&prefix.join("pending.json"), &json(p)?)?;
+    upgrade_fault("after_migration_started")?;
+    drop(
+        guard
+            .migrate()
+            .map_err(|e| format!("installation_upgrade_failed_recover_new: {e}"))?,
+    );
+    upgrade_fault("after_migration")?;
+    finish_activation(prefix, p)
+}
+fn upgrade_fault(_point: &str) -> Result<()> {
+    #[cfg(feature = "test-fixtures")]
+    if std::env::var("MOOSURI_INSTALLATION_FAULT").ok().as_deref() == Some(_point) {
+        return Err(format!("installation_test_interrupted_{_point}"));
+    }
+    Ok(())
 }
 fn maintenance(data: &Path) -> Result<Option<moosuri_store::backup::MaintenanceGuard>> {
     if data.join("assistant.sqlite").exists() {
@@ -696,6 +793,9 @@ pub fn run(command: &Command) -> Result<()> {
             network,
         } => {
             let b = bundle(root, trust_key)?;
+            if b.manifest.store_schema != own_probe().store_schema {
+                return Err("installation_run_target_binary_required".into());
+            }
             path_checked(prefix)?;
             path_checked(data_dir)?;
             if prefix.starts_with(data_dir) || data_dir.starts_with(prefix) {
@@ -779,50 +879,95 @@ pub fn run(command: &Command) -> Result<()> {
             {
                 return Err("installation_release_not_newer".into());
             }
-            let guard = moosuri_store::backup::MaintenanceGuard::open(&i.data_dir)
+            if b.manifest.store_schema != own_probe().store_schema {
+                return Err("installation_run_signed_target_binary_for_upgrade_or_recover".into());
+            }
+            let guard = moosuri_store::backup::MaintenanceGuard::open_for_upgrade(&i.data_dir)
                 .map_err(|e| e.to_string())?;
-            if guard.schema_version() != b.manifest.store_schema {
-                return Err("installation_same_schema_required".into());
+            let source_schema = guard.schema_version();
+            if source_schema != release_schema(prefix, &from)?
+                || source_schema > b.manifest.store_schema
+            {
+                return Err("installation_upgrade_schema_mismatch".into());
+            }
+            let to = stage(prefix, &b)?;
+            let mut p = Activation {
+                from,
+                to,
+                backup_output: backup_output.clone(),
+                export_id: String::new(),
+                source_schema: Some(source_schema),
+                target_schema: Some(b.manifest.store_schema),
+                migration_started: false,
+            };
+            let upgrading = source_schema != b.manifest.store_schema;
+            if upgrading {
+                require_target_updater(prefix, &p)?;
             }
             let export = guard
                 .encrypted_export(backup_output)
                 .map_err(|e| e.to_string())?;
-            let to = stage(prefix, &b)?;
-            publish(
-                prefix,
-                &Activation {
-                    from,
-                    to,
-                    backup_output: backup_output.clone(),
-                    export_id: export.export_id,
-                },
-            )?;
+            p.export_id = export.export_id;
+            // Exclusive prefix admission makes this absent-check authoritative;
+            // never expose a partial initial pending record or overwrite one.
+            no_pending(prefix)?;
+            atomic(&prefix.join("pending.json"), &json(&p)?)?;
+            if upgrading {
+                resume_upgrade(prefix, &mut p, &guard)?;
+            } else {
+                finish_activation(prefix, &p)?;
+            }
             println!(
-                "Verified same-schema binary activated under the stopped writer lock. Encrypted SQLite/journal export retained; no old-snapshot rollback, migration, service start or traffic change was performed."
+                "Verified binary activated under the stopped writer lock (schema {source_schema} -> {}). Encrypted source export retained; no database rollback, service start or traffic change was performed.",
+                b.manifest.store_schema
             );
         }
         Command::Recover { prefix, choose } => {
             let _lock = lock(prefix, true)?;
             let i = installation(prefix)?;
-            let p = pending(prefix)?.ok_or("installation_no_pending_activation")?;
-            let _data = maintenance(&i.data_dir)?;
+            let mut p = pending(prefix)?.ok_or("installation_no_pending_activation")?;
+            let guard = moosuri_store::backup::MaintenanceGuard::open_for_upgrade(&i.data_dir)
+                .map_err(|e| e.to_string())?;
             let active = current(prefix)?;
             if active != p.from && active != p.to {
                 return Err("installation_activation_record_conflict".into());
             }
             verify_release(prefix, &i, &p.from)?;
             verify_release(prefix, &i, &p.to)?;
-            atomic(
-                &prefix.join("current.json"),
-                &json(match choose {
-                    Choice::New => &p.to,
-                    Choice::Old => &p.from,
-                })?,
-            )?;
-            fs::remove_file(prefix.join("pending.json")).map_err(error)?;
-            sync(prefix)?;
+            let from_schema = release_schema(prefix, &p.from)?;
+            let to_schema = release_schema(prefix, &p.to)?;
+            let upgrading = from_schema != to_schema;
+            if upgrading {
+                if p.source_schema != Some(from_schema) || p.target_schema != Some(to_schema) {
+                    return Err("installation_upgrade_record_invalid".into());
+                }
+                match choose {
+                    Choice::Old => {
+                        if p.migration_started || guard.schema_version() != from_schema {
+                            return Err("installation_upgrade_started_recover_new_only_no_database_rollback".into());
+                        }
+                        atomic(&prefix.join("current.json"), &json(&p.from)?)?;
+                        fs::remove_file(prefix.join("pending.json")).map_err(error)?;
+                        sync(prefix)?;
+                    }
+                    Choice::New => resume_upgrade(prefix, &mut p, &guard)?,
+                }
+            } else {
+                if p.migration_started || guard.schema_version() != from_schema {
+                    return Err("installation_upgrade_schema_mismatch".into());
+                }
+                atomic(
+                    &prefix.join("current.json"),
+                    &json(match choose {
+                        Choice::New => &p.to,
+                        Choice::Old => &p.from,
+                    })?,
+                )?;
+                fs::remove_file(prefix.join("pending.json")).map_err(error)?;
+                sync(prefix)?;
+            }
             println!(
-                "Pending binary activation resolved. SQLite was not rolled back. Review status before starting the service."
+                "Pending activation resolved under stopped admission. SQLite was never rolled back. Review status before explicitly starting the service."
             );
         }
         Command::Uninstall { prefix } => {

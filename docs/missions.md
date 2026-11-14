@@ -6,7 +6,7 @@
 유효한 동안만 실행한다. 관리자는 다른 사용자의 결과를 읽거나 제어할 수 없다.
 
 현재 범위는 보관 자료·기억 검색/읽기, 허용한 지침 스킬 읽기, 정확한 소수 계산,
-설치에서 설정한 공개 HTTP 읽기/검색이다. 메일·브라우저·볼트·임의 코드·외부 쓰기는
+설치에서 설정한 공개 HTTP 읽기/검색, 업무에 명시한 연결 Gmail·기본 Calendar 읽기다. 메일 발송·초안·Calendar 변경·브라우저·볼트·임의 코드·외부 쓰기는
 실행하지 않는다. 해당 도구를 요구하면 지원하지 않는 작업으로 남기고 무의미한 수정을 반복하지 않는다. 결과는 해당 사용자의 맡긴 일 기록 안에 저장한다.
 
 일반적인 내용·의미 검토는 ‘일부 결과 · 검토 필요’로 남는다. 모델의 완료 선언은 증명이
@@ -36,7 +36,7 @@ API는 `POST/GET /api/v1/missions`, `POST /api/v1/missions/{id}/control`,
 삭제는 기존 파괴적 작업 저널에 영구 기록하며 재시도·복원으로 삭제한 결과를 되살리지 않는다.
 
 일회성 단위 자체에는 반복 예약된 복합 작업, 변경점 비교, 대화에서 작업 자동 추출, 실행 범위 확장,
-메일/브라우저 읽기, 의미 판단 자동 완료가 포함되지 않는다. F27 전체 완료를 의미하지 않는다.
+브라우저 읽기, 의미 판단 자동 완료가 포함되지 않는다. F27 전체 완료를 의미하지 않는다.
 
 ## Acknowledged recovery and control retries
 
@@ -50,7 +50,7 @@ Stable mission controls and restarts cannot strand execution at the shared chat 
 
 **예약해서 맡기기**에서 일·조건·계산 확인값과 한 번/간격/매일/매주 시간을 직접 저장한다.
 저장한 업무 본문·확인 기준·당시 검증된 모델/effort·읽기 범위는 고정된다. 시간 규칙과
-이름은 바꿀 수 있으며 업무 내용이나 모델을 바꾸려면 새 예약으로 저장한다. 메일·브라우저·
+이름은 바꿀 수 있으며 업무 내용이나 모델을 바꾸려면 새 예약으로 저장한다. 메일 발송·초안·Calendar 변경·브라우저·
 볼트·외부 쓰기는 예약할 수 없다. 직접 양식의 권한은 실제 저장 요청에서 나온다.
 아래 대화 경로는 현재 사용자의 명시적 요청만 해석하며 자료나 일반 모델 출력은 권한이 아니다.
 
@@ -180,3 +180,40 @@ API는 `/api/v1/recurring-missions`(GET/POST), `/{id}`(PUT 시간 규칙),
 삭제했다고 무관한 예약까지 멈추거나, 저장된 옛 목록으로 삭제한 지침을 다시 읽지 않는다.
 복원한 예약의 기존 격리·명시적 재개 경계도 그대로다. private 실행 route는 여전히
 미션에서 제외하며 별도 예약 실행 권한을 얻지 않는다.
+
+
+## 연결된 Gmail·Calendar 읽기 위임
+
+`매일 아침9시에 Gmail과 Calendar를 읽고 요약해 줘`처럼 **현재 요청의 업무 본문**에
+Gmail/mail/email/메일 또는 Calendar/캘린더/일정을 명시하면 해당 영역의 읽기를 맡길 수 있다.
+직접 일회/예약 양식도 같은 이름을 사용한다. 영역을 추가하려면 새 업무로 맡긴다. 현재
+연결된 소유 계정의 정확한 connection epoch·OAuth client/app revision·Calendar primary ID를
+원래 업무와 함께 고정하며, 이전에 저장한 업무에는 이 읽기 권한을 소급하지 않는다.
+연결이 없거나 app에 묶이지 않은 옛 연결이면 `needs_connection`으로 안내하고, 요청한 영역을
+빼고 보관 자료만 읽는 축소 업무를 저장하지 않는다. 연결 후 원래 전체 업무를 새로 맡긴다.
+
+별도 로그인 세션이나 UserContext를 만들어내지 않는다. 기존 mission owner/account epoch,
+원래 provider/model/effort, 실행 mode, 예약 parent와 시작된 typed read permit에서만 credential
+carrier를 만든다. durable grant는 정상 로그아웃 후에도 유효하지만 계정 정지·세대 변경·임시
+계정 만료·연결 철회에는 유효하지 않다. current_session 업무는 원래 실제 세션이 필요하며
+새 로그인으로 이어 붙이지 않는다. 개인 ChatGPT 연결의 background 권한은 추가하지 않는다.
+
+허용 도구는 Gmail search/read/thread 및 소유 기본 Calendar list/read다. Gmail message/thread ID는
+**이번 회차**의 실제 완료된 읽기 근거에서 나와야 하고, Calendar는 이번 run의 opaque
+observation_ref만 읽는다. 메일 검색은 최대5개, 본문4096bytes, thread 최근3개이며 Calendar는
+최대31일 범위·페이지5개다. 일부 페이지는 전체 부재를 증명하지 않는다. 매 회차 새 기준 시각과
+원래 Calendar 시간대를 제공하며 과거 회차의 결과·ID를 새 조회 영수증으로 사용하지 않는다.
+발송·답장·초안 작성·Calendar 변경/작업 조회·브라우저·볼트·첨부·외부 쓰기는 허용하지 않는다.
+결과는 private 업무 기록과 기존 상태 소식에만 남고, 자료/일반 모델 출력은 새 위임 권한이 아니다.
+
+접수·IO 직전/직후·결과 저장에서 owner/epoch/원래 session mode/parent/provider/connection/app
+pin을 검사한다. refresh도 원래 owner·connection·app 및 credential revision CAS로 저장하고
+scope를 늘리지 않는다. 읽기 권한이 사라지면 결과·private checkpoint/observation/후보를 제거하며
+최소 dispatch/accounting 영수증은 보존한다. 정지·취소도 연결 읽기의 private projection을 은퇴시키고,
+이미 시작한 작업은 결과 불명으로 남겨 자동 재실행하지 않는다. 안정된 정지 업무를 원래 권한으로
+재개하더라도 새 읽기만 사용할 수 있고 예산은 그대로다. 재연결은 옛 pin을 바꾸지 않으므로 새 업무가
+필요하다. 보관했던 결과도 연결 철회 뒤 되살아나지 않는다.
+
+기존 회차당 모델6회·도구12회·120초 누적 실행 한도와 최대 하루 유효기간을 유지한다. 승인 창을
+추가하지 않는다. 합성 Store/Runtime 및 실제 loopback connector 검증은 실제 Google 계정 동의,
+넓은 언어 이해 정확도, 실계정 정책이나 production 배포 검증을 뜻하지 않는다.

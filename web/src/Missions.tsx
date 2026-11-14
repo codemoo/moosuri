@@ -50,7 +50,7 @@ function Contents({accountId,onExpired,back}:Props){
  }
 
  const draft=()=>{if(!busy){pending.current=null;id.current=crypto.randomUUID()}};
- return <section className="missions"><header><button onClick={back}>← 대화로</button><h2>맡긴 일</h2><p>자료를 읽고 결과와 근거를 남겨요. 보관된 자료·공개 웹 읽기와 계산을 사용할 수 있어요.</p></header>
+ return <section className="missions"><header><button onClick={back}>← 대화로</button><h2>맡긴 일</h2><p>Gmail·메일 또는 Calendar·캘린더·일정을 업무에 명시하면 저장 당시 연결된 내 계정의 읽기만 맡길 수 있어요. 연결이 없거나 철회되면 요구를 빼고 진행하지 않아요. 발송·초안·일정 변경은 지원하지 않아요.</p><p>자료를 읽고 결과와 근거를 남겨요. 보관된 자료·공개 웹 읽기와 계산을 사용할 수 있어요.</p></header>
  <form onSubmit={create}><label>맡길 일<textarea required maxLength={8000} value={task} onChange={e=>{setTask(e.target.value);draft()}}/></label><label>지켜야 할 조건<textarea maxLength={4000} value={constraints} onChange={e=>{setConstraints(e.target.value);draft()}}/></label><label>완료 후 확인할 내용<input value={review} maxLength={1000} onChange={e=>{setReview(e.target.value);draft()}}/></label><details><summary>계산 결과를 정확히 확인할 때</summary><label>예상하는 정확한 값<input value={expected} maxLength={128} onChange={e=>{setExpected(e.target.value);draft()}}/></label><p>계산 영수증과 결과가 모두 일치해야 완료로 표시해요. 일반 내용 검토는 직접 확인이 필요해요.</p></details><label className="mission-mode"><input type="checkbox" checked={durable} onChange={e=>{setDurable(e.target.checked);draft()}}/>창을 닫거나 로그아웃해도 계속</label><p>이 요청에 한해 최대 하루 동안 실행해요. 멈춘 시간도 유효 기간에 포함돼요.</p><button disabled={busy||!task.trim()} type="submit">일 맡기기</button></form>
  <details><summary>예약해서 맡기기</summary><RecurringMissions accountId={accountId} onExpired={onExpired}/></details>
  {error&&<p role="alert">{error}</p>}<button disabled={busy} onClick={()=>void load().catch(failure)}>상태 새로고침</button>
@@ -100,7 +100,7 @@ function RecurringMissions({accountId,onExpired}:Pick<Props,"accountId"|"onExpir
  function edit(m:RecurringMissionView){if(busy)return;draft();setEditing(m);setTask(m.template.task);setConstraints(m.template.constraints);setTitle(m.schedule.title);setChanges(m.changes_only);setExpected(m.template.checks.find(c=>c.kind==="decimal_equals")?.expected??"");
   const r=m.schedule.rule;setKind(r.kind);if(r.kind==="once"||r.kind==="interval")setInstant(new Date((r.kind==="once"?r.at:r.anchor)*1000).toISOString().slice(0,16));if(r.kind==="interval")setSeconds(r.seconds);if(r.kind==="daily"||r.kind==="weekly"){setClock(r.time);setZone(r.timezone)}if(r.kind==="weekly")setDays(r.days);
  }
- return <section aria-label="예약한 읽기 업무"><p>자료 읽기와 계산을 예약해요. 저장한 일과 모델은 고정되며 로그아웃해도 실행해요. 매 회차는 예정 시각부터 최대 하루와 원래 실행 한도를 사용해요.</p>
+ return <section aria-label="예약한 읽기 업무"><p>업무에 명시한 Gmail·Calendar는 연결된 내 계정에서 매 회차 새로 읽어요. 연결 철회 후에는 재연결하고 새 업무로 맡겨야 해요. 발송·초안·Calendar 변경은 지원하지 않아요.</p><p>자료 읽기와 계산을 예약해요. 저장한 일과 모델은 고정되며 로그아웃해도 실행해요. 매 회차는 예정 시각부터 최대 하루와 원래 실행 한도를 사용해요.</p>
  <form onSubmit={save}><label>예약 이름<input required maxLength={160} disabled={busy} value={title} onChange={e=>{setTitle(e.target.value);draft()}}/></label>
  <label>예약할 일<textarea required maxLength={8000} disabled={busy||!!editing} value={task} onChange={e=>{setTask(e.target.value);draft()}}/></label>
  <label>예약 업무의 조건<textarea maxLength={4000} disabled={busy||!!editing} value={constraints} onChange={e=>{setConstraints(e.target.value);draft()}}/></label>

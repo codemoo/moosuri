@@ -2,8 +2,10 @@
 //! A durable grant is never converted to a session UserContext.
 use super::*;
 pub(crate) mod chat;
+pub(crate) mod connected;
 use crate::agent_execution::{KnowledgeToolInput, KnowledgeToolResult};
 use crate::chat::Run;
+pub use connected::MissionReadCredentials;
 use moosuri_core::{
     MissionAction, MissionCandidate, MissionCheck, MissionControl, MissionCreate, MissionMode,
     MissionReceipt, MissionView, RunState,
@@ -36,12 +38,20 @@ pub(crate) fn authority(c: &Connection, r: &Run) -> Result<()> {
         || expiry <= clock()?
         || revision < 1
     {
+        connected::withdraw_private(c, &r.tenant, &r.id)?;
         return Err(StoreError::Unauthorized);
     }
     if mode == "current_session" {
-        crate::chat::authority(c, r)?;
+        if let Err(error) = crate::chat::authority(c, r) {
+            connected::withdraw_private(c, &r.tenant, &r.id)?;
+            return Err(error);
+        }
     }
     crate::recurring_missions::authority(c, r)?;
+    if !connected::current(c, r)? {
+        connected::withdraw_private(c, &r.tenant, &r.id)?;
+        return Err(StoreError::Conflict);
+    }
     // Pinned instruction skill withdrawals fence even proposals that did not read the pin yet.
     if let Some(p) = &r.tool_profile {
         for pin in &p.skills {
@@ -63,6 +73,19 @@ pub(crate) fn tool_allowed(v: &KnowledgeToolInput) -> bool {
             | KnowledgeToolInput::ReadMemory { .. }
             | KnowledgeToolInput::SkillRead { .. }
             | KnowledgeToolInput::DecimalCalculate { .. }
+            | KnowledgeToolInput::External {
+                request: moosuri_core::ExternalToolRequest::Mail(
+                    moosuri_core::MailToolRequest::Search { .. }
+                        | moosuri_core::MailToolRequest::Read { .. }
+                        | moosuri_core::MailToolRequest::Thread { .. }
+                )
+            }
+            | KnowledgeToolInput::External {
+                request: moosuri_core::ExternalToolRequest::Calendar(
+                    moosuri_core::CalendarReadRequest::List { .. }
+                        | moosuri_core::CalendarReadRequest::Read { .. }
+                )
+            }
             | KnowledgeToolInput::External {
                 request: moosuri_core::ExternalToolRequest::Web(
                     moosuri_core::WebToolRequest::Read { .. }
@@ -234,6 +257,10 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
                         ),
                     ),
                     KnowledgeToolResult::External(v) => {
+                        if let Some(receipt) = connected::receipt(&v) {
+                            receipts.push(receipt);
+                            continue;
+                        }
                         let page = v.get("web_page");
                         let detail = if let Some(page) = page {
                             format!(
@@ -646,6 +673,7 @@ pub(crate) fn create_pinned_in(
         "INSERT INTO agent_execution(tenant_id,run_id,agent,deadline_ms) VALUES(?1,?2,1,?3)",
         params![tenant, run, expiry],
     )?;
+    connected::admit_run(tx, &crate::chat::load_run(tx, tenant, &run)?)?;
     Ok(id)
 }
 
@@ -659,6 +687,7 @@ pub(crate) fn read_profile(
     profile.credential_github = false;
     profile.conversation_recall = false;
     profile.mail_connections.clear();
+    profile.mission_reads = None;
     if let Some(w) = &mut profile.web {
         w.browser_pin = None;
     }
@@ -705,7 +734,7 @@ pub(crate) fn create_owner_in(
         return Err(StoreError::Busy);
     }
     providers::binding_for_choice(tx, key, &choice)?;
-    let profile = read_profile(profile);
+    let profile = connected::admit_profile(tx, u, &input, read_profile(profile))?;
     let mut model = serde_json::to_value(choice).map_err(|_| StoreError::InvalidInput)?;
     model["agent_profile"] = serde_json::to_value(profile).map_err(|_| StoreError::InvalidInput)?;
     let expiry = clock()?
@@ -793,6 +822,7 @@ pub(crate) fn control_owner_in(
                 "cancelled"
             };
             tx.execute("UPDATE missions SET state=?3,uncertain=max(uncertain,?4),revision=revision+1,grant_enabled=CASE WHEN ?3='cancelled' THEN 0 ELSE grant_enabled END WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,state,dispatched])?;
+            connected::withdraw_private(tx, &u.tenant.0, &run)?;
             tx.execute(
                 "UPDATE chat_runs SET state='cancelled' WHERE tenant_id=?1 AND id=?2",
                 params![u.tenant.0, run],
@@ -809,6 +839,17 @@ pub(crate) fn control_owner_in(
             let carrier = crate::chat::load_run(tx, &u.tenant.0, &run)?;
             if carrier.epoch != u.epoch {
                 return Err(StoreError::Unauthorized);
+            }
+            if carrier
+                .tool_profile
+                .as_ref()
+                .is_some_and(|p| p.mission_reads.is_some())
+                && matches!(current.request.execution_mode, MissionMode::CurrentSession)
+            {
+                crate::chat::authority(tx, &carrier)?;
+                if carrier.session != u.digest {
+                    return Err(StoreError::Unauthorized);
+                }
             }
             providers::binding_for_choice(tx, key, &carrier.model)?;
             crate::agent_execution::guard_execution(tx, &carrier)?;

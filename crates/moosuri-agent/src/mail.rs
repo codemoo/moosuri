@@ -23,6 +23,8 @@ pub struct MailService {
     managed_redirect: Option<String>,
     locks: MailLocks,
     signals: crate::Signals,
+    #[cfg(test)]
+    synthetic_google: Option<std::net::SocketAddr>,
 }
 impl MailService {
     pub(crate) fn new(
@@ -32,6 +34,8 @@ impl MailService {
     ) -> Self {
         Self {
             store,
+            #[cfg(test)]
+            synthetic_google: None,
             client: GmailClient::google(),
             oauth,
             managed_redirect: None,
@@ -63,6 +67,20 @@ impl MailService {
             Some(redirect) => self.store.google_app(redirect.clone()).await,
             None => Ok(None),
         }
+    }
+    #[cfg(test)]
+    pub(crate) fn with_synthetic_google(mut self, address: std::net::SocketAddr) -> Self {
+        self.client = GmailClient::synthetic_loopback(address).unwrap();
+        self.synthetic_google = Some(address);
+        self
+    }
+    pub(crate) fn calendar_client(&self) -> moosuri_connectors::calendar::CalendarClient {
+        #[cfg(test)]
+        if let Some(address) = self.synthetic_google {
+            return moosuri_connectors::calendar::CalendarClient::synthetic_loopback(address)
+                .unwrap();
+        }
+        moosuri_connectors::calendar::CalendarClient::google()
     }
     pub fn client(&self) -> &GmailClient {
         &self.client
@@ -196,38 +214,93 @@ impl MailService {
         cancel: &CancellationToken,
     ) -> Result<serde_json::Value, StoreError> {
         let b = self.binding(user, request.connection_id(), cancel).await?;
-        let value = match request {
-            MailToolRequest::Search {
-                query, page_token, ..
-            } => serde_json::to_value(
-                self.client
-                    .list_messages(&b.access_token, query, page_token.as_deref(), 5, cancel)
-                    .await
-                    .map_err(map)?,
-            )
-            .map_err(|_| StoreError::Unavailable)?,
-            MailToolRequest::Read { message_id, .. } => project(
-                self.client
-                    .get_message(&b.access_token, message_id, cancel)
-                    .await
-                    .map_err(map)?,
-            ),
-            MailToolRequest::Thread { thread_id, .. } => {
-                let t = self
-                    .client
-                    .get_thread(&b.access_token, thread_id, cancel)
-                    .await
-                    .map_err(map)?;
-                serde_json::json!({"id":t.id,"messages":t.messages.into_iter().map(project).collect::<Vec<_>>(),"truncated":t.truncated})
-            }
-            MailToolRequest::Draft { .. } => return Err(StoreError::InvalidInput),
-        };
+        let value = self
+            .read_with_token(&b.access_token, request, cancel)
+            .await?;
         // Revalidate after IO before returning any private data (including disconnect).
         let latest = self.store.mail_binding(user, b.id.clone()).await?;
         if latest.epoch != b.epoch {
             return Err(StoreError::Conflict);
         }
         Ok(value)
+    }
+    async fn read_with_token(
+        &self,
+        token: &moosuri_connectors::gmail::SecretString,
+        request: &MailToolRequest,
+        cancel: &CancellationToken,
+    ) -> Result<serde_json::Value, StoreError> {
+        let value = match request {
+            MailToolRequest::Search {
+                query, page_token, ..
+            } => serde_json::to_value(
+                self.client
+                    .list_messages(token, query, page_token.as_deref(), 5, cancel)
+                    .await
+                    .map_err(map)?,
+            )
+            .map_err(|_| StoreError::Unavailable)?,
+            MailToolRequest::Read { message_id, .. } => project(
+                self.client
+                    .get_message(token, message_id, cancel)
+                    .await
+                    .map_err(map)?,
+            ),
+            MailToolRequest::Thread { thread_id, .. } => {
+                let t = self
+                    .client
+                    .get_thread(token, thread_id, cancel)
+                    .await
+                    .map_err(map)?;
+                serde_json::json!({"id":t.id,"messages":t.messages.into_iter().map(project).collect::<Vec<_>>(),"truncated":t.truncated})
+            }
+            MailToolRequest::Draft { .. } => return Err(StoreError::InvalidInput),
+        };
+        Ok(value)
+    }
+    pub(crate) async fn mission_credentials(
+        &self,
+        permit: &ExternalToolPermit,
+        cancel: &CancellationToken,
+    ) -> Result<moosuri_store::MissionReadCredentials, StoreError> {
+        let app = self.oauth_client().await?.ok_or(StoreError::Unavailable)?;
+        let first = self
+            .store
+            .mission_read_credentials(permit, app.pin.clone())
+            .await?;
+        let lock = self.lock(&first.connection_id).await;
+        drop(first);
+        let _guard = lock.lock().await;
+        let mut b = self
+            .store
+            .mission_read_credentials(permit, app.pin.clone())
+            .await?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| StoreError::Unavailable)?
+            .as_secs() as i64;
+        if b.expires_at <= now + 60 {
+            let tokens = match self.client.refresh(&app.client, &b.refresh, cancel).await {
+                Ok(tokens) => tokens,
+                Err(error) => {
+                    if matches!(error, GmailError::Http(400 | 401 | 403)) {
+                        let _delivery = self.signals.delivery.write().await;
+                        let _ = self
+                            .store
+                            .mark_mission_read_needs_reconnect(permit, app.pin.clone(), b.revision)
+                            .await;
+                        self.signals.changed();
+                    }
+                    return Err(map(error));
+                }
+            };
+            self.store
+                .refresh_mission_read(permit, app.pin.clone(), b.revision, tokens)
+                .await?;
+            b = self.store.mission_read_credentials(permit, app.pin).await?;
+        }
+        self.store.check_external_tool(permit).await?;
+        Ok(b)
     }
     pub async fn external(
         &self,
@@ -237,10 +310,19 @@ impl MailService {
         let ExternalToolRequest::Mail(request) = permit.request() else {
             return KnowledgeToolResult::Error(ToolReadError::Unavailable);
         };
-        let Some(user) = permit.user() else {
-            return KnowledgeToolResult::Error(ToolReadError::Unavailable);
+        let result = if let Some(user) = permit.user() {
+            self.read(user, request, cancel).await
+        } else {
+            async {
+                let b = self.mission_credentials(permit, cancel).await?;
+                self.store.check_external_tool(permit).await?;
+                let value = self.read_with_token(&b.access, request, cancel).await?;
+                self.store.check_external_tool(permit).await?;
+                Ok(value)
+            }
+            .await
         };
-        match self.read(user, request, cancel).await {
+        match result {
             Ok(mut value) => {
                 fn trim(value: &mut serde_json::Value) {
                     if let Some(text) = value

@@ -511,6 +511,7 @@ mod mail;
 mod parcel;
 mod web;
 
+mod connected_missions;
 mod mission_chat;
 mod missions;
 

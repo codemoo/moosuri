@@ -51,6 +51,7 @@ fn view(c: &Connection, u: &UserContext, id: &str) -> Result<RecurringMissionVie
 fn fence_children(c: &Connection, t: &str, id: &str) -> Result<()> {
     let runs=c.prepare("SELECT m.run_id FROM missions m JOIN recurring_mission_occurrences o ON o.tenant_id=m.tenant_id AND o.mission_id=m.id WHERE o.tenant_id=?1 AND o.schedule_id=?2 AND m.state IN('queued','planning','executing','verifying','paused')")?.query_map(params![t,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for run in runs {
+        crate::missions::connected::withdraw_private(c, t, &run)?;
         let dispatched:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",params![t,run],|r|r.get(0))?;
         c.execute("UPDATE missions SET grant_enabled=0,state=?3,uncertain=max(uncertain,?4),candidate=NULL,round_text=NULL,plan='[]',revision=revision+1,report='[\"Recurring authority changed; this occurrence will not resume.\"]' WHERE tenant_id=?1 AND run_id=?2",params![t,run,if dispatched{"unknown"}else{"cancelled"},dispatched])?;
         c.execute(
@@ -180,6 +181,12 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
             continue;
         }
         if !skills::admit_eligible(c, &t, &schedule, time)? {
+            continue;
+        }
+        if !crate::missions::connected::saved_current(c, &t, &account, epoch, &model)? {
+            c.execute("UPDATE reminder_schedules SET state='paused',reason='connection_unavailable',revision=revision+1 WHERE tenant_id=?1 AND id=?2",params![t,schedule])?;
+            c.execute("UPDATE reminder_occurrences SET state='skipped',reason='connection_unavailable',updated_at=?3 WHERE tenant_id=?1 AND id=?2",params![t,occurrence,time])?;
+            fence_children(c, &t, &schedule)?;
             continue;
         }
         let choice: ModelChoice = decode(&model)?;
@@ -318,7 +325,12 @@ pub(crate) fn create_owner_in(
         return Err(StoreError::InvalidInput);
     }
     providers::binding_for_choice(tx, key, &choice)?;
-    let profile = crate::missions::read_profile(profile);
+    let profile = crate::missions::connected::admit_profile(
+        tx,
+        u,
+        &input.template,
+        crate::missions::read_profile(profile),
+    )?;
     let mut model = serde_json::to_value(choice).map_err(|_| StoreError::InvalidInput)?;
     model["agent_profile"] = serde_json::to_value(profile).map_err(|_| StoreError::InvalidInput)?;
     // Titles/messages of the scheduler sidecar never contain mission or source content.
@@ -359,6 +371,20 @@ pub(crate) fn control_owner_in(
 ) -> Result<RecurringMissionView> {
     let old = view(tx, u, id)?;
     if input.action == "resume" {
+        let model: String = tx.query_row(
+            "SELECT model FROM recurring_missions WHERE tenant_id=?1 AND schedule_id=?2",
+            params![u.tenant.0, id],
+            |r| r.get(0),
+        )?;
+        if !crate::missions::connected::saved_current(
+            tx,
+            &u.tenant.0,
+            &u.account.id,
+            u.epoch,
+            &model,
+        )? {
+            return Err(StoreError::Conflict);
+        }
         skills::resume_eligible(tx, &u.tenant.0, id)?;
         providers::binding_for_choice(tx, key, &old.model)?;
     }

@@ -10,7 +10,7 @@ pub mod credential_chat;
 mod missions;
 mod recurring_missions;
 mod request_continuations;
-pub use missions::{MissionExecution, MissionPendingRound};
+pub use missions::{MissionExecution, MissionPendingRound, MissionReadCredentials};
 pub mod credential_broker;
 mod schedules;
 pub mod vault_authority;

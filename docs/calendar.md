@@ -55,7 +55,7 @@ API: `/api/v1/calendar/connections`, `/oauth/start`, `/oauth/complete`, `/calend
 code는 callback에서 교환하지 않고 로그인된 same-origin completion으로 마친다.
 
 이 구현은 F37의 소유권 확인한 기본 캘린더 읽기·직접 양식 및 아래 제한된 대화 쓰기 범위다. 미션의
-Calendar 실행, 반복 일정 편집, 참석자 초대/알림 메일, 보조 캘린더 변경, 종일 일정 쓰기,
+Calendar 쓰기 실행, 반복 일정 편집, 참석자 초대/알림 메일, 보조 캘린더 변경, 종일 일정 쓰기,
 실계정/실기기 검증과 배포 완료를 포함하지 않는다.
 
 조회·변경·불명 결과 확인은 공통 `CalendarService`를 통해 실행한다. HTTP 양식은 인증된
@@ -153,3 +153,12 @@ literal 기억 명령은 기존 격리·정확 인용 계약을 유지한다.
 변경된 ETag, 결과 불명 영수증이나 연결 철회는 새 변경 근거가 되지 않는다. 다른 제목/날짜로
 명시한 대상은 기존 완전한 작은 목록의 유일성 검사를 그대로 사용한다. 영수증은 대상 식별
 근거이며 새 변경 권한은 지금 보낸 요청에서 나온다. 추가 승인 창은 없다.
+
+
+## 맡긴 일의 기본 Calendar 읽기
+
+현재 사용자가 Calendar·캘린더·일정 읽기를 명시한 일회/반복 [읽기 업무](missions.md#연결된-gmailcalendar-읽기-위임)는
+원래 owner/account epoch와 connection/app/primary pin으로 list/read만 실행한다. 로그인 세션을
+만들지 않으며 current_session 업무에는 원래 세션이 필요하다. 매 회차의 새 reference와
+opaque observation만 사용하고 write/status 도구는 제공하지 않는다. 연결 철회는 private 업무
+결과·checkpoint도 제거한다. 개인 ChatGPT foreground에 background 권한을 추가하지 않는다.

@@ -20,6 +20,8 @@ pub struct RunToolProfile {
     pub credential_github: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub conversation_recall: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission_reads: Option<ConnectedMissionReads>,
     pub skills: Vec<SkillPin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub community_metadata: Vec<SkillMetadata>,
@@ -112,4 +114,39 @@ pub struct DecimalCalculation {
 
 fn is_false(v: &bool) -> bool {
     !*v
+}
+
+/// Immutable owner delegation snapshot, private model state; no session/credential.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectedMissionReads {
+    pub app_revision: Option<i64>,
+    pub mail: Vec<MissionMailPin>,
+    pub calendar: Vec<crate::CalendarAgentPin>,
+    pub primary_ids: Vec<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MissionMailPin {
+    pub connection: crate::MailConnectionPin,
+    pub client_id: String,
+}
+/// Domain names in the immutable owner task, not a model-provided grant or time parser.
+pub fn mission_read_domains(text: &str) -> (bool, bool) {
+    let lower = text.to_lowercase();
+    let words = lower
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .collect::<Vec<_>>();
+    (
+        words
+            .iter()
+            .any(|w| matches!(*w, "gmail" | "mail" | "email" | "mailbox"))
+            || lower.contains("메일"),
+        words.contains(&"calendar")
+            || lower.contains("캘린더")
+            || lower
+                .replace("일정 간격", "")
+                .replace("일정한", "")
+                .contains("일정"),
+    )
 }

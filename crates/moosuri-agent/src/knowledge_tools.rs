@@ -322,6 +322,7 @@ mod tests {
         let profile = RunToolProfile {
             credential_github: false,
             conversation_recall: false,
+            mission_reads: None,
             version: moosuri_core::BUILTIN_TOOLSET_VERSION,
             skills: vec![],
             community_metadata: vec![],

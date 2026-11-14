@@ -192,3 +192,12 @@ v1 비교는 CRLF/LF·헤더 줄접기·생성 Date만 정규화한다. 전체 �
 이 경로는 고정한 한 통의 bytes만 보내며 반복 발송이나 예약 시점 모델 생성이 아니다.
 기존 commitment/영수증/불명 결과·읽기 전용 보낸편지함 확인 규칙을 그대로 적용한다.
 자세한 범위는 [변경 설계](../openspec/changes/gmail-drafts-and-scheduled-send/design.md)를 따른다.
+
+
+## 명시적으로 맡긴 메일 읽기
+
+[맡긴 일](missions.md#연결된-gmailcalendar-읽기-위임)의 현재 업무에 Gmail·메일 읽기를
+명시하면 기존 연결을 고정한 일회/반복 읽기 업무에서 search/read/thread를 쓸 수 있다. 별도
+가짜 세션을 만들거나 send/compose 권한을 위임하지 않는다. 매 회차의 새 근거와 원래
+connection/app pin이 필요하며 disconnect/reconnect가 옛 위임을 복구하지 않는다. 메일 발송은
+여전히 기존 전체 확인과 사람 승인 경로만 허용한다.

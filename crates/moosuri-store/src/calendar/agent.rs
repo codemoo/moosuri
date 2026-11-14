@@ -199,7 +199,8 @@ pub(crate) fn invalidate(c: &Connection, t: &str, id: &str) -> Result<()> {
 fn admit_pin(c: &Connection, r: &Run, p: &CalendarAgentPin) -> Result<()> {
     if !pin_current(c, r, p)?
         || crate::media::has_context(c, &r.tenant, &r.id)?
-        || crate::missions::is_mission(c, &r.tenant, &r.id)?
+        || (crate::missions::is_mission(c, &r.tenant, &r.id)?
+            && !crate::missions::connected::current(c, r)?)
     {
         return Err(StoreError::Forbidden);
     }
@@ -209,7 +210,11 @@ fn admit_pin(c: &Connection, r: &Run, p: &CalendarAgentPin) -> Result<()> {
     )?;
     Ok(())
 }
-fn request_connection(c: &Connection, r: &Run, q: &CalendarReadRequest) -> Result<Option<String>> {
+pub(crate) fn request_connection(
+    c: &Connection,
+    r: &Run,
+    q: &CalendarReadRequest,
+) -> Result<Option<String>> {
     match q {
         CalendarReadRequest::List{range}=>{
             moosuri_connectors::calendar::validate_range(&range.start,&range.end).map_err(|_|StoreError::InvalidInput)?;
@@ -222,6 +227,13 @@ fn request_connection(c: &Connection, r: &Run, q: &CalendarReadRequest) -> Resul
     }
 }
 pub(crate) fn allowed(c: &Connection, r: &Run, q: &CalendarReadRequest) -> Result<bool> {
+    if crate::missions::is_mission(c, &r.tenant, &r.id)? {
+        return crate::missions::connected::allowed(
+            c,
+            r,
+            &ExternalToolRequest::Calendar(q.clone()),
+        );
+    }
     let Some(p) = profile(c, &r.tenant, &r.id)? else {
         return Ok(false);
     };

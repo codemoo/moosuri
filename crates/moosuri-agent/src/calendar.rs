@@ -185,10 +185,11 @@ fn remote(error: GmailError) -> StoreError {
 }
 impl CalendarService {
     pub fn new(store: Store, mail: MailService) -> Self {
+        let client = mail.calendar_client();
         Self {
             store,
             mail,
-            io: Arc::new(CalendarIo::Google(Box::new(CalendarClient::google()))),
+            io: Arc::new(CalendarIo::Google(Box::new(client))),
         }
     }
     async fn app(&self) -> Result<GoogleApp, StoreError> {
@@ -452,6 +453,54 @@ impl CalendarService {
         let ExternalToolRequest::Calendar(q) = permit.request() else {
             return KnowledgeToolResult::Error(ToolReadError::Unavailable);
         };
+        if permit.user().is_none() {
+            let result = async {
+                let b = self.mail.mission_credentials(permit, cancel).await?;
+                let primary = self.io.primary(&b.access, cancel).await.map_err(remote)?;
+                self.store.check_external_tool(permit).await?;
+                if !primary.primary
+                    || primary.access_role != "owner"
+                    || b.primary_id.as_deref() != Some(primary.id.as_str())
+                {
+                    return Err(StoreError::Forbidden);
+                }
+                let value = match q {
+                    CalendarReadRequest::List { range } => serde_json::to_value(
+                        self.io
+                            .events_page(&b.access, &primary.id, range, cancel)
+                            .await
+                            .map_err(remote)?,
+                    )
+                    .map_err(|_| StoreError::InvalidInput)?,
+                    CalendarReadRequest::Read { observation_ref } => {
+                        let (id, event) = self
+                            .store
+                            .calendar_read_event_id(permit.run_lease(), observation_ref.clone())
+                            .await?;
+                        if id != b.connection_id {
+                            return Err(StoreError::Forbidden);
+                        }
+                        let observed = self
+                            .io
+                            .event(&b.access, &primary.id, &event, cancel)
+                            .await
+                            .map_err(remote)?;
+                        serde_json::json!({"event":observed.into_event(),"untrusted":true})
+                    }
+                    CalendarReadRequest::Status { .. } => return Err(StoreError::Forbidden),
+                };
+                self.store.check_external_tool(permit).await?;
+                Ok(value)
+            }
+            .await;
+            return match result {
+                Ok(v) => KnowledgeToolResult::External(v),
+                Err(StoreError::InvalidInput) => {
+                    KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+                }
+                Err(_) => KnowledgeToolResult::Error(ToolReadError::Unavailable),
+            };
+        }
         let Some(user) = permit.user() else {
             return KnowledgeToolResult::Error(ToolReadError::Unavailable);
         };

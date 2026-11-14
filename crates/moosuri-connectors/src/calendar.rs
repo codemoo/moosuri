@@ -42,6 +42,18 @@ impl CalendarClient {
             transport: Transport::google(),
         }
     }
+    #[cfg(feature = "test-fixtures")]
+    #[doc(hidden)]
+    pub fn synthetic_loopback(address: std::net::SocketAddr) -> Result<Self, GmailError> {
+        if address.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+            || address.port() == 0
+        {
+            return Err(GmailError::DestinationDenied);
+        }
+        Ok(Self {
+            transport: Transport::fixture(format!("http://{address}"), 1024 * 1024),
+        })
+    }
     #[cfg(test)]
     fn fixture(base: String) -> Self {
         Self {

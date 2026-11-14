@@ -40,6 +40,7 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
     let profile = RunToolProfile {
         credential_github: false,
         conversation_recall: false,
+        mission_reads: None,
         version: 5,
         skills: vec![],
         community_metadata: vec![],

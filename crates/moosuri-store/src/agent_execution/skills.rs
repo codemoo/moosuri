@@ -21,6 +21,7 @@ pub(crate) fn profile() -> RunToolProfile {
     RunToolProfile {
         credential_github: false,
         conversation_recall: false,
+        mission_reads: None,
         version: BUILTIN_TOOLSET_VERSION,
         skills: BUNDLED_SKILLS.iter().map(pin).collect(),
         community_metadata: vec![],

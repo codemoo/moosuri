@@ -7,6 +7,7 @@ use crate::agent_execution::{
 
 use moosuri_core::ExternalToolRequest;
 
+#[derive(Clone)]
 pub struct ExternalToolPermit {
     lease: StepLease,
     call_id: String,
@@ -19,6 +20,14 @@ pub struct ExternalToolPermit {
 }
 
 impl ExternalToolPermit {
+    pub(crate) fn guard_started(&self, c: &Connection, key: &[u8; 32]) -> Result<crate::chat::Run> {
+        let run = agent_execution::guard_step(c, key, &self.lease)?;
+        let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND nonce=?5 AND state='started')",params![run.tenant,run.id,self.lease.step,self.call_id,self.nonce],|r|r.get(0))?;
+        if !valid {
+            return Err(StoreError::Conflict);
+        }
+        Ok(run)
+    }
     pub fn thread_id(&self) -> &str {
         &self.thread_id
     }
@@ -54,6 +63,15 @@ impl Store {
 
             let result =
                 agent_execution::guard_step(&tx, &db.provider_key, &lease).and_then(|run| {
+                    if crate::missions::is_mission(&tx, &run.tenant, &run.id)?
+                        && matches!(
+                            &request,
+                            ExternalToolRequest::Mail(_) | ExternalToolRequest::Calendar(_)
+                        )
+                        && !crate::missions::connected::allowed(&tx, &run, &request)?
+                    {
+                        return Err(StoreError::Conflict);
+                    }
                     if let ExternalToolRequest::Web(request) = &request
                         && !crate::web::allowed(run.tool_profile.as_ref(), &db.web_profile, request)
                     {
@@ -111,6 +129,7 @@ impl Store {
             let user=if crate::missions::is_mission(&tx,&run.tenant,&run.id)? {None}else{Some(crate::chat::authority(&tx,&run)?)};
 
             let valid=(!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
+                ExternalToolRequest::Mail(_) if crate::missions::is_mission(&tx,&run.tenant,&run.id)? => crate::missions::connected::allowed(&tx,&run,&request)?,
                 ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
                 ExternalToolRequest::Calendar(q)=>crate::calendar::agent::allowed(&tx,&run,q)?,
@@ -170,6 +189,7 @@ impl Store {
             };
             let user=if crate::missions::is_mission(&tx,&run.tenant,&run.id)? {None}else{Some(crate::chat::authority(&tx,&run)?)};
             let valid=(!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
+                ExternalToolRequest::Mail(_) if crate::missions::is_mission(&tx,&run.tenant,&run.id)? => crate::missions::connected::allowed(&tx,&run,&request)?,
                 ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.epoch==pin.epoch&&c.email==pin.email&&c.status=="active"))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
                 ExternalToolRequest::Calendar(q)=>crate::calendar::agent::allowed(&tx,&run,q)?,

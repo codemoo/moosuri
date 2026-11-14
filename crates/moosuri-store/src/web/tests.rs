@@ -446,6 +446,7 @@ fn browser_requires_v4_and_identical_current_deployment_pin() {
         let profile = RunToolProfile {
             credential_github: false,
             conversation_recall: false,
+            mission_reads: None,
             version,
             skills: vec![],
             community_metadata: vec![],

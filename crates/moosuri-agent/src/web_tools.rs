@@ -59,6 +59,7 @@ mod tests {
         let mut profile = RunToolProfile {
             credential_github: false,
             conversation_recall: false,
+            mission_reads: None,
             version: 4,
             skills: vec![],
             community_metadata: vec![],
@@ -114,6 +115,7 @@ mod tests {
         let mut profile = RunToolProfile {
             credential_github: false,
             conversation_recall: false,
+            mission_reads: None,
             version: 1,
             skills: vec![],
             community_metadata: vec![],
@@ -146,6 +148,7 @@ mod tests {
         let mut profile = RunToolProfile {
             credential_github: false,
             conversation_recall: false,
+            mission_reads: None,
             version: 3,
             skills: vec![],
             community_metadata: vec![],
@@ -196,6 +199,7 @@ mod tests {
         let profile = RunToolProfile {
             credential_github: false,
             conversation_recall: false,
+            mission_reads: None,
             version: 3,
             skills: vec![],
             community_metadata: vec![],

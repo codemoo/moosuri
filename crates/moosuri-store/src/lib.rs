@@ -5,6 +5,7 @@ pub mod push;
 
 mod missions;
 mod recurring_missions;
+mod request_continuations;
 pub use missions::{MissionExecution, MissionPendingRound};
 pub mod credential_broker;
 mod schedules;
@@ -210,7 +211,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 41;
+const CURRENT_SCHEMA_VERSION: i64 = 42;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -628,6 +629,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0041_account_deletion.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 42 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0042_request_continuations.sql"),
                 "COMMIT;"
             ))?;
         }

@@ -155,7 +155,7 @@ async fn calendar_domain_uses_same_single_current_intent_round_and_preserves_lit
     let counted = count.clone();
     let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{let count=counted.clone();async move{
         let n=count.fetch_add(1,Ordering::SeqCst);assert_eq!(body["messages"].as_array().unwrap().len(),2);let functions=body["tools"].as_array().unwrap();assert!(functions.iter().any(|f|f["function"]["name"]=="mission_chat_decision"));assert!(functions.iter().any(|f|f["function"]["name"]=="calendar_chat_decision"));let text=body["messages"][1]["content"].as_str().unwrap();
-        let d=moosuri_core::CalendarChatDecision{domain:"calendar".into(),decision:"clarify".into(),operation:None,connection_quote:None,intent_quote:None,title_quote:None,target_quote:None,date_quote:None,date:None,start_quote:None,start:None,end_quote:None,end:None,duration_quote:None,duration_minutes:None,clarification:Some("time".into())};assert!(text.contains("meeting"));
+        let d=moosuri_core::CalendarChatDecision{domain:"calendar".into(),decision:"clarify".into(),operation:None,connection_quote:None,intent_quote:None,title_quote:None,target_quote:None,date_quote:None,date:None,move_date_quote:None,move_date:None,start_quote:None,start:None,end_quote:None,end:None,duration_quote:None,duration_minutes:None,clarification:Some("time".into())};assert!(text.contains("meeting"));
         let delta=json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("calendar-decision-{n}"),"calendar_chat_decision",serde_json::to_value(d).unwrap())]});let content=frame(json!({"id":format!("cal-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}))+&frame(json!({"id":format!("cal-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";Response::builder().header("content-type","text/event-stream").body(Body::from(content)).unwrap()
     }}));
     let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -195,6 +195,97 @@ async fn calendar_domain_uses_same_single_current_intent_round_and_preserves_lit
     let reminder = wait(&s, &u, &t).await;
     assert!(reminder.run.calendar_receipt.is_none());
     assert_eq!(count.load(Ordering::SeqCst), 1);
+    runtime.shutdown().await;
+    upstream.abort();
+}
+
+#[tokio::test]
+async fn request_continuation_runtime_clock_answer_saves_original_weekly_task_and_controls_actual_receipt()
+ {
+    let _g = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let counted = count.clone();
+    let initial = "every Monday summarize public paper updates";
+    let complete = format!("{initial}\nat 9AM");
+    let expected = complete.clone();
+    let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{
+        let count=counted.clone();let complete=expected.clone();async move {
+        let n=count.fetch_add(1,Ordering::SeqCst);assert!(n<3,"exactly one interpretation per explicit turn");
+        assert_eq!(body["messages"].as_array().unwrap().len(),2,"arbitrary history must never enter interpreter");
+        let text=body["messages"][1]["content"].as_str().unwrap();
+        let mut d=semantic(initial,"command");d.task_quote=Some("summarize public paper updates".into());
+        if n==0 {assert_eq!(text,initial);d.decision="clarify".into();d.time=None;d.time_quote=None;d.clarification=Some("time".into())}
+        else if n==1 {assert_eq!(text,complete);assert!(body["messages"][0]["content"].as_str().unwrap().contains("initiating_request"));d.time=Some(MissionChatTime::Weekly{days:vec![1],time:"09:00".into()});d.time_quote=Some(complete)}
+        else {assert_eq!(text,"pause that task");d.action=Some("pause".into());d.intent_quote=Some(text.into());d.target_kind=Some("selected".into());d.task_quote=None;d.time=None;d.time_quote=None;}
+        let content=frame(json!({"id":format!("continuation-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("decision-{n}"),"mission_chat_decision",serde_json::to_value(d).unwrap())]},"finish_reason":null}]}))+&frame(json!({"id":format!("continuation-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";
+        Response::builder().header("content-type","text/event-stream").body(Body::from(content)).unwrap()
+    }}));
+    let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_dir, s, u, thread) = knowledge::tool_configured(&base).await;
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        initial.into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let runtime = Runtime::start(s.clone());
+    let first = wait(&s, &u, &thread).await;
+    assert_eq!(first.run.mission_receipt.unwrap().state, "clarify");
+    assert!(s.recurring_missions(&u).await.unwrap().is_empty());
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        "at 9AM".into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let second = wait(&s, &u, &thread).await;
+    assert_eq!(
+        second.run.state,
+        moosuri_core::RunState::Completed,
+        "{:?}",
+        second.run.error
+    );
+    assert_eq!(second.run.mission_receipt.unwrap().state, "active");
+    let saved = s.recurring_missions(&u).await.unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].template.task, "summarize public paper updates");
+    assert_eq!(count.load(Ordering::SeqCst), 2);
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        "pause that task".into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let controlled = wait(&s, &u, &thread).await;
+    assert_eq!(controlled.run.mission_receipt.unwrap().state, "paused");
+    assert_eq!(
+        s.recurring_missions(&u).await.unwrap()[0].schedule.state,
+        "paused"
+    );
+    assert_eq!(count.load(Ordering::SeqCst), 3);
     runtime.shutdown().await;
     upstream.abort();
 }

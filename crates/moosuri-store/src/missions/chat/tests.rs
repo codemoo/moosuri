@@ -427,7 +427,7 @@ async fn mission_chat_schema29_rolls_back_late_failure_without_recreating_prior_
     let d = crate::tests::directory();
     drop(Store::open(d.path()).unwrap());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;CREATE TABLE mission_chat_commands(conflict INTEGER);PRAGMA user_version=28;").unwrap();
+    c.execute_batch("DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;CREATE TABLE mission_chat_commands(conflict INTEGER);PRAGMA user_version=28;").unwrap();
     drop(c);
     assert!(Store::open(d.path()).is_err());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
@@ -1383,4 +1383,89 @@ async fn personal_source_envelope_rejects_mission_record_and_corrupted_decided_e
         .await
         .unwrap();
     }
+}
+
+#[tokio::test]
+async fn request_continuation_rejects_daily_expansion_and_keeps_weekly_scope_with_long_task_and_short_answer_quote()
+ {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, s, u) = setup().await;
+    let task = format!("summarize {}", "public paper updates ".repeat(65));
+    let initial = format!("every Monday {task}");
+    assert!(initial.len() > 1024);
+    let (thread, first) = source(&s, &u, &initial, None).await;
+    let mut partial = decision(&initial, true);
+    partial.decision = "clarify".into();
+    partial.intent_quote = Some("every Monday".into());
+    partial.task_quote = Some(task.clone());
+    partial.time = None;
+    partial.time_quote = None;
+    partial.clarification = Some("time".into());
+    commit(&s, &first, partial.clone()).await;
+    assert_eq!(s.apply_mission_chat(&first).await.unwrap(), Some(true));
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        Uuid::new_v4().to_string(),
+        "at 9AM".into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let second = s.claim_agent_run().await.unwrap().unwrap().lease;
+    let context = s.agent_context(&second).await.unwrap();
+    let step = s
+        .begin_agent_step(&second, context.checkpoint_seq)
+        .await
+        .unwrap();
+    let mut forged = partial;
+    forged.decision = "command".into();
+    forged.clarification = None;
+    forged.time_quote = Some("at 9AM".into());
+    forged.time = Some(MissionChatTime::Daily {
+        time: "09:00".into(),
+    });
+    let bytes = serde_json::json!({"kind":"mission_chat_decision","decision":forged})
+        .to_string()
+        .into_bytes();
+    assert!(matches!(
+        s.commit_agent_step(&step, PrivateCheckpoint { bytes }, vec![])
+            .await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert!(s.recurring_missions(&u).await.unwrap().is_empty());
+    forged.time = Some(MissionChatTime::Weekly {
+        days: vec![1],
+        time: "09:00".into(),
+    });
+    s.commit_agent_step(
+        &step,
+        PrivateCheckpoint {
+            bytes: serde_json::json!({"kind":"mission_chat_decision","decision":forged})
+                .to_string()
+                .into_bytes(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    assert_eq!(s.apply_mission_chat(&second).await.unwrap(), Some(true));
+    let saved = s.recurring_missions(&u).await.unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].template.task, task);
+    let ScheduleRule::Weekly {
+        days,
+        time,
+        timezone,
+    } = &saved[0].schedule.rule
+    else {
+        panic!("original weekly scope must remain")
+    };
+    assert_eq!(days, &vec![1]);
+    assert_eq!(time, "09:00");
+    assert_eq!(timezone, "Asia/Seoul");
 }

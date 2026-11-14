@@ -58,6 +58,8 @@ pub(super) fn decision(text: &str) -> CalendarChatDecision {
         target_quote: None,
         date_quote: Some("2026-12-01".into()),
         date: Some("2026-12-01".into()),
+        move_date_quote: None,
+        move_date: None,
         start_quote: Some("10:00".into()),
         start: Some("10:00".into()),
         end_quote: Some("11:00".into()),
@@ -505,7 +507,7 @@ async fn calendar_schema30_late_migration_failure_rolls_back_and_retries() {
         .unwrap();
     drop(s);
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;CREATE TABLE calendar_agent_action_links(conflict INTEGER);PRAGMA user_version=29;").unwrap();
+    c.execute_batch("DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;CREATE TABLE calendar_agent_action_links(conflict INTEGER);PRAGMA user_version=29;").unwrap();
     drop(c);
     assert!(Store::open(dir.path()).is_err());
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
@@ -958,4 +960,102 @@ async fn calendar_personal_disconnect_retires_private_storage_before_late_settle
                 .is_err()
         );
     }
+}
+
+#[tokio::test]
+async fn request_continuation_reopen_freezes_operation_and_fields_and_rejects_answerless_completion()
+ {
+    let _g = TEST_LOCK.lock().await;
+    let (dir, s, u, _c) = setup().await;
+    let initial = "Create Synthetic meeting on 2026-12-01 from 10:00";
+    let (thread, first) = source(&s, &u, initial, None).await;
+    let mut partial = decision(initial);
+    partial.decision = "clarify".into();
+    partial.end = None;
+    partial.end_quote = None;
+    partial.clarification = Some("duration".into());
+    commit(&s, &first, &partial).await;
+    s.finish_calendar_chat(&first, Some("clarify".into()))
+        .await
+        .unwrap();
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    let (_, answer) = source(&s, &u, "45 minutes", Some(thread)).await;
+    let planning = s.mission_chat_planning(&answer).await.unwrap().unwrap();
+    assert_eq!(
+        planning.continuation.as_ref().unwrap().initiating_request,
+        initial
+    );
+    assert_eq!(
+        planning.continuation.as_ref().unwrap().answers,
+        vec!["45 minutes"]
+    );
+    let context = s.agent_context(&answer).await.unwrap();
+    let step = s
+        .begin_agent_step(&answer, context.checkpoint_seq)
+        .await
+        .unwrap();
+    let mut forged = partial.clone();
+    forged.decision = "command".into();
+    forged.clarification = None;
+    forged.operation = Some("update".into());
+    forged.target_quote = Some("Synthetic meeting".into());
+    forged.duration_minutes = Some(45);
+    forged.duration_quote = Some("45 minutes".into());
+    assert!(matches!(
+        s.commit_agent_step(
+            &step,
+            PrivateCheckpoint {
+                bytes: serde_json::json!({"kind":"mission_chat_decision","decision":forged})
+                    .to_string()
+                    .into_bytes()
+            },
+            vec![]
+        )
+        .await,
+        Err(StoreError::Conflict)
+    ));
+    let mut answerless = partial.clone();
+    answerless.decision = "command".into();
+    answerless.clarification = None;
+    answerless.duration_minutes = Some(60);
+    answerless.duration_quote = Some("10:00".into());
+    assert!(matches!(
+        s.commit_agent_step(
+            &step,
+            PrivateCheckpoint {
+                bytes: serde_json::json!({"kind":"mission_chat_decision","decision":answerless})
+                    .to_string()
+                    .into_bytes()
+            },
+            vec![]
+        )
+        .await,
+        Err(StoreError::InvalidInput)
+    ));
+    let mut valid = partial;
+    valid.decision = "command".into();
+    valid.clarification = None;
+    valid.duration_minutes = Some(45);
+    valid.duration_quote = Some("45 minutes".into());
+    s.commit_agent_step(
+        &step,
+        PrivateCheckpoint {
+            bytes: serde_json::json!({"kind":"mission_chat_decision","decision":valid})
+                .to_string()
+                .into_bytes(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        s.calendar_agent_command(&answer)
+            .await
+            .unwrap()
+            .unwrap()
+            .decision
+            .duration_minutes,
+        Some(45)
+    );
 }

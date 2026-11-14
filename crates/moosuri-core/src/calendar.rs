@@ -150,6 +150,10 @@ pub struct CalendarChatDecision {
     pub target_quote: Option<String>,
     pub date_quote: Option<String>,
     pub date: Option<String>,
+    #[serde(default)]
+    pub move_date_quote: Option<String>,
+    #[serde(default)]
+    pub move_date: Option<String>,
     pub start_quote: Option<String>,
     pub start: Option<String>,
     pub end_quote: Option<String>,

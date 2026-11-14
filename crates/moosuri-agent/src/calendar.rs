@@ -388,11 +388,24 @@ impl CalendarService {
             let p = self.primary(&b).await?;
             let cancel = CancellationToken::new();
             let prior = if matches!(cmd.decision.operation.as_deref(), Some("update" | "delete")) {
-                let page = self
-                    .io
-                    .events_page(&b.access, &p.id, &q, &cancel)
-                    .await
-                    .map_err(remote)?;
+                let page = if let Some(id) = self.store.calendar_agent_followup_target(l).await? {
+                    let event = self
+                        .io
+                        .event(&b.access, &p.id, &id, &cancel)
+                        .await
+                        .map_err(remote)?;
+                    CalendarEvents {
+                        events: vec![event.event().clone()],
+                        partial: false,
+                        next_page_token: None,
+                        primary_id: p.id.clone(),
+                    }
+                } else {
+                    self.io
+                        .events_page(&b.access, &p.id, &q, &cancel)
+                        .await
+                        .map_err(remote)?
+                };
                 let target = self.store.calendar_agent_target(l, page).await?;
                 Some(
                     self.io

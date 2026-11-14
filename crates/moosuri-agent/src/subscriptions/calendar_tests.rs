@@ -58,6 +58,8 @@ fn decision(text: &str, mode: usize) -> CalendarChatDecision {
         } else {
             Some("2026-12-01".into())
         },
+        move_date_quote: None,
+        move_date: None,
         start_quote: if mode == 20 {
             Some("10:00".into())
         } else if mode == 21 {

@@ -6,6 +6,9 @@ type PlanRow = (String, Option<String>, i64, Option<String>, Option<String>);
 mod tests;
 #[derive(Clone, serde::Serialize)]
 pub struct Planning {
+    pub continuation: Option<crate::request_continuations::Continuation>,
+    pub receipt_target_available: bool,
+    pub request_text: String,
     pub anchor: i64,
     pub timezone: Option<String>,
     pub selected_kind: Option<String>,
@@ -43,6 +46,7 @@ pub(crate) fn admit(
         return Err(StoreError::InvalidInput);
     }
     c.execute("INSERT INTO mission_chat_plans(tenant_id,run_id,anchor,timezone,target,original_session,original_epoch) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![r.tenant,r.id,now()?,zone,context.and_then(|v|v.target.as_ref()).map(encode).transpose()?,r.session.as_slice(),r.epoch])?;
+    crate::request_continuations::admit(c, r)?;
     Ok(())
 }
 /// An unapplied command retains its original capability even if ordinary Retry rebinds the run.
@@ -97,7 +101,7 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
     ] {
         quote(text, v, max, false)?;
     }
-    if d.decision != "command" {
+    if d.decision != "command" && !(d.decision == "clarify" && d.action.is_some()) {
         if d.action.is_some()
             || d.target_kind.is_some()
             || d.task_quote.is_some()
@@ -123,7 +127,7 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
         return Ok(());
     }
     let action = d.action.as_deref().ok_or(StoreError::InvalidInput)?;
-    if d.clarification.is_some()
+    if d.decision == "command" && d.clarification.is_some()
         || !matches!(
             action,
             "create_now"
@@ -138,14 +142,15 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
         return Err(StoreError::InvalidInput);
     }
     if matches!(action, "create_now" | "create_scheduled") {
-        quote(text, &d.task_quote, 8000, true)?;
+        quote(text, &d.task_quote, 8000, d.decision == "command")?;
         if d.target_kind.is_some() || d.target_quote.is_some() || d.instruction_quote.is_some() {
             return Err(StoreError::InvalidInput);
         }
     } else if !matches!(
         d.target_kind.as_deref(),
         Some("one_off" | "recurring" | "selected")
-    ) {
+    ) && !(d.decision == "clarify" && d.target_kind.is_none())
+    {
         return Err(StoreError::InvalidInput);
     }
     if !matches!(action, "create_now" | "create_scheduled")
@@ -157,8 +162,8 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
         return Err(StoreError::InvalidInput);
     }
     if matches!(action, "create_scheduled" | "edit_time") {
-        quote(text, &d.time_quote, 1024, true)?;
-        if d.time.is_none() {
+        quote(text, &d.time_quote, 1024, d.decision == "command")?;
+        if d.decision == "command" && d.time.is_none() {
             return Err(StoreError::InvalidInput);
         }
     } else if d.time.is_some() || d.time_quote.is_some() {
@@ -221,7 +226,16 @@ pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
     .map_err(|_| StoreError::InvalidInput)?;
     original_authority(c, r)?;
     allowed_mission_decision(r, &d)?;
-    validate(&r.text, &d)?;
+    validate(&crate::request_continuations::text(c, r)?, &d)?;
+    crate::request_continuations::validate_scope(c, r, &CurrentChatDecision::Mission(d.clone()))?;
+    if d.decision == "clarify" {
+        crate::request_continuations::pending(
+            c,
+            r,
+            CurrentChatDecision::Mission(d.clone()),
+            d.clarification.as_deref(),
+        )?;
+    }
     let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting') AND EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
     if !valid || crate::media::has_context(c, &r.tenant, &r.id)? {
         return Err(StoreError::Conflict);
@@ -784,7 +798,7 @@ fn preflight(db: &mut Database, l: &crate::RunLease) -> Result<Option<StoreError
     let u = original_authority(&tx, &r)?;
     let d: MissionChatDecision = decode(&raw)?;
     allowed_mission_decision(&r, &d)?;
-    validate(&r.text, &d)?;
+    validate(&crate::request_continuations::text(&tx, &r)?, &d)?;
     let pristine:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|row|row.get(0))?;
     if !pristine || crate::media::has_context(&tx, &r.tenant, &r.id)? {
         return Err(StoreError::Conflict);
@@ -862,7 +876,7 @@ impl Store {
         self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
         retry_authority(&tx,&r)?;
         let attempted:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans p JOIN agent_execution e ON e.tenant_id=p.tenant_id AND e.run_id=p.run_id WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.state='awaiting' AND e.remote_calls>0)",params![r.tenant,r.id],|r|r.get(0))?;if attempted{return Err(StoreError::Conflict)}
-        let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{calendar_only:r.model.source==ModelSource::PersonalChatGpt,calendar:crate::calendar::agent::profile(&tx,&r.tenant,&r.id)?,anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
+        let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{continuation:crate::request_continuations::context(&tx,&r)?,receipt_target_available:crate::request_continuations::target(&tx,&r)?.is_some(),request_text:crate::request_continuations::text(&tx,&r)?,calendar_only:r.model.source==ModelSource::PersonalChatGpt,calendar:crate::calendar::agent::profile(&tx,&r.tenant,&r.id)?,anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
     }
     /// None means not yet decided; Some(false) continues ordinary chat without reclassification.
     pub async fn apply_mission_chat(&self, lease: &crate::RunLease) -> Result<Option<bool>> {
@@ -880,7 +894,7 @@ impl Store {
             if state=="awaiting"{original_authority(&tx,&r)?;return Ok(None)}
  if state=="passed"{return Ok(Some(false))}
  if state!="decided"{return Err(StoreError::Conflict)}
-            let u=original_authority(&tx,&r)?;let d:MissionChatDecision=decode(&decision.ok_or(StoreError::Corrupt)?)?;allowed_mission_decision(&r,&d)?;validate(&r.text,&d)?;
+            let u=original_authority(&tx,&r)?;let d:MissionChatDecision=decode(&decision.ok_or(StoreError::Corrupt)?)?;allowed_mission_decision(&r,&d)?;validate(&crate::request_continuations::text(&tx,&r)?,&d)?;
             if crate::media::has_context(&tx,&r.tenant,&r.id)?{return Err(StoreError::Conflict)}
             let pristine:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
             if !pristine{return Err(StoreError::Conflict)}
@@ -899,14 +913,14 @@ impl Store {
                         let input=MissionCreate{request_id:r.request.clone(),task:task.clone(),constraints,checks:vec![MissionCheck::UserReview{description:"요청과 조건의 내용은 직접 검토가 필요합니다.".into()}],execution_mode:MissionMode::Durable};
                         let profile=r.tool_profile.clone().ok_or(StoreError::InvalidInput)?;
                         if action=="create_now"{let id=super::create_owner_in(&tx,&db.provider_key,&u,input,r.model.clone(),profile)?;receipt.target=Some(MissionChatTarget{kind:"one_off".into(),id,revision:1});receipt.state="queued".into();}
-                        else{let rule=rule(&d,anchor,zone.as_deref(),&r.text)?;let title=task.chars().scan(0usize,|n,c|{*n+=c.len_utf8();(*n<=160).then_some(c)}).collect();let out=crate::recurring_missions::create_owner_in(&tx,&db.provider_key,&u,RecurringMissionCreate{request_id:r.request.clone(),template:input,schedule:ScheduleDraft{title,message:"예약한 읽기 업무".into(),rule,valid_until:None},changes_only:false},r.model.clone(),profile)?;receipt.target=Some(MissionChatTarget{kind:"recurring".into(),id:out.schedule.id,revision:out.schedule.revision});receipt.state=out.schedule.state;receipt.next_local_slot=out.schedule.next_local_slot;}
+                        else{let rule=rule(&crate::request_continuations::time_decision(&tx,&r,&d)?,anchor,zone.as_deref(),&crate::request_continuations::text(&tx,&r)?)?;let title=task.chars().scan(0usize,|n,c|{*n+=c.len_utf8();(*n<=160).then_some(c)}).collect();let out=crate::recurring_missions::create_owner_in(&tx,&db.provider_key,&u,RecurringMissionCreate{request_id:r.request.clone(),template:input,schedule:ScheduleDraft{title,message:"예약한 읽기 업무".into(),rule,valid_until:None},changes_only:false},r.model.clone(),profile)?;receipt.target=Some(MissionChatTarget{kind:"recurring".into(),id:out.schedule.id,revision:out.schedule.revision});receipt.state=out.schedule.state;receipt.next_local_slot=out.schedule.next_local_slot;}
                         message="맡긴 일을 저장했어요. 실제 실행 결과는 맡긴 일에서 확인할 수 있어요. / Task saved. Execution results will appear in your task history.".into();return Ok(())
                     }
                     let target=resolve_target(&tx,&u,&d,selected.as_deref(),&mut receipt);
                     if let Some(error)=preflight_error {return Err(error)}
                     let target=target?;
                     if target.kind=="one_off"{controlled_target=Some(target.clone());let a=match action{"pause"=>MissionAction::Pause,"resume"=>MissionAction::Resume,"cancel"=>MissionAction::Cancel,"steer"=>MissionAction::Steer{instruction:d.instruction_quote.clone().ok_or(StoreError::InvalidInput)?},_=>return Err(StoreError::InvalidInput)};let out=super::control_owner_in(&tx,&db.provider_key,&u,&target.id,MissionControl{request_id:r.request.clone(),expected_revision:target.revision,action:a})?;receipt.target=Some(MissionChatTarget{revision:out.revision,..target});receipt.state=out.state;}
-                    else {let out=if action=="edit_time"{let mut draft=ScheduleDraft{title:String::new(),message:"예약한 읽기 업무".into(),rule:rule(&d,anchor,zone.as_deref(),&r.text)?,valid_until:None};let row:(String,Option<i64>)=tx.query_row("SELECT title,valid_until FROM reminder_schedules WHERE tenant_id=?1 AND id=?2",params![r.tenant,target.id],|r|Ok((r.get(0)?,r.get(1)?)))?;draft.title=row.0;draft.valid_until=row.1;crate::recurring_missions::edit_owner_in(&tx,&db.provider_key,&u,&target.id,ScheduleEdit{expected_revision:target.revision,draft})?}else{let action=match action{"pause"=>"pause","resume"=>"resume","cancel"=>"revoke",_=>return Err(StoreError::InvalidInput)};crate::recurring_missions::control_owner_in(&tx,&db.provider_key,&u,&target.id,ScheduleControl{expected_revision:target.revision,action:action.into()})?};receipt.target=Some(MissionChatTarget{revision:out.schedule.revision,..target});receipt.state=out.schedule.state;receipt.next_local_slot=out.schedule.next_local_slot;}
+                    else {let out=if action=="edit_time"{let mut draft=ScheduleDraft{title:String::new(),message:"예약한 읽기 업무".into(),rule:rule(&crate::request_continuations::time_decision(&tx,&r,&d)?,anchor,zone.as_deref(),&crate::request_continuations::text(&tx,&r)?)?,valid_until:None};let row:(String,Option<i64>)=tx.query_row("SELECT title,valid_until FROM reminder_schedules WHERE tenant_id=?1 AND id=?2",params![r.tenant,target.id],|r|Ok((r.get(0)?,r.get(1)?)))?;draft.title=row.0;draft.valid_until=row.1;crate::recurring_missions::edit_owner_in(&tx,&db.provider_key,&u,&target.id,ScheduleEdit{expected_revision:target.revision,draft})?}else{let action=match action{"pause"=>"pause","resume"=>"resume","cancel"=>"revoke",_=>return Err(StoreError::InvalidInput)};crate::recurring_missions::control_owner_in(&tx,&db.provider_key,&u,&target.id,ScheduleControl{expected_revision:target.revision,action:action.into()})?};receipt.target=Some(MissionChatTarget{revision:out.schedule.revision,..target});receipt.state=out.schedule.state;receipt.next_local_slot=out.schedule.next_local_slot;}
                     message="요청하신 업무 제어를 적용했어요. 현재 실행 상태는 맡긴 일에서 확인할 수 있어요. / Task control applied.".into();Ok(())
                 })();
                 if attempt.is_ok(){tx.execute_batch("RELEASE mission_chat_apply")?;}

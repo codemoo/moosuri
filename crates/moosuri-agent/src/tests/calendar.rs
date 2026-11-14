@@ -51,6 +51,8 @@ fn decision(text: &str) -> CalendarChatDecision {
         target_quote: None,
         date_quote: Some("2026-12-01".into()),
         date: Some("2026-12-01".into()),
+        move_date_quote: None,
+        move_date: None,
         start_quote: Some("10:00".into()),
         start: Some("10:00".into()),
         end_quote: Some("11:00".into()),
@@ -463,4 +465,219 @@ async fn calendar_cancellation_before_dispatch_retry_stays_ordinary_without_recl
     assert!(!service.chat(&retry.lease).await.unwrap());
     assert_eq!(io.write_count(), 0);
     assert!(service.store.calendar_actions(&u).await.unwrap().is_empty());
+}
+
+async fn next_sealed(
+    s: &Store,
+    u: &UserContext,
+    thread: &str,
+    text: &str,
+    d: CalendarChatDecision,
+) -> RunLease {
+    s.submit_turn_with_schedule_context(
+        u,
+        thread.into(),
+        uuid::Uuid::new_v4().to_string(),
+        text.into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let lease = s.claim_agent_run().await.unwrap().unwrap().lease;
+    let ctx = s.agent_context(&lease).await.unwrap();
+    let step = s
+        .begin_agent_step(&lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &step,
+        PrivateCheckpoint {
+            bytes: serde_json::json!({"kind":"mission_chat_decision","decision":d})
+                .to_string()
+                .into_bytes(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    lease
+}
+#[tokio::test]
+async fn request_continuation_calendar_answer_creates_and_receipt_moves_preserving_duration() {
+    let _g = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, service, u, _c, io) = fixture().await;
+    configure(&service.store, &u).await;
+    let initial = "Create Synthetic meeting on 2026-12-01 from 10:00";
+    let mut partial = decision(initial);
+    partial.decision = "clarify".into();
+    partial.end = None;
+    partial.end_quote = None;
+    partial.clarification = Some("duration".into());
+    let (thread, first) = sealed(&service.store, &u, initial, partial.clone()).await;
+    service.chat(&first).await.unwrap();
+    assert_eq!(io.write_count(), 0);
+    let mut completed = partial;
+    completed.decision = "command".into();
+    completed.clarification = None;
+    completed.duration_quote = Some("45 minutes".into());
+    completed.duration_minutes = Some(45);
+    let second = next_sealed(&service.store, &u, &thread, "45 minutes", completed).await;
+    service.chat(&second).await.unwrap();
+    assert_eq!(io.write_count(), 1);
+    let turns = service
+        .store
+        .conversation(&u, thread.clone(), None)
+        .await
+        .unwrap()
+        .turns;
+    assert!(turns[0].assistant[0].text.contains("종료 시각이나 기간"));
+    assert_eq!(
+        turns[1].run.calendar_receipt.as_ref().unwrap().state,
+        "applied"
+    );
+    let original_id = turns[1]
+        .run
+        .calendar_receipt
+        .as_ref()
+        .unwrap()
+        .event_id
+        .clone()
+        .unwrap();
+    let text = "그 일정 2026-12-02로 옮겨";
+    let mut moved = decision(text);
+    moved.operation = Some("update".into());
+    moved.title_quote = None;
+    moved.target_quote = Some("그 일정".into());
+    moved.date = None;
+    moved.date_quote = None;
+    moved.start = None;
+    moved.start_quote = None;
+    moved.end = None;
+    moved.end_quote = None;
+    moved.move_date = Some("2026-12-02".into());
+    moved.move_date_quote = Some("2026-12-02".into());
+    let third = next_sealed(&service.store, &u, &thread, text, moved).await;
+    service.chat(&third).await.unwrap();
+    assert_eq!(io.write_count(), 2);
+    let record = io.writes.lock().unwrap()[1].clone();
+    assert_eq!(record.event_id, original_id);
+    let CalendarMutation::Update { fields, .. } = record.mutation else {
+        panic!("expected date move")
+    };
+    assert_eq!(fields.start, "2026-12-02T01:00:00+00:00");
+    assert_eq!(fields.end, "2026-12-02T01:45:00+00:00");
+    assert_eq!(fields.title, "Synthetic meeting");
+}
+#[tokio::test]
+async fn request_continuation_calendar_withdrawal_drops_pending_authority() {
+    let _g = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, service, u, c, io) = fixture().await;
+    configure(&service.store, &u).await;
+    let initial = "Create Synthetic meeting on 2026-12-01 from 10:00";
+    let mut partial = decision(initial);
+    partial.decision = "clarify".into();
+    partial.end = None;
+    partial.end_quote = None;
+    partial.clarification = Some("duration".into());
+    let (thread, first) = sealed(&service.store, &u, initial, partial).await;
+    service.chat(&first).await.unwrap();
+    service.store.disconnect_calendar(&u, c.id).await.unwrap();
+    service
+        .store
+        .submit_turn_with_schedule_context(
+            &u,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "45 minutes".into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let next = service
+        .store
+        .claim_agent_run()
+        .await
+        .unwrap()
+        .unwrap()
+        .lease;
+    assert!(
+        service
+            .store
+            .mission_chat_planning(&next)
+            .await
+            .unwrap()
+            .unwrap()
+            .continuation
+            .is_none()
+    );
+    assert_eq!(io.write_count(), 0);
+}
+
+#[tokio::test]
+async fn request_continuation_receipt_stale_etag_never_writes_or_retargets() {
+    let _g = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, service, u, _c, io) = fixture().await;
+    configure(&service.store, &u).await;
+    let (thread, first) = sealed(&service.store, &u, TEXT, decision(TEXT)).await;
+    service.chat(&first).await.unwrap();
+    assert_eq!(io.write_count(), 1);
+    let id = service
+        .store
+        .conversation(&u, thread.clone(), None)
+        .await
+        .unwrap()
+        .turns[0]
+        .run
+        .calendar_receipt
+        .as_ref()
+        .unwrap()
+        .event_id
+        .clone()
+        .unwrap();
+    io.lookup_mode.store(4, Ordering::SeqCst);
+    let text = "그 일정 2026-12-02로 옮겨";
+    let mut d = decision(text);
+    d.operation = Some("update".into());
+    d.title_quote = None;
+    d.target_quote = Some("그 일정".into());
+    d.date = None;
+    d.date_quote = None;
+    d.start = None;
+    d.start_quote = None;
+    d.end = None;
+    d.end_quote = None;
+    d.move_date = Some("2026-12-02".into());
+    d.move_date_quote = Some("2026-12-02".into());
+    let next = next_sealed(&service.store, &u, &thread, text, d).await;
+    service.chat(&next).await.unwrap();
+    assert_eq!(io.write_count(), 1);
+    assert!(
+        io.event_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|value| value == &id)
+    );
+    assert_eq!(
+        service
+            .store
+            .conversation(&u, thread, None)
+            .await
+            .unwrap()
+            .turns[1]
+            .run
+            .calendar_receipt
+            .as_ref()
+            .unwrap()
+            .state,
+        "clarify"
+    );
 }

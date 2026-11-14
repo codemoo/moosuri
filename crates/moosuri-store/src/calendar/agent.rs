@@ -4,7 +4,7 @@ use crate::{
     agent_execution::{self, StepLease},
     chat::Run,
 };
-use chrono::{Days, NaiveDate, NaiveTime, TimeZone};
+use chrono::{Days, NaiveDate, NaiveTime, TimeZone, Timelike};
 pub struct CalendarAgentCommand {
     pub user: UserContext,
     pub profile: CalendarRunProfile,
@@ -84,6 +84,7 @@ pub(crate) fn purge(c: &Connection, t: &str, r: &str) -> Result<()> {
         "calendar_agent_profiles",
         "calendar_agent_observations",
         "calendar_command_plans",
+        "request_continuations",
     ] {
         c.execute(
             &format!("DELETE FROM {table} WHERE tenant_id=?1 AND run_id=?2"),
@@ -145,7 +146,7 @@ pub(crate) fn invalidate_subscription(
     binding: &str,
     revision: i64,
 ) -> Result<()> {
-    let runs = c.prepare("SELECT r.id FROM chat_runs r JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.state!='completed' AND e.invalidated=0 AND json_extract(r.model,'$.source')='personal_chat_gpt' AND json_extract(r.model,'$.provider_id')=?3 AND json_extract(r.model,'$.provider_revision')=?4 AND (EXISTS(SELECT 1 FROM calendar_command_plans p WHERE p.tenant_id=r.tenant_id AND p.run_id=r.id) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins o WHERE o.tenant_id=r.tenant_id AND o.run_id=r.id))")?
+    let runs = c.prepare("SELECT r.id FROM chat_runs r JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.state!='completed' AND e.invalidated=0 AND json_extract(r.model,'$.source')='personal_chat_gpt' AND json_extract(r.model,'$.provider_id')=?3 AND json_extract(r.model,'$.provider_revision')=?4 AND (EXISTS(SELECT 1 FROM calendar_command_plans p WHERE p.tenant_id=r.tenant_id AND p.run_id=r.id) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins o WHERE o.tenant_id=r.tenant_id AND o.run_id=r.id) OR EXISTS(SELECT 1 FROM request_continuations q WHERE q.tenant_id=r.tenant_id AND q.run_id=r.id AND (q.calendar_target IS NOT NULL OR json_extract(q.context,'$.draft.domain')='calendar')))")?
         .query_map(params![tenant, account, binding, revision], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     for run in &runs {
@@ -191,6 +192,7 @@ pub(crate) fn quarantine_restore(c: &Connection) -> Result<()> {
 pub(crate) fn invalidate(c: &Connection, t: &str, id: &str) -> Result<()> {
     let runs=c.prepare("SELECT DISTINCT run_id FROM calendar_run_dependencies WHERE tenant_id=?1 AND connection_id=?2 UNION SELECT p.run_id FROM calendar_agent_profiles p JOIN calendar_command_plans q USING(tenant_id,run_id) WHERE p.tenant_id=?1 AND EXISTS(SELECT 1 FROM json_each(profile,'$.connections') WHERE json_extract(value,'$.id')=?2)")?.query_map(params![t,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     agent_execution::purge_runs(c, t, runs)?;
+    c.execute("DELETE FROM request_continuations WHERE tenant_id=?1 AND (json_extract(calendar_target,'$.connection_id')=?2 OR (json_extract(context,'$.draft.domain')='calendar' AND run_id IN(SELECT run_id FROM calendar_agent_profiles WHERE tenant_id=?1 AND EXISTS(SELECT 1 FROM json_each(profile,'$.connections') WHERE json_extract(value,'$.id')=?2))))",params![t,id])?;
     c.execute("DELETE FROM calendar_agent_profiles WHERE tenant_id=?1 AND EXISTS(SELECT 1 FROM json_each(profile,'$.connections') WHERE json_extract(value,'$.id')=?2)",params![t,id])?;
     Ok(())
 }
@@ -268,13 +270,14 @@ fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
         (&d.title_quote, 512),
         (&d.target_quote, 512),
         (&d.date_quote, 128),
+        (&d.move_date_quote, 128),
         (&d.start_quote, 256),
         (&d.end_quote, 256),
         (&d.duration_quote, 128),
     ] {
         exact(text, q, max, false)?;
     }
-    if d.decision != "command" {
+    if d.decision != "command" && !(d.decision == "clarify" && d.operation.is_some()) {
         if d.operation.is_some()
             || d.connection_quote.is_some()
             || d.title_quote.is_some()
@@ -293,15 +296,25 @@ fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
         return Ok(());
     }
     if !matches!(d.operation.as_deref(), Some("create" | "update" | "delete"))
-        || d.clarification.is_some()
+        || d.decision == "command" && d.clarification.is_some()
     {
         return Err(StoreError::InvalidInput);
     }
-    exact(text, &d.date_quote, 128, true)?;
+    exact(
+        text,
+        &d.date_quote,
+        128,
+        d.decision == "command" && d.operation.as_deref() == Some("create"),
+    )?;
+    if d.move_date.is_some() != d.move_date_quote.is_some()
+        || d.move_date.is_some() && d.operation.as_deref() != Some("update")
+    {
+        return Err(StoreError::InvalidInput);
+    }
     if d.operation.as_deref() == Some("create") {
-        exact(text, &d.title_quote, 512, true)?;
+        exact(text, &d.title_quote, 512, d.decision == "command")?;
     } else {
-        exact(text, &d.target_quote, 512, true)?;
+        exact(text, &d.target_quote, 512, d.decision == "command")?;
     }
     if d.start.is_some() != d.start_quote.is_some()
         || d.end.is_some() != d.end_quote.is_some()
@@ -443,6 +456,69 @@ fn end_quote(text: &str, d: &CalendarChatDecision) -> Result<String> {
     }
     Ok(end.into())
 }
+fn receipt_target(
+    c: &Connection,
+    r: &Run,
+    d: &CalendarChatDecision,
+) -> Result<Option<crate::request_continuations::CalendarTarget>> {
+    if !matches!(d.operation.as_deref(), Some("update" | "delete"))
+        || !matches!(
+            d.target_quote.as_deref(),
+            Some("그 일정" | "그 회의" | "that event" | "that meeting" | "it" | "the event")
+        )
+    {
+        return Ok(None);
+    }
+    let Some(target) = crate::request_continuations::target(c, r)? else {
+        return Err(StoreError::InvalidInput);
+    };
+    let source = crate::chat::load_run(c, &r.tenant, &target.source_run_id)?;
+    if source.thread != r.thread
+        || source.account != r.account
+        || profile(c, &r.tenant, &source.id)?.is_none()
+        || !dependencies_current(c, &source)?
+    {
+        return Err(StoreError::Forbidden);
+    }
+    let p = profile(c, &r.tenant, &r.id)?.ok_or(StoreError::Forbidden)?;
+    let pin = selected(&p, d)?;
+    if pin.id != target.connection_id || !pin_current(c, r, pin)? {
+        return Err(StoreError::Forbidden);
+    }
+    Ok(Some(target))
+}
+fn command_range(
+    c: &Connection,
+    r: &Run,
+    p: &CalendarRunProfile,
+    d: &CalendarChatDecision,
+) -> Result<CalendarRange> {
+    if let Some(target) = receipt_target(c, r, d)? {
+        let zone = zone(p, d)?;
+        let start = chrono::DateTime::parse_from_rfc3339(&target.event.fields.start)
+            .map_err(|_| StoreError::Corrupt)?
+            .with_timezone(&zone)
+            .date_naive();
+        let next = start
+            .checked_add_days(Days::new(1))
+            .ok_or(StoreError::InvalidInput)?;
+        let start = zone
+            .from_local_datetime(&start.and_hms_opt(0, 0, 0).ok_or(StoreError::InvalidInput)?)
+            .single()
+            .ok_or(StoreError::InvalidInput)?;
+        let end = zone
+            .from_local_datetime(&next.and_hms_opt(0, 0, 0).ok_or(StoreError::InvalidInput)?)
+            .single()
+            .ok_or(StoreError::InvalidInput)?;
+        return Ok(CalendarRange {
+            connection_id: target.connection_id,
+            start: start.to_rfc3339(),
+            end: end.to_rfc3339(),
+            page_token: None,
+        });
+    }
+    range(p, d)
+}
 fn fields(
     p: &CalendarRunProfile,
     d: &CalendarChatDecision,
@@ -459,6 +535,37 @@ fn fields(
     });
     if let Some(title) = &d.title_quote {
         f.title = title.clone();
+    }
+    let old_duration = prior
+        .map(|old| {
+            let start = chrono::DateTime::parse_from_rfc3339(&old.fields.start)
+                .map_err(|_| StoreError::InvalidInput)?;
+            let end = chrono::DateTime::parse_from_rfc3339(&old.fields.end)
+                .map_err(|_| StoreError::InvalidInput)?;
+            Ok::<_, StoreError>(end - start)
+        })
+        .transpose()?;
+    let mut destination = d.clone();
+    if let Some(date) = &d.move_date {
+        let old = prior.ok_or(StoreError::InvalidInput)?;
+        destination.date = Some(date.clone());
+        destination.date_quote = d.move_date_quote.clone();
+        let clock = chrono::DateTime::parse_from_rfc3339(&old.fields.start)
+            .map_err(|_| StoreError::InvalidInput)?
+            .with_timezone(&zone(p, &destination)?)
+            .format("%H:%M")
+            .to_string();
+        if d.start.is_none() {
+            let old_start = chrono::DateTime::parse_from_rfc3339(&old.fields.start)
+                .map_err(|_| StoreError::InvalidInput)?;
+            let fraction = chrono::Duration::seconds(i64::from(old_start.second()))
+                + chrono::Duration::nanoseconds(i64::from(old_start.nanosecond()));
+            f.start = (moment(p, &destination, &clock, &clock)? + fraction).to_rfc3339();
+        }
+    }
+    let d = &destination;
+    if d.start.is_some() || d.end.is_some() || d.move_date.is_some() {
+        f.time_zone = Some(zone(p, d)?.to_string());
     }
     if let Some(s) = &d.start {
         f.start = moment(
@@ -494,13 +601,23 @@ fn fields(
             chrono::DateTime::parse_from_rfc3339(&f.start).map_err(|_| StoreError::InvalidInput)?;
         f.end = (start + chrono::Duration::minutes(i64::from(minutes))).to_rfc3339();
     }
-    if d.start.is_some() && d.end.is_none() && d.duration_minutes.is_none() {
-        return Err(StoreError::InvalidInput);
+    if (d.start.is_some() || d.move_date.is_some())
+        && d.end.is_none()
+        && d.duration_minutes.is_none()
+    {
+        let duration = old_duration.ok_or(StoreError::InvalidInput)?;
+        if duration <= chrono::Duration::zero() || duration > chrono::Duration::hours(24) {
+            return Err(StoreError::InvalidInput);
+        }
+        let start =
+            chrono::DateTime::parse_from_rfc3339(&f.start).map_err(|_| StoreError::InvalidInput)?;
+        f.end = (start + duration).to_rfc3339();
     }
     if prior.is_none() && (d.start.is_none() || d.end.is_none() && d.duration_minutes.is_none()) {
         return Err(StoreError::InvalidInput);
     }
     if prior.is_some()
+        && d.move_date.is_none()
         && d.title_quote.is_none()
         && d.start.is_none()
         && d.end.is_none()
@@ -514,7 +631,16 @@ fn fields(
 pub(crate) fn record(c: &Connection, r: &Run, raw: serde_json::Value) -> Result<()> {
     let d: CalendarChatDecision =
         serde_json::from_value(raw).map_err(|_| StoreError::InvalidInput)?;
-    validate_decision(&r.text, &d)?;
+    validate_decision(&crate::request_continuations::text(c, r)?, &d)?;
+    crate::request_continuations::validate_scope(c, r, &CurrentChatDecision::Calendar(d.clone()))?;
+    if d.decision == "clarify" {
+        crate::request_continuations::pending(
+            c,
+            r,
+            CurrentChatDecision::Calendar(d.clone()),
+            d.clarification.as_deref(),
+        )?;
+    }
     let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans p JOIN agent_execution e USING(tenant_id,run_id) WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.state='awaiting' AND e.remote_calls=1 AND e.tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
     if !valid
         || profile(c, &r.tenant, &r.id)?.is_none()
@@ -526,8 +652,11 @@ pub(crate) fn record(c: &Connection, r: &Run, raw: serde_json::Value) -> Result<
     // transaction; invalid zone metadata will clarify before provider IO.
     if d.decision == "command" {
         let mut p = profile(c, &r.tenant, &r.id)?.ok_or(StoreError::Forbidden)?;
-        p.timezone =
-            crate::missions::chat::source_zone(&r.text, p.timezone.as_deref()).unwrap_or(None);
+        p.timezone = crate::missions::chat::source_zone(
+            &crate::request_continuations::text(c, r)?,
+            p.timezone.as_deref(),
+        )
+        .unwrap_or(None);
         c.execute(
             "UPDATE calendar_agent_profiles SET profile=?3 WHERE tenant_id=?1 AND run_id=?2",
             params![r.tenant, r.id, json(&p)?],
@@ -646,6 +775,24 @@ fn message(state: &str) -> &'static str {
         }
     }
 }
+fn clarification_message(d: &CalendarChatDecision) -> &'static str {
+    match d.clarification.as_deref() {
+        Some("time") => {
+            "몇 시에 시작하나요? 오전/오후를 포함해 알려 주세요. / What start time should I use?"
+        }
+        Some("date") => "어느 날짜인가요? / Which date should I use?",
+        Some("duration") => {
+            "언제 끝나나요? 종료 시각이나 기간을 알려 주세요. / What end time or duration should I use?"
+        }
+        Some("target") => {
+            "어느 일정을 변경할까요? 제목과 날짜를 알려 주세요. / Which event do you mean? Give its title and date."
+        }
+        Some("account") => {
+            "어느 Calendar 계정에 적용할까요? / Which Calendar account should I use?"
+        }
+        _ => message("clarify"),
+    }
+}
 fn finish(c: &Connection, r: &Run, receipt: CalendarChatReceipt) -> Result<()> {
     c.execute("UPDATE calendar_command_plans SET state='finished',receipt=?3 WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id,json(&receipt)?])?;
     crate::chat::apply_patches(
@@ -674,11 +821,24 @@ impl Store {
         })
         .await
     }
+    pub async fn calendar_agent_followup_target(
+        &self,
+        l: &crate::RunLease,
+    ) -> Result<Option<String>> {
+        let l = l.clone();
+        self.call(move |db| {
+            let cmd = command(&db.conn, &db.provider_key, &l)?.ok_or(StoreError::Conflict)?;
+            let r = crate::chat::guard(&db.conn, &db.provider_key, &l)?;
+            Ok(receipt_target(&db.conn, &r, &cmd.decision)?.map(|v| v.event.id))
+        })
+        .await
+    }
     pub async fn calendar_agent_range(&self, l: &crate::RunLease) -> Result<CalendarRange> {
         let l = l.clone();
         self.call(move |db| {
             let v = command(&db.conn, &db.provider_key, &l)?.ok_or(StoreError::Conflict)?;
-            range(&v.profile, &v.decision)
+            let r = crate::chat::guard(&db.conn, &db.provider_key, &l)?;
+            command_range(&db.conn, &r, &v.profile, &v.decision)
         })
         .await
     }
@@ -694,11 +854,11 @@ impl Store {
         let conn = b.connection.clone();
         let app = b.app.clone();
         self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let cmd=command(&tx,&db.provider_key,&l)?.ok_or(StoreError::Conflict)?;let r=crate::chat::guard(&tx,&db.provider_key,&l)?;
-            let d=&cmd.decision;validate_decision(&r.text,d)?;let p=selected(&cmd.profile,d)?;
+            let d=&cmd.decision;validate_decision(&crate::request_continuations::text(&tx,&r)?,d)?;let p=selected(&cmd.profile,d)?;
             if p.id!=conn.id || p.epoch!=conn.epoch || p.client_id!=app.client_id || p.app_revision!=app.revision || cmd.user.digest!=u.digest || cmd.user.epoch!=u.epoch {return Err(StoreError::Forbidden)} admit_pin(&tx,&r,p)?;
-            let mutation=match d.operation.as_deref(){Some("create")=>CalendarMutation::Create{fields:fields(&cmd.profile,d,None,&r.text)?},Some("update"|"delete")=>{let old=prior.as_ref().ok_or(StoreError::InvalidInput)?;if !old.writable || d.target_quote.as_ref()!=Some(&old.fields.title){return Err(StoreError::Conflict)}let q=range(&cmd.profile,d)?;let start=chrono::DateTime::parse_from_rfc3339(&old.fields.start).map_err(|_|StoreError::InvalidInput)?;if start<chrono::DateTime::parse_from_rfc3339(&q.start).map_err(|_|StoreError::InvalidInput)? || start>=chrono::DateTime::parse_from_rfc3339(&q.end).map_err(|_|StoreError::InvalidInput)? {return Err(StoreError::Conflict)}
+            let mutation=match d.operation.as_deref(){Some("create")=>CalendarMutation::Create{fields:fields(&cmd.profile,d,None,&crate::request_continuations::text(&tx,&r)?)?},Some("update"|"delete")=>{let old=prior.as_ref().ok_or(StoreError::InvalidInput)?;let receipt=receipt_target(&tx,&r,d)?;if !old.writable || if let Some(target)=&receipt {target.event.id!=old.id || target.event.etag!=old.etag} else {d.target_quote.as_ref()!=Some(&old.fields.title)} {return Err(StoreError::Conflict)}let q=command_range(&tx,&r,&cmd.profile,d)?;let start=chrono::DateTime::parse_from_rfc3339(&old.fields.start).map_err(|_|StoreError::InvalidInput)?;if start<chrono::DateTime::parse_from_rfc3339(&q.start).map_err(|_|StoreError::InvalidInput)? || start>=chrono::DateTime::parse_from_rfc3339(&q.end).map_err(|_|StoreError::InvalidInput)? {return Err(StoreError::Conflict)}
                 let proof:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_agent_observations WHERE tenant_id=?1 AND run_id=?2 AND handle='sealed-target' AND event_id=?3 AND etag=?4)",params![r.tenant,r.id,old.id,old.etag],|r|r.get(0))?;if !proof {return Err(StoreError::Conflict)}
-                if d.operation.as_deref()==Some("delete"){CalendarMutation::Delete{event_id:old.id.clone(),etag:old.etag.clone()}}else{CalendarMutation::Update{event_id:old.id.clone(),etag:old.etag.clone(),fields:fields(&cmd.profile,d,Some(old),&r.text)?}}
+                if d.operation.as_deref()==Some("delete"){CalendarMutation::Delete{event_id:old.id.clone(),etag:old.etag.clone()}}else{CalendarMutation::Update{event_id:old.id.clone(),etag:old.etag.clone(),fields:fields(&cmd.profile,d,Some(old),&crate::request_continuations::text(&tx,&r)?)?}}
             },_=>return Err(StoreError::InvalidInput)};
             let change=CalendarChange{request_id:cmd.action_id.clone(),connection_id:p.id.clone(),expected_epoch:conn.epoch,expected_revision:conn.revision,mutation}; let result=admit_change_in(&tx,&u,&conn,&app,change,primary,prior)?;
             tx.execute("INSERT INTO calendar_agent_action_origins(tenant_id,action_id,run_id) VALUES(?1,?2,?3)",params![r.tenant,cmd.action_id,r.id])?;
@@ -712,8 +872,8 @@ impl Store {
     ) -> Result<CalendarEvent> {
         let l = l.clone();
         self.call(move|db|{let tx=db.conn.transaction()?;let cmd=command(&tx,&db.provider_key,&l)?.ok_or(StoreError::Conflict)?;let r=crate::chat::guard(&tx,&db.provider_key,&l)?;let p=selected(&cmd.profile,&cmd.decision)?;admit_pin(&tx,&r,p)?;
-            if page.partial || page.next_page_token.is_some() || page.events.len()>5 {return Err(StoreError::InvalidInput)}let matches=page.events.into_iter().filter(|e|Some(&e.fields.title)==cmd.decision.target_quote.as_ref()).collect::<Vec<_>>();if matches.len()!=1 || !matches[0].writable {return Err(StoreError::InvalidInput)}let event=matches.into_iter().next().ok_or(StoreError::InvalidInput)?;
-            tx.execute("INSERT OR REPLACE INTO calendar_agent_observations VALUES(?1,?2,'sealed-target',?3,?4,?5,'current-request',?6,?7,?8,?9,?10)",params![r.tenant,r.id,p.id,p.epoch,cmd.step.step,json(&range(&cmd.profile,&cmd.decision)?)?,event.id,event.etag,now()?,format!("{:x}",Sha256::digest(json(&event)?.as_bytes()))])?;tx.commit()?;Ok(event)}).await
+            if page.partial || page.next_page_token.is_some() || page.events.len()>5 {return Err(StoreError::InvalidInput)}let receipt=receipt_target(&tx,&r,&cmd.decision)?;let matches=page.events.into_iter().filter(|e|if let Some(target)=&receipt {e.id==target.event.id && e.etag==target.event.etag}else{Some(&e.fields.title)==cmd.decision.target_quote.as_ref()}).collect::<Vec<_>>();if matches.len()!=1 || !matches[0].writable {return Err(StoreError::InvalidInput)}let event=matches.into_iter().next().ok_or(StoreError::InvalidInput)?;
+            tx.execute("INSERT OR REPLACE INTO calendar_agent_observations VALUES(?1,?2,'sealed-target',?3,?4,?5,'current-request',?6,?7,?8,?9,?10)",params![r.tenant,r.id,p.id,p.epoch,cmd.step.step,json(&command_range(&tx,&r,&cmd.profile,&cmd.decision)?)?,event.id,event.etag,now()?,format!("{:x}",Sha256::digest(json(&event)?.as_bytes()))])?;tx.commit()?;Ok(event)}).await
     }
     pub async fn finish_calendar_chat(
         &self,
@@ -722,7 +882,7 @@ impl Store {
     ) -> Result<bool> {
         let l = l.clone();
         self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l) {Ok(r)=>r,Err(error)=>{tx.commit()?;return Err(error)}};let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_command_plans WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;if !exists{return Ok(false)}
-            let receipt=if let Some(state)=state {let cmd=command(&tx,&db.provider_key,&l)?.ok_or(StoreError::Conflict)?;CalendarChatReceipt{action_id:None,operation:cmd.decision.operation.unwrap_or_else(||cmd.decision.decision.clone()),state:state.clone(),event_id:None,provider_etag:None,message:message(&state).into()}}else{let Some(receipt)=receipt(&tx,&r)? else{return Ok(false)};receipt};finish(&tx,&r,receipt)?;tx.commit()?;Ok(true)}).await
+            let receipt=if let Some(state)=state {let cmd=command(&tx,&db.provider_key,&l)?.ok_or(StoreError::Conflict)?;CalendarChatReceipt{action_id:None,operation:cmd.decision.operation.clone().unwrap_or_else(||cmd.decision.decision.clone()),state:state.clone(),event_id:None,provider_etag:None,message:if state=="clarify" {clarification_message(&cmd.decision).into()}else{message(&state).into()}}}else{let Some(receipt)=receipt(&tx,&r)? else{return Ok(false)};receipt};finish(&tx,&r,receipt)?;tx.commit()?;Ok(true)}).await
     }
     pub async fn calendar_read_event_id(
         &self,
@@ -838,6 +998,8 @@ mod civil_tests {
             target_quote: None,
             date_quote: Some(q.into()),
             date: Some(date.into()),
+            move_date_quote: None,
+            move_date: None,
             start_quote: None,
             start: None,
             end_quote: None,
@@ -870,5 +1032,48 @@ mod civil_tests {
         let p = clock_profile("America/Los_Angeles");
         assert!(moment(&p, &proposal("2027-03-14", "2027-03-14"), "02:30", "02:30").is_err());
         assert!(moment(&p, &proposal("2027-11-07", "2027-11-07"), "01:30", "01:30").is_err());
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+    fn event(start: &str, end: &str) -> CalendarEvent {
+        CalendarEvent {
+            id: "synthetic".into(),
+            etag: "etag".into(),
+            status: "confirmed".into(),
+            html_link: None,
+            writable: true,
+            all_day: false,
+            updated: None,
+            fields: CalendarFields {
+                title: "Synthetic".into(),
+                description: String::new(),
+                location: String::new(),
+                start: start.into(),
+                end: end.into(),
+                time_zone: Some("America/Los_Angeles".into()),
+            },
+        }
+    }
+    #[test]
+    fn request_continuation_date_move_retains_duration_seconds_and_rejects_dst_gap_fold() {
+        let p = CalendarRunProfile {
+            version: 1,
+            reference: 1800000000,
+            timezone: Some("America/Los_Angeles".into()),
+            connections: vec![],
+        };
+        let mut d:CalendarChatDecision=serde_json::from_value(serde_json::json!({"domain":"calendar","decision":"command","operation":"update","intent_quote":"move","title_quote":null,"target_quote":"Synthetic","date":"2027-03-13","date_quote":"2027-03-13","move_date":"2027-03-14","move_date_quote":"2027-03-14","start_quote":null,"start":null,"end_quote":null,"end":null,"duration_quote":null,"duration_minutes":null,"connection_quote":null,"clarification":null})).unwrap();
+        let old = event("2027-03-13T01:30:30-08:00", "2027-03-13T03:30:30-08:00");
+        let moved = fields(&p, &d, Some(&old), "move Synthetic to 2027-03-14").unwrap();
+        assert_eq!(moved.start, "2027-03-14T09:30:30+00:00");
+        assert_eq!(moved.end, "2027-03-14T11:30:30+00:00");
+        let gap = event("2027-03-13T02:30:00-08:00", "2027-03-13T03:15:00-08:00");
+        assert!(fields(&p, &d, Some(&gap), "move Synthetic to 2027-03-14").is_err());
+        d.move_date = Some("2027-11-07".into());
+        d.move_date_quote = d.move_date.clone();
+        assert!(fields(&p, &d, Some(&old), "move Synthetic to 2027-11-07").is_err());
     }
 }

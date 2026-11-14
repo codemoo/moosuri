@@ -26,7 +26,11 @@ pub(super) async fn run(
             return None;
         }
     };
-    let candidate = if planning.calendar_only {
+    let candidate = if planning.continuation.is_some()
+        || planning.receipt_target_available && crate::calendar_intent::followup_candidate(text)
+    {
+        true
+    } else if planning.calendar_only {
         crate::calendar_intent::candidate(text)
     } else {
         crate::mission_intent::candidate(text, planning.selected_kind.is_some())
@@ -38,6 +42,7 @@ pub(super) async fn run(
         }
         return Some(context);
     }
+    let text = planning.request_text.as_str();
     let metadata = serde_json::to_string(&planning).ok()?;
     let request = if planning.calendar_only {
         crate::calendar_intent::personal_request(

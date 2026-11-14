@@ -46,7 +46,7 @@ pub(crate) struct FixtureIo {
     observed: Mutex<Option<CalendarEvent>>,
     //0 success,1 timeout (including applied-but-ACK-lost),2 definite412.
     write_mode: AtomicU8,
-    //0 matching current event,1 absent,2 wrong operation marker,3 peer edit.
+    //0 matching current event,1 absent,2 wrong operation marker,3 peer edit,4 stale ETag.
     lookup_mode: AtomicU8,
     hold_primary: AtomicBool,
     hold_events: AtomicBool,
@@ -166,6 +166,9 @@ impl FixtureIo {
                     .unwrap_or_else(fields)
             });
         let mut e = event(id, f);
+        if self.lookup_mode.load(Ordering::SeqCst) == 4 {
+            e.etag = "peer-etag".into();
+        }
         if self.lookup_mode.load(Ordering::SeqCst) == 3 {
             e.fields.title = "Peer changed title".into()
         }

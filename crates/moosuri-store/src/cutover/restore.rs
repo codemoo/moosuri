@@ -461,6 +461,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0041_account_deletion.sql"
         ))?;
     }
+    if captured < 42 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0042_request_continuations.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -547,6 +552,7 @@ fn quarantine(
         [],
     )?;
     crate::calendar::agent::quarantine_restore(&tx)?;
+    tx.execute("DELETE FROM request_continuations", [])?;
     crate::schedules::quarantine_for_restore(&tx)?;
     tx.execute(
         "UPDATE mission_chat_plans SET state='quarantined' WHERE state IN('awaiting','decided')",

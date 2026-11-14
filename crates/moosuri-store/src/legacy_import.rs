@@ -644,6 +644,18 @@ pub async fn import_bundle(
     dest: &Path,
     report_dir: &Path,
 ) -> Result<Report> {
+    import_bundle_with_relation_report(input, owner, enrollment, dest, report_dir, None).await
+}
+/// The schema23 adapter may attach its fixed-name private reconciliation report
+/// to the SAME reports-before-data publication. No arbitrary filename is accepted.
+pub(crate) async fn import_bundle_with_relation_report(
+    input: &Path,
+    owner: &str,
+    enrollment: Enrollment,
+    dest: &Path,
+    report_dir: &Path,
+    relation_report: Option<&Value>,
+) -> Result<Report> {
     if !valid_label(owner, 128) {
         return Err(Error::Invalid);
     }
@@ -774,6 +786,12 @@ pub async fn import_bundle(
             });
         }
     }
+    // A relation adapter must not publish a claim that conversion succeeded
+    // when normal Store admission rejected any generated event/report. Its
+    // precomputed source-row reconciliation would otherwise be inaccurate.
+    if relation_report.is_some() && report.quarantined_events != 0 {
+        return Err(Error::Integrity);
+    }
     report.mappings = reconcile(&store, &user, mappings).await?;
     reports_in_sqlite(&store, &user, &mut report).await?;
     finalize(&store, &user, collections).await?;
@@ -792,6 +810,9 @@ pub async fn import_bundle(
         &reports.path.join("quarantine.json"),
         &serde_json::json!({"format":1,"bundle_sha256":report.bundle_sha256,"payload_policy":"rejected raw payload remains only in unchanged selected bundle; retain it privately","events":report.outcomes.iter().filter(|o|o.state=="quarantined").collect::<Vec<_>>()}),
     )?;
+    if let Some(report) = relation_report {
+        write(&reports.path.join("legacy-adapter-report.json"), report)?;
+    }
     backup::files::sync_dir(&reports.path)?;
     cutover::publication::no_replace(&reports.path, &report_dir)?;
     reports.published = true;

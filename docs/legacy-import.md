@@ -162,3 +162,11 @@ New installation usage is not a claim that the legacy deployment's spending was
 zero or reconciled. There is no production read comparison, drain, source writer
 handoff, rollback or cutover in this unit. Use [migration](migration.md) and
 [historical restore](historical-restore.md) for those remaining boundaries.
+
+## Source-grounded schema23 input
+
+The [relation adapter](legacy-relations.md) supplies the normalized input directly
+from a complete explicit schema23 PostgreSQL relation snapshot. It imports current
+projections with exact joins and full row accounting, without inventing missing
+revision history. The SQL export recipe requires an isolated operator-managed
+snapshot; production execution, media/vault and cutover remain separate.

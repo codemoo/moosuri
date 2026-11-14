@@ -20,6 +20,7 @@ mod backup_live;
 mod backup_snapshots;
 mod import_private;
 mod installation;
+mod legacy_relations;
 mod skills;
 mod subscriptions;
 mod work_sessions;
@@ -47,6 +48,8 @@ enum RecoveryRole {
 enum Command {
     /// Import an explicitly selected private normalized export into a NEW staging data root.
     ImportPrivate(import_private::Command),
+    /// Import a complete private PostgreSQL schema23 relation snapshot into a NEW root.
+    ImportLegacyRelations(legacy_relations::Command),
     /// Allocate new forward requests after historical recovery; old usage stays unknown.
     RecoveryBudget {
         #[command(subcommand)]
@@ -398,6 +401,7 @@ async fn run(cli: Cli) -> Result<(), String> {
     }
     match cli.command {
         Command::ImportPrivate(command) => import_private::run(&data, command).await?,
+        Command::ImportLegacyRelations(command) => legacy_relations::run(&data, command).await?,
         Command::RecoveryBudget { command } => {
             let status = match command {
                 RecoveryBudgetCommand::Status => {

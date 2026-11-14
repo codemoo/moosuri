@@ -250,3 +250,8 @@ F52/P1/P9 adds optional live full SQLite/journal capture and encrypted local exp
 without stopping the service. Existing historical restore and independently pinned
 journal requirements remain; no off-host or zero-loss guarantee is implied.
 [Behavior](online-backups.md) · [Acceptance](reviews/2026-11-15-online-full-backups.md).
+
+P9 adds the [schema23 relation adapter](legacy-relations.md): exact source contract,
+current source/memory/plain artifact projections, source-row accounting and private
+reconciliation. It does not infer missing revision history or resume old authority.
+Operator export, production comparison and full cutover remain separate.

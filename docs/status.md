@@ -26,6 +26,14 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 현재 독립 vault 또는 명시한 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver와 실행 중 전체 자료의 암호화된 로컬 export를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export의 실제 운영 수락·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
+## 최근 수락한 단위 · 구 시스템 schema23 자료 이전
+
+기존 PostgreSQL 관계를 명시적으로 추출한 파일에서 현재 원문·기억·문서를 새 계정으로
+옮기는 어댑터를 구현했다. 전체 행을 대조하고 불확실한 근거·삭제/망각 대상은 격리하며,
+원본에 없는 옛 값이나 이력을 만들지 않는다. 독립 소스 검토와 Linux 실제
+Store/CLI·Clippy·빌드를 통과했다. 실제 운영 DB 추출·미디어/볼트·운영 전환은 별도다.
+[이전 절차](legacy-relations.md).
+
 ## 최근 수락한 단위 · 실행 중 전체 자료 백업
 
 서버를 멈추지 않고 DB와 삭제 기록을 같은 시점으로 캡처하고, writer를 놓은 뒤 기존
@@ -510,7 +518,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P6 외부 연결 | Gmail/Calendar·공식/커스텀 수집·선택한 Codex 요청 수집·공개 웹·일본우편 최근 상태·브라우저·승인된 gws 초대 | 통화/다른 작업 feed·다른 배송사/전체 이력·실계정 |
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 native GitHub credential 조회/원래 채팅 대기·완료 | 일반 credential 도구·Google adapter·호환 이전·독립 최신 복구 |
-| P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 legacy exporter/schema adapter·운영 대조·drain/cutover/rollback 실증 |
+| P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 operator export·운영 대조·drain/cutover/rollback 실증 |
 | P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory | 공식 서명 배포·arm64·binary provenance/license·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
@@ -547,7 +555,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
 5. **P8 볼트와 credential 사용**: 실제 native GitHub adapter·archive unlock·scope 재사용과
    명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체도 구현했다. 일반 credential 도구·Google adapter,
    독립 최신 복구·구 v1 호환/이전·서명 배포를 이어 구현한다. 계정 삭제 outbox는 구현·통합 검증했다.
-6. **P9/P10 이전·출시**: 정규화 private importer/대조를 구현했다. 실제 legacy schema exporter·제한 cutover·rollback,
+6. **P9/P10 이전·출시**: 정규화 private importer/대조와 schema23 relation adapter를 구현했다. 실제 operator export·제한 cutover·rollback,
    수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거와 source-lock SBOM을 공식 artifact·arm64·binary provenance/license로 확장하고,
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.

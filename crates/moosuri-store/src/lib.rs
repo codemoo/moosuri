@@ -58,6 +58,7 @@ pub mod cutover;
 mod files;
 mod journal;
 pub mod legacy_import;
+pub mod legacy_relations;
 mod mail;
 mod web;
 pub use browser::BrowserAccess;

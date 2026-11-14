@@ -1,0 +1,94 @@
+[
+  {
+    "name": "001_initial.sql",
+    "sha256": "767730c731661f8dbc27dcf142d970616e9728bc8d6c2a83f50fe95f864732dd"
+  },
+  {
+    "name": "002_journal.sql",
+    "sha256": "936db1af5ca29b48d5ff9b47237ecae49e550d6e28635f4f24eff83292e36f81"
+  },
+  {
+    "name": "003_sources.sql",
+    "sha256": "6c8ef7a058464fc1be08313de9c369395b932017482a8ae8fabf157897171856"
+  },
+  {
+    "name": "004_memory.sql",
+    "sha256": "c7d3d1daae2d9bd04081756e517b59934f6f29be438a61649a8cf598b6f23429"
+  },
+  {
+    "name": "005_tasks.sql",
+    "sha256": "cad6aed05a6c8dc05442bdfd5e5ec3a7d1d5d8f6b1b0aca7cefec7a9f723a62e"
+  },
+  {
+    "name": "006_source_bindings.sql",
+    "sha256": "470e1bdeb036ee80c9962b818e9f521f3256203d865d4cc0154f3cc26baf6cd4"
+  },
+  {
+    "name": "007_providers.sql",
+    "sha256": "b63f61d00de376831e3d8a244ee0a29ac8bf14d3b459ddc6491fde9dfc7317d2"
+  },
+  {
+    "name": "008_background.sql",
+    "sha256": "a206107b49c3e5679a6cc120503a1d1faf175ee49c5a5e59712c8d3004b25c24"
+  },
+  {
+    "name": "009_integration.sql",
+    "sha256": "a6b2569ca60d155e27c14062b98c6daeaf6887cd6258af439de638ebf6f2dacd"
+  },
+  {
+    "name": "010_memory_topics.sql",
+    "sha256": "ace687cbb6363d20a59c35ce247e8c5063628926a0ab18229cd163e38c92939a"
+  },
+  {
+    "name": "011_restore_quarantine.sql",
+    "sha256": "a008788ba2230ccda7dbdf90eea34f29fa503c2e15e6c82e4954add922836352"
+  },
+  {
+    "name": "012_model_settings.sql",
+    "sha256": "fcb69d868ded09e4d6ffbaadfe7c11fe457902ace6c9eb05fc93d465f0646174"
+  },
+  {
+    "name": "013_context.sql",
+    "sha256": "b29307125a777f7f5124e7d7315eb0fbeabd63431b7ea264887414008dd5b9b1"
+  },
+  {
+    "name": "014_task_repair.sql",
+    "sha256": "6f35323b16a7190a9db726fbd802b219df8e87a61fddb02b84b492f2751d9f13"
+  },
+  {
+    "name": "015_obligations.sql",
+    "sha256": "43357040d984ee96e1ca7e4eac5de33d8b2335daa82a56aa7baf8869325f1024"
+  },
+  {
+    "name": "016_media_metrics.sql",
+    "sha256": "3bb0dcb466dfa047b29d82601a90c126c6dc6db1e45f1726dc1dbf6306585f19"
+  },
+  {
+    "name": "017_learned_skills.sql",
+    "sha256": "c893ce4087df291732d4aba6c382bc4536fb027e76adfd269a35d33cde403690"
+  },
+  {
+    "name": "018_thread_lifecycle.sql",
+    "sha256": "2f0caad65dde5466a6ccb52346453666d3f822f3db2828cc966a600cc1710f3a"
+  },
+  {
+    "name": "019_run_recovery.sql",
+    "sha256": "d4b51f38c577842d1e4403ba559fb7aa637d937deb81df68f370d32ad0b5936a"
+  },
+  {
+    "name": "020_session_continuity.sql",
+    "sha256": "16b78d1f6ca87ccc5a7e9666ca4e45785d53330345caaceaa5ea02a6fd183bf4"
+  },
+  {
+    "name": "021_schedule_results.sql",
+    "sha256": "a0406fcd7203079df1355ef2e1bca70be5ddf3134a44ccce4fc147fb51e2614b"
+  },
+  {
+    "name": "022_learned_route_lifecycle.sql",
+    "sha256": "03e67c76debf7cbf505c5428f0596ea901558bb2172c79b7406c536665847fcd"
+  },
+  {
+    "name": "023_schedule_comparison_reads.sql",
+    "sha256": "e3bc9020c1c3da454778a3f4c2ccf034e82db7b73929e0e031bc7e9c8a0b04e0"
+  }
+]

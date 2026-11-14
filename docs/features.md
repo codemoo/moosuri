@@ -297,3 +297,6 @@ F51/P8에 선택한 baseline과 recipient를 고정하는 주기적 SSH journal 
 기존 과거 복원을 실행한다. ACK 유실 재시도·오래된/fork 기록·중단된 게시를 검증했다.
 source 준비는 크기 제한만 있으며 종료 시 완료까지 기다릴 수 있다. 실제 off-host 배치,
 주기 사이의 변경과 무손실 최신 복구는 별도다. [계약](vault-journal-publication.md).
+
+F09/F16/P7의 키보드 건너뛰기·명시적 메뉴 이동 초점·현재 페이지 표시·삭제 후 초점 복귀를
+보완했다. 배경 갱신은 입력 초점을 유지한다. [검증](reviews/2026-11-15-workspace-navigation.md).

@@ -74,6 +74,9 @@ function server(
         return Promise.resolve(
           response({ selection: null, effective: null, choices: [] }),
         );
+      if (path === "/admin/invitations/") return Promise.resolve(response([]));
+      if (path === "/admin/invitations/sender")
+        return Promise.resolve(response({configured:false,from:null}));
       if (/^\/threads\/[^/]+\/messages/.test(path))
         return Promise.resolve(
           response({
@@ -108,6 +111,51 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+it("bypasses long navigation, marks only the destination and leaves draft focus alone on refresh", async () => {
+  const user = userEvent.setup();
+  server(path => path === "/threads" ? response({threads:[thread]})
+    : path === "/calendar/connections" ? response({configured:false,connections:[]})
+    : path === "/calendar/actions" ? response([]) : response({},204));
+  render(<StrictMode><App/></StrictMode>);
+  const composer = await screen.findByRole("textbox", {name:"메시지"});
+  await user.tab();
+  expect(screen.getByRole("link",{name:"작업 영역으로 건너뛰기"})).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("heading",{level:1,name:thread.title})).toHaveFocus();
+  await user.type(composer,"Keep this unsent draft");
+  await user.click(screen.getByRole("button",{name:/내 Calendar/}));
+  expect(await screen.findByRole("heading",{level:1,name:"내 Calendar"})).toHaveFocus();
+  expect(screen.getByRole("button",{name:thread.title})).not.toHaveAttribute("aria-current");
+  expect(screen.getByRole("button",{name:/내 Calendar/})).toHaveAttribute("aria-current","page");
+  await user.click(screen.getByRole("button",{name:"← 대화로"}));
+  expect(screen.getByRole("heading",{level:1,name:thread.title})).toHaveFocus();
+  const restored=await screen.findByRole("textbox",{name:"메시지"});
+  expect(restored).toHaveValue("Keep this unsent draft");
+  await user.click(restored);
+  fireEvent(window,new Event("focus"));
+  await waitFor(()=>expect(screen.getByRole("textbox",{name:"메시지"})).toHaveFocus());
+});
+
+it("moves mobile drawer navigation and deleted dialog controls to a visible destination", async () => {
+  const user=userEvent.setup();let removed=false;
+  server((path,init)=>path==="/threads"?response({threads:removed?[]:[thread]})
+    :init.method==="DELETE"?(removed=true,response({},204)):response({},204));
+  render(<App/>);
+  await screen.findByRole("button",{name:thread.title});
+  await user.click(screen.getByRole("button",{name:"Open conversations"}));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button",{name:thread.title}));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("heading",{level:1,name:thread.title})).toHaveFocus();
+  await user.click(screen.getByRole("button",{name:"Open conversations"}));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button",{name:`Delete ${thread.title}`}));
+  await user.click(screen.getByRole("button",{name:"Keep conversation"}));
+  expect(screen.getByRole("heading",{level:1,name:thread.title})).toHaveFocus();
+  await user.click(screen.getByRole("button",{name:`Delete ${thread.title}`}));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Delete conversation"}));
+  await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("heading",{level:1,name:"A new beginning"})).toHaveFocus();
+});
 
 it("keeps an uninitialized installation behind a safe operator setup instruction", async () => {
   const fetcher = vi.fn((_: string) =>

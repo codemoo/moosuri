@@ -91,11 +91,13 @@ function Modal({
   children,
   close,
   returnFocus,
+  fallbackFocus,
 }: {
   title: string;
   children: ReactNode;
   close: () => void;
   returnFocus?: HTMLElement | null;
+  fallbackFocus?: HTMLElement | null;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -107,8 +109,9 @@ function Modal({
     return () => {
       element.close();
       if (previous?.isConnected) previous.focus();
+      else if (fallbackFocus?.isConnected) fallbackFocus.focus({ preventScroll: true });
     };
-  }, [returnFocus]);
+  }, [returnFocus, fallbackFocus]);
   return (
     <dialog
       ref={ref}
@@ -717,7 +720,7 @@ function Workspace({
   session,
   draftSession,
   path,
-  navigate,
+  navigate: navigateParent,
   onLogout,
   onExpired,
 }: {
@@ -775,6 +778,17 @@ function Workspace({
   const [deleting, setDeleting] = useState<ThreadSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const historyOpener = useRef<HTMLButtonElement>(null);
+  const pageHeading = useRef<HTMLHeadingElement>(null);
+  const [navigationFocus, setNavigationFocus] = useState(0);
+  function navigate(destination: string) {
+    // Only deliberate navigation moves focus. Saved titles, streamed answers and
+    // the implicit creation of a sent conversation must not interrupt typing.
+    setNavigationFocus(value => value + 1);
+    navigateParent(destination);
+  }
+  useEffect(() => {
+    if (navigationFocus > 0) pageHeading.current?.focus({ preventScroll: true });
+  }, [navigationFocus]);
   const deleteOpener = useRef<HTMLButtonElement | null>(null);
   const admin =
     path === "/admin" || path === "/admin/providers" || path === "/admin/usage" || path === "/admin/google";
@@ -794,6 +808,9 @@ function Workspace({
   const artifactPage=path==="/app/artifacts"||path.startsWith("/app/artifacts/");
   const missionsPage = path === "/app/missions";
   const schedulesPage = path === "/app/schedules";
+  const chatPage = ![admin, personalUsage, knowledgeOpen, personalModel, calendarPage,
+    nativeCredentials, personalMail, personalSources, communitySkills, artifactPage,
+    missionsPage, schedulesPage].some(Boolean);
   const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -908,6 +925,7 @@ function Workspace({
       if (selected === deleting.id) setSelected(remaining[0]?.id ?? null);
       removeMemory(deleting.id);
       setDeleting(null);
+      setNavigationFocus(value => value + 1);
     } catch (e) {
       fail(e);
     } finally {
@@ -952,7 +970,7 @@ function Workspace({
         ) : (
           threads.map((thread) => (
             <div
-              className={`thread-row ${thread.id === selected && !admin && !personalModel && !personalUsage && !personalSources && !knowledgeOpen ? "active" : ""}`}
+              className={`thread-row ${thread.id === selected && chatPage ? "active" : ""}`}
               key={thread.id}
             >
               <button
@@ -963,12 +981,7 @@ function Workspace({
                   setDrawer(false);
                 }}
                 aria-current={
-                  thread.id === selected &&
-                  !admin &&
-                  !personalModel &&
-                  !personalUsage &&
-                  !personalSources &&
-                  !knowledgeOpen
+                  thread.id === selected && chatPage
                     ? "page"
                     : undefined
                 }
@@ -1024,7 +1037,7 @@ function Workspace({
           기억<span aria-hidden="true">↗</span>
         </button>
         <button
-          className={`nav-link ${personalModel ? "chosen" : ""}`}
+          className={`nav-link ${personalModel ? "chosen" : ""}`} aria-current={personalModel ? "page" : undefined}
           onClick={() => {
             navigate(personalModel ? "/app" : "/settings/model");
             setDrawer(false);
@@ -1043,15 +1056,15 @@ function Workspace({
         >
           자료 수집 연결<span aria-hidden="true">↗</span>
         </button>
-        <button className={`nav-link ${artifactPage?"chosen":""}`} onClick={()=>{navigate("/app/artifacts");setDrawer(false)}}>문서 · 목표 · 요청<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${communitySkills ? "chosen" : ""}`} onClick={()=>{navigate("/app/skills");setDrawer(false)}}>제안 · 할 수 있는 일<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${missionsPage?"chosen":""}`} onClick={()=>{navigate("/app/missions");setDrawer(false)}}>맡긴 일<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${artifactPage?"chosen":""}`} aria-current={artifactPage ? "page" : undefined} onClick={()=>{navigate("/app/artifacts");setDrawer(false)}}>문서 · 목표 · 요청<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${communitySkills ? "chosen" : ""}`} aria-current={communitySkills ? "page" : undefined} onClick={()=>{navigate("/app/skills");setDrawer(false)}}>제안 · 할 수 있는 일<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${missionsPage?"chosen":""}`} aria-current={missionsPage ? "page" : undefined} onClick={()=>{navigate("/app/missions");setDrawer(false)}}>맡긴 일<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${schedulesPage ? "chosen" : ""}`} aria-current={schedulesPage?"page":undefined} onClick={()=>{navigate("/app/schedules");setDrawer(false)}}>예약 · 소식<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${calendarPage?"chosen":""}`} onClick={()=>{navigate("/settings/calendar");setDrawer(false)}}>내 Calendar<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${nativeCredentials ? "chosen":""}`} onClick={()=>{navigate("/settings/credentials");setDrawer(false)}}>신뢰 기기 credential · 실험<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${personalMail ? "chosen" : ""}`} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${calendarPage?"chosen":""}`} aria-current={calendarPage ? "page" : undefined} onClick={()=>{navigate("/settings/calendar");setDrawer(false)}}>내 Calendar<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${nativeCredentials ? "chosen":""}`} aria-current={nativeCredentials ? "page" : undefined} onClick={()=>{navigate("/settings/credentials");setDrawer(false)}}>신뢰 기기 credential · 실험<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${personalMail ? "chosen" : ""}`} aria-current={personalMail ? "page" : undefined} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
         <button
-          className={`nav-link ${personalUsage ? "chosen" : ""}`}
+          className={`nav-link ${personalUsage ? "chosen" : ""}`} aria-current={personalUsage ? "page" : undefined}
           onClick={() => {
             navigate(personalUsage ? "/app" : "/settings/usage");
             setDrawer(false);
@@ -1062,7 +1075,7 @@ function Workspace({
         </button>
         {allowedAdmin && (
           <button
-            className={`nav-link ${admin ? "chosen" : ""}`}
+            className={`nav-link ${admin ? "chosen" : ""}`} aria-current={admin ? "page" : undefined}
             onClick={() => {
               navigate(admin ? "/app" : "/admin");
               setDrawer(false);
@@ -1095,6 +1108,10 @@ function Workspace({
   );
   return (
     <div className="workspace" ref={workspace}>
+      <a className="workspace-skip" href="#workspace-heading" onClick={event => {
+        event.preventDefault();
+        pageHeading.current?.focus({ preventScroll: true });
+      }}>작업 영역으로 건너뛰기</a>
       <aside className="sidebar">{history}</aside>
       <section className="work-area">
         <header className="work-header">
@@ -1116,8 +1133,8 @@ function Workspace({
                     ? "MY SETTINGS"
                     : "YOUR SPACE"}
             </span>
-            <h1>
-              {calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : schedulesPage ? "예약 · 소식" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
+            <h1 id="workspace-heading" ref={pageHeading} tabIndex={-1}>
+              {personalMail ? "내 Gmail" : nativeCredentials ? "신뢰 기기 연결" : calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : schedulesPage ? "예약 · 소식" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
                   ? "기억"
                   : "자료"
@@ -1330,6 +1347,7 @@ function Workspace({
         <Modal
           title="Delete conversation?"
           returnFocus={deleteOpener.current}
+          fallbackFocus={pageHeading.current}
           close={() => {
             if (!deleteBusy) setDeleting(null);
           }}

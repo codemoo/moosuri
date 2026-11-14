@@ -41,11 +41,11 @@ pub(crate) fn authority(c: &Connection, r: &Run) -> Result<()> {
         connected::withdraw_private(c, &r.tenant, &r.id)?;
         return Err(StoreError::Unauthorized);
     }
-    if mode == "current_session" {
-        if let Err(error) = crate::chat::authority(c, r) {
-            connected::withdraw_private(c, &r.tenant, &r.id)?;
-            return Err(error);
-        }
+    if mode == "current_session"
+        && let Err(error) = crate::chat::authority(c, r)
+    {
+        connected::withdraw_private(c, &r.tenant, &r.id)?;
+        return Err(error);
     }
     crate::recurring_missions::authority(c, r)?;
     if !connected::current(c, r)? {

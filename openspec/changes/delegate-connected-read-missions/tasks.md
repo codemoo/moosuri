@@ -4,4 +4,4 @@
 - [x] Preserve required domains/effects and truthful shared/personal capability wording.
 - [x] Fence logout/session/connection/parent/provider controls and private projections.
 - [x] Pass focused composed Store3/3 and actual loopback Runtime2/2 outcomes, web typecheck and strict OpenSpec validation.
-- [ ] Complete source-pinned independent review and root integration gate.
+- [x] Complete source-pinned independent review and root integration gate.

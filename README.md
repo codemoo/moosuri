@@ -6,7 +6,7 @@ A self-hosted assistant for individuals, families and friends.
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat with bounded tab-refresh draft recovery and older-conversation recall,
 private knowledge and memories, editable records, bounded
-read-only missions from chat or forms, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with provider drafts and approved fixed scheduled sends, bounded Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
+read-only missions from chat or forms, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with provider drafts and approved fixed scheduled sends, bounded Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
 opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
 The experimental [native credential companion](docs/native-credential-github.md)
@@ -40,7 +40,7 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 
 ## Use and configure
 
-- [Accounts](docs/account-management.md) · [onboarding](docs/onboarding.md) · [isolation](docs/accounts-isolation.md) · [model settings](docs/provider-settings.md) · [provider support](docs/providers.md).
+- [Accounts](docs/account-management.md) · [onboarding](docs/onboarding.md) · [isolation](docs/accounts-isolation.md) · [model settings](docs/provider-settings.md) · [provider support](docs/providers.md) · [server response timings](docs/run-timings.md).
 - [Chat](docs/chat.md) · [private knowledge](docs/knowledge.md) · [conversational memory](docs/conversational-memory.md) · [automatic extraction](docs/automatic-memory.md) · [documents, goals and followups](docs/artifacts.md).
 - [Task skills](docs/task-skills.md) · [private learned routes](docs/learned-skills.md) · [community packages](docs/community-skills.md) · [missions](docs/missions.md) · [reminders/inbox](docs/schedules.md) · [Web Push](docs/web-push.md).
 - [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [selected local work sessions](docs/local-work-sessions.md) · [public web research](docs/web-research.md) · [Japan Post tracking](docs/parcel-tracking.md) · [private browser workspaces](docs/browser-workspaces.md).

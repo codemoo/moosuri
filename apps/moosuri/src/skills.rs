@@ -28,6 +28,19 @@ pub(crate) enum Command {
     },
     /// Check local four-file content compatibility; does not install or execute.
     Check { directory: PathBuf },
+    /// Build static catalog artifacts from an exact public GitHub commit.
+    Catalog {
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        commit: String,
+        /// Explicit package directory; repeat for each selected package (maximum16).
+        #[arg(long = "package", required = true, num_args = 1)]
+        packages: Vec<String>,
+        /// New output directory with an existing parent; never overwritten.
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 type Result<T> = std::result::Result<T, String>;
 fn io_error(_: std::io::Error) -> String {
@@ -105,24 +118,142 @@ fn outside_installation(dir: &File) -> Result<()> {
     }
     Ok(())
 }
-fn directory(path: &Path) -> Result<File> {
-    let mut dir = OpenOptions::new()
+// A pinned chain is retained until publication/cleanup. Only root and this
+// effective UID may control names/modes; same-UID/root operator mutation is a
+// trusted boundary, not a threat that name-based rename can exclude.
+struct Directory {
+    chain: Vec<File>,
+}
+impl std::ops::Deref for Directory {
+    type Target = File;
+    fn deref(&self) -> &File {
+        self.chain.last().expect("directory chain includes root")
+    }
+}
+impl Directory {
+    fn recheck(&self) -> Result<()> {
+        for dir in &self.chain {
+            trusted_directory(dir)?;
+            outside_installation(dir)?;
+        }
+        Ok(())
+    }
+}
+fn trusted_mode(owner: libc::uid_t, mode: u32, current: libc::uid_t) -> bool {
+    (owner == 0 || owner == current) && (mode & 0o022 == 0 || mode & 0o1000 != 0)
+}
+fn trusted_directory(dir: &File) -> Result<()> {
+    let metadata = dir.metadata().map_err(io_error)?;
+    if !metadata.is_dir()
+        || !trusted_mode(metadata.uid(), metadata.mode(), unsafe { libc::geteuid() })
+    {
+        return Err("skills_untrusted_directory: require root/current-user owned ancestors without group/world write unless sticky".into());
+    }
+    supported_directory_acl(dir)
+}
+
+// macOS ACL grants can permit delete-child or permission changes independently
+// of Unix mode bits. Support deny-only ACLs (including the normal home-directory
+// delete denial); reject all grant ACLs instead of inferring principal trust.
+#[cfg(target_os = "macos")]
+fn supported_directory_acl(dir: &File) -> Result<()> {
+    unsafe extern "C" {
+        fn acl_get_fd_np(fd: libc::c_int, kind: libc::c_int) -> *mut libc::c_void;
+        fn acl_get_entry(
+            acl: *mut libc::c_void,
+            entry: libc::c_int,
+            result: *mut *mut libc::c_void,
+        ) -> libc::c_int;
+        fn acl_get_tag_type(entry: *mut libc::c_void, tag: *mut libc::c_int) -> libc::c_int;
+        fn acl_free(acl: *mut libc::c_void) -> libc::c_int;
+    }
+    struct Acl(*mut libc::c_void);
+    impl Drop for Acl {
+        fn drop(&mut self) {
+            unsafe {
+                acl_free(self.0);
+            }
+        }
+    }
+    let acl = unsafe { acl_get_fd_np(dir.as_raw_fd(), 0x100) }; // ACL_TYPE_EXTENDED
+    if acl.is_null() {
+        // Darwin reports ENOENT for a valid pinned directory with no extended
+        // ACL, including ordinary root ancestry. Other inspection failures fail.
+        if matches!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ENOENT | libc::ENOTSUP)
+        ) {
+            return Ok(());
+        }
+        return Err("skills_directory_acl: ACL inspection unavailable".into());
+    }
+    let acl = Acl(acl);
+    // Darwin returns -1/EINVAL at end-of-list. The descriptor yields a native
+    // valid ACL; cap entries rather than consuming an unbounded list.
+    for index in 0..=128 {
+        let mut entry = std::ptr::null_mut();
+        if unsafe { acl_get_entry(acl.0, if index == 0 { 0 } else { -1 }, &mut entry) } != 0 {
+            return if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINVAL) {
+                Ok(())
+            } else {
+                Err("skills_directory_acl: ACL inspection unavailable".into())
+            };
+        }
+        let mut tag = 0;
+        if index == 128 || unsafe { acl_get_tag_type(entry, &mut tag) } != 0 || tag != 2 {
+            return Err("skills_directory_acl: grant or unsupported directory ACL; choose an ordinary trusted directory".into());
+        }
+    }
+    Err("skills_directory_acl: unsupported ACL bounds".into())
+}
+// Reject Linux extended/default/NFSv4 ACLs rather than claiming that mode bits
+// describe every filesystem ACL policy. No attribute contents/principals leak.
+#[cfg(target_os = "linux")]
+fn supported_directory_acl(dir: &File) -> Result<()> {
+    for attribute in [
+        c"system.posix_acl_access",
+        c"system.posix_acl_default",
+        c"system.nfs4_acl",
+    ] {
+        if unsafe { libc::fgetxattr(dir.as_raw_fd(), attribute.as_ptr(), std::ptr::null_mut(), 0) }
+            >= 0
+        {
+            return Err("skills_directory_acl: extended directory ACL is unsupported; choose an ordinary trusted directory".into());
+        }
+        let error = std::io::Error::last_os_error().raw_os_error();
+        if error != Some(libc::ENODATA) && error != Some(libc::ENOTSUP) {
+            return Err("skills_directory_acl: ACL inspection unavailable".into());
+        }
+    }
+    Ok(())
+}
+fn directory(path: &Path) -> Result<Directory> {
+    let root = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open("/")
         .map_err(io_error)?;
-    outside_installation(&dir)?;
+    trusted_directory(&root)?;
+    outside_installation(&root)?;
+    let mut result = Directory { chain: vec![root] };
     for part in path.components() {
         match part {
             Component::Normal(value) => {
-                dir = open_at(&dir, &name(value)?, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
+                let dir = open_at(
+                    &result,
+                    &name(value)?,
+                    libc::O_RDONLY | libc::O_DIRECTORY,
+                    0,
+                )?;
+                trusted_directory(&dir)?;
                 outside_installation(&dir)?;
+                result.chain.push(dir);
             }
             Component::RootDir | Component::CurDir => (),
             _ => return Err("skills_invalid_path".into()),
         }
     }
-    Ok(dir)
+    Ok(result)
 }
 
 // Inventory uses the pinned descriptor, so renaming a path cannot redirect reads.
@@ -206,7 +337,7 @@ fn read_package(dir: &File) -> Result<BTreeMap<String, String>> {
 }
 
 struct Partial {
-    parent: File,
+    parent: Directory,
     name: CString,
     dir: File,
     files: Vec<(CString, libc::dev_t, libc::ino_t)>,
@@ -214,7 +345,8 @@ struct Partial {
 }
 impl Drop for Partial {
     fn drop(&mut self) {
-        if self.published {
+        if self.published || self.parent.recheck().is_err() || trusted_directory(&self.dir).is_err()
+        {
             return;
         }
         let Ok(own) = identity(&self.dir) else {
@@ -248,6 +380,8 @@ impl Drop for Partial {
     }
 }
 fn publish(partial: &Partial, destination: &CStr) -> Result<()> {
+    partial.parent.recheck()?;
+    trusted_directory(&partial.dir)?;
     let own = identity(&partial.dir)?;
     let current = stat_at(&partial.parent, &partial.name)?.ok_or("skills_staging_changed")?;
     if (current.st_dev, current.st_ino) != own {
@@ -280,9 +414,8 @@ fn publish(partial: &Partial, destination: &CStr) -> Result<()> {
     }
     Ok(())
 }
-fn init(slug: &str, output: Option<&Path>) -> Result<()> {
-    let files = skill_author::template(slug).map_err(|e| e.to_string())?;
-    let output = absolute(output.unwrap_or_else(|| Path::new(slug)))?;
+fn write_new_directory(files: &BTreeMap<String, String>, output: &Path) -> Result<()> {
+    let output = absolute(output)?;
     let destination = name(output.file_name().ok_or("skills_invalid_path")?)?;
     let parent = directory(output.parent().ok_or("skills_invalid_path")?)?;
     if stat_at(&parent, &destination)?.is_some() {
@@ -324,14 +457,57 @@ fn init(slug: &str, output: Option<&Path>) -> Result<()> {
     publish(&partial, &destination)?;
     partial.published = true;
     partial.parent.sync_all().map_err(io_error)?;
+    Ok(())
+}
+fn init(slug: &str, output: Option<&Path>) -> Result<()> {
+    let files = skill_author::template(slug).map_err(|e| e.to_string())?;
+    write_new_directory(&files, output.unwrap_or_else(|| Path::new(slug)))?;
     println!(
         "Created four synthetic authoring files. Edit and review them, then run moosuri skills check DIRECTORY. Nothing was installed or published remotely."
     );
     Ok(())
 }
-pub(crate) fn run(command: &Command) -> Result<()> {
+pub(crate) async fn run(command: &Command) -> Result<()> {
+    run_with_catalog(command, |selection| async move {
+        skill_author::catalog::generate(&selection)
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+// Private injection seam tests real dispatch on the existing Tokio runtime;
+// production always supplies the fixed adapter-backed generator above.
+async fn run_with_catalog<F, Fut>(command: &Command, generate: F) -> Result<()>
+where
+    F: FnOnce(skill_author::catalog::Selection) -> Fut,
+    Fut: std::future::Future<Output = Result<skill_author::catalog::Artifacts>>,
+{
     match command {
         Command::Init { slug, output } => init(slug, output.as_deref()),
+        Command::Catalog {
+            repository,
+            commit,
+            packages,
+            output,
+        } => {
+            let selection =
+                skill_author::catalog::Selection::new(repository, commit, packages.clone())
+                    .map_err(|e| e.to_string())?;
+            // Reject unusable/conflicting destinations before any public request.
+            let path = absolute(output)?;
+            let destination = name(path.file_name().ok_or("skills_invalid_path")?)?;
+            let parent = directory(path.parent().ok_or("skills_invalid_path")?)?;
+            if stat_at(&parent, &destination)?.is_some() {
+                return Err("skills_destination_exists: choose a new directory".into());
+            }
+            let artifacts = generate(selection).await?;
+            write_new_directory(artifacts.files(), output)?;
+            println!(
+                "Created {} immutable public package artifacts and catalog.json. No installation or remote publication occurred.",
+                artifacts.package_count()
+            );
+            Ok(())
+        }
         Command::Check { directory: path } => {
             let dir = directory(&absolute(path)?)?;
             let files = read_package(&dir)?;
@@ -355,6 +531,108 @@ pub(crate) fn run(command: &Command) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ancestor_trust_requires_owner_even_for_sticky_directories() {
+        let current = 1000;
+        for owner in [0, current] {
+            for mode in [0o700, 0o755, 0o1755, 0o1777] {
+                assert!(trusted_mode(owner, mode, current));
+            }
+            for mode in [0o770, 0o775, 0o777] {
+                assert!(!trusted_mode(owner, mode, current));
+            }
+        }
+        for mode in [0o700, 0o755, 0o1777] {
+            assert!(!trusted_mode(2000, mode, current));
+        }
+    }
+    #[test]
+    fn publication_rechecks_the_entire_pinned_chain_and_cleanup_fails_closed() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let ancestor = root.path().join("ancestor");
+        let nested = ancestor.join("nested");
+        std::fs::create_dir(&ancestor).unwrap();
+        std::fs::create_dir(&nested).unwrap();
+        let parent = directory(&nested).unwrap();
+        let stage = name(OsStr::new("owned-stage")).unwrap();
+        assert_eq!(
+            unsafe { libc::mkdirat(parent.as_raw_fd(), stage.as_ptr(), 0o700) },
+            0
+        );
+        let dir = open_at(&parent, &stage, libc::O_RDONLY | libc::O_DIRECTORY, 0).unwrap();
+        let partial = Partial {
+            parent,
+            name: stage,
+            dir,
+            files: vec![],
+            published: false,
+        };
+        // Even though the immediate parent and stage remain private, a changed
+        // earlier ancestor invalidates publication and conservative cleanup.
+        std::fs::set_permissions(&ancestor, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(
+            publish(&partial, &name(OsStr::new("release")).unwrap())
+                .unwrap_err()
+                .contains("skills_untrusted_directory")
+        );
+        drop(partial);
+        assert!(!nested.join("release").exists());
+        assert!(nested.join("owned-stage").is_dir());
+        std::fs::set_permissions(&ancestor, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    #[tokio::test]
+    async fn catalog_dispatch_awaits_on_existing_runtime_and_failed_acquisition_publishes_nothing()
+    {
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let output = root.path().join("public-release");
+        let command = Command::Catalog {
+            repository: "https://github.com/codemoo/moosuri".into(),
+            commit: "7f91c0ad8ef38049c5e0e601658da9b99b5f824e".into(),
+            packages: vec!["community/skills/source-briefing".into()],
+            output: output.clone(),
+        };
+        let result = run_with_catalog(&command, |_| async {
+            tokio::task::yield_now().await;
+            Err("skills_catalog: synthetic unavailable public source".into())
+        })
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            "skills_catalog: synthetic unavailable public source"
+        );
+        assert!(!output.exists());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+    #[test]
+    fn static_catalog_output_is_atomic_and_failure_preserves_existing_destinations() {
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let destination = root.path().join("catalog-release");
+        let files = BTreeMap::from([
+            ("catalog.json".into(), "{\"synthetic\":true}".into()),
+            (
+                "package-synthetic.json".into(),
+                "synthetic public package".into(),
+            ),
+        ]);
+        let mut fail = files.clone();
+        fail.insert(
+            "z\0invalid".into(),
+            "synthetic failure after first writes".into(),
+        );
+        assert!(write_new_directory(&fail, &destination).is_err());
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        write_new_directory(&files, &destination).unwrap();
+        assert!(write_new_directory(&fail, &destination).is_err());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+        for (name, text) in files {
+            assert_eq!(
+                std::fs::read_to_string(destination.join(name)).unwrap(),
+                text
+            );
+        }
+    }
     #[test]
     fn failed_staging_cleanup_removes_only_owned_inodes_and_preserves_unknown_paths() {
         let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();

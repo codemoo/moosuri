@@ -1,6 +1,8 @@
 //! Pure local package authoring compatibility. No installation, filesystem or IO.
 use super::*;
 
+pub mod catalog;
+
 pub const FILE_NAMES: [&str; 4] = FILES;
 pub const FILE_LIMIT: usize = 32 * 1024;
 pub const TOTAL_LIMIT: usize = 64 * 1024;

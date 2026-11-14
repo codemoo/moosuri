@@ -74,6 +74,24 @@ fn validate(envelope: Envelope) -> Result<Validated> {
     entry.external = Some(location);
     Ok(entry)
 }
+// The adapter's private carrier is the only production provenance input shared
+// by preview and static generation. Local author bytes cannot claim a commit.
+pub(super) fn downloaded(downloaded: DownloadedGitHubSkill) -> Result<Validated> {
+    let (source, commit, files) = downloaded.into_parts();
+    let slug = files
+        .get("SKILL.md")
+        .and_then(|s| s.lines().find_map(|line| line.strip_prefix("name: ")))
+        .ok_or(StoreError::InvalidInput)?
+        .to_owned();
+    validate(Envelope {
+        format_version: 2,
+        repository: source.repository().into(),
+        directory: source.directory().into(),
+        commit,
+        slug,
+        files,
+    })
+}
 pub(super) fn decode(json: &str) -> Result<Validated> {
     let value: serde_json::Value = serde_json::from_str(json).map_err(|_| StoreError::Corrupt)?;
     if value.get("format_version").is_some() {
@@ -106,20 +124,7 @@ impl Store {
         user: &UserContext,
         downloaded: DownloadedGitHubSkill,
     ) -> Result<CommunitySkillCard> {
-        let (source, commit, files) = downloaded.into_parts();
-        let slug = files
-            .get("SKILL.md")
-            .and_then(|s| s.lines().find_map(|line| line.strip_prefix("name: ")))
-            .ok_or(StoreError::InvalidInput)?
-            .to_owned();
-        let entry = validate(Envelope {
-            format_version: 2,
-            repository: source.repository().into(),
-            directory: source.directory().into(),
-            commit,
-            slug,
-            files,
-        })?;
+        let entry = self::downloaded(downloaded)?;
         let user = user.clone();
         self.call(move |db| preview(db, user, entry)).await
     }

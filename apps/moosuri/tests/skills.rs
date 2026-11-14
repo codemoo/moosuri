@@ -320,3 +320,224 @@ fn simultaneous_init_publishes_one_complete_package_without_replacement_or_parti
     assert_eq!(snapshot(&package).len(), 4);
     assert!(check(root.path(), &package).status.success());
 }
+
+#[test]
+fn catalog_cli_rejects_unverified_local_sources_and_conflicts_before_network() {
+    let root = root();
+    let output = root.path().join("release");
+    for commit in [
+        "main",
+        "private-canary",
+        "ABCDEFabcdefabcdefabcdefabcdefabcdefabcd",
+    ] {
+        let out = command(root.path())
+            .args([
+                "skills",
+                "catalog",
+                "--repository",
+                "https://github.com/codemoo/moosuri",
+                "--commit",
+                commit,
+                "--package",
+                "community/skills/source-briefing",
+                "--output",
+            ])
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("private-canary"));
+        rejected(out, "skills_catalog");
+        assert!(!output.exists());
+    }
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join("sentinel"), "synthetic unchanged bytes").unwrap();
+    let before = snapshot(&output);
+    rejected(
+        command(root.path())
+            .args([
+                "skills",
+                "catalog",
+                "--repository",
+                "https://github.com/codemoo/moosuri",
+                "--commit",
+                "7f91c0ad8ef38049c5e0e601658da9b99b5f824e",
+                "--package",
+                "community/skills/source-briefing",
+                "--output",
+            ])
+            .arg(&output)
+            .output()
+            .unwrap(),
+        "skills_destination_exists",
+    );
+    assert_eq!(snapshot(&output), before);
+    assert!(!root.path().join("missing-installation").exists());
+}
+
+#[test]
+fn authoring_rejects_mutable_ancestors_before_staging_or_public_acquisition() {
+    let root = root();
+    for mode in [0o770, 0o775, 0o777] {
+        let ancestor = root.path().join(format!("mutable-{mode:o}"));
+        let nested = ancestor.join("private-repository");
+        fs::create_dir(&ancestor).unwrap();
+        fs::create_dir(&nested).unwrap();
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(nested.join("Cargo.toml"), "synthetic ordinary repository").unwrap();
+        let existing = nested.join("existing");
+        assert!(
+            init(root.path(), "synthetic-summary", &existing)
+                .status
+                .success()
+        );
+        let original = snapshot(&existing);
+        fs::set_permissions(&ancestor, fs::Permissions::from_mode(mode)).unwrap();
+        let destination = nested.join("new-package");
+        rejected(
+            init(root.path(), "synthetic-summary", &destination),
+            "skills_untrusted_directory",
+        );
+        rejected(check(root.path(), &existing), "skills_untrusted_directory");
+        rejected(
+            command(root.path())
+                .args([
+                    "skills",
+                    "catalog",
+                    "--repository",
+                    "https://github.com/codemoo/moosuri",
+                    "--commit",
+                    "7f91c0ad8ef38049c5e0e601658da9b99b5f824e",
+                    "--package",
+                    "community/skills/source-briefing",
+                    "--output",
+                ])
+                .arg(&destination)
+                .output()
+                .unwrap(),
+            "skills_untrusted_directory",
+        );
+        assert!(!destination.exists());
+        assert_eq!(snapshot(&existing), original);
+        assert_eq!(
+            fs::metadata(&ancestor).unwrap().permissions().mode() & 0o7777,
+            mode
+        );
+        assert_eq!(fs::read_dir(&nested).unwrap().count(), 2);
+    }
+    assert!(!root.path().join("missing-installation").exists());
+}
+
+#[test]
+fn trusted_sticky_temp_with_owned_private_repository_allows_authoring() {
+    let root = root();
+    let sticky = root.path().join("trusted-sticky");
+    let repository = sticky.join("owned-repository");
+    fs::create_dir(&sticky).unwrap();
+    fs::set_permissions(&sticky, fs::Permissions::from_mode(0o1777)).unwrap();
+    fs::create_dir(&repository).unwrap();
+    fs::set_permissions(&repository, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::create_dir(repository.join(".git")).unwrap();
+    let package = repository.join("new-package");
+    assert!(
+        init(root.path(), "synthetic-summary", &package)
+            .status
+            .success()
+    );
+    assert!(check(root.path(), &package).status.success());
+    assert_eq!(snapshot(&package).len(), 4);
+    assert_eq!(
+        fs::metadata(&sticky).unwrap().permissions().mode() & 0o7777,
+        0o1777
+    );
+    assert_eq!(
+        fs::metadata(&repository).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+}
+
+#[test]
+fn foreign_owned_nested_ancestors_reject_even_if_sticky_when_test_can_set_uid() {
+    // The policy matrix runs without privileges; root's Linux gate additionally
+    // executes this real filesystem case and the separate distinct-UID probe.
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let root = root();
+    for mode in [0o755, 0o1777] {
+        let foreign = root.path().join(format!("foreign-{mode:o}"));
+        let nested = foreign.join("root-owned-child");
+        fs::create_dir(&foreign).unwrap();
+        fs::create_dir(&nested).unwrap();
+        fs::set_permissions(&foreign, fs::Permissions::from_mode(mode)).unwrap();
+        let cpath =
+            std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(foreign.as_os_str()))
+                .unwrap();
+        assert_eq!(unsafe { libc::chown(cpath.as_ptr(), 65534, !0) }, 0);
+        let output = nested.join("output");
+        rejected(
+            init(root.path(), "synthetic-summary", &output),
+            "skills_untrusted_directory",
+        );
+        assert!(!output.exists());
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_grant_acl_is_explicitly_unsupported_while_deny_only_acl_allows_authoring() {
+    let root = root();
+    let parent = root.path().join("acl-parent");
+    fs::create_dir(&parent).unwrap();
+    let output = parent.join("package");
+    assert!(
+        Command::new("/bin/chmod")
+            .args(["+a", "everyone allow delete_child"])
+            .arg(&parent)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let denied = init(root.path(), "synthetic-summary", &output);
+    assert!(
+        Command::new("/bin/chmod")
+            .arg("-N")
+            .arg(&parent)
+            .status()
+            .unwrap()
+            .success()
+    );
+    rejected(denied, "skills_directory_acl");
+    assert!(!output.exists());
+    assert!(
+        Command::new("/bin/chmod")
+            .args(["+a", "everyone deny delete"])
+            .arg(&parent)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let allowed = init(root.path(), "synthetic-summary", &output);
+    assert!(
+        Command::new("/bin/chmod")
+            .arg("-N")
+            .arg(&parent)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        allowed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    // The parent's deny-only ACL may be inherited by generated files; remove
+    // only that synthetic tree's ACLs so TempDir can perform ordinary cleanup.
+    assert!(
+        Command::new("/bin/chmod")
+            .args(["-R", "-N"])
+            .arg(&output)
+            .status()
+            .unwrap()
+            .success()
+    );
+}

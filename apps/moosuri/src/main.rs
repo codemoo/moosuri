@@ -173,7 +173,7 @@ fn main() {
 }
 async fn run(cli: Cli) -> Result<(), String> {
     if let Command::Skills { command } = &cli.command {
-        return skills::run(command);
+        return skills::run(command).await;
     }
     if let Command::Backup {
         command: BackupCommand::Keygen { output },

@@ -22,7 +22,7 @@
 
 v1은 같은 `moosuri` repository의 `community/skills/<slug>/`를 기본 기여 위치로 한다. 작성자는 template→SKILL.md/호환 정보/합성 예제→PR 순서로 기여한다. 처음부터 별도 registry 운영팀·DB·배포 서버를 요구하지 않는다. public GitHub 링크를 직접 추가하는 고급 경로도 제공하되 curated 목록과 구분한다. private GitHub 인증은 후속이며 공개 공유의 선행 조건이 아니다.
 
-source catalog는 Git에서 관리하고 release job이 exact commit+package digest를 가진 static index와 패키지를 만든다. index 자신의 commit을 같은 commit 안에 자기 참조로 넣지 않는다. 생성 index는 release artifact다. 서비스는 설정된 catalog source만 자동 갱신하고 사용자가 고른 패키지만 받는다. 기여자 GitHub PR merge가 사용자 설치/업데이트를 자동 수행하지 않는다. 실제 repo 공개·release publish는 이번 문서 작업에서 수행하지 않는다.
+source catalog는 Git에서 관리하고 `moosuri skills catalog`가 선택한 exact public commit+package digest를 가진 static index와 패키지를 만든다. index 자신의 commit을 같은 commit 안에 자기 참조로 넣지 않는다. 생성 index는 release artifact다. 서비스는 설정된 catalog source만 자동 갱신하고 사용자가 고른 패키지만 받는다. 기여자 GitHub PR merge가 사용자 설치/업데이트를 자동 수행하지 않는다. 실제 repo 공개·release publish는 이번 문서 작업에서 수행하지 않는다.
 
 기본 기여는 small recipe로 충분하다. core 도구/권한/설치 형식 변경은 OpenSpec change와 Rust adapter PR, 기존 도구를 조합하는 ordinary skill 추가는 간단한 skill PR+예제로 처리한다. 모든 스킬마다 무거운 제안서4개를 요구하지 않는다. capability/schema가 바뀌는 경우만 새 계약을 논의한다.
 
@@ -82,7 +82,7 @@ disable/remove는 새 사용을 막고 종속 예약을 needs_skill로 멈춘다
 
 SQLite0011은 immutable 공개 snapshot과 사용자별 active/previous pointer, enabled/hidden/revision을 저장한다. snapshot staging과 pointer 변경은 같은 SQLite transaction으로 원자적이다. 활성판 변경은 새 run에만 적용되며 기존 run의 exact pin과 기존 tool profile은 유지한다. disable은 새 admission을 막는다. remove는 해당 사용자에게 이미 admit된 관련 run을 취소하고 agent 상태를 invalidate하며 durable retry 철회를 남긴다. 늦은 실행·출력은 기존 lease/state fence로 막고 외부 receipt나 완료한 effect는 삭제하지 않는다. 공개 snapshot은 진행 run의 identity를 위해 유지하며 GC는 아직 없다.
 
-자동 catalog 다운로드/업데이트·정적 release 생성기·외부 Git 주소·예약 needs_skill·수정본 fork·portable lockfile·개인 학습 재구성/export는 후속이다. 이번 단위를 그 전체 구현으로 표시하지 않는다.
+자동 catalog 다운로드/업데이트·예약 needs_skill·수정본 fork·portable lockfile·개인 학습 재구성/export는 후속이다. 이번 단위를 그 전체 구현으로 표시하지 않는다.
 
 같은 이름의 bundled 절차는 최초 managed 설치 시 단일 community pin으로 대체한다. disable/remove tombstone은 이후 새 run에서 bundled twin까지 discovery에서 제외하며 native 도구 권한 자체는 바꾸지 않는다. 다시 추가하면 복구한다. 버전이 바뀌어도 tombstone/숨김은 source+subdirectory identity로 유지한다.
 
@@ -96,7 +96,7 @@ Git subprocess·archive·redirect 대신 고정 `api.github.com`의 commit/tree/
 
 외부 envelope2와 stable opaque ID는 정규화한 repository+directory를 포함한다. 같은 표시 이름을 고른 다른 제작자나 다른 하위 경로가 서로 덮어쓰지 않는다. 외부 원본은 bundled 절차를 대체하지 않는다. 기존 curated envelope/hash/pin은 재작성하지 않으며, 이미 admit된 run은 원래 package bytes·metadata·tool profile을 유지한다. 다운로드는 SQLite writer 밖에서 수행하고 download 뒤와 activation 때 각각 currentUserContext를 다시 검증한다. 새 schema migration은 없다. 사용자당64개 외부 identity(tombstone 포함)까지만 보관하며 공개 staging cache의 GC는 후속이다.
 
-private GitHub 인증·범용 SKILL import·archive·스크립트·자동 갱신/정적 release 생성·개인 학습 export·cache GC는 아직 지원하지 않는다.
+private GitHub 인증·범용 SKILL import·archive·스크립트·자동 갱신/정적 release 게시·개인 학습 export·cache GC는 아직 지원하지 않는다.
 
 
 ## 로컬 작성 CLI
@@ -107,6 +107,25 @@ private GitHub 인증·범용 SKILL import·archive·스크립트·자동 갱신
 
 현재 capability 이름은 `knowledge_search`, `knowledge_read_source`, `knowledge_read_memory`, `decimal_calculate`, `mail_search`, `mail_read`, `mail_thread`, `mail_prepare_draft`, `web_read`다. sidecar는 기존 계약의 single-line JSON scalar/array 부분 문법을 쓰며 unknown key·capability는 거절한다. 확인 결과는 파일 형식·호환성일 뿐 안전성·저작권·작업 성공 인증이 아니다. 진단은 파일/규칙을 설명하고 원문·credential을 출력하지 않는다.
 
-두 명령은 data-dir 해석과 Store open 전에 실행하므로 설치·계정·서버가 필요 없다. 저장소 안의 일반 작성 경로는 허용하지만 `..`·symlink 경로·app-data marker가 있는 경로/하위 경로는 거절하며 다른 tree의 권한을 바꾸지 않는다. init은 새 sibling staging에 네 파일을 완성·sync한 뒤 Linux/macOS no-replace rename으로 게시하고 parent를 sync한다. 기존 목적지는 덮어쓰지 않는다. 실패 정리는 만든 inode가 같은 파일만 제거하며 모르는 내용은 보존한다. 게시 후 parent sync 오류에서는 완성된 목적지가 이미 있을 수 있으므로 검사한다.
+init/check와 catalog는 data-dir 해석과 Store open 전에 실행하므로 설치·계정·서버가 필요 없다. 저장소 안의 일반 작성 경로는 허용하지만 `..`·symlink 경로·app-data marker가 있는 경로/하위 경로는 거절하며 다른 tree의 권한을 바꾸지 않는다. 기존 ancestor는 모두 root 또는 현재 effective UID 소유여야 하고 group/world writable이면 sticky여야 한다. root/current-user 소유 sticky temp 아래에서도 각 child 소유권을 계속 확인하며 다른 UID 소유 sticky 디렉터리는 허용하지 않는다. pinned ancestor descriptor chain을 유지하고 게시·실패 정리 전에 다시 검사한다. root/같은 UID의 동시 경로·권한 변경은 신뢰한 운영자 경계다. macOS는 deny-only ACL만 지원하고 grant ACL은 거절한다. Linux는 extended/default/NFSv4 ACL이 검출되면 지원하지 않는 경로로 거절하며 ACL 조회 실패도 진단한다. 알려진 로컬 Unix 소유권·mode/ACL 정책 밖의 filesystem 권한을 포괄적으로 인증하지 않는다. init은 새 sibling staging에 네 파일을 완성·sync한 뒤 Linux/macOS no-replace rename으로 게시하고 parent를 sync한다. 기존 목적지는 덮어쓰지 않는다. 실패 정리는 만든 inode가 같은 파일만 제거하며 모르는 내용은 보존한다. 게시 후 parent sync 오류에서는 완성된 목적지가 이미 있을 수 있으므로 검사한다.
 
-작성자는 파일을 직접 편집·검토하고 원하는 commit/PR/push를 수행한다. 이 CLI는 Git subprocess·network·설치·실행·자동 게시를 하지 않는다. 이후 사용자는 기존 GitHub UI에서 exact commit snapshot을 선택하며 기존 도구 권한은 늘지 않는다. release/catalog generator·private-learning export·설치 snapshot 직접 수정·GC는 계속 후속이다. [작성 안내](../community/README.md)와 [합성 검증 기록](reviews/2026-11-13-community-authoring.md)을 따른다.
+작성자는 파일을 직접 편집·검토하고 원하는 commit/PR/push를 수행한다. 이 CLI는 Git subprocess·network·설치·실행·자동 게시를 하지 않는다. 이후 사용자는 기존 GitHub UI에서 exact commit snapshot을 선택하며 기존 도구 권한은 늘지 않는다. private-learning export·설치 snapshot 직접 수정·GC는 계속 후속이다. 정적 산출물 생성은 아래 별도 명령을 따른다. [작성 안내](../community/README.md)와 [합성 검증 기록](reviews/2026-11-13-community-authoring.md)을 따른다.
+
+
+## 정적 catalog 산출물 생성
+
+```sh
+moosuri skills catalog --repository https://github.com/codemoo/moosuri \
+  --commit 7f91c0ad8ef38049c5e0e601658da9b99b5f824e \
+  --package community/skills/source-briefing \
+  --package community/skills/evidence-comparison \
+  --output ./public-release
+```
+
+기여자는 네 파일을 check하고 평소 Git 검토·commit·PR·push를 마친 뒤 실제 공개된40자리 소문자 commit과 명시한1–16개 디렉터리를 선택한다. branch/tag·로컬 파일·사용자가 입력한 SHA에 로컬 bytes를 붙이는 경로는 없다. 고정 공개 GitHub adapter가 commit/tree/blob를 확인하고 요청 commit과 응답 commit이 같을 때만 생성한다. 미커밋 변경은 읽지 않는다. 잘못된 commit·추가 파일·symlink/executable·변조 blob·지원하지 않는 license/capability는 기존 취득/installer 검증에서 실패한다. 인터넷이 필요하며 private 인증·proxy·cookie·개인 설치/학습/credential 접근은 없다.
+
+결과는 새 디렉터리의 `catalog.json`과 `package-<content_digest>.json`이다. 선택 디렉터리 순으로 정렬하며 시간·로컬 경로·index 자체의 commit은 넣지 않아 같은 공개 bytes/선택이면 동일하다. package는 기존 external envelope2와 동일하며 source repository+directory+commit+이름+네 파일의 길이 구분 SHA-256이 `content_digest`다. `artifact_sha256`은 JSON 파일 bytes의 별도 SHA-256이다. 예를 들어 `shasum -a 256 public-release/package-*.json` 결과를 index의 해당 `artifact_sha256`과 비교하고, source_commit·선택 디렉터리·license/capability·파일을 검토한다. 해시는 안전성·권리·진위 서명이나 실행 성공 증명이 아니다. 여섯 curated envelope1/pin과 `community/catalog-pins.json`은 재작성하지 않는다.
+
+패키지별 기존12요청/2MiB/30초·파일32KiB/합계64KiB, 전체16패키지/120초/8MiB 산출물 제한을 적용한다. 모든 취득·검증이 끝난 뒤 init과 같은 trusted ancestor descriptor/no-replace 원자 게시로 완성 디렉터리를 만든다. 기존 init/check도 같은 소유권·writable/sticky·지원 ACL 경로 경계를 적용한다. 실패 시 기존 목적지와 활성 설치본은 유지하며 다운로드 중에는 output을 만들지 않는다. 게시 후 parent sync 실패에서는 완성 목적지가 이미 있을 수 있어 검사한다. 진단은 고정된 규칙·상태만 표시한다.
+
+이 명령은 로컬 release 파일 생성까지만 한다. 사용자가 검토한 파일을 배포하는 GitHub release/job·자동 게시·서버 catalog 자동 소비/갱신은 없다. 현재 사용 가능한 설치 경로는 계속 GitHub 원본 UI에서 같은 repository/directory/exact commit을 확인하고 추가하는 것이다. 생성 index를 앱 data-dir에 복사하거나 설치 snapshot/내장 pin을 고쳐 활성화하지 않는다. 개인 학습 재구성/export는 별도 미구현 범위다.

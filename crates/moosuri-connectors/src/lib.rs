@@ -13,3 +13,5 @@ pub mod browser;
 pub mod push;
 
 pub mod chatgpt_oauth;
+
+pub mod invitation;

@@ -1,3 +1,4 @@
+import {InvitationEmail} from "./InvitationEmail";
 import { fenceIncomingShares } from "./share-state";
 import { refreshShareSession } from "./share-intake";
 import { IncomingShareNotice } from "./IncomingShare";
@@ -1528,7 +1529,7 @@ function Admin({
           </button>
         </form>
         <p className="fine">
-          No email is sent. The new member must change their password on first
+          Creating an account sends no email. Optional email delivery needs a separate final preview approval. The member must change their password on first
           sign-in.
         </p>
       </section>
@@ -1575,6 +1576,7 @@ function Admin({
           </ul>
         )}
       </section>
+      <InvitationEmail accountId={accountId} onExpired={onExpired}/>
       {invitation && (
         <Modal
           title={invitation.reset ? "A new password, just once." : "An invitation, just once."}
@@ -1605,6 +1607,7 @@ function Admin({
             member must choose a new password after signing in.
           </p>
           {copyError && <Notice>{copyError}</Notice>}
+          {invitation.revision!==null && <InvitationEmail key={`${invitation.user.id}:${invitation.revision}`} accountId={accountId} onExpired={onExpired} target={{account_id:invitation.user.id,revision:invitation.revision,temporary_password:invitation.temporary_password}}/>}
           <div className="dialog-actions">
             <button
               className="secondary"

@@ -841,6 +841,7 @@ mod plan_tool_probe_tests {
             config,
             logins: Arc::new(Mutex::new(HashMap::new())),
             probes: Arc::new(tokio::sync::Semaphore::new(2)),
+            invitation_sends: Arc::new(tokio::sync::Semaphore::new(1)),
             delivery: runtime.delivery_gate(),
             streams: Arc::new(Mutex::new(HashMap::new())),
             mail: runtime.mail_service(),

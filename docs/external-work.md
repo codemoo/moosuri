@@ -119,3 +119,15 @@ timing. Provider draft IDs never select send bytes; the existing local revision,
 full preview, frozen MIME and one durable send commitment remain mandatory.
 Timing changes revoke approval. See [mail](mail.md) and the
 [workflow delta](../openspec/changes/gmail-drafts-and-scheduled-send/design.md).
+
+
+## System invitation email
+
+Admin invitation delivery is a separate fixed-content effect with encrypted pending
+snapshot, original admin/session and target credential/revision fences. It never
+uses model-visible personal mail drafts for temporary passwords. Every invocation
+requires the full People preview and explicit final approval. The optional native
+gws sender uses only explicitly configured operator credentials; creation/copy flow
+survives mail failure. Commitment/unknown is never automatically resent. See
+[onboarding](onboarding.md#선택-시스템-초대-발신자) and
+[invitation design](../openspec/changes/admin-invitation-email/design.md).

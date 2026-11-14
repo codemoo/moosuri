@@ -94,6 +94,17 @@ enum Command {
         /// Owner-only Google OAuth web client JSON file; never pass a secret on the CLI.
         #[arg(long)]
         google_client_file: Option<PathBuf>,
+        /// Explicit native gws binary for system invitations; no ambient authentication.
+        #[arg(long,requires_all=["invitation_gws_credentials","invitation_gws_config","invitation_from"])]
+        invitation_gws: Option<PathBuf>,
+        /// Dedicated operator-owned0600 gws credentials; never a credential value.
+        #[arg(long, requires = "invitation_gws")]
+        invitation_gws_credentials: Option<PathBuf>,
+        /// Dedicated existing0700 gws directory; current user's default is never reused.
+        #[arg(long, requires = "invitation_gws")]
+        invitation_gws_config: Option<PathBuf>,
+        #[arg(long, requires = "invitation_gws")]
+        invitation_from: Option<String>,
         /// Optional owner-only Brave Search key file; public HTTP reading needs no key.
         #[arg(long)]
         web_search_key_file: Option<PathBuf>,
@@ -373,6 +384,10 @@ async fn run(cli: Cli) -> Result<(), String> {
             trusted_proxy,
             client_ip_header,
             google_client_file,
+            invitation_gws,
+            invitation_gws_credentials,
+            invitation_gws_config,
+            invitation_from,
             web_search_key_file,
             browser_capsule_file,
             community_catalog_repository,
@@ -403,6 +418,16 @@ async fn run(cli: Cli) -> Result<(), String> {
             if let Some(proxy) = trusted_proxy {
                 config = config
                     .with_trusted_proxy(proxy, &client_ip_header)
+                    .map_err(str::to_owned)?;
+            }
+            if let (Some(executable), Some(credentials), Some(directory), Some(from)) = (
+                invitation_gws,
+                invitation_gws_credentials,
+                invitation_gws_config,
+                invitation_from,
+            ) {
+                config = config
+                    .with_invitation_sender(executable, credentials, directory, from)
                     .map_err(str::to_owned)?;
             }
             if let Some(path) = google_client_file {

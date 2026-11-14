@@ -115,6 +115,14 @@ export type BrowserControl = { workspace: BrowserWorkspaceView,
  */
 control_token: string, };
 export type BrowserFrame = { workspace_id: string, revision: number, frame_token: string, png_base64: string, width: number, height: number, url: string, };
+export type InvitationDelivery = { id: string, account_id: string, state: string, digest: string, expires_at: number, from: string, to: string, subject: string, text: string | null, provider_message_id: string | null, };
+export type InvitationPreviewInput = { request_id: string, account_id: string, expected_revision: number,
+/**
+ * Available only from the one-time creation/reset UI. Not recoverable later.
+ */
+temporary_password: string | null, };
+export type InvitationApproval = { digest: string, };
+export type InvitationSenderStatus = { configured: boolean, from: string | null, };
 export type MailConnection = { compose_enabled: boolean, id: string, email: string, epoch: number, status: string, };
 export type MailConnections = { configured: boolean, connections: Array<MailConnection>, };
 export type MailReply = { thread_id: string, in_reply_to: string, references: Array<string>, };

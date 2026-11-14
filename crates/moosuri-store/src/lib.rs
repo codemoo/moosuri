@@ -13,6 +13,8 @@ pub mod vault_authority;
 pub use schedules::ReminderLease;
 mod calendar;
 pub use calendar::*;
+mod invitations;
+pub use invitations::InvitationDispatch;
 mod accounts;
 mod share_origin;
 pub use accounts::{AccountManagementResult, PreparedAccountManagement};
@@ -211,7 +213,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 42;
+const CURRENT_SCHEMA_VERSION: i64 = 43;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -639,6 +641,14 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 43 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0043_invitation_delivery.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        invitations::restart(&conn)?;
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         audio::restart(&conn)?;
         calendar::restart(&conn)?;
@@ -834,6 +844,7 @@ impl Store {
             db.poisoned = true;
             let record = db.journal.append(&current.account.id, next_epoch)?;
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            invitations::invalidate(&tx,&current.account.id)?;
             let changed = tx.execute("UPDATE accounts SET password_hash=?1, must_change_password=0, temporary_expires_at=NULL, auth_epoch=?2, management_revision=management_revision+1 WHERE id=?3 AND auth_epoch=?4 AND recovery_required=0", params![hash, next_epoch, current.account.id, current.epoch])?;
             if changed != 1 { return Err(StoreError::Unauthorized); }
             tx.execute("DELETE FROM sessions WHERE tenant_id=?1 AND account_id=?2", params![current.tenant.0, current.account.id])?;

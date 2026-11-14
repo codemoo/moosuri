@@ -1,6 +1,6 @@
 # 설치·관리자·사용자 흐름
 
-목표는 **설치 한 번, 웹 설정 몇 단계**다. 아래 통합 초기 마법사는 목표 명세다. 현재 `init`/`serve`, 계정·로그인·로컬 초대, 웹 모델 설정과 Google 설치 설정을 사용할 수 있다. [개발 실행 안내](development.md)를 따른다. `/admin/google`의 [Google 마법사](mail.md)는 콜백 복사·웹 클라이언트 JSON 등록·본인 연결 확인을 제공한다. 각 회원의 Google 동의와 메일함은 분리되며 초대 이메일 발송·통합 웹 bootstrap·일반 설치 패키지는 아직 미구현이다.
+목표는 **설치 한 번, 웹 설정 몇 단계**다. 아래 통합 초기 마법사는 목표 명세다. 현재 `init`/`serve`, 계정·로그인·로컬 초대, 웹 모델 설정과 Google 설치 설정을 사용할 수 있다. [개발 실행 안내](development.md)를 따른다. `/admin/google`의 [Google 마법사](mail.md)는 콜백 복사·웹 클라이언트 JSON 등록·본인 연결 확인을 제공한다. 각 회원의 Google 동의와 메일함은 분리되며 선택한 시스템 발신자의 초대 이메일은 아래 별도 최종 확인 흐름을 제공한다. 통합 웹 bootstrap·일반 설치 패키지는 아직 미구현이다.
 
 ## 설치 방식
 
@@ -14,7 +14,7 @@
 2. **최초 관리자:** 이름·이메일·비밀번호를 입력한다. 비밀번호 생략 시 충분한 난수의 임시 비밀번호를1회 보여준다. DB에는 Argon2id 해시만 저장하고 `must_change_password=true`다. 설치 중 비밀번호 입력은 terminal echo/log·URL·shell history에 남기지 않는다. 임시 비밀번호의1회 표시는 인증된 setup UI 또는 controlling TTY로만 전달하며 stdout/stderr·로그 수집 출력에 섞지 않는다. TTY 없는 설치는 권한을 제한한 입력 파일/FD로 비밀번호를 제공하고 자동 생성 비밀을 로그에 출력하지 않는다.
 3. **LLM 연결:** OpenAI API, Anthropic API, OpenRouter, local/compatible endpoint, 지원되는 ChatGPT plan 연결, Claude 공식 개인 실행 연결을 고른다. [providers](providers.md)의 지원 제한을 그대로 표시한다. 나중에 설정할 수도 있다.
 4. **기본 모델·effort:** 실제 연결에서 읽은 model catalog와 probe 결과로 선택한다. 이전 사용자의 private 이전은 기존 Terra/high 선택을 보존하고, 새 설치에서 없는 모델을 강제로 지정하지 않는다. effort 미지원은 숨기거나 설명한다.
-5. **초대 메일:** Google 계정 연결을 선택하면 gws 기반 시스템 발신자를 준비한다. 최소 Gmail 발송 scope·현재 계정을 확인한다. 건너뛰어도 로컬 초대 정보 전달로 계정을 만들 수 있다.
+5. **초대 메일:** 운영자가 별도 gws 시스템 발신자를 명시적으로 설정한다. 현재 구현은 아래 CLI 설정이며 통합 웹 OAuth 마법사는 미구현이다. 설정한 발신 주소·credential의 유효성은 운영자가 관리하고 설정됨을 실제 Google 계정/scope 확인 완료로 표시하지 않는다. 건너뛰어도 로컬 초대 정보 전달로 계정을 만들 수 있다.
 6. **백업 설정(선택):** public recipient를 등록하거나 백업 복구 묶음을1회 내보내 서버 밖에 보관한다. 별도 복사본으로 작은 합성 암호문을 여는 검사를 거쳐 자동 backup을 켠다. 건너뛰면 unconfigured로 표시하며 일반 앱 사용은 가능하다. 사용자 vault master를 요구하거나 이 묶음에 넣지 않는다. 키 소유·교체·복원 입력은 [백업 설계](architecture.md)의 계약을 따른다.
 7. **완료:** 사용자 앱 `/app`과 관리자 `/admin` 주소, backup 상태·계정/연결 상태를 보여준다. admin 외 계정은 자동 생성하지 않는다.
 
@@ -58,3 +58,48 @@ Ollama·LM Studio·vLLM preset과 generic base URL을 제공한다. server가 �
 ## 개인 Google Calendar 연결
 
 설치 Google OAuth 웹 앱과 callback은 한 번 준비한다. Calendar를 쓰면 같은 프로젝트에서 Google Calendar API도 사용 설정한다. 각 사용자는 [내 Google Calendar](calendar.md)에서 별도 scope로 동의한다. 기존 Gmail 연결이 Calendar 허용을 뜻하지 않으며 Gmail token을 재사용하지 않는다. 모델 연결 없이도 직접 양식으로 사용한다.
+
+
+## 선택 시스템 초대 발신자
+
+운영자는 별도 native **gws0.22.5**와 최소 `gmail.send` scope의 전용 credential을 준비한다.
+이 저장소나 현재 Mac의 기존 로그인은 자동 사용하지 않는다. npm의 JavaScript wrapper
+대신 내려받은 실제 native gws binary의 절대 경로를 지정한다. credential JSON은0600,
+전용 gws 설정·임시 발송 디렉터리는0700이며 symlink final path는 받지 않는다.
+사용자 개인 Gmail/모델 연결과 별개다.
+
+```sh
+moosuri --data-dir /private/moosuri serve --origin https://YOUR-HOST \
+  --invitation-gws /private/bin/gws \
+  --invitation-gws-credentials /private/invitation/credentials.json \
+  --invitation-gws-config /private/invitation/gws \
+  --invitation-from system@example.com
+```
+
+설정이 없거나 발송 실패해도 계정 생성·일회 암호 복사는 유지된다. 이 옵션은 운영자가
+지정한 발신자라는 뜻이며 Google profile/scope의 실계정 검증 완료 표시가 아니다.
+gws/Google OAuth의 설치·로그인·credential 회전은 운영자가 별도로 수행한다.
+다른 gws 버전은 send 전에 거절하며 해당 버전의 native 입력/재시도 동작을 별도 검토해야 한다.
+
+**People**에서 계정을 만들거나 명시적으로 암호를 재발급하면 기존 일회 암호 창에
+**초대 이메일**이 나타난다. 암호 포함은 선택 사항이다. **전체 내용 준비**는 이름·계정
+이메일·로그인 URL·credential 만료·전체 본문과 From/To/Cc/Bcc/첨부 없음을 보여준다.
+보낸다고 한 사용자 메시지나 계정 생성만으로 발송하지 않으며 **전체 내용을 허락하고
+초대 이메일 보내기**를 눌러야 한다. 임시 암호는 현재 credential과 일치하는지 검사한 뒤
+서버 관리 키로 암호화해 최대15분 동안 이 확인본에 보관한다. 다른 로그인이나 관리자는
+이 확인본의 암호를 복구하거나 허락할 수 없다. 만료·reset·계정 정지/삭제·암호 변경은
+미발송 권한과 저장 payload를 제거한다. 복원은 미발송 초대를 만료시킨다.
+
+같은 credential epoch에는 발송 효과가 하나뿐이며 새 UUID로 중복 발송할 수 없다.
+실제 native invocation 전에 commitment를 저장하고 payload를 제거한다. **Gmail 발송
+접수**는 message ID를 받았다는 뜻이며 상대 수신·열람 확인은 아니다. gws 시작 뒤 실패,
+응답 유실·중단은 **발송 결과 불명**이다. People의 상태 새로 읽기는 조회만 하며 재발송하지
+않는다. send-only 권한으로 Sent 확인을 만들지 않는다. 재초대하려면 명시적으로 새 암호를
+발급해 이전 credential을 폐기하고 새 전체 확인을 거쳐야 한다.
+
+실제 발송은 gws의 문서화된 native `--upload`로0600 MIME 파일을 읽는다. 본문·암호는
+argv/로그에 넣지 않는다. 새0700 임시 디렉터리는 완료·오류·timeout 뒤 Rust가 제거한다.
+강제 종료 중 남은 일시 평문 파일은 전용 발신자를 다음에 시작할 때 정리한다. 물리 디스크
+즉시 삭제나 평문 없는 dispatch라고 주장하지 않으므로 전용 디렉터리를 보호해야 한다.
+실계정 연결·scope·이메일 발송은 별도 운영자 설정과 구체적 사용자 허락으로 검증할 영역이다.
+[변경 설계](../openspec/changes/admin-invitation-email/design.md)를 따른다.

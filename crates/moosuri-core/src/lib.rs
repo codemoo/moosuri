@@ -26,6 +26,8 @@ mod web;
 pub use web::*;
 mod browser;
 pub use browser::*;
+mod invitations;
+pub use invitations::*;
 mod mail;
 pub use mail::*;
 mod media;
@@ -200,6 +202,10 @@ pub fn typescript_contract() -> String {
         BrowserWorkspaceStatus::decl(),
         BrowserControl::decl(),
         BrowserFrame::decl(),
+        InvitationDelivery::decl(),
+        InvitationPreviewInput::decl(),
+        InvitationApproval::decl(),
+        InvitationSenderStatus::decl(),
         MailConnection::decl(),
         MailConnections::decl(),
         MailReply::decl(),

@@ -9,6 +9,7 @@ mod chat;
 mod community_skills;
 mod credential_broker;
 mod google_setup;
+mod invitations;
 mod knowledge;
 mod mail;
 mod media;
@@ -87,6 +88,7 @@ pub struct ServerConfig {
     browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
     vault_origin: Option<String>,
     pdf_extractor: Option<std::path::PathBuf>,
+    invitation_sender: Option<moosuri_connectors::invitation::GwsInvitationSender>,
     audio: moosuri_connectors::audio::AudioClient,
     community_catalog: Option<moosuri_connectors::github_catalog::CatalogSource>,
     #[cfg(feature = "test-fixtures")]
@@ -130,6 +132,7 @@ impl ServerConfig {
             browser: None,
             vault_origin: None,
             pdf_extractor: None,
+            invitation_sender: None,
             audio: moosuri_connectors::audio::AudioClient::default(),
             community_catalog: None,
             #[cfg(feature = "test-fixtures")]
@@ -251,6 +254,21 @@ impl ServerConfig {
             .map(|reader| reader.deployment_pin().to_owned());
         Store::open_with_web(path, profile)
     }
+    pub fn with_invitation_sender(
+        mut self,
+        executable: std::path::PathBuf,
+        credentials: std::path::PathBuf,
+        config_dir: std::path::PathBuf,
+        from: String,
+    ) -> Result<Self, &'static str> {
+        self.invitation_sender = Some(moosuri_connectors::invitation::GwsInvitationSender::new(
+            executable,
+            credentials,
+            config_dir,
+            from,
+        )?);
+        Ok(self)
+    }
     pub fn start_runtime(&self, store: Store) -> moosuri_agent::Runtime {
         moosuri_agent::Runtime::start_with_google_setup(
             store,
@@ -284,6 +302,7 @@ struct AppState {
     config: ServerConfig,
     logins: Arc<Mutex<LoginBuckets>>,
     probes: Arc<tokio::sync::Semaphore>,
+    invitation_sends: Arc<tokio::sync::Semaphore>,
     runtime: moosuri_agent::Runtime,
     delivery: Arc<tokio::sync::RwLock<()>>,
     streams: Arc<Mutex<HashMap<String, usize>>>,
@@ -310,6 +329,7 @@ pub fn router_with_runtime(
         config,
         logins: Arc::new(Mutex::new(HashMap::new())),
         probes: Arc::new(tokio::sync::Semaphore::new(2)),
+        invitation_sends: Arc::new(tokio::sync::Semaphore::new(1)),
         delivery: runtime.delivery_gate(),
         runtime,
         streams: Arc::new(Mutex::new(HashMap::new())),
@@ -374,6 +394,7 @@ pub fn router_with_runtime(
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/vault", get(vault::status))
         .route("/api/v1/vault/handoff", post(vault::handoff))
+        .nest("/api/v1/admin/invitations", invitations::routes())
         .route("/api/v1/admin/users", get(users).post(create_user))
         .route("/api/v1/admin/users/{id}/manage", post(accounts::manage))
         .route(

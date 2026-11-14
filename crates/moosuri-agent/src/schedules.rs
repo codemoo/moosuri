@@ -5,6 +5,7 @@ pub(crate) async fn worker(store: Store, signals: Signals) {
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {biased;_=signals.stop.cancelled()=>break,_=tick.tick()=>{}}
+        let _ = store.expire_invitation_deliveries().await;
         if store.enqueue_scheduled_reminders().await.is_err() {
             continue;
         }

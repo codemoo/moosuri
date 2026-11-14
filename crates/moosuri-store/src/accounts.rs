@@ -227,6 +227,7 @@ impl Store {
             let changed = tx.execute("UPDATE accounts SET auth_epoch=?1,management_revision=?2 WHERE id=?3 AND auth_epoch=?4 AND management_revision=?5 AND recovery_required=0",params![epoch,revision,account_id,old_epoch,target.revision])?;
             if changed != 1 { return Err(StoreError::Conflict); }
             if matches!(input.action, AccountManagementAction::Delete) { mark_deleted(&tx, &account_id, epoch)?; }
+            crate::invitations::invalidate(&tx,&account_id)?;
             enqueue_lifecycle(&tx, &account_id, epoch, matches!(input.action, AccountManagementAction::Delete))?;
             tx.execute("DELETE FROM sessions WHERE tenant_id=?1 AND account_id=?2", params![tenant,account_id])?;
             tx.execute("INSERT INTO account_management_receipts(actor_id,request_id,target_id,request_digest,resulting_revision,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![actor.account.id,input.request_id,account_id,hash.as_slice(),revision,time])?;
@@ -255,6 +256,8 @@ pub(crate) fn enqueue_lifecycle(
     Ok(())
 }
 pub(crate) fn mark_deleted(conn: &Connection, id: &str, epoch: i64) -> Result<()> {
+    crate::invitations::invalidate(conn, id)?;
+    conn.execute("UPDATE invitation_deliveries SET payload=NULL,from_address='',to_address='',subject='',provider_message=NULL WHERE target_id=?1 OR actor_id=?1",[id])?;
     conn.execute("INSERT OR IGNORE INTO account_deletions SELECT id,tenant_id,?1,'pending' FROM accounts WHERE id=?2", params![now()?,id])?;
     conn.execute("UPDATE accounts SET deleted=1,status='suspended',recovery_required=1,role='member',name='Deleted account',email=?1,password_hash='deleted',must_change_password=0,temporary_expires_at=NULL,auth_epoch=MAX(auth_epoch,?2) WHERE id=?3",params![format!("deleted-{id}@invalid.invalid"),epoch,id])?;
     conn.execute("DELETE FROM sessions WHERE account_id=?1", [id])?;

@@ -104,6 +104,9 @@ async fn fixture() -> Fixture {
   ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],format!("data: {text}\n\ndata: {done}\n\ndata: [DONE]\n\n")).into_response()
  }))
  .route("/v1/responses",post(|State(s):State<Arc<Provider>>,headers:axum::http::HeaderMap,Json(body):Json<Value>|async move{
+  if s.tool_mode.load(Ordering::SeqCst)>=30 {
+    return missions_tests::response(&s,&headers,&body).await;
+  }
   if body.get("tools").is_some() && s.tool_mode.load(Ordering::SeqCst)>=20 {
     return calendar_tests::response(&s,&headers,&body).await;
   }
@@ -1704,3 +1707,6 @@ async fn historical_forward_personal_proof_and_final_chat_use_new_allowance_with
     assert!(store.usage_summary(&owner).await.is_err());
     assert_eq!(f.state.models.load(Ordering::SeqCst), 2);
 }
+
+#[path = "missions_tests.rs"]
+mod missions_tests;

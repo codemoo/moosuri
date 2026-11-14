@@ -255,3 +255,9 @@ P9 adds the [schema23 relation adapter](legacy-relations.md): exact source contr
 current source/memory/plain artifact projections, source-row accounting and private
 reconciliation. It does not infer missing revision history or resume old authority.
 Operator export, production comparison and full cutover remain separate.
+
+개인 ChatGPT의 별도 text/tool proof를 통과한 모델로 명시적 일회·반복 읽기 업무를
+위임할 수 있다(P2/P5). 기존 owner grant·회차·사용량·취소/철회 경계를 재사용하며
+추가 단계별 승인 창을 만들지 않는다. 대화 등록은 새로 수락한 실행에만 적용한다.
+메일/일정 쓰기·browser/vault·Claude background는 이 범위가 아니다.
+[개인 읽기 업무 검증](reviews/2026-11-15-personal-chatgpt-missions.md).

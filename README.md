@@ -65,7 +65,10 @@ support saved reads, exact calculation and the existing connected read/local-dra
 Explicit current-user memory changes and source-grounded record creation/anchored edits
 use typed local operations and stored confirmations. Personal Calendar also supports
 explicit primary-calendar timed solo-event creation, same-day edits and deletion
-through the existing typed service. Media and background work remain pending.
+through the existing typed service. Explicit one-off and recurring read-only missions
+can use the owner's separately verified personal model after logout, including
+delegated Gmail/primary Calendar reads. Media, automatic memory extraction and
+mission writes/browser/vault execution remain pending.
 An optional [official Claude Code text connection](docs/claude-execution.md) provides
 owner settings, an exact-model probe and saved chat through a separate pinned
 rootless Linux execution profile. Actual official login and production-profile

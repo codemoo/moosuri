@@ -10,7 +10,7 @@ use moosuri_core::{
 /// Reject clear required effects; this conservative gate never grants an action.
 pub(crate) fn unsupported_effect(text: &str) -> bool {
     let lower = text.to_lowercase();
-    let (mail, calendar) = moosuri_core::mission_read_domains(&lower);
+    let (mail, _) = moosuri_core::mission_read_domains(&lower);
     let lower = lower
         .replace("do not send", "")
         .replace("don't send", "")
@@ -66,7 +66,9 @@ pub(crate) fn unsupported_effect(text: &str) -> bool {
         ]
         .iter()
         .any(|w| compact.contains(w));
-    mail && (delivery && !local || draft) || calendar && calendar_write
+    // The write predicate already requires an event/meeting/Calendar noun.
+    // A direct "create a meeting" must not need the extra word "Calendar".
+    mail && (delivery && !local || draft) || calendar_write
 }
 pub(crate) fn admit_profile(
     c: &Connection,

@@ -1469,3 +1469,39 @@ async fn request_continuation_rejects_daily_expansion_and_keeps_weekly_scope_wit
     assert_eq!(time, "09:00");
     assert_eq!(timezone, "Asia/Seoul");
 }
+
+#[test]
+fn implicit_english_intervals_preserve_exact_unit_and_numeric_control() {
+    for (quote, seconds) in [
+        ("Every minute", 60),
+        ("every hour", 3600),
+        ("Every 2 minutes", 120),
+    ] {
+        let mut d = decision(quote, true);
+        d.time_quote = Some(quote.into());
+        d.time = Some(MissionChatTime::Interval { seconds });
+        assert!(civil_consistent(&d, 1700000000, "UTC"), "{quote}");
+        d.time = Some(MissionChatTime::Interval {
+            seconds: seconds + 60,
+        });
+        assert!(
+            !civil_consistent(&d, 1700000000, "UTC"),
+            "mismatched duration: {quote}"
+        );
+    }
+    for quote in [
+        "Every minute",
+        "every hour",
+        "every second",
+        "every minute or hour",
+        "every morning",
+    ] {
+        let mut d = decision(quote, true);
+        d.time_quote = Some(quote.into());
+        d.time = Some(MissionChatTime::Relative { seconds: 60 });
+        assert!(
+            !civil_consistent(&d, 1700000000, "UTC"),
+            "must not infer a relative delay: {quote}"
+        );
+    }
+}

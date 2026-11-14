@@ -190,7 +190,7 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
             continue;
         }
         let choice: ModelChoice = decode(&model)?;
-        if providers::binding_for_choice(c, key, &choice).is_err() {
+        if crate::missions::require_model(c, key, &t, &account, &choice).is_err() {
             c.execute("UPDATE reminder_schedules SET state='paused',reason='provider_unavailable',revision=revision+1 WHERE tenant_id=?1 AND id=?2",params![t,schedule])?;
             c.execute("UPDATE reminder_occurrences SET state='skipped',reason='provider_unavailable',updated_at=?3 WHERE tenant_id=?1 AND id=?2",params![t,occurrence,time])?;
             fence_children(c, &t, &schedule)?;
@@ -324,7 +324,7 @@ pub(crate) fn create_owner_in(
     if !choice.function_tools {
         return Err(StoreError::InvalidInput);
     }
-    providers::binding_for_choice(tx, key, &choice)?;
+    crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &choice)?;
     let profile = crate::missions::connected::admit_profile(
         tx,
         u,
@@ -386,7 +386,7 @@ pub(crate) fn control_owner_in(
             return Err(StoreError::Conflict);
         }
         skills::resume_eligible(tx, &u.tenant.0, id)?;
-        providers::binding_for_choice(tx, key, &old.model)?;
+        crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &old.model)?;
     }
     let changed = crate::schedules::control_recurring_in(tx, u, id, &input, now()?)?;
     if changed.revision != old.schedule.revision {
@@ -405,7 +405,7 @@ pub(crate) fn edit_owner_in(
 ) -> Result<RecurringMissionView> {
     let old = view(tx, u, id)?;
     skills::resume_eligible(tx, &u.tenant.0, id)?;
-    providers::binding_for_choice(tx, key, &old.model)?;
+    crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &old.model)?;
     input.draft.message = "예약한 읽기 업무".into();
     crate::schedules::edit_recurring_in(tx, u, id, &input, now()?)?;
     fence_children(tx, &u.tenant.0, id)?;

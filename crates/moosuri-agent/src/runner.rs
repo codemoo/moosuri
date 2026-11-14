@@ -710,7 +710,7 @@ pub(crate) async fn execute_with_calendar(
 ) {
     match store.mission_execution(&claimed.lease).await {
         Ok(Some(_)) => {
-            mission::execute(store, claimed, signals, mail, web).await;
+            mission::execute(store, claimed, signals, mail, web, subscriptions).await;
             return;
         }
         Ok(None) => {}
@@ -960,7 +960,7 @@ pub(crate) async fn execute_with_calendar(
             .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
     }
     if personal && model.function_tools {
-        request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. One explicit current-user solo-event Calendar command uses its separate typed action and actual receipt. Background delegation and media attachments remain unavailable; do not claim to perform them.");
+        request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. One explicit current-user solo-event Calendar command uses its separate typed action and actual receipt. Background work requires an original explicit owner mission delegation and its durable grant; foreground tools alone grant none. Media attachments remain unavailable.");
     }
     // A write grant supports saved-evidence provenance only. Keep this common
     // across personal/shared providers; undeclared calls fail in the decoder.

@@ -26,6 +26,25 @@ pub(crate) fn is_mission(c: &Connection, t: &str, r: &str) -> Result<bool> {
         |r| r.get(0),
     )?)
 }
+/// A saved exact tool proof is transport capability, not background authority.
+/// The original owner mission grant below remains the execution authority.
+pub(crate) fn require_model(
+    c: &Connection,
+    key: &[u8; 32],
+    tenant: &str,
+    account: &str,
+    choice: &moosuri_core::ModelChoice,
+) -> Result<()> {
+    if !choice.function_tools
+        || !matches!(
+            choice.source,
+            moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalChatGpt
+        )
+    {
+        return Err(StoreError::Forbidden);
+    }
+    providers::binding_for_owner_choice(c, key, tenant, account, choice).map(|_| ())
+}
 pub(crate) fn authority(c: &Connection, r: &Run) -> Result<()> {
     let (state,mode,enabled,revision,expiry):(String,String,bool,i64,i64)=c.query_row("SELECT state,mode,grant_enabled,revision,expires_ms FROM missions WHERE tenant_id=?1 AND run_id=?2 AND account_id=?3 AND auth_epoch=?4",params![r.tenant,r.id,r.account,r.epoch],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::Unauthorized)?;
     let eligible:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE tenant_id=?1 AND id=?2 AND auth_epoch=?3 AND status='active' AND recovery_required=0 AND must_change_password=0 AND (temporary_expires_at IS NULL OR temporary_expires_at>?4))",params![r.tenant,r.account,r.epoch,now()?],|r|r.get(0))?;
@@ -734,7 +753,7 @@ pub(crate) fn create_owner_in(
     if global >= 16 {
         return Err(StoreError::Busy);
     }
-    providers::binding_for_choice(tx, key, &choice)?;
+    require_model(tx, key, &u.tenant.0, &u.account.id, &choice)?;
     let profile = connected::admit_profile(tx, u, &input, read_profile(profile))?;
     let mut model = serde_json::to_value(choice).map_err(|_| StoreError::InvalidInput)?;
     model["agent_profile"] = serde_json::to_value(profile).map_err(|_| StoreError::InvalidInput)?;
@@ -783,7 +802,7 @@ pub(crate) fn preflight_control_guard(
     if carrier.epoch != u.epoch {
         return Err(StoreError::Unauthorized);
     }
-    providers::binding_for_choice(tx, key, &carrier.model)?;
+    require_model(tx, key, &u.tenant.0, &u.account.id, &carrier.model)?;
     crate::agent_execution::guard_execution(tx, &carrier)
 }
 pub(crate) fn control_owner_in(
@@ -852,7 +871,7 @@ pub(crate) fn control_owner_in(
                     return Err(StoreError::Unauthorized);
                 }
             }
-            providers::binding_for_choice(tx, key, &carrier.model)?;
+            require_model(tx, key, &u.tenant.0, &u.account.id, &carrier.model)?;
             crate::agent_execution::guard_execution(tx, &carrier)?;
             let mut steering = current.steering;
             if let MissionAction::Steer { instruction } = &input.action {

@@ -45,6 +45,7 @@ pub(super) async fn execute(
     signals: Signals,
     mail: crate::mail::MailService,
     web: crate::web::Service,
+    subscriptions: crate::subscriptions::SubscriptionService,
 ) {
     let AgentClaim {
         lease,
@@ -63,15 +64,26 @@ pub(super) async fn execute(
         .take()
         .map(|v| Secret::new(v.to_string()))
         .transpose();
-    let client = match credential.and_then(|credential| {
-        model_client(
-            &binding.config,
-            credential,
-            TextCapabilities {
-                efforts: capabilities.efforts.clone(),
-            },
-        )
-    }) {
+    let built = if let Some(reference) = binding.subscription.clone() {
+        subscriptions
+            .client(
+                moosuri_store::SubscriptionAuthority::Run(lease.clone()),
+                reference,
+            )
+            .await
+            .map_err(|_| TransportError::InvalidConfiguration)
+    } else {
+        credential.and_then(|credential| {
+            model_client(
+                &binding.config,
+                credential,
+                TextCapabilities {
+                    efforts: capabilities.efforts.clone(),
+                },
+            )
+        })
+    };
+    let mut client = match built {
         Ok(v) => v,
         Err(e) => {
             let (s, e) = transport_failure(e);
@@ -166,6 +178,34 @@ pub(super) async fn execute(
             Ok(v) => v,
             Err(_) => return,
         };
+        // Token readiness/rotation is authorized by the same owner mission
+        // lease before each new inference; this never retries a dispatched call.
+        if let Some(reference) = binding.subscription.clone() {
+            client = match subscriptions
+                .client(
+                    moosuri_store::SubscriptionAuthority::Run(lease.clone()),
+                    reference,
+                )
+                .await
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    finish(
+                        &store,
+                        &lease,
+                        None,
+                        RunState::Failed,
+                        Some(RunFailure::ProviderUnavailable),
+                        &signals,
+                    )
+                    .await;
+                    return;
+                }
+            };
+        }
+        if signals.stopping().is_cancelled() {
+            return;
+        }
         let planning = execution.view.plan.is_empty();
         let mut request = TextRequest {
             model: binding.model.clone(),
@@ -199,16 +239,15 @@ pub(super) async fn execute(
             results: &[],
         };
         let valid = if planning {
-            encode_request(wire, &request, &capabilities)
+            if client.responses_dialect()
+                == moosuri_connectors::model::chatgpt::ResponsesDialect::ChatGptPlan
+            {
+                moosuri_connectors::model::chatgpt::encode_text_request(&request, &capabilities)
+            } else {
+                encode_request(wire, &request, &capabilities)
+            }
         } else {
-            encode_tool_request(
-                wire,
-                &tools,
-                &capabilities,
-                &ToolCapabilities {
-                    function_tools: true,
-                },
-            )
+            preflight_tools(&client, wire, &tools, &capabilities)
         };
         if valid.is_err() {
             finish(

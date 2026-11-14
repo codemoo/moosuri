@@ -107,7 +107,7 @@ pub(crate) fn admit(c: &Connection, r: &Run) -> Result<()> {
         |row| row.get(0),
     )?;
     if selected.is_none()
-        && r.model.source == ModelSource::Shared
+        && crate::missions::chat::commands_allowed(r)
         && task_control_candidate(&r.text)
     {
         let receipt: Option<String> = c

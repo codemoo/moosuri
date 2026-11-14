@@ -103,6 +103,7 @@ pub(super) struct Run {
     pub(super) text: String,
     pub(super) model: ModelChoice,
     pub(super) tool_profile: Option<moosuri_core::RunToolProfile>,
+    pub(super) mission_commands_enabled: bool,
     pub(super) session: [u8; 32],
     pub(super) epoch: i64,
     pub(super) attempt: i32,
@@ -117,6 +118,8 @@ struct StoredRunChoice {
     model: ModelChoice,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     agent_profile: Option<moosuri_core::RunToolProfile>,
+    #[serde(default)]
+    mission_commands_enabled: bool,
 }
 fn json<T: serde::Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|_| StoreError::Corrupt)
@@ -194,6 +197,7 @@ pub(super) fn load_run(conn: &Connection, tenant: &str, id: &str) -> Result<Run>
         text: r.6,
         model: choice.model,
         tool_profile: choice.agent_profile,
+        mission_commands_enabled: choice.mission_commands_enabled,
         session: r.8.try_into().map_err(|_| StoreError::Corrupt)?,
         epoch: r.9,
         attempt: r.10,
@@ -1041,7 +1045,7 @@ fn submit_turn_context_in(
         }
     }
     let order = next_order(tx)?;
-    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { agent_profile: choice.function_tools.then(||crate::web::admitted_profile(tx,&user,web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
+    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { mission_commands_enabled: choice.source == moosuri_core::ModelSource::PersonalChatGpt && choice.function_tools, agent_profile: choice.function_tools.then(||crate::web::admitted_profile(tx,&user,web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
     crate::run_timings::admit(tx, &user.tenant.0, &id, 1)?;
     for (ordinal, media) in attachments.iter().enumerate() {
         tx.execute(

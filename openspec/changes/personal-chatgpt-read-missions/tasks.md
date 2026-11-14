@@ -1,0 +1,8 @@
+- [x] Owner-aware exact personal proof for one-off/recurring admission and control
+- [x] Existing mission lease, official plan wire and durable inference accounting
+- [x] New explicit personal command admission with old-run scope preserved
+- [x] Focused actual Runtime official-protocol and connected-read gates passed (R0 Linux2, R1 native repaired natural flow)
+- [x] Exact every-minute/hour interval admission and numeric/mismatched-unit regression
+- [x] Scoped final-source agent/store all-target Clippy passed natively
+- [x] Document grant/capability distinction and supported scope
+- [x] Focused R2 Linux tests/Clippy, joined embedded-web binary build and independent authority review

@@ -93,6 +93,8 @@ fn authorize(
                 || r.model.source != ModelSource::PersonalChatGpt
                 || r.model.provider_id != b.id
                 || r.model.provider_revision != b.revision
+                || r.model.model != b.model
+                || r.model.effort != b.effort
             {
                 return Err(StoreError::Unauthorized);
             }

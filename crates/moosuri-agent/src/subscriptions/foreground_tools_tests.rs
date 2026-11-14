@@ -2,7 +2,7 @@
 use super::*;
 use moosuri_core::{ModelChoice, ModelSelection};
 
-fn final_wire(text: &str) -> String {
+pub(super) fn final_wire(text: &str) -> String {
     let item = json!({"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":text,"annotations":[]}]});
     [json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"m","role":"assistant","content":[]}}),json!({"type":"response.content_part.added","item_id":"m","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}),json!({"type":"response.output_text.delta","item_id":"m","output_index":0,"content_index":0,"delta":text}),json!({"type":"response.output_text.done","item_id":"m","output_index":0,"content_index":0,"text":text}),json!({"type":"response.content_part.done","item_id":"m","output_index":0,"content_index":0,"part":{"type":"output_text","text":text,"annotations":[]}}),json!({"type":"response.output_item.done","output_index":0,"item":item}),json!({"type":"response.completed","response":{"id":"r","model":"fixture-model","status":"completed","output":[item],"usage":{"input_tokens":8,"output_tokens":2}}})].iter().map(|e|format!("data: {e}\n\n")).collect()
 }

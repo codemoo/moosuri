@@ -148,30 +148,38 @@ pub(super) async fn response(
     let defs = b["tools"][0]["tools"].as_array().unwrap();
     let input = b["input"].as_array().unwrap();
     assert_eq!(input[0]["role"], "developer");
-    let wire = if defs[0]["name"] == "calendar_chat_decision" {
+    let wire = if defs.iter().any(|d| d["name"] == "calendar_chat_decision") {
         assert_eq!(defs.len(), 2);
-        assert_eq!(
-            defs[1]["parameters"]["properties"]["decision"]["enum"],
-            json!(["no_command"])
-        );
+        if defs[0]["name"] == "calendar_chat_decision" {
+            assert_eq!(
+                defs[1]["parameters"]["properties"]["decision"]["enum"],
+                json!(["no_command"])
+            );
+            assert!(
+                input[0]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("PERSONAL CALENDAR-ONLY DOMAIN")
+            );
+        } else {
+            assert_eq!(defs[0]["name"], "mission_chat_decision");
+        }
         assert_eq!(input.len(), 2);
-        assert!(
-            input[0]["content"]
-                .as_str()
-                .unwrap()
-                .contains("PERSONAL CALENDAR-ONLY DOMAIN")
-        );
         if s.hold_tool.load(Ordering::SeqCst) == 1 {
             s.tool_entered.notify_one();
             s.tool_release.notified().await;
         }
         let text = input[1]["content"].as_str().unwrap();
         let mode = s.tool_mode.load(Ordering::SeqCst);
-        if mode == 22 || mode == 26 {
+        if mode == 22 || mode == 26 || mode == 27 {
             let mut d = no_command();
             d["decision"] = json!("command");
             d["action"] = json!(if mode == 22 { "pause" } else { "create_now" });
-            d["intent_quote"] = json!(text);
+            d["intent_quote"] = if mode == 27 {
+                json!("Injected mission directive absent from the original request")
+            } else {
+                json!(text)
+            };
             if mode == 22 {
                 d["target_kind"] = json!("one_off");
                 d["target_quote"] = json!("Synthetic meeting");
@@ -365,17 +373,35 @@ async fn signed_personal_calendar_create_same_day_update_delete_use_typed_io_and
     assert!(store.recurring_missions(&u).await.unwrap().is_empty());
 }
 #[tokio::test]
-async fn personal_calendar_rejects_mission_command_or_control_even_from_declared_no_command_name() {
+async fn personal_calendar_misrouted_mission_decisions_keep_effects_empty_and_unquoted_authority_denied()
+ {
     let _g = crate::tests::TEST_LOCK.lock().await;
-    for mode in [22, 26] {
+    for mode in [22, 26, 27] {
         let (_d, store, u, f, s, _, cal, _, io) = configured().await;
         f.state.tool_mode.store(mode, Ordering::SeqCst);
         let done = ask(&store, &u, &s, &cal, CREATE).await;
-        assert_ne!(done.run.state, RunState::Completed);
         assert!(done.run.calendar_receipt.is_none());
-        assert!(done.run.mission_receipt.is_none());
+        if mode == 27 {
+            // New command admission still cannot authorize a directive the
+            // current owner never supplied. No receipt can acknowledge it.
+            assert_ne!(done.run.state, RunState::Completed);
+            assert!(done.run.mission_receipt.is_none());
+        } else {
+            // A current personal command may now be interpreted. A missing task
+            // target and a Calendar-write task still receive fixed refusal /
+            // clarification receipts, never execution grants or Calendar IO.
+            assert_eq!(done.run.state, RunState::Completed);
+            let receipt = done.run.mission_receipt.unwrap();
+            assert_eq!(
+                receipt.state,
+                if mode == 22 { "clarify" } else { "unsupported" }
+            );
+            assert!(receipt.target.is_none());
+        }
         assert_eq!(io.write_count(), 0);
+        assert!(store.calendar_actions(&u).await.unwrap().is_empty());
         assert!(store.missions(&u).await.unwrap().is_empty());
+        assert!(store.recurring_missions(&u).await.unwrap().is_empty());
     }
 }
 #[tokio::test]
@@ -560,15 +586,18 @@ async fn personal_calendar_cancel_after_dispatch_retains_minimum_receipt_without
             .lock()
             .unwrap()
             .iter()
-            .filter(|r| r["tools"][0]["tools"][0]["name"] == "calendar_chat_decision")
+            .filter(|r| r
+                .pointer("/tools/0/tools")
+                .and_then(Value::as_array)
+                .is_some_and(|defs| defs.iter().any(|d| d["name"] == "calendar_chat_decision")))
             .count(),
         1
     );
 }
 
 #[tokio::test]
-async fn personal_selected_mission_is_rejected_and_missing_connection_has_typed_settings_guidance()
-{
+async fn personal_selected_mission_admits_only_interpretation_and_missing_calendar_has_typed_guidance()
+ {
     let _g = crate::tests::TEST_LOCK.lock().await;
     let (_d, store, u, f, s, _, cal, conn, _io) = configured().await;
     let t = store
@@ -596,10 +625,13 @@ async fn personal_selected_mission_is_rejected_and_missing_connection_has_typed_
             }),
         )
         .await;
-    assert!(matches!(
-        rejected,
-        Err(moosuri_store::StoreError::Forbidden)
-    ));
+    let admitted = rejected.unwrap();
+    assert!(admitted.run.mission_receipt.is_none());
+    store
+        .cancel_run(&u, admitted.run.id, admitted.run.attempt)
+        .await
+        .unwrap();
+    assert!(store.missions(&u).await.unwrap().is_empty());
     store.disconnect_calendar(&u, conn.id).await.unwrap();
     let t = store
         .create_thread(&u, "Admitted before reconnect".into())
@@ -625,7 +657,7 @@ async fn personal_selected_mission_is_rejected_and_missing_connection_has_typed_
         .await
         .unwrap()
         .unwrap();
-    assert!(planning.calendar_only);
+    assert!(!planning.calendar_only);
     assert!(planning.calendar.unwrap().connections.is_empty());
     execute(store.clone(), s.clone(), claim, cal).await;
     let done = store

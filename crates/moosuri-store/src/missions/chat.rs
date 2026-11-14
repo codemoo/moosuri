@@ -21,6 +21,12 @@ fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
 fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
     serde_json::from_str(v).map_err(|_| StoreError::Corrupt)
 }
+pub(crate) fn commands_allowed(r: &Run) -> bool {
+    r.model.source == ModelSource::Shared
+        || r.model.source == ModelSource::PersonalChatGpt
+            && r.model.function_tools
+            && r.mission_commands_enabled
+}
 pub(crate) fn admit(
     c: &Connection,
     r: &Run,
@@ -30,7 +36,7 @@ pub(crate) fn admit(
     if r.tool_profile.is_none() || crate::media::has_context(c, &r.tenant, &r.id)? {
         return Ok(());
     }
-    if r.model.source != ModelSource::Shared {
+    if !commands_allowed(r) {
         if context.and_then(|v| v.target.as_ref()).is_some() {
             return Err(StoreError::Forbidden);
         }
@@ -174,10 +180,11 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
     }
     Ok(())
 }
-// Personal foreground Calendar shares the envelope, never mission authority.
-// Repeat this predicate before effect preflight/application as well as recording.
+// Old Calendar-only personal runs retain their admitted scope. New command
+// admission still requires the original authenticated explicit owner decision.
+// Repeat before effect preflight/application as well as recording.
 fn allowed_mission_decision(r: &Run, d: &MissionChatDecision) -> Result<()> {
-    if r.model.source != ModelSource::Shared
+    if !commands_allowed(r)
         && (d.decision != "no_command"
             || d.action.is_some()
             || d.target_kind.is_some()
@@ -487,6 +494,16 @@ pub(crate) fn civil_consistent(d: &MissionChatDecision, anchor: i64, zone: &str)
                 };
                 duration = value;
                 count += 1;
+            }
+            // These exact English interval quotes carry an unambiguous one
+            // unit even without a numeral. Never infer a relative delay or
+            // accept a mismatched unit/proposed duration from the model.
+            if count == 0 && matches!(d.time, Some(MissionChatTime::Interval { .. })) {
+                return match q.as_str() {
+                    "everyminute" => *seconds == 60,
+                    "everyhour" => *seconds == 3600,
+                    _ => false,
+                };
             }
             return count > 0 && duration == *seconds;
         }
@@ -876,7 +893,7 @@ impl Store {
         self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
         retry_authority(&tx,&r)?;
         let attempted:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans p JOIN agent_execution e ON e.tenant_id=p.tenant_id AND e.run_id=p.run_id WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.state='awaiting' AND e.remote_calls>0)",params![r.tenant,r.id],|r|r.get(0))?;if attempted{return Err(StoreError::Conflict)}
-        let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{continuation:crate::request_continuations::context(&tx,&r)?,receipt_target_available:crate::request_continuations::target(&tx,&r)?.is_some(),request_text:crate::request_continuations::text(&tx,&r)?,calendar_only:r.model.source==ModelSource::PersonalChatGpt,calendar:crate::calendar::agent::profile(&tx,&r.tenant,&r.id)?,anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
+        let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{continuation:crate::request_continuations::context(&tx,&r)?,receipt_target_available:crate::request_continuations::target(&tx,&r)?.is_some(),request_text:crate::request_continuations::text(&tx,&r)?,calendar_only:!commands_allowed(&r),calendar:crate::calendar::agent::profile(&tx,&r.tenant,&r.id)?,anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
     }
     /// None means not yet decided; Some(false) continues ordinary chat without reclassification.
     pub async fn apply_mission_chat(&self, lease: &crate::RunLease) -> Result<Option<bool>> {

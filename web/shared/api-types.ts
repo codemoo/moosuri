@@ -112,14 +112,25 @@ export type BrowserControl = { workspace: BrowserWorkspaceView,
  */
 control_token: string, };
 export type BrowserFrame = { workspace_id: string, revision: number, frame_token: string, png_base64: string, width: number, height: number, url: string, };
-export type MailConnection = { id: string, email: string, epoch: number, status: string, };
+export type MailConnection = { compose_enabled: boolean, id: string, email: string, epoch: number, status: string, };
 export type MailConnections = { configured: boolean, connections: Array<MailConnection>, };
 export type MailReply = { thread_id: string, in_reply_to: string, references: Array<string>, };
 export type MailDraftContent = { from: string, to: Array<string>, cc: Array<string>, bcc: Array<string>, subject: string, text: string, reply: MailReply | null, };
 export type MailDraftInput = { connection_id: string, content: MailDraftContent, origin_thread_id: string | null, };
-export type MailAction = { id: string, version: number, revision: number, connection_id: string, content: MailDraftContent | null, digest: string, state: string, expires_at: number, message_id: string, provider_message_id: string | null, provider_thread_id: string | null, origin_thread_id: string | null, reconciliation?: MailReconciliation, };
+export type MailAction = { schedule?: MailSchedule, id: string, version: number, revision: number, connection_id: string, content: MailDraftContent | null, digest: string, state: string, expires_at: number, message_id: string, provider_message_id: string | null, provider_thread_id: string | null, origin_thread_id: string | null, reconciliation?: MailReconciliation, };
 export type MailReconciliation = { status: string, last_result: string, last_checked_at: number | null, candidate_count: number, automatic_attempts: number, manual_after: number, };
 export type MailApproval = { revision: number, digest: string, };
+export type MailSchedule = { due_at: number, timezone: string, };
+export type MailScheduleInput = { expected: MailApproval, schedule: MailSchedule | null, };
+export type MailSchedulePreviewInput = { local_datetime: string, timezone: string, };
+export type GmailDraftRef = { id: string, message_id: string, };
+export type GmailDraftPage = { drafts: Array<GmailDraftRef>, next_page_token: string | null, };
+export type GmailDraft = { id: string, digest: string, subject: string, text: string, text_truncated: boolean, attachment_names: Array<string>,
+/**
+ * None means unsupported MIME; never silently remove attachments/HTML/reply metadata.
+ */
+content: MailDraftContent | null, };
+export type GmailDraftSave = { expected: MailApproval, draft_id: string | null, expected_provider_digest: string | null, };
 export type Role = "admin" | "member";
 export type AccountSummary = { id: string, name: string, email: string, role: Role, must_change_password: boolean, };
 export type SessionView = { user: AccountSummary, password_change_required: boolean,

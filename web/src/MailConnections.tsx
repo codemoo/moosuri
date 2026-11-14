@@ -12,6 +12,8 @@ import type {
 } from "../shared/api-types";
 import { useScope } from "./account-scope";
 import { ApiFailure, errorText, isAborted } from "./api";
+import { GmailDrafts } from "./GmailDrafts";
+import { MailTiming } from "./MailTiming";
 import { MailApproval } from "./MailApproval";
 import "./mail.css";
 type ReadMessage = {
@@ -70,6 +72,7 @@ export function MailConnections({
     [],
   );
   const [message, setMessage] = useState<ReadMessage | null>(null);
+  const [timingEditing, setTimingEditing] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const oauthStarted = useRef(false);
   function fail(e: unknown) {
@@ -135,7 +138,7 @@ export function MailConnections({
     if (
       !latest ||
       !latest.content ||
-      latest.state !== "pending_approval" ||
+      !["pending_approval", "approved"].includes(latest.state) ||
       latest.revision !== editing.revision ||
       latest.digest !== editing.digest ||
       latest.connection_id !== editing.connection_id
@@ -146,12 +149,12 @@ export function MailConnections({
     }
   }, [actions, editing]);
   const action = actions.find((a) => a.id === selected) ?? null;
-  async function connect() {
+  async function connect(compose = false) {
     setBusy(true);
     setError("");
     try {
       const r = await scope.request<{ authorization_url: string }>(
-        "/mail/oauth/start",
+        compose ? "/mail/oauth/compose" : "/mail/oauth/start",
         "POST",
         {},
       );
@@ -239,7 +242,7 @@ export function MailConnections({
     }
   }
   async function decide(approve: boolean) {
-    if (!action || uncertain || busy || editing) return;
+    if (!action || uncertain || busy || editing || timingEditing) return;
     setError("");
     try {
       const a = await scope.request<MailAction>(
@@ -297,10 +300,12 @@ export function MailConnections({
           >
             Google 계정 연결
           </button>
+          <button disabled={busy || !connections.configured} onClick={() => void connect(true)}>Gmail 초안 권한을 포함해 새로 연결</button>
+          <p>기본 연결은 읽기·발송만 요청합니다. 초안 권한 연결은 Gmail compose 동의를 추가로 요청합니다. 사용할 연결에서 초안 권한 표시를 확인하세요.</p>
           <ul>
             {connections.connections.map((c) => (
               <li key={c.id}>
-                {c.email} · {c.status}
+                {c.email} · {c.status} · {c.compose_enabled ? "Gmail 초안 권한 있음" : "로컬 초안만"}
                 <button
                   disabled={busy || c.status === "disconnected"}
                   onClick={async () => {
@@ -403,7 +408,7 @@ export function MailConnections({
               {editing ? "초안 수정 · 다시 허락 필요" : "무수리 로컬 초안"}
             </h3>
             <p>
-              Gmail 초안함에 저장되지 않습니다. 첨부·HTML·다른 보내는 주소는
+              이 폼은 로컬 초안을 만듭니다. Gmail 초안함 저장은 별도 버튼을 사용하세요. 첨부·HTML·다른 보내는 주소는
               지원하지 않습니다.
             </p>
             <form className="mail-compose" onSubmit={save}>
@@ -464,6 +469,10 @@ export function MailConnections({
           </section>
         </>
       )}
+      {connection && connections?.connections.find(c => c.id === connection)?.compose_enabled && <GmailDrafts
+        key={connection} connection={connection} action={action} request={scope.request.bind(scope)} fail={fail}
+        disabled={busy || !!editing || timingEditing}
+        importDraft={content => { setSelected(null); setEditing(null); setTimingEditing(false); setDraft(content); setRecipients({to:content.to.join(", "),cc:content.cc.join(", "),bcc:content.bcc.join(", ")}); }} />}
       <section className="admin-card">
         <h3>발송 허락과 결과</h3>
         <ul>
@@ -472,6 +481,7 @@ export function MailConnections({
               <button
                 onClick={() => {
                   setSelected(a.id);
+                  if (a.id !== selected) setTimingEditing(false);
                   setUncertain(false);
                 }}
               >
@@ -480,11 +490,15 @@ export function MailConnections({
             </li>
           ))}
         </ul>
+        {action && action.content && ["pending_approval", "approved"].includes(action.state) && <MailTiming
+          key={`${action.id}:${action.revision}`} action={action} request={scope.request.bind(scope)} editing={setTimingEditing}
+          disabled={uncertain || busy || !!editing} fail={fail}
+          changed={a => setActions(v => adopt(v,v.map(x => x.id===a.id?a:x)))} />}
         {action && (
           <MailApproval
             key={`${action.id}:${action.revision}:${uncertain}`}
             action={action}
-            disabled={uncertain || busy || !!editing}
+            disabled={uncertain || busy || !!editing || timingEditing}
             decide={decide}
             checkSent={async () => {
               if (busy || action.state !== "outcome_unknown") return;

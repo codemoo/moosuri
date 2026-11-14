@@ -1116,7 +1116,7 @@ async fn source_mute_schema38_upgrade_is_atomic_and_preserves_old_visible_receip
     let visible = deliver(&store, at).await;
     drop(store);
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;PRAGMA user_version=38;CREATE TABLE notification_source_preferences(conflict INTEGER);").unwrap();
+    c.execute_batch("DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;PRAGMA user_version=38;CREATE TABLE notification_source_preferences(conflict INTEGER);").unwrap();
     assert!(Store::open(dir.path()).is_err());
     assert_eq!(
         c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))

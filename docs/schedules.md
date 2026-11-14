@@ -243,3 +243,15 @@ Natural task candidates use one bounded isolated decision and actual existing
 mission/template primitives. Missing time or ambiguous target clarifies only that
 field; no routine approval screen is added. See [missions](missions.md) for quote,
 current-session, receipt, restore and honest language-evaluation limitations.
+
+
+## Separate approved one-off email
+
+The mail UI now supports a fixed-content one-off Gmail send with an explicit final
+preview of all recipients/content and the exact UTC/local time plus IANA timezone.
+This uses schema40 `mail_schedules` and the existing immutable mail dispatch boundary,
+not a reminder or recurring-mission grant. Saving timing alone cannot send. Timing
+or content edits require another full human approval; source/account/connection
+withdrawal fences it, logout alone leaves its separate approved background grant
+active, and due+24h expires it. Restore cancels/quarantines uncommitted mail authority.
+No recurring mail or due-time content generation is supported. See [mail](mail.md).

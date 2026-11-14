@@ -42,7 +42,7 @@ beforeEach(() => {
     }
     if (path === "/admin/google/check") return Response.json({ email: "mine@example.test", checked_at: 1234 });
     if (path === "/mail/oauth/complete") {
-      const connection = { id: "mine", email: "mine@example.test", epoch: 1, status: "active" };
+      const connection = { id: "mine", email: "mine@example.test", epoch: 1, status: "active", compose_enabled: false };
       status.personal_connections = [connection];
       return Response.json(connection);
     }
@@ -65,7 +65,7 @@ it("separates local JSON validation, explicit save, and a real personal profile 
   expect(screen.getByRole("button", { name: "이 설치에 저장" })).toBeDisabled();
   expect(requests.find(r => r.method === "PUT")?.body).toEqual({ expected_revision: 3, client_json: raw });
   expect(requests.some(r => r.path === "/admin/google/check")).toBe(false);
-  status.personal_connections = [{ id: "mine", email: "mine@example.test", epoch: 1, status: "active" }];
+  status.personal_connections = [{ id: "mine", email: "mine@example.test", epoch: 1, status: "active", compose_enabled: false }];
   await user.click(screen.getByRole("button", { name: "상태 새로고침" }));
   await user.click(await screen.findByRole("button", { name: "내 연결 프로필 확인" }));
   await screen.findByText("Google 프로필 확인 성공 · mine@example.test");
@@ -124,7 +124,7 @@ it("explains pending OAuth without leaking provider errors and allows a fresh re
   expect(document.body.textContent).not.toContain(secret);
 });
 it("operator file mode retains callback and own check but has no import or save", async () => {
-  status = { ...status, mode: "operator_file", configured: true, redirect_matches: true, personal_connections: [{ id: "mine", email: "mine@example.test", epoch: 1, status: "active" }] };
+  status = { ...status, mode: "operator_file", configured: true, redirect_matches: true, personal_connections: [{ id: "mine", email: "mine@example.test", epoch: 1, status: "active", compose_enabled: false }] };
   const user = userEvent.setup(); show();
   await screen.findByText(/운영자의/);
   expect(screen.getByLabelText("이 설치의 콜백 주소")).toHaveValue(redirect);
@@ -142,7 +142,7 @@ it("origin mismatch explains repair and blocks authorization even with a saved a
   expect(screen.getByText("설치 설정: 콜백 갱신 필요")).toBeVisible();
 });
 it("profile failure stays distinct from a successful local setup", async () => {
-  status = { ...status, configured: true, redirect_matches: true, mode: "managed", personal_connections: [{ id: "mine", email: "mine@example.test", epoch: 1, status: "active" }] };
+  status = { ...status, configured: true, redirect_matches: true, mode: "managed", personal_connections: [{ id: "mine", email: "mine@example.test", epoch: 1, status: "active", compose_enabled: false }] };
   failure = { path: "/admin/google/check", code: "google_profile_mismatch", status: 400 };
   const user = userEvent.setup(); show();
   await user.click(await screen.findByRole("button", { name: "내 연결 프로필 확인" }));

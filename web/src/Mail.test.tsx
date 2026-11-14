@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { MailConnections } from "./MailConnections";
@@ -64,12 +64,18 @@ beforeEach(() => {
         });
       if (path.endsWith("/actions") && method === "GET")
         return Response.json({ actions: [action] });
+      if (path.endsWith("/schedule/preview")) return Response.json({due_at:1999999980,timezone:body.timezone});
+      if (path.endsWith("/schedule") && method === "PUT") {
+        expect(body.expected).toEqual({revision:action.revision,digest:action.digest});
+        action={...action,revision:action.revision+1,version:action.version+1,state:"pending_approval",schedule:body.schedule};
+        return Response.json(action);
+      }
       if (path.endsWith("/check-sent")) {
         action = {...action, version: action.version+1, reconciliation: {status:"matching_sent_observed",last_result:"matching_sent_observed",last_checked_at:1700000000,candidate_count:1,automatic_attempts:1,manual_after:Math.floor(Date.now()/1000)+60}};
         return Response.json(action);
       }
       if (path.endsWith("/approve")) {
-        expect(body).toEqual({ revision: 1, digest: "immutable-digest" });
+        expect(body).toEqual({ revision: action.revision, digest: action.digest });
         action = { ...action, version: action.version + 1, state: "approved" };
         return Response.json(action);
       }
@@ -335,4 +341,22 @@ it("checks unknown Sent evidence through owner POST without another approval or 
   const checks=requests.filter(r=>r.path.endsWith("/check-sent"));
   expect(checks).toHaveLength(1); expect(checks[0].method).toBe("POST"); expect(checks[0].account).toBe("owner");
   expect(requests.some(r=>r.path.endsWith("/approve") || r.path.endsWith("/send"))).toBe(false);
+});
+
+it("scheduled mail shows the exact instant and requires a fresh approval after timing edits", async () => {
+  const user=userEvent.setup();
+  render(<MailConnections accountId="account-a" onExpired={() => {}} back={() => {}} originThreadId={null}/>);
+  await user.click(await screen.findByRole("button",{name:"검토할 메일 · pending_approval"}));
+  await user.click(screen.getByRole("button",{name:"예약 시각 설정·변경"}));
+  expect(screen.getByRole("button",{name:"허락하고 보내기"})).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("발송할 날짜와 현지 시각"),{target:{value:"2033-05-18T12:33"}});
+  await user.clear(screen.getByLabelText("IANA 시간대"));await user.type(screen.getByLabelText("IANA 시간대"),"Asia/Seoul");
+  await user.click(screen.getByRole("button",{name:"정확한 시각 확인"}));
+  await user.click(await screen.findByRole("button",{name:"예약 시각 저장 · 발송은 다시 허락 필요"}));
+  const approve=await screen.findByRole("button",{name:"전체 내용과 예약 시각을 허락하고 예약"});
+  expect(requests.filter(r=>r.path.endsWith("/approve"))).toHaveLength(0);
+  expect(within(screen.getByRole("article",{name:"메일 발송 확인"})).getByText(/발송 예약:.*Asia\/Seoul/)).toBeInTheDocument();
+  await user.click(approve);
+  expect(requests.find(r=>r.path.endsWith("/approve"))?.body.revision).toBe(2);
+  expect(await screen.findByRole("button",{name:"발송 취소"})).toBeInTheDocument();
 });

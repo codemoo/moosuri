@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MailConnection {
+    pub compose_enabled: bool,
     pub id: String,
     pub email: String,
     #[ts(type = "number")]
@@ -44,6 +45,9 @@ pub struct MailDraftInput {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MailAction {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub schedule: Option<MailSchedule>,
     pub id: String,
     #[ts(type = "number")]
     pub version: i64,
@@ -132,4 +136,54 @@ pub enum ExternalToolRequest {
     Mail(MailToolRequest),
     Web(crate::WebToolRequest),
     Calendar(crate::CalendarReadRequest),
+}
+
+/// Fixed one-off send timing. This is separate from provider-free reminders.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MailSchedule {
+    #[ts(type = "number")]
+    pub due_at: i64,
+    pub timezone: String,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MailScheduleInput {
+    pub expected: MailApproval,
+    pub schedule: Option<MailSchedule>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct GmailDraftRef {
+    pub id: String,
+    pub message_id: String,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct GmailDraftPage {
+    pub drafts: Vec<GmailDraftRef>,
+    pub next_page_token: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct GmailDraft {
+    pub id: String,
+    pub digest: String,
+    pub subject: String,
+    pub text: String,
+    pub text_truncated: bool,
+    pub attachment_names: Vec<String>,
+    /// None means unsupported MIME; never silently remove attachments/HTML/reply metadata.
+    pub content: Option<MailDraftContent>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct GmailDraftSave {
+    pub expected: MailApproval,
+    pub draft_id: Option<String>,
+    pub expected_provider_digest: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MailSchedulePreviewInput {
+    pub local_datetime: String,
+    pub timezone: String,
 }

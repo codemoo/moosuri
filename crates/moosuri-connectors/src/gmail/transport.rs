@@ -191,7 +191,7 @@ impl Transport {
             .get(header::ETAG)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
-        if status == 204 && matches!(endpoint, Endpoint::Calendar) {
+        if status == 204 && matches!(endpoint, Endpoint::Calendar | Endpoint::Gmail) {
             return Ok((status, etag, Zeroizing::new(Vec::new())));
         }
         let content_type = response

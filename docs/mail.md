@@ -69,8 +69,10 @@ moosuri --data-dir /private/moosuri serve \
 ## 각 사용자의 Google 연결
 
 로그인한 사용자가 **메일 → Google 연결**에서 자신의 계정을 승인한다. 현재 요청하는
-scope는 `gmail.readonly`와 `gmail.send`다. 초안은 무수리에 저장하므로 Gmail 초안함을
-수정하는 `gmail.compose` 권한을 요청하거나 Gmail 초안 저장 완료라고 표현하지 않는다.
+기본 scope는 `gmail.readonly`와 `gmail.send`다. **Gmail 초안 권한을 포함해 새로 연결**을
+선택할 때만 `gmail.compose`를 추가로 요청한다. 연결마다 초안 권한 표시를 제공하며
+선택 동의가 누락된 연결은 Gmail 초안 API를 호출할 수 없다. 로컬 초안 저장과 Gmail
+초안함 저장은 별도 동작이며 어느 쪽도 발송 허락이 아니다.
 Google callback은 cookie 없는 외부 GET을 처리하고, 원래 로그인 세션의 same-origin
 완료 요청이 계정·state·PKCE·만료를 검증한 뒤 연결을 완성한다.
 
@@ -149,4 +151,44 @@ v1 비교는 CRLF/LF·헤더 줄접기·생성 Date만 정규화한다. 전체 �
 자세한 외부 실행 계약은 [external work](external-work.md)를 따른다.
 
 불명 발송 조회의 설계와 합성 검증은 [reconciliation change](../openspec/changes/reconcile-unknown-gmail-send/proposal.md)와
-[검증 기록](reviews/2026-11-14-gmail-reconciliation.md)에 있다. Gmail provider 초안 CRUD·선택 compose 동의와 승인된 고정 예약 발송은 아직 별도 구현 대상이다.
+[검증 기록](reviews/2026-11-14-gmail-reconciliation.md)에 있다. Gmail provider 초안 CRUD·선택 compose 동의와 승인된 고정 예약 발송은 아래 별도 경계를 따른다.
+
+
+## Gmail 초안함
+
+초안 권한이 있는 연결에서 **Gmail 초안 목록 읽기**로 실제 초안함을 20개씩 조회한다.
+읽은 초안은 지원하는 전체 일반 텍스트인 경우 로컬 편집기로 복사할 수 있다. 로컬 확인본은
+**Gmail에 새 초안으로 저장**하거나 읽은 Gmail 초안을 명시적으로 덮어쓸 수 있다.
+삭제도 실제 Gmail 초안에 적용하며 로컬 발송 허락은 별개다. 이미 Gmail에 저장한
+초안은 연결 해제나 로컬 원문 철회로 자동 삭제되지 않는다. 초안함에 저장한 뒤에도
+발송은 아래 전체 내용 확인의 **허락하고 보내기**만 허용한다. Gmail에서 나중에 초안을
+고쳐도 이미 승인한 로컬 MIME bytes는 바뀌지 않는다.
+
+첨부·HTML·multipart·표시 이름/별칭·답장 메타데이터가 포함된 provider 초안은 현재 편집·
+가져오기 대상이 아니다. 제한된 본문을 읽고 삭제할 수 있지만 조용히 일부를 제거하여
+덮어쓰지 않는다. 읽기 화면은 일부 본문 표시와 첨부 목록을 명시한다. 원래 전체 수신인·
+본문을 보존할 수 있는 지원된 초안만 새 발송 확인으로 가져온다.
+
+읽은 원문의 digest로 바뀐 Gmail 초안을 감지한다. Gmail 초안 API의 원자적 조건부 수정은
+지원하지 않으므로 검사와 쓰기 사이 다른 편집기가 변경하면 충돌할 수 있다. 동시에 편집하지
+않아야 하며 UI에도 표시한다. 저장/삭제 응답이 유실되면 목록과 초안을 다시 읽어 확인한다.
+자동 쓰기 재시도나 자동 발송은 없다.
+
+## 한 번 예약해서 보내기
+
+발송 확인에서 **예약 시각 설정·변경**으로 날짜·현지 시각·IANA 시간대를 입력하고 정확한
+시각을 확인한다. 존재하지 않는 DST 시각은 거절하고 두 번 오는 시각은 첫 offset을 쓴다.
+최대 366일 뒤까지 한 번만 예약하며 UTC instant와 현지 시각/시간대를 모두 표시한다.
+시각 저장 뒤 전체 수신인·본문·첨부 없음을 다시 보고 **전체 내용과 예약 시각을 허락하고
+예약**해야 한다. 시각 변경/예약 해제는 새 revision이며 기존 허락을 취소한다. 내용·연결
+수정은 예전 예약 시각도 제거하므로 다시 설정하고 확인한다.
+
+승인한 예약은 로그아웃 후에도 별도 background grant로 유지된다. 계정 상태·auth epoch·
+임시 계정 만료·연결 epoch/status/send scope·원문 철회와 pinned grant를 worker가 확인한다.
+시각이 지난 뒤 새 승인은 거절하며, 이미 승인한 작업은 due+24시간까지만 지연 실행한다.
+발송 commitment 전에는 **발송 취소**와 수정이 가능하고, 먼저 commitment가 된 요청은
+회수할 수 없다. 복원된 예약의 실행 grant는 제거되고 미발송 승인은 취소된다.
+
+이 경로는 고정한 한 통의 bytes만 보내며 반복 발송이나 예약 시점 모델 생성이 아니다.
+기존 commitment/영수증/불명 결과·읽기 전용 보낸편지함 확인 규칙을 그대로 적용한다.
+자세한 범위는 [변경 설계](../openspec/changes/gmail-drafts-and-scheduled-send/design.md)를 따른다.

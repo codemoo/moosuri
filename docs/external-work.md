@@ -112,3 +112,10 @@ idempotency key로 보장하지 않는다. 결과 0개는 색인 지연일 수 �
 Schema31 stores a bounded v1 fingerprint of the actual frozen supported MIME before dispatch drops raw bytes. A separately leased, current-account/connection/readonly-scope check can perform fixed users/me Sent search and one raw candidate fetch. Automatic attempts persist at +0/15/120/600 seconds (max4); authenticated owner manual POST checks are limited to one per minute per action. Read leases do not grant send authority or require another permission prompt.
 
 A complete unique supported fingerprint match records `matching_sent_observed` beside immutable `outcome_unknown`; it is not a synchronous send response or delivery receipt. Missing/ambiguous/incomplete/mismatching evidence remains unknown, including legacy rows with no original oracle. Late revoked or withdrawn observations are discarded, original send-response receipts win, and restored lookup authority is quarantined. No network IO runs inside SQLite. See [mail](mail.md), [delta](../openspec/changes/reconcile-unknown-gmail-send/design.md) and [synthetic evidence](reviews/2026-11-14-gmail-reconciliation.md).
+
+
+Schema40 adds explicitly opted-in Gmail provider draft CRUD and fixed one-off mail
+timing. Provider draft IDs never select send bytes; the existing local revision,
+full preview, frozen MIME and one durable send commitment remain mandatory.
+Timing changes revoke approval. See [mail](mail.md) and the
+[workflow delta](../openspec/changes/gmail-drafts-and-scheduled-send/design.md).

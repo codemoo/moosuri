@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
+mod drafts;
 mod reconcile;
 type MailLocks = Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>;
 #[derive(Clone)]

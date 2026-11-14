@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { formatMailTime } from "./MailTiming";
 import type { MailAction } from "../shared/api-types";
 export function MailApproval({
   action,
@@ -30,6 +31,7 @@ export function MailApproval({
   return (
     <article className="mail-preview" aria-label="메일 발송 확인">
       <h3>{label[action.state] ?? action.state}</h3>
+      {action.schedule && <p>발송 예약: {formatMailTime(action.schedule)}</p>}
       {c && (
         <>
           <dl>
@@ -77,7 +79,7 @@ export function MailApproval({
           <p>조회는 메일을 다시 보내지 않습니다. 자동 조회는 최대 네 번이며 직접 확인은 1분 간격입니다.</p>
         </section>
       )}
-      {action.state === "pending_approval" && c && (
+      {["pending_approval", "approved"].includes(action.state) && c && (
         <div className="dialog-actions">
           <button
             disabled={busy || disabled}
@@ -98,9 +100,9 @@ export function MailApproval({
               }
             }}
           >
-            거절
+            {action.state === "approved" ? "발송 취소" : "거절"}
           </button>
-          <button
+          {action.state === "pending_approval" && <button
             disabled={busy || disabled}
             className="primary"
             onClick={async () => {
@@ -112,8 +114,8 @@ export function MailApproval({
               }
             }}
           >
-            허락하고 보내기
-          </button>
+            {action.schedule ? "전체 내용과 예약 시각을 허락하고 예약" : "허락하고 보내기"}
+          </button>}
         </div>
       )}
     </article>

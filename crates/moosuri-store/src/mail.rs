@@ -8,6 +8,7 @@ use moosuri_core::*;
 
 mod external;
 mod reconcile;
+mod workflows;
 pub use reconcile::{MailReconcileCredentials, MailReconcilePermit};
 
 pub use external::{ExternalToolPermit, ExternalToolStart};
@@ -83,6 +84,7 @@ pub struct MailOAuthExchange {
     user: UserContext,
     state: Vec<u8>,
     app: Option<GoogleAppPin>,
+    pub compose: bool,
 }
 
 /// Trusted application carrier. Never Debug/Serialize or pass to the model.
@@ -101,6 +103,14 @@ pub struct MailBinding {
 }
 
 impl MailBinding {
+    pub fn app_pin(&self) -> Option<&GoogleAppPin> {
+        self.app.as_ref()
+    }
+    pub fn has_compose(&self) -> bool {
+        self.scopes
+            .iter()
+            .any(|s| s == moosuri_connectors::gmail::COMPOSE_SCOPE)
+    }
     pub fn user(&self) -> &UserContext {
         &self.user
     }
@@ -132,8 +142,8 @@ pub(crate) fn connection(
     user: &UserContext,
     id: &str,
 ) -> Result<MailConnection> {
-    conn.query_row("SELECT id,email,epoch,status FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok(MailConnection{
-        id:r.get(0)?,email:r.get(1)?,epoch:r.get(2)?,status:r.get(3)?}
+    conn.query_row("SELECT id,email,epoch,status,scopes FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok(MailConnection{
+        id:r.get(0)?,email:r.get(1)?,epoch:r.get(2)?,status:r.get(3)?,compose_enabled:serde_json::from_str::<Vec<String>>(&r.get::<_,String>(4)?).map_err(|_|rusqlite::Error::InvalidQuery)?.iter().any(|s|s==moosuri_connectors::gmail::COMPOSE_SCOPE)}
     )).optional()?.ok_or(StoreError::NotFound)
 }
 
@@ -168,7 +178,7 @@ fn binding(conn: &Connection, key: &[u8; 32], user: &UserContext, id: &str) -> R
 
 fn action(conn: &Connection, user: &UserContext, id: &str) -> Result<MailAction> {
     conn.query_row("SELECT id,revision,connection_id,content,digest,state,expires_at,message_id,provider_message,provider_thread,origin_thread,version FROM mail_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get::<_,Option<String>>(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?))).optional()?.ok_or(StoreError::NotFound).and_then(|r|Ok(MailAction{
-        id:r.0,version:r.11,revision:r.1,connection_id:r.2,content:r.3.map(|s|parse(&s)).transpose()?,digest:r.4,state:r.5,expires_at:r.6,message_id:r.7,provider_message_id:r.8,provider_thread_id:r.9,origin_thread_id:r.10,reconciliation:reconcile::status(conn,user,id)?}
+        id:r.0,version:r.11,revision:r.1,connection_id:r.2,content:r.3.map(|s|parse(&s)).transpose()?,digest:r.4,state:r.5,expires_at:r.6,message_id:r.7,provider_message_id:r.8,provider_thread_id:r.9,origin_thread_id:r.10,schedule:workflows::schedule(conn,user,id)?,reconciliation:reconcile::status(conn,user,id)?}
     ))
 }
 
@@ -241,6 +251,11 @@ pub(crate) fn draft(
 
     let frozen = FrozenMail::prepare(&body, &message_id).map_err(|_| StoreError::InvalidInput)?;
 
+    // Content/connection edits retire the old timing and its background approval.
+    conn.execute(
+        "DELETE FROM mail_schedules WHERE tenant_id=?1 AND action_id=?2",
+        params![user.tenant.0, id],
+    )?;
     let expires = now()? + 3600;
 
     conn.execute("INSERT INTO mail_actions(tenant_id,account_id,id,revision,connection_id,connection_epoch,auth_epoch,content,raw,digest,message_id,reply_thread,origin_thread,origin_run,state,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'pending_approval',?15) ON CONFLICT(tenant_id,id) DO UPDATE SET version=mail_actions.version+1,revision=excluded.revision,connection_id=excluded.connection_id,connection_epoch=excluded.connection_epoch,auth_epoch=excluded.auth_epoch,content=excluded.content,raw=excluded.raw,digest=excluded.digest,message_id=excluded.message_id,reply_thread=excluded.reply_thread,origin_thread=excluded.origin_thread,origin_run=excluded.origin_run,state='pending_approval',expires_at=excluded.expires_at,dispatch_nonce=NULL,provider_message=NULL,provider_thread=NULL",params![user.tenant.0,user.account.id,id,revision,c.id,c.epoch,user.epoch,json(&input.content)?,frozen.raw_mime(),digest_string(frozen.digest()),message_id,frozen.thread_id(),input.origin_thread_id,retained_origin,expires])?;
@@ -305,7 +320,7 @@ impl Store {
     }
 
     pub async fn start_mail_oauth(&self, user: &UserContext) -> Result<MailOAuthStart> {
-        self.start_mail_oauth_inner(user, None, false).await
+        self.start_mail_oauth_inner(user, None, false, false).await
     }
 
     pub async fn start_mail_oauth_with_app(
@@ -314,7 +329,15 @@ impl Store {
         pin: GoogleAppPin,
         setup_return: bool,
     ) -> Result<MailOAuthStart> {
-        self.start_mail_oauth_inner(user, Some(pin), setup_return)
+        self.start_mail_oauth_inner(user, Some(pin), setup_return, false)
+            .await
+    }
+    pub async fn start_mail_compose_oauth_with_app(
+        &self,
+        user: &UserContext,
+        pin: GoogleAppPin,
+    ) -> Result<MailOAuthStart> {
+        self.start_mail_oauth_inner(user, Some(pin), false, true)
             .await
     }
     async fn start_mail_oauth_inner(
@@ -322,6 +345,7 @@ impl Store {
         user: &UserContext,
         pin: Option<GoogleAppPin>,
         setup_return: bool,
+        compose: bool,
     ) -> Result<MailOAuthStart> {
         let user = user.clone();
         self.call(move|db|{
@@ -334,7 +358,7 @@ impl Store {
             let verifier=Zeroizing::new(random()?);
             let digest=hash(&state);
             let cipher=providers::encrypt(&db.provider_key,verifier.as_bytes(),&oauth_aad(&digest,"verifier"))?;
-            db.conn.execute("INSERT INTO mail_oauth_sessions(state_hash,tenant_id,account_id,session_digest,auth_epoch,expires_at,verifier,app_revision,client_id,redirect_uri,setup_return) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![digest,user.tenant.0,user.account.id,user.digest.as_slice(),user.epoch,now()?+600,cipher,pin.as_ref().and_then(|p|p.revision),pin.as_ref().map(|p|&p.client_id),pin.as_ref().map(|p|&p.redirect_uri),setup_return])?;
+            db.conn.execute("INSERT INTO mail_oauth_sessions(state_hash,tenant_id,account_id,session_digest,auth_epoch,expires_at,verifier,app_revision,client_id,redirect_uri,setup_return,compose) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",params![digest,user.tenant.0,user.account.id,user.digest.as_slice(),user.epoch,now()?+600,cipher,pin.as_ref().and_then(|p|p.revision),pin.as_ref().map(|p|&p.client_id),pin.as_ref().map(|p|&p.redirect_uri),setup_return,compose])?;
             Ok(MailOAuthStart{
                 state,verifier}
             )}
@@ -405,7 +429,7 @@ impl Store {
                 let plain=providers::decrypt(&db.provider_key,bytes,&oauth_aad(&state,purpose))?;
                 SecretString::new(String::from_utf8(plain.to_vec()).map_err(|_|StoreError::Corrupt)?).map_err(|_|StoreError::Corrupt)};
             let result=MailOAuthExchange{
-                code:decode(&code,"code")?,verifier:decode(&verifier,"verifier")?,user,state:state.clone(),app:pin};
+                compose:tx.query_row("SELECT compose FROM mail_oauth_sessions WHERE state_hash=?1",[&state],|r|r.get(0))?,code:decode(&code,"code")?,verifier:decode(&verifier,"verifier")?,user,state:state.clone(),app:pin};
             tx.execute("UPDATE mail_oauth_sessions SET claimed=1,code=NULL,verifier=NULL WHERE state_hash=?1",[state])?;
             tx.commit()?;
             Ok(result)}
@@ -423,9 +447,11 @@ impl Store {
             if !db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_oauth_sessions WHERE state_hash=?1 AND claimed=1 AND expires_at>?2)",params![exchange.state,now()?],|r|r.get::<_,bool>(0))?{
                 return Err(StoreError::Conflict)}
             if let Some(pin)=&exchange.app {google_setup::guard_app(&db.conn,pin)?;}
-            let scopes=tokens.scopes.unwrap_or_else(||moosuri_connectors::gmail::MINIMAL_SCOPES.iter().map(|s|s.to_string()).collect());
+            if exchange.compose && !tokens.scopes.as_ref().is_some_and(|s|s.iter().any(|s|s==moosuri_connectors::gmail::COMPOSE_SCOPE)) { return Err(StoreError::Forbidden); }
+            let mut scopes=tokens.scopes.unwrap_or_else(||moosuri_connectors::gmail::MINIMAL_SCOPES.iter().map(|s|s.to_string()).collect());
             if moosuri_connectors::gmail::MINIMAL_SCOPES.iter().any(|s|!scopes.iter().any(|v|v==s)){
                 return Err(StoreError::Forbidden)}
+            if !exchange.compose {scopes.retain(|s|s!=moosuri_connectors::gmail::COMPOSE_SCOPE);}
             let refresh=tokens.refresh_token.ok_or(StoreError::Forbidden)?;
             let id=Uuid::new_v4().to_string();
             let plain=Zeroizing::new(serde_json::to_vec(&(tokens.access_token.expose(),refresh.expose())).map_err(|_|StoreError::InvalidInput)?);
@@ -516,7 +542,10 @@ impl Store {
             .map(|s| s.expose().to_owned())
             .unwrap_or_else(|| old.refresh_token.expose().into());
 
-        let scopes = tokens.scopes.unwrap_or_else(|| old.scopes.clone());
+        let mut scopes = tokens.scopes.unwrap_or_else(|| old.scopes.clone());
+        if !old.has_compose() {
+            scopes.retain(|s| s != moosuri_connectors::gmail::COMPOSE_SCOPE);
+        }
 
         let plain = Zeroizing::new(
             serde_json::to_vec(&(tokens.access_token.expose(), refresh))
@@ -526,7 +555,7 @@ impl Store {
         self.call(move|db|{
             if let Some(pin)=&app {google_setup::guard_mail_app(&db.conn,&user.tenant.0,&id,pin)?;}
             if let Some((action,nonce))=dispatch{
-                if !db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_actions a JOIN accounts u ON u.tenant_id=a.tenant_id AND u.id=a.account_id WHERE a.tenant_id=?1 AND a.id=?2 AND a.dispatch_nonce=?3 AND a.state='dispatch_committed' AND u.auth_epoch=a.auth_epoch AND u.recovery_required=0)",params![user.tenant.0,action,nonce],|r|r.get::<_,bool>(0))?{
+                if !db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_actions a JOIN accounts u ON u.tenant_id=a.tenant_id AND u.id=a.account_id WHERE a.tenant_id=?1 AND a.id=?2 AND a.dispatch_nonce=?3 AND a.state='dispatch_committed' AND a.expires_at>unixepoch() AND u.auth_epoch=a.auth_epoch AND u.recovery_required=0 AND u.must_change_password=0 AND u.status='active' AND (u.temporary_expires_at IS NULL OR u.temporary_expires_at>unixepoch()))",params![user.tenant.0,action,nonce],|r|r.get::<_,bool>(0))?{
                     return Err(StoreError::Conflict)}
             }
             else{
@@ -643,8 +672,9 @@ impl Store {
                 tx.commit()?;
                 return Ok(a)}
 
-            if a.state!="pending_approval" || a.expires_at<=now()?{
+            if !matches!(a.state.as_str(),"pending_approval"|"approved") || a.expires_at<=now()?{
                 return Err(StoreError::Conflict)}
+            if approve && a.schedule.as_ref().is_some_and(|s|s.due_at<=now().unwrap_or(i64::MAX)) {return Err(StoreError::Conflict)}
             let c=connection(&tx,&user,&a.connection_id)?;
             if c.status!="active"{
                 return Err(StoreError::Conflict)}
@@ -654,6 +684,9 @@ impl Store {
                 "rejected"};
             if tx.execute("UPDATE mail_actions SET version=version+1,state=?4,raw=CASE WHEN ?4='rejected' THEN NULL ELSE raw END,content=CASE WHEN ?4='rejected' THEN NULL ELSE content END WHERE tenant_id=?1 AND id=?2 AND connection_epoch=?3 AND auth_epoch=?5",params![user.tenant.0,id,c.epoch,state,user.epoch])?!=1{
                 return Err(StoreError::Conflict)}
+            if approve {
+                tx.execute("UPDATE mail_schedules SET approved_revision=?3,auth_epoch=?4 WHERE tenant_id=?1 AND action_id=?2",params![user.tenant.0,id,a.revision,user.epoch])?;
+            }
             let a=action(&tx,&user,&id)?;
             tx.commit()?;
             Ok(a)}
@@ -666,13 +699,13 @@ impl Store {
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute("UPDATE mail_actions SET version=version+1,state='expired',raw=NULL,content=NULL WHERE state='approved' AND expires_at<=?1",[now()?])?;
-            let row:Option<DispatchRow>=tx.query_row("SELECT a.tenant_id,a.account_id,a.id,a.connection_id,a.auth_epoch,a.raw,a.digest,a.reply_thread,a.connection_epoch,a.revision FROM mail_actions a WHERE a.state='approved' ORDER BY a.rowid LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).optional()?;
+            let row:Option<DispatchRow>=tx.query_row("SELECT a.tenant_id,a.account_id,a.id,a.connection_id,a.auth_epoch,a.raw,a.digest,a.reply_thread,a.connection_epoch,a.revision FROM mail_actions a LEFT JOIN mail_schedules s ON s.tenant_id=a.tenant_id AND s.action_id=a.id WHERE a.state='approved' AND (s.action_id IS NULL OR s.due_at<=?1) ORDER BY a.rowid LIMIT 1",[now()?],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).optional()?;
             let Some((tenant,account,id,connection_id,epoch,raw,digest,reply,connection_epoch,_))=row else{
                 tx.commit()?;
                 return Ok(None)};
 
             // Approval outlives the originating chat session but not the account epoch.
-            let current:Option<(AccountSummary,i64)>=tx.query_row("SELECT id,name,email,role,must_change_password,auth_epoch FROM accounts WHERE tenant_id=?1 AND id=?2 AND recovery_required=0 AND must_change_password=0",params![tenant,account],|r|Ok((summary_row(r)?,r.get(5)?))).optional()?;
+            let current:Option<(AccountSummary,i64)>=tx.query_row("SELECT id,name,email,role,must_change_password,auth_epoch FROM accounts WHERE tenant_id=?1 AND id=?2 AND recovery_required=0 AND must_change_password=0 AND status='active' AND (temporary_expires_at IS NULL OR temporary_expires_at>?3)",params![tenant,account,now()?],|r|Ok((summary_row(r)?,r.get(5)?))).optional()?;
 
             let Some((summary,current_epoch))=current else{
                 tx.execute("UPDATE mail_actions SET version=version+1,state='cancelled',raw=NULL,content=NULL WHERE tenant_id=?1 AND id=?2",params![tenant,id])?;
@@ -685,7 +718,9 @@ impl Store {
 
             let c=connection(&tx,&user,&connection_id)?;
 
-            if current_epoch!=epoch || c.epoch!=connection_epoch || c.status!="active"{
+            let scopes:String=tx.query_row("SELECT scopes FROM mail_connections WHERE tenant_id=?1 AND id=?2",params![tenant,connection_id],|r|r.get(0))?;
+            let can_send=parse::<Vec<String>>(&scopes)?.iter().any(|s|s==moosuri_connectors::gmail::SEND_SCOPE);
+            if !can_send || current_epoch!=epoch || c.epoch!=connection_epoch || c.status!="active" || !workflows::grant_valid(&tx,&user,&id)? {
                 tx.execute("UPDATE mail_actions SET version=version+1,state='cancelled',raw=NULL,content=NULL WHERE tenant_id=?1 AND id=?2",params![tenant,id])?;
                 tx.commit()?;
                 return Ok(None)}
@@ -714,9 +749,11 @@ impl Store {
         let nonce = dispatch.nonce.clone();
 
         self.call(move|db|{
-            if !db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_actions a JOIN accounts u ON u.tenant_id=a.tenant_id AND u.id=a.account_id JOIN mail_connections c ON c.tenant_id=a.tenant_id AND c.id=a.connection_id WHERE a.tenant_id=?1 AND a.id=?2 AND a.dispatch_nonce=?3 AND a.state='dispatch_committed' AND u.auth_epoch=a.auth_epoch AND u.recovery_required=0 AND c.epoch=a.connection_epoch AND c.status='active')",params![user.tenant.0,id,nonce],|r|r.get::<_,bool>(0))?{
+            if !db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_actions a JOIN accounts u ON u.tenant_id=a.tenant_id AND u.id=a.account_id JOIN mail_connections c ON c.tenant_id=a.tenant_id AND c.id=a.connection_id WHERE a.tenant_id=?1 AND a.id=?2 AND a.dispatch_nonce=?3 AND a.state='dispatch_committed' AND a.expires_at>unixepoch() AND u.auth_epoch=a.auth_epoch AND u.recovery_required=0 AND u.must_change_password=0 AND u.status='active' AND (u.temporary_expires_at IS NULL OR u.temporary_expires_at>unixepoch()) AND c.epoch=a.connection_epoch AND c.status='active')",params![user.tenant.0,id,nonce],|r|r.get::<_,bool>(0))?{
                 return Err(StoreError::Conflict)}
+            if !workflows::grant_valid(&db.conn,&user,&id)? { return Err(StoreError::Conflict); }
             let mut b=binding(&db.conn,&db.provider_key,&user,&c)?;
+            if !b.scopes.iter().any(|s|s==moosuri_connectors::gmail::SEND_SCOPE) || db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_send_evidence WHERE tenant_id=?1 AND action_id=?2 AND withdrawn=1)",params![user.tenant.0,id],|r|r.get::<_,bool>(0))? {return Err(StoreError::Conflict)}
             b.dispatch=Some((id,nonce));
             Ok(b)}
         ).await

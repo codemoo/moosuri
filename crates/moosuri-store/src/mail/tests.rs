@@ -941,7 +941,7 @@ async fn schema29_and30_upgrade_keeps_unknown_legacy_without_self_derived_oracle
         drop(d);
         drop(store);
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-        conn.execute_batch("DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
+        conn.execute_batch("DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
             .unwrap();
         if predecessor == 29 {
             conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;").unwrap();
@@ -1157,4 +1157,268 @@ async fn reconciliation_retires_invalid_due_authority_without_starving_another_o
             .automatic_attempts,
         1
     );
+}
+
+#[tokio::test]
+async fn scheduled_mail_freezes_timing_reapproves_edits_and_commits_due_once() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let a = admin(&store).await;
+    let c = connect(&store, &a.user).await;
+    let original = store
+        .create_mail_draft(&a.user, input(&c), None)
+        .await
+        .unwrap();
+    let schedule = MailSchedule {
+        due_at: now().unwrap() + 7200,
+        timezone: "Asia/Seoul".into(),
+    };
+    let scheduled = store
+        .schedule_mail(
+            &a.user,
+            original.id.clone(),
+            MailScheduleInput {
+                expected: approval(&original),
+                schedule: Some(schedule.clone()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(scheduled.revision, original.revision + 1);
+    assert_eq!(scheduled.state, "pending_approval");
+    assert!(
+        store
+            .decide_mail(&a.user, original.id.clone(), approval(&original), true)
+            .await
+            .is_err()
+    );
+    assert!(store.next_mail_dispatch().await.unwrap().is_none());
+    let approved = store
+        .decide_mail(&a.user, scheduled.id.clone(), approval(&scheduled), true)
+        .await
+        .unwrap();
+    assert!(store.next_mail_dispatch().await.unwrap().is_none());
+    let changed = store
+        .schedule_mail(
+            &a.user,
+            approved.id.clone(),
+            MailScheduleInput {
+                expected: approval(&approved),
+                schedule: Some(MailSchedule {
+                    due_at: schedule.due_at + 3600,
+                    timezone: "UTC".into(),
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.state, "pending_approval");
+    assert!(store.next_mail_dispatch().await.unwrap().is_none());
+    store
+        .decide_mail(&a.user, changed.id.clone(), approval(&changed), true)
+        .await
+        .unwrap();
+    // Logout does not revoke the separately approved background work.
+    store.logout(&a.user).await.unwrap();
+    let id = changed.id.clone();
+    store
+        .call(move |db| {
+            db.conn.execute(
+                "UPDATE mail_schedules SET due_at=unixepoch()-1 WHERE action_id=?1",
+                [id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let d = store.next_mail_dispatch().await.unwrap().unwrap();
+    assert_eq!(d.frozen.digest(), digest_bytes(&changed.digest).unwrap());
+    assert!(store.next_mail_dispatch().await.unwrap().is_none());
+    store.finish_mail_dispatch(&d, None, false).await.unwrap();
+    assert!(store.next_mail_dispatch().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn scheduled_mail_account_grant_connection_source_and_cancel_fences() {
+    let _g = TEST_LOCK.lock().await;
+    for mode in [
+        "grant",
+        "suspend",
+        "epoch",
+        "connection",
+        "source",
+        "cancel",
+        "scope",
+    ] {
+        let dir = directory();
+        let store = Store::open(dir.path()).unwrap();
+        let a = admin(&store).await;
+        let c = connect(&store, &a.user).await;
+        let draft = store
+            .create_mail_draft(&a.user, input(&c), None)
+            .await
+            .unwrap();
+        let s = store
+            .schedule_mail(
+                &a.user,
+                draft.id.clone(),
+                MailScheduleInput {
+                    expected: approval(&draft),
+                    schedule: Some(MailSchedule {
+                        due_at: now().unwrap() + 3600,
+                        timezone: "UTC".into(),
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+        let s = store
+            .decide_mail(&a.user, s.id.clone(), approval(&s), true)
+            .await
+            .unwrap();
+        if mode == "cancel" {
+            store
+                .decide_mail(&a.user, s.id.clone(), approval(&s), false)
+                .await
+                .unwrap();
+        }
+        let id = s.id.clone();
+        let account = a.user.account.id.clone();
+        let connection = c.id.clone();
+        store.call(move|db|{
+            db.conn.execute("UPDATE mail_schedules SET due_at=unixepoch()-1 WHERE action_id=?1",[&id])?;
+            match mode {
+                "grant"=>{db.conn.execute("UPDATE mail_schedules SET approved_revision=NULL WHERE action_id=?1",[&id])?;},
+                "suspend"=>{db.conn.execute("UPDATE accounts SET status='suspended' WHERE id=?1",[account])?;},
+                "epoch"=>{db.conn.execute("UPDATE accounts SET auth_epoch=auth_epoch+1 WHERE id=?1",[account])?;},
+                "connection"=>{db.conn.execute("UPDATE mail_connections SET epoch=epoch+1 WHERE id=?1",[connection])?;},
+                "source"=>{db.conn.execute("UPDATE mail_actions SET state='cancelled',content=NULL,raw=NULL WHERE id=?1",[&id])?;},
+                "scope"=>{db.conn.execute("UPDATE mail_connections SET scopes='[]' WHERE id=?1",[connection])?;},
+                _=>(),
+            }Ok(())
+        }).await.unwrap();
+        let dispatch = store.next_mail_dispatch().await.unwrap();
+        assert!(dispatch.is_none(), "mode {mode}");
+    }
+}
+
+#[tokio::test]
+async fn scheduled_mail_preview_and_content_edit_retire_timing() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let a = admin(&store).await;
+    let c = connect(&store, &a.user).await;
+    use chrono::TimeZone;
+    let local = chrono_tz::Asia::Seoul
+        .timestamp_opt(now().unwrap() + 7200, 0)
+        .unwrap()
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    let preview = store
+        .preview_mail_schedule(
+            &a.user,
+            MailSchedulePreviewInput {
+                local_datetime: local,
+                timezone: "Asia/Seoul".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(preview.due_at > now().unwrap() + 7000);
+    assert!(
+        store
+            .preview_mail_schedule(
+                &a.user,
+                MailSchedulePreviewInput {
+                    local_datetime: "2027-03-14T02:30".into(),
+                    timezone: "America/New_York".into()
+                }
+            )
+            .await
+            .is_err()
+    );
+    let draft = store
+        .create_mail_draft(&a.user, input(&c), None)
+        .await
+        .unwrap();
+    let s = store
+        .schedule_mail(
+            &a.user,
+            draft.id.clone(),
+            MailScheduleInput {
+                expected: approval(&draft),
+                schedule: Some(preview),
+            },
+        )
+        .await
+        .unwrap();
+    let edited = store
+        .create_mail_draft(&a.user, input(&c), Some((s.id, s.revision)))
+        .await
+        .unwrap();
+    assert!(edited.schedule.is_none());
+    assert_eq!(edited.state, "pending_approval");
+}
+
+#[tokio::test]
+async fn compose_consent_is_opt_in_and_partial_grant_cannot_expand_drafts() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let a = admin(&store).await;
+    let start = store.start_mail_oauth(&a.user).await.unwrap();
+    let h = store
+        .capture_mail_oauth(
+            start.state,
+            SecretString::new("synthetic-code".into()).unwrap(),
+        )
+        .await
+        .unwrap();
+    let e = store.claim_mail_oauth(&a.user, h).await.unwrap();
+    let mut t = tokens();
+    t.scopes
+        .as_mut()
+        .unwrap()
+        .push(moosuri_connectors::gmail::COMPOSE_SCOPE.into());
+    let c = store
+        .complete_mail_oauth(e, t, "sender@example.test".into())
+        .await
+        .unwrap();
+    assert!(!c.compose_enabled);
+    assert!(
+        !store
+            .mail_binding(&a.user, c.id)
+            .await
+            .unwrap()
+            .has_compose()
+    );
+    let pin = GoogleAppPin {
+        revision: None,
+        client_id: "synthetic-app".into(),
+        redirect_uri: "http://127.0.0.1/callback".into(),
+    };
+    let start = store
+        .start_mail_compose_oauth_with_app(&a.user, pin.clone())
+        .await
+        .unwrap();
+    let h = store
+        .capture_mail_oauth(
+            start.state,
+            SecretString::new("synthetic-code".into()).unwrap(),
+        )
+        .await
+        .unwrap();
+    let e = store
+        .claim_mail_oauth_with_app(&a.user, h, pin)
+        .await
+        .unwrap();
+    assert!(e.compose);
+    assert!(matches!(
+        store
+            .complete_mail_oauth(e, tokens(), "sender@example.test".into())
+            .await,
+        Err(StoreError::Forbidden)
+    ));
 }

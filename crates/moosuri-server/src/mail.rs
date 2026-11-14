@@ -40,6 +40,13 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/connections", get(connections))
         .route("/connections/{id}", delete(disconnect))
         .route("/oauth/start", post(start))
+        .route("/oauth/compose", post(start_compose))
+        .route("/schedule/preview", post(schedule_preview))
+        .route("/drafts", get(provider_drafts))
+        .route(
+            "/drafts/{id}",
+            get(provider_draft).delete(delete_provider_draft),
+        )
         .route("/oauth/callback", get(callback))
         .route("/oauth/complete", post(complete))
         .route("/search", post(search))
@@ -47,6 +54,8 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/threads/{id}", get(thread))
         .route("/actions", get(actions).post(draft))
         .route("/actions/{id}", get(action).put(edit))
+        .route("/actions/{id}/schedule", put(schedule))
+        .route("/actions/{id}/provider-draft", post(save_provider_draft))
         .route("/actions/{id}/approve", post(approve))
         .route("/actions/{id}/reject", post(reject))
         .route("/actions/{id}/check-sent", post(check_sent))
@@ -171,7 +180,12 @@ async fn complete(
     };
     // A partial consent cannot establish a durable mailbox connection. Release
     // the claimed flow so a failed consent does not block installer edits.
-    if tokens.refresh_token.is_none()
+    if (exchange.compose
+        && !tokens.scopes.as_ref().is_some_and(|s| {
+            s.iter()
+                .any(|s| s == moosuri_connectors::gmail::COMPOSE_SCOPE)
+        }))
+        || tokens.refresh_token.is_none()
         || tokens.scopes.as_ref().is_some_and(|scopes| {
             moosuri_connectors::gmail::MINIMAL_SCOPES
                 .iter()
@@ -338,4 +352,122 @@ async fn check_sent(
             .await?,
     )
     .into_response())
+}
+
+async fn start_compose(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let app = s
+        .mail
+        .oauth_client()
+        .await?
+        .ok_or(StoreError::Unavailable)?;
+    let start = s
+        .store
+        .start_mail_compose_oauth_with_app(&u, app.pin)
+        .await?;
+    let url = GmailClient::authorization_url_scoped(
+        &app.client.client_id,
+        &app.client.redirect_uri,
+        &start.state,
+        &start.verifier,
+        &moosuri_connectors::gmail::COMPOSE_SCOPES,
+    )
+    .map_err(|_| StoreError::Unavailable)?;
+    Ok(Json(serde_json::json!({"authorization_url":url})).into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DraftQuery {
+    connection_id: String,
+    page_token: Option<String>,
+}
+async fn provider_drafts(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<DraftQuery>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    Ok(Json(
+        s.mail
+            .gmail_drafts(
+                &u,
+                &q.connection_id,
+                q.page_token.as_deref(),
+                &CancellationToken::new(),
+            )
+            .await?,
+    )
+    .into_response())
+}
+async fn provider_draft(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<Read>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    Ok(Json(
+        s.mail
+            .gmail_draft(&u, &q.connection_id, &id, &CancellationToken::new())
+            .await?,
+    )
+    .into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteDraft {
+    connection_id: String,
+    expected_digest: String,
+}
+async fn delete_provider_draft(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(q): Json<DeleteDraft>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    s.mail
+        .delete_gmail_draft(
+            &u,
+            &q.connection_id,
+            &id,
+            &q.expected_digest,
+            &CancellationToken::new(),
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+async fn save_provider_draft(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::GmailDraftSave>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    Ok(Json(
+        s.mail
+            .save_gmail_draft(&u, id, input, &CancellationToken::new())
+            .await?,
+    )
+    .into_response())
+}
+async fn schedule(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::MailScheduleInput>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let a = s.store.schedule_mail(&u, id, input).await?;
+    s.runtime.wake();
+    Ok(Json(a).into_response())
+}
+
+async fn schedule_preview(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<moosuri_core::MailSchedulePreviewInput>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    Ok(Json(s.store.preview_mail_schedule(&u, input).await?).into_response())
 }

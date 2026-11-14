@@ -5,7 +5,9 @@
 //! commit a durable dispatch record before calling `send_frozen`. A timeout or
 //! lost response must be reconciled, never blindly retried. Google acceptance is
 //! not proof of recipient delivery. No model-facing raw send tool belongs here.
+mod drafts;
 mod mime;
+pub use drafts::{Draft, DraftPage, DraftRef};
 mod reconcile;
 pub use reconcile::{SentCandidate, SentObservation, SentSearch, reconciliation_fingerprint};
 #[cfg(test)]
@@ -20,6 +22,8 @@ use tokio_util::sync::CancellationToken;
 use transport::{Body, Endpoint};
 use zeroize::Zeroizing;
 
+pub const COMPOSE_SCOPE: &str = "https://www.googleapis.com/auth/gmail.compose";
+pub const COMPOSE_SCOPES: [&str; 3] = [READ_SCOPE, SEND_SCOPE, COMPOSE_SCOPE];
 pub const READ_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";
 pub const SEND_SCOPE: &str = "https://www.googleapis.com/auth/gmail.send";
 pub const MINIMAL_SCOPES: [&str; 2] = [READ_SCOPE, SEND_SCOPE];

@@ -1,6 +1,7 @@
 //! HTTP boundary. Authentication, tenant scoping and persistence live in Store.
 mod accounts;
 mod artifacts;
+mod audio;
 mod automatic_memory;
 mod browser;
 mod calendar;
@@ -84,6 +85,7 @@ pub struct ServerConfig {
     browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
     vault_origin: Option<String>,
     pdf_extractor: Option<std::path::PathBuf>,
+    audio: moosuri_connectors::audio::AudioClient,
 }
 impl ServerConfig {
     pub fn new(origin: &str, allow_http_loopback: bool) -> Result<Self, &'static str> {
@@ -123,7 +125,14 @@ impl ServerConfig {
             browser: None,
             vault_origin: None,
             pdf_extractor: None,
+            audio: moosuri_connectors::audio::AudioClient::default(),
         })
+    }
+    #[cfg(feature = "test-fixtures")]
+    pub fn with_audio_fixture(mut self, base: String) -> Result<Self, &'static str> {
+        self.audio = moosuri_connectors::audio::AudioClient::fixture(base)
+            .map_err(|_| "invalid_audio_fixture")?;
+        Ok(self)
     }
     /// Fixed deployment-owned Moosuri executable. Never accepted from HTTP/model input.
     pub fn with_pdf_extractor(
@@ -329,6 +338,13 @@ pub fn router_with_runtime(
             "/api/v1/admin/providers/{id}/vision-probe",
             post(providers::vision_probe),
         )
+        .route("/api/v1/audio/settings", get(audio::settings))
+        .route(
+            "/api/v1/audio/{id}",
+            post(audio::upload).get(audio::status).delete(audio::remove),
+        )
+        .route("/api/v1/admin/audio/settings", post(audio::disable))
+        .route("/api/v1/admin/audio/probe", post(audio::probe))
         .route("/api/v1/media", get(media::library))
         .route(
             "/api/v1/media/{id}",

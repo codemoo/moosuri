@@ -798,7 +798,7 @@ fn public_address(ip: IpAddr) -> bool {
     }
 }
 
-fn allowed(policy: &NetworkPolicy, ip: IpAddr) -> bool {
+pub(super) fn allowed(policy: &NetworkPolicy, ip: IpAddr) -> bool {
     if forbidden(ip) {
         return false;
     }

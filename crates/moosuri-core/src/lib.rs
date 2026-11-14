@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod audio;
+pub use audio::*;
 mod push;
 pub use push::*;
 
@@ -96,6 +98,9 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        AudioSelection::decl(),
+        AudioSettings::decl(),
+        AudioJob::decl(),
         PushDeviceView::decl(),
         PushConfiguration::decl(),
         ScheduleRule::decl(),

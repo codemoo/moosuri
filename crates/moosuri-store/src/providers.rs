@@ -224,7 +224,7 @@ fn credential_valid(secret: &str) -> Result<()> {
     }
     Ok(())
 }
-struct Revision {
+pub(super) struct Revision {
     id: String,
     revision: i64,
     name: String,
@@ -268,7 +268,7 @@ fn credential(key: &[u8; 32], row: &Revision) -> Result<Option<Zeroizing<String>
         })
         .transpose()
 }
-fn require_binding(conn: &Connection, id: &str, revision: i64) -> Result<Revision> {
+pub(super) fn require_binding(conn: &Connection, id: &str, revision: i64) -> Result<Revision> {
     let row = load_revision(conn, id)?;
     if row.revision != revision {
         return Err(StoreError::Conflict);
@@ -278,7 +278,7 @@ fn require_binding(conn: &Connection, id: &str, revision: i64) -> Result<Revisio
     }
     Ok(row)
 }
-fn binding(
+pub(super) fn binding(
     key: &[u8; 32],
     row: Revision,
     model: String,

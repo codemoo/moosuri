@@ -3,6 +3,8 @@
 export class RequestScope {
   constructor(private readonly expectedAccountId?: string) {}
   private active = true;
+  private cleanups = new Set<()=>void>();
+  onClose(cleanup:()=>void) { if(!this.active){cleanup();return ()=>{};}this.cleanups.add(cleanup);return ()=>{this.cleanups.delete(cleanup);}; }
   private urls = new Set<string>();
   private uploads = new Set<XMLHttpRequest>();
   releaseUrl(url: string) {
@@ -54,6 +56,12 @@ export class RequestScope {
     signal: AbortSignal,
     filename?: string,
   ): Promise<T> {
+    return this.uploadBinary<T>(filename === undefined ? `/api/v1/media/${encodeURIComponent(id)}` : `/api/v1/files/${encodeURIComponent(id)}?filename=${encodeURIComponent(filename)}`, blob, progress, signal);
+  }
+  audioUpload<T>(id: string, blob: Blob, progress: (percent:number)=>void, signal:AbortSignal, probe?:{provider_id:string;provider_revision:number}):Promise<T> {
+    return this.uploadBinary<T>(probe ? "/api/v1/admin/audio/probe" : `/api/v1/audio/${encodeURIComponent(id)}`,blob,progress,signal,probe);
+  }
+  private uploadBinary<T>(path:string,blob:Blob,progress:(percent:number)=>void,signal:AbortSignal,probe?:{provider_id:string;provider_revision:number}):Promise<T> {
     if (!this.active || signal.aborted)
       return Promise.reject(
         new DOMException("Closed account lifetime", "AbortError"),
@@ -67,7 +75,8 @@ export class RequestScope {
         this.uploads.delete(xhr);
         signal.removeEventListener("abort", abort);
       };
-      xhr.open("POST", filename === undefined ? `/api/v1/media/${encodeURIComponent(id)}` : `/api/v1/files/${encodeURIComponent(id)}?filename=${encodeURIComponent(filename)}`);
+      xhr.open("POST", path);
+      if(probe){xhr.setRequestHeader("X-Audio-Provider",probe.provider_id);xhr.setRequestHeader("X-Audio-Revision",String(probe.provider_revision));}
       xhr.withCredentials = true;
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
       if (this.expectedAccountId)
@@ -88,7 +97,7 @@ export class RequestScope {
             if (xhr.responseText.length <= 1024) {
               const body: unknown = JSON.parse(xhr.responseText);
               const value = body && typeof body === "object" && "code" in body ? body.code : undefined;
-              if (typeof value === "string" && ["pdf_encrypted", "pdf_no_text", "pdf_unsupported_content", "pdf_extraction_limit", "pdf_extraction_timeout", "pdf_extractor_unavailable", "pdf_invalid"].includes(value)) code = value;
+              if (typeof value === "string" && ["audio_invalid", "audio_probe_mismatch", "audio_probe_too_long", "audio_credentials_rejected", "audio_rate_limited", "audio_outcome_unknown", "audio_response_invalid", "audio_unavailable", "pdf_encrypted", "pdf_no_text", "pdf_unsupported_content", "pdf_extraction_limit", "pdf_extraction_timeout", "pdf_extractor_unavailable", "pdf_invalid"].includes(value)) code = value;
             }
           } catch { /* Unknown error bodies keep the fixed generic failure. */ }
           reject(new ApiFailure(xhr.status, code));
@@ -114,6 +123,8 @@ export class RequestScope {
   private controllers = new Set<AbortController>();
   close() {
     this.active = false;
+    for(const cleanup of this.cleanups){try{cleanup();}catch{/* Continue fencing every request even if a local resource cleanup fails. */}}
+    this.cleanups.clear();
     for (const xhr of this.uploads) xhr.abort();
     this.uploads.clear();
     for (const url of this.urls) URL.revokeObjectURL(url);

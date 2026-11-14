@@ -1,3 +1,4 @@
+import {AudioSettingsPanel} from "./AudioSettings";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type {
   ModelCatalog,
@@ -513,6 +514,7 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
           요청 처리 중…
         </p>
       )}
+      <AudioSettingsPanel accountId={accountId} providers={data?.providers??[]} onExpired={onExpired}/>
       <div className="settings-toolbar">
         <button
           className="primary"

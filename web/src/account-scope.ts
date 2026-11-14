@@ -22,6 +22,7 @@ export function useScope(expectedAccountId?: string, lifetime?: string | null) {
   }, [expectedAccountId, registry, ref]);
   return useMemo(
     () => ({
+      onClose: (cleanup:()=>void) => ref.current!.onClose(cleanup),
       localUrl: (blob: Blob) => ref.current!.localUrl(blob),
       releaseUrl: (url: string) => ref.current?.releaseUrl(url),
       imageUrl: (path: string, signal?: AbortSignal) =>
@@ -33,6 +34,7 @@ export function useScope(expectedAccountId?: string, lifetime?: string | null) {
         signal: AbortSignal,
         filename?: string,
       ) => ref.current!.upload<T>(id, blob, progress, signal, filename),
+      audioUpload: <T>(id:string,blob:Blob,progress:(percent:number)=>void,signal:AbortSignal,probe?:{provider_id:string;provider_revision:number}) => ref.current!.audioUpload<T>(id,blob,progress,signal,probe),
       request: <T>(
         path: string,
         method?: string,

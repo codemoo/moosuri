@@ -1,5 +1,6 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
+pub mod audio;
 pub mod push;
 
 mod missions;
@@ -199,7 +200,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 32;
+const CURRENT_SCHEMA_VERSION: i64 = 33;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -550,7 +551,22 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 32 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0032_personal_chatgpt.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 33 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0033_bounded_audio.sql"),
+                "COMMIT;"
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
+        audio::restart(&conn)?;
         calendar::restart(&conn)?;
         media::quarantine(&conn)?;
         schedules::restart(&conn)?;
@@ -560,13 +576,6 @@ impl Store {
         browser::restart(&conn)?;
         conn.execute("UPDATE mail_actions SET version=version+1,state='outcome_unknown',raw=NULL,content=NULL WHERE state='dispatch_committed'",[])?;
         conn.execute("UPDATE mail_actions SET version=version+1,raw=NULL,content=NULL WHERE state='outcome_unknown' AND (raw IS NOT NULL OR content IS NOT NULL)",[])?;
-        if version < 32 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0032_personal_chatgpt.sql"),
-                "COMMIT;"
-            ))?;
-        }
         let provider_key = providers::open_key(&conn, &dir)?;
         subscriptions::initialize(&conn)?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;

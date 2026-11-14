@@ -6,6 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[features]
+test-fixtures = ["moosuri-connectors/test-fixtures"]
+
 [dependencies]
 moosuri-documents = { path = "../moosuri-documents" }
 subtle = "=2.6.1"

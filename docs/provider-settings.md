@@ -137,3 +137,9 @@ Synthetic signed OAuth, restart, real loopback plan transport and stored chat te
 exercise this integration. They do not establish real account/workspace eligibility,
 live capability or remotely managed hosted-app approval. Independent security and
 actual account acceptance remain separate gates.
+
+## 별도 음성 연결
+
+관리자 모델 설정의 **음성을 글로**에서 현재 유효한 설치용 OpenAI API 연결을 선택한다. 고정 공개 문장 “The blue bird sings beside the quiet river.”가 들리는15초 이하 녹음을 선택하고 **음성 연결 확인하고 저장**을 누른다. 실제 API 응답의 단어가 일치해야 저장한다. 기대 문장을 provider prompt에 넣지 않는다. 현재 모델은 `gpt-4o-mini-transcribe`이며 text/vision/tools 연결 확인과 독립적이다. 설정 변경·API key 회전/disable 뒤 다시 확인해야 한다. 구독/SIWC token은 Audio API로 보내지 않는다. 이 설치용 API key는 현재 server-managed 경계이며 개인 vault CredentialBroker 지원을 주장하지 않는다. 제공업체 처리 비용은 별도로 발생할 수 있다.
+
+음성 설정은 provider revision과 별도의 단조 증가 authority 세대를 갖는다. 끄기/성공한 재설정은 이전 음성 job을 취소하고 임시 글을 지우며, 이전 세대의 지연된 연결 확인 결과가 다시 설정을 활성화하지 못하게 한다. 같은 연결을 다시 확인하더라도 이전 job은 재개되지 않는다.

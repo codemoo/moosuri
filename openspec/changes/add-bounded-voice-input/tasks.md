@@ -1,0 +1,8 @@
+- [x] Add recorder/normalizer and original-slot draft insertion UI.
+- [x] Add closed WAV validator, separate OpenAI audio transport and explicit admin probe/selection.
+- [x] Add schema33 ephemeral receipts, dedup/authority/expiry/restart/quota fences and restore quarantine.
+- [x] Author focused synthetic recorder/UI/store/real HTTP loopback acceptance scenarios.
+- [x] Run focused native/typecheck/frontend/build checks with exact schema32 prerequisite overlay; retain initial lock/Clippy failures and successful fixes.
+- [x] Reproduce independent-review P1/P2 defects on v2, add permanent settings generation/CAS and same-attempt client recovery, then pass focused native/HTTP/UI/build/Clippy/restore gates.
+- [x] Independently re-review R3 repairs, integrate full personal schema32 before33, correct synthetic predecessor fixtures, and pass native/Linux/actual Chrome acceptance with explicitly synthetic audio/provider boundaries.
+- [ ] Actual configured provider speech recognition and representative mobile microphone/interruption acceptance.

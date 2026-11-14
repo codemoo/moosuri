@@ -1,3 +1,4 @@
+import {VoiceComposer,type VoiceComposerHandle} from "./VoiceComposer";
 import {CalendarEvidence} from "./CalendarEvidence";
 import type {MissionChatContext,MissionChatTarget} from "../shared/api-types";
 import {useMediaUploads,MediaLibraryView,PrivateImage} from "./Media";
@@ -147,6 +148,7 @@ export function ChatPanel(props: Props) {
   const sendScope = useScope(accountId);
   const slot = threadId ?? "new";
   const media=useMediaUploads(accountId,slot);
+  const voice=useRef<VoiceComposerHandle>(null);
   const draft = memory.drafts[slot] ?? "";
   const pending = memory.pending[slot];
   const pendingRef = useRef(memory.pending);
@@ -769,6 +771,7 @@ export function ChatPanel(props: Props) {
       try {
         thread = await callbacks.current.createThread();
         media.moveSlot("new",thread);
+        voice.current?.moveSlot("new",thread);
         callbacks.current.onCreated(thread, value.request_id);
       } catch (error) {
         callbacks.current.onPending("new", null, value.request_id);
@@ -1079,6 +1082,7 @@ export function ChatPanel(props: Props) {
         </div>
       )}
       <footer className="chat-composer-area">
+        <VoiceComposer ref={voice} accountId={accountId} slot={slot} onExpired={props.onExpired} onInsert={(origin,text)=>{flushRef.current();const current=callbacks.current.memory.drafts[origin]??"";const next=current?`${current}\n${text}`:text;if(new TextEncoder().encode(next).byteLength>8192)return false;callbacks.current.onDraft(origin,next);requestAnimationFrame(()=>{if(origin===(currentThread.current??"new"))textarea.current?.focus();});return true;}}/>
         {media.view}
         <MediaLibraryView accountId={accountId} onSelect={media.select}/>
         {modelError && (

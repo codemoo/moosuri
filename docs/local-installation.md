@@ -121,10 +121,12 @@ backup identities along with the source export.
 Before migration, a fsynced `pending.json` preserves the old/new signed releases,
 source/target schemas and export ID/path. A second durable migration-start marker
 precedes opening the real Store migration path. No migration SQL is duplicated in
-the installer. Existing same-schema updates retain their binary-only behavior.
+the installer. Existing same-schema updates perform no Store migration.
 Cross-schema activation also atomically refreshes the installed `manager` from the
 verified new binary, preserving the service's existing entry point; deployment
-files are not executed. A pending record fences managed startup until migration,
+files are not executed. Provenance-bearing same-schema bundles also refresh the
+verified manager because older strict managers reject the new manifest member.
+A pending record fences managed startup until migration,
 manager refresh, active-pointer publication and record retirement complete.
 
 The command never starts/resumes the service. After status succeeds, explicitly
@@ -199,6 +201,14 @@ moosuri installation manifest --binary /absolute/private/bundle/moosuri \
   --sequence 1 --output /absolute/private/bundle/manifest.json
 ```
 
+Before signing, optionally run `cargo run --locked -p xtask -- release-provenance
+--bundle /absolute/private/bundle` from the frozen source checkout. It generates a
+fresh source-lock SBOM, records declared checkout/compiler metadata and updates the
+unsigned manifest to bind both sidecars. See [offline binary provenance](binary-provenance.md)
+for exact claims, limits and verification. Sign the final updated manifest, and
+retain all five files. `moosuri installation verify --bundle BUNDLE --trust-key PIN`
+authenticates the complete local bundle without executing its code or installing it.
+
 Sign **the exact manifest bytes** externally with your independently controlled
 Ed25519 key, producing the raw64-byte `manifest.ed25519` beside it. For an operator's
 own key, OpenSSL's `pkeyutl -sign -rawin -inkey PRIVATE_KEY -in manifest.json
@@ -209,7 +219,11 @@ These instructions do not establish an official project release key.
 
 Format1 permits exactly one binary basename, `moosuri`; assets are embedded in it.
 The signed JSON records product, native target, SemVer, monotonically increasing
-sequence, exact Store schema, embedded-web flag, size and SHA256. Signature verifies
+sequence, exact Store schema, embedded-web flag, size and SHA256. An optional signed
+provenance reference binds only the fixed provenance/SBOM basenames; old bundles
+without it remain supported. Old strict installers reject the new member, so use
+the new executable when installing/updating an evidence-bearing bundle.
+Signature verifies
 before parsing paths or running staged code; the installed copy is hashed again
 and its public probe must match. The manager, immutable signed slots and review
 config files live only under the owner-private prefix. No archive extraction,

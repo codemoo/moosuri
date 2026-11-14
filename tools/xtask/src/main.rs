@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod release;
+#[path = "../../release/provenance.rs"]
+mod release_evidence;
 mod sbom;
 mod source_connections;
 
@@ -381,8 +384,15 @@ fn verify(root: &Path) -> Check<()> {
 
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args != ["verify-plan"] && args != ["sbom"] {
-        eprintln!("Usage: cargo run --locked -p xtask -- <verify-plan|sbom>");
+    if args != ["verify-plan"]
+        && args != ["sbom"]
+        && !args
+            .first()
+            .is_some_and(|s| ["release-provenance", "verify-provenance"].contains(&s.as_str()))
+    {
+        eprintln!(
+            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY>"
+        );
         std::process::exit(2);
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -392,6 +402,8 @@ fn main() {
         .and_then(|root| {
             if args == ["sbom"] {
                 sbom::print(&root)
+            } else if args[0] == "release-provenance" || args[0] == "verify-provenance" {
+                release::run(&root, &args)
             } else {
                 verify(&root)
             }

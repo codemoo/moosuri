@@ -21,8 +21,12 @@ resolved download URLs, configuration and credentials, so identical locks produc
 identical bytes. No source content, package cache or license file is copied.
 
 Cargo.lock has no dependency license evidence: the inventory does not guess it.
-License clearance/notices, vulnerability assessment, target-specific build
-provenance and signed official release artifacts remain separate gates. Nonstandard
+The [offline provenance packager](binary-provenance.md) binds these exact inventory
+bytes to a particular artifact hash/target and declared checkout/compiler metadata.
+It remains a packager claim, not proof of authenticated build execution or the
+minimal dependency graph of that binary. License clearance/notices, vulnerability
+assessment, authenticated build provenance and signed official release artifacts
+remain separate gates. Nonstandard
 Rust sources and unsupported/corrupt lock formats fail with bounded diagnostics
 rather than exporting private registry or Git addresses. Generate a fresh inventory
 for each release instead of committing a stale generated copy.

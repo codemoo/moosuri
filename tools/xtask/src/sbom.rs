@@ -255,7 +255,7 @@ fn inventory(inputs: &[(&str, &str)]) -> Check<Value> {
         json!({"$schema":"https://cyclonedx.org/schema/bom-1.6.schema.json","bomFormat":"CycloneDX","specVersion":"1.6","version":1,"metadata":{"component":{"type":"application","bom-ref":"moosuri-source","name":"moosuri","version":version},"properties":properties},"components":components.into_values().collect::<Vec<_>>()}),
     )
 }
-pub(super) fn print(root: &Path) -> Check<()> {
+pub(super) fn generate(root: &Path) -> Check<Vec<u8>> {
     let mut contents = Vec::new();
     for path in LOCKS {
         let p = root.join(path);
@@ -272,9 +272,12 @@ pub(super) fn print(root: &Path) -> Check<()> {
     let value = inventory(&inputs)?;
     let mut bytes = serde_json::to_vec_pretty(&value).map_err(|_| failure())?;
     bytes.push(b'\n');
+    Ok(bytes)
+}
+pub(super) fn print(root: &Path) -> Check<()> {
     std::io::stdout()
         .lock()
-        .write_all(&bytes)
+        .write_all(&generate(root)?)
         .map_err(|_| "cannot write SBOM".into())
 }
 

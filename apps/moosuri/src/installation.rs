@@ -15,6 +15,8 @@ use std::{
     path::{Component, Path, PathBuf},
     process::Command as Process,
 };
+#[path = "../../../tools/release/provenance.rs"]
+mod release_evidence;
 type Result<T> = std::result::Result<T, String>;
 const BINARY_CAP: u64 = 256 * 1024 * 1024;
 #[derive(Clone, ValueEnum, Serialize, Deserialize)]
@@ -36,6 +38,13 @@ pub enum Command {
         sequence: u64,
         #[arg(long)]
         output: PathBuf,
+    },
+    /// Authenticate a local bundle and its bound evidence without installing or executing it.
+    Verify {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        trust_key: PathBuf,
     },
     /// Install a local signed bundle into a new private prefix; initialize separately.
     Install {
@@ -115,6 +124,25 @@ struct Manifest {
     binary: String,
     size: u64,
     sha256: String,
+    #[serde(
+        default,
+        deserialize_with = "present_provenance",
+        skip_serializing_if = "Option::is_none"
+    )]
+    provenance: Option<serde_json::Value>,
+}
+// Missing is the legacy format. Explicit null is a new signed member which
+// older strict managers cannot read, and must not silently acquire legacy semantics.
+fn present_provenance<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<serde_json::Value>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Err(serde::de::Error::custom(
+            "installation_provenance_null_refused",
+        ));
+    }
+    Ok(Some(value))
 }
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(deny_unknown_fields)]
@@ -154,7 +182,8 @@ struct Bundle {
     bytes: Vec<u8>,
     signature: Vec<u8>,
     key: Vec<u8>,
-    binary: PathBuf,
+    binary: Vec<u8>,
+    evidence: Vec<(&'static str, Vec<u8>)>,
 }
 fn error(_: impl std::fmt::Display) -> String {
     "installation_io_failed".into()
@@ -474,7 +503,34 @@ fn validate_manifest(m: &Manifest) -> Result<()> {
     if m.version.len() > 64 || semver::Version::parse(&m.version).is_err() {
         return Err("installation_version_invalid".into());
     }
+    if let Some(r) = &m.provenance {
+        release_evidence::validate_reference(
+            r,
+            release_evidence::PROVENANCE,
+            release_evidence::PROVENANCE_CAP,
+        )
+        .map_err(str::to_owned)?;
+    }
     Ok(())
+}
+fn evidence(root: &Path, m: &Manifest, private: bool) -> Result<Vec<(&'static str, Vec<u8>)>> {
+    use release_evidence::{INVENTORY, INVENTORY_CAP, PROVENANCE, PROVENANCE_CAP};
+    let Some(reference) = &m.provenance else {
+        // An unsigned adjacent claim is not release evidence. Reserved sidecars
+        // require a signed reference; old ordinary three-file bundles still work.
+        for name in [PROVENANCE, INVENTORY] {
+            match fs::symlink_metadata(root.join(name)) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                _ => return Err("installation_unbound_provenance".into()),
+            }
+        }
+        return Ok(vec![]);
+    };
+    let p = read(&root.join(PROVENANCE), PROVENANCE_CAP, private)?;
+    let i = read(&root.join(INVENTORY), INVENTORY_CAP, private)?;
+    release_evidence::verify(reference, &p, &i, &serde_json::to_value(m).map_err(error)?)
+        .map_err(str::to_owned)?;
+    Ok(vec![(PROVENANCE, p), (INVENTORY, i)])
 }
 fn bundle(root: &Path, key_path: &Path) -> Result<Bundle> {
     private_dir(root)?;
@@ -490,8 +546,16 @@ fn bundle(root: &Path, key_path: &Path) -> Result<Bundle> {
         .map_err(|_| "installation_signature_invalid".to_owned())?;
     let m: Manifest = parse(&bytes)?;
     validate_manifest(&m)?;
+    // Capture verified bytes before any installation/update state mutation.
+    // Staging consumes this snapshot, not replaceable source paths.
+    let binary = read(&root.join("moosuri"), BINARY_CAP, false)?;
+    if binary.len() as u64 != m.size || hash(&binary) != m.sha256 {
+        return Err("installation_binary_hash_mismatch".into());
+    }
+    let evidence = evidence(root, &m, false)?;
     Ok(Bundle {
-        binary: root.join(&m.binary),
+        binary,
+        evidence,
         manifest: m,
         bytes,
         signature: sig,
@@ -502,8 +566,8 @@ fn stage(prefix: &Path, b: &Bundle) -> Result<Release> {
     let releases = prefix.join("releases");
     private_dir(&releases)?;
     let dir = releases.join(b.manifest.sequence.to_string());
-    let binary = read(&b.binary, BINARY_CAP, false)?;
-    if binary.len() as u64 != b.manifest.size || hash(&binary) != b.manifest.sha256 {
+    let binary = &b.binary;
+    if binary.len() as u64 != b.manifest.size || hash(binary) != b.manifest.sha256 {
         return Err("installation_binary_hash_mismatch".into());
     }
     if dir.exists() {
@@ -513,6 +577,7 @@ fn stage(prefix: &Path, b: &Bundle) -> Result<Release> {
             if !["moosuri", "manifest.json", "manifest.ed25519"]
                 .iter()
                 .any(|expected| name == *expected)
+                && !b.evidence.iter().any(|(expected, _)| name == *expected)
             {
                 return Err("installation_release_unrelated_entry".into());
             }
@@ -522,11 +587,17 @@ fn stage(prefix: &Path, b: &Bundle) -> Result<Release> {
     }
     // An exact same signed slot can finish staging after a pre-activation crash.
     // Changed files are never overwritten or recursively removed.
-    for (name, bytes, executable) in [
+    let mut files = vec![
         ("moosuri", binary.as_slice(), true),
         ("manifest.json", b.bytes.as_slice(), false),
         ("manifest.ed25519", b.signature.as_slice(), false),
-    ] {
+    ];
+    files.extend(
+        b.evidence
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice(), false)),
+    );
+    for (name, bytes, executable) in files {
         let path = dir.join(name);
         match fs::symlink_metadata(&path) {
             Ok(_) => {
@@ -593,6 +664,7 @@ fn verify_release(prefix: &Path, i: &Installation, r: &Release) -> Result<PathBu
     if bytes.len() as u64 != m.size || hash(&bytes) != m.sha256 {
         return Err("installation_binary_hash_mismatch".into());
     }
+    evidence(&dir, &m, true)?;
     Ok(binary)
 }
 fn pending(prefix: &Path) -> Result<Option<Activation>> {
@@ -610,9 +682,19 @@ fn no_pending(prefix: &Path) -> Result<()> {
     }
 }
 fn finish_activation(prefix: &Path, p: &Activation) -> Result<()> {
-    if p.source_schema.is_some() && p.source_schema != p.target_schema {
-        // Legacy managers enforce their own schema. Refresh the verified manager
-        // under the same pending fence so the installed service can run the new slot.
+    let target: Manifest = parse(&read(
+        &prefix
+            .join("releases")
+            .join(p.to.sequence.to_string())
+            .join("manifest.json"),
+        16384,
+        true,
+    )?)?;
+    if p.source_schema.is_some() && p.source_schema != p.target_schema
+        || target.provenance.is_some()
+    {
+        // Legacy managers reject new signed fields as well as new schemas.
+        // Refresh under the pending fence before selecting an evidence-bearing slot.
         let mut i = installation(prefix)?;
         let bytes = read(&verify_release(prefix, &i, &p.to)?, BINARY_CAP, true)?;
         atomic_mode(&prefix.join("manager"), &bytes, true)?;
@@ -777,11 +859,26 @@ pub fn run(command: &Command) -> Result<()> {
                 binary: "moosuri".into(),
                 size: bytes.len() as u64,
                 sha256: hash(&bytes),
+                provenance: None,
             };
             create(output, &json(&m)?, false)?;
             sync(output.parent().ok_or("installation_parent_required")?)?;
             println!(
                 "Unsigned manifest created. Sign its exact bytes externally with your explicitly pinned Ed25519 key; no official release trust was created."
+            );
+        }
+        Command::Verify {
+            bundle: root,
+            trust_key,
+        } => {
+            let verified = bundle(root, trust_key)?;
+            println!(
+                "Pinned signature and binary verified. Bound provenance: {}. No bundle code was executed or installation data opened. Provenance metadata remains a packager claim.",
+                if verified.manifest.provenance.is_some() {
+                    "verified"
+                } else {
+                    "absent (legacy format1)"
+                }
             );
         }
         Command::Install {
@@ -956,15 +1053,14 @@ pub fn run(command: &Command) -> Result<()> {
                 if p.migration_started || guard.schema_version() != from_schema {
                     return Err("installation_upgrade_schema_mismatch".into());
                 }
-                atomic(
-                    &prefix.join("current.json"),
-                    &json(match choose {
-                        Choice::New => &p.to,
-                        Choice::Old => &p.from,
-                    })?,
-                )?;
-                fs::remove_file(prefix.join("pending.json")).map_err(error)?;
-                sync(prefix)?;
+                match choose {
+                    Choice::New => finish_activation(prefix, &p)?,
+                    Choice::Old => {
+                        atomic(&prefix.join("current.json"), &json(&p.from)?)?;
+                        fs::remove_file(prefix.join("pending.json")).map_err(error)?;
+                        sync(prefix)?;
+                    }
+                }
             }
             println!(
                 "Pending activation resolved under stopped admission. SQLite was never rolled back. Review status before explicitly starting the service."
@@ -1083,11 +1179,21 @@ fn uninstall(prefix: &Path, i: &Installation) -> Result<()> {
             kept += 1;
             continue;
         }
-        for (file, cap) in [
+        let mut files = vec![
             ("moosuri", BINARY_CAP),
             ("manifest.json", 16384),
             ("manifest.ed25519", 64),
-        ] {
+        ];
+        if m.provenance.is_some() {
+            files.extend([
+                (
+                    release_evidence::PROVENANCE,
+                    release_evidence::PROVENANCE_CAP,
+                ),
+                (release_evidence::INVENTORY, release_evidence::INVENTORY_CAP),
+            ]);
+        }
+        for (file, cap) in files {
             let digest = hash(&read(&path.join(file), cap, true)?);
             remove_exact(&path.join(file), &digest)?;
         }

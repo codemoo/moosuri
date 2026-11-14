@@ -26,6 +26,18 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 현재 독립 vault 또는 명시한 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver와 실행 중 전체 자료의 암호화된 로컬 export를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export의 실제 운영 수락·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
+## 최근 수락한 단위 · 설치 파일과 출처 정보 검증
+
+실행 파일·소스 버전·컴파일러 정보·의존성 목록의 정확한 bytes를 기존 서명 manifest에
+연결하는 오프라인 Rust 도구를 구현했다. 설치 전 검증은 실행 파일을 실행하거나 운영
+자료를 열지 않으며, 설치·업데이트·중단 복구·제거에서도 같은 정보의 일치를 확인한다.
+기존 세 파일 배포 형식은 유지하고 새 형식이 필요한 관리자는 함께 갱신한다.
+
+독립 검토에서 새 필드의 명시적 null이 구버전 관리자 시작을 막을 수 있는 문제를 찾아
+설치 변경 전에 거부하도록 수정했다. 이 정보는 배포자가 서명한 주장이다. 실제 빌드 환경의
+독립 증명·라이선스 검토·공식 서명 배포를 완료한 것으로 표시하지 않는다.
+[사용법](binary-provenance.md) · [검증](reviews/2026-11-15-binary-provenance.md).
+
 ## 최근 수락한 단위 · 개인 ChatGPT의 예약 읽기 업무
 
 개인 ChatGPT 연결에서 선택한 모델로 일회성·반복 읽기 업무를 맡길 수 있다. 대화와
@@ -545,7 +557,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 native GitHub credential 조회/원래 채팅 대기·완료 | 일반 credential 도구·Google adapter·호환 이전·독립 최신 복구 |
 | P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 operator export·운영 대조·drain/cutover/rollback 실증 |
-| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory | 공식 서명 배포·arm64·binary provenance/license·품질/기기/출시 gate |
+| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory·서명된 binary/source/compiler/inventory 연결 | 공식 서명 배포·arm64·독립 빌드 증명/license·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기를 수락했고, 고정 비교 baseline과 넓은 품질 평가는 남는다.
@@ -583,7 +595,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체도 구현했다. 일반 credential 도구·Google adapter,
    독립 최신 복구·구 v1 호환/이전·서명 배포를 이어 구현한다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: 정규화 private importer/대조와 schema23 relation adapter를 구현했다. 실제 operator export·제한 cutover·rollback,
-   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거와 source-lock SBOM을 공식 artifact·arm64·binary provenance/license로 확장하고,
+   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결을 공식 artifact·arm64·독립 빌드 증명/license로 확장하고,
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 

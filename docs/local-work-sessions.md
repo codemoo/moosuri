@@ -158,3 +158,21 @@ source text, token, path, remote checkpoint or provider diagnostics.
 
 [Focused synthetic evidence](reviews/2026-11-14-local-work-session-feed.md) separates
 mock protocol behavior from actual Store/server integration and real-account use.
+
+## Claude transcript provenance limit
+
+The current raw Claude Code transcript format does not establish human-turn
+provenance for this producer's automation exclusion. At the pinned official
+[Anthropic SDK commit4720d367f7db9d5df8a166c74d7f36a538ac8c34](https://github.com/anthropics/claude-agent-sdk-python/commit/4720d367f7db9d5df8a166c74d7f36a538ac8c34),
+[programmatic SDK prompts](https://github.com/anthropics/claude-agent-sdk-python/blob/4720d367f7db9d5df8a166c74d7f36a538ac8c34/src/claude_agent_sdk/_internal/client.py#L181)
+use `type:user` and `role:user`, while the
+[session reader](https://github.com/anthropics/claude-agent-sdk-python/blob/4720d367f7db9d5df8a166c74d7f36a538ac8c34/src/claude_agent_sdk/_internal/sessions.py#L1248)
+filters metadata/sidechain/team records without proving human origin. The
+[raw transcript union is internal](https://github.com/anthropics/claude-agent-sdk-python/blob/4720d367f7db9d5df8a166c74d7f36a538ac8c34/src/claude_agent_sdk/types.py#L1956).
+
+A user-role label alone cannot satisfy this feed's human-request contract, so no
+raw Claude importer is shipped. A future adapter needs verified turn provenance
+or a separately specified owner-selected export format. The generic
+[custom source protocol](data-connections.md) remains available for explicitly
+normalized data; its producer declarations are not provider or human-origin proof.
+This review used only public source; no personal transcript or official CLI was run.

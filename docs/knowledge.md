@@ -6,7 +6,7 @@ Tool-verified models can search and read them in chat; see
 account-owned Gmail/Slack sync and custom HTTP ingestion with per-revision provenance.
 Opt-in [source-memory extraction](automatic-memory.md) creates literal evidence-backed
 facts from newly committed text or one explicitly selected source revision.
-Document/goal editing remains upcoming work. Kakao
+[Document/goal editing](artifacts.md) uses its separate versioned artifact family. Kakao
 collection remains an independently operated private producer outside this distribution.
 
 ## Sources
@@ -71,8 +71,8 @@ follows selected prior successful context into later answers.
 
 Destructive actions append and fsync an opaque journal before applying SQLite changes.
 A crash gap is replayed before private reads become ready. A damaged, truncated or
-missing required journal fails closed. This mechanism is not yet a supported backup
-restore workflow or forensic erasure of old WAL pages/filesystem snapshots.
+missing required journal fails closed. Supported [backup](backup.md) and [restore](restore.md) workflows are documented
+separately; deletion is not forensic erasure of old WAL pages/filesystem snapshots.
 
 ## Search and limits
 
@@ -95,7 +95,7 @@ must refresh after a mutation. Snippets are plain text, at most 512 characters.
 These are implementation bounds, not memory quality scores. Local knowledge is
 stored in the assistant database; it is not the separately designed user-key vault.
 Administrator web APIs have no override to read another user's knowledge. An operating
-system/database owner has a different trust boundary from that future encrypted vault.
+system/database owner has a different trust boundary from the independent encrypted vault.
 
 ## HTTP contract
 

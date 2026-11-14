@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod notices;
 mod release;
 #[path = "../../release/provenance.rs"]
 mod release_evidence;
@@ -386,12 +387,12 @@ fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args != ["verify-plan"]
         && args != ["sbom"]
-        && !args
-            .first()
-            .is_some_and(|s| ["release-provenance", "verify-provenance"].contains(&s.as_str()))
+        && !args.first().is_some_and(|s| {
+            ["release-provenance", "verify-provenance", "rust-notices"].contains(&s.as_str())
+        })
     {
         eprintln!(
-            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY>"
+            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|rust-notices --vendor DIRECTORY [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY>"
         );
         std::process::exit(2);
     }
@@ -402,6 +403,8 @@ fn main() {
         .and_then(|root| {
             if args == ["sbom"] {
                 sbom::print(&root)
+            } else if args[0] == "rust-notices" {
+                notices::run(&root, &args)
             } else if args[0] == "release-provenance" || args[0] == "verify-provenance" {
                 release::run(&root, &args)
             } else {

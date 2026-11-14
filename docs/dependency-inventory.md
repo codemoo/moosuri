@@ -21,6 +21,9 @@ resolved download URLs, configuration and credentials, so identical locks produc
 identical bytes. No source content, package cache or license file is copied.
 
 Cargo.lock has no dependency license evidence: the inventory does not guess it.
+The separate [Rust notice collector](rust-license-evidence.md) reads explicitly
+supplied vendored sources, preserves actual notice text and reports missing files.
+It does not change this inventory format or establish license clearance.
 The [offline provenance packager](binary-provenance.md) binds these exact inventory
 bytes to a particular artifact hash/target and declared checkout/compiler metadata.
 It remains a packager claim, not proof of authenticated build execution or the

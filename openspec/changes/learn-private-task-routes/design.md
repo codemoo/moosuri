@@ -1,0 +1,10 @@
+## Decisions
+
+Use four fixed structural route families rather than a generic DSL: exact sum/difference/product and fresh source search→first-hit read. A route stores no example IDs or arguments. Two proof hashes link actual private runs/receipts; strict final-output inclusion establishes adopted operation postconditions, not semantic mission success. Canonical numeric formatting/permutations and normalized search replay count once. Alternative phrases selecting the same source cannot supply independent B. Content-free observed-run markers prevent reharvesting withdrawn finalized examples. Invalidated routes need two new proofs; removed/disabled/quarantined choices are not automatically cleared.
+
+Learn atomically after the existing final no-call step transition. Existing profile pins and metadata expose only usable current-owner routes; old runs gain no new pins. A parent durable slot links each actual child input/result; actual underlying calls consume budget once, with maximum cost checked before execution. The same SQLite transaction records results and provenance.
+
+Source/version/owner/schema and receipt chains are rechecked. Existing destructive dependency purge immediately removes proof hashes and invalidates derivative/pinned output. Finite cascade visits each stored run once. Remove leaves a tombstone; disable/remove revoke pinned late publication. Only deterministic argument/arithmetic failure increments route failures. Infrastructure/cancel/missing data do not. Foreground only; no mission authority expansion or public export.
+
+
+Actual prior assistant output adopted into chat context also copies learned revocation edges, including decimal-only ancestors with no ordinary source dependency. These edges are owner-scoped data dependencies and validate route/schema availability without requiring a tool pin in a text-only descendant. Invocation execution continues to require its original admitted pin. Mere discovery does not create this edge; completed and held descendants are selected by the existing withdrawal purge.

@@ -146,6 +146,17 @@ These commands work before `--data-dir` handling and need no installation or ser
 
 Ordinary repository paths are allowed. Existing destinations, `..`, symlink components and installation-data paths are rejected. `check` accepts exactly the documented four bounded regular nonexecutable files and reports compatibility, not safety or task-quality certification. It performs no install, model call, Git operation or publishing. Follow your normal edit/review/commit/PR process; existing curated pins are unchanged. See [community authoring](../community/README.md#local-authoring).
 
+## Private learned operations
+
+Foreground chats can learn the documented exact-calculation or saved-source lookup
+route after two distinct finalized owner examples, then bind fresh inputs through the
+normal durable tool loop. The existing skills screen shows private status and supports
+disable/remove. No permission popup or community publication is added. Schema38 also
+withdraws proofs on deletion and quarantines learning on sealed restore. Actual context
+inheritance carries withdrawal into text-only descendants without granting tool authority.
+See [supported routes and limits](learned-skills.md). Compound/mission learning and
+export remain pending; synthetic round savings are not a real-model speed claim.
+
 ## Synthetic outcome evaluation
 
 `cargo run --locked -p moosuri-eval -- --report /absolute/new-report.json` runs

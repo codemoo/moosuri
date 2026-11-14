@@ -213,3 +213,9 @@ F69의 기기 pairing·서명 요청·로컬 grant 한도·온라인 실행 확�
 [실험적 broker 기반](credential-broker-foundation.md)에 구현했다. 기본 경로는 비활성이고,
 실제 vault 해제/typed provider adapter·첫 연결/잠금 대기 화면·서명 배포는 남아 있다.
 F69 전체 완료와 자동 credential 사용을 뜻하지 않는다.
+
+
+F26/F58/F66의 초기 개인 학습은 [고정 계산·저장 원문 조회](learned-skills.md) 범위에서
+두 독립 finalized 입력·실제 영수증·새 입력 재사용·철회를 구현했다. 스킬/원문/학습 대화
+삭제는 실제로 문맥을 이어받은 후속 답변도 철회한다. 복합 업무 학습·예약 재사용·공유
+export·실모델 효용 평가는 여전히 별도이며 [검증](reviews/2026-11-14-private-learning.md)을 따른다.

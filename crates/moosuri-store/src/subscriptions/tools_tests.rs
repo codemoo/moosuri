@@ -130,7 +130,7 @@ async fn schema35_personal_probes_migrate_with_disabled_tool_capability() {
     s.record_subscription_probe(&a.user, b).await.unwrap();
     s.call(|db| {
         db.conn.execute_batch(
-            "DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;ALTER TABLE chatgpt_model_probes DROP COLUMN function_tools;PRAGMA user_version=35;",
+            "DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;ALTER TABLE chatgpt_model_probes DROP COLUMN function_tools;PRAGMA user_version=35;",
         )?;
         Ok(())
     })

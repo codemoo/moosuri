@@ -25,6 +25,13 @@ pub(crate) fn read(conn: &Connection, run: &Run, requested: &SkillPin) -> Knowle
     let available = run.tool_profile.as_ref().is_some_and(|profile| {
         matches!(profile.version, 1..=5) && profile.skills.contains(requested)
     });
+    if available && requested.id.starts_with("private:") {
+        return crate::learned_skills::read(conn, run, requested)
+            .ok()
+            .flatten()
+            .map(KnowledgeToolResult::Skill)
+            .unwrap_or(KnowledgeToolResult::Error(ToolReadError::Unavailable));
+    }
     if available
         && let Some(document) = crate::community_skills::read(conn, requested)
             .ok()

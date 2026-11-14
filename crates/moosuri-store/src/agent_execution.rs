@@ -8,7 +8,7 @@ use moosuri_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-mod arithmetic;
+pub(crate) mod arithmetic;
 pub(crate) mod skills;
 
 const CHECKPOINT_LIMIT: usize = 256 * 1024;
@@ -49,6 +49,9 @@ pub enum KnowledgeToolInput {
     },
     Artifact {
         request: moosuri_core::ArtifactToolRequest,
+    },
+    LearnedSkill {
+        invocation: moosuri_core::LearnedSkillInvocation,
     },
     InvalidArguments,
 }
@@ -225,7 +228,9 @@ fn retry_fences(conn: &Connection, tenant: &str, run: &str, needs_capacity: bool
         && last.is_none_or(|v| clock >= v))
 }
 pub(super) fn guard_execution(conn: &Connection, run: &Run) -> Result<()> {
-    if !crate::calendar::agent::dependencies_current(conn, run)? {
+    if !crate::calendar::agent::dependencies_current(conn, run)?
+        || !crate::learned_skills::dependencies_current(conn, run)?
+    {
         purge_runs(conn, &run.tenant, vec![run.id.clone()])?;
         return Err(StoreError::Conflict);
     }
@@ -273,13 +278,16 @@ pub(super) fn inherit_dependencies(
     prior: &str,
 ) -> Result<()> {
     let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
+        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM learned_skill_uses WHERE tenant_id=?1 AND run_id=?2)",
         params![tenant, prior],
         |r| r.get(0),
     )?;
     if !exists {
         return Ok(());
     }
+    // This is called only after an earlier assistant output was selected for
+    // the new model context. These are revocation edges, never new tool pins.
+    crate::learned_skills::inherit_context(conn, tenant, run, prior)?;
     let generation = knowledge::generation(conn, tenant)?;
     conn.execute("INSERT OR IGNORE INTO personal_artifact_run_dependencies SELECT tenant_id,?2,artifact_id,revision FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     conn.execute("INSERT OR IGNORE INTO agent_execution(tenant_id,run_id,agent,generation) VALUES(?1,?2,0,?3)",params![tenant,run,generation])?;
@@ -312,6 +320,7 @@ pub(super) fn invalidate_source(conn: &Connection, tenant: &str, source: &str) -
     Ok(())
 }
 pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> Result<()> {
+    let ids = crate::learned_skills::invalidate_runs(conn, tenant, ids)?;
     let mut threads = BTreeSet::new();
     for id in &ids {
         let run = chat::load_run(conn, tenant, id)?;
@@ -454,7 +463,7 @@ fn add_dependency(conn: &Connection, run: &Run, kind: &str, id: &str, revision: 
     )?;
     Ok(())
 }
-fn read_tool(
+pub(crate) fn read_tool(
     conn: &Connection,
     run: &Run,
     input: &KnowledgeToolInput,
@@ -465,6 +474,9 @@ fn read_tool(
         return Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable));
     }
     let read = match input {
+        KnowledgeToolInput::LearnedSkill { .. } => {
+            Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
+        }
         KnowledgeToolInput::Artifact { request } => {
             crate::artifacts::agent::tool(conn, run, request).map(KnowledgeToolResult::External)
         }
@@ -742,7 +754,7 @@ impl Store {
                 if old.as_deref()!=Some(digest.as_slice()){return Err(StoreError::Conflict)}
             }else{
                 let used: i64=tx.query_row("SELECT tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
-                if used+calls.len() as i64>12{return Err(StoreError::BudgetExhausted)}
+                if used+calls.iter().map(|c|crate::learned_skills::cost(&c.input)).sum::<i64>()>12{return Err(StoreError::BudgetExhausted)}
                 crate::missions::record_round(&tx,&run,lease.step,&checkpoint.bytes)?;
                 crate::missions::chat::record(&tx,&run,&checkpoint.bytes)?;
                 tx.execute("UPDATE agent_steps SET state='completed',completion_digest=?4,checkpoint=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step,digest.as_slice(),checkpoint.bytes])?;
@@ -767,12 +779,16 @@ impl Store {
             let (input,saved):(String,Option<String>)=tx.query_row("SELECT input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
             if let Some(saved)=saved {let result=decoded(&saved)?;tx.commit()?;return Ok(result)}
             let used: i64=tx.query_row("SELECT tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
-            if used>=12 {return Err(StoreError::BudgetExhausted)}
             let input:KnowledgeToolInput=decoded(&input)?;
+            let cost=crate::learned_skills::cost(&input);
+            if used+cost>12 {return Err(StoreError::BudgetExhausted)}
             if matches!(&input,KnowledgeToolInput::Artifact{request:moosuri_core::ArtifactToolRequest::Write{..}}) && tx.query_row("SELECT count(*) FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get::<_,i64>(0))?!=1{return Err(StoreError::InvalidInput)}
-            let result=read_tool(&tx,&run,&input)?;
+            let (result,cost)=match &input {
+                KnowledgeToolInput::LearnedSkill{invocation}=>crate::learned_skills::execute(&tx,&run,invocation,lease.step,&call_id)?,
+                _=>(read_tool(&tx,&run,&input)?,1),
+            };
             let generation=knowledge::generation(&tx,&run.tenant)?;
-            tx.execute("UPDATE agent_execution SET tool_calls=tool_calls+1,checkpoint_seq=checkpoint_seq+1,generation=?3 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,generation])?;
+            tx.execute("UPDATE agent_execution SET tool_calls=tool_calls+?4,checkpoint_seq=checkpoint_seq+1,generation=?3 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,generation,cost])?;
             tx.execute("UPDATE agent_tool_slots SET result=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id,encoded(&result)?])?;
             if matches!(&input,KnowledgeToolInput::Artifact{request:moosuri_core::ArtifactToolRequest::Write{..}})
                 && matches!(&result,KnowledgeToolResult::External(v) if v.get("request_id").is_some() && v.get("url").is_some()) {
@@ -847,7 +863,9 @@ impl Store {
                 if !complete {return Err(StoreError::Conflict)}
             }
             if state!=RunState::Completed {tx.execute("UPDATE agent_steps SET state='unknown' WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='dispatched'",params![run.tenant,run.id,lease.step])?;}
-            chat::transition(&tx,&run,state,error)?;tx.commit()?;Ok(())
+            chat::transition(&tx,&run,state,error)?;
+            if state==RunState::Completed {crate::learned_skills::finalize(&tx,&run)?;}
+            tx.commit()?;Ok(())
         }).await
     }
     pub async fn update_agent_step_usage(&self, lease: &StepLease, usage: RunUsage) -> Result<()> {

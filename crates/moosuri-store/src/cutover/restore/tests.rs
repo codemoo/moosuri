@@ -639,7 +639,7 @@ async fn supported_predecessor_migrates_offline_and_repeated_restore_keeps_journ
         .write_all(&items[1].1)
         .unwrap();
     let conn = Connection::open(&db).unwrap();
-    conn.execute_batch("DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;").unwrap();
+    conn.execute_batch("DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;").unwrap();
     conn.execute(
         "UPDATE installation_cutover SET seal=?1",
         [String::from_utf8(encode(&manifest.seal, 16384).unwrap()).unwrap()],
@@ -711,7 +711,7 @@ async fn schema29_and30_restore_upgrades_current_and_quarantines_legacy_lookup_a
             .write_all(&items[1].1)
             .unwrap();
         let conn = Connection::open(&db).unwrap();
-        conn.execute_batch("DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
+        conn.execute_batch("DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
             .unwrap();
         if captured == 29 {
             conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;").unwrap();
@@ -946,4 +946,86 @@ async fn personal_chatgpt_restore_quarantines_every_credential_and_generates_a_n
     restore(&cipher, &head, &f.identity, &f.dest).unwrap();
     let store = Store::open(&f.dest).unwrap();
     store.call(move|db|{let restored:String=db.conn.query_row("SELECT host_id FROM subscription_runtime WHERE singleton=1",[],|r|r.get(0))?;assert_ne!(restored,host);for table in ["community_catalog_cache","chatgpt_handoffs","chatgpt_sessions","chatgpt_model_probes","chatgpt_auth_attempts","personal_subscription_selections"]{assert_eq!(db.conn.query_row(&format!("SELECT count(*) FROM {table}"),[],|r|r.get::<_,i64>(0))?,0)}assert_eq!(db.conn.query_row("SELECT count(*) FROM chatgpt_bindings WHERE status!='needs_reauth'",[],|r|r.get::<_,i64>(0))?,0);assert_eq!(db.conn.query_row("SELECT count(*) FROM chatgpt_binding_revisions WHERE identity IS NOT NULL OR client_id IS NOT NULL",[],|r|r.get::<_,i64>(0))?,0);Ok(())}).await.unwrap();
+}
+
+#[tokio::test]
+async fn learned_restore_erases_private_proof_and_child_payloads_before_any_owner_reenrollment() {
+    let _g = TEST_LOCK.lock().await;
+    let f = fixture().await;
+    let mut items = unpack(&f);
+    let mut manifest = decode_manifest(&items[0].1).unwrap();
+    let db = f.kit.join("learning-canary.sqlite");
+    files::create_file(&db)
+        .unwrap()
+        .write_all(&items[1].1)
+        .unwrap();
+    let conn = Connection::open(&db).unwrap();
+    // Restore boundary canaries deliberately do not claim successful learning:
+    // even a checkpoint carrying these private rows must be quarantined offline.
+    let (tenant, account, run): (String, String, String) = conn
+        .query_row(
+            "SELECT tenant_id,account_id,id FROM chat_runs LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    conn.execute("INSERT INTO learned_skills(tenant_id,account_id,id,route,schema_version,state) VALUES(?1,?2,'private:restore-canary','source-first-v1',1,'usable')",params![tenant,account]).unwrap();
+    conn.execute("INSERT INTO learned_skill_proofs VALUES(?1,?2,'private:restore-canary','synthetic-input-hash',?3,'synthetic-receipt-hash',NULL)",params![tenant,account,run]).unwrap();
+    conn.execute(
+        "INSERT INTO learned_skill_observations VALUES(?1,?2)",
+        params![tenant, run],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR IGNORE INTO agent_execution(tenant_id,run_id,agent) VALUES(?1,?2,1)",
+        params![tenant, run],
+    )
+    .unwrap();
+    conn.execute("INSERT INTO agent_steps(tenant_id,run_id,step,attempt,nonce,state) VALUES(?1,?2,1,1,zeroblob(32),'completed')",params![tenant,run]).unwrap();
+    conn.execute(
+        "INSERT INTO agent_tool_slots VALUES(?1,?2,1,'restore-canary','{}','{}')",
+        params![tenant, run],
+    )
+    .unwrap();
+    conn.execute("INSERT INTO learned_skill_receipts VALUES(?1,?2,1,'restore-canary',0,'synthetic-private-input-canary','synthetic-private-result-canary')",params![tenant,run]).unwrap();
+    drop(conn);
+    items[1].1 = fs::read(db).unwrap();
+    for (entry, (_, bytes)) in manifest.entries.iter_mut().zip(items.iter().skip(1)) {
+        entry.sha256 = hash(bytes);
+        entry.size = bytes.len() as u64;
+    }
+    items[0].1 = encode(&manifest, 32768).unwrap();
+    let (cipher, head) = repack(&f, &items, |_| {});
+    restore(&cipher, &head, &f.identity, &f.dest).unwrap();
+    let restored = Connection::open(f.dest.join("assistant.sqlite")).unwrap();
+    for table in [
+        "learned_skill_proofs",
+        "learned_skill_receipts",
+        "learned_skill_uses",
+    ] {
+        assert_eq!(
+            restored
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+    assert_eq!(
+        restored
+            .query_row(
+                "SELECT state FROM learned_skills WHERE id='private:restore-canary'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+        "invalidated"
+    );
+    assert_eq!(
+        restored
+            .query_row("SELECT count(*) FROM learned_skill_observations", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
 }

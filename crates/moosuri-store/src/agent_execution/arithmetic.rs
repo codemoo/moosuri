@@ -47,7 +47,7 @@ fn decimal(value: &str) -> Result<(i128, u32), ToolReadError> {
     Ok((coefficient, scale))
 }
 
-pub(super) fn calculate(input: &DecimalCalculation) -> Result<String, ToolReadError> {
+pub(crate) fn calculate(input: &DecimalCalculation) -> Result<String, ToolReadError> {
     if !(2..=32).contains(&input.operands.len())
         || (matches!(input.operation, DecimalOperation::Product) && input.operands.len() != 2)
     {

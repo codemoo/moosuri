@@ -41,7 +41,7 @@
 | 배송 현재 상태·주문/취소 | 실시간 배송·쇼핑 도구 없음 | carrier/store adapter 또는 격리된 브라우저, 조회시각·상태 영수증 |
 | 주기적 감시·변경 알림 | 고정 알림·회차·pause/edit/restart·inbox·opt-in Push 구현; schema28 직접 반복 읽기 업무·좁은 정확 일치 알림 생략 구현 | 대화 복합 업무 capture·일반 의미상 변경 비교·topic mute·실기기; [현재 상태](status.md)가 수락 정본 |
 | 전화·결제·정부 서류 제출 | 해당 실행 도구 없음 | 공급자/사이트별 실행·인증 인계·결과 조회 |
-| 커뮤니티 설치·업데이트·자동 개인 학습 | 여섯 내장 절차와 개인 curated/public GitHub pin·update/rollback/disable/remove·로컬 작성/check | typed 성공 절차 학습·독립 proof·합성 export·catalog/예약 lifecycle 등 [남은 계약](community-skills.md) |
+| 커뮤니티 설치·업데이트·개인 학습 | 여섯 내장 절차와 개인 curated/public GitHub pin·update/rollback/disable/remove·로컬 작성/check, [제한된 정확 계산/저장 원문 찾기 학습](learned-skills.md) | 일반 복합 업무의 typed 학습·의미상 성공 평가·합성 export·예약 lifecycle 등 [남은 계약](community-skills.md) |
 
 없는 기능은 연결 필요와 현재 지원 안 함을 구별한다. 실행 불가능한 작업을 수락해 놓고
 뒤에서 조용히 사라지게 하지 않는다. 대신 가능한 자료 정리나 초안이 실제로 도움이 될
@@ -76,7 +76,8 @@ run 누적 한도를 늘리지 않는다. 스킬 실행 이후의 retry가 기�
 - **중단:** 인증이나 정보가 필요하면 원래 요청과 진행을 보존한다. 연결 후 처음부터
   주문을 반복하지 않고 같은 작업에서 재개한다. 결과 불명은 원래 상태부터 조회한다.
 - **재사용:** 성공한 절차의 입력 slot·도구 조합·검증 조건을 개인 후보로 남긴다. 기존
-  [community 규칙](community-skills.md)의 독립 성공 검증 후 재사용하며 private trace를 공개 패키지로 복사하지 않는다.
+  [community 규칙](community-skills.md)의 독립 성공 검증 후 재사용하며 private trace를 공개 패키지로 복사하지 않는다. 현재 구현은
+  [정확 계산과 첫 검색 원문 읽기](learned-skills.md)의 제한된 연산 결과 채택 검증이며 일반 업무 성공 학습은 후속이다.
 
 권한 검사는 내부 계약이며 사용자에게 매 단계 승인창을 띄우는 요구가 아니다. 현재 사용자가
 명확히 맡긴 범위는 진행하고, 실제 미정 조건·변경된 거래 조건·새 연결만 필요한 시점에 다룬다.

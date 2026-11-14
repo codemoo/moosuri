@@ -138,7 +138,7 @@ function Cards({ accountId, onExpired, back, connect, start }: Props) {
           <p>{card.description}</p>
           <p>{card.catalog && !card.catalog.verified && !card.installed_digest ? "공개 목록 제안 · 내용과 원본 확인 필요" : card.readiness === "connection_needed" ? "필요한 연결을 확인해 주세요"
             : card.readiness === "ready" ? "사용 가능"
-            : card.readiness === "disabled" ? "비활성화됨" : "추가 가능"}</p>
+            : card.readiness === "disabled" ? "비활성화됨" : card.readiness === "candidate" ? "학습 중" : card.readiness === "invalidated" ? "다시 확인 필요" : card.readiness === "quarantined" ? "사용 중지" : "추가 가능"}</p>
           {card.missing.some(c => c.startsWith("mail_")) && <button onClick={connect}>Gmail 연결하기</button>}
           {card.missing.includes("web_read") && <p>서버의 공개 웹 읽기 지원이 필요합니다.</p>}
           <div className="community-actions">
@@ -161,8 +161,8 @@ function Cards({ accountId, onExpired, back, connect, start }: Props) {
           </div>
           <details>
             <summary>출처 · 버전 · 필요한 기능</summary>
-            <p>제작자: {card.github ? card.github.repository : "moosuri contributors"} · {card.catalog ? "설정된 공개 catalog" : card.github ? "사용자가 선택한 외부 원본" : "curated 목록"} · {card.catalog && !card.catalog.verified ? "아직 패키지 내용 확인 전" : "호환 형식 확인됨"} · 실제 사용 성공을 보증하지 않습니다.</p>
-            <a href={card.source} target="_blank" rel="noreferrer">공개 원본</a>
+            {card.id.startsWith("private:") ? <p>나의 실제 작업에서 배운 개인 절차입니다. 제한된 연산 결과 검증이며 전체 업무 성공을 보증하지 않습니다. 공개 원본이나 공유된 학습 이력이 없습니다.</p> : <p>제작자: {card.github ? card.github.repository : "moosuri contributors"} · {card.catalog ? "설정된 공개 catalog" : card.github ? "사용자가 선택한 외부 원본" : "curated 목록"} · {card.catalog && !card.catalog.verified ? "아직 패키지 내용 확인 전" : "호환 형식 확인됨"} · 실제 사용 성공을 보증하지 않습니다.</p>}
+            {!card.id.startsWith("private:") && <a href={card.source} target="_blank" rel="noreferrer">공개 원본</a>}
             <p>제공 버전 {card.version} · 설치 버전 {card.installed_version ?? "없음"} · {card.license}</p>
             <p>필요한 기능: {card.capabilities.join(", ")}</p>
             {card.catalog && <details><summary>정확한 버전 정보</summary><p>원본 commit: {card.source_commit}</p><p>내용 SHA-256: {card.digest}</p><p>산출물 SHA-256: {card.catalog.artifact_sha256}</p></details>}

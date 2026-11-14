@@ -649,6 +649,10 @@ pub(crate) fn create_pinned_in(
 pub(crate) fn read_profile(
     mut profile: moosuri_core::RunToolProfile,
 ) -> moosuri_core::RunToolProfile {
+    profile.skills.retain(|pin| !pin.id.starts_with("private:"));
+    profile
+        .community_metadata
+        .retain(|metadata| !metadata.pin.id.starts_with("private:"));
     profile.mail_connections.clear();
     if let Some(w) = &mut profile.web {
         w.browser_pin = None;

@@ -30,7 +30,7 @@ source catalog는 Git에서 관리하고 `moosuri skills catalog`가 선택한 e
 
 표준 Agent Skills의 `SKILL.md` frontmatter(name/description)와 필요한 references/assets를 기본으로 쓴다. `scripts/`·hooks·dependency installer는 v1에서 실행하지 않는다. script가 필수인 외부 skill은 inspect 가능하지만 실행 미지원으로 표시한다. 파일 형식이 같다는 이유로 Claude/OpenClaw의 도구·계정·권한이 생기지 않는다. `allowed-tools`는 요청 정보일 뿐 moosuri의 실제 권한을 생성하지 않는다.
 
-모두가 편하게 쓸 수 있는 native catalog 항목에는 작은 `moosuri.toml` sidecar를 제공한다. 필수 정보는 format version·skill version·설명/입력·기존 capability 이름과 호환 version·mode다. license는 SPDX 또는 포함한 LICENSE로 명확히 한다. typed route가 있을 때만 route를 추가하고 기존9tool/8step validator와 evidence 규칙을 재사용한다. plain SKILL.md는 instruction import로 받되 machine-readable 요구가 없으면 호환성 확인 필요 상태이며 바로 실행 가능한 native 기능으로 추천하지 않는다.
+모두가 편하게 쓸 수 있는 native catalog 항목에는 작은 `moosuri.toml` sidecar를 제공한다. 필수 정보는 format version·skill version·설명/입력·기존 capability 이름과 호환 version·mode다. license는 SPDX 또는 포함한 LICENSE로 명확히 한다. typed route 패키지 형식과 범용 route validator는 아직 구현하지 않았다. 현재 개인 학습의 제한된 정확 계산/저장 원문 찾기는 [별도 실제 지원 범위](learned-skills.md)를 따른다. instructions 패키지 검사를 실행 route 검증으로 표현하지 않는다. plain SKILL.md는 instruction import로 받되 machine-readable 요구가 없으면 호환성 확인 필요 상태이며 바로 실행 가능한 native 기능으로 추천하지 않는다.
 
 sidecar는 code/SQL/shell/새 endpoint/credential 값을 정의하지 않는다. 필요한 tool이 없다면 Rust connector를 별도 기여한다. 인증은 capability와 [credential binding](credential-use.md)의 handle을 통해서만 제공한다. package가 vault item ID·다른 사용자·임의 host를 골라 secret을 읽게 하지 않는다.
 
@@ -59,6 +59,8 @@ package identity는 정규화한 repository+subdirectory이고 표시 이름은 
 disable/remove는 새 사용을 막고 종속 예약을 needs_skill로 멈춘다. 진행 중 외부 effect/receipt는 지우거나 재발송하지 않는다. 사용자 삭제/철회는 run generation을 올리고 늦은 발행을 막되 실제 완료한 영수증은 보존한다. 한 사용자의 삭제가 다른 사용자의 설치본을 없애지 않게 reference count/GC를 사용한다. curated catalog에서 철회된 악성/손상 revision은 새 사용을 차단하고 이유를 표시하며 자동으로 다른 제작자 패키지로 바꾸지 않는다.
 
 설치 관리용 예정 CLI는 `moosuri skills install <github-url>`, `list`, `update [id]`, `rollback <id>`, `disable <id>`, `remove <id>`다. 로컬 파일 작성·검사는 아래의 별도 native 명령으로 지원한다. 일반 사용자는 UI 카드만으로 같은 기능을 수행한다. CLI는 server 인증한 user scope를 쓰고 arbitrary `--user`로 타인 설치를 바꾸지 않는다. 아직 실행 가능한 명령으로 문서화하지 않는다.
+
+현재 개인 학습·candidate/usable·새 입력 재사용의 구현 범위는 [개인 학습](learned-skills.md)을 따른다. 아래의 공개 재구성/export는 후속 계약이다.
 
 ## 개인 학습에서 공유용 스킬 만들기
 

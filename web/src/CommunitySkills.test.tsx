@@ -34,3 +34,20 @@ it("fences late installation results and local forms when the account changes",a
  await waitFor(()=>expect(fetch.mock.calls.some(c=>(c[1]?.headers as Record<string,string>)["X-Moosuri-Account"]==="b")).toBe(true));await act(async()=>resolve(response([card({name:"Private old account response",installed_digest:"a".repeat(64),enabled:true})])));
  expect(screen.queryByText("Private old account response")).not.toBeInTheDocument();expect(screen.queryByText("Saved briefing")).not.toBeInTheDocument();
 });
+
+it("inspects private candidates without public-origin claims and removes them through existing owner-scoped controls",async()=>{
+ const calls:{path:string;init?:RequestInit}[]=[];
+ const privateCard=card({id:"private:synthetic",name:"개인 자료 찾기",description:"새 검색어로 저장 자료를 찾아 읽습니다.",source:"private",source_commit:"",license:"private",installed_version:"1",installed_digest:"a".repeat(64),enabled:true,revision:2,readiness:"candidate"});
+ vi.stubGlobal("fetch",mockFetch(async(path:string,init?:RequestInit)=>{calls.push({path,init});return response(init?.method==="POST"?[]:[privateCard]);}));
+ render(<CommunitySkills accountId="a" onExpired={vi.fn()} back={vi.fn()} connect={vi.fn()} start={vi.fn()}/>);
+ await screen.findByText("학습 중");
+ expect(screen.queryByRole("button",{name:"채팅에서 시작"})).not.toBeInTheDocument();
+ expect(screen.queryByRole("button",{name:"추가"})).not.toBeInTheDocument();
+ expect(screen.queryByRole("link",{name:"공개 원본"})).not.toBeInTheDocument();
+ expect(screen.getByText(/전체 업무 성공을 보증하지 않습니다/)).toBeInTheDocument();
+ fireEvent.click(screen.getByRole("button",{name:"삭제"}));
+ await waitFor(()=>expect(screen.queryByText("개인 자료 찾기")).not.toBeInTheDocument());
+ const mutation=calls.find(c=>c.init?.method==="POST");
+ expect(mutation?.path).toContain("private%3Asynthetic");
+ expect(JSON.parse(String(mutation?.init?.body))).toEqual({action:"remove",expected_revision:2,expected_digest:"a".repeat(64)});
+});

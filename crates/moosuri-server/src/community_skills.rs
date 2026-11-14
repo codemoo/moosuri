@@ -46,7 +46,11 @@ async fn mutate(
             .await?;
         return Ok(Json(catalog_cards(&s, &user).await?).into_response());
     }
-    s.store.mutate_community_skill(&user, id, input).await?;
+    if id.starts_with("private:") {
+        s.store.mutate_learned_skill(&user, id, input).await?;
+    } else {
+        s.store.mutate_community_skill(&user, id, input).await?;
+    }
     Ok(Json(catalog_cards(&s, &user).await?).into_response())
 }
 
@@ -79,11 +83,13 @@ async fn catalog_cards(
     s: &AppState,
     u: &UserContext,
 ) -> Result<Vec<moosuri_core::CommunitySkillCard>, StoreError> {
-    if let Some(source) = &s.config.community_catalog {
-        s.store.community_catalog_cards(u, source.clone()).await
+    let mut cards = if let Some(source) = &s.config.community_catalog {
+        s.store.community_catalog_cards(u, source.clone()).await?
     } else {
-        s.store.community_skills(u).await
-    }
+        s.store.community_skills(u).await?
+    };
+    cards.extend(s.store.learned_skills(u).await?);
+    Ok(cards)
 }
 async fn refresh_catalog(s: &AppState, u: &UserContext, manual: bool) -> Result<(), StoreError> {
     let Some(source) = &s.config.community_catalog else {

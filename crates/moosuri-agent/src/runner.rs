@@ -464,6 +464,7 @@ fn typed_input(
             id: v.id,
             revision: v.revision,
         },
+        Invocation::LearnedSkill(invocation) => KnowledgeToolInput::LearnedSkill { invocation },
         Invocation::SkillRead(pin) => KnowledgeToolInput::SkillRead { pin },
         Invocation::DecimalCalculate(calculation) => {
             KnowledgeToolInput::DecimalCalculate { calculation }

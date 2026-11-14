@@ -75,6 +75,18 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
             }
         ]);
     }
+    if profile.is_some_and(|p| {
+        matches!(p.version, 1..=5) && p.skills.iter().any(|pin| pin.id.starts_with("private:"))
+    }) {
+        definitions.push(FunctionDefinition {
+            name: "learned_skill_execute".into(),
+            description: "Execute an admitted private learned route with fresh task parameters. Source lookup uses the first fresh saved-source hit; arithmetic uses the learned exact operation. It grants no new authority. Do not use A/B proof inputs or invent success.".into(),
+            parameters: object(json!({
+                "pin":object(json!({"id":{"type":"string"},"revision":{"type":"string"},"digest":{"type":"string"}})),
+                "arguments":object(json!({"kind":{"type":"string","enum":["source","decimal"]},"text":{"type":["string","null"],"description":"Fresh literal source search phrase for source route; null for decimal."},"operands":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh decimal operand strings for decimal route; null for source."}}))
+            })),
+        });
+    }
     definitions.extend(crate::mail_tools::definitions(profile));
     definitions.extend(crate::web_tools::definitions(profile));
     definitions
@@ -183,8 +195,42 @@ pub(super) enum Invocation {
     DecimalCalculate(DecimalCalculation),
     External(moosuri_core::ExternalToolRequest),
     Artifact(moosuri_core::ArtifactToolRequest),
+    LearnedSkill(moosuri_core::LearnedSkillInvocation),
     InvalidArguments,
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LearnedWire {
+    pin: SkillPin,
+    arguments: LearnedArgumentsWire,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LearnedArgumentsWire {
+    kind: String,
+    text: Option<String>,
+    operands: Option<Vec<String>>,
+}
+fn parse_learned(arguments: &str) -> Option<moosuri_core::LearnedSkillInvocation> {
+    let wire: LearnedWire = serde_json::from_str(arguments).ok()?;
+    let arguments = match (
+        wire.arguments.kind.as_str(),
+        wire.arguments.text,
+        wire.arguments.operands,
+    ) {
+        ("source", Some(text), None) => moosuri_core::LearnedSkillArguments::Source { text },
+        ("decimal", None, Some(operands)) => {
+            moosuri_core::LearnedSkillArguments::Decimal { operands }
+        }
+        _ => return None,
+    };
+    Some(moosuri_core::LearnedSkillInvocation {
+        pin: wire.pin,
+        arguments,
+    })
+}
+
 pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
     if arguments.len() > 16 * 1024 {
         return Invocation::InvalidArguments;
@@ -210,6 +256,9 @@ pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
             .unwrap_or(Invocation::InvalidArguments);
     }
     match name {
+        "learned_skill_execute" => parse_learned(arguments)
+            .map(Invocation::LearnedSkill)
+            .unwrap_or(Invocation::InvalidArguments),
         "skill_read" => serde_json::from_str::<SkillPin>(arguments)
             .map(Invocation::SkillRead)
             .unwrap_or(Invocation::InvalidArguments),
@@ -270,7 +319,13 @@ mod tests {
             mail_connections: vec![],
             web: None,
         };
-        for profile in [None, Some(&profile)] {
+        let mut learned_profile = profile.clone();
+        learned_profile.skills.push(SkillPin {
+            id: "private:synthetic".into(),
+            revision: "1".into(),
+            digest: "a".repeat(64),
+        });
+        for profile in [None, Some(&profile), Some(&learned_profile)] {
             let definitions = definitions(profile);
             assert_eq!(
                 definitions.iter().any(|d| d.name == "skill_read"),
@@ -280,7 +335,23 @@ mod tests {
                 definitions.iter().any(|d| d.name == "decimal_calculate"),
                 profile.is_some()
             );
-            assert_eq!(definitions.len(), if profile.is_some() { 5 } else { 3 });
+            let learned = profile.is_some_and(|p| !p.skills.is_empty());
+            assert_eq!(
+                definitions
+                    .iter()
+                    .any(|d| d.name == "learned_skill_execute"),
+                learned
+            );
+            assert_eq!(
+                definitions.len(),
+                if learned {
+                    6
+                } else if profile.is_some() {
+                    5
+                } else {
+                    3
+                }
+            );
             let request = TextRequest {
                 model: "fixture".into(),
                 effort: None,

@@ -347,7 +347,7 @@ pub(crate) fn admit(
             profile.skills.push(pin);
         }
     }
-    Ok(())
+    crate::learned_skills::admit(conn, user, profile)
 }
 pub(crate) fn read(
     conn: &Connection,

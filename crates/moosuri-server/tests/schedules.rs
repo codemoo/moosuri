@@ -407,6 +407,7 @@ async fn direct_chat_is_atomically_completed_and_http_retries_freeze_timezone_an
         .set_default_model(
             &a.user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: p.id,
                 provider_revision: 1,
                 model: "synthetic-model".into(),

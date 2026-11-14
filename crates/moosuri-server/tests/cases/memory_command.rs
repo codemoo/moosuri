@@ -204,6 +204,7 @@ async fn configured(
         .set_default_model(
             &user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: provider.id,
                 provider_revision: 1,
                 model: "memory-command-http-model".into(),

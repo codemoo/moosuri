@@ -1033,3 +1033,55 @@ async fn failed_or_expired_first_exchange_recovers_with_retained_issued_registra
         );
     }
 }
+
+#[tokio::test]
+async fn authenticated_local_seal_reopens_verified_carrier_without_unchecked_identity_import() {
+    let fixture = Fixture::new().await;
+    let bundle = connected(&fixture, SCOPES).await;
+    let sealer = sealed::SessionSealer::new(Zeroizing::new([42; 32]));
+    let context = b"synthetic/runtime/owner/binding/revision/generation";
+    let cipher = sealer.seal(&bundle, context).unwrap();
+    assert!(!cipher.windows(16).any(|w| w == b"synthetic-access"));
+    let reopened = sealer.open(&cipher, context).unwrap();
+    assert_eq!(reopened.identity(), bundle.identity());
+    assert_eq!(
+        reopened.plan_access_token().unwrap(),
+        bundle.plan_access_token().unwrap()
+    );
+    assert!(sealer.open(&cipher, b"other owner").is_err());
+    assert!(
+        sealed::SessionSealer::new(Zeroizing::new([43; 32]))
+            .open(&cipher, context)
+            .is_err()
+    );
+    let mut tampered = cipher;
+    tampered[25] ^= 1;
+    assert!(sealer.open(&tampered, context).is_err());
+    let identity = sealer
+        .seal_identity(bundle.identity(), b"synthetic identity owner")
+        .unwrap();
+    assert_eq!(
+        sealer
+            .open_identity(&identity, b"synthetic identity owner")
+            .unwrap(),
+        *bundle.identity()
+    );
+    assert!(sealer.open_identity(&identity, b"other owner").is_err());
+}
+
+#[tokio::test]
+async fn refresh_http200_followed_by_jwks_temporary_failure_is_rotation_unknown() {
+    for status in [429, 503] {
+        let fixture = Fixture::new().await;
+        let client = fixture.client();
+        let bundle = connected(&fixture, SCOPES).await;
+        fixture.queue(Response::json(200, token(&bundle.nonce, SCOPES)));
+        fixture.queue(Response::json(
+            status,
+            json!({"error":"temporary","error_description":"synthetic-secret"}),
+        ));
+        let error = client.refresh(&bundle).await.err().unwrap();
+        assert_eq!(error, AuthError::RefreshOutcomeUnknown);
+        assert!(!format!("{error:?} {error}").contains("synthetic-secret"));
+    }
+}

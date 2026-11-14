@@ -5,6 +5,7 @@
 //! cross-process refresh leases/generation CAS, and logout dispatch cancellation.
 //! Consuming Rust values prevent local reuse; they are not durable authorization.
 mod jwt;
+pub mod sealed;
 #[cfg(test)]
 mod tests;
 mod transport;
@@ -54,6 +55,10 @@ pub enum AuthError {
     DestinationDenied,
     #[error("authentication response exceeds limit")]
     LimitExceeded,
+    /// The token endpoint accepted a rotating refresh, but replacement validation
+    /// did not finish. The old refresh token must never be redeemed again.
+    #[error("refresh replacement could not be verified; reauthentication required")]
+    RefreshOutcomeUnknown,
     #[error("temporary authentication transport failure")]
     Transport,
     #[error("authentication deadline elapsed")]
@@ -107,6 +112,13 @@ pub struct IssuedRegistration {
     host_id: String,
 }
 impl IssuedRegistration {
+    /// Non-authoritative metadata only. Caller must authorize its saved owner mapping.
+    pub fn from_saved_metadata(client_id: String, host_id: String) -> Result<Self, AuthError> {
+        if !safe_atom(&client_id, 512) || client_id == DYNAMIC_CLIENT || !safe_atom(&host_id, 256) {
+            return Err(AuthError::InvalidInput);
+        }
+        Ok(Self { client_id, host_id })
+    }
     pub fn client_id(&self) -> &str {
         &self.client_id
     }
@@ -227,6 +239,29 @@ pub struct ChatGptAuthClient {
     transport: transport::Transport,
 }
 impl ChatGptAuthClient {
+    /// Synthetic loopback acceptance only; absent from default production builds.
+    #[cfg(feature = "test-fixtures")]
+    #[doc(hidden)]
+    pub async fn synthetic_fixture(origin: &str) -> Result<Self, AuthError> {
+        let u = Url::parse(origin).map_err(|_| AuthError::DestinationDenied)?;
+        if u.scheme() != "http"
+            || u.host_str() != Some("127.0.0.1")
+            || u.port().is_none_or(|p| p == 0 || p == 80)
+            || !u.username().is_empty()
+            || u.password().is_some()
+            || u.path() != "/"
+            || u.query().is_some()
+            || u.fragment().is_some()
+        {
+            return Err(AuthError::DestinationDenied);
+        }
+        Self::discover_using(transport::Transport {
+            fixture: Some(origin.trim_end_matches('/').to_owned()),
+            deadline: Duration::from_secs(30),
+            body_limit: None,
+        })
+        .await
+    }
     pub async fn discover() -> Result<Self, AuthError> {
         let transport = transport::Transport::official();
         Self::discover_using(transport).await
@@ -414,47 +449,54 @@ impl ChatGptAuthClient {
                 ],
             )
             .await?;
-        let mut token = parse_token(&bytes)?;
-        let now = unix_now()?;
-        if let Some(raw_id) = &token.id_token {
-            let jwks = self.transport.get(transport::Endpoint::Jwks).await?;
-            let subject = jwt::verify(
-                raw_id,
-                &jwks,
-                &current.identity.client_id,
-                &current.nonce,
-                false,
-                unix_now()?,
-            )?;
-            if subject != current.identity.subject {
-                return Err(AuthError::RegistrationMismatch);
+        // Only errors from the token request above can be a safe temporary
+        // rejection. Once HTTP200 returned, the provider may have rotated:
+        // parse/JWKS/signature/claim failures cannot re-enable the old token.
+        async {
+            let mut token = parse_token(&bytes)?;
+            let now = unix_now()?;
+            if let Some(raw_id) = &token.id_token {
+                let jwks = self.transport.get(transport::Endpoint::Jwks).await?;
+                let subject = jwt::verify(
+                    raw_id,
+                    &jwks,
+                    &current.identity.client_id,
+                    &current.nonce,
+                    false,
+                    unix_now()?,
+                )?;
+                if subject != current.identity.subject {
+                    return Err(AuthError::RegistrationMismatch);
+                }
             }
+            let scopes = token
+                .scope
+                .as_deref()
+                .map(parse_scopes)
+                .transpose()?
+                .unwrap_or_else(|| current.scopes.clone());
+            let expires_at = now
+                .checked_add(token.expires_in)
+                .ok_or(AuthError::InvalidResponse)?;
+            Ok::<TokenBundle, AuthError>(TokenBundle {
+                identity: current.identity.clone(),
+                access: Zeroizing::new(std::mem::take(&mut token.access_token)),
+                refresh: Zeroizing::new(std::mem::take(&mut token.refresh_token)),
+                id_token: Zeroizing::new(
+                    token
+                        .id_token
+                        .take()
+                        .unwrap_or_else(|| current.id_token.to_string()),
+                ),
+                nonce: Zeroizing::new(current.nonce.to_string()),
+                scopes,
+                received_at: now,
+                expires_at,
+                earliest_refresh_at: token.earliest_refresh_at.take(),
+            })
         }
-        let scopes = token
-            .scope
-            .as_deref()
-            .map(parse_scopes)
-            .transpose()?
-            .unwrap_or_else(|| current.scopes.clone());
-        let expires_at = now
-            .checked_add(token.expires_in)
-            .ok_or(AuthError::InvalidResponse)?;
-        Ok(TokenBundle {
-            identity: current.identity.clone(),
-            access: Zeroizing::new(std::mem::take(&mut token.access_token)),
-            refresh: Zeroizing::new(std::mem::take(&mut token.refresh_token)),
-            id_token: Zeroizing::new(
-                token
-                    .id_token
-                    .take()
-                    .unwrap_or_else(|| current.id_token.to_string()),
-            ),
-            nonce: Zeroizing::new(current.nonce.to_string()),
-            scopes,
-            received_at: now,
-            expires_at,
-            earliest_refresh_at: token.earliest_refresh_at.take(),
-        })
+        .await
+        .map_err(|_| AuthError::RefreshOutcomeUnknown)
     }
     /// Remote receipt only. Caller stops dispatch first and clears local tokens
     /// even when remote revocation cannot be confirmed; do not retain hidden tokens.

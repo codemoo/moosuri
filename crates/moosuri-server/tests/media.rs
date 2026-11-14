@@ -250,6 +250,7 @@ async fn upload_probe_chat_retry_reload_library_and_delete_during_response() {
         .set_default_model(
             &login.user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: p.id.clone(),
                 provider_revision: 1,
                 model: "image-fixture".into(),

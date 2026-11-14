@@ -34,6 +34,7 @@ const names: Record<ProviderKind, string> = {
 function selectionKey(selection: ModelSelection | null) {
   return selection
     ? JSON.stringify([
+        ...(selection.source === "personal_chat_gpt" ? [selection.source] : []),
         selection.provider_id,
         selection.provider_revision,
         selection.model,
@@ -43,6 +44,7 @@ function selectionKey(selection: ModelSelection | null) {
 }
 function choiceSelection(choice: ModelChoice): ModelSelection {
   return {
+    ...(choice.source === "personal_chat_gpt" ? {source:choice.source} : {}),
     provider_id: choice.provider_id,
     provider_revision: choice.provider_revision,
     model: choice.model,
@@ -50,7 +52,7 @@ function choiceSelection(choice: ModelChoice): ModelSelection {
   };
 }
 function choiceLabel(choice: ModelChoice) {
-  return `${choice.provider_name} · ${choice.model} · ${choice.effort ?? "기본 강도"}`;
+  return `${choice.source === "personal_chat_gpt" ? "내 ChatGPT · " : ""}${choice.provider_name} · ${choice.model} · ${choice.effort ?? "기본 강도"}`;
 }
 function currentChoices(provider: ProviderSummary) {
   if (
@@ -199,6 +201,7 @@ export function PersonalModelSettings({ accountId, onExpired }: Props) {
           {notice}
         </p>
       )}
+      <PersonalChatGpt accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} />
       <section className="admin-card">
         <div className="section-heading">
           <div>
@@ -1029,6 +1032,88 @@ function ProviderEditor({
           </button>
         </div>
       </form>
+    </section>
+  );
+}
+
+
+type PersonalBinding = {
+  id: string;
+  revision: number;
+  label: string;
+  status: string;
+  remote_revoke: string;
+};
+function PersonalChatGpt({accountId, onExpired, onVerified}: Props & {onVerified: () => void}) {
+  const scope = useScope(accountId);
+  const [items, setItems] = useState<PersonalBinding[]>([]);
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [model, setModel] = useState<Record<string, string>>({});
+  const [effort, setEffort] = useState<Record<string, string>>({});
+  const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
+  function fail(error: unknown) {
+    if (isAborted(error)) return;
+    if (error instanceof ApiFailure && error.status === 401) onExpired();
+    else setNotice("개인 ChatGPT 요청을 완료하지 못했습니다. 연결 상태와 사용 한도를 확인하세요.");
+  }
+  useEffect(() => {
+    let active = true;
+    scope.request<PersonalBinding[]>("/settings/chatgpt").then((value) => {
+      if (active) setItems(value);
+    }).catch((error: unknown) => { if (active) fail(error); });
+    return () => { active = false; };
+  }, [scope]);
+  async function act(binding: PersonalBinding, operation: "models" | "probe" | "disconnect") {
+    if (busy) return;
+    setBusy(true);
+    setNotice("");
+    try {
+      const path = `/settings/chatgpt/${encodeURIComponent(binding.id)}`;
+      if (operation === "disconnect") {
+        const result = await scope.request<{remote_revocation_confirmed: boolean}>(path, "DELETE", {revision: binding.revision});
+        setItems(await scope.request<PersonalBinding[]>("/settings/chatgpt"));
+        onVerified();
+        setNotice(result.remote_revocation_confirmed
+          ? "ChatGPT 연결을 해제했습니다."
+          : "로컬 연결을 해제했습니다. 원격 해제는 확인되지 않았습니다. ChatGPT 설정에서 앱 연결을 해제할 수 있습니다.");
+      } else if (operation === "models") {
+        const result = await scope.request<ModelCatalog>(`${path}/models`, "POST", {revision: binding.revision});
+        setCatalogs((old) => ({...old, [binding.id]: result}));
+      } else {
+        await scope.request(`${path}/probe`, "POST", {
+          revision: binding.revision,
+          model: (model[binding.id] ?? "").trim(),
+          effort: (effort[binding.id] ?? "").trim() || null,
+        });
+        onVerified();
+        setNotice("텍스트 연결을 확인했습니다. 사용할 모델을 선택하세요.");
+      }
+    } catch (error) { fail(error); }
+    finally { setBusy(false); }
+  }
+  return (
+    <section className="admin-card">
+      <h3>내 ChatGPT</h3>
+      <p>이 컴퓨터에서 <code>moosuri subscriptions chatgpt-login --server 로컬주소 --email 내주소</code> 명령으로 로그인하세요. 원격 VM 연결은 후속 지원입니다.</p>
+      <p>개인 연결은 공유 기본값으로 등록되지 않습니다. 현재 텍스트 대화를 지원하며 도구·첨부·백그라운드 업무는 지원하지 않습니다. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">ChatGPT 사용량</a></p>
+      {notice && <p role="status">{notice}</p>}
+      {items.map((binding) => (
+        <div key={binding.id} role="group" aria-label={binding.label}>
+          <strong>{binding.label}</strong>
+          <p>{binding.status} · 원격 해제: {binding.remote_revoke}</p>
+          <p>다시 로그인: <code>--binding {binding.id} --revision {binding.revision}</code></p>
+          {binding.status === "active" && <>
+            <button disabled={busy} onClick={() => void act(binding, "models")}>내 모델 목록</button>
+            <label>정확한 모델<input value={model[binding.id] ?? ""} onChange={(event) => setModel((old) => ({...old, [binding.id]: event.target.value}))} list={`personal-models-${binding.id}`} disabled={busy} /></label>
+            <label>추론 강도<input value={effort[binding.id] ?? ""} onChange={(event) => setEffort((old) => ({...old, [binding.id]: event.target.value}))} disabled={busy} /></label>
+            <button disabled={busy || !(model[binding.id] ?? "").trim()} onClick={() => void act(binding, "probe")}>텍스트 연결 확인</button>
+            <datalist id={`personal-models-${binding.id}`}>{catalogs[binding.id]?.models.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</datalist>
+            {catalogs[binding.id]?.truncated && <p>일부 모델만 표시합니다. 정확한 모델 ID를 입력할 수 있습니다.</p>}
+          </>}
+          <button disabled={busy || binding.status === "disconnected"} onClick={() => void act(binding, "disconnect")}>ChatGPT 연결 해제</button>
+        </div>
+      ))}
     </section>
   );
 }

@@ -411,7 +411,12 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0031_mail_reconciliation.sql"
         ))?;
     }
-    let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if captured < 32 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0032_personal_chatgpt.sql"
+        ))?;
+    }
+    let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
     }
@@ -471,6 +476,14 @@ fn quarantine(
     tx.execute(
         "UPDATE store_meta SET journal_seq=?1,journal_head=?2 WHERE singleton=1",
         params![last.seq, last.hash.as_slice()],
+    )?;
+    tx.execute_batch("DELETE FROM personal_subscription_selections; DELETE FROM chatgpt_auth_attempts; DELETE FROM chatgpt_model_probes; DELETE FROM chatgpt_sessions; UPDATE chatgpt_bindings SET status='needs_reauth',remote_revoke='not_requested'; UPDATE chatgpt_binding_revisions SET identity=NULL,client_id=NULL;")?;
+    tx.execute(
+        "UPDATE subscription_runtime SET runtime_id=?1,host_id=?2 WHERE singleton=1",
+        params![
+            Uuid::new_v4().to_string(),
+            format!("urn:uuid:{}", Uuid::new_v4())
+        ],
     )?;
     tx.execute_batch("UPDATE missions SET grant_enabled=0,state=CASE WHEN state IN('queued','planning','executing','verifying','paused') THEN 'quarantined' ELSE state END; DELETE FROM calendar_oauth_sessions; UPDATE calendar_connections SET status='needs_reconnect',credential=NULL,epoch=epoch+1,credential_revision=credential_revision+1; UPDATE calendar_actions SET state=CASE WHEN state IN('dispatch_committed','outcome_unknown') THEN 'quarantined' ELSE state END,payload=NULL,event=NULL; DELETE FROM sessions; DELETE FROM agent_run_leases; UPDATE agent_execution SET invalidated=1; UPDATE agent_steps SET checkpoint=NULL,completion_digest=NULL,state=CASE WHEN state='dispatched' THEN 'unknown' ELSE state END; UPDATE agent_tool_slots SET input=NULL; DELETE FROM memory_command_plans; DELETE FROM memory_target_plans; DELETE FROM memory_command_slots WHERE state='prepared'; UPDATE chat_runs SET state=CASE WHEN state='running' THEN 'outcome_unknown' ELSE 'cancelled' END,error='interrupted',version=version+1 WHERE state IN('queued','running');
     UPDATE mail_reconciliations SET quarantined=1,lease_nonce=NULL,lease_until=NULL,next_due=NULL,status='restore_quarantined';

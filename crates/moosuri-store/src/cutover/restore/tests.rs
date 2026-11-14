@@ -76,6 +76,7 @@ async fn fixture() -> Fixture {
         .set_default_model(
             &a,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: provider.id,
                 provider_revision: provider.revision,
                 model: "synthetic".into(),
@@ -638,7 +639,7 @@ async fn supported_predecessor_migrates_offline_and_repeated_restore_keeps_journ
         .write_all(&items[1].1)
         .unwrap();
     let conn = Connection::open(&db).unwrap();
-    conn.execute_batch("DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;").unwrap();
+    conn.execute_batch("DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;").unwrap();
     conn.execute(
         "UPDATE installation_cutover SET seal=?1",
         [String::from_utf8(encode(&manifest.seal, 16384).unwrap()).unwrap()],
@@ -697,7 +698,7 @@ async fn supported_predecessor_migrates_offline_and_repeated_restore_keeps_journ
 }
 
 #[tokio::test]
-async fn schema29_and30_restore_upgrades31_and_quarantines_legacy_lookup_authority() {
+async fn schema29_and30_restore_upgrades32_and_quarantines_legacy_lookup_authority() {
     let _g = TEST_LOCK.lock().await;
     for captured in [29, 30] {
         let f = fixture().await;
@@ -710,7 +711,7 @@ async fn schema29_and30_restore_upgrades31_and_quarantines_legacy_lookup_authori
             .write_all(&items[1].1)
             .unwrap();
         let conn = Connection::open(&db).unwrap();
-        conn.execute_batch("DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
+        conn.execute_batch("DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
             .unwrap();
         if captured == 29 {
             conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;").unwrap();
@@ -737,7 +738,7 @@ async fn schema29_and30_restore_upgrades31_and_quarantines_legacy_lookup_authori
         let store = Store::open(&f.dest).unwrap();
         assert!(store.next_mail_reconciliation().await.unwrap().is_none());
         assert!(store.next_mail_dispatch().await.unwrap().is_none());
-        store.call(|db|{assert_eq!(db.conn.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0))?,31);assert_eq!(db.conn.query_row("SELECT count(*) FROM mail_reconciliations WHERE quarantined=0 OR lease_nonce IS NOT NULL OR next_due IS NOT NULL",[],|r|r.get::<_,i64>(0))?,0);Ok(())}).await.unwrap();
+        store.call(|db|{assert_eq!(db.conn.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0))?,32);assert_eq!(db.conn.query_row("SELECT count(*) FROM mail_reconciliations WHERE quarantined=0 OR lease_nonce IS NOT NULL OR next_due IS NOT NULL",[],|r|r.get::<_,i64>(0))?,0);Ok(())}).await.unwrap();
     }
 }
 
@@ -894,4 +895,53 @@ async fn independent_review_retry_preserves_enrollment_and_subsequent_current_co
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn personal_chatgpt_restore_quarantines_every_credential_and_generates_a_new_host() {
+    let _g = TEST_LOCK.lock().await;
+    let f = fixture().await;
+    let mut items = unpack(&f);
+    let mut manifest = decode_manifest(&items[0].1).unwrap();
+    let db = f.kit.join("personal.sqlite");
+    files::create_file(&db)
+        .unwrap()
+        .write_all(&items[1].1)
+        .unwrap();
+    let conn = Connection::open(&db).unwrap();
+    let host: String = conn
+        .query_row(
+            "SELECT host_id FROM subscription_runtime WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let tenant: String = conn
+        .query_row(
+            "SELECT tenant_id FROM accounts WHERE id=?1",
+            [&f.account],
+            |r| r.get(0),
+        )
+        .unwrap();
+    conn.execute("INSERT INTO chatgpt_bindings(tenant_id,account_id,id,current_revision,status) VALUES(?1,?2,'synthetic-binding',1,'active')",params![tenant,f.account]).unwrap();
+    conn.execute("INSERT INTO chatgpt_binding_revisions VALUES(?1,?2,'synthetic-binding',1,'Synthetic plan','issued-synthetic-client',zeroblob(64))",params![tenant,f.account]).unwrap();
+    conn.execute("INSERT INTO chatgpt_sessions(tenant_id,account_id,binding_id,revision,generation,cipher,expires_at,plan_enabled,refresh_state,refresh_nonce) VALUES(?1,?2,'synthetic-binding',1,4,zeroblob(64),9999999999,1,'dispatched','synthetic-nonce')",params![tenant,f.account]).unwrap();
+    conn.execute(
+        "INSERT INTO chatgpt_model_probes VALUES(?1,?2,'synthetic-binding',1,'fixture-model','',1)",
+        params![tenant, f.account],
+    )
+    .unwrap();
+    conn.execute("INSERT INTO personal_subscription_selections VALUES(?1,?2,'synthetic-binding',1,'fixture-model','')",params![tenant,f.account]).unwrap();
+    conn.execute("INSERT INTO chatgpt_auth_attempts VALUES('synthetic-attempt',?1,?2,zeroblob(32),0,'synthetic-binding',1,9999999999,'issued')",params![tenant,f.account]).unwrap();
+    drop(conn);
+    items[1].1 = fs::read(db).unwrap();
+    for (entry, (_, bytes)) in manifest.entries.iter_mut().zip(items.iter().skip(1)) {
+        entry.sha256 = hash(bytes);
+        entry.size = bytes.len() as u64;
+    }
+    items[0].1 = encode(&manifest, 32768).unwrap();
+    let (cipher, head) = repack(&f, &items, |_| {});
+    restore(&cipher, &head, &f.identity, &f.dest).unwrap();
+    let store = Store::open(&f.dest).unwrap();
+    store.call(move|db|{let restored:String=db.conn.query_row("SELECT host_id FROM subscription_runtime WHERE singleton=1",[],|r|r.get(0))?;assert_ne!(restored,host);for table in ["chatgpt_sessions","chatgpt_model_probes","chatgpt_auth_attempts","personal_subscription_selections"]{assert_eq!(db.conn.query_row(&format!("SELECT count(*) FROM {table}"),[],|r|r.get::<_,i64>(0))?,0)}assert_eq!(db.conn.query_row("SELECT count(*) FROM chatgpt_bindings WHERE status!='needs_reauth'",[],|r|r.get::<_,i64>(0))?,0);assert_eq!(db.conn.query_row("SELECT count(*) FROM chatgpt_binding_revisions WHERE identity IS NOT NULL OR client_id IS NOT NULL",[],|r|r.get::<_,i64>(0))?,0);Ok(())}).await.unwrap();
 }

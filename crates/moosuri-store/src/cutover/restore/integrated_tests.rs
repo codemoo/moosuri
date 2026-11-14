@@ -191,6 +191,7 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         .set_default_model(
             &a,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: provider.id,
                 provider_revision: provider.revision,
                 model: "synthetic".into(),

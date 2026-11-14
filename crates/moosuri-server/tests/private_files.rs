@@ -268,6 +268,7 @@ async fn configured(base: String) -> (tempfile::TempDir, Store, LoginResult, Log
         .set_default_model(
             &admin.user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: p.id,
                 provider_revision: 1,
                 model: "file-fixture".into(),

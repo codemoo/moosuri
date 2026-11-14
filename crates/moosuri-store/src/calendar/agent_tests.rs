@@ -35,6 +35,7 @@ pub(super) async fn setup() -> (tempfile::TempDir, Store, UserContext, CalendarC
     s.set_default_model(
         &u,
         Some(ModelSelection {
+            source: Default::default(),
             provider_id: provider.id,
             provider_revision: 1,
             model: "synthetic".into(),
@@ -504,7 +505,7 @@ async fn calendar_schema30_late_migration_failure_rolls_back_and_retries() {
         .unwrap();
     drop(s);
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;CREATE TABLE calendar_agent_action_links(conflict INTEGER);PRAGMA user_version=29;").unwrap();
+    c.execute_batch("DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;CREATE TABLE calendar_agent_action_links(conflict INTEGER);PRAGMA user_version=29;").unwrap();
     drop(c);
     assert!(Store::open(dir.path()).is_err());
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

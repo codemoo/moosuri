@@ -448,6 +448,7 @@ async fn sealed_write_refuses_external_context_until_its_withdrawal_edges_are_su
         .set_default_model(
             &u,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: p.id,
                 provider_revision: p.revision,
                 model: "synthetic".into(),
@@ -595,6 +596,7 @@ async fn write_confirmation_is_atomic_and_lost_ack_reopens_completed_without_ano
         .set_default_model(
             &u,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: p.id,
                 provider_revision: p.revision,
                 model: "synthetic".into(),

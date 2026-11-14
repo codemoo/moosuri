@@ -29,6 +29,7 @@ pub struct ProviderChange {
 }
 /// Private server credential carrier: intentionally no Debug or serialization.
 pub struct ProviderBinding {
+    pub subscription: Option<crate::SubscriptionRef>,
     pub id: String,
     pub revision: i64,
     pub config: ProviderConfig,
@@ -134,7 +135,7 @@ pub(super) fn open_key(conn: &Connection, dir: &Path) -> Result<Zeroizing<[u8; 3
     } else {
         // An unmarked DB must not already contain ciphertext.
         if conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM provider_revisions WHERE credential IS NOT NULL)",
+            "SELECT EXISTS(SELECT 1 FROM provider_revisions WHERE credential IS NOT NULL) OR EXISTS(SELECT 1 FROM chatgpt_sessions WHERE cipher IS NOT NULL) OR EXISTS(SELECT 1 FROM chatgpt_binding_revisions WHERE identity IS NOT NULL)",
             [],
             |r| r.get::<_, bool>(0),
         )? {
@@ -289,6 +290,7 @@ fn binding(
         return Err(StoreError::Unavailable);
     }
     Ok(ProviderBinding {
+        subscription: None,
         id: row.id,
         revision: row.revision,
         config: row.config,
@@ -325,6 +327,7 @@ fn choices(conn: &Connection, id: Option<&str>) -> Result<Vec<ModelChoice>> {
         let config: ProviderConfig =
             serde_json::from_str(&config).map_err(|_| StoreError::Corrupt)?;
         Ok(ModelChoice {
+            source: Default::default(),
             provider_id,
             provider_revision,
             provider_name,
@@ -358,6 +361,7 @@ fn selection_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Selection> {
     let effort: String = r.get(3)?;
     Ok(Selection {
         value: ModelSelection {
+            source: Default::default(),
             provider_id: r.get(0)?,
             provider_revision: r.get(1)?,
             model: r.get(2)?,
@@ -371,6 +375,9 @@ fn selection_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Selection> {
     })
 }
 fn verified(conn: &Connection, selection: &ModelSelection) -> Result<ModelChoice> {
+    if selection.source != moosuri_core::ModelSource::Shared {
+        return Err(StoreError::Conflict);
+    }
     let row = load_revision(conn, &selection.provider_id).map_err(|error| {
         if error == StoreError::NotFound {
             StoreError::Conflict
@@ -388,9 +395,30 @@ fn verified(conn: &Connection, selection: &ModelSelection) -> Result<ModelChoice
         .ok_or(StoreError::Conflict)
 }
 fn settings(conn: &Connection, user: &UserContext) -> Result<ModelSettings> {
+    let subscription = subscriptions::selected(conn, user)?;
     let personal = selected(conn, Some(user))?;
+    if let Some(s) = subscription {
+        let mut all = choices(conn, None)?;
+        all.extend(subscriptions::choices(conn, user)?);
+        let effective = all
+            .iter()
+            .find(|c| {
+                c.source == s.source
+                    && c.provider_id == s.provider_id
+                    && c.provider_revision == s.provider_revision
+                    && c.model == s.model
+                    && c.effort == s.effort
+            })
+            .cloned();
+        return Ok(ModelSettings {
+            selection: Some(s),
+            effective,
+            choices: all,
+        });
+    }
     let effective = personal.clone().or(selected(conn, None)?);
-    let all = choices(conn, None)?;
+    let mut all = choices(conn, None)?;
+    all.extend(subscriptions::choices(conn, user)?);
     let effective = effective.and_then(|s| {
         all.iter()
             .find(|c| {
@@ -504,9 +532,15 @@ impl Store {
             let current=validate(&db.conn,&user,true,false)?;
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             if let Some(s)=selection {
+                if s.source==moosuri_core::ModelSource::PersonalChatGpt {
+                    let choice=subscriptions::verified(&tx,&current,&s)?;
+                    tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;
+                    tx.execute("INSERT INTO personal_subscription_selections VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant_id,account_id) DO UPDATE SET binding_id=excluded.binding_id,revision=excluded.revision,model=excluded.model,effort=excluded.effort",params![current.tenant.0,current.account.id,s.provider_id,choice.provider_revision,s.model,s.effort.unwrap_or_default()])?;
+                    let result=settings(&tx,&current)?;tx.commit()?;return Ok(result);
+                }
                 let choice=verified(&tx,&s)?;
                 tx.execute("INSERT INTO personal_model_selections(tenant_id,account_id,provider_id,revision,model,effort) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant_id,account_id) DO UPDATE SET provider_id=excluded.provider_id,revision=excluded.revision,model=excluded.model,effort=excluded.effort",params![current.tenant.0,current.account.id,s.provider_id,choice.provider_revision,s.model,s.effort.unwrap_or_default()])?;
-            } else {tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;}
+            } else {tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;tx.execute("DELETE FROM personal_subscription_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;}
             let result=settings(&tx,&current)?;tx.commit()?;Ok(result)
         }).await
     }
@@ -563,6 +597,7 @@ impl Store {
             verified(
                 &db.conn,
                 &ModelSelection {
+                    source: Default::default(),
                     provider_id: id,
                     provider_revision: revision,
                     model: model.clone(),
@@ -593,7 +628,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             validate(&tx,&user,true,true)?;
             require_binding(&tx,&id,revision)?;
-            let selection=ModelSelection{provider_id:id.clone(),provider_revision:revision,model:model.clone(),effort:effort.clone()};
+            let selection=ModelSelection{ source: Default::default(), provider_id:id.clone(),provider_revision:revision,model:model.clone(),effort:effort.clone()};
             verified(&tx,&selection)?;
             let changed=tx.execute("UPDATE provider_model_probes SET function_tools=1 WHERE provider_id=?1 AND revision=?2 AND model=?3 AND effort=?4",params![id,revision,model,effort.unwrap_or_default()])?;
             if changed!=1{return Err(StoreError::Conflict);}
@@ -631,13 +666,22 @@ impl Store {
             if !exists && db.conn.query_row("SELECT count(*) FROM provider_model_probes WHERE provider_id=?1 AND revision=?2",params![id,revision],|r|r.get::<_,i64>(0))? >= 128 { return Err(StoreError::Conflict); }
             let time=now()?;
             db.conn.execute("INSERT INTO provider_model_probes(provider_id,revision,model,effort,verified_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(provider_id,revision,model,effort) DO UPDATE SET verified_at=excluded.verified_at",params![id,revision,model,effort.clone().unwrap_or_default(),time])?;
-            verified(&db.conn,&ModelSelection{provider_id:id,provider_revision:revision,model,effort})
+            verified(&db.conn,&ModelSelection{ source: Default::default(), provider_id:id,provider_revision:revision,model,effort})
         }).await
     }
     pub async fn resolve_model(&self, user: &UserContext) -> Result<ProviderBinding> {
         let user = user.clone();
         self.call(move |db| {
             let current = validate(&db.conn, &user, true, false)?;
+            if let Some(s) = subscriptions::selected(&db.conn, &current)? {
+                let choice = subscriptions::verified(&db.conn, &current, &s)?;
+                return subscriptions::binding(
+                    &db.conn,
+                    &current.tenant.0,
+                    &current.account.id,
+                    &choice,
+                );
+            }
             let chosen = selected(&db.conn, Some(&current))?
                 .or(selected(&db.conn, None)?)
                 .ok_or(StoreError::Unavailable)?;
@@ -663,7 +707,11 @@ pub(super) fn binding_for_choice(
     key: &[u8; 32],
     choice: &ModelChoice,
 ) -> Result<ProviderBinding> {
+    if choice.source != moosuri_core::ModelSource::Shared {
+        return Err(StoreError::Conflict);
+    }
     let selection = ModelSelection {
+        source: Default::default(),
         provider_id: choice.provider_id.clone(),
         provider_revision: choice.provider_revision,
         model: choice.model.clone(),
@@ -681,4 +729,18 @@ pub(super) fn selected_choice(conn: &Connection, user: &UserContext) -> Result<M
     settings(conn, user)?
         .effective
         .ok_or(StoreError::Unavailable)
+}
+
+pub(super) fn binding_for_owner_choice(
+    conn: &Connection,
+    key: &[u8; 32],
+    tenant: &str,
+    account: &str,
+    choice: &ModelChoice,
+) -> Result<ProviderBinding> {
+    if choice.source == moosuri_core::ModelSource::PersonalChatGpt {
+        subscriptions::binding(conn, tenant, account, choice)
+    } else {
+        binding_for_choice(conn, key, choice)
+    }
 }

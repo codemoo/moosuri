@@ -365,6 +365,7 @@ async fn recovery_never_reauthorizes_held_run_source_or_mail_dispatch() {
         .set_default_model(
             &a.user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: provider.id.clone(),
                 provider_revision: 1,
                 model: "synthetic-model".into(),

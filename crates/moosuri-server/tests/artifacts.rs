@@ -268,6 +268,7 @@ async fn http_chat_receipt_editor_and_later_chat_share_one_durable_report() {
         .set_default_model(
             &login.user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: p.id,
                 provider_revision: p.revision,
                 model: "fixture-model".into(),

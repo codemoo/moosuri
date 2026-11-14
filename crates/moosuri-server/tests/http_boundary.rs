@@ -501,6 +501,9 @@ async fn stale_tab_account_assertion_cannot_act_with_new_shared_cookie() {
     assert!(store.authenticate(member.token).await.is_ok());
 }
 
+#[path = "cases/subscriptions.rs"]
+mod subscriptions;
+
 #[path = "cases/provider_settings.rs"]
 mod provider_settings;
 

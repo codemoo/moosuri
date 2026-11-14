@@ -632,3 +632,51 @@ it("requires an actual tool-capability response before enabling a verified text 
   expect(calls).toHaveLength(2);
   expect(calls[0].body).toEqual({revision:1,model:high.model,effort:"high"});
 });
+
+describe("personal ChatGPT settings", () => {
+  it("probes and selects the personal source, then keeps a disconnected preference unavailable", async () => {
+    const user = userEvent.setup();
+    const personal: ModelChoice = {
+      ...high,
+      source: "personal_chat_gpt",
+      provider_id: "personal-a",
+      provider_name: "나의 구독",
+      effort: null,
+    };
+    let connection = {id: "personal-a", revision: 1, label: "나의 구독", status: "active", remote_revoke: "not_requested"};
+    const settings: ModelSettings = {selection: null, effective: null, choices: [personal]};
+    const fixture = server((call) => {
+      if (call.path === "/settings/chatgpt") return response([connection]);
+      if (call.path === "/settings/chatgpt/personal-a/models") return response({models: [{id: personal.model, name: "Plan model"}], truncated: false});
+      if (call.path === "/settings/chatgpt/personal-a/probe") return response(personal);
+      if (call.path === "/settings/model" && call.method === "PUT") {
+        settings.selection = call.body!.selection as ModelSelection;
+        settings.effective = personal;
+        return response(settings);
+      }
+      if (call.path === "/settings/chatgpt/personal-a" && call.method === "DELETE") {
+        connection = {...connection, status: "disconnected", remote_revoke: "unconfirmed"};
+        settings.effective = null;
+        settings.choices = [];
+        return response({remote_revocation_confirmed: false});
+      }
+      return undefined;
+    }, member, {providers: [], default_selection: null}, settings);
+    open("/settings/model");
+    const group = await screen.findByRole("group", {name: "나의 구독"});
+    await user.click(within(group).getByRole("button", {name: "내 모델 목록"}));
+    await user.type(within(group).getByLabelText("정확한 모델"), personal.model);
+    await user.click(within(group).getByRole("button", {name: "텍스트 연결 확인"}));
+    await screen.findByText("텍스트 연결을 확인했습니다. 사용할 모델을 선택하세요.");
+    expect(fixture.calls.find((call) => call.path.endsWith("personal-a/probe"))?.body).toEqual({revision: 1, model: personal.model, effort: null});
+    const targetKey = JSON.stringify(["personal_chat_gpt", personal.provider_id, 1, personal.model, null]);
+    await user.selectOptions(screen.getByRole("combobox", {name: "모델과 추론 강도"}), targetKey);
+    await user.click(screen.getByRole("button", {name: "선택 저장"}));
+    await waitFor(() => expect(settings.selection?.source).toBe("personal_chat_gpt"));
+    await user.click(within(group).getByRole("button", {name: "ChatGPT 연결 해제"}));
+    await screen.findByText(/원격 해제는 확인되지 않았습니다/);
+    await screen.findByRole("option", {name: "현재 선택 · 사용할 수 없음"});
+    expect(settings.selection?.provider_id).toBe("personal-a");
+    expect(settings.effective).toBeNull();
+  });
+});

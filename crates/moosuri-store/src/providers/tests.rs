@@ -19,6 +19,7 @@ fn change(secret: &str) -> ProviderChange {
 }
 fn selection(id: &str, model: &str) -> ModelSelection {
     ModelSelection {
+        source: Default::default(),
         provider_id: id.into(),
         provider_revision: 1,
         model: model.into(),
@@ -152,6 +153,7 @@ async fn persistence_encrypted_secret_revision_probe_and_no_fallback() {
         Err(StoreError::Conflict)
     ));
     let selected = ModelSelection {
+        source: Default::default(),
         provider_id: row.id.clone(),
         provider_revision: 2,
         model: "synthetic-model".into(),

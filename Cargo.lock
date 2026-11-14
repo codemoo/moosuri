@@ -2116,6 +2116,7 @@ dependencies = [
  "moosuri-server",
  "moosuri-store",
  "rand 0.8.8",
+ "reqwest",
  "rpassword",
  "serde_json",
  "tempfile",
@@ -2128,14 +2129,17 @@ name = "moosuri-agent"
 version = "0.1.0-dev.1"
 dependencies = [
  "axum",
+ "base64 0.23.1",
  "futures-util",
  "moosuri-connectors",
  "moosuri-core",
  "moosuri-store",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "url",
  "uuid",
 ]
 
@@ -2145,6 +2149,7 @@ version = "0.1.0-dev.1"
 dependencies = [
  "axum",
  "base64 0.23.1",
+ "chacha20poly1305",
  "chrono",
  "futures-util",
  "jwt-compact",

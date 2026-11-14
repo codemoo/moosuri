@@ -380,6 +380,8 @@ fn transport_failure(error: TransportError) -> (RunState, RunFailure) {
         TransportError::Http {
             status: 401 | 403, ..
         } => (RunState::Failed, CredentialsRejected),
+        TransportError::ChatGptPlan { status: 429, .. } => (RunState::Incomplete, RateLimited),
+        TransportError::ChatGptPlan { .. } => (RunState::Failed, ProviderUnavailable),
         TransportError::Http { status: 429, .. } => (RunState::Failed, RateLimited),
         TransportError::Http { .. } => (RunState::Failed, ProviderUnavailable),
         TransportError::Timeout => (RunState::OutcomeUnknown, TimedOut),
@@ -605,6 +607,7 @@ pub(crate) async fn execute(
     signals: Signals,
     mail: crate::mail::MailService,
     web: crate::web::Service,
+    subscriptions: crate::subscriptions::SubscriptionService,
 ) {
     match store.mission_execution(&claimed.lease).await {
         Ok(Some(_)) => {
@@ -639,27 +642,45 @@ pub(crate) async fn execute(
         .await;
         return;
     }
+    let personal = binding.subscription.is_some();
+    if personal && (media_context || !images.is_empty() || !documents.is_empty()) {
+        // Defense after claim: no unsupported raw attachment may enter plan IO.
+        finish(
+            &store,
+            &lease,
+            None,
+            RunState::Failed,
+            Some(RunFailure::ProviderUnavailable),
+            &signals,
+        )
+        .await;
+        return;
+    }
     let calendar = crate::calendar::CalendarService::new(store.clone(), mail.clone());
-    match calendar.chat(&lease).await {
-        Ok(true) => {
-            signals.changed();
-            return;
+    if !personal {
+        match calendar.chat(&lease).await {
+            Ok(true) => {
+                signals.changed();
+                return;
+            }
+            Ok(false) => {}
+            Err(_) => return,
         }
-        Ok(false) => {}
-        Err(_) => return,
     }
     // A completed typed intent resumes before any classifier or ordinary capsule handling.
-    match store.apply_mission_chat(&lease).await {
-        Ok(Some(true)) => {
-            signals.changed();
-            signals.wake.notify_one();
-            return;
+    if !personal {
+        match store.apply_mission_chat(&lease).await {
+            Ok(Some(true)) => {
+                signals.changed();
+                signals.wake.notify_one();
+                return;
+            }
+            Ok(Some(false)) => {
+                context.checkpoint = None;
+            }
+            Ok(None) => {}
+            Err(_) => return,
         }
-        Ok(Some(false)) => {
-            context.checkpoint = None;
-        }
-        Ok(None) => {}
-        Err(_) => return,
     }
     // Explicit retry clears provider checkpoints, but preserves a separately
     // sealed local intent. Resume that identity before unrelated classifiers
@@ -739,16 +760,27 @@ pub(crate) async fn execute(
         .take()
         .map(|v| Secret::new(v.to_string()))
         .transpose();
-    let client = match credential.and_then(|credential| {
-        model_client(
-            &binding.config,
-            credential,
-            TextCapabilities {
-                efforts: capabilities.efforts.clone(),
-            },
-        )
-        .and_then(|client| client.with_images(images))
-    }) {
+    let built_client = if let Some(reference) = binding.subscription.clone() {
+        subscriptions
+            .client(
+                moosuri_store::SubscriptionAuthority::Run(lease.clone()),
+                reference,
+            )
+            .await
+            .map_err(|_| TransportError::InvalidConfiguration)
+    } else {
+        credential.and_then(|credential| {
+            model_client(
+                &binding.config,
+                credential,
+                TextCapabilities {
+                    efforts: capabilities.efforts.clone(),
+                },
+            )
+            .and_then(|client| client.with_images(images))
+        })
+    };
+    let client = match built_client {
         Ok(client) => client,
         Err(error) => {
             let (state, error) = transport_failure(error);
@@ -804,10 +836,12 @@ pub(crate) async fn execute(
             context = next;
         }
     }
-    request.messages[0]
-        .text
-        .push_str(&crate::artifact_tools::system(artifact_profile.as_ref()));
-    if !media_context {
+    if !personal {
+        request.messages[0]
+            .text
+            .push_str(&crate::artifact_tools::system(artifact_profile.as_ref()));
+    }
+    if !media_context && !personal {
         request.messages[0]
             .text
             .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
@@ -836,6 +870,8 @@ pub(crate) async fn execute(
         };
         let valid = if model.function_tools {
             encode_tool_request(protocol, &tool_request, &capabilities, &tool_capability)
+        } else if personal {
+            moosuri_connectors::model::chatgpt::encode_text_request(&request, &capabilities)
         } else {
             encode_request(protocol, &request, &capabilities)
         };

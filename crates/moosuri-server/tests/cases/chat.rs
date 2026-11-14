@@ -98,6 +98,7 @@ async fn ready_thread(store: &Store, app: &Router, model: &SyntheticModel) -> (S
         .set_default_model(
             &user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: profile.id,
                 provider_revision: profile.revision,
                 model: "fixture-model".into(),

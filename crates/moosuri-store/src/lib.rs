@@ -49,6 +49,8 @@ mod web;
 pub use browser::BrowserAccess;
 pub use mail::*;
 mod providers;
+mod subscriptions;
+pub use subscriptions::*;
 mod recovery;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use moosuri_core::{AccountSummary, Role, ThreadSummary};
@@ -197,7 +199,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 31;
+const CURRENT_SCHEMA_VERSION: i64 = 32;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -558,7 +560,15 @@ impl Store {
         browser::restart(&conn)?;
         conn.execute("UPDATE mail_actions SET version=version+1,state='outcome_unknown',raw=NULL,content=NULL WHERE state='dispatch_committed'",[])?;
         conn.execute("UPDATE mail_actions SET version=version+1,raw=NULL,content=NULL WHERE state='outcome_unknown' AND (raw IS NOT NULL OR content IS NOT NULL)",[])?;
+        if version < 32 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0032_personal_chatgpt.sql"),
+                "COMMIT;"
+            ))?;
+        }
         let provider_key = providers::open_key(&conn, &dir)?;
+        subscriptions::initialize(&conn)?;
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
         if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
             return Err(StoreError::Corrupt);

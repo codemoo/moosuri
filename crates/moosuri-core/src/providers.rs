@@ -21,9 +21,24 @@ pub struct ProviderConfig {
     pub zero_data_retention: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelSource {
+    #[default]
+    Shared,
+    PersonalChatGpt,
+}
+impl ModelSource {
+    pub fn is_shared(&self) -> bool {
+        *self == Self::Shared
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSelection {
+    #[serde(default, skip_serializing_if = "ModelSource::is_shared")]
+    pub source: ModelSource,
     pub provider_id: String,
     #[ts(type = "number")]
     pub provider_revision: i64,
@@ -33,6 +48,8 @@ pub struct ModelSelection {
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct ModelChoice {
+    #[serde(default, skip_serializing_if = "ModelSource::is_shared")]
+    pub source: ModelSource,
     pub provider_id: String,
     #[ts(type = "number")]
     pub provider_revision: i64,

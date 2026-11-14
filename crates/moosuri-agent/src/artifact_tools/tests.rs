@@ -211,6 +211,7 @@ async fn setup(base: &str) -> (tempfile::TempDir, Store, UserContext, String) {
         .set_default_model(
             &u,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: p.id,
                 provider_revision: p.revision,
                 model: "fixture-model".into(),

@@ -125,10 +125,11 @@ export type ThreadSummary = { id: string, title: string, created_at: number, upd
 export type ThreadsResponse = { threads: Array<ThreadSummary>, };
 export type UsersResponse = { users: Array<AccountSummary>, };
 export type ApiError = { code: string, };
+export type ModelSource = "shared" | "personal_chat_gpt";
 export type ProviderKind = "open_ai" | "anthropic" | "open_router" | "compatible";
 export type ProviderConfig = { kind: ProviderKind, base_url: string | null, allowed_ips: Array<string>, router_providers: Array<string>, zero_data_retention: boolean, };
-export type ModelSelection = { provider_id: string, provider_revision: number, model: string, effort: string | null, };
-export type ModelChoice = { provider_id: string, provider_revision: number, provider_name: string, kind: ProviderKind, model: string, effort: string | null, verified_at: number,
+export type ModelSelection = { source?: ModelSource, provider_id: string, provider_revision: number, model: string, effort: string | null, };
+export type ModelChoice = { source?: ModelSource, provider_id: string, provider_revision: number, provider_name: string, kind: ProviderKind, model: string, effort: string | null, verified_at: number,
 /**
  * Successful bounded tool round trip for this exact binding, separate from text.
  */

@@ -192,6 +192,32 @@ impl ModelClient {
         Ok(client)
     }
 
+    #[cfg(feature = "test-fixtures")]
+    #[doc(hidden)]
+    pub fn synthetic_chatgpt_plan(
+        origin: &str,
+        access_token: Secret,
+        capabilities: TextCapabilities,
+    ) -> Result<Self, TransportError> {
+        let u = Url::parse(origin).map_err(|_| TransportError::DestinationDenied)?;
+        if u.scheme() != "http"
+            || u.host_str() != Some("127.0.0.1")
+            || u.port().is_none_or(|p| p == 0 || p == 80)
+            || !u.username().is_empty()
+            || u.password().is_some()
+            || u.path() != "/"
+            || u.query().is_some()
+            || u.fragment().is_some()
+        {
+            return Err(TransportError::DestinationDenied);
+        }
+        let mut client = Self::chatgpt_plan(access_token, capabilities)?;
+        client.endpoint = u
+            .join("v1/responses")
+            .map_err(|_| TransportError::DestinationDenied)?;
+        client.network = NetworkPolicy::LocalExact(vec![IpAddr::from([127, 0, 0, 1])]);
+        Ok(client)
+    }
     pub fn responses_dialect(&self) -> ResponsesDialect {
         self.dialect
     }

@@ -38,9 +38,10 @@ does not establish live-provider readiness. Kakao collection is private and excl
 from public code/packages; independent producers can use the custom protocol.
 
 The model adapters support configured API/compatible/local endpoints with actual
-capability probes. Separate ChatGPT plan and OAuth protocols are implemented; durable personal setup
-and subscription selection are still pending. Development live ChatGPT evaluation
-does not establish that integration. Real device/provider acceptance remains bounded by
+capability probes. Personal ChatGPT supports same-computer official sign-in, sealed owner-scoped sessions,
+text-probed personal model selection and saved streamed chat. Protected remote-VM
+handoff and personal tools/media/background work remain pending. Synthetic protocol
+and lifecycle checks do not establish live account eligibility. Real device/provider acceptance remains bounded by
 [current status](docs/status.md); a model name or connection label does not prove support.
 
 ## Develop

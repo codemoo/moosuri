@@ -44,7 +44,7 @@ Connector에만 `ModelClient::chatgpt_plan`과 opt-in `ResponsesDialect::ChatGpt
 
 function tools는 명시적으로 검증한 capability만 사용하며 고정 `moosuri` namespace로 감싼다. decoder와 private continuation은 namespace/name/call ID·정확한 model·dialect를 보존하고 foreign/missing namespace와 다른 dialect 재생을 거절한다. API의 flat function tools 경로는 유지한다. 계획/사용량 오류는 알려진 안전한 code만 노출하고 중간 text·usage 관측을 완료로 표시하지 않는다. failed-frame usage는 검증된 response.created 이후 명시적인 동일 response ID/model이 있을 때만 정산 관측으로 보존한다. progress/queued 등 후속 full snapshot의 누락·충돌 identity도 실패하며, 이후의 올바른 terminal로 덮지 않는다. synthetic fragmented stream·loopback HTTP 시험은 실계정 capability 증명이 아니다.
 
-OAuth/JWKS·credential refresh·개인 binding 소유권·웹 선택/로그인·VM credential 전달은 이 M0에 포함되지 않는다. 따라서 구독 로그인/연결 완료나 공유 provider 사용을 활성화하지 않는다. 이미지·파일·hosted search·기타 media는 이 adapter에서 아직 노출하지 않는다. 개인 소유 layer와 실제 계정별 text/tool 검증이 준비된 뒤에만 선택 가능 상태로 전환한다. 근거: [SIWC inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference), [preview limits](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [namespace schema](https://developers.openai.com/api/docs/guides/function-calling#defining-namespaces).
+현재 P1은 같은 컴퓨터의 native loopback 로그인, 개인 소유 저장·refresh CAS·해제, 실제 text probe와 개인 선택·저장 대화를 연결한다. 공유 provider 설정은 그대로 유지한다. VM credential 전달·개인 tools·이미지·파일·hosted search·기타 media·백그라운드는 아직 노출하지 않는다. 연결 후 해당 계정의 정확한 모델/effort text probe를 통과해야 선택할 수 있다. 합성 로그인·전송·대화 검증을 실계정 OAuth/eligibility 수락으로 부르지 않는다. [사용법](provider-settings.md#personal-chatgpt-text-same-computer)을 따른다. 근거: [SIWC inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference), [preview limits](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [namespace schema](https://developers.openai.com/api/docs/guides/function-calling#defining-namespaces).
 
 ### SIWC authentication foundation
 
@@ -52,8 +52,9 @@ OAuth/JWKS·credential refresh·개인 binding 소유권·웹 선택/로그인·
 실제 RS256/JWKS 검증, 부여된 scope의 plan 상태, refresh/revoke 형식을 구현했다.
 반환 callback의 선택적 client_id와 최초 교환 실패 뒤 issued registration 재사용을 수정하고
 독립 재검토·Native/Linux 검사를 통과했다. [검증 기록](reviews/2026-11-14-chatgpt-authentication.md).
-이는 connector 기반이며 개인 credential 저장·실제 loopback helper·원격 VM 전달·개인 모델 선택은
-아직 연결하지 않았다. 기존 Codex 로그인이나 합성 토큰 검증으로 그 기능을 활성화하지 않는다.
+이 connector 위에 같은 컴퓨터의 개인 credential 저장·native loopback helper·개인 text
+모델 선택을 연결했다. 원격 VM 전달과 개인 도구/media는 후속이다. 기존 Codex 로그인
+정보를 추출하지 않으며 합성 검증을 실계정 로그인·모델 수락으로 설명하지 않는다.
 
 ## Claude 공식 실행 연결
 

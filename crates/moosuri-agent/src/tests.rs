@@ -54,7 +54,8 @@ async fn concurrent_shutdown_waits_for_cleanup_past_the_old_five_second_cutoff()
     let runtime = Runtime {
         control: Arc::new(Control {
             browser: crate::browser::BrowserService::new(store.clone(), None, signals.stop.clone()),
-            mail: crate::mail::MailService::new(store, None, signals.clone()),
+            mail: crate::mail::MailService::new(store.clone(), None, signals.clone()),
+            subscriptions: crate::subscriptions::SubscriptionService::new(store, signals.clone()),
             signals,
             supervisor: Mutex::new(Some(supervisor)),
             done,
@@ -163,6 +164,7 @@ async fn configured(base: &str) -> (tempfile::TempDir, Store, UserContext, Strin
         .set_default_model(
             &user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: provider.id,
                 provider_revision: 1,
                 model: "fixture-model".into(),

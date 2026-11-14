@@ -32,21 +32,21 @@ impl Endpoint {
     }
 }
 pub(super) struct Transport {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub(super) fixture: Option<String>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub(super) deadline: Duration,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub(super) body_limit: Option<usize>,
 }
 impl Transport {
     pub(super) fn official() -> Self {
         Self {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-fixtures"))]
             fixture: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-fixtures"))]
             deadline: Duration::from_secs(30),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-fixtures"))]
             body_limit: None,
         }
     }
@@ -65,9 +65,9 @@ impl Transport {
         endpoint: Endpoint,
         fields: Option<&[(&str, &str)]>,
     ) -> Result<Zeroizing<Vec<u8>>, AuthError> {
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-fixtures")))]
         let deadline = Duration::from_secs(30);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-fixtures"))]
         let deadline = self.deadline;
         // Includes DNS and complete bounded body, including error responses.
         tokio::time::timeout(deadline, self.inner(endpoint, fields))
@@ -79,12 +79,12 @@ impl Transport {
         endpoint: Endpoint,
         fields: Option<&[(&str, &str)]>,
     ) -> Result<Zeroizing<Vec<u8>>, AuthError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-fixtures"))]
         let (base, fixture) = (
             self.fixture.as_deref().unwrap_or(super::ISSUER),
             self.fixture.is_some(),
         );
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-fixtures")))]
         let (base, fixture) = (super::ISSUER, false);
         let url = url::Url::parse(&format!("{base}{}", endpoint.path()))
             .map_err(|_| AuthError::DestinationDenied)?;
@@ -147,7 +147,7 @@ impl Transport {
             .and_then(|s| s.split(';').next())
             .is_some_and(|s| s.trim().eq_ignore_ascii_case("application/json"));
         let limit = endpoint.limit();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-fixtures"))]
         let limit = self.body_limit.unwrap_or(limit).min(limit);
         if response.content_length().is_some_and(|n| n > limit as u64) {
             return Err(AuthError::LimitExceeded);

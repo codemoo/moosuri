@@ -412,7 +412,7 @@ pub(super) fn guard(conn: &Connection, key: &[u8; 32], lease: &RunLease) -> Resu
         )?;
         return Err(StoreError::Unauthorized);
     }
-    if providers::binding_for_choice(conn, key, &run.model).is_err() {
+    if binding_for_run(conn, key, &run).is_err() {
         transition(
             conn,
             &run,
@@ -424,6 +424,21 @@ pub(super) fn guard(conn: &Connection, key: &[u8; 32], lease: &RunLease) -> Resu
     agent_execution::guard_execution(conn, &run)?;
     Ok(run)
 }
+/// Resolve a durable run only after its source capability is checked. This runs
+/// before either claim path can materialize private attachment bodies.
+pub(super) fn binding_for_run(
+    conn: &Connection,
+    key: &[u8; 32],
+    run: &Run,
+) -> Result<ProviderBinding> {
+    if run.model.source == moosuri_core::ModelSource::PersonalChatGpt
+        && crate::media::has_context(conn, &run.tenant, &run.id)?
+    {
+        return Err(StoreError::Conflict);
+    }
+    providers::binding_for_owner_choice(conn, key, &run.tenant, &run.account, &run.model)
+}
+
 impl Store {
     pub async fn submit_turn(
         &self,
@@ -943,7 +958,21 @@ fn submit_turn_context_in(
     }
     queue_capacity(tx, &user.tenant.0)?;
     let choice = providers::selected_choice(tx, &user)?;
-    providers::binding_for_choice(tx, provider_key, &choice)?;
+    providers::binding_for_owner_choice(
+        tx,
+        provider_key,
+        &user.tenant.0,
+        &user.account.id,
+        &choice,
+    )?;
+    if choice.source == moosuri_core::ModelSource::PersonalChatGpt
+        && (!attachments.is_empty()
+            || crate::media::thread_has_context(tx, &user.tenant.0, &user.account.id, &thread_id)?)
+    {
+        // P1 excludes raw document and image history as well as current uploads.
+        // Include queued/running ancestors, matching dependency inheritance.
+        return Err(StoreError::Conflict);
+    }
     let mut needs_vision = false;
     for media in &attachments {
         let image:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM media_objects WHERE tenant_id=?1 AND id=?2 AND filename IS NULL)",params![user.tenant.0,media.id],|r|r.get(0))?;
@@ -1168,7 +1197,7 @@ fn retry_run_inner(
     crate::missions::chat::retry_authority(&tx, &run)?;
     crate::calendar::agent::retry_authority(&tx, &run)?;
     queue_capacity(&tx, &user.tenant.0)?;
-    providers::binding_for_choice(&tx, &db.provider_key, &run.model)?;
+    binding_for_run(&tx, &db.provider_key, &run)?;
     let order = next_order(&tx)?;
     tx.execute(
         "DELETE FROM chat_output WHERE tenant_id=?1 AND run_id=?2",
@@ -1212,7 +1241,7 @@ fn claim_run_inner(db: &mut Database) -> Result<Option<ClaimedRun>> {
             )?;
             continue;
         }
-        let binding = match providers::binding_for_choice(&tx, &db.provider_key, &run.model) {
+        let binding = match binding_for_run(&tx, &db.provider_key, &run) {
             Ok(binding) => binding,
             Err(_) => {
                 transition(

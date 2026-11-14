@@ -16,6 +16,7 @@ mod push;
 mod runner;
 mod schedules;
 mod source_connections;
+pub mod subscriptions;
 mod web;
 mod web_tools;
 
@@ -122,6 +123,7 @@ struct Control {
     done: watch::Receiver<bool>,
     mail: mail::MailService,
     browser: browser::BrowserService,
+    subscriptions: subscriptions::SubscriptionService,
 }
 impl Drop for Control {
     fn drop(&mut self) {
@@ -202,12 +204,14 @@ impl Runtime {
         let browser =
             browser::BrowserService::new(store.clone(), web.reader(), signals.stop.clone());
         web.set_workspaces(browser.clone());
+        let subscriptions = subscriptions::SubscriptionService::new(store.clone(), signals.clone());
         let supervisor = tokio::spawn(supervise(
             store,
             signals.clone(),
             done_tx,
             mail.clone(),
             web,
+            subscriptions.clone(),
         ));
         Self {
             control: Arc::new(Control {
@@ -216,8 +220,12 @@ impl Runtime {
                 done,
                 mail,
                 browser,
+                subscriptions,
             }),
         }
+    }
+    pub fn subscription_service(&self) -> subscriptions::SubscriptionService {
+        self.control.subscriptions.clone()
     }
     pub fn browser_service(&self) -> browser::BrowserService {
         self.control.browser.clone()
@@ -313,6 +321,7 @@ async fn supervise(
     done: watch::Sender<bool>,
     mail: mail::MailService,
     web: web::Service,
+    subscriptions: subscriptions::SubscriptionService,
 ) {
     let mut extraction_worker =
         tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
@@ -372,6 +381,7 @@ async fn supervise(
                             signals.clone(),
                             mail.clone(),
                             web.clone(),
+                            subscriptions.clone(),
                         ))
                         .id();
                     leases.insert(id, lease);

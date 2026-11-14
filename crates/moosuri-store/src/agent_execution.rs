@@ -655,7 +655,7 @@ impl Store {
             for (tenant,id) in queued {
                 let run=chat::load_run(&tx,&tenant,&id)?;
                 if chat::execution_authority(&tx,&run).is_err(){chat::transition(&tx,&run,RunState::Cancelled,Some(RunFailure::AuthorityRevoked))?;continue}
-                let binding=match providers::binding_for_choice(&tx,&db.provider_key,&run.model){Ok(v)=>v,Err(_)=>{chat::transition(&tx,&run,RunState::Failed,Some(RunFailure::ProviderUnavailable))?;continue}};
+                let binding=match chat::binding_for_run(&tx,&db.provider_key,&run){Ok(v)=>v,Err(_)=>{chat::transition(&tx,&run,RunState::Failed,Some(RunFailure::ProviderUnavailable))?;continue}};
                 let local_final = crate::missions::local_final_recovery(&tx, &tenant, &id)?;
                 if !retry_fences(&tx,&tenant,&id,!local_final)? {chat::transition(&tx,&run,RunState::Incomplete,Some(RunFailure::BudgetExhausted))?;continue}
                 match guard_execution(&tx,&run) {Ok(())=>{},Err(StoreError::Conflict|StoreError::BudgetExhausted)=>continue,Err(e)=>return Err(e)}

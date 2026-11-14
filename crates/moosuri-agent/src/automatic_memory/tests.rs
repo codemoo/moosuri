@@ -115,6 +115,7 @@ async fn automatic_worker_saves_literal_evidence_once_rejects_forged_fields_and_
             .set_default_model(
                 &u,
                 Some(ModelSelection {
+                    source: Default::default(),
                     provider_id: p.id,
                     provider_revision: 1,
                     model: "synthetic-model".into(),

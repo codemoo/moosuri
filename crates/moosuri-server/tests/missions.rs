@@ -85,6 +85,7 @@ async fn mission_http_owner_admission_deduplication_controls_and_scope() {
     s.set_default_model(
         &u.user,
         Some(ModelSelection {
+            source: Default::default(),
             provider_id: p.id,
             provider_revision: 1,
             model: "synthetic".into(),

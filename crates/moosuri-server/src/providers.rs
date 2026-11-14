@@ -178,7 +178,7 @@ pub(super) async fn set_preference(
     .into_response())
 }
 
-fn transport_failure(error: TransportError) -> Response {
+pub(super) fn transport_failure(error: TransportError) -> Response {
     let (status, code) = match error {
         TransportError::InvalidConfiguration | TransportError::DestinationDenied => {
             (StatusCode::BAD_REQUEST, "model_configuration_invalid")

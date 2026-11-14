@@ -202,6 +202,7 @@ pub fn typescript_contract() -> String {
         ThreadsResponse::decl(),
         UsersResponse::decl(),
         ApiError::decl(),
+        ModelSource::decl(),
         ProviderKind::decl(),
         ProviderConfig::decl(),
         ModelSelection::decl(),

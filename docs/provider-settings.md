@@ -2,8 +2,8 @@
 
 The administrator manages installation API/local connections at `/admin/providers`.
 Each member chooses a verified model and effort at `/settings/model`, or explicitly
-uses the installation default. Verified choices are connected to saved conversations. Subscription login remains
-a separate implementation.
+uses the installation default. Verified choices are connected to saved conversations.
+Personal ChatGPT text connections use the separate owner-scoped flow below.
 
 1. Add an OpenAI API, Anthropic API, OpenRouter, or compatible/local connection.
 2. Enter its API key. Compatible servers may omit a key; hosted providers require one.
@@ -76,3 +76,64 @@ The private user's prior `gpt-6.1-terra` / `high` preference remains a future im
 input, not a hardcoded public-installation default. Only account-available verified
 choices can become defaults. ChatGPT Sign in and official Claude CLI subscription
 isolation remain the separate paths described in [providers](providers.md).
+
+
+## Personal ChatGPT text (same computer)
+
+Run the native helper on the computer running Moosuri and the system browser:
+
+```sh
+moosuri subscriptions chatgpt-login --server http://127.0.0.1:3210 --email owner@example.test
+```
+
+Use the exact configured local origin; the server must already be running in its
+normal local development configuration. Enter your Moosuri password in the hidden
+prompt, then complete official ChatGPT consent in the system browser. Tokens and
+OAuth callback parameters are not printed. The helper does not read Codex login
+files. Remote VM protected handoff is not implemented in this slice.
+
+At `/settings/model`, open **내 모델 목록**, choose an exact slug and optional effort,
+then **텍스트 연결 확인**. The fixed text probe uses only synthetic verification
+content. After proof, choose the personal model in **사용할 모델**. Catalog presence
+and OAuth alone never make a selectable verified choice. An identity-only login
+shows `plan_disabled`; enable the plan grant in ChatGPT and reconnect explicitly.
+To reconnect an existing registration, add its displayed `--binding` and
+`--revision` to the login command. Same-host returning login preserves issued client
+and verified subject, including when OpenAI omits callback client_id. An incomplete
+first exchange retains its issued client for a fresh-code retry.
+
+Personal choices are never installation defaults and never appear in another
+member's settings, including an administrator's own account view. This slice is
+text-only: tools, attachments and background automatic memory/missions are
+unavailable for personal ChatGPT. A conversation with ready document/image
+dependencies from earlier turns is also unavailable for this source; use a new
+text-only conversation or explicitly select a supported shared model. Nothing
+silently copies prior raw attachment text to the personal provider. Shared API/local tools and background grants
+continue independently. Changing the selected source affects new runs; existing
+runs keep their model/effort/connection revision. A stale or disconnected personal
+preference stays visibly unavailable until explicitly replaced or cleared; no
+shared model fallback is performed.
+
+OAuth bundles use authenticated server-managed sealing under the existing private
+root key. A missing/mismatched key fails closed. Native listener state is transient
+and abandoned on restart; verified registration and renewable sessions persist.
+Normal refresh serializes rotating-token use, atomically advances generation and
+preserves model proof. An ambiguous dispatched refresh is not replayed after a
+crash; the connection needs reauthentication. This includes a successful rotating
+refresh whose subsequent JWKS fetch or replacement validation fails. Only a known
+temporary rejection from the refresh-token endpoint itself preserves the old bundle. The optional provider refresh hint is
+retained without guessing its wire format. Local budgets do not impose an OpenAI
+hard output-token cap for SIWC.
+
+**ChatGPT 연결 해제** fences new requests and clears local tokens even when remote
+revocation fails. Settings reports unconfirmed remote revocation accurately; use
+[ChatGPT Settings](https://chatgpt.com/settings) to disconnect the app if necessary.
+Already accepted inference can still be charged. Ordinary Moosuri logout ends the
+local session's request authority but does not remove the saved personal connection.
+Sealed restore clears personal sessions/proofs/selections and old verified identity
+seals, then creates a new runtime/host ID; reconnect in the new installation.
+
+Synthetic signed OAuth, restart, real loopback plan transport and stored chat tests
+exercise this integration. They do not establish real account/workspace eligibility,
+live capability or remotely managed hosted-app approval. Independent security and
+actual account acceptance remain separate gates.

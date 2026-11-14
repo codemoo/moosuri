@@ -1,6 +1,6 @@
 # ChatGPT OSS authentication protocol foundation
 
-`moosuri-connectors::chatgpt_oauth` implements the bounded official public OSS SIWC protocol. It is deliberately not connected to server routes, personal provider selection, the CLI or web UI. Existing API providers remain the default. Synthetic protocol tests are not an actual account connection, plan eligibility or model capability proof.
+`moosuri-connectors::chatgpt_oauth` implements the bounded official public OSS SIWC protocol. P1 connects same-host native loopback login to owner-scoped sealed storage, personal text probe/selection and durable streamed chat. Existing shared API providers remain independently available. Synthetic protocol tests are not an actual account connection, plan eligibility or model capability proof.
 
 The protocol follows the official [OSS overview](https://developers.openai.com/siwc/token-sharing-open-source), [sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [profiles and sessions](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions) and [token reference](https://developers.openai.com/siwc/token-sharing-open-source/token-reference), checked 2026-11-13. Paid or remotely managed hosted deployments have separate registration conditions; this module establishes no approval for them.
 
@@ -18,12 +18,55 @@ JWKS selection rejects duplicate key IDs, missing/mismatched IDs, non-RSA keys, 
 
 Refresh sends only grant type, issued client ID, current refresh token and resource, omitting scope. A successful response returns a complete replacement carrier and never mutates the old bundle. Known terminal 400/401 token errors require reauthorization; network/deadline/429/5xx failures preserve the old carrier. No automatic code/refresh retry is made: a response lost after token rotation has an unknown remote outcome. Revocation posts the refresh token, token-type hint and issued client ID; an empty HTTP 200 confirms the remote request. A failed remote revocation remains distinguishable from success.
 
-## Caller duties and remaining integration gates
+## Personal P1 integration
 
-Rust value consumption prevents replay through this in-process API. It is not a durable owner authorization system. Before any UI/dispatch integration, the application must implement authenticated owner binding, durable attempt/callback ownership and restart/replay rejection, registration persistence before exchange, protected atomic bundle persistence, restore/import validation, cross-process refresh single-flight leases and generation CAS. A normal refresh must not change binding configuration revision or capability evidence. Crash after provider rotation and before durable commit must remain an explicit unknown/reauthentication state. The current module has no public deserialization/import shortcut that could forge a verified carrier.
+The store owns authenticated owner/session/epoch and binding-revision checks,
+registration persistence before exchange, rotating-token single flight, generation
+CAS, local disconnect and restore quarantine. Server/agent code performs no network
+IO while holding the SQLite writer. See [personal connection instructions](provider-settings.md#personal-chatgpt-text-same-computer).
 
-The next unit supplies the native listener/helper, protected local storage, VM handoff, owner-only import and refresh ownership. The host ID cannot be copied from laptop to VM. Logout must stop new dispatch and cancel local waits before revocation, then clear local usable tokens even if remote revocation fails, preserve the client/account/host mapping and display unconfirmed remote status plus ChatGPT Settings disconnect instructions. The protocol adapter alone cannot clear caller storage or stop existing inference.
+`SessionSealer` is an explicit trusted private-runtime key capability. It seals only
+verified carriers and reopens authenticated records under exact owner/runtime/
+binding/revision/generation context. Neither TokenBundle nor VerifiedIdentity gains
+unchecked Deserialize/from_parts. Local reopen preserves prior verified identity
+when a retained ID token is historically expired; it is not fresh OpenID verification
+or an external credential import API. Access-token expiry still blocks dispatch.
+The source discriminator is authoritative; ProviderKind remains the shared wire
+family enum and cannot select SIWC by itself.
 
-Account/workspace eligibility, hosted approval where applicable, real model catalog/text/tool capability checks, personal schema/store/run ownership, UI selection and actual login remain unexecuted. Do not enable personal SIWC selection from protocol success alone. The existing distinct ChatGPT Responses dialect remains separately gated.
+The native helper uses ordinary hidden-password Moosuri authentication and a
+server-owned exact127.0.0.1 ephemeral listener on the same computer. Callback/code/
+nonce/PKCE remain private; attempts are consumed and abandoned after restart.
+Verified identity remains subject-pinned across disconnect and returning sign-in.
+Incomplete issued-client metadata has no subject authority. A callback may omit
+client_id only for the selected returning registration.
 
-The only signing key committed under this module is `synthetic-test-key.pk8`: a deliberately public, newly generated test fixture. It has never authenticated to a provider and must never be used as a real credential. Tests use loopback servers only; the alternative origin/deadline/body-limit constructor exists solely inside private `cfg(test)` code.
+Refresh advances idle→acquired→durably dispatched before provider IO; only the exact
+owner/binding/revision/generation/nonce and current initiating authority can commit
+its replacement. Expiration never reclaims a dispatched rotating-token attempt.
+Ambiguous rotation loss/restart requires reauthentication, while recognized temporary
+HTTP rejection from the refresh-token endpoint keeps the old bundle with cooldown.
+After that endpoint returns HTTP200, any failed parsing, JWKS fetch or identity
+validation is `RefreshOutcomeUnknown`, including JWKS429/503; the old rotating
+token is cleared and cannot be replayed. Disconnect fences first, clears
+local usable tokens and reports remote confirmation separately. Sealed-current
+restore removes tokens/proofs/selections and old identity/client authority, then
+creates a new host/runtime; reconnect explicitly in the restored installation.
+
+P1 keeps personal tools, attachments and background work unavailable. This includes
+ready raw document/image history from earlier conversation turns, including queued
+ancestors. Admission rejects it without changing the personal selection or routing
+to a shared provider. Durable claim/retry/output guards repeat the fence before
+loading private attachment bodies; the runner checks again before plan IO. Shared
+conversation attachment inheritance remains supported. Protocol
+namespace support alone is not a personal tool capability proof. Protected VM
+handoff and independent fresh import verification remain P2; no plaintext token
+paste/upload or remote HTTPS OAuth callback is provided. Account/workspace
+eligibility, actual OAuth/catalog/text acceptance, personal tools and hosted approval
+where applicable remain unexecuted. Internal independent authentication/storage/
+restore review is required before publication.
+
+The committed `synthetic-test-key.pk8` is a deliberately public signing fixture,
+never a real credential. Optional `test-fixtures` constructors accept only exact
+127.0.0.1 HTTP origins with nondefault ports; default production builds have no
+alternate auth/model destination. Synthetic tests do not establish live readiness.

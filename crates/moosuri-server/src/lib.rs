@@ -16,6 +16,7 @@ mod providers;
 mod push;
 mod schedules;
 mod source_connections;
+mod subscriptions;
 pub mod vault;
 use axum::{
     Json, Router,
@@ -267,6 +268,27 @@ pub fn router_with_runtime(
         streams: Arc::new(Mutex::new(HashMap::new())),
     };
     Router::new()
+        .route("/api/v1/settings/chatgpt", get(subscriptions::list))
+        .route(
+            "/api/v1/settings/chatgpt/local-login",
+            post(subscriptions::login),
+        )
+        .route(
+            "/api/v1/settings/chatgpt/attempts/{id}",
+            get(subscriptions::attempt),
+        )
+        .route(
+            "/api/v1/settings/chatgpt/{id}",
+            delete(subscriptions::disconnect),
+        )
+        .route(
+            "/api/v1/settings/chatgpt/{id}/models",
+            post(subscriptions::catalog),
+        )
+        .route(
+            "/api/v1/settings/chatgpt/{id}/probe",
+            post(subscriptions::probe),
+        )
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
         .route("/health/ready", get(ready))
         .route("/api/v1/system", get(system))

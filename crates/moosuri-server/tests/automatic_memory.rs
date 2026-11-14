@@ -85,6 +85,7 @@ async fn extraction_controls_require_current_account_and_do_not_backfill_or_gran
         .set_default_model(
             u,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: provider.id,
                 provider_revision: 1,
                 model: "synthetic".into(),

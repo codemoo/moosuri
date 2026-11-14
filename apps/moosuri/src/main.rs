@@ -17,6 +17,7 @@ use std::{
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 mod skills;
+mod subscriptions;
 
 #[derive(Parser)]
 #[command(
@@ -37,6 +38,11 @@ enum RecoveryRole {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Personal model sign-in on this computer.
+    Subscriptions {
+        #[command(subcommand)]
+        command: subscriptions::Command,
+    },
     #[command(hide = true, name = "internal-pdf-text")]
     InternalPdfText,
     /// Author or check local instruction packages without an installation.
@@ -172,6 +178,9 @@ fn main() {
     }
 }
 async fn run(cli: Cli) -> Result<(), String> {
+    if let Command::Subscriptions { command } = &cli.command {
+        return subscriptions::run(command).await;
+    }
     if let Command::Skills { command } = &cli.command {
         return skills::run(command).await;
     }
@@ -196,7 +205,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     }
     match cli.command {
         Command::InternalPdfText => unreachable!("PDF extraction does not open installation state"),
-        Command::Skills { .. } => unreachable!("skills authoring runs without installation state"),
+        Command::Skills { .. } | Command::Subscriptions { .. } => {
+            unreachable!("native helpers run without installation state")
+        }
         Command::Backup { command } => match command {
             BackupCommand::Keygen { .. } => unreachable!("keygen runs without installation state"),
             BackupCommand::Restore {

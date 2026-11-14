@@ -37,6 +37,7 @@ async fn configured(store: &Store) -> (UserContext, String) {
         .set_default_model(
             &user,
             Some(ModelSelection {
+                source: Default::default(),
                 provider_id: provider.id.clone(),
                 provider_revision: 1,
                 model: "synthetic-model".into(),

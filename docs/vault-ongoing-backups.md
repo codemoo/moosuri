@@ -80,15 +80,16 @@ adapter key are required; no old session/pending command is activated. Repeating
 the exact completed restore only resyncs that matching root and preserves new work.
 An unrelated occupied root or reserved staging destination rejects.
 
-This unit does **not** provide an independently pinned newer encrypted journal or
-historical forward-replay contract. An older snapshot cannot know about item/owner
+Plain `restore-snapshot` does **not** attach a newer journal. The separate manual
+[pinned journal recovery](vault-historical-recovery.md) can recover through an
+explicit full journal checkpoint with exact-prefix and semantic checks.
+An older snapshot by itself cannot know about item/owner
 deletion or nonce use committed after its captured head. Explicitly restoring it
 can therefore recover older ciphertext; it must not be called latest, deletion-safe
 through a later date, or zero-loss. Choose/retain snapshots according to their
-actual capture coverage. Pairing older snapshots with independently newer journals
-requires a separate authenticated format, prefix/semantic checks and authority
-contract and is still pending. This implementation does not silently attach a live
-source journal or infer its latest head.
+actual capture coverage. The manual historical path requires its distinct encrypted
+format and independent head hash; no live source journal is silently attached and
+no latest head is inferred. Automatic off-host journal transport/pinning remains pending.
 
 The original service stays live, and restored copies have distinct service UUIDs.
 They can accept fresh grants independently; there is no distributed singleton or

@@ -139,6 +139,68 @@ fn inventory(items: &[EncryptedItem]) -> Result<String> {
         .collect())
 }
 impl Database {
+    /// Private staged forward recovery only. Every append must reproduce the
+    /// independently pinned transcript byte/head exactly; no session is granted.
+    pub(crate) fn replay_forward(
+        &mut self,
+        intent: Intent,
+        sequence: i64,
+        head: [u8; 32],
+    ) -> Result<()> {
+        match intent {
+            Intent::Prepare { owner, operation } => {
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO owners VALUES(?1,?2)",
+                    params![owner.tenant.to_string(), owner.account.to_string()],
+                )?;
+                self.prepare(&owner, operation)?;
+            }
+            Intent::Adopt {
+                owner,
+                operation,
+                digest,
+            } => {
+                self.commit(&owner, operation, &digest)?;
+            }
+            Intent::Cancel {
+                owner,
+                operation,
+                digest,
+            } => {
+                if hash(&json(&operation)?) != digest {
+                    return Err(Error::Unavailable);
+                }
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO owners VALUES(?1,?2)",
+                    params![owner.tenant.to_string(), owner.account.to_string()],
+                )?;
+                self.cancel(&owner, operation.id(), operation)?;
+            }
+            Intent::Lifecycle {
+                event,
+                owner,
+                action,
+            } => self.lifecycle(event, &owner, &action)?,
+            Intent::Close { session } => {
+                unhex(&session)?;
+                let next = self.append(&Intent::Close {
+                    session: session.clone(),
+                })?;
+                let tx = self.conn.transaction()?;
+                tx.execute("UPDATE sessions SET closed=1 WHERE digest=?1", [session])?;
+                tx.execute(
+                    "UPDATE meta SET sequence=?1,head=?2",
+                    params![next.0, next.1.as_slice()],
+                )?;
+                tx.commit()?;
+                self.adopt_head(next);
+            }
+        }
+        if self.sequence != sequence || self.head != head {
+            return Err(Error::Unavailable);
+        }
+        Ok(())
+    }
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_inner(path, false)
     }

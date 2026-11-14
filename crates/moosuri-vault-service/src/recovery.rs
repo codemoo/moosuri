@@ -23,6 +23,7 @@ const DB_LIMIT: u64 = 512 * 1024 * 1024;
 const ARCHIVE_LIMIT: u64 = DB_LIMIT + JOURNAL_LIMIT + 1024 * 1024;
 const JSON_LIMIT: u64 = 16 * 1024;
 const STAGE_PREFIX: &str = ".vault-recovery-stage-";
+pub mod historical;
 pub mod online;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -630,6 +631,7 @@ pub fn restore(
         identity_file,
         FORMAT,
         WIRE,
+        None,
     )
 }
 /// Explicit point-in-time restore. It does not certify current/latest history
@@ -647,6 +649,7 @@ pub fn restore_snapshot(
         identity_file,
         SNAPSHOT_FORMAT,
         SNAPSHOT_WIRE,
+        None,
     )
 }
 fn restore_inner(
@@ -656,6 +659,7 @@ fn restore_inner(
     identity_file: &Path,
     format: &str,
     wire: &[u8; 8],
+    forward: Option<&historical::JournalInputs<'_>>,
 ) -> Result<()> {
     if reserved_stage_name(destination) {
         return Err(Error::Invalid);
@@ -667,6 +671,9 @@ fn restore_inner(
         if input.starts_with(destination) {
             return Err(Error::Invalid);
         }
+    }
+    if let Some(inputs) = forward {
+        inputs.validate(destination)?;
     }
     let head: TrustedHead = if format == SNAPSHOT_FORMAT {
         TrustedHead::from(read_json::<SnapshotTrustedHead>(trusted_head)?)
@@ -751,8 +758,20 @@ fn restore_inner(
         return Err(Error::Unavailable);
     }
     verify_semantics(&db, &journal, parent)?;
+    let forward_head = if let Some(inputs) = forward {
+        Some(historical::forward(
+            &mut db, &journal, parent, &head, inputs,
+        )?)
+    } else {
+        None
+    };
     if destination.symlink_metadata().is_ok() {
         private_dir(destination)?;
+        if let Some(journal_head) = &forward_head {
+            historical::existing_destination(destination, &head, journal_head)?;
+            sync_dir(parent)?;
+            return Ok(());
+        }
         let provenance: Provenance = if format == SNAPSHOT_FORMAT {
             let p: SnapshotProvenance = read_json(&destination.join("vault.restored"))?;
             Provenance {
@@ -803,7 +822,9 @@ fn restore_inner(
         trusted: head,
         destination: new_id,
     };
-    let encoded = if format == SNAPSHOT_FORMAT {
+    let encoded = if let Some(journal_head) = forward_head {
+        historical::provenance(&provenance.trusted, journal_head, new_id)?
+    } else if format == SNAPSHOT_FORMAT {
         encode(&SnapshotProvenance {
             format: provenance.format,
             version: provenance.version,

@@ -201,6 +201,169 @@ fn ongoing_snapshot_is_immutable_source_stays_live_and_restore_quarantines_autho
     );
 }
 #[test]
+fn historical_journal_forward_preserves_rotation_deletions_receipts_nonce_fences_and_fresh_work() {
+    use moosuri_vault_core::{ClientVault, inventory_digest};
+    use recovery::historical::{JournalInputs, journal_checkpoint, restore_historical};
+    let tmp = tempfile::tempdir().unwrap();
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let snapshots = tmp.path().join("snapshots");
+    let journals = tmp.path().join("journals");
+    for p in [&snapshots, &journals] {
+        fs::create_dir(p).unwrap();
+        fs::set_permissions(p, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let s = kit(&snapshots);
+    let j = kit(&journals);
+    let source = tmp.path().join("source");
+    let mut db = Database::open(&source).unwrap();
+    let mut o = owner();
+    let mut active = setup(&mut db, &o);
+    let deleted_owner = owner();
+    let _deleted_active = setup(&mut db, &deleted_owner);
+    let item = active
+        .seal_item(Uuid::new_v4(), 1, &fields(), &mut OsEntropy)
+        .unwrap();
+    let first_put = put(&mut db, &o, item);
+    let r = db.prepare(&o, first_put.clone()).unwrap();
+    db.commit(&o, first_put.id(), &r.payload_sha256).unwrap();
+    db.capture_snapshot(&snapshots)
+        .unwrap()
+        .encrypt(&s.recipient, &s.archive, &s.head)
+        .unwrap();
+    let before = db.state(&o).unwrap();
+    let mut client = ClientVault::new(active);
+    let password = SecretText::new("Synthetic newer root password".into()).unwrap();
+    client
+        .prepare_rotation(
+            &password,
+            &before.items,
+            inventory_digest(&before.items).unwrap(),
+            &mut OsEntropy,
+        )
+        .unwrap();
+    let recovery =
+        RecoveryKey::parse(&client.pending_recovery().unwrap().unwrap().expose_encoded()).unwrap();
+    client.verify_recovery(&recovery).unwrap();
+    let (id, digest) = client.pending_candidate().unwrap();
+    let rotation = Operation::Key {
+        id,
+        expected_header: Some(before.header_sha256),
+        expected_inventory: before.inventory_sha256,
+        header: client.pending_header().unwrap().clone(),
+        items: client.pending_items().unwrap().to_vec(),
+        commitment: digest.iter().map(|v| format!("{v:02x}")).collect(),
+    };
+    let r = db.prepare(&o, rotation.clone()).unwrap();
+    let rotated = db.commit(&o, id, &r.payload_sha256).unwrap();
+    client
+        .confirm_commit(StorageReceipt::from_verified_storage(id, digest))
+        .unwrap();
+    client.activate().unwrap();
+    let after = db.state(&o).unwrap();
+    let rotated_header = serde_json::to_vec(&after.header).unwrap();
+    let deletion = Operation::Delete {
+        id: Uuid::new_v4(),
+        expected_header: after.header_sha256,
+        item: after.items[0].id,
+        expected_revision: after.items[0].revision,
+    };
+    let r = db.prepare(&o, deletion.clone()).unwrap();
+    db.commit(&o, deletion.id(), &r.payload_sha256).unwrap();
+    let cancelled_item = client
+        .active()
+        .unwrap()
+        .seal_item(Uuid::new_v4(), 1, &fields(), &mut OsEntropy)
+        .unwrap();
+    let cancelled = put(&mut db, &o, cancelled_item);
+    let cancelled_receipt = db.cancel(&o, cancelled.id(), cancelled.clone()).unwrap();
+    o.epoch += 1;
+    db.lifecycle(Uuid::new_v4(), &o, "revoke").unwrap();
+    let pending_item = client
+        .active()
+        .unwrap()
+        .seal_item(Uuid::new_v4(), 1, &fields(), &mut OsEntropy)
+        .unwrap();
+    let pending = put(&mut db, &o, pending_item.clone());
+    let pending_receipt = db.prepare(&o, pending.clone()).unwrap();
+    db.lifecycle(Uuid::new_v4(), &deleted_owner, "delete")
+        .unwrap();
+    let later_owner = owner();
+    let _later_active = setup(&mut db, &later_owner);
+    db.close_session(&format!("synthetic-cookie-{}", later_owner.account))
+        .unwrap();
+    drop(db);
+    let head = journal_checkpoint(&source, &j.recipient, &j.archive, &j.head).unwrap();
+    let pin = head.pin().unwrap();
+    assert_eq!(
+        pin,
+        moosuri_vault_service::hash(&fs::read(&j.head).unwrap())
+    );
+    assert!(!source.join("vault.sealed").exists());
+    let destination = tmp.path().join("restored");
+    let inputs = JournalInputs {
+        checkpoint: &j.archive,
+        trusted_head: &j.head,
+        trusted_head_sha256: &pin,
+        identity_file: &j.identity,
+    };
+    restore_historical(&destination, &s.archive, &s.head, &s.identity, &inputs).unwrap();
+    let mut restored = Database::open(&destination).unwrap();
+    assert!(
+        restored
+            .session(&format!("synthetic-cookie-{}", o.account))
+            .is_err()
+    );
+    assert_eq!(
+        serde_json::to_vec(&restored.state(&o).unwrap().header).unwrap(),
+        rotated_header
+    );
+    assert!(restored.state(&o).unwrap().items.is_empty());
+    assert_eq!(
+        serde_json::to_vec(&restored.operation(&o, rotation.id()).unwrap().1).unwrap(),
+        serde_json::to_vec(&rotated).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_vec(&restored.operation(&o, cancelled.id()).unwrap().1).unwrap(),
+        serde_json::to_vec(&cancelled_receipt).unwrap()
+    );
+    assert_eq!(
+        restored
+            .commit(&o, pending.id(), &pending_receipt.payload_sha256)
+            .unwrap()
+            .state,
+        "aborted"
+    );
+    let mut altered = pending_item;
+    altered.wrapped_key = "A".repeat(altered.wrapped_key.len());
+    let altered = put(&mut restored, &o, altered);
+    assert!(restored.prepare(&o, altered).is_err());
+    assert!(restored.state(&deleted_owner).is_err());
+    assert!(
+        restored
+            .create_session("deleted-owner", &deleted_owner)
+            .is_err()
+    );
+    assert!(restored.state(&later_owner).unwrap().header.is_some());
+    assert!(
+        restored
+            .session(&format!("synthetic-cookie-{}", later_owner.account))
+            .is_err()
+    );
+    restored.create_session("fresh-historical", &o).unwrap();
+    drop(restored);
+    restore_historical(&destination, &s.archive, &s.head, &s.identity, &inputs).unwrap();
+    assert!(
+        Database::open(&destination)
+            .unwrap()
+            .session("fresh-historical")
+            .is_ok()
+    );
+    assert!(
+        recovery::restore_snapshot(&destination, &s.archive, &s.head, &s.identity).is_err(),
+        "plain restore cannot adopt a historical destination"
+    );
+}
+#[test]
 fn exact_restore_quarantines_pending_sessions_preserves_receipts_tombstones_and_reservations() {
     let tmp = tempfile::tempdir().unwrap();
     let k = kit(tmp.path());

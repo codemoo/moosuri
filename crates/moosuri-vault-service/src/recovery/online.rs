@@ -7,8 +7,8 @@ use std::{
 use tokio::sync::watch;
 
 pub struct CapturedSnapshot {
-    stage: Stage,
-    binding: CheckpointBinding,
+    pub(super) stage: Stage,
+    pub(super) binding: CheckpointBinding,
 }
 fn root(db: &Database) -> Result<PathBuf> {
     Ok(Path::new(db.conn.path().ok_or(Error::Unavailable)?)

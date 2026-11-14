@@ -48,6 +48,32 @@ enum Command {
 }
 #[derive(Subcommand)]
 enum Recovery {
+    /// Export a non-sealing full journal checkpoint under stopped local admission.
+    JournalCheckpoint {
+        #[arg(long)]
+        recipient: String,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        trusted_head: PathBuf,
+    },
+    /// Recover an older live snapshot through an explicitly pinned newer full journal.
+    RestoreHistorical {
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        snapshot_head: PathBuf,
+        #[arg(long)]
+        snapshot_identity_file: PathBuf,
+        #[arg(long)]
+        journal: PathBuf,
+        #[arg(long)]
+        journal_head: PathBuf,
+        #[arg(long)]
+        journal_head_sha256: String,
+        #[arg(long)]
+        journal_identity_file: PathBuf,
+    },
     Checkpoint {
         #[arg(long)]
         recipient: String,
@@ -116,6 +142,45 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     if let Some(Command::Recovery { command }) = args.command {
         match command {
+            Recovery::JournalCheckpoint {
+                recipient,
+                output,
+                trusted_head,
+            } => {
+                let head = moosuri_vault_service::recovery::historical::journal_checkpoint(
+                    &args.data_dir,
+                    &recipient,
+                    &output,
+                    &trusted_head,
+                )?;
+                println!(
+                    "vault_journal_head_sha256={}; captured head only, not independent latestness",
+                    head.pin()?
+                );
+            }
+            Recovery::RestoreHistorical {
+                snapshot,
+                snapshot_head,
+                snapshot_identity_file,
+                journal,
+                journal_head,
+                journal_head_sha256,
+                journal_identity_file,
+            } => {
+                let inputs = moosuri_vault_service::recovery::historical::JournalInputs {
+                    checkpoint: &journal,
+                    trusted_head: &journal_head,
+                    trusted_head_sha256: &journal_head_sha256,
+                    identity_file: &journal_identity_file,
+                };
+                moosuri_vault_service::recovery::historical::restore_historical(
+                    &args.data_dir,
+                    &snapshot,
+                    &snapshot_head,
+                    &snapshot_identity_file,
+                    &inputs,
+                )?;
+            }
             Recovery::Checkpoint {
                 recipient,
                 output,
@@ -210,6 +275,40 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn historical_journal_restore_requires_explicit_receipt_pin() {
+        let flags = [
+            "vault-service",
+            "--data-dir",
+            "/private/restored",
+            "recovery",
+            "restore-historical",
+            "--snapshot",
+            "/private/s.age",
+            "--snapshot-head",
+            "/private/s.json",
+            "--snapshot-identity-file",
+            "/private/s.key",
+            "--journal",
+            "/private/j.age",
+            "--journal-head",
+            "/private/j.json",
+            "--journal-identity-file",
+            "/private/j.key",
+        ];
+        assert!(Args::try_parse_from(flags).is_err());
+        let mut args = flags.to_vec();
+        args.extend([
+            "--journal-head-sha256",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ]);
+        assert!(matches!(
+            Args::try_parse_from(args).unwrap().command,
+            Some(Command::Recovery {
+                command: Recovery::RestoreHistorical { .. }
+            })
+        ));
+    }
     #[test]
     fn ongoing_snapshot_service_flags_require_recipient_and_restore_is_explicit() {
         assert!(

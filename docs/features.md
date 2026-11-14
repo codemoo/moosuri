@@ -276,3 +276,8 @@ HTTP와 동일한 writer를 사용하며 암호화는 잠금을 놓은 뒤 실�
 F09/P7의 화면 높이·읽기 위치 유지와 도구 줄을 보완했다. normal-scale visual viewport,
 비동기 첨부/입력창 크기 변화의 bottom/older anchor, 긴 메뉴·확장 composer 스크롤을
 지원한다. 실제 휴대폰 OS/접근성 수락은 별도다. [검증](reviews/2026-11-15-mobile-chat-layout.md).
+
+F51/P8은 과거 live snapshot과 명시적으로 고정한 이후 full-journal의 exact-prefix/typed
+복구를 제공한다. 이후 삭제·회전·nonce/영수증을 보존하고 fresh identity/session/pending
+격리를 적용한다. 같은 완료 복원은 새 작업을 유지한다. 자동 off-host 최신 기록과
+실운영/무손실 수락은 별도다. [계약](vault-historical-recovery.md).

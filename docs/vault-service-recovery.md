@@ -4,8 +4,9 @@ The separate ciphertext service supports an **offline, destructive cutover of it
 exact current checkpoint**. Stop the service first. This is distinct from the
 [user-local encrypted item archive](vault-archive.md), the assistant's backup,
 and general disaster recovery. Opt-in [routine live snapshots](vault-ongoing-backups.md)
-now provide a separate non-sealing point-in-time path. Historical forward recovery
-with an independently current off-host journal, old-v1 migration,
+now provide a separate non-sealing point-in-time path; older live snapshots can
+use [manual pinned journal recovery](vault-historical-recovery.md). An automatic
+independently current off-host journal receiver, old-v1 migration,
 credential broker and independent signed-client distribution remain separate.
 No user master password, recovery key, decrypted item or assistant adapter key is
 needed or exported.

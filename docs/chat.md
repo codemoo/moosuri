@@ -140,3 +140,15 @@ mission-classification model call solely because they contain “부탁”. Expl
 timing/delegation, selected-task controls and pending clarification keep their
 existing routes. This removes one unnecessary round trip in that case; it is not
 a measured general latency or live-model quality claim.
+
+## 키보드와 대화 공간
+
+사진·파일·음성·보관함을 입력창 위의 짧은 도구 줄에서 연다. 펼친 녹음·보관함은
+입력 영역 안에서 스크롤할 수 있고, 작은 화면에서도 대화 영역을 남긴다. 입력창이
+커지거나 미리보기가 늦게 나타나도 맨 아래를 보던 중이면 최신 메시지를 따라가고,
+이전 내용을 읽던 중이면 보던 메시지 위치를 유지한다. 새 응답 버튼도 실제 입력창
+높이 위에 놓인다. 긴 사이드 메뉴의 아래 계정 설정은 메뉴를 스크롤해 접근한다.
+
+지원 브라우저에서는 키보드로 줄어든 visual viewport에 화면 높이를 맞춘다.
+확대/축소는 제한하지 않으며, 확대 중에는 앱의 원래 배치를 유지한다. Chrome의
+합성 화면 크기·비동기 높이 변화 검증과 실제 iOS/Android 키보드·접근성 수락은 별도다.

@@ -121,7 +121,7 @@ export const VoiceComposer = forwardRef<VoiceComposerHandle, {
         return;
     } clear(); inserted.current = true; setOpen(false); setNotice(origin.current === slot ? "초안에 넣었습니다. 내용을 확인하고 전송하세요." : "녹음을 시작한 대화의 초안에 넣었습니다."); }
     return <section className="voice-composer" aria-label="음성 입력">
-  <button type="button" className="voice-toggle" aria-expanded={open} onClick={() => setOpen(v => !v)}><span aria-hidden="true">◉</span> {capturing && !open ? `녹음 중 · ${time(state.seconds)}` : "음성으로 입력"}</button>
+  <button type="button" className="voice-toggle" aria-label={capturing && !open ? `녹음 중 · ${time(state.seconds)}` : "음성으로 입력"} aria-expanded={open} onClick={() => setOpen(v => !v)}><span aria-hidden="true">◉</span> {capturing && !open ? `녹음 중 · ${time(state.seconds)}` : "음성"}</button>
   {!open && notice && <p className="voice-help" role="status">{notice}</p>}
   {open && <div className="voice-card">
    <div className="voice-header"><strong>{capturing ? state.phase === "paused" ? "잠시 멈춤" : state.phase === "permission" ? "마이크 권한 확인 중" : state.phase === "stopping" ? "녹음 마무리 중" : "듣고 있어요" : state.blob ? "녹음을 확인하세요" : "말을 글로, 내 속도로"}</strong><time aria-label={`녹음 시간 ${time(state.seconds)}`}>{time(state.seconds)}</time></div>

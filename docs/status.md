@@ -26,6 +26,14 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint·운영 중 암호화 snapshot/시점 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 현재 독립 vault 또는 명시한 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver와 실행 중 전체 자료의 암호화된 로컬 export를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export의 실제 운영 수락·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
+## 최근 수락한 단위 · 모바일 대화 공간과 스크롤
+
+키보드로 줄어드는 화면에 앱 높이를 맞추고, 입력창·첨부 높이가 바뀌어도 최신 답변 또는
+읽던 이전 메시지의 위치를 유지한다. 음성/사진/파일/보관함 도구를 짧은 한 줄로 줄이고
+확장 패널과 긴 데스크톱 메뉴는 자체 스크롤한다. 확대/축소와 기존 초안·전송 수명은 유지한다.
+실제 Chrome 합성 레이아웃과 물리 기기의 키보드·접근성 수락은 구분한다.
+[대화](chat.md) · [검증](reviews/2026-11-15-mobile-chat-layout.md).
+
 ## 최근 수락한 단위 · 운영 중 볼트 백업과 시점 복구
 
 볼트 서버가 계속 동작하는 동안 암호화된 전체 snapshot을 주기적으로 저장하는 선택

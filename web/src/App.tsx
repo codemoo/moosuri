@@ -1,4 +1,5 @@
 import {InvitationEmail} from "./InvitationEmail";
+import { useWorkspaceViewport } from "./workspace-viewport";
 import { fenceIncomingShares } from "./share-state";
 import { refreshShareSession } from "./share-intake";
 import { IncomingShareNotice } from "./IncomingShare";
@@ -728,6 +729,7 @@ function Workspace({
   onExpired: () => void;
 }) {
   const scope = useScope(session.user.id);
+  const workspace = useWorkspaceViewport();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [selected, updateSelected] = useState<string | null>(null);
   const [knowledgeDrafts, setKnowledgeDrafts] = useState(
@@ -1092,7 +1094,7 @@ function Workspace({
     </>
   );
   return (
-    <div className="workspace">
+    <div className="workspace" ref={workspace}>
       <aside className="sidebar">{history}</aside>
       <section className="work-area">
         <header className="work-header">

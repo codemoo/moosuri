@@ -338,7 +338,7 @@ export function useMediaUploads(accountId: string, slot: string) {
         <div className="media-attach-actions">
         <label className="media-file-button">
           <span aria-hidden="true">＋</span>
-          이미지 첨부
+          사진
           <input
             aria-label="이미지 첨부"
             type="file"
@@ -353,7 +353,7 @@ export function useMediaUploads(accountId: string, slot: string) {
         </label>
         <label className="media-file-button">
           <span aria-hidden="true">＋</span>
-          파일 첨부
+          파일
           <input aria-label="파일 첨부" type="file" accept={documentAccept} multiple disabled={visible.length>=4} onChange={e=>{add(e.target.files,true);e.target.value="";}}/>
         </label>
         </div>
@@ -541,7 +541,7 @@ export function MediaLibraryView({
         if (e.currentTarget.open) void refresh();
       }}
     >
-      <summary>내 이미지·파일 보관함</summary>
+      <summary aria-label="내 이미지·파일 보관함">보관함</summary>
       <p>삭제하면 해당 첨부에서 파생된 대화 답변도 철회됩니다.</p>
       {data && data.used_bytes >= data.quota_bytes * 0.85 && (
         <p>보관함 공간이 거의 찼습니다. 필요 없는 이미지를 지워 주세요.</p>

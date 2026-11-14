@@ -272,3 +272,7 @@ F50/P8에 독립 볼트의 운영 중 암호화 snapshot과 명시적 시점 복
 HTTP와 동일한 writer를 사용하며 암호화는 잠금을 놓은 뒤 실행한다. 기존 봉인 checkpoint와
 형식을 구분하고 복원 세션/대기 실행을 격리한다. 보관 시점 뒤 삭제에 대한 최신 journal
 반영·off-host·실운영/실기기 수락은 별도다. [볼트 snapshot](vault-ongoing-backups.md).
+
+F09/P7의 화면 높이·읽기 위치 유지와 도구 줄을 보완했다. normal-scale visual viewport,
+비동기 첨부/입력창 크기 변화의 bottom/older anchor, 긴 메뉴·확장 composer 스크롤을
+지원한다. 실제 휴대폰 OS/접근성 수락은 별도다. [검증](reviews/2026-11-15-mobile-chat-layout.md).

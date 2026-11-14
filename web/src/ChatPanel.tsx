@@ -193,6 +193,7 @@ export function ChatPanel(props: Props) {
   const actionLock = useRef(false);
   const posts = useRef(new Map<string, AbortController>());
   const scroll = useRef<HTMLDivElement>(null);
+  const scrollContent = useRef<HTMLDivElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const nearBottom = useRef(true);
   const [unseen, setUnseen] = useState(false);
@@ -599,6 +600,59 @@ export function ChatPanel(props: Props) {
     }
   }, [draft]);
 
+  useLayoutEffect(() => {
+    const element = scroll.current;
+    const content = scrollContent.current;
+    if (!element || !content) return;
+    let height = element.clientHeight;
+    let contentHeight = element.scrollHeight;
+    let reading: { element: HTMLElement; top: number } | null = null;
+    const remember = () => {
+      height = element.clientHeight;
+      contentHeight = element.scrollHeight;
+      const top = element.getBoundingClientRect().top;
+      const visible = [...content.querySelectorAll<HTMLElement>("[data-run-id]")]
+        .find((item) => item.getBoundingClientRect().bottom > top);
+      reading = visible ? { element: visible, top: visible.getBoundingClientRect().top - top } : null;
+    };
+    const layout = () => {
+      if (nearBottom.current) {
+        element.scrollTop = element.scrollHeight;
+      } else if (reading?.element.isConnected && element.contains(reading.element)) {
+        element.scrollTop += reading.element.getBoundingClientRect().top
+          - element.getBoundingClientRect().top - reading.top;
+      }
+      // Keep the jump button above the actual composer, uploads and recorder.
+      const panel = element.parentElement;
+      if (panel) panel.style.setProperty("--chat-bottom-height",
+        `${Math.max(0, panel.getBoundingClientRect().bottom - element.getBoundingClientRect().bottom)}px`);
+      remember();
+    };
+    const onScroll = () => {
+      // Layout can produce a scroll event before ResizeObserver is delivered.
+      // Do not mistake a keyboard/content resize for the reader scrolling away.
+      if (height !== element.clientHeight || contentHeight !== element.scrollHeight) {
+        layout();
+        return;
+      }
+      nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+      if (nearBottom.current) setUnseen(false);
+      remember();
+    };
+    remember();
+    element.addEventListener("scroll", onScroll, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(layout);
+    observer?.observe(element);
+    observer?.observe(content);
+    window.addEventListener("resize", layout);
+    return () => {
+      observer?.disconnect();
+      element.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", layout);
+      element.parentElement?.style.removeProperty("--chat-bottom-height");
+    };
+  }, [threadId]);
+
   async function older() {
     if (!threadId || !nextBefore || olderPending.current) return;
     olderPending.current = true;
@@ -898,15 +952,8 @@ export function ChatPanel(props: Props) {
       <div
         className="chat-scroll"
         ref={scroll}
-        onScroll={() => {
-          const element = scroll.current;
-          if (element) {
-            nearBottom.current =
-              element.scrollHeight - element.scrollTop - element.clientHeight <
-              96;
-            if (nearBottom.current) setUnseen(false);
-          }
-        }}
+        tabIndex={0}
+        aria-label="대화 기록"
       >
         {nextBefore && (
           <button
@@ -941,7 +988,7 @@ export function ChatPanel(props: Props) {
             )}
           </div>
         )}
-        <div className="chat-turns">
+        <div className="chat-turns" ref={scrollContent}>
           {turns.map((turn) => (
             <article
               className="chat-turn"

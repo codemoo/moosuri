@@ -331,7 +331,10 @@ form {
   margin-top: 25px;
 }
 .workspace {
-  height: 100dvh;
+  position: fixed;
+  inset-inline: 0;
+  top: var(--workspace-top, 0px);
+  height: var(--workspace-height, 100dvh);
   display: flex;
   overflow: hidden;
   padding-left: env(safe-area-inset-left);
@@ -344,6 +347,9 @@ form {
   background: #eeefe6;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 27px 18px 0;
 }
 .sidebar-heading {

@@ -8,6 +8,7 @@ mod release;
 mod release_evidence;
 mod sbom;
 mod source_connections;
+mod web_notices;
 
 type Check<T> = Result<T, String>;
 
@@ -388,11 +389,17 @@ fn main() {
     if args != ["verify-plan"]
         && args != ["sbom"]
         && !args.first().is_some_and(|s| {
-            ["release-provenance", "verify-provenance", "rust-notices"].contains(&s.as_str())
+            [
+                "release-provenance",
+                "verify-provenance",
+                "rust-notices",
+                "web-notices",
+            ]
+            .contains(&s.as_str())
         })
     {
         eprintln!(
-            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|rust-notices --vendor DIRECTORY [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY>"
+            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|rust-notices --vendor DIRECTORY [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY>"
         );
         std::process::exit(2);
     }
@@ -403,6 +410,8 @@ fn main() {
         .and_then(|root| {
             if args == ["sbom"] {
                 sbom::print(&root)
+            } else if args[0] == "web-notices" {
+                web_notices::run(&root, &args)
             } else if args[0] == "rust-notices" {
                 notices::run(&root, &args)
             } else if args[0] == "release-provenance" || args[0] == "verify-provenance" {

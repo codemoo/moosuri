@@ -30,6 +30,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 웹 의존성 고지 | 두 React 앱의 lock/설치본을 오프라인 대조,217개 고지와66개 미완료 위치를 보고; 법적 검토·완전한 배포 고지와 구별 | [사용법](web-license-evidence.md)·[검증](reviews/2026-11-15-web-license-evidence.md) |
 | 채팅 우선 로딩 | 최초 JavaScript610,903→383,331byte(37.25% 감소), 보조 화면 오류에도 초안 보존; 모델 지연/전체 PWA 크기 측정과 구별 | [검증](reviews/2026-11-15-deferred-workspace.md) |
 | 배송조회 학습 | 독립 두 조회의 결과로 개인 절차 학습, 새 현재 번호의 실제 재조회와 구조 공유; 일본우편 최근 요약 범위 | [계약](learned-parcel.md)·[검증](reviews/2026-11-15-learned-parcel.md) |
 | Google credential | 기기 내 볼트 credential로 계정/scope 확인 후 INBOX 개수만 원래 채팅에 전달 | [계약](native-credential-google.md)·[검증](reviews/2026-11-15-native-google-credential.md) |
@@ -92,7 +93,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체와 native Google INBOX 개수 조회도 구현했다. 일반 credential/Google 본문·쓰기 도구는 남는다.
    운영 중 암호화 snapshot/시점 복구도 구현했다. 명시적으로 고정한 이후 journal을 합치는 복구도 구현했다. 구 v1 암호화 파일의 로컬 이전을 구현했다. 주기적 SSH journal publisher/receiver도 구현했다. 실제 off-host 배치·무손실 최신 기록·실제 옛 파일 수락·서명 배포는 남는다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: 정규화 private importer/대조와 schema23 relation adapter를 구현했다. 실제 operator export·제한 cutover·rollback,
-   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결을 공식 artifact·arm64·독립 빌드 증명/license로 확장하고,
+   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결을 공식 artifact·arm64·독립 빌드 증명/완전한 license 검토로 확장하고(Rust·웹 고지 수집기는 구현),
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 

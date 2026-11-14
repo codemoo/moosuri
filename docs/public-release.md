@@ -30,8 +30,10 @@ Tailscale Serve는 tailnet 접근, ordinary HTTPS는 공개 주소 접근이다.
 `cargo run --locked -p xtask -- sbom`으로 [CycloneDX source-lock inventory](dependency-inventory.md)를
 생성한다. 네 개 lock의 전체 dependency·version·digest를 보존한다.
 [Rust 고지 수집기](rust-license-evidence.md)는 명시한 vendor의 실제 license/notice
-내용과 선언을 검증·보존하고 누락을 표시한다. 현재21개 dependency의 notice 보완과
-npm/자산 고지·license 선택/소스 제공 의무 검토는 남아 있다.
+내용과 선언을 검증·보존하고 누락을 표시한다. [웹 고지 수집기](web-license-evidence.md)는
+두 React 앱의 lock과 명시한 설치 디렉터리를 대조하며 실제 고지/해시와 미완료 항목을 보존한다.
+현재 Rust21개·웹66개 lock 위치의 근거 보완, OpenSpec/자산 고지·license 선택/소스 제공 의무
+검토는 남아 있다. 웹66개에는 이 기기에 설치하지 않은 다른 플랫폼 선택 패키지62개가 포함된다.
 [offline binary provenance](binary-provenance.md)는 실제 artifact hash/target과
 현재 checkout/compiler의 packager claim, 정확한 inventory bytes를 signed manifest에
 묶고 설치·업데이트 전에 검증한다. 인증된 builder/실제 build 실행이나 최소 binary

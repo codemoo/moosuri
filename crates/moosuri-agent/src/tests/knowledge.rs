@@ -92,6 +92,8 @@ async fn scripted_response(
     assert_eq!(
         names,
         BTreeSet::from([
+            "conversation_search",
+            "conversation_read",
             "knowledge_search",
             "knowledge_read_source",
             "knowledge_read_memory",

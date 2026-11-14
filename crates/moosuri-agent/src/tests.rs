@@ -498,6 +498,7 @@ async fn exited_worker_without_terminal_checkpoint_is_settled_without_replay() {
 }
 
 mod knowledge;
+mod conversation_recall;
 mod memory;
 
 mod live_memory;

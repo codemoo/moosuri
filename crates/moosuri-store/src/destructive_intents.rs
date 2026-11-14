@@ -323,6 +323,7 @@ pub(crate) fn apply(conn: &Connection, record: &Record) -> Result<()> {
             crate::missions::apply_delete(conn, &record.tenant, target)?;
         }
         Effect::DeleteThread { target } => {
+            crate::conversation_recall::delete_thread(conn, &record.tenant, target)?;
             crate::learned_skills::invalidate_thread(conn, &record.tenant, target)?;
             crate::calendar::agent::purge_thread(conn, &record.tenant, target)?;
             mail::purge_thread(conn, &record.tenant, target)?;

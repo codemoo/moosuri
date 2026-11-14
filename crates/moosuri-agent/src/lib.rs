@@ -9,6 +9,7 @@ mod calendar_tools;
 pub mod credential_broker;
 mod credential_chat;
 mod knowledge_tools;
+mod conversation_tools;
 pub mod mail;
 mod mail_tools;
 mod memory_intent;

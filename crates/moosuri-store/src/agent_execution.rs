@@ -57,6 +57,14 @@ pub enum KnowledgeToolInput {
         owner: String,
         repository: String,
     },
+    ConversationSearch {
+        query: String,
+        scope: moosuri_core::ConversationScope,
+    },
+    ConversationRead {
+        turn_id: String,
+        revision: i64,
+    },
     InvalidArguments,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -88,6 +96,8 @@ pub enum ToolReadError {
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum KnowledgeToolResult {
     Search(KnowledgeSearch),
+    ConversationSearch(moosuri_core::ConversationSearch),
+    ConversationTurn(moosuri_core::ConversationTurn),
     Source(SourceExcerpt),
     Memory(MemoryDocument),
     Skill(moosuri_core::SkillDocument),
@@ -234,6 +244,7 @@ fn retry_fences(conn: &Connection, tenant: &str, run: &str, needs_capacity: bool
 pub(super) fn guard_execution(conn: &Connection, run: &Run) -> Result<()> {
     if !crate::calendar::agent::dependencies_current(conn, run)?
         || !crate::learned_skills::dependencies_current(conn, run)?
+        || !crate::conversation_recall::current(conn, run)?
     {
         purge_runs(conn, &run.tenant, vec![run.id.clone()])?;
         return Err(StoreError::Conflict);
@@ -282,7 +293,7 @@ pub(super) fn inherit_dependencies(
     prior: &str,
 ) -> Result<()> {
     let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM learned_skill_uses WHERE tenant_id=?1 AND run_id=?2)",
+        "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM learned_skill_uses WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM conversation_recall_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM media_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
         params![tenant, prior],
         |r| r.get(0),
     )?;
@@ -292,6 +303,8 @@ pub(super) fn inherit_dependencies(
     // This is called only after an earlier assistant output was selected for
     // the new model context. These are revocation edges, never new tool pins.
     crate::learned_skills::inherit_context(conn, tenant, run, prior)?;
+    crate::conversation_recall::inherit(conn, tenant, run, prior)?;
+    conn.execute("INSERT OR IGNORE INTO media_run_dependencies SELECT tenant_id,?2,media_id,revision FROM media_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     let generation = knowledge::generation(conn, tenant)?;
     conn.execute("INSERT OR IGNORE INTO personal_artifact_run_dependencies SELECT tenant_id,?2,artifact_id,revision FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?3",params![tenant,run,prior])?;
     conn.execute("INSERT OR IGNORE INTO agent_execution(tenant_id,run_id,agent,generation) VALUES(?1,?2,0,?3)",params![tenant,run,generation])?;
@@ -324,7 +337,18 @@ pub(super) fn invalidate_source(conn: &Connection, tenant: &str, source: &str) -
     Ok(())
 }
 pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> Result<()> {
-    let ids = crate::learned_skills::invalidate_runs(conn, tenant, ids)?;
+    let mut ids = ids;
+    loop {
+        let before: BTreeSet<_> = ids.iter().cloned().collect();
+        ids = crate::conversation_recall::expand(
+            conn,
+            tenant,
+            crate::learned_skills::invalidate_runs(conn, tenant, ids)?,
+        )?;
+        if ids.iter().cloned().collect::<BTreeSet<_>>() == before {
+            break;
+        }
+    }
     let mut threads = BTreeSet::new();
     for id in &ids {
         let run = chat::load_run(conn, tenant, id)?;
@@ -478,6 +502,14 @@ pub(crate) fn read_tool(
         return Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable));
     }
     let read = match input {
+        KnowledgeToolInput::ConversationSearch { query, scope } => {
+            crate::conversation_recall::search(conn, run, query, *scope)
+                .map(KnowledgeToolResult::ConversationSearch)
+        }
+        KnowledgeToolInput::ConversationRead { turn_id, revision } => {
+            crate::conversation_recall::read(conn, run, turn_id, *revision)
+                .map(KnowledgeToolResult::ConversationTurn)
+        }
         KnowledgeToolInput::CredentialGitHub { .. } => {
             Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
         }
@@ -657,7 +689,9 @@ pub(crate) fn read_tool(
                 }
             }
         }
-        KnowledgeToolResult::External(_)
+        KnowledgeToolResult::ConversationSearch(_)
+        | KnowledgeToolResult::ConversationTurn(_)
+        | KnowledgeToolResult::External(_)
         | KnowledgeToolResult::Error(_)
         | KnowledgeToolResult::Skill(_)
         | KnowledgeToolResult::Decimal { .. } => {}

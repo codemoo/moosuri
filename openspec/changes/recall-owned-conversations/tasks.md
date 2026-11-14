@@ -1,0 +1,6 @@
+- [x] Add bounded owner-scoped typed history discovery and whole-turn read.
+- [x] Pin new foreground admission without expanding old or background profiles.
+- [x] Track every returned candidate and inherited upstream/context provenance.
+- [x] Expand destructive learned/recall closure; block recalled artifact publication.
+- [x] Verify focused Store4/4, actual Runtime/old-profile2/2 and affected existing knowledge chain1/1; exact DTO export, web typecheck and strict OpenSpec validation.
+- [ ] Complete source-pinned independent review and parent integration validation.

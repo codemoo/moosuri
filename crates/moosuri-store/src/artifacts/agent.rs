@@ -64,6 +64,11 @@ pub(crate) fn tool(
     run: &Run,
     request: &ArtifactToolRequest,
 ) -> Result<serde_json::Value> {
+    if matches!(request, ArtifactToolRequest::Write { .. }) && conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM conversation_recall_dependencies WHERE tenant_id=?1 AND run_id=?2)",
+        params![run.tenant,run.id], |r| r.get::<_,bool>(0))? {
+        return Ok(serde_json::json!({"error":"private_conversation_evidence"}));
+    }
     let Some(profile) = profile(conn, &run.tenant, &run.id)? else {
         return Ok(serde_json::json!({"error":"unavailable"}));
     };

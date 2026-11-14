@@ -8,6 +8,7 @@ pub(crate) fn admitted_profile(
     current: &WebToolProfile,
 ) -> Result<moosuri_core::RunToolProfile> {
     let mut profile = agent_execution::skills::profile();
+    profile.conversation_recall = true;
     profile.credential_github = cfg!(feature = "credential-broker-chat");
     profile.mail_connections = crate::mail::pins(conn, user)?;
     if !profile.mail_connections.is_empty() {

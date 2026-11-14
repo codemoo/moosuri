@@ -4,6 +4,7 @@ pub mod audio;
 pub mod push;
 
 pub mod credential_chat;
+mod conversation_recall;
 mod missions;
 mod recurring_missions;
 mod request_continuations;
@@ -214,7 +215,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 46;
+const CURRENT_SCHEMA_VERSION: i64 = 47;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -671,6 +672,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0046_followup_notifications.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 47 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0047_conversation_recall.sql"),
                 "COMMIT;"
             ))?;
         }

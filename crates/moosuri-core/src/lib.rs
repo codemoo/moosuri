@@ -1,4 +1,6 @@
 //! Public API contracts. No database connections, authentication secrets or IO.
+mod conversation_recall;
+pub use conversation_recall::*;
 mod audio;
 pub use audio::*;
 mod push;
@@ -102,6 +104,12 @@ pub struct ApiError {
 /// Generated for the React client; request secrets deliberately have no Debug DTO.
 pub fn typescript_contract() -> String {
     let declarations = [
+        ConversationScope::decl(),
+        ConversationHit::decl(),
+        ConversationSearch::decl(),
+        HistoricalRole::decl(),
+        HistoricalMessage::decl(),
+        ConversationTurn::decl(),
         AudioSelection::decl(),
         AudioSettings::decl(),
         AudioJob::decl(),

@@ -114,3 +114,23 @@ browser extensions and anyone with browser/OS access may read plaintext sessionS
 copy a session into a duplicated tab or restore it after a crash/restart; tab-close erasure and crash
 recovery are browser behavior, not guaranteed here. Recovery still requires the same current server
 session. On shared devices, sign out and clear browser data as appropriate.
+
+## Older conversation recall
+
+New foreground tool profiles admit `conversation_search` and `conversation_read`.
+Search defaults by instruction to the current thread; use `owned_conversations`
+when other owned conversations are relevant to the current request. A literal query
+scans the newest4096 eligible earlier successful turns and returns at most five
+role-labelled snippet pairs with actual turn/thread IDs, revisions and timestamps.
+Truncation is explicit. Turns exceeding10KiB whole text or14KiB encoded read content
+are omitted. This is bounded lexical recall, so a miss does not prove global absence.
+
+Read uses only an exact candidate returned to that run. Historical user assertions
+and assistant answers remain distinct evidence, never new requests or approvals.
+Every returned candidate is revocable, even if the model reads only another hit.
+Source-thread deletion or upstream source/memory/mail/calendar/artifact/learned/media
+withdrawal purges derived answers, private checkpoints and context descendants;
+retry/reopen cannot recover purged output. Recall remains inside the existing
+six-dispatch/twelve-tool/120-second run budgets. Stored old profiles gain no tools,
+background missions exclude recall, and runs carrying recalled evidence cannot
+publish it as a saved artifact.

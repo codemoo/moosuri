@@ -262,7 +262,9 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
                         };
                         ("공개 웹 관측".into(), detail)
                     }
-                    KnowledgeToolResult::Error(_) => continue,
+                    KnowledgeToolResult::ConversationSearch(_)
+                    | KnowledgeToolResult::ConversationTurn(_)
+                    | KnowledgeToolResult::Error(_) => continue,
                 };
                 receipts.push(MissionReceipt {
                     label,
@@ -654,6 +656,7 @@ pub(crate) fn read_profile(
         .community_metadata
         .retain(|metadata| !metadata.pin.id.starts_with("private:"));
     profile.credential_github = false;
+    profile.conversation_recall = false;
     profile.mail_connections.clear();
     if let Some(w) = &mut profile.web {
         w.browser_pin = None;

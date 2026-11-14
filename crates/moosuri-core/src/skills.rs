@@ -18,6 +18,8 @@ pub struct RunToolProfile {
     pub version: u32,
     #[serde(default, skip_serializing_if = "is_false")]
     pub credential_github: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub conversation_recall: bool,
     pub skills: Vec<SkillPin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub community_metadata: Vec<SkillMetadata>,

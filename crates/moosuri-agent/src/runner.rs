@@ -456,6 +456,14 @@ fn typed_input(
         Invocation::CredentialGitHub { owner, repository } => {
             KnowledgeToolInput::CredentialGitHub { owner, repository }
         }
+        Invocation::ConversationSearch(v) => KnowledgeToolInput::ConversationSearch {
+            query: v.query,
+            scope: v.scope,
+        },
+        Invocation::ConversationRead(v) => KnowledgeToolInput::ConversationRead {
+            turn_id: v.turn_id,
+            revision: v.revision,
+        },
         Invocation::Search(query) => KnowledgeToolInput::Search { query },
         Invocation::ReadSource(v) => KnowledgeToolInput::ReadSource {
             id: v.id,
@@ -894,8 +902,13 @@ pub(crate) async fn execute_with_calendar(
     let artifact_write = artifact_profile.as_ref().is_some_and(|p| p.write);
     let mut answer_profile = tool_profile.clone();
     if artifact_write {
+        let recall_instructions = crate::conversation_tools::system(tool_profile.as_ref());
+        if !recall_instructions.is_empty() {
+            request.messages[0].text = request.messages[0].text.replace(recall_instructions, "");
+        }
         if let Some(profile) = &mut answer_profile {
             profile.credential_github = false;
+            profile.conversation_recall = false;
             profile.mail_connections.clear();
             profile.web = None;
         }

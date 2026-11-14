@@ -239,3 +239,9 @@ F27/F29/P4~P6의 공유 provider 읽기 업무는 명시한 개인 Gmail search/
 메일/일정 쓰기는 포함하지 않는다. F54/P0는 실제 서버 단계별 시간과 실패/누락 집계를
 추가했으며 브라우저 지연·실모델 성능 목표 통과는 별도다.
 [연결 미션](missions.md) · [실행 시간](run-timings.md).
+
+F69/P8의 실험적 native GitHub 조회는 독립 live vault의 현재 항목을 사용하기 전 다시
+확인하고, 같은 범위의 재연결/교체·일시 장애 대기/재개를 지원한다. 취소·만료·응답 유실은
+원래 실행 ID로 정산하며 결과 불명을 자동 재실행하지 않는다. 일반 credential/Google/
+브라우저 adapter·서명 배포·실기기 검증 완료와는 구분한다.
+[지원/한계](native-credential-github.md) · [검증](reviews/2026-11-15-native-live-vault-credential.md).

@@ -20,6 +20,9 @@ struct Args {
     origin: String,
     #[arg(long)]
     pair: bool,
+    /// Exact independent HTTPS vault origin for native live mode.
+    #[arg(long)]
+    vault_origin: Option<String>,
 }
 fn now() -> i64 {
     std::time::SystemTime::now()
@@ -27,7 +30,7 @@ fn now() -> i64 {
         .map(|n| n.as_secs() as i64)
         .unwrap_or(i64::MAX)
 }
-fn password() -> Result<SecretText, Error> {
+fn password(label: &str) -> Result<SecretText, Error> {
     use std::os::fd::AsRawFd;
     let mut tty = std::fs::OpenOptions::new()
         .read(true)
@@ -54,7 +57,7 @@ fn password() -> Result<SecretText, Error> {
         return Err(Error::PrivateState);
     }
     let _restore = Restore(fd, old);
-    write!(tty, "Vault archive password: ").map_err(|_| Error::PrivateState)?;
+    write!(tty, "{label}: ").map_err(|_| Error::PrivateState)?;
     tty.flush().map_err(|_| Error::PrivateState)?;
     let mut secret = Zeroizing::new(String::new());
     let mut reader = io::BufReader::new(&tty);
@@ -126,9 +129,13 @@ async fn run() -> Result<(), Error> {
         return Err(Error::Authentication);
     }
     let adapter = GitHubAdapter::new()?;
-    let mut vault: Option<UnlockedArchive> = None;
+    enum Vault {
+        Archive(UnlockedArchive),
+        Live(moosuri_credential_broker::live_vault::LiveVault),
+    }
+    let mut vault: Option<Vault> = None;
     println!(
-        "Commands: unlock ABSOLUTE_ARCHIVE_PATH | items | select ITEM_UUID OWNER REPO | poll | lock | quit"
+        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | poll | lock | quit"
     );
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
     loop {
@@ -139,7 +146,13 @@ async fn run() -> Result<(), Error> {
             value=input.next_line()=>value.map_err(|_|Error::PrivateState)?,
             _=interval.tick(),if vault.is_some()=>{
                 tokio::select! {
-                    result=transport.poll(&mut engine,vault.as_mut().unwrap(),&adapter)=>{if let Ok(n)=result && n>0 {println!("Processed {n} original requests.");}continue;},
+                    result=async {match vault.as_mut().unwrap(){Vault::Archive(v)=>transport.poll(&mut engine,v,&adapter).await,Vault::Live(v)=>transport.poll_live(&mut engine,v,&adapter).await}}=>{
+                        if let Ok(n)=result && n>0 {println!("Processed {n} original requests.");}
+                        if matches!(result,Err(Error::Authentication|Error::Reconnect)) {if matches!(vault,Some(Vault::Live(_))){vault=None;println!("Live connection retired; reconnect locally.");}}
+                        else if matches!(result,Err(Error::Unavailable)){println!("Connection unavailable; dispatch suspended until fresh validation succeeds.");}
+                        if matches!(vault.as_ref(),Some(Vault::Live(v)) if !v.is_unlocked()){vault=None;}
+                        continue;
+                    },
                     value=input.next_line()=>value.map_err(|_|Error::PrivateState)?,
                 }
             }
@@ -149,11 +162,23 @@ async fn run() -> Result<(), Error> {
         let command = parts.next().unwrap_or("");
         let result: Result<(), Error> = async {
             match command {
+                "connect-live" => {
+                    vault=None;
+                    let email=parts.next().ok_or(Error::Policy)?;
+                    let origin=args.vault_origin.as_deref().ok_or(Error::Policy)?;
+                    let account_password=password("Assistant account password (native login)")?;
+                    let mut live=moosuri_credential_broker::live_vault::LiveVault::login(&args.origin,origin,engine.device().owner.clone(),email,&account_password).await?;
+                    drop(account_password);
+                    let master=password("Vault master password (local decrypt only)")?;
+                    live.unlock(&master).await?;drop(master);
+                    vault=Some(Vault::Live(live));
+                    println!("Live vault unlocked only on this device. Select an exact GitHub item/repository locally.");
+                }
                 "unlock" => {
                     vault = None;
                     let path = PathBuf::from(parts.next().ok_or(Error::Policy)?);
                     let bytes = moosuri_credential_broker::read_private_archive(&path)?;
-                    let secret = password()?;
+                    let secret = password("Vault archive password (snapshot only)")?;
                     let unlocked =
                         UnlockedArchive::unlock(&bytes, &secret).map_err(|_| Error::Policy)?;
                     if unlocked.header().binding.owner_id != engine.device().owner.account
@@ -161,17 +186,13 @@ async fn run() -> Result<(), Error> {
                     {
                         return Err(Error::Policy);
                     }
-                    vault = Some(unlocked);
+                    vault = Some(Vault::Archive(unlocked));
                     println!("Unlocked on this device only.");
                 }
                 "items" => {
-                    let v = vault.as_mut().ok_or(Error::Locked)?;
-                    let ids = v.items().iter().map(|i| i.id).collect::<Vec<_>>();
-                    for id in ids {
-                        let item = v.open(id).map_err(|_| Error::Policy)?;
-                        if item.kind == moosuri_vault_core::ItemKind::ApiKey {
-                            println!("{} {}", id, item.title.expose());
-                        }
+                    match vault.as_mut().ok_or(Error::Locked)? {
+                        Vault::Archive(v)=>{let ids=v.items().iter().map(|i|i.id).collect::<Vec<_>>();for id in ids{let item=v.open(id).map_err(|_|Error::Policy)?;if item.kind==moosuri_vault_core::ItemKind::ApiKey{println!("{} {}",id,item.title.expose());}}}
+                        Vault::Live(v)=>{for(id,title)in v.items().await?{println!("{id} {title}");}}
                     }
                 }
                 "select" => {
@@ -184,21 +205,19 @@ async fn run() -> Result<(), Error> {
                         owner: parts.next().ok_or(Error::Policy)?.into(),
                         repository: parts.next().ok_or(Error::Policy)?.into(),
                     };
-                    let binding = engine.archive_grant(
-                        vault.as_mut().ok_or(Error::Locked)?,
-                        id,
-                        repository.clone(),
-                        now() + 30 * 86400,
-                    )?;
-                    transport
-                        .command(
-                            &engine,
-                            Command::RegisterRepository {
-                                binding,
-                                repository,
-                            },
-                        )
-                        .await?;
+                    match vault.as_mut().ok_or(Error::Locked)? {
+                        Vault::Archive(v)=>{
+                            let binding=engine.archive_grant(v,id,repository.clone(),now()+30*86400)?;
+                            transport.command(&engine,Command::RegisterRepository{binding,repository}).await?;
+                        }
+                        Vault::Live(v)=>{
+                            // Resolve all uncertain older preparations before changing
+                            // a local version; their original identity is never replayed.
+                            transport.sync_retained(&mut engine).await?;
+                            let binding=engine.live_grant(v,id,repository.clone(),now()+30*86400).await?;
+                            transport.register_live(&mut engine,&binding,&repository).await?;
+                        }
+                    }
                     println!(
                         "Exact repository connected; compatible requests reuse this selection."
                     );
@@ -222,6 +241,12 @@ async fn run() -> Result<(), Error> {
         }
         .await;
         if let Err(error) = result {
+            if matches!(error, Error::Authentication | Error::Reconnect)
+                && matches!(vault, Some(Vault::Live(_)))
+            {
+                vault = None;
+                println!("Live connection retired; reconnect locally.");
+            }
             eprintln!("{error}");
         }
         if command == "quit" {

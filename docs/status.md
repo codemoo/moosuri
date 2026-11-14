@@ -23,8 +23,21 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP·명시한 개인 Gmail/기본 Calendar 읽기 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 빠진 값을 다음 답변으로 보완하고 직전 업무 영수증으로 제어한다. 넓은 자연어/시간 해석·메일/일정 쓰기·browser/vault 미션 실행·개인 구독 background는 미완료. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
 | Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 확인 질문의 다음 답변·직전 일정 지칭·기간을 유지한 날짜 이동을 지원한다. 반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
-| 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·live-vault rotation·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
+| 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 현재 독립 vault 또는 명시한 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 현재 볼트 credential 자동 재사용
+
+native companion에서 계정 로그인 후 독립 볼트를 로컬로 잠금 해제하고, 선택한 credential로
+같은 GitHub 저장소 요청을 자동 처리한다. 사용 직전에 현재 항목과 키를 다시 확인한다.
+일시적인 연결 장애는 잠금 해제를 유지한 채 기다리고, 항목/키 변경·삭제·인증 철회는
+기존 연결을 폐기한다. 같은 항목·저장소의 재연결은 대기 중인 원래 작업 ID를 유지한다.
+
+독립 검토에서 취소/만료 후 다음 요청까지 막히던 처리를 수정했다. 이미 진입한 요청은
+결과 불명으로, 진입하지 못한 만료 요청은 미실행으로 정산하며 같은 외부 요청을 다시 보내지
+않는다. 비밀은 native 기기에서만 복호화하고 assistant에는 제한된 서명 결과만 보낸다.
+합성 실제 서비스 검증과 일반 도구/실기기 지원은 구분한다.
+[사용법](native-credential-github.md) · [검증](reviews/2026-11-15-native-live-vault-credential.md).
 
 ## 최근 수락한 단위 · 여러 DB 버전을 건너뛰는 설치 업데이트
 
@@ -488,7 +501,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P5 예약·소식 | due loop·반복 회차·알림·quiet hours·예약별 소식 제어·followup 날짜 알림·Push | 전체 알림/제안 정책·실기기 수신·고정 메일 외 예약 외부 작업 |
 | P6 외부 연결 | Gmail/Calendar·공식/커스텀 수집·선택한 Codex 요청 수집·공개 웹·일본우편 최근 상태·브라우저·승인된 gws 초대 | 통화/다른 작업 feed·다른 배송사/전체 이력·실계정 |
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
-| P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 native GitHub credential 조회/원래 채팅 대기·완료 | 일반 credential 도구·Google adapter·live-vault rotation·호환 이전·독립 최신 복구 |
+| P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 native GitHub credential 조회/원래 채팅 대기·완료 | 일반 credential 도구·Google adapter·호환 이전·독립 최신 복구 |
 | P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 legacy exporter/schema adapter·운영 대조·drain/cutover/rollback 실증 |
 | P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory | 공식 서명 배포·arm64·binary provenance/license·품질/기기/출시 gate |
 
@@ -524,7 +537,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
 4. **P7 첨부·모바일**: 파일/음성 공유의 실제 OS 전달, 실제 음성 인식·OS 공유 메뉴·Push·키보드/스크롤·
    접근성을 지원 기기에서 검증한다.
 5. **P8 볼트와 credential 사용**: 실제 native GitHub adapter·archive unlock·scope 재사용과
-   명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 일반 credential 도구·Google adapter·live-vault rotation,
+   명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체도 구현했다. 일반 credential 도구·Google adapter,
    독립 최신 복구·구 v1 호환/이전·서명 배포를 이어 구현한다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: 정규화 private importer/대조를 구현했다. 실제 legacy schema exporter·제한 cutover·rollback,
    수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거와 source-lock SBOM을 공식 artifact·arm64·binary provenance/license로 확장하고,

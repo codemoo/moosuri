@@ -182,6 +182,17 @@ pub enum Command {
         binding: Binding,
         repository: GitHubRepository,
     },
+    /// Same local scope, exact old→new version CAS; no item identity is uploaded.
+    RefreshRepository {
+        expected: Binding,
+        binding: Binding,
+        repository: GitHubRepository,
+    },
+    /// Fresh live-vault dispatch binds the exact original/current request bytes.
+    CommitCurrent {
+        invocation: Invocation,
+        request_digest: [u8; 32],
+    },
     Poll,
     Abandon {
         invocation: Invocation,
@@ -375,6 +386,25 @@ pub fn command_bytes(
             body.binding(binding);
             body.blob(repository.owner.as_bytes());
             body.blob(repository.repository.as_bytes());
+        }
+        Command::RefreshRepository {
+            expected,
+            binding,
+            repository,
+        } => {
+            body.0.push(8);
+            body.binding(expected);
+            body.binding(binding);
+            body.blob(repository.owner.as_bytes());
+            body.blob(repository.repository.as_bytes());
+        }
+        Command::CommitCurrent {
+            invocation,
+            request_digest,
+        } => {
+            body.0.push(9);
+            body.invocation(invocation);
+            body.blob(request_digest);
         }
         Command::Poll => body.0.push(6),
         Command::Abandon { invocation } => {

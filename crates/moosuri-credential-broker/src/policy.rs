@@ -3,6 +3,14 @@ use crate::{Error, Result, auth::hash};
 use moosuri_vault_protocol::broker::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+/// Ciphertext-only freshness pin, retained on the device and never the assistant.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivePin {
+    pub origin: String,
+    pub head: moosuri_vault_protocol::VaultHead,
+    pub item_sha256: String,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalGrant {
@@ -19,6 +27,10 @@ pub struct LocalGrant {
     repository: Option<GitHubRepository>,
     #[serde(default)]
     vault: Option<Uuid>,
+    #[serde(default)]
+    live: Option<LivePin>,
+    #[serde(default)]
+    previous: Option<Binding>,
 }
 impl LocalGrant {
     /// Actual local connection/selection step. Foundation supports only a fixed,
@@ -58,6 +70,8 @@ impl LocalGrant {
             revoked: false,
             repository: None,
             vault: None,
+            live: None,
+            previous: None,
         };
         // Fixed-order local commitment includes the otherwise hidden grant ceiling.
         let mut data = Vec::from(b"moosuri/local-fixed-probe/v1".as_slice());
@@ -115,6 +129,87 @@ impl LocalGrant {
         g.binding.grant_hash = hash(&bytes);
         Ok(g)
     }
+    pub fn live(&self) -> Option<&LivePin> {
+        self.live.as_ref()
+    }
+    pub fn pending_refresh(&self) -> Option<&Binding> {
+        self.previous.as_ref()
+    }
+    pub(crate) fn confirm_refresh(&mut self) {
+        self.previous = None;
+    }
+    pub(crate) fn select_live(mut self, pin: LivePin) -> Result<Self> {
+        if !crate::live_vault::valid_origin(&pin.origin)
+            || pin.head.header_sha256.len() != 64
+            || pin.item_sha256.len() != 64
+        {
+            return Err(Error::Policy);
+        }
+        self.live = Some(pin);
+        self.bind_live()?;
+        Ok(self)
+    }
+    fn bind_live(&mut self) -> Result<()> {
+        let pin = self.live.as_ref().ok_or(Error::Policy)?;
+        let mut bytes = Vec::from(b"moosuri/local-live-github-grant/v1".as_slice());
+        bytes.extend(
+            serde_json::to_vec(&(
+                self.item,
+                self.vault,
+                self.repository.as_ref(),
+                &self.device,
+                &self.binding.id,
+                self.binding.epoch,
+                self.binding.grant_version,
+                self.binding.item_epoch,
+                self.binding.key_epoch,
+                self.binding.expires_at,
+                pin,
+            ))
+            .map_err(|_| Error::Policy)?,
+        );
+        self.binding.grant_hash = hash(&bytes);
+        Ok(())
+    }
+    /// Explicit local reconnection only; item, repository, vault and expiry
+    /// ceiling cannot change. Retain the old binding until exact server ACK.
+    pub(crate) fn refresh_live(
+        &mut self,
+        item_epoch: u64,
+        key_epoch: u64,
+        pin: LivePin,
+    ) -> Result<()> {
+        if self.revoked
+            || self
+                .live
+                .as_ref()
+                .is_some_and(|old| old.origin != pin.origin)
+            || item_epoch < self.binding.item_epoch
+            || key_epoch < self.binding.key_epoch
+        {
+            return Err(Error::Policy);
+        }
+        if self.live.as_ref() == Some(&pin)
+            && item_epoch == self.binding.item_epoch
+            && key_epoch == self.binding.key_epoch
+        {
+            return Ok(());
+        }
+        if self.previous.is_some() {
+            return Err(Error::Policy);
+        }
+        self.previous = Some(self.binding.clone());
+        self.binding.epoch = self.binding.epoch.checked_add(1).ok_or(Error::Policy)?;
+        self.binding.grant_version = self
+            .binding
+            .grant_version
+            .checked_add(1)
+            .ok_or(Error::Policy)?;
+        self.binding.item_epoch = item_epoch;
+        self.binding.key_epoch = key_epoch;
+        self.live = Some(pin);
+        self.bind_live()
+    }
     pub fn repository(&self) -> Option<&GitHubRepository> {
         self.repository.as_ref()
     }
@@ -141,6 +236,7 @@ impl LocalGrant {
         key_epoch: u64,
     ) -> Result<()> {
         if self.revoked
+            || self.previous.is_some()
             || request.device != self.device
             || request.binding != self.binding
             || request.expires_at <= now

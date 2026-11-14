@@ -1,6 +1,6 @@
 # 볼트 credential 연결과 자동 사용
 
-사용자가 일을 맡기면 필요한 서비스의 기존 credential binding을 자동 사용한다. 처음 연결할 때, 항목이 여러 개여서 특정할 수 없을 때, 실제 인증이 만료됐을 때만 필요한 입력을 받는다. 매 실행/도구 단계마다 승인을 반복하지 않는다. 이 문서는 전체 연결 계약이다. 현재 [native GitHub adapter](native-credential-github.md)는 암호화 archive 사본의 API-key를 쓰는 실험용 한 경로다. 기존 [foundation](credential-broker-foundation.md)의 pairing/journal 계약을 사용하며, Google·일반 chat-tool/browser 연결·서명 배포는 아직 제공하지 않는다.
+사용자가 일을 맡기면 필요한 서비스의 기존 credential binding을 자동 사용한다. 처음 연결할 때, 항목이 여러 개여서 특정할 수 없을 때, 실제 인증이 만료됐을 때만 필요한 입력을 받는다. 매 실행/도구 단계마다 승인을 반복하지 않는다. 이 문서는 전체 연결 계약이다. 현재 [native GitHub adapter](native-credential-github.md)는 독립 live vault 또는 명시적 암호화 archive 사본의 API-key로 정확한 저장소 metadata만 읽는 실험용 경로다. 기존 [foundation](credential-broker-foundation.md)의 pairing/journal 계약을 사용하며, Google·일반 chat-tool/browser 연결·서명 배포는 아직 제공하지 않는다.
 
 ## 세 경계
 
@@ -26,7 +26,7 @@ v1은 **서버가 기존 grant 안에서 요청을 구성하는 것**을 위임�
 
 ## 실제 실행 위치와 무인 실행
 
-관리자가 운영하는 일반 서버는 사용자만 가진 암호화키 없이 잠긴 볼트를 자동 해독할 수 없다. v1의 강한 경계는 **신뢰한 사용자 client/device broker**다. native Rust companion은 GitHub 저장소 metadata 읽기와 신뢰 기기의 명시적 archive 사본만 지원한다. 서명 배포와 다른 provider adapter는 후속이다. 현재 browser vault는 지속 journal/단일 owner/provider adapter를 제공하지 않아 credential 실행 경로가 아니다. 향후 browser 경로도 adapter/CORS와 지속 owner/journal 검증을 먼저 통과해야 한다. 관리자와 같은 서버/UID에 둔 sidecar를 독립 비밀 경계라고 주장하지 않는다. 악성 서버가 공급하는 웹 JS의 한계는 [vault-security](vault-security.md) 그대로다.
+관리자가 운영하는 일반 서버는 사용자만 가진 암호화키 없이 잠긴 볼트를 자동 해독할 수 없다. v1의 강한 경계는 **신뢰한 사용자 client/device broker**다. native Rust companion은 정확한 GitHub 저장소 metadata 읽기를 지원한다. 독립 live vault의 현재 session/header/item을 확인하며 로컬에서 unlock하고, 명시적 archive 사본은 snapshot 모드로 구분한다. 일시적인 offline은 unlock을 유지한 채 dispatch를 멈추고 자동 재검증하며, 항목/키 변경·인증 철회는 로컬 재연결이 필요하다. 서명 배포와 다른 provider adapter는 후속이다. 현재 browser vault는 지속 journal/단일 owner/provider adapter를 제공하지 않아 credential 실행 경로가 아니다. 향후 browser 경로도 adapter/CORS와 지속 owner/journal 검증을 먼저 통과해야 한다. 관리자와 같은 서버/UID에 둔 sidecar를 독립 비밀 경계라고 주장하지 않는다. 악성 서버가 공급하는 웹 JS의 한계는 [vault-security](vault-security.md) 그대로다.
 
 broker가 없거나 잠겼거나 offline이면 `waiting_for_credential`로 보존하고 “볼트를 연결/열면 이어서 진행”을 보여준다. key를 서버에 몰래 복사하거나 복호화 가능한 master escrow를 만들지 않는다. 대기 중 model/worker 실행 슬롯을 반환하며 5초마다 LLM으로 잠금을 확인하지 않는다. unlock/연결 복귀 뒤 같은 run/effect ID·유효한 최신 조건으로 이어간다. 이미 시간/authority가 만료됐으면 자동 실행하지 않는다. 로그인 유지와 vault unlock 유지도 별개다.
 

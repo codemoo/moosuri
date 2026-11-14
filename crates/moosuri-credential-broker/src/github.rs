@@ -117,7 +117,8 @@ impl Engine {
                         .map(|v| v.as_secs() as i64)
                         .unwrap_or(i64::MAX)
         }) {
-            if g.vault() != Some(archive.header().binding.vault_id)
+            if g.live().is_some()
+                || g.vault() != Some(archive.header().binding.vault_id)
                 || g.item() != item
                 || g.binding.item_epoch != epoch
                 || g.binding.key_epoch != key
@@ -153,7 +154,7 @@ impl Engine {
             .iter()
             .find(|g| g.binding.id == request.binding.id)
             .ok_or(Error::Policy)?;
-        if grant.vault() != Some(archive.header().binding.vault_id) {
+        if grant.live().is_some() || grant.vault() != Some(archive.header().binding.vault_id) {
             return Err(Error::Policy);
         }
         let item = archive
@@ -203,18 +204,41 @@ impl Engine {
         {
             return Err(Error::Policy);
         }
+        if grant.live().is_some() {
+            return Err(Error::Policy);
+        }
+        self.execute_github_secret(
+            invocation,
+            adapter,
+            fields.secret.expose(),
+            epoch,
+            archive.header().generation,
+        )
+        .await
+    }
+    pub(crate) async fn execute_github_secret(
+        &mut self,
+        invocation: &Invocation,
+        adapter: &GitHubAdapter,
+        secret: &str,
+        item_epoch: u64,
+        key_epoch: u64,
+    ) -> Result<SignedReceipt> {
+        let request = self
+            .state
+            .entries
+            .iter()
+            .find(|e| &e.request.invocation == invocation)
+            .ok_or(Error::Policy)?
+            .request
+            .clone();
         let repository = request
             .repository
             .as_ref()
             .filter(|r| r.valid())
             .ok_or(Error::Policy)?;
-        let commitment = self.begin_dispatch(
-            invocation,
-            current_time()?,
-            epoch,
-            archive.header().generation,
-        )?;
-        let (projection, outcome) = match adapter.read(repository, fields.secret.expose()).await {
+        let commitment = self.begin_dispatch(invocation, current_time()?, item_epoch, key_epoch)?;
+        let (projection, outcome) = match adapter.read(repository, secret).await {
             Ok(p) => (p, Outcome::ProjectedSuccess),
             Err(Error::Policy) => (Projection::None, Outcome::Rejected),
             Err(_) => (Projection::None, Outcome::Unknown),

@@ -1,0 +1,7 @@
+- [x] Native HTTPS login/handoff/session and local vault-core unlock
+- [x] Current owner/header/inventory/item checks, transient suspend and retirement
+- [x] Same-scope local refresh, writer CAS and exact request-digest commitment fence
+- [x] Existing signed projection/journal/retained reconciliation shared with live use
+- [x] Actual synthetic assistant/vault/core/provider integration fixture passed locally
+- [x] Document live/snapshot distinction, offline behavior and admission race
+- [x] Independent frozen security review and joined Linux gates (integration owner)

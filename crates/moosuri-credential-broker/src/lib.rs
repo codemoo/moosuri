@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod github;
 mod journal;
+pub mod live_vault;
 pub mod policy;
 pub mod transport;
 use moosuri_vault_protocol::broker::*;
@@ -20,6 +21,10 @@ pub enum Error {
     Locked,
     #[error("broker operation cannot be retried")]
     Unknown,
+    #[error("broker connection unavailable; waiting for fresh checks")]
+    Unavailable,
+    #[error("live vault authorization or selected revision changed; reconnect locally")]
+    Reconnect,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -237,6 +242,21 @@ impl Engine {
                     return Err(Error::Policy);
                 }
             }
+            Command::RefreshRepository {
+                expected,
+                binding,
+                repository,
+            } => {
+                let grant = self
+                    .state
+                    .grants
+                    .iter()
+                    .find(|g| &g.binding == binding && g.repository() == Some(repository))
+                    .ok_or(Error::Policy)?;
+                if self.state.revoked || grant.pending_refresh() != Some(expected) {
+                    return Err(Error::Policy);
+                }
+            }
             Command::Poll => {}
             Command::Abandon { invocation } => {
                 if !self.state.entries.iter().any(|e| {
@@ -246,7 +266,7 @@ impl Engine {
                     return Err(Error::Unknown);
                 }
             }
-            Command::Commit { invocation } => {
+            Command::Commit { invocation } | Command::CommitCurrent { invocation, .. } => {
                 if self.state.revoked {
                     return Err(Error::Policy);
                 }
@@ -256,6 +276,13 @@ impl Engine {
                     .iter()
                     .find(|e| &e.request.invocation == invocation)
                     .ok_or(Error::Policy)?;
+                if let Command::CommitCurrent { request_digest, .. } = &command {
+                    if *request_digest != auth::hash(&request_bytes(&entry.request)) {
+                        return Err(Error::Policy);
+                    }
+                } else if entry.request.binding.grant_version != 1 {
+                    return Err(Error::Policy);
+                }
                 if !matches!(entry.phase, Phase::Prepared | Phase::Committed(_)) {
                     return Err(Error::Unknown);
                 }

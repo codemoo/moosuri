@@ -10,11 +10,12 @@ read-only missions from chat or forms, explicitly delegated recurring Gmail/Cale
 opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
 The experimental [native credential companion](docs/native-credential-github.md)
-can unlock an encrypted vault archive locally and read one exact GitHub repository
-with a selected credential. An explicit exact-repository chat request can wait for the
+can unlock the independent live vault or an explicit encrypted archive locally and
+read one exact GitHub repository with a selected credential. Live mode rechecks the
+current selected item before use and resumes after transient connection loss. An explicit exact-repository chat request can wait for the
 same signed result and finish in its original conversation without another model call.
-Its routes remain default-off; general credential tools, live-vault rotation and signed
-companion distribution remain unfinished.
+Its routes remain default-off; general credential tools and signed companion
+distribution remain unfinished.
 Account deletion clears active private data and delivers durable deletion to the separate vault.
 Every mail send needs the user's explicit approval of its final preview, including scheduled timing. Unknown sends
 have conservative read-only Sent checks and are never automatically resent.

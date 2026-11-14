@@ -2348,6 +2348,7 @@ dependencies = [
  "fs2",
  "http-body-util",
  "libc",
+ "moosuri-credential-broker",
  "moosuri-server",
  "moosuri-store",
  "moosuri-vault-core",

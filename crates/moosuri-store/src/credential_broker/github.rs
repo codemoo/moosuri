@@ -151,6 +151,34 @@ pub(super) fn poll(
     })
 }
 
+/// Only proven uncommitted, uncancelled work may move to a refreshed version of
+/// the SAME device/repository grant. Invocation/effect identity never changes.
+pub(super) fn refresh_uncommitted(
+    conn: &Connection,
+    device: &Device,
+    expected: &Binding,
+    binding: &Binding,
+    repository: &GitHubRepository,
+) -> Result<()> {
+    let tenant = device.owner.tenant.to_string();
+    let rows=conn.prepare("SELECT i.request FROM credential_broker_invocations i WHERE i.tenant_id=?1 AND i.cancelled=0 AND NOT EXISTS(SELECT 1 FROM credential_broker_commitments c WHERE c.tenant_id=i.tenant_id AND c.run_id=i.run_id AND c.step=i.step AND c.call_id=i.call_id AND c.invocation_nonce=i.invocation_nonce)")?.query_map([&tenant],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for text in rows {
+        let mut request: Request = decode(&text)?;
+        if request.device != *device
+            || request.binding != *expected
+            || request.repository.as_ref() != Some(repository)
+        {
+            continue;
+        }
+        request.binding = binding.clone();
+        let json = encode(&request)?;
+        let i = &request.invocation;
+        conn.execute("UPDATE credential_broker_invocations SET request=?1 WHERE tenant_id=?2 AND run_id=?3 AND step=?4 AND call_id=?5 AND invocation_nonce=?6 AND request=?7 AND cancelled=0",params![json,tenant,i.run.to_string(),i.step,i.call.to_string(),i.nonce.to_string(),text])?;
+        conn.execute("UPDATE credential_broker_jobs SET request=?1 WHERE tenant_id=?2 AND run_id=?3 AND call_id=?4 AND invocation_nonce=?5 AND request=?6",params![json,tenant,i.run.to_string(),i.call.to_string(),i.nonce.to_string(),text])?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

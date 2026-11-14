@@ -5,6 +5,7 @@ use std::time::Duration;
 pub struct Transport {
     client: reqwest::Client,
     origin: String,
+    endpoint: String,
 }
 impl Transport {
     pub fn new(origin: &str) -> Result<Self> {
@@ -20,7 +21,26 @@ impl Transport {
                 .build()
                 .map_err(|_| Error::PrivateState)?,
             origin: origin.into(),
+            endpoint: origin.into(),
         })
+    }
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn synthetic_loopback(origin: &str, endpoint: &str) -> Result<Self> {
+        let url = url::Url::parse(endpoint).map_err(|_| Error::Policy)?;
+        if url.scheme() != "http"
+            || !matches!(url.host_str(), Some("127.0.0.1" | "localhost"))
+            || url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.origin().ascii_serialization() != endpoint
+        {
+            return Err(Error::Policy);
+        }
+        let mut transport = Self::new(origin)?;
+        transport.endpoint = endpoint.into();
+        Ok(transport)
     }
     pub async fn post<I: Serialize, O: DeserializeOwned>(
         &self,
@@ -41,17 +61,21 @@ impl Transport {
         }
         let mut r = self
             .client
-            .post(format!("{}{path}", self.origin))
+            .post(format!("{}{path}", self.endpoint))
             .header("content-type", "application/json")
             .body(body.to_vec())
             .send()
             .await
-            .map_err(|_| Error::Authentication)?;
+            .map_err(|_| Error::Unavailable)?;
         if !r.status().is_success() {
-            return Err(Error::Authentication);
+            return Err(if matches!(r.status().as_u16(), 401 | 403) {
+                Error::Authentication
+            } else {
+                Error::Unavailable
+            });
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = r.chunk().await.map_err(|_| Error::Authentication)? {
+        while let Some(chunk) = r.chunk().await.map_err(|_| Error::Unavailable)? {
             if bytes.len() + chunk.len() > 262144 {
                 return Err(Error::Authentication);
             }
@@ -120,6 +144,165 @@ impl Transport {
             }
         }
         Ok(())
+    }
+    pub async fn register_live(
+        &self,
+        engine: &mut Engine,
+        binding: &Binding,
+        repository: &GitHubRepository,
+    ) -> Result<()> {
+        let grant = engine
+            .grants()
+            .iter()
+            .find(|g| {
+                &g.binding == binding && g.repository() == Some(repository) && g.live().is_some()
+            })
+            .ok_or(Error::Policy)?;
+        let refresh = grant.pending_refresh().cloned();
+        let command = match &refresh {
+            Some(expected) => Command::RefreshRepository {
+                expected: expected.clone(),
+                binding: binding.clone(),
+                repository: repository.clone(),
+            },
+            None => Command::RegisterRepository {
+                binding: binding.clone(),
+                repository: repository.clone(),
+            },
+        };
+        if !matches!(self.command(engine, command).await?, Reply::Registered) {
+            return Err(Error::Authentication);
+        }
+        if refresh.is_some() {
+            engine.confirm_live_refresh(binding)?;
+        }
+        Ok(())
+    }
+    async fn live_pending(
+        &self,
+        engine: &mut Engine,
+        vault: &mut live_vault::LiveVault,
+        adapter: &github::GitHubAdapter,
+    ) -> Result<usize> {
+        let invocation = vault.pending.clone().ok_or(Error::Policy)?;
+        // A dropped poll future can leave pending after provider admission or
+        // receipt persistence. Only a same-process Committed phase is proof of
+        // non-entry; every other phase must reconcile without adapter retry.
+        let phase = engine
+            .state
+            .entries
+            .iter()
+            .find(|e| e.request.invocation == invocation)
+            .ok_or(Error::Policy)?
+            .phase
+            .clone();
+        let result = match phase {
+            Phase::Committed(_) => {
+                engine
+                    .execute_live_github(vault, &invocation, adapter)
+                    .await
+            }
+            _ => engine.settle_without_retry(&invocation),
+        };
+        let receipt = match result {
+            Ok(receipt) => receipt,
+            Err(Error::Unavailable) => return Err(Error::Unavailable),
+            Err(Error::Reconnect) => {
+                vault.retire();
+                let receipt = engine.settle_without_retry(&invocation)?;
+                let result = self
+                    .command(
+                        engine,
+                        Command::Settle {
+                            receipt: Box::new(receipt),
+                        },
+                    )
+                    .await;
+                if result.is_ok() {
+                    engine.delivered(invocation)?;
+                }
+                return Err(Error::Reconnect);
+            }
+            // A terminal local admission failure (for example request expiry
+            // while offline) must not strand pending ahead of reconciliation.
+            // The durable phase determines NotDispatched vs Unknown; neither
+            // branch grants a second provider entry.
+            Err(_) => engine.settle_without_retry(&invocation)?,
+        };
+        self.command(
+            engine,
+            Command::Settle {
+                receipt: Box::new(receipt),
+            },
+        )
+        .await?;
+        engine.delivered(invocation)?;
+        vault.pending = None;
+        Ok(1)
+    }
+    /// Transient loss suspends; an acknowledged, not-entered commitment can
+    /// revalidate in this same unlocked process. Restart retains no such permit.
+    pub async fn poll_live(
+        &self,
+        engine: &mut Engine,
+        vault: &mut live_vault::LiveVault,
+        adapter: &github::GitHubAdapter,
+    ) -> Result<usize> {
+        let result = self.poll_live_inner(engine, vault, adapter).await;
+        if matches!(result, Err(Error::Authentication | Error::Reconnect)) {
+            vault.retire();
+        }
+        result
+    }
+    async fn poll_live_inner(
+        &self,
+        engine: &mut Engine,
+        vault: &mut live_vault::LiveVault,
+        adapter: &github::GitHubAdapter,
+    ) -> Result<usize> {
+        let mut completed = 0;
+        if vault.pending.is_some() {
+            completed += self.live_pending(engine, vault, adapter).await?;
+        }
+        if !vault.is_unlocked() {
+            return Err(Error::Reconnect);
+        }
+        vault.validate().await?;
+        self.sync_retained(engine).await?;
+        let Reply::Waiting {
+            requests,
+            revocation_pending,
+        } = self.command(engine, Command::Poll).await?
+        else {
+            return Err(Error::Authentication);
+        };
+        if revocation_pending {
+            engine.revoke()?;
+            vault.retire();
+            self.command(engine, Command::AckRevoke).await?;
+            return Ok(completed);
+        }
+        for request in requests {
+            let invocation = request.invocation.clone();
+            let request_digest = auth::hash(&request_bytes(&request));
+            engine.prepare_live_github(vault, request).await?;
+            let Reply::Commitment { commitment } = self
+                .command(
+                    engine,
+                    Command::CommitCurrent {
+                        invocation: invocation.clone(),
+                        request_digest,
+                    },
+                )
+                .await?
+            else {
+                return Err(Error::Authentication);
+            };
+            engine.accept_commitment(*commitment)?;
+            vault.pending = Some(invocation);
+            completed += self.live_pending(engine, vault, adapter).await?;
+        }
+        Ok(completed)
     }
     /// Locked callers do not invoke this: waiting server jobs use no worker/model slot.
     pub async fn poll(

@@ -26,9 +26,10 @@ url = "=2.5.8"
 clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]
+moosuri-credential-broker = { path = "../moosuri-credential-broker", features = ["test-fixtures"] }
 moosuri-vault-core = { path = "../moosuri-vault-core" }
 moosuri-store = { path = "../moosuri-store" }
-moosuri-server = { path = "../moosuri-server" }
+moosuri-server = { path = "../moosuri-server", features = ["credential-broker-foundation"] }
 tempfile.workspace = true
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

@@ -49,3 +49,16 @@ Independent per-item CAS can validly add another item under the same unchanged h
 ## Lifecycle delivery
 
 Service schema2 adds owner lifecycle tombstones and exact event receipts; schema1 roots migrate transactionally after existing DB/journal validation. The assistant adapter additionally supports authenticated service-only `lifecycle_next` and `lifecycle_ack`. No browser cookie, user key or private content enters that protocol. The service polls one event every two seconds, appends/fsyncs its lifecycle intent, purges only the matching owner and then ACKs the same event. Lost ACKs are idempotent. Deletion is permanent across later epochs and service recovery replay. Historical encrypted journal/checkpoint bytes follow retention policy; active DB deletion is not physical media secure erase.
+
+## Native credential freshness
+
+The experimental [native GitHub broker](native-credential-github.md) uses the same
+vault-local session/current-head and full ciphertext state APIs. Its own native
+vault-core root and selected-item pin are separate from the browser Worker. It
+checks current owner, authenticated header/inventory and selected ciphertext again
+after decrypt and before fixed adapter entry. Transient unavailability suspends
+and retains a valid in-memory unlock; a changed item/header or rejected session
+retires it and requires native reconnection. No master password enters either HTTP
+service. An archive copy remains an explicit snapshot and is never a freshness
+fallback for the live connection. The final fresh read is the admission point;
+a later peer change cannot retract an already-entered provider request.

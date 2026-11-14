@@ -48,6 +48,75 @@ fn projection_allowed(outcome: Outcome, p: Projection, operation: Operation) -> 
         _ => false,
     }
 }
+fn commit_current(
+    conn: &Connection,
+    tenant: &str,
+    p: &PairChallenge,
+    session: &[u8],
+    status: &str,
+    invocation: &Invocation,
+    digest: Option<[u8; 32]>,
+) -> Result<Reply> {
+    if let Some(old) = commitment(conn, tenant, invocation)? {
+        if old.request.device != p.device
+            || digest.is_some_and(|d| {
+                d != moosuri_credential_broker::auth::hash(&request_bytes(&old.request))
+            })
+        {
+            return Err(StoreError::Forbidden);
+        }
+        return Ok(Reply::Commitment {
+            commitment: Box::new(old),
+        });
+    }
+    active(conn, p, session)?;
+    if status != "active" {
+        return Err(StoreError::Forbidden);
+    }
+    let r = stored_request(conn, tenant, invocation)?;
+    if digest
+        .map(|d| d != moosuri_credential_broker::auth::hash(&request_bytes(&r)))
+        .unwrap_or(r.binding.grant_version != 1)
+    {
+        return Err(StoreError::Forbidden);
+    }
+    if !crate::credential_chat::dispatch_current(
+        conn,
+        tenant,
+        &invocation.run.to_string(),
+        invocation.step,
+        &invocation.call.to_string(),
+        &invocation.nonce.to_string(),
+    )? {
+        return Err(StoreError::Forbidden);
+    }
+    if r.device != p.device || r.expires_at <= now()? || r.expires_at > r.binding.expires_at {
+        return Err(StoreError::Forbidden);
+    }
+    let bs:String=conn.query_row("SELECT binding FROM credential_broker_bindings WHERE device_id=?1 AND binding_id=?2 AND active=1",params![p.device.id.to_string(),r.binding.id.to_string()],|r|r.get(0)).optional()?.ok_or(StoreError::Forbidden)?;
+    let b: Binding = decode(&bs)?;
+    if b != r.binding || b.expires_at <= now()? {
+        return Err(StoreError::Forbidden);
+    }
+    let committed = Commitment {
+        request: r,
+        nonce: Uuid::new_v4(),
+    };
+    conn.execute(
+        "INSERT INTO credential_broker_commitments VALUES(?1,?2,?3,?4,?5,?6,NULL)",
+        params![
+            tenant,
+            invocation.run.to_string(),
+            invocation.step,
+            invocation.call.to_string(),
+            invocation.nonce.to_string(),
+            encode(&committed)?
+        ],
+    )?;
+    Ok(Reply::Commitment {
+        commitment: Box::new(committed),
+    })
+}
 impl Store {
     pub async fn broker_pair_challenge(
         &self,
@@ -193,6 +262,19 @@ impl Store {
     tx.execute("INSERT OR IGNORE INTO credential_broker_repositories VALUES(?1,?2,?3)",params![device,binding.id.to_string(),repo])?;
     Reply::Registered
    },
+   Command::RefreshRepository{expected,binding,repository}=>{
+    active(&tx,&p,&session)?;
+    if status!="active" || !repository.valid() || binding.id!=expected.id || binding.epoch!=expected.epoch.checked_add(1).ok_or(StoreError::Forbidden)? || binding.grant_version!=expected.grant_version.checked_add(1).ok_or(StoreError::Forbidden)? || binding.item_epoch<expected.item_epoch || binding.key_epoch<expected.key_epoch || binding.expires_at!=expected.expires_at || binding.expires_at<=now()? || binding.grant_hash==[0;32] || binding.grant_hash==expected.grant_hash {return Err(StoreError::Forbidden)}
+    let (saved,repo):(String,String)=tx.query_row("SELECT b.binding,r.repository FROM credential_broker_bindings b JOIN credential_broker_repositories r USING(device_id,binding_id) WHERE b.device_id=?1 AND b.binding_id=?2 AND b.active=1",params![device,binding.id.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
+    if decode::<GitHubRepository>(&repo)?!=repository {return Err(StoreError::Forbidden)}
+    let current:Binding=decode(&saved)?;
+    if current!=binding {
+        if current!=expected{return Err(StoreError::Conflict)}
+        tx.execute("UPDATE credential_broker_bindings SET binding=?1 WHERE device_id=?2 AND binding_id=?3 AND binding=?4",params![encode(&binding)?,device,binding.id.to_string(),saved])?;
+        github::refresh_uncommitted(&tx,&c.device,&expected,&binding,&repository)?;
+    }
+    Reply::Registered
+   },
    Command::Register{binding}=>{
     active(&tx,&p,&session)?;if status!="active"||binding.id.is_nil()||binding.epoch==0||binding.grant_version==0||binding.key_epoch==0||binding.item_epoch==0||binding.expires_at<=now()?||binding.grant_hash==[0;32]{return Err(StoreError::Forbidden)}
     let old:Option<String>=tx.query_row("SELECT binding FROM credential_broker_bindings WHERE device_id=?1 AND binding_id=?2",params![device,binding.id.to_string()],|r|r.get(0)).optional()?;
@@ -201,22 +283,8 @@ impl Store {
      tx.execute("INSERT INTO credential_broker_bindings VALUES(?1,?2,?3,1)",params![device,binding.id.to_string(),json])?;
     }Reply::Registered
    },
-   Command::Commit{invocation}=>{
-    // Exact retries reconcile existing adoption, never mint a new nonce, including
-    // after revoke. The original device/generation remains the only owner.
-    if let Some(old)=commitment(&tx,&tenant,&invocation)? {
-     if old.request.device!=c.device{return Err(StoreError::Forbidden)}Reply::Commitment{commitment:Box::new(old)}
-    }else{
-     active(&tx,&p,&session)?;if status!="active"{return Err(StoreError::Forbidden)}
-     let r=stored_request(&tx,&tenant,&invocation)?;
-     if !crate::credential_chat::dispatch_current(&tx,&tenant,&invocation.run.to_string(),invocation.step,&invocation.call.to_string(),&invocation.nonce.to_string())? {return Err(StoreError::Forbidden)}
-     if r.device!=c.device || r.expires_at<=now()? || r.expires_at>r.binding.expires_at{return Err(StoreError::Forbidden)}
-     let bs:String=tx.query_row("SELECT binding FROM credential_broker_bindings WHERE device_id=?1 AND binding_id=?2 AND active=1",params![device,r.binding.id.to_string()],|r|r.get(0)).optional()?.ok_or(StoreError::Forbidden)?;
-     let b:Binding=decode(&bs)?;if b!=r.binding || b.expires_at<=now()?{return Err(StoreError::Forbidden)}
-     let committed=Commitment{request:r,nonce:Uuid::new_v4()};
-     tx.execute("INSERT INTO credential_broker_commitments VALUES(?1,?2,?3,?4,?5,?6,NULL)",params![tenant,invocation.run.to_string(),invocation.step,invocation.call.to_string(),invocation.nonce.to_string(),encode(&committed)?])?;Reply::Commitment{commitment:Box::new(committed)}
-    }
-   },
+   Command::Commit{invocation}=>commit_current(&tx,&tenant,&p,&session,&status,&invocation,None)?,
+   Command::CommitCurrent{invocation,request_digest}=>commit_current(&tx,&tenant,&p,&session,&status,&invocation,Some(request_digest))?,
    Command::Recover{invocation}=>{let old=commitment(&tx,&tenant,&invocation)?.ok_or(StoreError::NotFound)?;if old.request.device!=c.device{return Err(StoreError::Forbidden)}Reply::Commitment{commitment:Box::new(old)}},
    Command::Settle{receipt}=>{
     let r=&receipt.receipt;let i=&r.commitment.request.invocation;

@@ -1344,7 +1344,8 @@ async fn execute_tool_inner(
     web: &crate::web::Service,
     cancel: &CancellationToken,
 ) -> Result<KnowledgeToolResult, StoreError> {
-    let external = matches!(&call.input,KnowledgeToolInput::External{request} if !matches!(request,moosuri_core::ExternalToolRequest::Mail(moosuri_core::MailToolRequest::Draft{..})));
+    let external = matches!(&call.input,KnowledgeToolInput::External{request} if !matches!(request,moosuri_core::ExternalToolRequest::Mail(moosuri_core::MailToolRequest::Draft{..})))
+        || matches!(&call.input, KnowledgeToolInput::LearnedSkill {invocation} if matches!(invocation.arguments,moosuri_core::LearnedSkillArguments::Parcel{..}));
     if !external {
         return retry_local(|| store.execute_knowledge_tool(step, call.call_id.clone())).await;
     }

@@ -17,6 +17,7 @@ pub struct ExternalToolPermit {
     browser_pin: Option<String>,
     thread_id: String,
     parcel_origin: Option<Box<crate::web::ParcelOrigin>>,
+    learned_pin: Option<moosuri_core::SkillPin>,
 }
 
 impl ExternalToolPermit {
@@ -109,10 +110,7 @@ impl Store {
             let(input,saved):(String,Option<String>)=tx.query_row("SELECT input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
             if let Some(saved)=saved{
                 return Ok(ExternalToolStart::Complete(parse(&saved)?))}
-            let KnowledgeToolInput::External{
-                mut request}
-            =parse(&input)? else{
-                return Err(StoreError::InvalidInput)};
+            let input:KnowledgeToolInput=parse(&input)?;
 
             let started:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4)",params![run.tenant,run.id,lease.step,call_id],|r|r.get(0))?;
 
@@ -128,16 +126,25 @@ impl Store {
 
             let user=if crate::missions::is_mission(&tx,&run.tenant,&run.id)? {None}else{Some(crate::chat::authority(&tx,&run)?)};
 
+            let generation=knowledge::generation(&tx,&run.tenant)?;
+            tx.execute("UPDATE agent_execution SET tool_calls=tool_calls+1,checkpoint_seq=checkpoint_seq+1,generation=?3 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,generation])?;
+            let (mut request,learned_pin)=match input {
+                KnowledgeToolInput::External{request}=>(request,None),
+                KnowledgeToolInput::LearnedSkill{invocation} if matches!(invocation.arguments,moosuri_core::LearnedSkillArguments::Parcel{..})=>{
+                    match crate::learned_skills::parcel_request(&tx,&run,&invocation)? {
+                        Ok(request)=>(request,Some(invocation.pin)),
+                        Err(error)=>{let result=KnowledgeToolResult::Error(error);tx.execute("UPDATE agent_tool_slots SET result=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id,json(&result)?])?;tx.commit()?;return Ok(ExternalToolStart::Complete(result))}
+                    }
+                },
+                _=>return Err(StoreError::InvalidInput),
+            };
+
             let valid=(!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
                 ExternalToolRequest::Mail(_) if crate::missions::is_mission(&tx,&run.tenant,&run.id)? => crate::missions::connected::allowed(&tx,&run,&request)?,
                 ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
                 ExternalToolRequest::Calendar(q)=>crate::calendar::agent::allowed(&tx,&run,q)?,
             };
-
-            let generation=knowledge::generation(&tx,&run.tenant)?;
-
-            tx.execute("UPDATE agent_execution SET tool_calls=tool_calls+1,checkpoint_seq=checkpoint_seq+1,generation=?3 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,generation])?;
 
             if !valid {
                 let result=KnowledgeToolResult::Error(ToolReadError::Unavailable);
@@ -161,7 +168,7 @@ impl Store {
             tx.execute("INSERT INTO external_tool_dispatches VALUES(?1,?2,?3,?4,?5,'started')",params![run.tenant,run.id,lease.step,call_id,nonce])?;
             tx.commit()?;
             Ok(ExternalToolStart::Dispatch(ExternalToolPermit{
-                lease,call_id,nonce,request:Box::new(request),user,browser_pin,thread_id:run.thread,parcel_origin:parcel_origin.map(Box::new)}
+                lease,call_id,nonce,request:Box::new(request),user,browser_pin,thread_id:run.thread,parcel_origin:parcel_origin.map(Box::new),learned_pin}
             ))}
         ).await
     }
@@ -177,6 +184,7 @@ impl Store {
 
         let nonce = permit.nonce.clone();
         let parcel_origin = permit.parcel_origin.clone();
+        let learned_pin = permit.learned_pin.clone();
 
         let request = permit.request.as_ref().clone();
 
@@ -210,6 +218,7 @@ impl Store {
 
             if let Some(saved)=saved{
                 return parse(&saved)}
+            if let Some(pin)=&learned_pin {crate::learned_skills::complete_parcel(&tx,&run,pin,lease.step,&call_id,&request,&result)?;}
             tx.execute("UPDATE agent_tool_slots SET result=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id,json(&result)?])?;
             tx.execute("UPDATE external_tool_dispatches SET state='completed' WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step,call_id])?;
             tx.execute("UPDATE agent_execution SET checkpoint_seq=checkpoint_seq+1 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id])?;

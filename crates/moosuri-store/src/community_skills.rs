@@ -134,6 +134,7 @@ fn compatible_contents(package: Package) -> std::result::Result<Validated, autho
         "mail_thread",
         "mail_prepare_draft",
         "web_read",
+        "parcel_track",
     ];
     if metadata.format_version != 1
         || metadata.mode != "instructions"
@@ -400,7 +401,10 @@ fn card(
         .metadata
         .capabilities
         .iter()
-        .filter(|c| (c.starts_with("mail_") && !mail) || (c.as_str() == "web_read" && !web.read))
+        .filter(|c| {
+            (c.starts_with("mail_") && !mail)
+                || (matches!(c.as_str(), "web_read" | "parcel_track") && !web.read)
+        })
         .cloned()
         .collect();
     let directory = e

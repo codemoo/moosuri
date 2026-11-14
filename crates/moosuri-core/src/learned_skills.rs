@@ -3,9 +3,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LearnedSkillArguments {
-    Source { text: String },
-    Decimal { operands: Vec<String> },
-    Workflow { inputs: Vec<String> },
+    Source {
+        text: String,
+    },
+    Decimal {
+        operands: Vec<String>,
+    },
+    Workflow {
+        inputs: Vec<String>,
+    },
+    /// Japan Post only; must match one explicit number in the current request.
+    Parcel {
+        tracking_number: String,
+    },
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

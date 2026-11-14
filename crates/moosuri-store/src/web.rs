@@ -110,6 +110,13 @@ pub(crate) fn evidence(conn: &Connection, tenant: &str, run: &str) -> Result<Vec
         match input {
             agent_execution::KnowledgeToolInput::External {
                 request: moosuri_core::ExternalToolRequest::Web(WebToolRequest::Parcel { .. }),
+            }
+            | agent_execution::KnowledgeToolInput::LearnedSkill {
+                invocation:
+                    moosuri_core::LearnedSkillInvocation {
+                        arguments: moosuri_core::LearnedSkillArguments::Parcel { .. },
+                        ..
+                    },
             } => {
                 if let Some(page) = value.pointer("/parcel/source")
                     && let Some(time) = page.get("retrieved_at_unix_ms").and_then(|v| v.as_u64())
@@ -187,12 +194,12 @@ pub(crate) struct ParcelOrigin {
     tracking_number: String,
     used_previous_number: bool,
 }
-fn current_numbers(text: &str) -> std::collections::BTreeSet<String> {
+pub(crate) fn current_numbers(text: &str) -> std::collections::BTreeSet<String> {
     text.split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
         .filter_map(|token| moosuri_connectors::parcel::normalize(token).ok())
         .collect()
 }
-fn explicit_carrier(text: &str) -> bool {
+pub(crate) fn explicit_carrier(text: &str) -> bool {
     let compact = text.to_lowercase().split_whitespace().collect::<String>();
     [
         "japanpost",
@@ -248,7 +255,7 @@ pub(crate) fn parcel_origin(
     if literals.len() > 1 {
         return Err(StoreError::InvalidInput);
     }
-    let rows=c.prepare("SELECT old.sequence,t.result FROM chat_runs old JOIN agent_execution e ON e.tenant_id=old.tenant_id AND e.run_id=old.id JOIN agent_tool_slots t ON t.tenant_id=old.tenant_id AND t.run_id=old.id JOIN external_tool_dispatches d USING(tenant_id,run_id,step,call_id) WHERE old.tenant_id=?1 AND old.account_id=?2 AND old.thread_id=?3 AND old.sequence<?4 AND old.sequence>=?4-32 AND old.state='completed' AND e.invalidated=0 AND d.state='completed' AND json_extract(t.input,'$.request.adapter')='web' AND json_extract(t.input,'$.request.request.operation')='parcel' AND t.result IS NOT NULL ORDER BY old.sequence DESC,t.step DESC,t.call_id LIMIT 12")?.query_map(params![r.tenant,r.account,r.thread,r.sequence],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let rows=c.prepare("SELECT old.sequence,t.result FROM chat_runs old JOIN agent_execution e ON e.tenant_id=old.tenant_id AND e.run_id=old.id JOIN agent_tool_slots t ON t.tenant_id=old.tenant_id AND t.run_id=old.id JOIN external_tool_dispatches d USING(tenant_id,run_id,step,call_id) WHERE old.tenant_id=?1 AND old.account_id=?2 AND old.thread_id=?3 AND old.sequence<?4 AND old.sequence>=?4-32 AND old.state='completed' AND e.invalidated=0 AND d.state='completed' AND ((json_extract(t.input,'$.request.adapter')='web' AND json_extract(t.input,'$.request.request.operation')='parcel') OR (json_extract(t.input,'$.tool')='learned_skill' AND json_extract(t.input,'$.invocation.arguments.kind')='parcel')) AND t.result IS NOT NULL ORDER BY old.sequence DESC,t.step DESC,t.call_id LIMIT 12")?.query_map(params![r.tenant,r.account,r.thread,r.sequence],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let latest = rows.first().map(|row| row.0);
     let mut candidates = std::collections::BTreeMap::new();
     for (sequence, raw) in rows {

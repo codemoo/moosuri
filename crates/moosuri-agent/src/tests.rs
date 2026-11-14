@@ -503,6 +503,7 @@ mod memory;
 
 mod live_memory;
 
+mod learned_parcel;
 mod learned_skills;
 mod skills;
 

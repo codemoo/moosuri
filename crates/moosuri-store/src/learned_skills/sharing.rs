@@ -41,6 +41,14 @@ fn reconstruct(route: &str) -> Result<SkillSharePreview> {
         );
     }
     let (slug, summary, procedure, capabilities, request, expected) = match route {
+        PARCEL => (
+            "japan-post-latest-summary",
+            "Read Japan Post's latest official parcel summary for a fresh current-request number.",
+            "1. Require Japan Post and exactly one fresh tracking number in the current user's request. Ask for missing or ambiguous carrier/number; do not reuse a number from examples, history or private traces.\n2. Call parcel_track with carrier japan_post and that current number. Use only the actual new official latest-summary observation.\n3. Report the exact number, visible reported date/status and returned official source URL/time. Preserve not_found, provider_changed, missing timezone and latest-summary-only limits. Never infer delivery, full history, forecasts or success from HTTP200. No background tracking, notifications, other carriers, credentials, orders or external writes.",
+            vec!["parcel_track"],
+            "Japan Post: check synthetic example AA000000000JP. This is an invented example, not a real shipment.",
+            "Use only the currently supplied number in an actual parcel_track lookup when explicitly requested. Do not contact a provider merely to install/read this example. Report the actual observed summary and source, or the actual not_found/provider_changed/failure; this synthetic example stores no status.",
+        ),
         SOURCE => (
             "saved-source-lookup",
             "Find and read a current saved source for a fresh user-supplied phrase.",

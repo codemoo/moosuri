@@ -1,0 +1,3 @@
+# Learn one private Japan Post latest-summary procedure
+
+Extend existing private learned routes with the already supported Japan Post parcel_track operation. Two distinct finalized direct typed observations whose final answers adopt the exact current number/date/status/source can promote one structural route. Reuse requires a fresh explicit current-request number and fresh provider IO through the existing external-tool ledger. Structural synthetic export uses the existing suggestions/share path. No schema/global generation reset, carrier/history/background/write authority, credential path or automatic publication.

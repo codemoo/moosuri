@@ -90,10 +90,10 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
     }) {
         definitions.push(FunctionDefinition {
             name: "learned_skill_execute".into(),
-            description: "Execute an admitted private learned route with fresh task parameters. Source lookup uses the first fresh saved-source hit; arithmetic uses the learned exact operation. It grants no new authority. Do not use A/B proof inputs or invent success.".into(),
+            description: "Execute an admitted private learned route with fresh task parameters. Source lookup uses the first fresh saved-source hit; arithmetic uses the learned exact operation. Parcel uses only a fresh current-request Japan Post number and performs a new official latest-summary lookup; never reuse proof/history numbers or status. It grants no new authority. Do not use A/B proof inputs or invent success.".into(),
             parameters: object(json!({
                 "pin":object(json!({"id":{"type":"string"},"revision":{"type":"string"},"digest":{"type":"string"}})),
-                "arguments":object(json!({"kind":{"type":"string","enum":["source","decimal","workflow"]},"text":{"type":["string","null"],"description":"Fresh literal source search phrase for source route; null for decimal."},"operands":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh decimal operand strings for decimal route; null otherwise."},"inputs":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh workflow input strings matching the pinned structural graph input slots; null otherwise."}}))
+                "arguments":object(json!({"kind":{"type":"string","enum":["source","decimal","workflow","parcel"]},"text":{"type":["string","null"],"description":"Fresh literal source search phrase for source route; null for decimal."},"operands":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh decimal operand strings for decimal route; null otherwise."},"inputs":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh workflow input strings matching the pinned structural graph input slots; null otherwise."},"tracking_number":{"type":["string","null"],"description":"For parcel only: exactly one fresh tracking number explicitly supplied with Japan Post in the current user request. No history or cached status; null for other routes."}}))
             })),
         });
     }
@@ -228,6 +228,7 @@ struct LearnedArgumentsWire {
     text: Option<String>,
     operands: Option<Vec<String>>,
     inputs: Option<Vec<String>>,
+    tracking_number: Option<String>,
 }
 fn parse_learned(arguments: &str) -> Option<moosuri_core::LearnedSkillInvocation> {
     let wire: LearnedWire = serde_json::from_str(arguments).ok()?;
@@ -236,13 +237,19 @@ fn parse_learned(arguments: &str) -> Option<moosuri_core::LearnedSkillInvocation
         wire.arguments.text,
         wire.arguments.operands,
         wire.arguments.inputs,
+        wire.arguments.tracking_number,
     ) {
-        ("source", Some(text), None, None) => moosuri_core::LearnedSkillArguments::Source { text },
-        ("decimal", None, Some(operands), None) => {
+        ("source", Some(text), None, None, None) => {
+            moosuri_core::LearnedSkillArguments::Source { text }
+        }
+        ("decimal", None, Some(operands), None, None) => {
             moosuri_core::LearnedSkillArguments::Decimal { operands }
         }
-        ("workflow", None, None, Some(inputs)) => {
+        ("workflow", None, None, Some(inputs), None) => {
             moosuri_core::LearnedSkillArguments::Workflow { inputs }
+        }
+        ("parcel", None, None, None, Some(tracking_number)) => {
+            moosuri_core::LearnedSkillArguments::Parcel { tracking_number }
         }
         _ => return None,
     };
@@ -344,6 +351,39 @@ mod tests {
     };
 
     #[test]
+    fn learned_parcel_arguments_are_narrow_and_old_source_wire_remains_compatible() {
+        let pin = json!({"id":"private:synthetic","revision":"2","digest":"a".repeat(64)});
+        let valid = json!({"pin":pin,"arguments":{"kind":"parcel","tracking_number":"AA123456789JP","text":null,"operands":null,"inputs":null}});
+        assert!(matches!(
+            parse("learned_skill_execute", &valid.to_string()),
+            Invocation::LearnedSkill(moosuri_core::LearnedSkillInvocation {
+                arguments: moosuri_core::LearnedSkillArguments::Parcel { .. },
+                ..
+            })
+        ));
+        for key in ["text", "operands", "inputs"] {
+            let mut invalid = valid.clone();
+            invalid["arguments"][key] = if key == "text" {
+                json!("old input")
+            } else {
+                json!(["1", "2"])
+            };
+            assert!(matches!(
+                parse("learned_skill_execute", &invalid.to_string()),
+                Invocation::InvalidArguments
+            ));
+        }
+        let old =
+            json!({"pin":pin,"arguments":{"kind":"source","text":"fresh phrase","operands":null}});
+        assert!(matches!(
+            parse("learned_skill_execute", &old.to_string()),
+            Invocation::LearnedSkill(moosuri_core::LearnedSkillInvocation {
+                arguments: moosuri_core::LearnedSkillArguments::Source { .. },
+                ..
+            })
+        ));
+    }
+    #[test]
     fn scoped_profiles_encode_for_each_dialect_without_upgrading_legacy_vocabulary() {
         let profile = RunToolProfile {
             credential_github: false,
@@ -382,9 +422,9 @@ mod tests {
             assert_eq!(
                 definitions.len(),
                 if learned {
-                    6
+                    7
                 } else if profile.is_some() {
-                    5
+                    6
                 } else {
                     3
                 }

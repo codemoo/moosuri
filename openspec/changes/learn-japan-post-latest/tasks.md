@@ -1,0 +1,6 @@
+- [x] Structural Japan Post route and two finalized typed adopted observation proofs.
+- [x] Fresh current-request number admission, existing async external ledger/budget/child receipts and evidence.
+- [x] Discovery/card and synthetic structural share reconstruction/parcel capability validation without generation reset.
+- [x] Native learned-parcel7 (Store5 + actual parser/Runtime1 + wire1), affected existing route/protocol/share regressions5 and core/Store/agent all-target Clippy.
+- [x] Root independent review and Linux/integration/publication.
+- [ ] Real provider/positive shipment/model-language readiness (outside synthetic scope).

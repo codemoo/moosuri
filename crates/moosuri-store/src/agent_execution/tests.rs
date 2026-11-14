@@ -60,6 +60,7 @@ fn query(text: &str) -> KnowledgeQuery {
     KnowledgeQuery {
         kind: KnowledgeKind::Source,
         text: text.into(),
+        match_mode: None,
         collection_id: None,
         subject: None,
         speaker: None,

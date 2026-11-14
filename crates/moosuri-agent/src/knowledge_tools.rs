@@ -1,7 +1,8 @@
 //! Closed read-only tool vocabulary. Returned source text never grants authority.
 use moosuri_connectors::model::protocol::tools::FunctionDefinition;
 use moosuri_core::{
-    BUNDLED_SKILLS, DecimalCalculation, KnowledgeKind, KnowledgeQuery, RunToolProfile, SkillPin,
+    BUNDLED_SKILLS, DecimalCalculation, KnowledgeKind, KnowledgeMatchMode, KnowledgeQuery,
+    RunToolProfile, SkillPin,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -43,6 +44,7 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
             parameters: object(json!({
                 "kind":{"type":"string","enum":["source","memory"]},
                 "text":{"type":"string","description":"A specific literal search phrase; use Korean words directly. Exactly empty text is allowed only for memory browsing; whitespace is invalid."},
+                "match_mode":{"type":["string","null"],"enum":["literal","korean_aliases_v1",null],"description":"Null/literal preserves ordinary search. Opt into korean_aliases_v1 to expand only 휴대전화/휴대폰/핸드폰, 전자우편/이메일, 비밀번호/패스워드 when the whole query or exactly one raw whitespace token matches. Other words stay literal; no fuzzy identity matching. Keep mode on pagination."},
                 "collection_id":nullable_text("Filter only by a known collection ID, otherwise null."),
                 "subject":nullable_text("Exact memory subject filter, otherwise null."),
                 "speaker":nullable_text("Exact speaker filter, otherwise null; never infer a speaker."),
@@ -227,6 +229,7 @@ pub(super) fn system(profile: Option<&RunToolProfile>) -> String {
 struct Search {
     kind: KnowledgeKind,
     text: String,
+    match_mode: Option<KnowledgeMatchMode>,
     collection_id: Option<String>,
     subject: Option<String>,
     speaker: Option<String>,
@@ -379,6 +382,7 @@ pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
                 Invocation::Search(KnowledgeQuery {
                     kind: value.kind,
                     text: value.text,
+                    match_mode: value.match_mode,
                     collection_id: value.collection_id,
                     subject: value.subject,
                     speaker: value.speaker,
@@ -418,6 +422,32 @@ mod tests {
         tools::{ToolCapabilities, ToolRequest, encode_tool_request},
     };
 
+    #[test]
+    fn korean_aliases_tool_mode_is_opt_in_and_literal_keeps_old_serialization() {
+        let old = json!({"kind":"source","text":"휴대폰","collection_id":null,"subject":null,"speaker":null,"valid_at":null,"cursor":null});
+        let Invocation::Search(q) = parse("knowledge_search", &old.to_string()) else {
+            panic!("old search rejected")
+        };
+        assert!(q.match_mode.is_none());
+        assert_eq!(serde_json::to_value(q).unwrap(), old);
+        let mut explicit = old.clone();
+        explicit["match_mode"] = json!("literal");
+        let Invocation::Search(q) = parse("knowledge_search", &explicit.to_string()) else {
+            panic!("literal search rejected")
+        };
+        assert_eq!(serde_json::to_value(q).unwrap(), old);
+        explicit["match_mode"] = json!("korean_aliases_v1");
+        let Invocation::Search(q) = parse("knowledge_search", &explicit.to_string()) else {
+            panic!("alias search rejected")
+        };
+        assert!(q.match_mode == Some(KnowledgeMatchMode::KoreanAliasesV1));
+        assert_eq!(serde_json::to_value(q).unwrap(), explicit);
+        explicit["match_mode"] = json!("korean_aliases_v2");
+        assert!(matches!(
+            parse("knowledge_search", &explicit.to_string()),
+            Invocation::InvalidArguments
+        ));
+    }
     #[test]
     fn source_observation_tool_arguments_keep_old_wire_and_separate_memory_validity() {
         let old = json!({"kind":"source","text":"meeting","collection_id":null,"subject":null,"speaker":null,"valid_at":null,"cursor":null});

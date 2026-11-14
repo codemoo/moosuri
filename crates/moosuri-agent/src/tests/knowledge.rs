@@ -913,6 +913,7 @@ async fn broad_personal_recall_browses_scoped_pages_and_forget_revokes_grounded_
     let mut browse = moosuri_core::KnowledgeQuery {
         kind: KnowledgeKind::Memory,
         text: "".into(),
+        match_mode: None,
         collection_id: None,
         subject: None,
         speaker: None,

@@ -1812,3 +1812,24 @@ async fn source_observation_filters_decline_fixed_range_learning_and_preserve_un
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].readiness, "ready");
 }
+
+#[tokio::test]
+async fn korean_aliases_reads_decline_learning_while_legacy_literal_proofs_stay_ready() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = enabled(&store).await;
+    source(&store, &user, "휴대전화").await;
+    source(&store, &user, "전자우편").await;
+    for text in ["휴대폰", "이메일"] {
+        let mut q = query(text);
+        q.match_mode = Some(KnowledgeMatchMode::KoreanAliasesV1);
+        learned_source_example_query(&store, &user, q).await;
+    }
+    assert!(store.learned_skills(&user).await.unwrap().is_empty());
+    learned_source_example(&store, &user, "휴대전화").await;
+    learned_source_example(&store, &user, "전자우편").await;
+    let cards = store.learned_skills(&user).await.unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].readiness, "ready");
+}

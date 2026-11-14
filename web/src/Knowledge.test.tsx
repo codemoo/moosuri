@@ -1000,6 +1000,23 @@ describe("assertion editing and forgetting", () => {
 });
 
 describe("knowledge lifetime boundaries", () => {
+  it("opts into fixed Korean aliases and binds its selected mode to the returned page", async () => {
+    const user = userEvent.setup();
+    const test = fixture(call => call.path === "/knowledge/search" ? response({hits: [], next_cursor: call.body?.cursor ? null : "alias-cursor", truncated: false, generation: 1}) : undefined);
+    open(); await screen.findByRole("button", {name: /합성 원문/});
+    await user.type(screen.getByLabelText("자료 검색"), "휴대폰");
+    await user.click(screen.getByRole("button", {name: "검색"}));
+    await screen.findByRole("button", {name: "다음 검색 결과"});
+    expect(test.calls.find(c => c.path === "/knowledge/search")?.body).not.toHaveProperty("match_mode");
+    await user.click(screen.getByLabelText("한국어 별칭도 찾기"));
+    expect(screen.queryByRole("button", {name: "다음 검색 결과"})).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", {name: "검색"}));
+    await user.click(await screen.findByRole("button", {name: "다음 검색 결과"}));
+    await waitFor(() => expect(test.calls.filter(c => c.path === "/knowledge/search")).toHaveLength(3));
+    const queries = test.calls.filter(c => c.path === "/knowledge/search").map(c => c.body);
+    expect(queries[1]).toMatchObject({text: "휴대폰", match_mode: "korean_aliases_v1", cursor: null});
+    expect(queries[2]).toEqual({...queries[1], cursor: "alias-cursor"});
+  });
   it("filters source observation time separately, preserves the range for pages and rejects reversed bounds", async () => {
     const user = userEvent.setup();
     const test = fixture(call => call.path === "/knowledge/search" ? response({hits: [], next_cursor: call.body?.cursor ? null : "range-cursor", truncated: false, generation: 1}) : undefined);

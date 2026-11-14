@@ -36,6 +36,7 @@ fn query(kind: KnowledgeKind, text: &str) -> KnowledgeQuery {
     KnowledgeQuery {
         kind,
         text: text.into(),
+        match_mode: None,
         collection_id: None,
         subject: None,
         speaker: None,
@@ -1256,4 +1257,58 @@ async fn memory_browse_uses_effective_revisions_and_scoped_stable_pages() {
         store.search_knowledge(&owner, next).await,
         Err(StoreError::Conflict)
     ));
+}
+
+#[tokio::test]
+async fn korean_aliases_fixed_gold_compares_literal_and_alias_id_sets() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = admin(&store).await.user;
+    let group = group(&store, &user).await;
+    let gold: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/korean_aliases_v1.json")).unwrap();
+    let entries = gold["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| source_input(s["id"].as_str().unwrap(), s["text"].as_str().unwrap()))
+        .collect();
+    let receipt = store
+        .ingest_text(&user, group.id, batch(0, entries))
+        .await
+        .unwrap();
+    let mut ids = std::collections::BTreeMap::new();
+    for id in receipt.source_ids {
+        let source = store.source(&user, id.clone(), None).await.unwrap();
+        ids.insert(id, source.source.external_id);
+    }
+    let mut literal_hits = 0;
+    let mut alias_hits = 0;
+    for case in gold["queries"].as_array().unwrap() {
+        for (label, mode) in [
+            ("literal", None),
+            ("aliases", Some(KnowledgeMatchMode::KoreanAliasesV1)),
+        ] {
+            let mut q = query(KnowledgeKind::Source, case["text"].as_str().unwrap());
+            q.match_mode = mode;
+            let page = store.search_knowledge(&user, q).await.unwrap();
+            assert!(page.next_cursor.is_none() && !page.truncated);
+            let actual: std::collections::BTreeSet<_> =
+                page.hits.iter().map(|hit| ids[&hit.id].as_str()).collect();
+            let expected: std::collections::BTreeSet<_> = case[label]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            assert_eq!(actual, expected, "{} {label}", case["id"]);
+            if label == "literal" {
+                literal_hits += actual.len()
+            } else {
+                alias_hits += actual.len()
+            }
+        }
+    }
+    assert_eq!((literal_hits, alias_hits), (23, 44));
 }

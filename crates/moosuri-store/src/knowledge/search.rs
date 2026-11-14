@@ -1,3 +1,4 @@
+mod korean_aliases;
 use super::*;
 pub(super) fn search(
     conn: &Connection,
@@ -87,10 +88,21 @@ pub(crate) fn search_owner(
     };
     let key = tenant_key(tenant);
     let fts = normalized.chars().count() >= 3;
+    let variants = if query.match_mode == Some(KnowledgeMatchMode::KoreanAliasesV1) {
+        korean_aliases::variants(&query.text)
+    } else {
+        vec![normalized.clone()]
+    };
+    // FTS boolean union is evaluated before the single eligible-row page. IN
+    // membership emits each current id/revision once even for overlapping aliases.
     let matching = format!(
-        "tenant_key : \"{}\" AND normalized : \"{}\"",
+        "tenant_key : \"{}\" AND ({})",
         key,
-        normalized.replace('"', "\"\"")
+        variants
+            .iter()
+            .map(|text| format!("normalized : \"{}\"", text.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" OR ")
     );
     let (sql, work_truncated) = if fts {
         (

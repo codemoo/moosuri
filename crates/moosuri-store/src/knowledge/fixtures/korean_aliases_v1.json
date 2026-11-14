@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "description": "Hand-authored public retrieval gold, fixed before implementation. These explicit IDs and expected sets are not generated from the alias dictionary.",
+  "sources": [
+    {"id":"p1","text":"휴대전화"},
+    {"id":"p2","text":"휴대폰"},
+    {"id":"p3","text":"핸드폰"},
+    {"id":"ph1","text":"분실 휴대전화 보험"},
+    {"id":"ph2","text":"분실 휴대폰 보험"},
+    {"id":"ph3","text":"분실 핸드폰 보험"},
+    {"id":"e1","text":"전자우편"},
+    {"id":"e2","text":"이메일"},
+    {"id":"s1","text":"비밀번호"},
+    {"id":"s2","text":"패스워드"},
+    {"id":"n1","text":"전화기"},
+    {"id":"n2","text":"휴대폰을예약"},
+    {"id":"n3","text":"휴대폰 케이스 이메일"},
+    {"id":"n4","text":"분실 휴대폰 추가 보험"},
+    {"id":"n5","text":"휴대전화 케이스 전자우편"},
+    {"id":"n6","text":"분실 이메일 보험"},
+    {"id":"n7","text":"휴대폰 휴대폰"},
+    {"id":"n8","text":"핸드폰 휴대전화"}
+  ],
+  "queries": [
+    {"id":"phone-family","text":"휴대폰","literal":["p2","ph2","n2","n3","n4","n7"],"aliases":["p1","p2","p3","ph1","ph2","ph3","n2","n3","n4","n5","n7","n8"]},
+    {"id":"whole-normalized","text":"휴 대 폰","literal":["p2","ph2","n2","n3","n4","n7"],"aliases":["p1","p2","p3","ph1","ph2","ph3","n2","n3","n4","n5","n7","n8"]},
+    {"id":"email-family","text":"이메일","literal":["e2","n3","n6"],"aliases":["e1","e2","n3","n5","n6"]},
+    {"id":"password-family","text":"패스워드","literal":["s2"],"aliases":["s1","s2"]},
+    {"id":"phrase-middle","text":"분실 휴대폰 보험","literal":["ph2"],"aliases":["ph1","ph2","ph3"]},
+    {"id":"phrase-start","text":"휴대폰 보험","literal":["ph2"],"aliases":["ph1","ph2","ph3"]},
+    {"id":"phrase-end","text":"분실 휴대폰","literal":["ph2","n4"],"aliases":["ph1","ph2","ph3","n4"]},
+    {"id":"unknown","text":"스마트폰","literal":[],"aliases":[]},
+    {"id":"inflected","text":"휴대폰을","literal":["n2"],"aliases":["n2"]},
+    {"id":"punctuation","text":"휴대폰, 보험","literal":[],"aliases":[]},
+    {"id":"multiple-families","text":"휴대폰 케이스 이메일","literal":["n3"],"aliases":["n3"]},
+    {"id":"multiple-same-family","text":"휴대폰 휴대폰","literal":["n7"],"aliases":["n7"]}
+  ]
+}

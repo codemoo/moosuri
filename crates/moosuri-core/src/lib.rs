@@ -300,6 +300,7 @@ pub fn typescript_contract() -> String {
         MemoryDocument::decl(),
         MemoryPage::decl(),
         MemoryHistory::decl(),
+        KnowledgeMatchMode::decl(),
         KnowledgeQuery::decl(),
         KnowledgeHit::decl(),
         KnowledgeSearch::decl(),

@@ -767,6 +767,7 @@ async fn retrieved_knowledge_and_nonliteral_or_oversized_plans_cannot_authorize_
     let query = KnowledgeQuery {
         kind: KnowledgeKind::Memory,
         text: "green".into(),
+        match_mode: None,
         collection_id: None,
         subject: None,
         speaker: None,
@@ -1210,6 +1211,7 @@ async fn effective_past_revision_and_second_current_match_remain_ambiguous_witho
             KnowledgeQuery {
                 kind: KnowledgeKind::Memory,
                 text: "녹차".into(),
+                match_mode: None,
                 collection_id: None,
                 subject: None,
                 speaker: None,
@@ -1522,6 +1524,7 @@ async fn texts_at(store: &Store, user: &UserContext, at: i64) -> Vec<String> {
             KnowledgeQuery {
                 kind: KnowledgeKind::Memory,
                 text: String::new(),
+                match_mode: None,
                 collection_id: None,
                 subject: None,
                 speaker: None,

@@ -149,11 +149,25 @@ pub struct MemoryHistory {
     #[ts(type = "number | null")]
     pub next_before: Option<i64>,
 }
+/// Versioned, opt-in text matching only. Identity filters remain literal.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeMatchMode {
+    #[default]
+    Literal,
+    KoreanAliasesV1,
+}
+fn literal_or_absent(value: &Option<KnowledgeMatchMode>) -> bool {
+    value.is_none_or(|mode| mode == KnowledgeMatchMode::Literal)
+}
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct KnowledgeQuery {
     pub kind: KnowledgeKind,
     pub text: String,
+    #[serde(default, skip_serializing_if = "literal_or_absent")]
+    #[ts(optional, type = "KnowledgeMatchMode | null")]
+    pub match_mode: Option<KnowledgeMatchMode>,
     pub collection_id: Option<String>,
     pub subject: Option<String>,
     pub speaker: Option<String>,

@@ -72,6 +72,7 @@ export function KnowledgeView({
   const [busy, setBusy] = useState(false);
   const mutationLock = useRef(false);
   const [query, setQuery] = useState("");
+  const [koreanAliases, setKoreanAliases] = useState(false);
   const [speaker, setSpeaker] = useState("");
   const [subject, setSubject] = useState("");
   const [validAt, setValidAt] = useState<number | null>(null);
@@ -106,6 +107,7 @@ export function KnowledgeView({
   useEffect(() => {
     clearSearch();
     setQuery("");
+    setKoreanAliases(false);
     setSpeaker("");
     setSubject("");
     setValidAt(null);
@@ -313,6 +315,7 @@ export function KnowledgeView({
         : {
             kind: mode,
             text: query.trim(),
+            ...(koreanAliases ? {match_mode: "korean_aliases_v1" as const} : {}),
             collection_id: mode === "source" ? collectionId : null,
             subject: mode === "memory" ? subject.trim() || null : null,
             speaker: speaker.trim() || null,
@@ -802,6 +805,8 @@ export function KnowledgeView({
         </div>
         <details>
           <summary>검색 조건</summary>
+          <label><input type="checkbox" checked={koreanAliases} onChange={event => {setKoreanAliases(event.target.checked); clearSearch()}}/>한국어 별칭도 찾기</label>
+          <p>휴대전화·휴대폰·핸드폰, 전자우편·이메일, 비밀번호·패스워드만 함께 찾아요. 전체 검색어나 공백으로 나눈 한 단어가 정확히 일치할 때 적용하고, 이름·화자·주제 필터는 그대로 유지해요.</p>
           {mode === "memory" && (
             <label>
               주제 일치

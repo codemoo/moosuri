@@ -15,7 +15,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | --- | --- | --- |
 | 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/schema47부터 현재까지 stopped update/데이터 보존 제거도 구현했다. 공식 release·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
 | 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량·실제 실행 단계 시간/누락 집계, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 오래된/다른 소유 대화의 제한 검색·읽기, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경·명시적 일회/반복 읽기 미션 | 개인 Claude 공식 CLI의 설정·text probe·선택·저장 대화도 구현했다. Claude 실제 rootless Linux/공식 로그인과 media/background·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
-| 기억·자료 | 사용자별 원문/근거·기록 시각별 검색, 직접 기억·정정·망각·대화의 제한된 절대 날짜 적용, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
+| 기억·자료 | 사용자별 원문/근거·기록 시각별 검색·선택적 고정 한국어 별칭, 직접 기억·정정·망각·대화의 제한된 절대 날짜 적용, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회·일본우편 최근 요약의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 2–4단계 정확 계산과 유일한 저장 자료의 숫자를 읽는 근거 계산의 구조 학습·새 입력 재사용·합성 export도 구현했다. 일반 외부 복합 업무 학습/export·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
 | 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·로컬/Google 초안 CRUD·승인된 즉시/고정 예약 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. 인증된 자동 폼/장기 profile 복구·실제 Gmail 계정 검증은 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
 | 공식·custom 자료 연결 | 개인 Gmail/Slack 수집·custom ingest, 선택한 Codex 사용자 요청·정규화 통화 전사의 일회 수집, scope/cursor/receipt/provenance·상태 화면·철회, 일본우편 최근 상태 조회 | 합성 Linux 검증은 실제 OAuth/계정 scope/rate 검증을 대신하지 않는다. 카톡 코드는 공개 패키지에서 제외. schema48에서 시작 ACK 유실 복구를 추가했다. 통화 원본 기기/포맷·실제 전사 품질·다른 작업 세션 형식·다른 배송사/전체 이력은 남음. [연결](data-connections.md)·[검증](reviews/2026-11-13-source-connections.md) |
@@ -30,6 +30,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 한국어 별칭 검색 | 휴대전화/휴대폰/핸드폰 등 공개 세 단어군을 선택적으로 함께 검색; 문구의 나머지 순서·범위·페이지를 유지, 화면과 에이전트 도구 연결 | [사용법](korean-search-aliases.md)·[검증](reviews/2026-11-15-korean-search-aliases.md) |
 | 자료 기록 시각 검색 | 원문의 관측 시각으로 시작 포함·종료 제외 기간 검색; 기억의 유효 시각과 구분, API·도구·화면에 같은 범위 적용 | [사용법](source-time-filter.md)·[검증](reviews/2026-11-15-source-time-filter.md) |
 | 날짜를 정한 기억 | 대화에서 명시한 절대 날짜를 원래 시간대로 저장·정정, 적용 전/만료 후 현재 기억에서 제외, 재시도·재시작에도 날짜 유지 | [사용법](conversational-memory.md)·[검증](reviews/2026-11-15-dated-conversational-memory.md) |
 | Linux ARM64 개발 빌드 | 비서·독립 볼트·companion 교차 빌드, QEMU에서 실제 초기화·로그인·세션/SQLite 재시작·삭제·별도 볼트 shell 확인; 물리 ARM·공식 release는 별도 | [빌드](linux-arm64.md)·[검증](reviews/2026-11-15-linux-arm64.md) |
@@ -91,7 +92,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
 2. **P3/P4 기억·학습·업무 수행**: 초기 합성 평가와 계산/자료 조회의 typed 학습·
    두 입력 proof와 대화 기억/전이 망각/업무 취소/학습 재사용의 실제 결과 평가를 구현했다.
    명시적 날짜의 대화 기억·정정과 현재/과거 조회 및 원래 시간대 복구를 구현했다.
-   자료의 기록 시각 범위를 API·읽기 도구·검색 화면에 연결했다.
+   자료의 기록 시각 범위와 선택적 고정 한국어 별칭을 API·읽기 도구·검색 화면에 연결했다.
    넓은 시간 표현·실모델 이해력·복합 외부 절차의 독립 평가로 확장한다.
    정확 계산 그래프와 유일한 저장 원문 숫자에 묶은 계산의 합성 export는 구현했으며 일반 외부 복합 절차·전체 이력 보존/정리 정책은 남는다.
    정지한 일회성 업무의 기준 수정·기존 한도 내 재계획/검증/보완은 구현했다.

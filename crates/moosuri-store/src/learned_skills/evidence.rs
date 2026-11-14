@@ -196,6 +196,7 @@ fn resolve(
         || q.subject.is_some()
         || q.speaker.is_some()
         || q.valid_at.is_some()
+        || q.match_mode == Some(moosuri_core::KnowledgeMatchMode::KoreanAliasesV1)
         || q.observed_from.is_some()
         || q.observed_until.is_some()
         || page.hits.len() != 1

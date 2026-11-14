@@ -586,3 +586,194 @@ async fn source_observation_range_http_separates_validity_binds_pages_and_keeps_
             .all(|h| h["id"] != id)
     );
 }
+
+async fn alias_page(app: &Router, cookie: &str, query: Value) -> Value {
+    let response = send(app, "POST", "/api/v1/knowledge/search", Some(cookie), query).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    value(response).await
+}
+#[tokio::test]
+async fn korean_aliases_http_unions_before_paging_and_fences_mode_scope_time_owner_and_mutation() {
+    use uuid::Uuid;
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, app) = fixture(false).await;
+    let cookie = login(&app, "admin@example.test", PASSWORD).await;
+    let collection = create_collection(&app, &cookie).await;
+    let path = format!(
+        "/api/v1/knowledge/collections/{}/batches",
+        collection["id"].as_str().unwrap()
+    );
+    let words = ["휴대전화", "휴대폰", "핸드폰"];
+    let entries:Vec<Value>=(0..23).map(|i|json!({"external_id":format!("alias-{i}"),"version":"1","expected_revision":null,"title":format!("Alias row {i}"),"text":if i==1{"휴대전화 휴대폰 핸드폰"}else{words[i%3]},"speaker":"이메일","observed_at":199+i,"valid_from":1000,"valid_until":2000})).collect();
+    let payload = json!({"request_id":Uuid::new_v4().to_string(),"expected_cursor":0,"next_cursor":1,"complete_snapshot":false,"entries":entries});
+    assert_eq!(
+        send(&app, "POST", &path, Some(&cookie), payload)
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+    let q = json!({"kind":"source","text":"휴대폰","match_mode":"korean_aliases_v1","collection_id":null,"subject":null,"speaker":null,"valid_at":1500,"observed_from":200,"observed_until":221,"cursor":null});
+    let first = alias_page(&app, &cookie, q.clone()).await;
+    assert_eq!(first["hits"].as_array().unwrap().len(), 20);
+    let mut next = q.clone();
+    next["cursor"] = first["next_cursor"].clone();
+    assert!(next["cursor"].is_string());
+    let last = alias_page(&app, &cookie, next.clone()).await;
+    assert_eq!(last["hits"].as_array().unwrap().len(), 1);
+    let ids: std::collections::BTreeSet<_> = first["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(last["hits"].as_array().unwrap())
+        .map(|h| h["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids.len(),
+        21,
+        "overlapping aliases must not duplicate a source or skip a page"
+    );
+    let titles: std::collections::BTreeSet<_> = first["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(last["hits"].as_array().unwrap())
+        .map(|h| h["title"].as_str().unwrap())
+        .collect();
+    assert!(titles.contains("Alias row 1") && titles.contains("Alias row 21"));
+    assert!(!titles.contains("Alias row 0") && !titles.contains("Alias row 22"));
+    for (field, new) in [
+        ("match_mode", json!("literal")),
+        ("text", json!("핸드폰")),
+        ("observed_from", json!(201)),
+    ] {
+        let mut changed = next.clone();
+        changed[field] = new;
+        assert_eq!(
+            send(
+                &app,
+                "POST",
+                "/api/v1/knowledge/search",
+                Some(&cookie),
+                changed
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+    }
+    let mut invalid = q.clone();
+    invalid["match_mode"] = json!("korean_aliases_v2");
+    assert!(
+        !send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&cookie),
+            invalid
+        )
+        .await
+        .status()
+        .is_success()
+    );
+    for (field, new) in [("speaker", json!("전자우편")), ("valid_at", json!(999))] {
+        let mut excluded = q.clone();
+        excluded[field] = new;
+        assert!(
+            alias_page(&app, &cookie, excluded).await["hits"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let context = store
+        .authenticate(cookie.strip_prefix("moosuri_session=").unwrap().into())
+        .await
+        .unwrap();
+    let empty = store
+        .create_collection(&context, "Empty scope".into(), Uuid::new_v4().to_string())
+        .await
+        .unwrap();
+    let mut scoped = q.clone();
+    scoped["collection_id"] = json!(empty.id);
+    assert!(
+        alias_page(&app, &cookie, scoped).await["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let first = alias_page(&app, &cookie, q.clone()).await;
+    next["cursor"] = first["next_cursor"].clone();
+    let invitation = store
+        .create_user(
+            &context,
+            "Alias other".into(),
+            "alias-other@example.test".into(),
+        )
+        .await
+        .unwrap();
+    let other = store
+        .login(
+            "alias-other@example.test".into(),
+            invitation.temporary_password,
+        )
+        .await
+        .unwrap();
+    let other = store
+        .change_password(&other.user, PASSWORD.into())
+        .await
+        .unwrap();
+    let other_cookie = format!("moosuri_session={}", other.token);
+    assert!(
+        alias_page(&app, &other_cookie, q.clone()).await["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&other_cookie),
+            next.clone()
+        )
+        .await
+        .status()
+        .is_success()
+    );
+    let id = first["hits"][0]["id"].as_str().unwrap();
+    assert_eq!(
+        send(
+            &app,
+            "DELETE",
+            &format!("/api/v1/knowledge/sources/{id}"),
+            Some(&cookie),
+            json!({"expected_revision":1})
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/knowledge/search",
+            Some(&cookie),
+            next
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let after = alias_page(&app, &cookie, q).await;
+    assert_eq!(after["hits"].as_array().unwrap().len(), 20);
+    assert!(after["next_cursor"].is_null());
+    assert!(
+        after["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|h| h["id"] != id)
+    );
+}

@@ -192,6 +192,7 @@ fn proof(conn: &Connection, tenant: &str, account: &str, run_id: &str) -> Result
             && query.subject.is_none()
             && query.speaker.is_none()
             && query.valid_at.is_none()
+            && query.match_mode != Some(moosuri_core::KnowledgeMatchMode::KoreanAliasesV1)
             && query.observed_from.is_none()
             && query.observed_until.is_none()
             && !source.has_more
@@ -377,6 +378,7 @@ fn source_route(
     let query = KnowledgeQuery {
         kind: KnowledgeKind::Source,
         text: text.into(),
+        match_mode: None,
         collection_id: None,
         subject: None,
         speaker: None,

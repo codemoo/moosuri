@@ -257,7 +257,8 @@ evidence: Array<EvidenceRef>, };
 export type MemoryDocument = { extraction_origin?: MemoryExtractionOrigin, id: string, revision: number, status: MemoryStatus, draft: MemoryDraft, created_at: number, updated_at: number, };
 export type MemoryPage = { items: Array<MemoryDocument>, next_after: string | null, generation: number, };
 export type MemoryHistory = { items: Array<MemoryDocument>, next_before: number | null, };
-export type KnowledgeQuery = { kind: KnowledgeKind, text: string, collection_id: string | null, subject: string | null, speaker: string | null, valid_at: number | null,
+export type KnowledgeMatchMode = "literal" | "korean_aliases_v1";
+export type KnowledgeQuery = { kind: KnowledgeKind, text: string, match_mode?: KnowledgeMatchMode | null, collection_id: string | null, subject: string | null, speaker: string | null, valid_at: number | null,
 /**
  * Source observation time, inclusive. Independent from assertion validity.
  */

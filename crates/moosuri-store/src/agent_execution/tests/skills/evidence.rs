@@ -61,13 +61,19 @@ async fn prepare(
     prefix: &str,
     number: &str,
 ) -> EvidenceCalculation {
-    let (search, page) = execute(
-        s,
-        r,
-        "search",
-        KnowledgeToolInput::Search { query: query(q) },
-    )
-    .await;
+    prepare_mode(s, r, q, prefix, number, None).await
+}
+async fn prepare_mode(
+    s: &Store,
+    r: &AgentClaim,
+    q: &str,
+    prefix: &str,
+    number: &str,
+    match_mode: Option<KnowledgeMatchMode>,
+) -> EvidenceCalculation {
+    let mut query = query(q);
+    query.match_mode = match_mode;
+    let (search, page) = execute(s, r, "search", KnowledgeToolInput::Search { query }).await;
     let KnowledgeToolResult::Search(page) = page else {
         panic!("search result")
     };
@@ -464,4 +470,36 @@ async fn evidence_calculation_export_example_executes_with_many_unique_current_s
         assert!(!raw.contains(private), "{private}");
     }
     stop(&s, &fresh).await;
+}
+
+#[tokio::test]
+async fn korean_aliases_evidence_binding_declines_even_when_literal_fallback_found_one_source() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    source(&s, &u, "AliasPrice price: 2.35").await;
+    let r = start(&s, &u, "Find AliasPrice; prefix price:; quantity 4").await;
+    let calculation = prepare_mode(
+        &s,
+        &r,
+        "AliasPrice",
+        "price:",
+        "4",
+        Some(KnowledgeMatchMode::KoreanAliasesV1),
+    )
+    .await;
+    let (_, result) = execute(
+        &s,
+        &r,
+        "bound",
+        KnowledgeToolInput::EvidenceCalculate { calculation },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+    ));
+    assert!(s.learned_skills(&u).await.unwrap().is_empty());
+    stop(&s, &r).await;
 }

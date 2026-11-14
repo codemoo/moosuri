@@ -24,7 +24,7 @@ fn excerpt(text: &str, query: &str) -> String {
 }
 fn eligible_base(c: &Connection, r: &Run, id: &str) -> Result<Option<Run>> {
     let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM chat_runs p JOIN threads t ON t.tenant_id=p.tenant_id AND t.id=p.thread_id WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.id=?3 AND p.rowid<(SELECT rowid FROM chat_runs WHERE tenant_id=?1 AND id=?4) AND p.created_at<=?5 AND p.state='completed' AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=p.tenant_id AND a.run_id=p.id AND a.invalidated=1))",params![r.tenant,r.account,id,r.id,r.created],|v|v.get(0))?;
-    if !exists {
+    if !exists || crate::credential_chat::display_only_preview(c, &r.tenant, id)? {
         return Ok(None);
     }
     Ok(Some(chat::load_run(c, &r.tenant, id)?))
@@ -42,6 +42,9 @@ fn eligible(c: &Connection, r: &Run, id: &str) -> Result<Option<Run>> {
     Ok(Some(source))
 }
 fn whole(c: &Connection, r: &Run) -> Result<ConversationTurn> {
+    if crate::credential_chat::display_only_preview(c, &r.tenant, &r.id)? {
+        return Err(StoreError::NotFound);
+    }
     let output_bytes: i64 = c.query_row(
         "SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM chat_output WHERE tenant_id=?1 AND run_id=?2",
         params![r.tenant,r.id], |v| v.get(0))?;

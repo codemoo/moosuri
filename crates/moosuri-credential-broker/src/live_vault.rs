@@ -488,13 +488,36 @@ impl Engine {
         identity: crate::google::GoogleIdentity,
         expires: i64,
     ) -> Result<Binding> {
+        self.live_google_grant_for(vault, item, identity, expires, false)
+            .await
+    }
+    pub async fn live_google_preview_grant(
+        &mut self,
+        vault: &mut LiveVault,
+        item: Uuid,
+        identity: crate::google::GoogleIdentity,
+        expires: i64,
+    ) -> Result<Binding> {
+        self.live_google_grant_for(vault, item, identity, expires, true)
+            .await
+    }
+    async fn live_google_grant_for(
+        &mut self,
+        vault: &mut LiveVault,
+        item: Uuid,
+        identity: crate::google::GoogleIdentity,
+        expires: i64,
+        preview: bool,
+    ) -> Result<Binding> {
         if vault.owner != self.device().owner {
             return Err(Error::Policy);
         }
         let (id, item_epoch, key_epoch, pin) = vault.selection(item, true).await?;
         vault.state().await?;
         if let Some(at) = self.state.grants.iter().position(|g| {
-            g.google().is_some() && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
+            g.google().is_some()
+                && g.google_preview() == preview
+                && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
         }) {
             let grant = &mut self.state.grants[at];
             if grant.google() != Some(&identity)
@@ -510,7 +533,11 @@ impl Engine {
             return Ok(binding);
         }
         self.select(
-            policy::LocalGrant::select_google(
+            (if preview {
+                policy::LocalGrant::select_google_preview
+            } else {
+                policy::LocalGrant::select_google
+            })(
                 self.device().clone(),
                 item,
                 id,
@@ -585,7 +612,9 @@ impl Engine {
     ) -> Result<()> {
         if !matches!(
             request.operation,
-            Operation::GitHubRepositoryRead | Operation::GoogleInboxRead
+            Operation::GitHubRepositoryRead
+                | Operation::GoogleInboxRead
+                | Operation::GoogleInboxPreview
         ) || vault.owner != self.device().owner
         {
             return Err(Error::Policy);

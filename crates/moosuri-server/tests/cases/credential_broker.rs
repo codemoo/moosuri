@@ -10,6 +10,18 @@ async fn credential_broker_routes_are_absent_by_default() {
         send(
             &app,
             "POST",
+            "/api/v1/credential-broker/google-preview",
+            Some(&cookie),
+            json!({"request_id":uuid::Uuid::new_v4().to_string()})
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
             PAIR,
             Some(&cookie),
             json!({"public_key":vec![0;32]})
@@ -230,4 +242,65 @@ async fn google_inbox_http_jobs_are_typed_idempotent_and_separate_from_github() 
     assert_eq!(status["jobs"].as_array().unwrap().len(), 0);
     assert_eq!(status["google_jobs"].as_array().unwrap().len(), 1);
     assert!(!status.to_string().contains("other@example.test"));
+}
+
+#[cfg(feature = "credential-broker-foundation")]
+#[tokio::test]
+async fn google_preview_http_is_separate_idempotent_bounded_and_never_accepts_ids() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, _store, app) = fixture(false).await;
+    let cookie = login(&app, "admin@example.test", PASSWORD).await;
+    let id = uuid::Uuid::new_v4().to_string();
+    let path = "/api/v1/credential-broker/google-preview";
+    assert_eq!(
+        send(&app, "POST", path, None, json!({"request_id":id}))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    for _ in 0..2 {
+        let response = send(&app, "POST", path, Some(&cookie), json!({"request_id":id})).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let job = value(response).await;
+        assert_eq!(job["resource"]["google_inbox"], "preview_v1");
+        assert_eq!(job["status"], "waiting_for_credential");
+    }
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/credential-broker/google-inbox",
+            Some(&cookie),
+            json!({"request_id":id})
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            path,
+            Some(&cookie),
+            json!({"request_id":id,"message_id":"other","max_results":100,"query":"anything"})
+        )
+        .await
+        .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let status = value(
+        send(
+            &app,
+            "GET",
+            "/api/v1/credential-broker/status",
+            Some(&cookie),
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status["jobs"].as_array().unwrap().len(), 0);
+    assert_eq!(status["google_jobs"].as_array().unwrap().len(), 0);
+    assert_eq!(status["google_preview_jobs"].as_array().unwrap().len(), 1);
 }

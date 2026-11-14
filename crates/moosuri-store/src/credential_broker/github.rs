@@ -115,6 +115,31 @@ impl Store {
             ids.iter().map(|id|scoped_job(&db.conn,&u.tenant.0,id)).collect()
         }).await
     }
+    pub async fn request_google_preview(
+        &self,
+        user: &UserContext,
+        id: String,
+    ) -> Result<ScopedJob> {
+        if Uuid::parse_str(&id).is_err() {
+            return Err(StoreError::InvalidInput);
+        }
+        let user = user.clone();
+        self.call(move|db|{
+            let u=validate(&db.conn,&user,true,false)?;let resource=encode(&Resource::google_preview())?;
+            let old:Option<String>=db.conn.query_row("SELECT repository FROM credential_broker_jobs WHERE tenant_id=?1 AND request_id=?2",params![u.tenant.0,id],|r|r.get(0)).optional()?;
+            if let Some(old)=old{if old!=resource{return Err(StoreError::Conflict)}}else{
+                let n:i64=db.conn.query_row("SELECT count(*) FROM credential_broker_jobs WHERE tenant_id=?1",[&u.tenant.0],|r|r.get(0))?;if n>=1024{return Err(StoreError::Busy)}
+                db.conn.execute("INSERT INTO credential_broker_jobs(tenant_id,account_id,request_id,run_id,call_id,invocation_nonce,repository,auth_epoch,expires_at,request) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL)",params![u.tenant.0,u.account.id,id,Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),resource,u.epoch,now()?+3600])?;
+            }scoped_job(&db.conn,&u.tenant.0,&id)
+        }).await
+    }
+    pub async fn google_preview_jobs(&self, user: &UserContext) -> Result<Vec<ScopedJob>> {
+        let user = user.clone();
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;
+            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox')='preview_v1' ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            ids.iter().map(|id|scoped_job(&db.conn,&u.tenant.0,id)).collect()
+        }).await
+    }
     pub async fn broker_devices(&self, user: &UserContext) -> Result<Vec<(String, String)>> {
         let user = user.clone();
         self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;

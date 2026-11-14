@@ -35,14 +35,14 @@ fn commitment(conn: &Connection, tenant: &str, i: &Invocation) -> Result<Option<
     let s:Option<String>=conn.query_row("SELECT commitment FROM credential_broker_commitments WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,i.run.to_string(),i.step,i.call.to_string(),i.nonce.to_string()],|r|r.get(0)).optional()?;
     s.map(|s| decode(&s)).transpose()
 }
-fn projection_allowed(outcome: Outcome, p: Projection, operation: Operation) -> bool {
+fn projection_allowed(outcome: Outcome, p: &Projection, operation: Operation) -> bool {
     match (outcome, p, operation) {
         (Outcome::ProjectedSuccess, Projection::FixedProbeOk, Operation::FixedProbe) => true,
         (
             Outcome::ProjectedSuccess,
             Projection::GitHubRepository { id, .. },
             Operation::GitHubRepositoryRead,
-        ) => id > 0,
+        ) => *id > 0,
         (
             Outcome::ProjectedSuccess,
             Projection::GoogleInbox {
@@ -62,7 +62,19 @@ fn projection_allowed(outcome: Outcome, p: Projection, operation: Operation) -> 
                     threads_unread,
                 ]
                 .iter()
-                .all(|v| *v <= i32::MAX as u32)
+                .all(|v| **v <= i32::MAX as u32)
+        }
+        (
+            Outcome::ProjectedSuccess,
+            Projection::GoogleInboxPreview {
+                messages,
+                unavailable,
+                ..
+            },
+            Operation::GoogleInboxPreview,
+        ) => {
+            messages.len() + usize::from(*unavailable) <= 5
+                && messages.iter().all(GoogleMessagePreview::valid)
         }
         (Outcome::ProjectedSuccess, _, _) => false,
         (_, Projection::None, _) => true,
@@ -138,7 +150,13 @@ fn commit_current(
         commitment: Box::new(committed),
     })
 }
-fn register_google(conn: &Connection, device: &str, status: &str, binding: &Binding) -> Result<()> {
+fn register_google(
+    conn: &Connection,
+    device: &str,
+    status: &str,
+    binding: &Binding,
+    resource: &Resource,
+) -> Result<()> {
     if status != "active"
         || binding.id.is_nil()
         || binding.epoch == 0
@@ -176,7 +194,7 @@ fn register_google(conn: &Connection, device: &str, status: &str, binding: &Bind
             params![device, binding.id.to_string(), json],
         )?;
     }
-    let resource = encode(&Resource::google_inbox())?;
+    let resource = encode(resource)?;
     let old:Option<String>=conn.query_row("SELECT repository FROM credential_broker_repositories WHERE device_id=?1 AND binding_id=?2",params![device,binding.id.to_string()],|r|r.get(0)).optional()?;
     if old.is_some_and(|v| v != resource) {
         return Err(StoreError::Conflict);
@@ -318,7 +336,7 @@ impl Store {
    },
    Command::Poll=>github::poll(&tx,&p,&session,&status)?,
    Command::RegisterGoogleInbox{binding}=>{
-    active(&tx,&p,&session)?;register_google(&tx,&device,&status,&binding)?;Reply::Registered
+    active(&tx,&p,&session)?;register_google(&tx,&device,&status,&binding,&Resource::google_inbox())?;Reply::Registered
    },
    Command::RefreshGoogleInbox{expected,binding}=>{
     active(&tx,&p,&session)?;
@@ -328,6 +346,19 @@ impl Store {
     let current:Binding=decode(&saved)?;if current!=binding{if current!=expected{return Err(StoreError::Conflict)}
         tx.execute("UPDATE credential_broker_bindings SET binding=?1 WHERE device_id=?2 AND binding_id=?3 AND binding=?4",params![encode(&binding)?,device,binding.id.to_string(),saved])?;
         github::refresh_resource(&tx,&c.device,&expected,&binding,&Resource::google_inbox())?;
+    }Reply::Registered
+   },
+   Command::RegisterGooglePreview{binding}=>{
+    active(&tx,&p,&session)?;register_google(&tx,&device,&status,&binding,&Resource::google_preview())?;Reply::Registered
+   },
+   Command::RefreshGooglePreview{expected,binding}=>{
+    active(&tx,&p,&session)?;
+    if status!="active" || binding.id!=expected.id || binding.epoch!=expected.epoch.checked_add(1).ok_or(StoreError::Forbidden)? || binding.grant_version!=expected.grant_version.checked_add(1).ok_or(StoreError::Forbidden)? || binding.item_epoch<expected.item_epoch || binding.key_epoch<expected.key_epoch || binding.expires_at!=expected.expires_at || binding.expires_at<=now()? || binding.grant_hash==[0;32] || binding.grant_hash==expected.grant_hash{return Err(StoreError::Forbidden)}
+    let (saved,resource):(String,String)=tx.query_row("SELECT b.binding,r.repository FROM credential_broker_bindings b JOIN credential_broker_repositories r USING(device_id,binding_id) WHERE b.device_id=?1 AND b.binding_id=?2 AND b.active=1",params![device,binding.id.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
+    if decode::<Resource>(&resource)?!=Resource::google_preview(){return Err(StoreError::Forbidden)}
+    let current:Binding=decode(&saved)?;if current!=binding{if current!=expected{return Err(StoreError::Conflict)}
+        tx.execute("UPDATE credential_broker_bindings SET binding=?1 WHERE device_id=?2 AND binding_id=?3 AND binding=?4",params![encode(&binding)?,device,binding.id.to_string(),saved])?;
+        github::refresh_resource(&tx,&c.device,&expected,&binding,&Resource::google_preview())?;
     }Reply::Registered
    },
    Command::RegisterRepository {binding,repository}=>{
@@ -372,7 +403,7 @@ impl Store {
    Command::Settle{receipt}=>{
     let r=&receipt.receipt;let i=&r.commitment.request.invocation;
     let old=commitment(&tx,&tenant,i)?.ok_or(StoreError::NotFound)?;
-    if old!=r.commitment || old.request.device!=c.device || !projection_allowed(r.outcome,r.projection,old.request.operation) || r.projection_digest!=moosuri_credential_broker::auth::projection_digest(r.projection){return Err(StoreError::Forbidden)}
+    if old!=r.commitment || old.request.device!=c.device || !projection_allowed(r.outcome,&r.projection,old.request.operation) || r.projection_digest!=moosuri_credential_broker::auth::projection_digest(r.projection.clone()){return Err(StoreError::Forbidden)}
     check_sig(&key,Some(receipt_bytes(r)),&receipt.signature)?;
     let previous:Option<String>=tx.query_row("SELECT receipt FROM credential_broker_commitments WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,i.run.to_string(),i.step,i.call.to_string(),i.nonce.to_string()],|r|r.get(0))?;
     let json=encode(&receipt)?;if let Some(previous)=previous {if previous!=json{return Err(StoreError::Conflict)}}else{

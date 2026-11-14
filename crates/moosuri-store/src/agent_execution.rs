@@ -57,6 +57,7 @@ pub enum KnowledgeToolInput {
         invocation: moosuri_core::LearnedSkillInvocation,
     },
     CredentialGoogleInbox {},
+    CredentialGooglePreview {},
     CredentialGitHub {
         owner: String,
         repository: String,
@@ -516,7 +517,8 @@ pub(crate) fn read_tool(
                 .map(KnowledgeToolResult::ConversationTurn)
         }
         KnowledgeToolInput::CredentialGitHub { .. }
-        | KnowledgeToolInput::CredentialGoogleInbox {} => {
+        | KnowledgeToolInput::CredentialGoogleInbox {}
+        | KnowledgeToolInput::CredentialGooglePreview {} => {
             Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
         }
         KnowledgeToolInput::LearnedSkill { .. } => {

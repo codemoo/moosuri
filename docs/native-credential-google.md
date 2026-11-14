@@ -1,5 +1,8 @@
 # Trusted-native Google INBOX counts (experimental)
 
+A separately selected [bounded INBOX preview](native-google-inbox-preview.md) is also
+available. This counts grant remains limited to numeric totals and grants no preview access.
+
 The default-off `credential-broker-foundation` feature now has one additional typed operation: read the INBOX total/unread message and thread counts of the Google account explicitly selected on the trusted native device. Personal settings `/settings/credentials` starts a durable request; a direct current chat request such as “내 Gmail INBOX 개수 알려줘” uses `google_inbox_counts` only after a whole-message affirmative grammar match and completes the original waiting run from its signed numeric receipt. A valid local grant is reused automatically without per-run approval. Google login, message content/search, sending, label changes, Calendar and arbitrary HTTP remain outside this adapter.
 
 ## Local setup

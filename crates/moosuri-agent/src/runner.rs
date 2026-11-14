@@ -478,6 +478,7 @@ fn typed_input(
 ) -> KnowledgeToolInput {
     let input = match knowledge_tools::parse(call.name(), call.arguments()) {
         Invocation::CredentialGoogleInbox => KnowledgeToolInput::CredentialGoogleInbox {},
+        Invocation::CredentialGooglePreview => KnowledgeToolInput::CredentialGooglePreview {},
         Invocation::CredentialGitHub { owner, repository } => {
             KnowledgeToolInput::CredentialGitHub { owner, repository }
         }
@@ -1227,6 +1228,7 @@ pub(crate) async fn execute_with_calendar(
                 call.input,
                 KnowledgeToolInput::CredentialGitHub { .. }
                     | KnowledgeToolInput::CredentialGoogleInbox {}
+                    | KnowledgeToolInput::CredentialGooglePreview {}
             ) {
                 match store
                     .wait_for_credential_tool(&step, call.call_id.clone())

@@ -10,6 +10,10 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/api/v1/credential-broker/status", get(enabled::status))
         .route("/api/v1/credential-broker/github", post(enabled::github))
         .route(
+            "/api/v1/credential-broker/google-preview",
+            post(enabled::google_preview),
+        )
+        .route(
             "/api/v1/credential-broker/google-inbox",
             post(enabled::google_inbox),
         )
@@ -35,7 +39,7 @@ mod enabled {
     use moosuri_vault_protocol::broker::*;
     pub(super) async fn status(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
         let u = current(&s, &headers).await?;
-        Ok(Json(serde_json::json!({"devices":s.store.broker_devices(&u).await?,"jobs":s.store.github_metadata_jobs(&u).await?,"google_jobs":s.store.google_inbox_jobs(&u).await?})).into_response())
+        Ok(Json(serde_json::json!({"devices":s.store.broker_devices(&u).await?,"jobs":s.store.github_metadata_jobs(&u).await?,"google_jobs":s.store.google_inbox_jobs(&u).await?,"google_preview_jobs":s.store.google_preview_jobs(&u).await?})).into_response())
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -73,6 +77,18 @@ mod enabled {
         let u = current(&s, &headers).await?;
         Ok(Json(
             moosuri_agent::credential_broker::google_inbox(&s.store, &u, input.request_id).await?,
+        )
+        .into_response())
+    }
+    pub(super) async fn google_preview(
+        State(s): State<AppState>,
+        headers: HeaderMap,
+        Json(input): Json<GoogleInput>,
+    ) -> HttpResult {
+        let u = current(&s, &headers).await?;
+        Ok(Json(
+            moosuri_agent::credential_broker::google_preview(&s.store, &u, input.request_id)
+                .await?,
         )
         .into_response())
     }

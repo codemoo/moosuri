@@ -619,6 +619,11 @@ pub(super) fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage
     let mut omitted = false;
     for id in ids {
         let prior = load_run(conn, &run.tenant, &id)?;
+        // The owner can reopen this UI history, but device-only mail must not
+        // become assistant-role authority in a later model request.
+        if crate::credential_chat::display_only_preview(conn, &run.tenant, &id)? {
+            continue;
+        }
         let prior_id = prior.id.clone();
         let prior = turn(conn, &prior)?;
         let output = prior

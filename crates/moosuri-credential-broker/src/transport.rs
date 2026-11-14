@@ -184,13 +184,21 @@ impl Transport {
             .iter()
             .find(|g| &g.binding == binding && g.google().is_some())
             .ok_or(Error::Policy)?;
+        let preview = grant.google_preview();
         let refresh = grant.pending_refresh().cloned();
-        let command = match &refresh {
-            Some(expected) => Command::RefreshGoogleInbox {
+        let command = match (&refresh, preview) {
+            (Some(expected), true) => Command::RefreshGooglePreview {
                 expected: expected.clone(),
                 binding: binding.clone(),
             },
-            None => Command::RegisterGoogleInbox {
+            (None, true) => Command::RegisterGooglePreview {
+                binding: binding.clone(),
+            },
+            (Some(expected), false) => Command::RefreshGoogleInbox {
+                expected: expected.clone(),
+                binding: binding.clone(),
+            },
+            (None, false) => Command::RegisterGoogleInbox {
                 binding: binding.clone(),
             },
         };
@@ -231,7 +239,7 @@ impl Transport {
             .operation;
         let result = match phase {
             Phase::Committed(_) => match operation {
-                Operation::GoogleInboxRead => {
+                Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
                     engine.execute_live_google(vault, &invocation, google).await
                 }
                 Operation::GitHubRepositoryRead => {
@@ -389,7 +397,7 @@ impl Transport {
             let invocation = request.invocation.clone();
             let operation = request.operation;
             match operation {
-                Operation::GoogleInboxRead => {
+                Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
                     engine.prepare_google(archive, request, current_time()?)?
                 }
                 Operation::GitHubRepositoryRead => {
@@ -410,7 +418,7 @@ impl Transport {
             };
             engine.accept_commitment(*commitment)?;
             let receipt = match operation {
-                Operation::GoogleInboxRead => {
+                Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
                     engine.execute_google(archive, &invocation, google).await?
                 }
                 Operation::GitHubRepositoryRead => {

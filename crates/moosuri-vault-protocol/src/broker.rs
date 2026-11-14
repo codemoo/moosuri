@@ -1,4 +1,5 @@
-//! Versioned nonsecret broker metadata. No credential, provider body or arbitrary URL.
+//! Versioned credential-free broker messages. Preview text is private untrusted data.
+//! No credentials, raw provider bodies or arbitrary request URLs.
 use crate::Owner;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -43,6 +44,7 @@ pub enum Operation {
     FixedProbe,
     GitHubRepositoryRead,
     GoogleInboxRead,
+    GoogleInboxPreview,
 }
 /// Exact, canonical repository selection. Never a URL or HTTP header.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,11 +94,17 @@ pub struct GoogleInboxResource {
 #[serde(rename_all = "snake_case")]
 pub enum GoogleInboxVersion {
     CountsV1,
+    PreviewV1,
 }
 impl Resource {
     pub fn google_inbox() -> Self {
         Self::GoogleInbox(GoogleInboxResource {
             google_inbox: GoogleInboxVersion::CountsV1,
+        })
+    }
+    pub fn google_preview() -> Self {
+        Self::GoogleInbox(GoogleInboxResource {
+            google_inbox: GoogleInboxVersion::PreviewV1,
         })
     }
     pub fn valid(&self) -> bool {
@@ -108,7 +116,10 @@ impl Resource {
     pub fn operation(&self) -> Operation {
         match self {
             Self::GitHub(_) => Operation::GitHubRepositoryRead,
-            Self::GoogleInbox(_) => Operation::GoogleInboxRead,
+            Self::GoogleInbox(r) => match r.google_inbox {
+                GoogleInboxVersion::CountsV1 => Operation::GoogleInboxRead,
+                GoogleInboxVersion::PreviewV1 => Operation::GoogleInboxPreview,
+            },
         }
     }
     pub fn repository(&self) -> Option<&GitHubRepository> {
@@ -120,7 +131,10 @@ impl Resource {
     pub fn bytes(&self) -> Vec<u8> {
         match self {
             Self::GitHub(r) => r.bytes(),
-            Self::GoogleInbox(_) => b"moosuri/google-inbox-counts/v1".to_vec(),
+            Self::GoogleInbox(r) => match r.google_inbox {
+                GoogleInboxVersion::CountsV1 => b"moosuri/google-inbox-counts/v1".to_vec(),
+                GoogleInboxVersion::PreviewV1 => b"moosuri/google-inbox-preview/v1".to_vec(),
+            },
         }
     }
 }
@@ -169,8 +183,30 @@ pub enum Outcome {
     Rejected,
     ProjectedSuccess,
 }
-/// Projection is reconstructed from an allowlist; no strings from an adapter.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Only bounded untrusted mail display fields; no IDs, account, URLs or MIME.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoogleMessagePreview {
+    pub subject: String,
+    pub from: String,
+    pub date: String,
+    pub snippet: String,
+    pub truncated: bool,
+}
+impl GoogleMessagePreview {
+    pub fn valid(&self) -> bool {
+        [
+            (&self.subject, 256),
+            (&self.from, 256),
+            (&self.date, 128),
+            (&self.snippet, 512),
+        ]
+        .iter()
+        .all(|(s, max)| s.len() <= *max && !s.chars().any(char::is_control))
+    }
+}
+/// Projection is reconstructed from a typed allowlist. Preview text is untrusted data.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Projection {
     None,
@@ -181,6 +217,11 @@ pub enum Projection {
         threads_total: u32,
         threads_unread: u32,
     },
+    GoogleInboxPreview {
+        messages: Vec<GoogleMessagePreview>,
+        unavailable: u8,
+        more_available: bool,
+    },
     GitHubRepository {
         id: u64,
         private: bool,
@@ -190,9 +231,25 @@ pub enum Projection {
     },
 }
 impl Projection {
-    pub fn bytes(self) -> Vec<u8> {
+    pub fn bytes(&self) -> Vec<u8> {
         let mut b = Bytes::new(b"projection");
         match self {
+            Self::GoogleInboxPreview {
+                messages,
+                unavailable,
+                more_available,
+            } => {
+                b.0.push(4);
+                b.u(messages.len() as u64);
+                for m in messages {
+                    for s in [&m.subject, &m.from, &m.date, &m.snippet] {
+                        b.blob(s.as_bytes());
+                    }
+                    b.0.push(m.truncated as u8);
+                }
+                b.0.push(*unavailable);
+                b.0.push(*more_available as u8);
+            }
             Self::None => b.0.push(0),
             Self::FixedProbeOk => b.0.push(1),
             Self::GoogleInbox {
@@ -208,7 +265,7 @@ impl Projection {
                     threads_total,
                     threads_unread,
                 ] {
-                    b.u(value as u64);
+                    b.u(*value as u64);
                 }
             }
             Self::GitHubRepository {
@@ -219,11 +276,11 @@ impl Projection {
                 open_issues,
             } => {
                 b.0.push(2);
-                b.u(id);
-                b.0.push(private as u8);
-                b.0.push(archived as u8);
-                b.u(stars);
-                b.u(open_issues);
+                b.u(*id);
+                b.0.push(*private as u8);
+                b.0.push(*archived as u8);
+                b.u(*stars);
+                b.u(*open_issues);
             }
         }
         b.0
@@ -247,6 +304,13 @@ pub struct SignedReceipt {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Register {
+        binding: Binding,
+    },
+    RegisterGooglePreview {
+        binding: Binding,
+    },
+    RefreshGooglePreview {
+        expected: Binding,
         binding: Binding,
     },
     RegisterGoogleInbox {
@@ -357,8 +421,12 @@ impl Bytes {
         self.binding(&r.binding);
         match r.operation {
             Operation::FixedProbe => self.0.push(1),
-            Operation::GoogleInboxRead => {
-                self.0.push(3);
+            Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
+                self.0.push(if r.operation == Operation::GoogleInboxRead {
+                    3
+                } else {
+                    4
+                });
                 match &r.repository {
                     None => self.0.push(0),
                     Some(repo) => {
@@ -392,6 +460,7 @@ impl Bytes {
             Outcome::ProjectedSuccess => 3,
         });
         self.0.push(match r.projection {
+            Projection::GoogleInboxPreview { .. } => 4,
             Projection::None => 0,
             Projection::FixedProbeOk => 1,
             Projection::GoogleInbox { .. } => 3,
@@ -403,20 +472,20 @@ impl Bytes {
             archived,
             stars,
             open_issues,
-        } = r.projection
+        } = &r.projection
         {
-            self.u(id);
-            self.0.push(private as u8);
-            self.0.push(archived as u8);
-            self.u(stars);
-            self.u(open_issues);
+            self.u(*id);
+            self.0.push(*private as u8);
+            self.0.push(*archived as u8);
+            self.u(*stars);
+            self.u(*open_issues);
         }
         if let Projection::GoogleInbox {
             messages_total,
             messages_unread,
             threads_total,
             threads_unread,
-        } = r.projection
+        } = &r.projection
         {
             for value in [
                 messages_total,
@@ -424,8 +493,24 @@ impl Bytes {
                 threads_total,
                 threads_unread,
             ] {
-                self.u(value as u64);
+                self.u(*value as u64);
             }
+        }
+        if let Projection::GoogleInboxPreview {
+            messages,
+            unavailable,
+            more_available,
+        } = &r.projection
+        {
+            self.u(messages.len() as u64);
+            for m in messages {
+                for s in [&m.subject, &m.from, &m.date, &m.snippet] {
+                    self.blob(s.as_bytes());
+                }
+                self.0.push(m.truncated as u8);
+            }
+            self.0.push(*unavailable);
+            self.0.push(*more_available as u8);
         }
         self.0.extend_from_slice(&r.projection_digest);
     }
@@ -463,6 +548,15 @@ pub fn command_bytes(
     }
     let mut body = Bytes::new(b"command-body");
     match command {
+        Command::RegisterGooglePreview { binding } => {
+            body.0.push(12);
+            body.binding(binding);
+        }
+        Command::RefreshGooglePreview { expected, binding } => {
+            body.0.push(13);
+            body.binding(expected);
+            body.binding(binding);
+        }
         Command::RegisterGoogleInbox { binding } => {
             body.0.push(10);
             body.binding(binding);

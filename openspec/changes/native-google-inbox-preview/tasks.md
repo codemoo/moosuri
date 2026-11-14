@@ -1,0 +1,7 @@
+- [x] Verify official Gmail list/get/Message contract and document ordering/coverage limits.
+- [x] Implement preview-only local grant, typed projection/signatures and fixed bounded native adapter.
+- [x] Connect personal settings and current original chat with existing wait/recovery/revoke fences and literal rendering.
+- [x] Finish focused native/Store/Runtime/HTTP/settings checks and counts/signature regression.
+- [x] Repair independent R0 display-history, grant-suspension and near-cap output findings with focused outcomes.
+- [x] Freeze source and obtain independent credential-boundary review before root integration.
+- [x] Root verifies integrated public Linux scope and updates common product status.

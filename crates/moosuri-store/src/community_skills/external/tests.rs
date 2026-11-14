@@ -107,8 +107,10 @@ async fn external_preview_activation_update_rollback_and_remove_are_local_and_do
     store
         .call(move |db| {
             let mut profile = agent_execution::skills::profile();
+            let bundled = profile.skills.clone();
             admit(&db.conn, &owner, &mut profile)?;
-            assert_eq!(profile.skills.len(), 7);
+            assert_eq!(profile.skills.len(), bundled.len() + 1);
+            assert!(bundled.iter().all(|pin| profile.skills.contains(pin)));
             assert!(profile.skills.iter().any(|p| p.id == "source-briefing"));
             assert!(profile.skills.contains(&old_pin));
             assert!(
@@ -173,8 +175,9 @@ async fn external_preview_activation_update_rollback_and_remove_are_local_and_do
     store
         .call(move |db| {
             let mut profile = agent_execution::skills::profile();
+            let bundled = profile.skills.clone();
             admit(&db.conn, &owner, &mut profile)?;
-            assert_eq!(profile.skills.len(), 6);
+            assert!(profile.skills == bundled);
             assert!(profile.skills.iter().any(|p| p.id == "source-briefing"));
             Ok(())
         })

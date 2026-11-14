@@ -21,6 +21,8 @@ pub struct RunToolProfile {
     #[serde(default, skip_serializing_if = "is_false")]
     pub credential_google: bool,
     #[serde(default, skip_serializing_if = "is_false")]
+    pub credential_google_preview: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub conversation_recall: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mission_reads: Option<ConnectedMissionReads>,

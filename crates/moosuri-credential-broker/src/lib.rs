@@ -16,6 +16,8 @@ pub enum Error {
     Authentication,
     #[error("broker local policy denied")]
     Policy,
+    #[error("broker provider content is unusable for this request")]
+    ProviderContent,
     #[error("broker private state unavailable")]
     PrivateState,
     #[error("broker is already owned")]
@@ -229,22 +231,27 @@ impl Engine {
                     return Err(Error::Policy);
                 }
             }
-            Command::RegisterGoogleInbox { binding } => {
-                if self.state.revoked
-                    || !self
-                        .state
-                        .grants
-                        .iter()
-                        .any(|g| &g.binding == binding && g.google().is_some())
-                {
-                    return Err(Error::Policy);
-                }
-            }
-            Command::RefreshGoogleInbox { expected, binding } => {
+            Command::RegisterGoogleInbox { binding }
+            | Command::RegisterGooglePreview { binding } => {
                 if self.state.revoked
                     || !self.state.grants.iter().any(|g| {
                         &g.binding == binding
                             && g.google().is_some()
+                            && g.google_preview()
+                                == matches!(command, Command::RegisterGooglePreview { .. })
+                    })
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::RefreshGoogleInbox { expected, binding }
+            | Command::RefreshGooglePreview { expected, binding } => {
+                if self.state.revoked
+                    || !self.state.grants.iter().any(|g| {
+                        &g.binding == binding
+                            && g.google().is_some()
+                            && g.google_preview()
+                                == matches!(command, Command::RefreshGooglePreview { .. })
                             && g.pending_refresh() == Some(expected)
                     })
                 {

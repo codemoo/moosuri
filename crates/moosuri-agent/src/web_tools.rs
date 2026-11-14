@@ -59,6 +59,7 @@ mod tests {
         let mut profile = RunToolProfile {
             credential_github: false,
             credential_google: false,
+            credential_google_preview: false,
             conversation_recall: false,
             mission_reads: None,
             version: 4,
@@ -116,6 +117,7 @@ mod tests {
         let mut profile = RunToolProfile {
             credential_github: false,
             credential_google: false,
+            credential_google_preview: false,
             conversation_recall: false,
             mission_reads: None,
             version: 1,
@@ -150,6 +152,7 @@ mod tests {
         let mut profile = RunToolProfile {
             credential_github: false,
             credential_google: false,
+            credential_google_preview: false,
             conversation_recall: false,
             mission_reads: None,
             version: 3,
@@ -202,6 +205,7 @@ mod tests {
         let profile = RunToolProfile {
             credential_github: false,
             credential_google: false,
+            credential_google_preview: false,
             conversation_recall: false,
             mission_reads: None,
             version: 3,

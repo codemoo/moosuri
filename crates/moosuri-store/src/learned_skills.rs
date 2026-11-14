@@ -101,6 +101,9 @@ fn adopted_number(output: &str, exact: &str) -> bool {
 // first-hit source read; instruction reads do not affect the route. A successful
 // tool that is unused by the final answer cannot establish the postcondition.
 fn proof(conn: &Connection, tenant: &str, account: &str, run_id: &str) -> Result<Option<Proof>> {
+    if crate::credential_chat::display_only_preview(conn, tenant, run_id)? {
+        return Ok(None);
+    }
     let finalized: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM chat_runs r JOIN agent_execution a ON a.tenant_id=r.tenant_id AND a.run_id=r.id WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.id=?3 AND r.state='completed' AND a.invalidated=0) AND NOT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?3 AND state!='completed')", params![tenant,account,run_id], |r|r.get(0))?;
     if !finalized {
         return Ok(None);

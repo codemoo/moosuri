@@ -6,6 +6,12 @@ use moosuri_core::{CredentialChatStatus, MessagePhase, RunState};
 use moosuri_vault_protocol::broker::{
     GitHubRepository, Outcome, Projection, Resource, SignedReceipt,
 };
+const PREVIEW_OUTPUT_RESERVE: i64 = 8 * 1024;
+/// Durable display boundary, independent of current feature/profile flags. The
+/// resource recognizes R0 history; the item marker also protects newer records.
+pub(crate) fn display_only_preview(c: &Connection, tenant: &str, run: &str) -> Result<bool> {
+    Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM credential_chat_waits WHERE tenant_id=?1 AND run_id=?2 AND json_extract(repository,'$.google_inbox')='preview_v1') OR EXISTS(SELECT 1 FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item='credential-google-preview-result')",params![tenant,run],|r|r.get(0))?)
+}
 fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|_| StoreError::Corrupt)
 }
@@ -15,13 +21,25 @@ fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
 fn profile_enabled(profile: Option<&moosuri_core::RunToolProfile>, resource: &Resource) -> bool {
     profile.is_some_and(|p| match resource {
         Resource::GitHub(_) => p.credential_github,
-        Resource::GoogleInbox(_) => p.credential_google,
+        Resource::GoogleInbox(g) => match g.google_inbox {
+            moosuri_vault_protocol::broker::GoogleInboxVersion::CountsV1 => p.credential_google,
+            moosuri_vault_protocol::broker::GoogleInboxVersion::PreviewV1 => {
+                p.credential_google_preview
+            }
+        },
     })
 }
 fn resource_name(resource: &Resource) -> String {
     match resource {
         Resource::GitHub(r) => format!("{}/{}", r.owner, r.repository),
-        Resource::GoogleInbox(_) => "INBOX".into(),
+        Resource::GoogleInbox(g) => {
+            if g.google_inbox == moosuri_vault_protocol::broker::GoogleInboxVersion::PreviewV1 {
+                "INBOX preview"
+            } else {
+                "INBOX"
+            }
+            .into()
+        }
     }
 }
 fn service(resource: &Resource) -> &'static str {
@@ -35,6 +53,79 @@ fn service_label(resource: &Resource) -> &'static str {
         Resource::GitHub(_) => "GitHub",
         Resource::GoogleInbox(_) => "Gmail INBOX",
     }
+}
+fn literal_google_preview(text: &str) -> bool {
+    if text.len() > 512 || text.contains(['\n', '\r']) {
+        return false;
+    }
+    let text = text.trim().trim_end_matches(['.', '!', '?']).to_lowercase();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let english = text.strip_prefix("please ").unwrap_or(&text);
+    let english = english.strip_suffix(" please").unwrap_or(english);
+    if [
+        "show my gmail inbox preview",
+        "get my gmail inbox preview",
+        "read my gmail inbox preview",
+    ]
+    .contains(&english)
+    {
+        return true;
+    }
+    for owner in ["내 ", "나의 "] {
+        for service in ["gmail ", "지메일 "] {
+            for inbox in ["inbox ", "받은편지함 ", "받은 편지함 "] {
+                for action in [
+                    "미리보기 보여줘",
+                    "미리보기 보여 줘",
+                    "미리보기 보여주세요",
+                    "미리보기 보여 주세요",
+                    "미리보기를 보여줘",
+                    "미리보기 알려줘",
+                ] {
+                    if text == format!("{owner}{service}{inbox}{action}") {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+fn preview_summary(
+    messages: &[moosuri_vault_protocol::broker::GoogleMessagePreview],
+    unavailable: u8,
+    more: bool,
+) -> String {
+    // Fixed plain-text result. ChatPanel renders message.text as a React text
+    // child, without HTML/Markdown/link parsing; no model continuation is called.
+    let mut text = String::from(
+        "Gmail INBOX 미리보기 · 최대 5개\n표시 순서는 메일 도착 순서와 다를 수 있습니다.\n",
+    );
+    if messages.is_empty() && unavailable == 0 {
+        text.push_str("이 INBOX 목록 응답에 메시지가 없습니다.\n");
+    }
+    for (i, m) in messages.iter().enumerate() {
+        text.push_str(&format!(
+            "\n{}. 제목: {}\n보낸 사람: {}\n날짜: {}\n미리보기: {}\n",
+            i + 1,
+            m.subject,
+            m.from,
+            m.date,
+            m.snippet
+        ));
+        if m.truncated {
+            text.push_str("일부 표시 문구가 길이 제한으로 잘렸습니다.\n");
+        }
+    }
+    if unavailable > 0 {
+        text.push_str(&format!(
+            "\n목록 이후 삭제되거나 INBOX에서 이동되어 확인하지 못한 항목: {unavailable}개.\n"
+        ));
+    }
+    if more {
+        text.push_str("추가 페이지가 있지만 이 요청에서는 읽지 않았습니다.\n");
+    }
+    text
 }
 // A deliberately small whole-message command grammar. A matching topic inside
 // negation, translation, quotation or source-analysis prose grants no authority.
@@ -258,12 +349,14 @@ impl Store {
    let resource=match decode(&input)?{
     KnowledgeToolInput::CredentialGitHub{owner,repository}=>{let repo=GitHubRepository{owner,repository};if !repo.valid()||!literal_target(&run.text,&repo){return Ok(false)}Resource::GitHub(repo)},
     KnowledgeToolInput::CredentialGoogleInbox{}=>{if !literal_google(&run.text){return Ok(false)}Resource::google_inbox()},
+    KnowledgeToolInput::CredentialGooglePreview{}=>{if !literal_google_preview(&run.text){return Ok(false)}Resource::google_preview()},
     _=>return Ok(false)
    };if !profile_enabled(run.tool_profile.as_ref(),&resource){return Ok(false)}
    let (calls,used):(i64,i64)=tx.query_row("SELECT (SELECT count(*) FROM agent_tool_slots t WHERE t.tenant_id=?1 AND t.run_id=?2),tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
    if calls!=1||used!=0||has(&tx,&run.tenant,&run.id)? {return Ok(false)}
    let (bytes,items):(i64,i64)=tx.query_row("SELECT coalesce(sum(length(CAST(text AS BLOB))),0),count(*) FROM chat_output WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
-   if bytes>252*1024 || items>=127{return Ok(false)}
+   let reserve=if resource==Resource::google_preview(){PREVIEW_OUTPUT_RESERVE}else{4*1024};
+   if bytes>256*1024-reserve || items>=127{return Ok(false)}
 
    // Run/session authority is actual admission, never a caller-selected user ID.
    let user=chat::authority(&tx,&run)?;
@@ -303,7 +396,7 @@ impl Store {
     if invalid {chat::transition(&tx,&run,RunState::Cancelled,Some(RunFailure::AuthorityRevoked))?;changed+=1;continue}
     let commitment:Option<Option<String>>=tx.query_row("SELECT receipt FROM credential_broker_commitments WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,id,step,broker_call,nonce],|r|r.get(0)).optional()?;
     let resource:Resource=decode(&repo)?;
-    let (text,result,state,status)=if let Some(Some(receipt))=commitment.as_ref() {
+    let (mut text,result,mut state,status)=if let Some(Some(receipt))=commitment.as_ref() {
      let receipt:SignedReceipt=decode(receipt)?;let r=&receipt.receipt;let request=&r.commitment.request;
      let key:Vec<u8>=tx.query_row("SELECT public_key FROM credential_broker_devices WHERE id=?1 AND account_id=?2 AND tenant_id=?3",params![request.device.id.to_string(),run.account,tenant],|row|row.get(0))?;
      moosuri_credential_broker::auth::verify(&key,&moosuri_vault_protocol::broker::receipt_bytes(r),&receipt.signature).map_err(|_|StoreError::Unauthorized)?;
@@ -312,9 +405,10 @@ impl Store {
      if original!=*request{return Err(StoreError::Corrupt)}
 
      if request.operation!=resource.operation()||request.repository.as_ref()!=resource.repository()||request.device.owner.account.to_string()!=run.account||request.device.owner.tenant.to_string()!=tenant||request.device.owner.epoch!=run.epoch||request.invocation.run.to_string()!=id||request.invocation.step as i64!=step||request.invocation.call.to_string()!=broker_call||request.invocation.nonce.to_string()!=nonce {return Err(StoreError::Corrupt)}
-     let (text,state,status)=match (&resource,r.outcome,r.projection) {
+     let (text,state,status)=match (&resource,r.outcome,&r.projection) {
       (Resource::GitHub(repo),Outcome::ProjectedSuccess,Projection::GitHubRepository{id:repository_id,private,archived,stars,open_issues})=>(format!("GitHub {}/{}\nRepository ID: {}\nPrivate: {} · Archived: {}\nStars: {} · Open issues: {}\n신뢰 기기의 인증된 메타데이터 읽기 영수증으로 확인했습니다.",repo.owner,repo.repository,repository_id,private,archived,stars,open_issues),RunState::Completed,"complete"),
       (Resource::GoogleInbox(_),Outcome::ProjectedSuccess,Projection::GoogleInbox{messages_total,messages_unread,threads_total,threads_unread})=>(format!("Gmail INBOX\n메시지 전체: {messages_total} · 읽지 않음: {messages_unread}\n스레드 전체: {threads_total} · 읽지 않음: {threads_unread}\n신뢰 기기에서 계정과 실제 권한을 확인한 인증된 읽기 영수증입니다."),RunState::Completed,"complete"),
+      (Resource::GoogleInbox(g),Outcome::ProjectedSuccess,Projection::GoogleInboxPreview{messages,unavailable,more_available}) if g.google_inbox==moosuri_vault_protocol::broker::GoogleInboxVersion::PreviewV1 => (preview_summary(messages,*unavailable,*more_available),RunState::Completed,"complete"),
       (_,Outcome::ProjectedSuccess,_)=>return Err(StoreError::Corrupt),
       (_,Outcome::Unknown,_) =>(format!("{} 읽기 결과가 미확정입니다. 원래 요청의 영수증만 확인하며 다시 실행하지 않습니다.",service_label(&resource)),RunState::OutcomeUnknown,"outcome_unknown"),
       (_,Outcome::Rejected,_) =>("기기 credential이 거절되었습니다. 신뢰 기기 연결에서 credential을 갱신한 뒤 새로 요청하세요. 이 요청을 재전송하지 않았습니다.".into(),RunState::Incomplete,"credential_rejected"),
@@ -326,11 +420,21 @@ impl Store {
     }else if expires<=now()? {
      (format!("{} credential 대기 시간이 만료되었습니다. 원래 요청을 실행하지 않았으며 다시 보내지 않습니다.",service_label(&resource)),KnowledgeToolResult::Error(agent_execution::ToolReadError::Unavailable),RunState::Incomplete,"expired")
     }else{continue};
+    if resource==Resource::google_preview() {
+        let used:i64=tx.query_row("SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM chat_output WHERE tenant_id=?1 AND run_id=?2",params![tenant,id],|r|r.get(0))?;
+        let remaining=(256*1024_i64-used).max(0) as usize;
+        // Also retire a retained R0 wait that reserved only4KiB. The complete
+        // signed projection remains owner-visible in personal settings.
+        if text.len()>remaining {
+            text="Gmail INBOX 미리보기 영수증을 받았습니다. 대화 출력 한도로 메일 내용을 표시하지 못했습니다. 개인 설정에서 원래 미리보기 요청의 결과를 확인하세요.".into();
+            if text.len()>remaining {text.clear();state=RunState::Incomplete;}
+        }
+    }
     let old:Option<String>=tx.query_row("SELECT result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![tenant,id,step,call],|r|r.get(0)).optional()?.ok_or(StoreError::Corrupt)?;
     if old.is_some(){return Err(StoreError::Corrupt)}
     tx.execute("UPDATE agent_tool_slots SET result=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![tenant,id,step,call,encode(&result)?])?;
     tx.execute("UPDATE credential_chat_waits SET status='settled' WHERE tenant_id=?1 AND run_id=?2",params![tenant,id])?;
-    chat::apply_patches(&tx,&run,vec![OutputPatch::Append{item:if matches!(resource,Resource::GoogleInbox(_)){"credential-google-result".into()}else{"credential-github-result".into()},text,phase:Some(MessagePhase::FinalAnswer),refusal:false}])?;
+    if !text.is_empty(){chat::apply_patches(&tx,&run,vec![OutputPatch::Append{item:if resource==Resource::google_preview(){"credential-google-preview-result".into()}else if matches!(resource,Resource::GoogleInbox(_)){"credential-google-result".into()}else{"credential-github-result".into()},text,phase:Some(MessagePhase::FinalAnswer),refusal:false}])?;}
     chat::transition(&tx,&run,state,if state==RunState::OutcomeUnknown{Some(RunFailure::ConnectionFailed)}else{None})?;
     let _=status;changed+=1;
    }
@@ -404,6 +508,46 @@ mod session_tests {
     use moosuri_vault_protocol::broker::{
         Binding, Command, Commitment, Device, Invocation, PairProof, Receipt, Reply, SignedCommand,
     };
+    async fn configured(s: &Store) -> UserContext {
+        let b = admin(s).await.user;
+        let provider = s
+            .create_provider(
+                &b,
+                ProviderChange {
+                    name: "Synthetic".into(),
+                    enabled: true,
+                    config: ProviderConfig {
+                        kind: ProviderKind::Compatible,
+                        base_url: Some("http://127.0.0.1:11434/v1".into()),
+                        allowed_ips: vec!["127.0.0.1".into()],
+                        router_providers: vec![],
+                        zero_data_retention: false,
+                    },
+                    credential: CredentialChange::Clear,
+                },
+            )
+            .await
+            .unwrap();
+        s.record_model_probe(&b, provider.id.clone(), 1, "synthetic".into(), None)
+            .await
+            .unwrap();
+        s.record_tool_probe(&b, provider.id.clone(), 1, "synthetic".into(), None)
+            .await
+            .unwrap();
+        s.set_default_model(
+            &b,
+            Some(ModelSelection {
+                source: Default::default(),
+                provider_id: provider.id,
+                provider_revision: 1,
+                model: "synthetic".into(),
+                effort: None,
+            }),
+        )
+        .await
+        .unwrap();
+        b
+    }
     async fn command(s: &Store, d: &Device, k: &SigningKey, command: Command) -> Result<Reply> {
         let challenge = s.broker_auth_challenge(d.id).await?;
         s.broker_command(SignedCommand {
@@ -487,43 +631,7 @@ mod session_tests {
         let _serial = TEST_LOCK.lock().await;
         let dir = directory();
         let s = Store::open(dir.path()).unwrap();
-        let b = admin(&s).await.user;
-        let provider = s
-            .create_provider(
-                &b,
-                ProviderChange {
-                    name: "Synthetic".into(),
-                    enabled: true,
-                    config: ProviderConfig {
-                        kind: ProviderKind::Compatible,
-                        base_url: Some("http://127.0.0.1:11434/v1".into()),
-                        allowed_ips: vec!["127.0.0.1".into()],
-                        router_providers: vec![],
-                        zero_data_retention: false,
-                    },
-                    credential: CredentialChange::Clear,
-                },
-            )
-            .await
-            .unwrap();
-        s.record_model_probe(&b, provider.id.clone(), 1, "synthetic".into(), None)
-            .await
-            .unwrap();
-        s.record_tool_probe(&b, provider.id.clone(), 1, "synthetic".into(), None)
-            .await
-            .unwrap();
-        s.set_default_model(
-            &b,
-            Some(ModelSelection {
-                source: Default::default(),
-                provider_id: provider.id,
-                provider_revision: 1,
-                model: "synthetic".into(),
-                effort: None,
-            }),
-        )
-        .await
-        .unwrap();
+        let b = configured(&s).await;
         let key = SigningKey::from_pkcs8(&SigningKey::generate_pkcs8().unwrap()).unwrap();
         let pair = s
             .broker_pair_challenge(
@@ -722,5 +830,246 @@ mod session_tests {
             .unwrap(),
             Reply::Commitment { .. }
         ));
+    }
+    #[tokio::test]
+    async fn preview_output_reserve_and_retained_near_cap_wait_settle_without_rollback() {
+        let _serial = TEST_LOCK.lock().await;
+        let dir = directory();
+        let mut s = Store::open(dir.path()).unwrap();
+        let user = configured(&s).await;
+        let key = SigningKey::from_pkcs8(&SigningKey::generate_pkcs8().unwrap()).unwrap();
+        let pair = s
+            .broker_pair_challenge(
+                &user,
+                "https://assistant.example.test".into(),
+                key.public_key(),
+            )
+            .await
+            .unwrap();
+        let device = s
+            .broker_pair(PairProof {
+                challenge: pair.nonce,
+                signature: key.sign(&moosuri_vault_protocol::broker::pairing_bytes(&pair).unwrap()),
+            })
+            .await
+            .unwrap();
+        let grant = LocalGrant::select_google_preview(
+            device.clone(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            moosuri_credential_broker::google::GoogleIdentity {
+                subject: "synthetic-subject".into(),
+                email: "synthetic@example.test".into(),
+            },
+            1,
+            1,
+            now().unwrap() + 600,
+        )
+        .unwrap();
+        command(
+            &s,
+            &device,
+            &key,
+            Command::RegisterGooglePreview {
+                binding: grant.binding,
+            },
+        )
+        .await
+        .unwrap();
+        let messages = (0..5)
+            .map(|_| moosuri_vault_protocol::broker::GoogleMessagePreview {
+                subject: "S".repeat(256),
+                from: "F".repeat(256),
+                date: "D".repeat(128),
+                snippet: "N".repeat(512),
+                truncated: true,
+            })
+            .collect::<Vec<_>>();
+        let rendered = preview_summary(&messages, 0, true);
+        assert!(rendered.len() > 4096 && rendered.len() <= PREVIEW_OUTPUT_RESERVE as usize);
+        for (bytes, legacy, admitted) in [
+            (248 * 1024, false, true),
+            (252 * 1024, false, false),
+            (252 * 1024, true, true),
+        ] {
+            let thread = s.create_thread(&user, "near cap".into()).await.unwrap();
+            let turn = s
+                .submit_turn(
+                    &user,
+                    thread.id.clone(),
+                    Uuid::new_v4().to_string(),
+                    "내 Gmail 받은편지함 미리보기 보여줘".into(),
+                )
+                .await
+                .unwrap();
+            let claim = s.claim_agent_run().await.unwrap().unwrap();
+            assert_eq!(claim.lease.run_id(), turn.run.id);
+            let step = s
+                .begin_agent_step(&claim.lease, claim.context.checkpoint_seq)
+                .await
+                .unwrap();
+            let initial = if legacy { 1 } else { bytes };
+            let mut remaining = initial;
+            let mut patches = Vec::new();
+            while remaining > 0 {
+                let n = remaining.min(8192);
+                patches.push(OutputPatch::Append {
+                    item: "padding".into(),
+                    text: "x".repeat(n),
+                    phase: Some(MessagePhase::Commentary),
+                    refusal: false,
+                });
+                remaining -= n;
+            }
+            s.append_agent_output(&step, patches).await.unwrap();
+            s.commit_agent_step(
+                &step,
+                PrivateCheckpoint {
+                    bytes: b"{}".to_vec(),
+                },
+                vec![PendingKnowledgeCall {
+                    call_id: "preview-call".into(),
+                    input: KnowledgeToolInput::CredentialGooglePreview {},
+                }],
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                s.wait_for_credential_tool(&step, "preview-call".into())
+                    .await
+                    .unwrap(),
+                admitted
+            );
+            if !admitted {
+                s.cancel_run(&user, turn.run.id, 1).await.unwrap();
+                continue;
+            }
+            if legacy {
+                let tenant = user.tenant.0.clone();
+                let run = turn.run.id.clone();
+                s.call(move|db|{db.conn.execute("UPDATE chat_output SET text=?3 WHERE tenant_id=?1 AND run_id=?2 AND item='padding'",params![tenant,run,"x".repeat(bytes)])?;Ok(())}).await.unwrap();
+                drop(s);
+                s = Store::open(dir.path()).unwrap();
+            }
+            let Reply::Waiting { requests, .. } =
+                command(&s, &device, &key, Command::Poll).await.unwrap()
+            else {
+                panic!("waiting")
+            };
+            let request = requests
+                .into_iter()
+                .find(|r| r.invocation.run.to_string() == turn.run.id)
+                .unwrap();
+            let Reply::Commitment { commitment } = command(
+                &s,
+                &device,
+                &key,
+                Command::CommitCurrent {
+                    invocation: request.invocation.clone(),
+                    request_digest: moosuri_credential_broker::auth::hash(
+                        &moosuri_vault_protocol::broker::request_bytes(&request),
+                    ),
+                },
+            )
+            .await
+            .unwrap() else {
+                panic!("commit")
+            };
+            let projection = Projection::GoogleInboxPreview {
+                messages: messages.clone(),
+                unavailable: 0,
+                more_available: true,
+            };
+            let receipt = Receipt {
+                commitment: *commitment,
+                outcome: Outcome::ProjectedSuccess,
+                projection: projection.clone(),
+                projection_digest: projection_digest(projection),
+            };
+            let signed = SignedReceipt {
+                signature: key.sign(&moosuri_vault_protocol::broker::receipt_bytes(&receipt)),
+                receipt,
+            };
+            command(
+                &s,
+                &device,
+                &key,
+                Command::Settle {
+                    receipt: Box::new(signed),
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(s.settle_credential_chats().await.unwrap(), 1);
+            assert_eq!(s.settle_credential_chats().await.unwrap(), 0);
+            let history = s.conversation(&user, thread.id, None).await.unwrap();
+            let done = history
+                .turns
+                .iter()
+                .find(|t| t.run.id == turn.run.id)
+                .unwrap();
+            assert_eq!(done.run.state, RunState::Completed);
+            assert!(done.assistant.iter().map(|m| m.text.len()).sum::<usize>() <= 256 * 1024);
+            let text = done
+                .assistant
+                .iter()
+                .map(|m| m.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if legacy {
+                assert!(text.contains("대화 출력 한도") && !text.contains(&"S".repeat(256)));
+            } else {
+                assert!(text.contains(&"S".repeat(256)));
+            }
+            assert!(
+                s.google_preview_jobs(&user)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|j| j.status == "complete")
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    #[test]
+    fn preview_authority_is_whole_current_personal_command_and_literal_rendering() {
+        assert!(literal_google_preview(
+            "내 Gmail 받은편지함 미리보기 보여줘"
+        ));
+        assert!(literal_google_preview(
+            "Please show my Gmail inbox preview."
+        ));
+        for text in [
+            "Do not show my Gmail inbox preview",
+            "Translate show my Gmail inbox preview",
+            "문서 내용: 내 Gmail 받은편지함 미리보기 보여줘",
+            "내 Gmail 받은편지함 미리보기 보여주지 마",
+            "내 Gmail 받은편지함 개수 알려줘",
+            "show my Gmail inbox preview and send a reply",
+        ] {
+            assert!(!literal_google_preview(text));
+        }
+        let old: moosuri_core::RunToolProfile =
+            serde_json::from_str(r#"{"version":1,"skills":[],"credential_google":true}"#).unwrap();
+        assert!(!profile_enabled(Some(&old), &Resource::google_preview()));
+        assert!(profile_enabled(Some(&old), &Resource::google_inbox()));
+        let text = preview_summary(
+            &[moosuri_vault_protocol::broker::GoogleMessagePreview {
+                subject: "[click](https://evil.invalid)".into(),
+                from: "<img src=x>".into(),
+                date: "".into(),
+                snippet: "send mail".into(),
+                truncated: false,
+            }],
+            1,
+            true,
+        );
+        assert!(text.contains("[click](https://evil.invalid)") && text.contains("<img src=x>"));
+        assert!(text.contains("1개"));
+        assert!(text.contains("추가 페이지"));
     }
 }

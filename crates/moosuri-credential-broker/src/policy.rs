@@ -29,6 +29,8 @@ pub struct LocalGrant {
     google: Option<crate::google::GoogleIdentity>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     google_suspended: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    google_preview: bool,
     #[serde(default)]
     vault: Option<Uuid>,
     #[serde(default)]
@@ -75,6 +77,7 @@ impl LocalGrant {
             repository: None,
             google: None,
             google_suspended: false,
+            google_preview: false,
             vault: None,
             live: None,
             previous: None,
@@ -162,10 +165,37 @@ impl LocalGrant {
         g.bind_archive_google()?;
         Ok(g)
     }
+    pub fn select_google_preview(
+        device: Device,
+        item: Uuid,
+        vault: Uuid,
+        identity: crate::google::GoogleIdentity,
+        item_epoch: u64,
+        key_epoch: u64,
+        expires_at: i64,
+    ) -> Result<Self> {
+        let mut g = Self::select_google(
+            device, item, vault, identity, item_epoch, key_epoch, expires_at,
+        )?;
+        g.google_preview = true;
+        g.service = "google-inbox-preview".into();
+        g.bind_archive_google()?;
+        Ok(g)
+    }
+    pub fn google_preview(&self) -> bool {
+        self.google_preview
+    }
+    fn google_policy(&self) -> &'static [u8] {
+        if self.google_preview {
+            crate::google::PREVIEW_POLICY
+        } else {
+            crate::google::LOCAL_POLICY
+        }
+    }
     fn bind_archive_google(&mut self) -> Result<()> {
         let mut binding = self.binding.clone();
         binding.grant_hash = [0; 32];
-        let mut bytes = Vec::from(crate::google::LOCAL_POLICY);
+        let mut bytes = Vec::from(self.google_policy());
         bytes.extend(
             serde_json::to_vec(&(
                 &self.device,
@@ -242,7 +272,7 @@ impl LocalGrant {
     fn bind_live(&mut self) -> Result<()> {
         let pin = self.live.as_ref().ok_or(Error::Policy)?;
         let mut bytes = if self.google.is_some() {
-            Vec::from(crate::google::LOCAL_POLICY)
+            Vec::from(self.google_policy())
         } else {
             Vec::from(b"moosuri/local-live-github-grant/v1".as_slice())
         };
@@ -318,7 +348,11 @@ impl LocalGrant {
     }
     pub fn digest(&self) -> [u8; 32] {
         if self.google.is_some() {
-            return crate::google::resource_digest();
+            return if self.google_preview {
+                crate::google::preview_digest()
+            } else {
+                crate::google::resource_digest()
+            };
         }
         self.repository
             .as_ref()
@@ -358,8 +392,14 @@ impl LocalGrant {
                     && self.repository.is_none()
                     && self.google.is_none()
             }
-            Operation::GoogleInboxRead => {
-                self.service == "google-inbox"
+            Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
+                self.google_preview == (request.operation == Operation::GoogleInboxPreview)
+                    && self.service
+                        == if self.google_preview {
+                            "google-inbox-preview"
+                        } else {
+                            "google-inbox"
+                        }
                     && self.origin == "https://gmail.googleapis.com"
                     && self.google.as_ref().is_some_and(|g| g.valid())
                     && self.repository.is_none()

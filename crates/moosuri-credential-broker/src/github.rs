@@ -246,7 +246,7 @@ impl Engine {
         let receipt = Receipt {
             commitment,
             outcome,
-            projection,
+            projection: projection.clone(),
             projection_digest: auth::projection_digest(projection),
         };
         let signed = SignedReceipt {

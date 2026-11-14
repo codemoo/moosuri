@@ -400,7 +400,7 @@ fn fixed_probe_adapter(
         } else {
             Outcome::Rejected
         },
-        projection,
+        projection: projection.clone(),
         projection_digest: auth::projection_digest(projection),
     };
     let signed = SignedReceipt {

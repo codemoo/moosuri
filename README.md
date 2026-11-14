@@ -15,8 +15,11 @@ read one exact GitHub repository with a selected credential. Live mode rechecks 
 current selected item before use and resumes after transient connection loss. An explicit exact-repository chat request can wait for the
 same signed result and finish in its original conversation without another model call.
 The [Google companion adapter](docs/native-credential-google.md) can also read the
-selected account's Gmail INBOX total/unread counts. OAuth refresh and account/scope
-verification stay on the device; only four numeric counts return to the assistant.
+selected account's Gmail INBOX total/unread counts. A separately selected
+[INBOX preview](docs/native-google-inbox-preview.md) shows up to five literal
+subject/from/date/snippet summaries in settings or the original chat. OAuth refresh
+and account/scope verification stay on the device. Preview mail remains outside
+later model history, conversation recall and learned recipes.
 Its routes remain default-off; general credential tools and signed companion
 distribution remain unfinished.
 An explicit [legacy v1 encrypted-file import](docs/vault-v1-migration.md) locally

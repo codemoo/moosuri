@@ -19,3 +19,11 @@ pub async fn google_inbox(
 ) -> Result<moosuri_store::credential_broker::github::ScopedJob, StoreError> {
     store.request_google_inbox(user, request_id).await
 }
+
+pub async fn google_preview(
+    store: &moosuri_store::Store,
+    user: &moosuri_store::UserContext,
+    request_id: String,
+) -> Result<moosuri_store::credential_broker::github::ScopedJob, StoreError> {
+    store.request_google_preview(user, request_id).await
+}

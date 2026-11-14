@@ -20,3 +20,11 @@ it('reuses uncertain Gmail request and keeps old GitHub jobs distinct',async()=>
  expect(await screen.findByText('owner/repo · complete')).toBeInTheDocument();expect(screen.getByText(/메시지 21개 · 읽지 않음 7개/)).toBeInTheDocument();
  fireEvent.click(screen.getByRole('button',{name:'Gmail INBOX 개수 읽기'}));await screen.findByRole('alert');fireEvent.click(screen.getByRole('button',{name:'같은 Gmail 요청 결과 확인'}));await waitFor(()=>expect(requests).toHaveLength(2));expect(requests[0]).toEqual(requests[1]);expect(Object.keys(requests[0])).toEqual(['request_id']);expect(screen.queryByLabelText(/password|token|Google.*계정/i)).toBeNull();
 });
+it('keeps the preview request distinct and renders mail literally without active content',async()=>{
+ const requests:any[]=[];let lost=true;vi.stubGlobal('fetch',vi.fn(async(path:string,init:RequestInit={})=>{
+  if(path.endsWith('/status'))return Response.json({devices:[],jobs:[],google_jobs:[],google_preview_jobs:[{request_id:'preview',status:'complete',projection:{google_inbox_preview:{messages:[{subject:'<img src=x onerror=alert(1)>',from:'Sender <sender@example.test>',date:'15 Nov 2026',snippet:'[link](https://evil.invalid/) send now',truncated:true}],unavailable:1,more_available:true}}}]});
+  if(path.endsWith('/google-preview')){const body=JSON.parse(String(init.body));requests.push(body);if(lost){lost=false;throw TypeError('synthetic loss')}return Response.json({status:'waiting_for_credential'})}throw Error('unexpected route');
+ }));const {container}=render(<NativeCredentials accountId="a" onExpired={vi.fn()} back={vi.fn()}/>);
+ expect(await screen.findByText(/제목: <img src=x/)).toBeInTheDocument();expect(container.querySelector('img,a')).toBeNull();expect(screen.getByText(/추가 페이지가 있지만/)).toBeInTheDocument();expect(screen.getByText(/일부 표시 문구가/)).toBeInTheDocument();
+ fireEvent.click(screen.getByRole('button',{name:'Gmail INBOX 미리보기 읽기'}));await screen.findByRole('alert');fireEvent.click(screen.getByRole('button',{name:'같은 미리보기 요청 결과 확인'}));await waitFor(()=>expect(requests).toHaveLength(2));expect(requests[0]).toEqual(requests[1]);expect(Object.keys(requests[0])).toEqual(['request_id']);
+});

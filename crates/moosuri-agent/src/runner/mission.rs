@@ -395,6 +395,7 @@ mod tests {
         let profile = moosuri_core::RunToolProfile {
             credential_github: false,
             credential_google: false,
+            credential_google_preview: false,
             conversation_recall: false,
             mission_reads: None,
             version: 1,

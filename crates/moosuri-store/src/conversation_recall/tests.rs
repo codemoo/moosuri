@@ -316,3 +316,106 @@ async fn bounded_candidates_skip_oversized_turns_without_adopting_undelivered_hi
     let id = run.run.id;
     s.call(move|db|{let c=&db.conn;let r=chat::load_run(c,&tenant,&id)?;let page=search(c,&r,"bounded-needle",ConversationScope::CurrentThread)?;assert_eq!(page.hits.len(),5);assert!(page.truncated&&!page.scanned_limit);assert!(page.hits.iter().all(|h|!h.user_excerpt.contains("oversized")));let count:i64=c.query_row("SELECT count(*) FROM conversation_recall_dependencies WHERE tenant_id=?1 AND run_id=?2",params![tenant,id],|v|v.get(0))?;assert_eq!(count,5);assert!(serde_json::to_vec(&crate::KnowledgeToolResult::ConversationSearch(page)).unwrap().len()<crate::agent_execution::TOOL_RESULT_LIMIT);assert!(matches!(search(c,&r,"\n",ConversationScope::CurrentThread),Err(StoreError::InvalidInput)));Ok(())}).await.unwrap();
 }
+
+#[tokio::test]
+async fn display_only_preview_stays_in_owner_history_but_not_model_context_or_recall_after_reopen()
+{
+    // Unconditional test: this boundary also runs with credential feature OFF.
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = configured(&s).await;
+    let thread = s
+        .create_thread(&u, "device-only history".into())
+        .await
+        .unwrap();
+    let old = completed(
+        &s,
+        &u,
+        &thread.id,
+        "내 Gmail 받은편지함 미리보기 보여줘",
+        "PRIVATE_PREVIEW_DISPLAY_ONLY_19 old mail",
+    )
+    .await;
+    let newer = completed(
+        &s,
+        &u,
+        &thread.id,
+        "Please show my Gmail inbox preview",
+        "PRIVATE_PREVIEW_DISPLAY_ONLY_19 new mail",
+    )
+    .await;
+    completed(
+        &s,
+        &u,
+        &thread.id,
+        "Gmail counts request",
+        "Counts remain model-visible: 21",
+    )
+    .await;
+    let tenant = u.tenant.0.clone();
+    let account = u.account.id.clone();
+    let epoch = u.epoch;
+    let old_id = old.run.id.clone();
+    let new_id = newer.run.id.clone();
+    s.call(move|db|{
+        let c=&db.conn;let request=Uuid::new_v4().to_string();let resource=r#"{"google_inbox":"preview_v1"}"#;
+        c.execute("UPDATE chat_output SET item='credential-google-result' WHERE tenant_id=?1 AND run_id=?2",params![tenant,old_id])?;
+        c.execute("INSERT INTO credential_broker_jobs(tenant_id,account_id,request_id,run_id,call_id,invocation_nonce,repository,auth_epoch,expires_at,request) VALUES(?1,?2,?3,?4,'call','nonce',?5,?6,unixepoch()+300,NULL)",params![tenant,account,request,old_id,resource,epoch])?;
+        c.execute("INSERT INTO credential_chat_waits VALUES(?1,?2,1,1,'call','call','nonce',?3,?4,'settled',unixepoch()+300)",params![tenant,old_id,request,resource])?;
+        c.execute("UPDATE chat_output SET item='credential-google-preview-result' WHERE tenant_id=?1 AND run_id=?2",params![tenant,new_id])?;
+        Ok(())
+    }).await.unwrap();
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    assert!(
+        serde_json::to_string(&s.conversation(&u, thread.id.clone(), None).await.unwrap())
+            .unwrap()
+            .contains("PRIVATE_PREVIEW_DISPLAY_ONLY_19")
+    );
+    let current = queued(&s, &u, &thread.id, "current clean request").await;
+    let tenant = u.tenant.0.clone();
+    let current_id = current.run.id;
+    let old_id = old.run.id;
+    s.call(move |db| {
+        let c = &db.conn;
+        let mut run = chat::load_run(c, &tenant, &current_id)?;
+        let profile = run.tool_profile.as_mut().unwrap();
+        profile.credential_google = false;
+        profile.credential_google_preview = false;
+        let context = chat::context(c, &run)?;
+        let text = context
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!text.contains("PRIVATE_PREVIEW_DISPLAY_ONLY_19"));
+        assert!(text.contains("Counts remain model-visible"));
+        assert!(
+            search(
+                c,
+                &run,
+                "PRIVATE_PREVIEW_DISPLAY_ONLY_19",
+                ConversationScope::OwnedConversations
+            )?
+            .hits
+            .is_empty()
+        );
+        let page = search(c, &run, "Gmail", ConversationScope::OwnedConversations)?;
+        assert_eq!(page.hits.len(), 1);
+        let source = chat::load_run(c, &tenant, &old_id)?;
+        assert!(matches!(whole(c, &source), Err(StoreError::NotFound)));
+        // Even a previously retained discovery pin cannot disclose this content.
+        c.execute(
+            "INSERT INTO conversation_recall_dependencies VALUES(?1,?2,?3,?4,1)",
+            params![tenant, current_id, old_id, source.version],
+        )?;
+        assert!(matches!(
+            read(c, &run, &old_id, source.version),
+            Err(StoreError::NotFound)
+        ));
+        Ok(())
+    })
+    .await
+    .unwrap();
+}

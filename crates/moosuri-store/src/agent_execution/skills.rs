@@ -11,6 +11,12 @@ fn pin(skill: &moosuri_core::BundledSkill) -> SkillPin {
     }
 }
 
+pub(crate) fn current_skill(profile: Option<&RunToolProfile>, id: &str) -> bool {
+    BUNDLED_SKILLS
+        .iter()
+        .find(|s| s.id == id)
+        .is_some_and(|s| profile.is_some_and(|p| p.skills.contains(&pin(s))))
+}
 pub(crate) fn profile() -> RunToolProfile {
     RunToolProfile {
         credential_github: false,

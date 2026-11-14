@@ -29,6 +29,8 @@ pub struct WebConfig {
 /// No credential/session sharing with model connections or personal browsers.
 pub struct WebClient {
     brave_api_key: Option<Zeroizing<String>>,
+    #[cfg(feature = "test-fixtures")]
+    parcel_test_endpoint: Option<Url>,
     #[cfg(test)]
     test_endpoint: Option<Url>,
 }
@@ -108,11 +110,79 @@ impl WebClient {
         }
         Ok(Self {
             brave_api_key,
+            #[cfg(feature = "test-fixtures")]
+            parcel_test_endpoint: None,
             #[cfg(test)]
             test_endpoint: None,
         })
     }
 
+    /// Synthetic loopback provider transport only; never present in a production build.
+    #[cfg(feature = "test-fixtures")]
+    pub fn with_parcel_test_endpoint(mut self, endpoint: &str) -> Result<Self, WebError> {
+        let u = Url::parse(endpoint).map_err(|_| WebError::InvalidUrl)?;
+        if u.scheme() != "http"
+            || !u.host_str().is_some_and(|h| h == "127.0.0.1")
+            || u.path() != "/services/srv/search"
+            || u.query().is_some()
+            || !u.username().is_empty()
+            || u.password().is_some()
+        {
+            return Err(WebError::InvalidUrl);
+        }
+        self.parcel_test_endpoint = Some(u);
+        Ok(self)
+    }
+    pub async fn parcel(
+        &self,
+        number: &str,
+        cancel: &CancellationToken,
+    ) -> Result<crate::parcel::ParcelResult, WebError> {
+        let official = crate::parcel::url(number)?;
+        let number = crate::parcel::normalize(number)?;
+        self.bounded(cancel, async {
+            #[allow(unused_mut)]
+            let mut transport = official.clone();
+            #[cfg(feature = "test-fixtures")]
+            if let Some(endpoint) = &self.parcel_test_endpoint {
+                transport = endpoint.clone();
+                transport.set_query(official.query());
+            }
+            let response = self
+                .client(&transport)
+                .await?
+                .get(transport)
+                .send()
+                .await
+                .map_err(|_| WebError::Network)?;
+            // No redirect can turn a fixed-carrier lookup into another host/path.
+            if response.status().is_redirection() {
+                return Err(WebError::Redirect);
+            }
+            if !response.status().is_success() {
+                return Err(WebError::Status);
+            }
+            let kind = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if !matches!(kind, "text/html" | "application/xhtml+xml") {
+                return Err(WebError::UnsupportedContent);
+            }
+            let input = String::from_utf8(body(response).await?)
+                .map_err(|_| WebError::UnsupportedContent)?;
+            parse_blocking(move || {
+                crate::parcel::parse(&input, &number, official.to_string(), now())
+            })
+            .await
+        })
+        .await
+    }
     /// The caller persists this snapshot and may paginate its text locally. Re-fetching
     /// an URL is a new observation, never a continuation of an older document.
     pub async fn read(
@@ -274,6 +344,11 @@ impl WebClient {
         });
         #[cfg(not(test))]
         let local_test = false;
+        #[cfg(feature = "test-fixtures")]
+        let local_test = local_test
+            || self.parcel_test_endpoint.as_ref().is_some_and(|u| {
+                u.host_str() == url.host_str() && u.port_or_known_default() == Some(port)
+            });
         validate_addresses(&addresses, local_test)?;
         Client::builder()
             .no_proxy()

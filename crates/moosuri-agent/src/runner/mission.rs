@@ -16,6 +16,7 @@ fn mission_definitions(
                 && !d.name.starts_with("browser_")
                 && !d.name.starts_with("artifact_")
                 && d.name != "learned_skill_execute"
+                && d.name != "parcel_track"
         })
         .collect()
 }

@@ -5,6 +5,7 @@ pub mod github_catalog;
 pub mod github_skills;
 pub mod gmail;
 pub mod model;
+pub mod parcel;
 pub mod source;
 pub mod web;
 

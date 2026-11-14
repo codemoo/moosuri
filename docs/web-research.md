@@ -63,3 +63,14 @@ actual loopback HTTP parsing, cancellation, limits and destination denial; they 
 not introduce a production private-IP override. No live paid Brave request, Gmail
 send, model quality claim or JavaScript-browser support is established by these
 tests. Independent review and deployment validation remain separate release gates.
+
+## Japan Post latest parcel lookup
+
+New public-read runs also pin the bundled `parcel-tracking` recipe and may use the
+actual `parcel_track` tool. It uses only Japan Post's fixed official English
+summary endpoint, with validated current-user number/carrier or the same thread's
+latest unique typed receipt. A follow-up is a fresh observation, not reuse of old
+status. Latest raw date/status/office and source/time, not_found and provider_changed
+are explicit; complete history, inferred timezone, other carriers and notifications
+are unsupported. Old serialized profiles lacking that exact recipe pin gain no new
+tool. See [supported scope and public evidence](parcel-tracking.md).

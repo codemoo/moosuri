@@ -8,7 +8,7 @@
 ## 이번 구현 단위
 
 저장된 개인 자료를 읽는 세 가지 내장 스킬과 정확한 소수 계산을 채팅에 연결했다.
-[외부 업무 절차](external-task-recipes.md)에서 웹 조사·메일 브리핑·답장 초안을 추가해 총 여섯 가지다.
+[외부 업무 절차](external-task-recipes.md)에서 웹 조사·메일 브리핑·답장 초안을 추가해 여섯 가지를 연결했고, [일본우편 최근 배송 조회](parcel-tracking.md) 절차를 추가했다.
 후속 구현으로 [개인 Gmail](mail.md)·[공개 HTTP 조사](web-research.md)·[격리 브라우저 읽기](browser-chat.md)를 연결했다.
 실행 시 실제 연결과 도구 설정을 기준으로 사용하며, 스킬 설명이 없는 권한을 만들지 않는다.
 실제 검증 결과는 [현재 상태](status.md)에 별도로 기록한다.
@@ -38,7 +38,7 @@
 | 연결한 Gmail 읽기·답장 준비·승인 후 발송 | 개인 OAuth, 검색·본문/thread·thread identity를 유지한 로컬 답장 초안·최종 승인·발송 영수증 | 라벨 변경·Gmail provider 초안 CRUD·첨부·Microsoft와 자동 불명 결과 조회 |
 | 공개 웹 조사·가격/조건 읽기 | HTTP/Brave·검증한 Chromium 읽기, workspace·사람의 로그인/조작 인계·같은 페이지 후속 대화 | 인증된 자동 클릭/폼·장기 profile 복구·전용 배송 adapter; 자동 구매/웹 예약은 현재 기본 계약 밖 |
 | 일정 조율·등록·변경 | 개인 Calendar 기본 읽기·primary solo-event 직접 양식 및 제한된 현재 대화 쓰기; 새 chat-only5개 paging/read/status | Calendar 미션·넓은 시간/대상 해석; 반복/종일/참석자/보조 캘린더 변경은 별도 범위 |
-| 배송 현재 상태·주문/취소 | 실시간 배송·쇼핑 도구 없음 | carrier/store adapter 또는 격리된 브라우저, 조회시각·상태 영수증 |
+| 배송 현재 상태·주문/취소 | 일본우편 고정 공식 endpoint의 최근 요약·실제 원문/시각·같은 대화 운송장 영수증 재사용 | 전체 이력·타 배송사·알림 구독·주문/취소는 미지원 |
 | 주기적 감시·변경 알림 | 고정 알림·회차·pause/edit/restart·inbox·opt-in Push 구현; schema28 직접 반복 읽기 업무·좁은 정확 일치 알림 생략 구현 | 대화 복합 업무 capture·일반 의미상 변경 비교·topic mute·실기기; [현재 상태](status.md)가 수락 정본 |
 | 전화·결제·정부 서류 제출 | 해당 실행 도구 없음 | 공급자/사이트별 실행·인증 인계·결과 조회 |
 | 커뮤니티 설치·업데이트·개인 학습 | 여섯 내장 절차와 개인 curated/public GitHub pin·update/rollback/disable/remove·로컬 작성/check, [제한된 정확 계산/저장 원문 찾기 학습](learned-skills.md) | 일반 복합 업무의 typed 학습·의미상 성공 평가·합성 export·예약 lifecycle 등 [남은 계약](community-skills.md) |

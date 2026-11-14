@@ -141,6 +141,21 @@ async fn execute(
         | WebToolRequest::BrowserHandoff { .. } => {
             return KnowledgeToolResult::Error(ToolReadError::Unavailable);
         }
+        WebToolRequest::Parcel {
+            carrier,
+            tracking_number,
+        } => {
+            if carrier != "japan_post" {
+                return KnowledgeToolResult::Error(ToolReadError::InvalidInput);
+            }
+            let Some(number) = tracking_number else {
+                return KnowledgeToolResult::Error(ToolReadError::InvalidInput);
+            };
+            client
+                .parcel(number, cancel)
+                .await
+                .map(|parcel| json!({"parcel":parcel}))
+        }
         WebToolRequest::Read { url } => client
             .read(url, cancel)
             .await

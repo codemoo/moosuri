@@ -507,6 +507,7 @@ mod skills;
 
 mod mail;
 
+mod parcel;
 mod web;
 
 mod mission_chat;

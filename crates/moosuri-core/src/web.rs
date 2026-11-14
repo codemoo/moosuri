@@ -5,12 +5,26 @@ use ts_rs::TS;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WebToolRequest {
-    Read { url: String },
-    Search { query: String },
-    BrowserRead { url: String },
-    BrowserOpen { url: String },
+    Parcel {
+        carrier: String,
+        tracking_number: Option<String>,
+    },
+    Read {
+        url: String,
+    },
+    Search {
+        query: String,
+    },
+    BrowserRead {
+        url: String,
+    },
+    BrowserOpen {
+        url: String,
+    },
     BrowserObserve {},
-    BrowserHandoff { reason: String },
+    BrowserHandoff {
+        reason: String,
+    },
 }
 
 /// Capabilities are admitted by the installation, never by model arguments.

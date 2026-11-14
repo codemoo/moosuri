@@ -43,6 +43,12 @@ pub struct BundledSkill {
 
 pub const BUNDLED_SKILLS: &[BundledSkill] = &[
     BundledSkill {
+        id: "parcel-tracking",
+        revision: "1.0.0",
+        description: "Read actual Japan Post latest parcel status with an official source/time; reuse this thread’s actual tracking receipt on follow-up.",
+        instructions: include_str!("../../../community/skills/parcel-tracking/SKILL.md"),
+    },
+    BundledSkill {
         id: "source-briefing",
         revision: "1.0.0",
         description: "Prepare a concise grounded briefing from saved sources and memories.",

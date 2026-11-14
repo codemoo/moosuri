@@ -36,3 +36,18 @@ missions have separate denominators. Setup failures remain planned/not-run; exec
 errors remain failed with available timings, calls and usage. Reports bind actual
 source bytes rather than asserting clean HEAD, provide observed-sample percentiles,
 and leave unobserved stages/cost and baseline/quality comparisons unknown.
+
+## Private reference content preflight
+
+The separate `baseline-pin` CLI selects149 runtime/migration/dependency files from
+the historically hashed audit manifest and verifies exact size/hash, regular paths
+and absence of extra runtime files. It does not import legacy modules, load `.env`,
+read DBs/tests/traces, mutate the checkout or start a process. Reports contain only
+content identity and check/count metadata. The original source remains private.
+An untracked legacy runtime cannot be identified by its checkout HEAD alone.
+
+The preflight is not a freeze or runtime result. A later isolated adapter must copy
+only allowed source, recheck hashes, discard Python bytecode and pin provider/profile
+configuration. PostgreSQL remains a requirement of the legacy implementation. Its
+clock and tool differences require an explicitly comparable time-independent first
+fixture set; none of these missing execution gates are inferred from a matching hash.

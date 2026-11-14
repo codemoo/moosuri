@@ -1,4 +1,5 @@
 //! Synthetic-only public regression harness, never a live/quality benchmark.
+pub mod baseline;
 mod grader;
 mod model;
 mod observe;

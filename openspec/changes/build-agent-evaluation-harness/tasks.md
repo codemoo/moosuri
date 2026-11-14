@@ -4,6 +4,7 @@
 
 ## 2. Implement and verify
 - [ ] 2.1 Pin the isolated first-release baseline and common synthetic fixture adapters in P0; verify equivalent initial states/results without legacy test porting or production access.
+- [x] 2.1a Verify the historical149-file runtime/dependency content pin without executing legacy code or reading operational data. Local actual-source CLI, Linux synthetic mutation cases, default evaluator CLI, Clippy and independent review passed. This preflight does not close2.1.
 - [x] 2.2 Implement Rust synthetic-world runner and independent state/receipt grader; demonstrate a failing mutant (initial public subset only; bounded scope below).
 - [ ] 2.3 Add affected memory/chat/mission/skill contracts through real SQLite/runner boundaries.
 - [ ] 2.4 Add bounded provider profiles, latency/usage measurement and honest failure reporting.

@@ -23,6 +23,18 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·broker 실제 adapter/사용 흐름·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
+## 최근 수락한 단위 · 기존 비서의 내용 고정 검사
+
+P0의 비교 기준 준비로 `moosuri-eval baseline-pin`을 추가했다. 계획 당시 manifest에
+있는 runtime·migration·dependency149개의 내용이 실제 원본과 일치함을 로컬에서
+확인했다. 원본을 실행하거나 전송하지 않고, 공개 Linux 시험은 합성 파일만 사용했다.
+변조·누락·추가 파일·symlink를 거부하며 source 내용을 보고서에 넣지 않는다.
+
+독립 검토, 실제 로컬 CLI/출력 보호 검사, Linux 합성3개·Clippy·기존6세계 CLI·계획
+검사를 통과했다. 이것은 소스 동결·실행 비교가 아니다. 격리 PostgreSQL·공통 fixture
+adapter·model/effort·시간 조건의 고정은 아직 남고 비교/비열등 결과는 `not_run`이다.
+[사용법](agent-evaluation.md#기존-비서의-소스-기준-고정)·[검증](reviews/2026-11-14-legacy-content-pin.md).
+
 ## 최근 수락한 단위 · 개인 작업의 제한된 학습과 재사용
 
 실제 완료한 계산 또는 저장 원문 조회를 서로 다른 입력에서 두 번 검증하면 개인 절차로
@@ -224,7 +236,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 
 | 계획 단계 | 현재 구현 | 아직 닫지 못한 종료 조건 |
 | --- | --- | --- |
-| P0 공개 기반 | 공개 저장소·Rust/React/Linux 빌드·기여/OpenSpec·합성 결과 runner/독립 grader | 고정 비교 baseline·넓은 사례/실모델·통계 평가 |
+| P0 공개 기반 | 공개 저장소·Rust/React/Linux 빌드·기여/OpenSpec·합성 결과 runner/독립 grader·기존149개 소스 내용 검사 | 격리 실행 baseline/공통 adapter·넓은 사례/실모델·통계 평가 |
 | P1 영속 상태 | SQLite 격리·실행/외부 영수증·journal·봉인된 현재 복원 | ongoing/off-host journal·과거 복원 |
 | P2 대화 | 계정·설정·스트림·취소/재시도·개인 ChatGPT | 지원 구독의 전체 실행 범위·실계정 검증 |
 | P3 자료·기억 | 출처·기억 정정/망각·제한 추출·문서 | 장기/시간 사실·추출 품질의 독립 검증 |
@@ -247,8 +259,9 @@ CI는 사용자 지시에 따라 계속 비활성이다.
 진행 중인 단위는 위 표의 단계에 연결하고, 다음 미완료 계약을 기존 계획의 의존순서대로
 닫는다. `선택` 연결/볼트 패키지도 v1 제공 대상이며 사용자의 설치 선택을 뜻한다.
 
-1. **P0 평가 기준·P1/P2 기초의 남은 계약**: source/config를 고정한 격리 baseline과
-   공통 fixture adapter를 구현한다. 초기 독립 상태/영수증 grader와 실패를 포함한 관측
+1. **P0 평가 기준·P1/P2 기초의 남은 계약**: 기존 소스의 내용 일치 검사는 구현했다.
+   이를 고정한 격리 실행 baseline·공통 fixture adapter와 실행 설정을 연결한다.
+   초기 독립 상태/영수증 grader와 실패를 포함한 관측
    latency/usage 집계는 구현했으며 넓은 사례·실모델·단계별 계측으로 확장한다.
    ongoing/off-host journal·과거 복구, 계정 삭제/outbox·지원 구독 실행 범위·gws 초대는
    해당 저장/연결 의존성과 함께 닫는다.

@@ -3,12 +3,28 @@ use std::{fs::OpenOptions, io::Write, path::Path, process::ExitCode};
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let report_path = match args.as_slice() {
-        [] => None,
-        [flag, path] if flag == "--report" && Path::new(path).is_absolute() => Some(path),
+    let (source, report_path) = match args.as_slice() {
+        [] => (None, None),
+        [flag, path] if flag == "--report" && Path::new(path).is_absolute() => (None, Some(path)),
+        [command, flag, source]
+            if command == "baseline-pin"
+                && flag == "--source"
+                && Path::new(source).is_absolute() =>
+        {
+            (Some(source), None)
+        }
+        [command, flag, source, report, path]
+            if command == "baseline-pin"
+                && flag == "--source"
+                && Path::new(source).is_absolute()
+                && report == "--report"
+                && Path::new(path).is_absolute() =>
+        {
+            (Some(source), Some(path))
+        }
         _ => {
             eprintln!(
-                "Usage: cargo run --locked -p moosuri-eval -- [--report /absolute/new-report.json]"
+                "Usage: moosuri-eval [baseline-pin --source /absolute/legacy-root] [--report /absolute/new-report.json]"
             );
             return ExitCode::from(2);
         }
@@ -32,8 +48,13 @@ async fn main() -> ExitCode {
     } else {
         None
     };
-    let report = moosuri_eval::run().await;
-    let mut bytes = serde_json::to_vec_pretty(&report).unwrap();
+    let (success, mut bytes) = if let Some(source) = source {
+        let report = moosuri_eval::baseline::preflight(Path::new(source));
+        (report.success, serde_json::to_vec_pretty(&report).unwrap())
+    } else {
+        let report = moosuri_eval::run().await;
+        (report.success, serde_json::to_vec_pretty(&report).unwrap())
+    };
     bytes.push(b'\n');
     if bytes.len() > 128 * 1024 {
         eprintln!("report_size_exceeded");
@@ -48,7 +69,7 @@ async fn main() -> ExitCode {
         eprintln!("report_write_failed");
         return ExitCode::from(2);
     }
-    if report.success {
+    if success {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

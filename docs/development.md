@@ -166,6 +166,11 @@ and failed setup remain visible; task completion and expected failure handling h
 separate denominators. This is a public contract regression, not real-model quality,
 a blind holdout or the legacy comparison baseline. See [evaluation](agent-evaluation.md).
 
+The optional `moosuri-eval baseline-pin --source /absolute/legacy-root` preflights
+the private historical reference's149 allowlisted source/dependency files. It never
+imports/executes that source or opens operating data. Matching content is not an
+executable comparison; runtime, model profile and fixture-adapter gates stay open.
+
 ## Local verification
 
 CI/Actions are disabled at the owner's request. Run locally before committing a

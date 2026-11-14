@@ -14,7 +14,7 @@ fn collect(root: &Path, path: &Path, hash: &mut Sha256) {
         }
     } else if matches!(
         path.extension().and_then(|s| s.to_str()),
-        Some("rs" | "toml" | "lock" | "sql" | "md" | "json")
+        Some("rs" | "toml" | "lock" | "sql" | "md" | "json" | "tsv")
     ) {
         let name = path.strip_prefix(root).unwrap().to_string_lossy();
         let bytes = fs::read(path).unwrap();
@@ -35,6 +35,7 @@ fn main() {
         "migrations",
         "community",
         "tools/moosuri-eval",
+        "audit/source-manifest.tsv",
     ] {
         println!("cargo:rerun-if-changed={}", root.join(name).display());
         collect(root, &root.join(name), &mut hash);

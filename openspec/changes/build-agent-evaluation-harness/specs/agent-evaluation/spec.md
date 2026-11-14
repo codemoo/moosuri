@@ -32,6 +32,20 @@ A non-inferiority claim MUST use a source-pinned executable baseline, common syn
 - **WHEN** the pinned baseline cannot run the common fixture protocol
 - **THEN** non-inferiority is reported as not run and its release gate remains unmet; absolute alpha results may still be reported separately
 
+### Requirement: Private reference content preflight
+A separate baseline preflight SHALL verify only allowlisted historical source and
+dependency bytes against a fixed audit manifest. It MUST NOT execute the source,
+read operating data or infer runtime/adapter/model readiness from matching hashes.
+Its report MUST omit private paths and source contents and leave comparison not-run.
+
+#### Scenario: Untracked or changed reference code
+- **WHEN** the legacy runtime is untracked in Git, changed, missing, symlinked or contains an unpinned runtime file
+- **THEN** Git HEAD is never substituted for content identity; only exact regular allowlisted source can pass the content check, and any mismatch fails
+
+#### Scenario: Matching content without an executable adapter
+- **WHEN** all149 historical source and dependency files match but no isolated common-fixture adapter has executed
+- **THEN** the preflight reports matching content while runtime, fixture adapter, model profile and non-inferiority remain not-run
+
 ### Requirement: Bounded public regression execution
 The initial evaluator SHALL execute only fresh synthetic worlds through authenticated
 HTTP, Runtime and SQLite with a compiled loopback-only provider profile. It MUST NOT

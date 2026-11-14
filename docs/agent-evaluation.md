@@ -13,7 +13,8 @@ cargo test --locked -p moosuri-eval
 `--report`를 생략하면 JSON을 stdout으로 출력한다. 파일은 새로만 생성하며 Unix에서는
 0600으로 만든다. 기존 파일·symlink 대상은 덮어쓰지 않는다. 출력은 128KiB 이하이며
 사례·판정기 검증 실패/미실행은 종료 코드 1, 잘못된 인자·출력 오류는 2다.
-endpoint/model/credential/기존 DB/사용자 fixture 경로를 받는 옵션은 없다.
+회귀 실행은 endpoint/model/credential/기존 DB/사용자 fixture 경로를 받지 않는다.
+아래 별도 `baseline-pin` 명령은 과거 소스의 허용 목록만 읽으며 에이전트를 실행하지 않는다.
 CI는 사용자 지시로 계속 꺼져 있으며 이 명령은 로컬 검증이다.
 
 ## 공개 세계와 판정
@@ -73,7 +74,33 @@ first-final-body·DOM·RSS/CPU는 측정하지 않아 null이다. polling 지연
 기존 run의 6 model/12 tool 한도, provider 세계당32회, 준비/실행 각각40초를 적용하고 shutdown은
 기존 Runtime의 bounded drain을 따른다.
 
-source-pinned legacy baseline/공통 adapter, 실제 model profile, calibrated judge/사람 검토,
+실행 가능한 legacy baseline/공통 adapter, 실제 model profile, calibrated judge/사람 검토,
 통계 비교·holdout·부하·실계정/기기와 SKILL02~05의 실제 학습 proof는 미완료다.
 [현재 상태](status.md)와 [active change](../openspec/changes/build-agent-evaluation-harness/tasks.md)가
 전체 수락 범위의 정본이다.
+
+## 기존 비서의 소스 기준 고정
+
+첫 안정판의 비교 대상은 기존 비서다. 기존 Git HEAD만으로 추적되지 않는 runtime을
+고정했다고 주장하지 않고, 계획 당시 `audit/source-manifest.tsv`의 소스 bytes를 사용한다.
+이 자료는 일반 설치와 공개 회귀 실행에 필요하지 않다.
+
+```sh
+cargo run --locked -p moosuri-eval -- baseline-pin \
+  --source /absolute/legacy-root --report /absolute/new-pin-report.json
+```
+
+고정된 manifest 해시에서 `agent/src/musuri_agent`, `agent/migrations`, 세 dependency/lock
+파일만 선택한다. 총149개/1,750,513byte가 모두 맞아야 성공하며 누락·변조·심볼릭 링크·
+추가 runtime 파일을 거부한다. Python bytecode cache는 제외하며 이후 실제 adapter는
+반드시 새 허용 목록 복사본에서 실행해야 한다. 원본 tree·Git·DB·서비스는 수정하지 않는다.
+소스를 import하거나 실행하지 않고 `.env`, 개인 설정, credential, DB, 기존 평가 trace와
+과거 테스트는 읽지 않는다. 보고서에는 고정 hash·수·검사 결과만 담고 경로/원문을 넣지 않는다.
+
+이 검사는 **내용 일치 사전 검사**다. 실행할 소스를 복사/봉인하지 않으며 이후 변경을
+막지도 않는다. 실제 비교 실행은 격리한 소스의 재검증, 고정 provider/model/effort·prompt,
+공통 fixture adapter와 별도 PostgreSQL을 필요로 한다. 현재 report의 runtime/adapter/
+model profile/non-inferiority는 모두 `not_run`이다. 이전 실행기는 SQLite가 아니며
+Python과 PostgreSQL의 실제 시간을 함께 사용하므로 공통 fake clock도 아직 없다.
+정확 계산 도구가 없는 이전 실행기에 새 calculator receipt를 요구해서는 안 된다.
+초기 공통 범위는 시간에 무관한 기억 조회/사용자 입력 계산부터 별도로 고정해야 한다.

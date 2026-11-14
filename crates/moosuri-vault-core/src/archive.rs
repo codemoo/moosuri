@@ -154,10 +154,27 @@ impl ArchiveImport {
             authenticated.push(source.open_item(item)?);
         }
         drop(source);
+        Self::from_authenticated_fields(
+            authenticated,
+            archive.items.iter().map(|i| i.id).collect(),
+            current,
+            existing,
+            cancel,
+        )
+    }
+    pub(crate) fn from_authenticated_fields(
+        authenticated: Vec<ItemFields>,
+        mut forbidden_ids: HashSet<Uuid>,
+        current: &mut ActiveVault,
+        existing: &[EncryptedItem],
+        cancel: &impl Cancellation,
+    ) -> Result<Self> {
+        if authenticated.len() > ARCHIVE_ITEMS || existing.len() > ARCHIVE_ITEMS {
+            return Err(Error::Limit);
+        }
         inventory_digest(existing)?; // Reject duplicate current IDs as well.
         let mut contents = HashSet::new();
         let mut accounts = HashSet::new();
-        let mut forbidden_ids: HashSet<_> = archive.items.iter().map(|i| i.id).collect();
         for item in existing {
             if cancel.cancelled() {
                 return Err(Error::Cancelled);

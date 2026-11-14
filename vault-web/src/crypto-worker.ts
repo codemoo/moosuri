@@ -111,10 +111,10 @@ async function dispatch(command:Command):Promise<unknown>{
     const receipt=await api<Receipt>(`/api/operations/${encodeURIComponent(id)}/cancel`,"POST",record.operation);
     if(receipt.state==="committed"){lock("vault_refresh_unlock");return null}return load();
   }
-  if(command.op==="archive_file"){
+  if(command.op==="archive_file"||command.op==="legacy_v1_file"){
     const file=command.file;if(!(file instanceof File)||file.size>26*1024*1024)throw fixed("vault_limit");
     const archive=await file.text();if(closed)throw fixed("vault_locked");await checkHead();
-    return local({op:"archive_preview",archive,secret:command.secret,recovery:command.recovery===true});
+    return local({op:command.op==="legacy_v1_file"?"legacy_v1_preview":"archive_preview",archive,secret:command.secret,recovery:command.recovery===true});
   }
   if(command.op==="archive_export"){
     // Pin a fresh coherent source snapshot. Never silently export a mixed or

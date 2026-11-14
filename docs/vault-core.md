@@ -18,7 +18,7 @@ Password/recovery rewrap is not retroactive revocation: someone retaining an old
 
 V2 uses AES256-GCM (12-byte nonce/16-byte tag), Argon2id13 (64MiB,t3,p1,16-byte salt,32-byte result) and HKDF/HMAC-SHA256 with distinct purposes. Password UTF-8 bytes are not normalized and are capped before KDF. Base64 must be canonical/padded. Header16KiB, plaintext item64KiB, serialized item100000bytes and inventory1000 items are bounded. Header/items are closed typed schemas, and unsupported versions/KDFs are rejected before derivation. KDF block memory is explicitly zeroized. Primitives/OS/compiler copies and JS GC are not claimed completely erased.
 
-The owner/tenant AAD and header authentication make this an explicit **v2** format. Required v1 AES/Argon/HKDF primitives were retained, but no old wire compatibility is claimed. Real v1 ciphertext needs separate synthetic cross-client vectors and explicit user-local migration; the library rejects v1 rather than silently rewriting it. The later [bounded client archive](vault-archive.md) supports independent v2 encrypted file import/export; it does not claim old-v1 migration or a service backup.
+The owner/tenant AAD and header authentication make this an explicit **v2** format. Required v1 AES/Argon/HKDF primitives were retained, but no old wire compatibility is claimed. The ordinary v2 APIs reject old v1 rather than silently rewriting it. The separate explicit [old-v1 migration](vault-v1-migration.md) route has synthetic cross-runtime vectors and supports only the documented authenticated export. The later [bounded client archive](vault-archive.md) supports independent v2 encrypted file import/export; it is separate from old-v1 migration and does not claim a service backup.
 
 ## Local TOTP and CSV
 

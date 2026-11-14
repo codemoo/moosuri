@@ -4,6 +4,7 @@
 mod apple;
 mod archive;
 mod crypto;
+mod legacy_v1;
 mod secret;
 mod totp;
 mod wire;

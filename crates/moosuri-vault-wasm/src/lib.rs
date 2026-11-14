@@ -136,6 +136,11 @@ enum Request {
         secret: SecretText,
         recovery: bool,
     },
+    LegacyV1Preview {
+        archive: String,
+        secret: SecretText,
+        recovery: bool,
+    },
     ArchiveSelect {
         rows: Vec<u32>,
     },
@@ -249,6 +254,41 @@ impl VaultEngine {
             return Err(Error::State);
         }
         Ok(())
+    }
+    fn preview_archive(
+        &mut self,
+        archive: &str,
+        secret: &SecretText,
+        recovery: bool,
+        legacy: bool,
+    ) -> Result<Value> {
+        self.mutable()?;
+        self.no_import()?;
+        let items = self.current()?.items.clone();
+        let import = if legacy {
+            ArchiveImport::preview_legacy_v1(
+                archive.as_bytes(),
+                secret,
+                recovery,
+                self.active()?,
+                &items,
+                &Continue,
+            )?
+        } else {
+            ArchiveImport::preview(
+                archive.as_bytes(),
+                secret,
+                recovery,
+                self.active()?,
+                &items,
+                &Continue,
+            )?
+        };
+        let p = import.counts();
+        let result = json!({"eligible":p.eligible,"duplicates":p.duplicates,"filtered":0,"rows":p.rows.iter().map(|r|json!({"row":r.row,"status":match r.status{ImportStatus::New=>"new",ImportStatus::ChangedAccount=>"changed",ImportStatus::Duplicate=>"duplicate",ImportStatus::Filtered=>"filtered"},"blank_password":false,"unsupported_url":false,"invalid_otp":false})).collect::<Vec<_>>()});
+        self.archive_import = Some(import);
+        self.batch_index = 0;
+        Ok(result)
     }
     fn item(&self, id: Uuid) -> Result<EncryptedItem> {
         self.current()?
@@ -590,24 +630,12 @@ impl VaultEngine {
                 archive,
                 secret,
                 recovery,
-            } => {
-                self.mutable()?;
-                self.no_import()?;
-                let items = self.current()?.items.clone();
-                let import = ArchiveImport::preview(
-                    archive.as_bytes(),
-                    &secret,
-                    recovery,
-                    self.active()?,
-                    &items,
-                    &Continue,
-                )?;
-                let p = import.counts();
-                let result = json!({"eligible":p.eligible,"duplicates":p.duplicates,"filtered":0,"rows":p.rows.iter().map(|r|json!({"row":r.row,"status":match r.status{ImportStatus::New=>"new",ImportStatus::ChangedAccount=>"changed",ImportStatus::Duplicate=>"duplicate",ImportStatus::Filtered=>"filtered"},"blank_password":false,"unsupported_url":false,"invalid_otp":false})).collect::<Vec<_>>()});
-                self.archive_import = Some(import);
-                self.batch_index = 0;
-                Ok(result)
-            }
+            } => self.preview_archive(&archive, &secret, recovery, false),
+            Request::LegacyV1Preview {
+                archive,
+                secret,
+                recovery,
+            } => self.preview_archive(&archive, &secret, recovery, true),
             Request::ArchiveSelect { rows } => {
                 self.mutable()?;
                 if self.import.is_some() {
@@ -1015,6 +1043,81 @@ mod tests {
         let outcome = e.acknowledge(receipt, state).unwrap();
         assert_eq!(outcome["saved"], true);
         assert_eq!(outcome["refresh_unlock"], true);
+    }
+    #[test]
+    fn legacy_v1_batch_retains_exact_operation_until_ack_and_cancel_keeps_committed_items() {
+        let (mut e, mut entropy) = fixture();
+        let archive =
+            include_str!("../../moosuri-vault-core/tests/fixtures/legacy-v1-webcrypto.json");
+        let meta: Value = serde_json::from_str(include_str!(
+            "../../moosuri-vault-core/tests/fixtures/legacy-v1-vector-meta.json"
+        ))
+        .unwrap();
+        let secret = || SecretText::new(meta["recovery"].as_str().unwrap().into()).unwrap();
+        assert!(
+            e.dispatch(Request::ArchivePreview {
+                archive: archive.into(),
+                secret: secret(),
+                recovery: true
+            })
+            .is_err()
+        );
+        assert!(e.no_import().is_ok());
+        let preview = e
+            .dispatch(Request::LegacyV1Preview {
+                archive: archive.into(),
+                secret: secret(),
+                recovery: true,
+            })
+            .unwrap();
+        assert_eq!(preview["eligible"], 2);
+        assert!(!preview.to_string().contains("SYNTHETIC"));
+        let mut import = e.archive_import.take().unwrap();
+        e.batch = import
+            .seal_selected(e.active().unwrap(), &[1, 2], &mut entropy, &Continue)
+            .unwrap()
+            .to_vec();
+        e.archive_import = Some(import);
+        e.next_import(Uuid::from_u128(441)).unwrap();
+        let exact = serde_json::to_vec(e.pending.as_ref().unwrap()).unwrap();
+        assert_eq!(e.batch_index, 0);
+        assert!(e.next_import(Uuid::from_u128(442)).is_err());
+        assert_eq!(
+            serde_json::to_vec(e.pending.as_ref().unwrap()).unwrap(),
+            exact
+        );
+        let mut state = e.state.take().unwrap();
+        state.items.push(e.batch[0].clone());
+        state.inventory_sha256 = hex(&inventory_digest(&state.items).unwrap());
+        let receipt = Receipt {
+            operation: e.pending.as_ref().unwrap().id(),
+            payload_sha256: hash(&exact),
+            state: "committed".into(),
+            header_sha256: state.header_sha256.clone(),
+            inventory_sha256: state.inventory_sha256.clone(),
+            commitment: None,
+        };
+        let mut wrong = receipt.clone();
+        wrong.payload_sha256 = "00".repeat(32);
+        let mut old: VaultState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        old.items.clear();
+        old.inventory_sha256 = hex(&inventory_digest(&[]).unwrap());
+        e.state = Some(old);
+        assert!(
+            e.acknowledge(
+                wrong,
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap()
+            )
+            .is_err()
+        );
+        assert_eq!(e.batch_index, 0);
+        e.acknowledge(receipt, state).unwrap();
+        assert_eq!(e.batch_index, 1);
+        e.dispatch(Request::CsvCancel).unwrap();
+        assert!(e.batch.is_empty());
+        assert!(e.archive_import.is_none());
+        assert_eq!(e.current().unwrap().items.len(), 1);
     }
     #[test]
     fn archive_batch_lost_ack_keeps_exact_operation_and_only_advances_after_receipt() {

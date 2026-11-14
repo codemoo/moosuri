@@ -16,6 +16,8 @@ current selected item before use and resumes after transient connection loss. An
 same signed result and finish in its original conversation without another model call.
 Its routes remain default-off; general credential tools and signed companion
 distribution remain unfinished.
+An explicit [legacy v1 encrypted-file import](docs/vault-v1-migration.md) locally
+authenticates the old export before re-encrypting selected items for the current vault.
 Account deletion clears active private data and delivers durable deletion to the separate vault.
 Every mail send needs the user's explicit approval of its final preview, including scheduled timing. Unknown sends
 have conservative read-only Sent checks and are never automatically resent.

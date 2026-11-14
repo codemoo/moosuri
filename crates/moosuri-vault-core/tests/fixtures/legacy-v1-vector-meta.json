@@ -1,0 +1,44 @@
+{
+  "synthetic_only": true,
+  "password": "SYNTHETIC v1 é password 🔐",
+  "recovery": "MR1-QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+  "root": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8=",
+  "item_keys": [
+    "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8=",
+    "gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8="
+  ],
+  "plaintext_json": [
+    "{\"expires_at\":\"2030-06-01\",\"favorite\":true,\"kind\":\"login\",\"notes\":\"SYNTHETIC note\\nsecond line\",\"secret\":\"SYNTHETIC v1 secret\",\"title\":\"SYNTHETIC café é 🔐\",\"totp\":\"JBSWY3DPEHPK3PXP\",\"url\":\"https://example.test/日本\",\"username\":\"fixture@example.test\"}",
+    "{\"expires_at\":\"\",\"favorite\":false,\"kind\":\"note\",\"notes\":\"Optional totp was absent\",\"secret\":\"SYNTHETIC note secret\",\"title\":\"SYNTHETIC old optional TOTP\",\"url\":\"\",\"username\":\"\"}"
+  ],
+  "fields": [
+    {
+      "kind": "login",
+      "title": "SYNTHETIC café é 🔐",
+      "username": "fixture@example.test",
+      "url": "https://example.test/日本",
+      "secret": "SYNTHETIC v1 secret",
+      "notes": "SYNTHETIC note\nsecond line",
+      "favorite": true,
+      "expires_at": "2030-06-01",
+      "totp": "JBSWY3DPEHPK3PXP"
+    },
+    {
+      "kind": "note",
+      "title": "SYNTHETIC old optional TOTP",
+      "username": "",
+      "url": "",
+      "secret": "SYNTHETIC note secret",
+      "notes": "Optional totp was absent",
+      "favorite": false,
+      "expires_at": ""
+    }
+  ],
+  "verifier": {
+    "node": "v22.22.0",
+    "openssl": "3.5.4",
+    "pynacl": "1.5.0",
+    "libsodium_version": "not exposed by installed PyNaCl binding",
+    "argon2id13_algorithm": 2
+  }
+}

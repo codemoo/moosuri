@@ -1,0 +1,5 @@
+# Authenticated file boundary
+
+Old wire structs and AAD remain private to an explicit parser. Validate full structure and256-item/26MiB bounds before root KDF. Admit only exact supported old password/recovery policies and canonical UUID/base64 text. Decrypt root, authenticate the whole inventory manifest, then authenticate every payload before shared duplicate/selection staging. No fallback or fabricated storage receipt admits a legacy header.
+
+Fresh v2 IDs/keys/nonces and current binding replace source identity. Existing exact operation receipts, retry/cancel and Worker lifetime fences remain authoritative. Current narrower field caps reject the complete source input instead of truncating. Source files and secrets remain local, with Rust zeroization and explicit browser-copy limits. Original wrappers persist in retained files; authenticated export coverage does not prove server latestness/completeness. Independent synthetic WebCrypto/libsodium vectors and separately reviewed frozen source are required; real personal data is excluded.

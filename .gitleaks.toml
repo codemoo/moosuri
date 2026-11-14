@@ -1,0 +1,16 @@
+# Exact encrypted bytes from the independently generated public synthetic v1 fixture.
+# No credential/path-pattern blanket exception; changed values still trigger scanning.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Four fixed synthetic legacy-v1 wrap/nonce values; not operational credentials"
+condition = "AND"
+paths = ['''(^|/)crates/moosuri-vault-core/tests/fixtures/legacy-v1-webcrypto\.json$''']
+regexTarget = "secret"
+regexes = [
+  '''^XL9lryHFn8MjTrFXhN6byDMxFSDDP\+cvEeBXuFdA76MwMUHrTnuYdGYpSHNiXPsj$''',
+  '''^gIGCg4SFhoeIiYqL$''',
+  '''^kJGSk5SVlpeYmZqb$''',
+  '''^kq4d4xQ3ZP64K/UEmCF7ts9LJnuEUjSq4UOBzqwLom5OjbpemWytJ9GcJD8VGuyo$''',
+]

@@ -19,15 +19,25 @@ async function fixture(changeInventory=false){
   return {scope,calls,send,flush,changeHead:()=>{head={...head,header_sha256:"d".repeat(64),revision:2,envelope_epoch:2}}};
 }
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.doUnmock("./wasm/vault_crypto.js")});
-it("source archive file read disposed after destination generation changes",async()=>{
+it.each(["archive_file","legacy_v1_file"])("source archive file read %s disposed after destination generation changes",async(op)=>{
   const f=await fixture();let finish!:(s:string)=>void;
   const file=new File(["synthetic ciphertext"],"synthetic.encrypted.json");
   Object.defineProperty(file,"text",{value:()=>new Promise<string>(resolve=>{finish=resolve})});
-  f.send(2,{op:"archive_file",file,secret:"Synthetic fixture password",recovery:false});await f.flush();
+  f.send(2,{op,file,secret:"Synthetic fixture password",recovery:false});await f.flush();
   f.changeHead();finish("synthetic ciphertext");await f.flush();
-  expect(f.calls.some(c=>c.op==="archive_preview")).toBe(false);
+  expect(f.calls.some(c=>c.op==="archive_preview"||c.op==="legacy_v1_preview")).toBe(false);
   expect(f.scope.postMessage).toHaveBeenCalledWith({kind:"locked",reason:"vault_generation_changed"});
   expect(f.scope.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({id:2,ok:true}));
+});
+it("legacy v1 file requires its explicit local route and never uploads source secrets",async()=>{
+  const f=await fixture();const archive="SYNTHETIC OLD CIPHERTEXT";const secret="SYNTHETIC MR1 LOCAL SECRET";
+  const file=new File([archive],"old-v1.encrypted.json");Object.defineProperty(file,"text",{value:async()=>archive});
+  f.send(2,{op:"legacy_v1_file",file,secret,recovery:true});await f.flush();
+  expect(f.calls).toContainEqual({op:"legacy_v1_preview",archive,secret,recovery:true});
+  expect(f.calls.some(c=>c.op==="archive_preview")).toBe(false);
+  const network=JSON.stringify(vi.mocked(fetch).mock.calls);
+  expect(network).not.toContain(archive);expect(network).not.toContain(secret);
+  const replies=JSON.stringify(f.scope.postMessage.mock.calls);expect(replies).not.toContain(secret);expect(replies).not.toContain(archive);
 });
 it("export rejects inventory changed between fresh snapshot and final check",async()=>{
   const f=await fixture(true);f.send(2,{op:"archive_export"});await f.flush();

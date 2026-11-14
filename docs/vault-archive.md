@@ -6,6 +6,8 @@ Choose **암호화 파일 내보내기** in the unlocked vault. The download nam
 
 The original owner, tenant, vault/item IDs, revisions, generation, KDF/envelope metadata, item count and ciphertext lengths are visible in the archive. All field values, including title and TOTP, remain encrypted. The generic filename prevents title leakage from the application; browser download history and user renaming are outside that guarantee. Import preview returns ordinal statuses and counts only, without titles, secrets or plaintext fingerprints.
 
+For old `musuri-vault` v1 files, use the separate explicit [local migration](vault-v1-migration.md) route. The format below remains the current v2-ciphertext archive.
+
 ## Archive v1 contract
 
 The exact JSON object has `format: "moosuri-encrypted-vault-archive"`, `version: 1`, `count`, source v2 `header`, ordered source `items`, and canonical base64 `authentication`. Unknown/duplicate fields, trailing JSON, unsupported formats, noncanonical base64, malformed binding/revisions/generations, source duplicate IDs, count mismatch, more than256 items, header over16384 bytes, item over100000 bytes or total input over26MiB fail closed. Both source envelopes must satisfy the one already admitted Argon2id13/HKDF policy before any KDF runs. No new cryptographic dependency or primitive is introduced.

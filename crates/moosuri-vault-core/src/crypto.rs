@@ -55,7 +55,11 @@ fn random<const N: usize>(entropy: &mut impl TrustedEntropy) -> Result<[u8; N]> 
     entropy.fill(&mut bytes)?;
     Ok(bytes)
 }
-fn password_key(password: &SecretText, salt: &[u8], policy: &PasswordKdf) -> Result<Key> {
+pub(crate) fn password_key(
+    password: &SecretText,
+    salt: &[u8],
+    policy: &PasswordKdf,
+) -> Result<Key> {
     policy.validate()?;
     if password.expose().is_empty() || password.expose().len() > 1024 || salt.len() != 16 {
         return Err(Error::Invalid);
@@ -150,7 +154,7 @@ pub(crate) fn encrypt(key: &Key, nonce: &[u8], aad: &[u8], plaintext: &[u8]) -> 
         .map_err(|_| Error::Authentication)?;
     Ok(b64(&bytes))
 }
-fn decrypt(
+pub(crate) fn decrypt(
     key: &Key,
     nonce: &str,
     aad: &[u8],

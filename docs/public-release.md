@@ -25,6 +25,8 @@ Tailscale Serve는 tailnet 접근, ordinary HTTPS는 공개 주소 접근이다.
 
 업데이트는 manifest/hash 검증→admission/drain→backup·journal 확인→forward migration→health/contract probe→traffic 재개다. uninstall 기본은 실행 파일/서비스만 제거하고 data 보존, 데이터 삭제는 범위를 명시한다. secret과 DB는 Dropbox/Git/served static root 바깥이다. 원래 host-local 파일/secret을 제거한 환경에서 문서에 명시한 offline backup identity·archive·최신 journal/검증 자료만으로 restore가 성공해야 복구 지원으로 표시한다. backup key는 사용자 vault master와 분리하며 교체 전후 archive/key 보관도 검증한다. restore는 옛 password/role/provider를 자동 재활성화하지 않고 로컬 operator recovery와 credential 재등록을 요구한다. snapshot 이후 사용량이 불명이면 해당 예산의 새 지출을 막으며, 일반 재시작에는 이 절차가 없다.
 
+Linux ARM64의 비서·볼트·companion 교차 빌드와 격리된 QEMU의 직접 실행을 확인했다. [빌드와 검증 범위](linux-arm64.md)를 따르며 물리 ARM·child binary를 실행하는 설치/업데이트·공식 release는 별도 수락 대상이다.
+
 ## 출시 gate
 
 `cargo run --locked -p xtask -- sbom`으로 [CycloneDX source-lock inventory](dependency-inventory.md)를

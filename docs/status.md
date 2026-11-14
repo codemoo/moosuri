@@ -30,6 +30,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| Linux ARM64 개발 빌드 | 비서·독립 볼트·companion 교차 빌드, QEMU에서 실제 초기화·로그인·세션/SQLite 재시작·삭제·별도 볼트 shell 확인; 물리 ARM·공식 release는 별도 | [빌드](linux-arm64.md)·[검증](reviews/2026-11-15-linux-arm64.md) |
 | 맡긴 일 조건 수정 | 정지한 일회성 업무의 조건·확인 기준 변경, 원래 요청/이력 보존, 기존 호출·시간 한도 안에서 재계획·검증·보완 | [사용법](mission-revisions.md)·[검증](reviews/2026-11-15-mission-revisions.md) |
 | 배포 고지 보충 | 정확한 lock 항목에 공개 원본 고지를 별도 출처로 결합; Rust17개·웹4위치의 보충 근거 확보, 기존21/66 누락과 strict 판정 유지 | [사용법](notice-supplements.md)·[검증](reviews/2026-11-15-notice-supplements.md) |
 | 자료 읽기·정확 계산 학습 | 현재 요청의 문구로 유일한 원문·숫자 항목을 확인해 계산; 독립 두 사례 뒤 새 원문으로 재사용·합성 공유, 기존 학습은 generation3의 새 근거 필요 | [사용법](evidence-calculation.md)·[검증](reviews/2026-11-15-evidence-calculation.md) |
@@ -61,7 +62,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·운영 중 snapshot/시점·명시적 최신 journal 복구·주기적 SSH journal receiver·구 v1 파일 이전·실험적 native GitHub/Google INBOX 개수·미리보기 조회·원래 채팅 대기/완료 | 일반 credential/Google 본문·쓰기 도구·실제 옛 파일 수락·실제 off-host/무손실 최신 복구 |
 | P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 operator export·운영 대조·drain/cutover/rollback 실증 |
-| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory·서명된 binary/source/compiler/inventory 연결 | 공식 서명 배포·arm64·독립 빌드 증명/license·품질/기기/출시 gate |
+| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory·서명된 binary/source/compiler/inventory 연결·ARM64 교차 빌드/직접 에뮬레이션 | 공식 서명 배포·물리 ARM/설치 경로·독립 빌드 증명/license·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기와 두 세계 비교 adapter를 구현했다. 기존 비서의 실제 비교 실행은
@@ -103,7 +104,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체와 native Google INBOX 개수·별도 미리보기 조회도 구현했다. 일반 credential/Google 본문·쓰기 도구는 남는다.
    운영 중 암호화 snapshot/시점 복구도 구현했다. 명시적으로 고정한 이후 journal을 합치는 복구도 구현했다. 구 v1 암호화 파일의 로컬 이전을 구현했다. 주기적 SSH journal publisher/receiver도 구현했다. 실제 off-host 배치·무손실 최신 기록·실제 옛 파일 수락·서명 배포는 남는다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: 정규화 private importer/대조와 schema23 relation adapter를 구현했다. 실제 operator export·제한 cutover·rollback,
-   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결을 공식 artifact·arm64·독립 빌드 증명/완전한 license 검토로 확장하고(Rust·웹 고지 수집기와 별도 출처 보충은 구현),
+   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결을 공식 artifact·물리 ARM/설치 경로·독립 빌드 증명/완전한 license 검토로 확장하고(Rust·웹 고지 수집기와 별도 출처 보충은 구현),
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 

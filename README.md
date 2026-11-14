@@ -44,6 +44,7 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 ## Start
 
 - [Development quickstart](docs/development.md): build, init, shared API/local model settings and run the embedded web app. LLM configuration can be skipped while setting up accounts.
+- [Linux ARM64 development](docs/linux-arm64.md): cross-build and direct emulation evidence; native hardware and official release acceptance remain open.
 - [Local signed installation](docs/local-installation.md): install an explicitly trusted native bundle, update a stopped installation from supported schema47 through the current version, recover interrupted activation and remove runtime files while retaining data. Official release bundles are not yet published.
 - [Current status](docs/status.md): implemented bounds, evidence and next work. Optional vault/broker packages are still required v1 deliverables; the full product is not complete.
 - [Requirements](docs/requirements.md) · [feature contracts](docs/features.md) · [rewrite plan](docs/plan.md) · [migration order](docs/migration.md).

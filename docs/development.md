@@ -5,6 +5,8 @@ a stable release. The separate [local signed bundle manager](local-installation.
 of supported behavior, validation limits and remaining work. Every email send
 requires explicit approval of its final preview.
 
+The [Linux ARM64 build guide](linux-arm64.md) records cross-build and direct emulation support, with native hardware/release limits.
+
 Use Rust 1.89+ and Node.js 22.22+. Node is needed to build React, not to run the
 resulting server. SQLite is bundled. Build from a clean public checkout:
 

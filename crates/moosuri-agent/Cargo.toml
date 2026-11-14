@@ -11,6 +11,7 @@ default = []
 test-fixtures = ["moosuri-connectors/test-fixtures"]
 
 [dependencies]
+moosuri-vault-protocol = {path="../moosuri-vault-protocol"}
 moosuri-core = { path = "../moosuri-core" }
 moosuri-store = { path = "../moosuri-store" }
 moosuri-connectors = { path = "../moosuri-connectors" }

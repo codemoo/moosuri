@@ -6,6 +6,7 @@ pub mod browser;
 pub mod calendar;
 mod calendar_intent;
 mod calendar_tools;
+pub mod credential_broker;
 mod knowledge_tools;
 pub mod mail;
 mod mail_tools;

@@ -329,6 +329,7 @@ pub(crate) fn finish_deletions(conn: &mut Connection) -> Result<()> {
                 ],
             )?;
         }
+        tx.execute("DELETE FROM credential_broker_repositories WHERE device_id IN(SELECT id FROM credential_broker_devices WHERE tenant_id=?1)",[&tenant])?;
         tx.execute("DELETE FROM credential_broker_auth WHERE device_id IN(SELECT id FROM credential_broker_devices WHERE tenant_id=?1)",[&tenant])?;
         tx.execute("DELETE FROM credential_broker_bindings WHERE device_id IN(SELECT id FROM credential_broker_devices WHERE tenant_id=?1)",[&tenant])?;
         tx.execute(

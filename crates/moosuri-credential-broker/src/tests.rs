@@ -48,6 +48,7 @@ fn setup() -> (
         },
         binding,
         operation: Operation::FixedProbe,
+        repository: None,
         digest,
         expires_at: 500,
     };

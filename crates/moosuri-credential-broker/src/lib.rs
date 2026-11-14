@@ -1,7 +1,9 @@
-//! Native enforcement foundation. No network adapter or credential unlocking is shipped.
+//! Trusted native credential enforcement, archive unlock and one fixed GitHub adapter.
 pub mod auth;
+pub mod github;
 mod journal;
 pub mod policy;
+pub mod transport;
 use moosuri_vault_protocol::broker::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -44,6 +46,8 @@ struct State {
     grants: Vec<policy::LocalGrant>,
     entries: Vec<Entry>,
     revoked: bool,
+    #[serde(default)]
+    delivered: Vec<Invocation>,
 }
 pub struct Engine {
     state: State,
@@ -65,6 +69,7 @@ impl Engine {
             grants: vec![],
             entries: vec![],
             revoked: false,
+            delivered: vec![],
         };
         let journal = journal::Journal::create(path, pkcs8, &state)?;
         Ok(Self {
@@ -218,6 +223,29 @@ impl Engine {
                     return Err(Error::Policy);
                 }
             }
+            Command::RegisterRepository {
+                binding,
+                repository,
+            } => {
+                if self.state.revoked
+                    || !self
+                        .state
+                        .grants
+                        .iter()
+                        .any(|g| &g.binding == binding && g.repository() == Some(repository))
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::Poll => {}
+            Command::Abandon { invocation } => {
+                if !self.state.entries.iter().any(|e| {
+                    &e.request.invocation == invocation
+                        && matches!(e.phase, Phase::RetainedPrepared | Phase::Prepared)
+                }) {
+                    return Err(Error::Unknown);
+                }
+            }
             Command::Commit { invocation } => {
                 if self.state.revoked {
                     return Err(Error::Policy);
@@ -276,6 +304,61 @@ impl Engine {
             command,
         })
     }
+    pub fn delivered(&mut self, invocation: Invocation) -> Result<()> {
+        if !self.state.delivered.contains(&invocation) {
+            self.state.delivered.push(invocation);
+            self.save()?;
+        }
+        Ok(())
+    }
+    pub fn is_revoked(&self) -> bool {
+        self.state.revoked
+    }
+    pub fn device(&self) -> &Device {
+        &self.state.device
+    }
+    pub fn origin(&self) -> &str {
+        &self.state.origin
+    }
+    pub fn public_key(&self) -> &[u8] {
+        &self.state.public_key
+    }
+    pub fn grants(&self) -> &[policy::LocalGrant] {
+        &self.state.grants
+    }
+    pub fn retained(&self) -> Vec<Request> {
+        self.state
+            .entries
+            .iter()
+            .filter(|e| !self.state.delivered.contains(&e.request.invocation))
+            .map(|e| e.request.clone())
+            .collect()
+    }
+    /// CLI-local open: the same private journal/key/enrollment are required. This
+    /// does not create state or claim coordinated rollback resistance.
+    pub fn open_local(path: &Path) -> Result<Self> {
+        let (journal, bytes, state): (journal::Journal, zeroize::Zeroizing<Vec<u8>>, State) =
+            journal::Journal::reopen(path)?;
+        let key = auth::SigningKey::from_pkcs8(&bytes)?;
+        if key.public_key() != state.public_key || !auth::valid_origin(&state.origin) {
+            return Err(Error::PrivateState);
+        }
+        let mut e = Self {
+            state,
+            journal,
+            key,
+            poisoned: false,
+        };
+        for entry in &mut e.state.entries {
+            entry.phase = match &entry.phase {
+                Phase::Prepared => Phase::RetainedPrepared,
+                Phase::Committed(c) => Phase::RetainedCommitted(c.clone()),
+                x => x.clone(),
+            };
+        }
+        e.save()?;
+        Ok(e)
+    }
     /// Immediately fences local entry. This is not upstream provider revocation.
     pub fn revoke(&mut self) -> Result<()> {
         self.state.revoked = true;
@@ -333,7 +416,6 @@ impl Engine {
         self.save()?;
         Ok(r)
     }
-    #[cfg(test)]
     fn begin_dispatch(
         &mut self,
         invocation: &Invocation,
@@ -368,3 +450,18 @@ impl Engine {
 }
 #[cfg(test)]
 mod tests;
+
+/// Owner-private ciphertext input; no plaintext filesystem loader is exposed.
+pub fn read_private_archive(path: &Path) -> Result<Vec<u8>> {
+    journal::read_archive(path)
+}
+
+/// Trusted device wall clock; transport never carries an old poll timestamp across IO.
+fn current_time() -> Result<i64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| Error::PrivateState)?
+        .as_secs()
+        .try_into()
+        .map_err(|_| Error::PrivateState)
+}

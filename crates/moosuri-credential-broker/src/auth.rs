@@ -55,6 +55,9 @@ pub fn projection_digest(projection: moosuri_vault_protocol::broker::Projection)
     let code = match projection {
         moosuri_vault_protocol::broker::Projection::None => 0,
         moosuri_vault_protocol::broker::Projection::FixedProbeOk => 1,
+        p @ moosuri_vault_protocol::broker::Projection::GitHubRepository { .. } => {
+            return hash(&p.bytes());
+        }
     };
     let mut bytes = Vec::from(b"moosuri/broker/projection/v1\0".as_slice());
     bytes.push(code);

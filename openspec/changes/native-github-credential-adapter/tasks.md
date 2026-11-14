@@ -1,0 +1,7 @@
+- [x] Typed exact GitHub scope/projection and native HTTP adapter
+- [x] Existing archive crypto unlock, local item/repository selection and lock
+- [x] Native pairing/signed transport, polling and retained-work reconciliation
+- [x] Durable user request/status/reuse and personal experimental page
+- [x] Focused synthetic native/server/web verification
+- [ ] Independent security/integration acceptance
+- [ ] Google and model-tool waiting integration (next slice, not P8 complete)

@@ -32,6 +32,7 @@ import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
 import { PwaInstallButton } from "./PwaInstallButton";
+import { NativeCredentials } from "./NativeCredentials";
 import { MailConnections } from "./MailConnections";
 import { GoogleSetup } from "./GoogleSetup";
 import { Artifacts, type ArtifactDrafts } from "./Artifacts";
@@ -784,6 +785,7 @@ function Workspace({
   const providerAdmin = path === "/admin/providers";
   const personalModel = path === "/settings/model";
   const calendarPage = path === "/settings/calendar";
+  const nativeCredentials = path === "/settings/credentials";
   const personalMail = path === "/settings/mail";
   const personalSources = path === "/settings/sources";
   const communitySkills = path === "/app/skills";
@@ -1044,6 +1046,7 @@ function Workspace({
         <button className={`nav-link ${missionsPage?"chosen":""}`} onClick={()=>{navigate("/app/missions");setDrawer(false)}}>맡긴 일<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${schedulesPage ? "chosen" : ""}`} aria-current={schedulesPage?"page":undefined} onClick={()=>{navigate("/app/schedules");setDrawer(false)}}>예약 · 소식<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${calendarPage?"chosen":""}`} onClick={()=>{navigate("/settings/calendar");setDrawer(false)}}>내 Calendar<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${nativeCredentials ? "chosen":""}`} onClick={()=>{navigate("/settings/credentials");setDrawer(false)}}>신뢰 기기 credential · 실험<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${personalMail ? "chosen" : ""}`} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
         <button
           className={`nav-link ${personalUsage ? "chosen" : ""}`}
@@ -1188,7 +1191,7 @@ function Workspace({
             },
           }));
           navigate("/app");
-        }}/> : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => navigate("/admin/google") : undefined}/> : knowledgeOpen ? (
+        }}/> : nativeCredentials ? <NativeCredentials key={session.user.id} accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => navigate("/admin/google") : undefined}/> : knowledgeOpen ? (
           <KnowledgeView
             accountId={session.user.id}
             mode={memoryPage ? "memory" : "source"}

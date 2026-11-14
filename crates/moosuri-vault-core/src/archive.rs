@@ -572,3 +572,44 @@ mod tests {
         assert!(source.export_archive(&items, [0; 32], &Continue).is_err());
     }
 }
+
+/// Authenticated local archive snapshot for trusted native credential consumers.
+/// The caller owns its lifetime; dropping it clears the root key. This does not
+/// attest that a copied archive is the current online vault head.
+pub struct UnlockedArchive {
+    active: ActiveVault,
+    items: Vec<EncryptedItem>,
+}
+impl UnlockedArchive {
+    pub fn unlock(bytes: &[u8], secret: &SecretText) -> Result<Self> {
+        if bytes.len() > ARCHIVE_LIMIT {
+            return Err(Error::Limit);
+        }
+        let archive: Archive = serde_json::from_slice(bytes).map_err(|_| Error::Invalid)?;
+        let transcript = archive.transcript(&crate::Continue)?;
+        let authentication = unb64(&archive.authentication, 32, 32)?;
+        let mut active =
+            ActiveVault::archive_open(archive.header, secret, false, &transcript, &authentication)?;
+        for item in &archive.items {
+            drop(active.open_item(item)?);
+        }
+        Ok(Self {
+            active,
+            items: archive.items,
+        })
+    }
+    pub fn header(&self) -> &Header {
+        self.active.header()
+    }
+    pub fn items(&self) -> &[EncryptedItem] {
+        &self.items
+    }
+    pub fn open(&mut self, id: Uuid) -> Result<ItemFields> {
+        self.active.open_item(
+            self.items
+                .iter()
+                .find(|i| i.id == id)
+                .ok_or(Error::Invalid)?,
+        )
+    }
+}

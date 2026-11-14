@@ -1,4 +1,4 @@
-//! Opt-in protocol foundation. No production adapter or invocation mint route.
+//! Opt-in signed device protocol and explicit typed GitHub metadata requests.
 use super::*;
 #[cfg(not(feature = "credential-broker-foundation"))]
 pub(super) fn routes() -> Router<AppState> {
@@ -7,6 +7,8 @@ pub(super) fn routes() -> Router<AppState> {
 #[cfg(feature = "credential-broker-foundation")]
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
+        .route("/api/v1/credential-broker/status", get(enabled::status))
+        .route("/api/v1/credential-broker/github", post(enabled::github))
         .route("/api/v1/credential-broker/pair", post(enabled::challenge))
         .route(
             "/api/v1/credential-broker/{id}/revoke",
@@ -27,6 +29,33 @@ pub(super) fn routes() -> Router<AppState> {
 mod enabled {
     use super::*;
     use moosuri_vault_protocol::broker::*;
+    pub(super) async fn status(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
+        let u = current(&s, &headers).await?;
+        Ok(Json(serde_json::json!({"devices":s.store.broker_devices(&u).await?,"jobs":s.store.github_metadata_jobs(&u).await?})).into_response())
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct GitHubInput {
+        request_id: String,
+        repository: GitHubRepository,
+    }
+    pub(super) async fn github(
+        State(s): State<AppState>,
+        headers: HeaderMap,
+        Json(input): Json<GitHubInput>,
+    ) -> HttpResult {
+        let u = current(&s, &headers).await?;
+        Ok(Json(
+            moosuri_agent::credential_broker::github_metadata(
+                &s.store,
+                &u,
+                input.request_id,
+                input.repository,
+            )
+            .await?,
+        )
+        .into_response())
+    }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(super) struct PairInput {

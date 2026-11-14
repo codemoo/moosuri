@@ -255,3 +255,23 @@ impl Drop for Journal {
         let _ = fs2::FileExt::unlock(&self.lock);
     }
 }
+
+pub(crate) fn read_archive(path: &Path) -> Result<Vec<u8>> {
+    let parent = path.parent().ok_or(Error::PrivateState)?;
+    let dir = root(parent, false)?;
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or(Error::PrivateState)?;
+    let f = open(&dir, name, false)?;
+    if io(f.metadata())?.len() > moosuri_vault_core::ARCHIVE_LIMIT as u64 {
+        return Err(Error::PrivateState);
+    }
+    let mut bytes = Vec::new();
+    io(f.take(moosuri_vault_core::ARCHIVE_LIMIT as u64 + 1)
+        .read_to_end(&mut bytes))?;
+    if bytes.len() > moosuri_vault_core::ARCHIVE_LIMIT {
+        return Err(Error::PrivateState);
+    }
+    Ok(bytes)
+}

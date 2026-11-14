@@ -471,6 +471,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0043_invitation_delivery.sql"
         ))?;
     }
+    if captured < 44 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0044_native_credential_adapter.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);

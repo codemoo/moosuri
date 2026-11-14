@@ -1,3 +1,8 @@
+> Later experimental native slice: [GitHub credential adapter](native-credential-github.md)
+> adds an executable companion/archive unlock and one real API operation. The
+> historical foundation-only scope below describes the original unit; Google,
+> general chat-tool routing and signed distribution remain open.
+
 # CredentialBroker authority and device-local foundation
 
 This bounded source unit supplies broker pairing, device authentication, online

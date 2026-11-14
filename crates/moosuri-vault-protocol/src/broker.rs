@@ -41,6 +41,39 @@ pub struct AuthChallenge {
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
     FixedProbe,
+    GitHubRepositoryRead,
+}
+/// Exact, canonical repository selection. Never a URL or HTTP header.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitHubRepository {
+    pub owner: String,
+    pub repository: String,
+}
+impl GitHubRepository {
+    pub fn valid(&self) -> bool {
+        !self.owner.is_empty()
+            && self.owner.len() <= 39
+            && !self.owner.starts_with('-')
+            && !self.owner.ends_with('-')
+            && self
+                .owner
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && !self.repository.is_empty()
+            && self.repository.len() <= 100
+            && !matches!(self.repository.as_str(), "." | "..")
+            && self
+                .repository
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+    }
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut b = Bytes::new(b"github-repository-metadata/v1");
+        b.blob(self.owner.as_bytes());
+        b.blob(self.repository.as_bytes());
+        b.0
+    }
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +101,8 @@ pub struct Request {
     pub invocation: Invocation,
     pub binding: Binding,
     pub operation: Operation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<GitHubRepository>,
     pub digest: [u8; 32],
     pub expires_at: i64,
 }
@@ -91,6 +126,37 @@ pub enum Outcome {
 pub enum Projection {
     None,
     FixedProbeOk,
+    GitHubRepository {
+        id: u64,
+        private: bool,
+        archived: bool,
+        stars: u64,
+        open_issues: u64,
+    },
+}
+impl Projection {
+    pub fn bytes(self) -> Vec<u8> {
+        let mut b = Bytes::new(b"projection");
+        match self {
+            Self::None => b.0.push(0),
+            Self::FixedProbeOk => b.0.push(1),
+            Self::GitHubRepository {
+                id,
+                private,
+                archived,
+                stars,
+                open_issues,
+            } => {
+                b.0.push(2);
+                b.u(id);
+                b.0.push(private as u8);
+                b.0.push(archived as u8);
+                b.u(stars);
+                b.u(open_issues);
+            }
+        }
+        b.0
+    }
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -109,10 +175,26 @@ pub struct SignedReceipt {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
-    Register { binding: Binding },
-    Commit { invocation: Invocation },
-    Recover { invocation: Invocation },
-    Settle { receipt: Box<SignedReceipt> },
+    Register {
+        binding: Binding,
+    },
+    RegisterRepository {
+        binding: Binding,
+        repository: GitHubRepository,
+    },
+    Poll,
+    Abandon {
+        invocation: Invocation,
+    },
+    Commit {
+        invocation: Invocation,
+    },
+    Recover {
+        invocation: Invocation,
+    },
+    Settle {
+        receipt: Box<SignedReceipt>,
+    },
     AckRevoke,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -126,8 +208,15 @@ pub struct SignedCommand {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
     Registered,
-    Commitment { commitment: Box<Commitment> },
+    Waiting {
+        requests: Vec<Request>,
+        revocation_pending: bool,
+    },
+    Commitment {
+        commitment: Box<Commitment>,
+    },
     Settled,
+    Abandoned,
     Revoked,
 }
 
@@ -177,7 +266,19 @@ impl Bytes {
         self.device(&r.device);
         self.invocation(&r.invocation);
         self.binding(&r.binding);
-        self.0.push(1);
+        match r.operation {
+            Operation::FixedProbe => self.0.push(1),
+            Operation::GitHubRepositoryRead => {
+                self.0.push(2);
+                if let Some(repo) = &r.repository {
+                    self.blob(repo.owner.as_bytes());
+                    self.blob(repo.repository.as_bytes());
+                } else {
+                    self.blob(&[]);
+                    self.blob(&[]);
+                }
+            }
+        }
         self.0.extend_from_slice(&r.digest);
         self.0.extend_from_slice(&r.expires_at.to_be_bytes());
     }
@@ -193,7 +294,22 @@ impl Bytes {
         self.0.push(match r.projection {
             Projection::None => 0,
             Projection::FixedProbeOk => 1,
+            Projection::GitHubRepository { .. } => 2,
         });
+        if let Projection::GitHubRepository {
+            id,
+            private,
+            archived,
+            stars,
+            open_issues,
+        } = r.projection
+        {
+            self.u(id);
+            self.0.push(private as u8);
+            self.0.push(archived as u8);
+            self.u(stars);
+            self.u(open_issues);
+        }
         self.0.extend_from_slice(&r.projection_digest);
     }
 }
@@ -251,6 +367,20 @@ pub fn command_bytes(
             body.blob(&receipt.signature)
         }
         Command::AckRevoke => body.0.push(4),
+        Command::RegisterRepository {
+            binding,
+            repository,
+        } => {
+            body.0.push(5);
+            body.binding(binding);
+            body.blob(repository.owner.as_bytes());
+            body.blob(repository.repository.as_bytes());
+        }
+        Command::Poll => body.0.push(6),
+        Command::Abandon { invocation } => {
+            body.0.push(7);
+            body.invocation(invocation)
+        }
     }
     // The body itself is bounded and length-prefixed, thus binds at least as strongly
     // as a digest. Native auth also exposes its SHA256 for transport diagnostics.

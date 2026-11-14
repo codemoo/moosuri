@@ -9,7 +9,9 @@ mod totp;
 mod wire;
 
 pub use apple::{AppleImport, ImportPreview, ImportRow, ImportStatus, UsernameFilter};
-pub use archive::{ARCHIVE_ITEMS, ARCHIVE_LIMIT, ArchiveImport, ArchivePreview, ArchiveRow};
+pub use archive::{
+    ARCHIVE_ITEMS, ARCHIVE_LIMIT, ArchiveImport, ArchivePreview, ArchiveRow, UnlockedArchive,
+};
 pub use crypto::{
     ActiveVault, ClientVault, CommittedHeader, HeaderReceipt, PendingChange, PendingVault,
     RecoveryKey, StorageReceipt, inventory_digest, storage_commitment,

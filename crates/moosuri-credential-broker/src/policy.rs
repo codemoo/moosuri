@@ -15,6 +15,10 @@ pub struct LocalGrant {
     origin: String,
     resource: Uuid,
     revoked: bool,
+    #[serde(default)]
+    repository: Option<GitHubRepository>,
+    #[serde(default)]
+    vault: Option<Uuid>,
 }
 impl LocalGrant {
     /// Actual local connection/selection step. Foundation supports only a fixed,
@@ -52,6 +56,8 @@ impl LocalGrant {
             origin: "https://fixed-probe.invalid".into(),
             resource,
             revoked: false,
+            repository: None,
+            vault: None,
         };
         // Fixed-order local commitment includes the otherwise hidden grant ceiling.
         let mut data = Vec::from(b"moosuri/local-fixed-probe/v1".as_slice());
@@ -67,11 +73,62 @@ impl LocalGrant {
             },
             binding: g.binding.clone(),
             operation: Operation::FixedProbe,
+            repository: None,
             digest: [0; 32],
             expires_at,
         }));
         g.binding.grant_hash = hash(&data);
         Ok(g)
+    }
+    pub fn select_github(
+        device: Device,
+        item: Uuid,
+        vault: Uuid,
+        repository: GitHubRepository,
+        item_epoch: u64,
+        key_epoch: u64,
+        expires_at: i64,
+    ) -> Result<Self> {
+        if !repository.valid() {
+            return Err(Error::Policy);
+        }
+        let mut g = Self::select_fixed_probe(
+            device,
+            item,
+            Uuid::new_v4(),
+            item_epoch,
+            key_epoch,
+            expires_at,
+        )?;
+        g.service = "github".into();
+        g.origin = "https://api.github.com".into();
+        g.repository = Some(repository);
+        g.vault = Some(vault);
+        let mut bytes = Vec::from(b"moosuri/local-github-grant/v1".as_slice());
+        bytes.extend_from_slice(g.item.as_bytes());
+        bytes.extend_from_slice(vault.as_bytes());
+        bytes.extend_from_slice(&g.repository.as_ref().unwrap().bytes());
+        bytes.extend_from_slice(&g.binding.item_epoch.to_be_bytes());
+        bytes.extend_from_slice(&g.binding.key_epoch.to_be_bytes());
+        bytes.extend_from_slice(&g.binding.expires_at.to_be_bytes());
+        bytes.extend_from_slice(g.device.id.as_bytes());
+        g.binding.grant_hash = hash(&bytes);
+        Ok(g)
+    }
+    pub fn repository(&self) -> Option<&GitHubRepository> {
+        self.repository.as_ref()
+    }
+    pub fn vault(&self) -> Option<Uuid> {
+        self.vault
+    }
+    pub fn item(&self) -> Uuid {
+        self.item
+    }
+    pub fn digest(&self) -> [u8; 32] {
+        self.repository
+            .as_ref()
+            .map(|r| hash(&r.bytes()))
+            .unwrap_or_else(|| self.probe_digest())
     }
     pub fn revoke(&mut self) {
         self.revoked = true;
@@ -91,14 +148,26 @@ impl LocalGrant {
             || self.binding.expires_at <= now
             || item_epoch != self.binding.item_epoch
             || key_epoch != self.binding.key_epoch
-            || self.service != "foundation-fixed-probe"
             || self.adapter_version != 1
-            || self.origin != "https://fixed-probe.invalid"
         {
             return Err(Error::Policy);
         }
         // Digest is derived locally from a typed fixed resource, not a URL supplied by server.
-        if request.digest != self.probe_digest() {
+        let scope = match request.operation {
+            Operation::FixedProbe => {
+                self.service == "foundation-fixed-probe"
+                    && self.origin == "https://fixed-probe.invalid"
+                    && request.repository.is_none()
+                    && self.repository.is_none()
+            }
+            Operation::GitHubRepositoryRead => {
+                self.service == "github"
+                    && self.origin == "https://api.github.com"
+                    && request.repository == self.repository
+                    && self.repository.as_ref().is_some_and(|r| r.valid())
+            }
+        };
+        if !scope || request.digest != self.digest() {
             return Err(Error::Policy);
         }
         Ok(())

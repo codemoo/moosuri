@@ -4,6 +4,7 @@ use moosuri_credential_broker::auth::verify;
 use moosuri_vault_protocol::broker::Command;
 use moosuri_vault_protocol::broker::*;
 use serde::{Serialize, de::DeserializeOwned};
+pub mod github;
 fn encode<T: Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|_| StoreError::Corrupt)
 }
@@ -33,6 +34,19 @@ fn stored_request(conn: &Connection, tenant: &str, i: &Invocation) -> Result<Req
 fn commitment(conn: &Connection, tenant: &str, i: &Invocation) -> Result<Option<Commitment>> {
     let s:Option<String>=conn.query_row("SELECT commitment FROM credential_broker_commitments WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,i.run.to_string(),i.step,i.call.to_string(),i.nonce.to_string()],|r|r.get(0)).optional()?;
     s.map(|s| decode(&s)).transpose()
+}
+fn projection_allowed(outcome: Outcome, p: Projection, operation: Operation) -> bool {
+    match (outcome, p, operation) {
+        (Outcome::ProjectedSuccess, Projection::FixedProbeOk, Operation::FixedProbe) => true,
+        (
+            Outcome::ProjectedSuccess,
+            Projection::GitHubRepository { id, .. },
+            Operation::GitHubRepositoryRead,
+        ) => id > 0,
+        (Outcome::ProjectedSuccess, _, _) => false,
+        (_, Projection::None, _) => true,
+        _ => false,
+    }
 }
 impl Store {
     pub async fn broker_pair_challenge(
@@ -157,6 +171,28 @@ impl Store {
   tx.execute("DELETE FROM credential_broker_auth WHERE nonce=?1",[c.nonce.to_string()])?;
   let tenant=c.device.owner.tenant.to_string();let device=c.device.id.to_string();
   let reply=match input.command {
+   Command::Abandon {invocation}=>{
+    if commitment(&tx,&tenant,&invocation)?.is_some(){return Err(StoreError::Conflict)}
+    let json:String=tx.query_row("SELECT request FROM credential_broker_invocations WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,invocation.run.to_string(),invocation.step,invocation.call.to_string(),invocation.nonce.to_string()],|r|r.get(0)).optional()?.ok_or(StoreError::NotFound)?;
+    let request:Request=decode(&json)?;if request.device!=c.device{return Err(StoreError::Forbidden)}
+    tx.execute("UPDATE credential_broker_invocations SET cancelled=1 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,invocation.run.to_string(),invocation.step,invocation.call.to_string(),invocation.nonce.to_string()])?;Reply::Abandoned
+   },
+   Command::Poll=>github::poll(&tx,&p,&session,&status)?,
+   Command::RegisterRepository {binding,repository}=>{
+    active(&tx,&p,&session)?;
+    if status!="active" || !repository.valid() || binding.id.is_nil() || binding.epoch==0 || binding.grant_version==0 || binding.key_epoch==0 || binding.item_epoch==0 || binding.expires_at<=now()? || binding.grant_hash==[0;32] {return Err(StoreError::Forbidden)}
+    let old:Option<String>=tx.query_row("SELECT binding FROM credential_broker_bindings WHERE device_id=?1 AND binding_id=?2",params![device,binding.id.to_string()],|r|r.get(0)).optional()?;
+    let json=encode(&binding)?;
+    if let Some(old)=old {if old!=json {return Err(StoreError::Conflict)}} else {
+      let n:i64=tx.query_row("SELECT count(*) FROM credential_broker_bindings WHERE device_id=?1",[&device],|r|r.get(0))?;if n>=256{return Err(StoreError::Busy)}
+      tx.execute("INSERT INTO credential_broker_bindings VALUES(?1,?2,?3,1)",params![device,binding.id.to_string(),json])?;
+    }
+    let repo=encode(&repository)?;
+    let previous:Option<String>=tx.query_row("SELECT repository FROM credential_broker_repositories WHERE device_id=?1 AND binding_id=?2",params![device,binding.id.to_string()],|r|r.get(0)).optional()?;
+    if previous.as_ref().is_some_and(|v|v!=&repo){return Err(StoreError::Conflict)}
+    tx.execute("INSERT OR IGNORE INTO credential_broker_repositories VALUES(?1,?2,?3)",params![device,binding.id.to_string(),repo])?;
+    Reply::Registered
+   },
    Command::Register{binding}=>{
     active(&tx,&p,&session)?;if status!="active"||binding.id.is_nil()||binding.epoch==0||binding.grant_version==0||binding.key_epoch==0||binding.item_epoch==0||binding.expires_at<=now()?||binding.grant_hash==[0;32]{return Err(StoreError::Forbidden)}
     let old:Option<String>=tx.query_row("SELECT binding FROM credential_broker_bindings WHERE device_id=?1 AND binding_id=?2",params![device,binding.id.to_string()],|r|r.get(0)).optional()?;
@@ -184,7 +220,7 @@ impl Store {
    Command::Settle{receipt}=>{
     let r=&receipt.receipt;let i=&r.commitment.request.invocation;
     let old=commitment(&tx,&tenant,i)?.ok_or(StoreError::NotFound)?;
-    if old!=r.commitment || old.request.device!=c.device || (r.outcome==Outcome::ProjectedSuccess)!=(r.projection==Projection::FixedProbeOk) || r.projection_digest!=moosuri_credential_broker::auth::projection_digest(r.projection){return Err(StoreError::Forbidden)}
+    if old!=r.commitment || old.request.device!=c.device || !projection_allowed(r.outcome,r.projection,old.request.operation) || r.projection_digest!=moosuri_credential_broker::auth::projection_digest(r.projection){return Err(StoreError::Forbidden)}
     check_sig(&key,Some(receipt_bytes(r)),&receipt.signature)?;
     let previous:Option<String>=tx.query_row("SELECT receipt FROM credential_broker_commitments WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,i.run.to_string(),i.step,i.call.to_string(),i.nonce.to_string()],|r|r.get(0))?;
     let json=encode(&receipt)?;if let Some(previous)=previous {if previous!=json{return Err(StoreError::Conflict)}}else{
@@ -236,6 +272,7 @@ impl Store {
                 },
                 binding,
                 operation: Operation::FixedProbe,
+                repository: None,
                 digest,
                 expires_at: now()? + 30,
             };

@@ -1,4 +1,4 @@
-//! Real predecessor→current CLI acceptance; explicitly provision the previous executable.
+//! Actual schema47→current CLI acceptance; provision the real supported-floor executable.
 #![cfg(feature = "test-fixtures")]
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{Value, json};
@@ -156,8 +156,8 @@ async fn predecessor_content(manager: &Path, prefix: &Path) -> String {
     id
 }
 #[tokio::test]
-#[ignore = "requires real predecessor-schema binary via MOOSURI_TEST_PREDECESSOR_BINARY; do not count unrun as acceptance"]
-async fn signed_predecessor_update_interruption_retry_preserves_content_and_never_rolls_database_back()
+#[ignore = "requires actual schema47 executable via MOOSURI_TEST_PREDECESSOR_BINARY; do not count unrun as acceptance"]
+async fn signed_multiversion_update_interruption_retry_preserves_content_and_never_rolls_database_back()
  {
     let new = Path::new(env!("CARGO_BIN_EXE_moosuri"));
     let old = PathBuf::from(
@@ -166,10 +166,20 @@ async fn signed_predecessor_update_interruption_retry_preserves_content_and_neve
     );
     let old_probe = metadata(&old);
     let new_probe = metadata(new);
+    let source_schema = old_probe["store_schema"].as_i64().unwrap();
+    let target_schema = new_probe["store_schema"].as_i64().unwrap();
+    // This is actual old-binary evidence, never a current DB relabeled by PRAGMA.
+    assert_eq!(source_schema, 47);
     assert_eq!(
-        old_probe["store_schema"].as_i64().unwrap() + 1,
-        new_probe["store_schema"].as_i64().unwrap()
+        source_schema,
+        moosuri_store::backup::MIN_SUPPORTED_UPDATE_SCHEMA
     );
+    assert!(
+        target_schema >= 49,
+        "target must span multiple real schema migrations"
+    );
+    assert!(target_schema - source_schema >= 2);
+    assert!(moosuri_store::backup::supports_update_from(source_schema));
     assert_eq!(old_probe["target"], new_probe["target"]);
     for point in [
         "after_migration_started",

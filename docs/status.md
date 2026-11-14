@@ -13,7 +13,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 영역 | 구현한 범위 | 남은 경계와 사용·증거 |
 | --- | --- | --- |
-| 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/현재·직전 schema의 stopped update/데이터 보존 제거도 구현했다. 공식 release·두 단계 이상 schema update·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
+| 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/schema47부터 현재까지 stopped update/데이터 보존 제거도 구현했다. 공식 release·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
 | 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량·실제 실행 단계 시간/누락 집계, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 오래된/다른 소유 대화의 제한 검색·읽기, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경 | 개인 Claude 공식 CLI의 설정·text probe·선택·저장 대화도 구현했다. Claude 실제 rootless Linux/공식 로그인과 media/background·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·검색, 직접 기억·정정·망각, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 여섯 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 2–4단계 정확 계산의 구조 학습·새 입력 재사용·합성 export도 구현했다. 일반 외부 복합 업무 학습/export·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
@@ -25,6 +25,18 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·live-vault rotation·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 여러 DB 버전을 건너뛰는 설치 업데이트
+
+서명된 로컬 설치의 업데이트 범위를 고정된 schema47부터 현재 schema50까지 넓혔다.
+매번 직전 버전만 허용해 오래된 설치를 막던 제한을 제거했으며, 백업·서명 확인·중지된
+writer lock·중간 실패의 forward 복구는 그대로 사용한다. 진행을 시작한 뒤에는 예전 DB로
+돌아가 새 작업을 잃지 않는다.
+
+실제 구버전47 실행 파일로 만든 설치를50으로 올리면서 네 가지 중단·재시도 경계를
+리눅스에서 검증했다. 원래 자료와 갱신 후 추가한 자료가 유지되고 기존 백업도 보존됐다.
+독립 검토·Clippy·빌드도 통과했다. 공식 릴리스 배포와 arm64 수락은 별도다.
+[업데이트](local-installation.md) · [검증](reviews/2026-11-15-multiversion-updates.md).
 
 ## 최근 수락한 단위 · 정규화한 개인 자료 이전 도구
 
@@ -478,7 +490,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 native GitHub credential 조회/원래 채팅 대기·완료 | 일반 credential 도구·Google adapter·live-vault rotation·호환 이전·독립 최신 복구 |
 | P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 legacy exporter/schema adapter·운영 대조·drain/cutover/rollback 실증 |
-| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/현재·직전 schema update/제거·CycloneDX source-lock inventory | 공식 서명 배포·arm64·여러 단계 schema update·binary provenance/license·품질/기기/출시 gate |
+| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory | 공식 서명 배포·arm64·binary provenance/license·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기를 수락했고, 고정 비교 baseline과 넓은 품질 평가는 남는다.
@@ -515,7 +527,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 일반 credential 도구·Google adapter·live-vault rotation,
    독립 최신 복구·구 v1 호환/이전·서명 배포를 이어 구현한다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: 정규화 private importer/대조를 구현했다. 실제 legacy schema exporter·제한 cutover·rollback,
-   수락한 Linux x86_64 로컬 서명 설치/현재·직전 schema update/제거와 source-lock SBOM을 공식 artifact·arm64·여러 단계 schema update·binary provenance/license로 확장하고,
+   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거와 source-lock SBOM을 공식 artifact·arm64·binary provenance/license로 확장하고,
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 

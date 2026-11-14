@@ -667,7 +667,7 @@ fn resume_upgrade(
     if source >= target
         || guard.schema_version() < source
         || guard.schema_version() > target
-        || source != own_probe().store_schema - 1
+        || !moosuri_store::backup::supports_update_from(source)
     {
         return Err("installation_upgrade_schema_mismatch".into());
     }

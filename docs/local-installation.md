@@ -74,7 +74,7 @@ app account authentication remains required. Do not overwrite another service's
 configuration. Unit installation/enabling, actual Tailscale/domain setup and the
 separate vault origin remain operator actions.
 
-## Stopped update and predecessor-schema migration
+## Stopped update across supported Store schemas
 
 Stop the user service and wait for shutdown. Configure the existing encrypted
 backup recipient with an independently held identity using `backup keygen/setup`
@@ -92,9 +92,12 @@ moosuri installation status --prefix /absolute/private/runtime
 The release sequence must increase and SemVer cannot decrease. Target, exact
 binary size/hash, signature and self-reported build metadata/embedded assets must
 agree. The selected old release's signed schema must match the stopped database.
-The updater supports its own schema and **only the immediately preceding schema**;
-it rejects a newer database, a schema gap, a mismatched old manifest or a target
-schema different from its own build. Use the new bundle's executable for a schema
+The updater supports the fixed source floor **schema47 through its own current
+Store schema**, including gaps spanning multiple explicit forward migrations.
+Schema46 and earlier remain unsupported by this signed-update contract, even where
+the Store contains older migration SQL. It rejects a newer database, an unsupported
+source schema, a mismatched old manifest or a target schema different from its own
+build. Use the new bundle's executable for a schema
 upgrade. Its executing bytes must equal the newly staged, pinned signed executable
 before a source export or migration can proceed. Independently verify its public
 pin as described above; no official release or automatic download is implied.
@@ -102,8 +105,15 @@ pin as described above; no official release or automatic download is implied.
 A running managed process or another data writer rejects the update. The original
 stopped writer lock remains held continuously across source integrity/applied
 journal verification, encrypted SQLite/journal export, product Store migration and
-activation. An unconfigured backup or pending journal rejects before migration.
-The export records the actual source schema. Export limitations remain as described
+activation. An unconfigured backup or invalid/unverifiable journal rejects before
+migration. Valid unapplied journal tails are included with their complete and
+snapshot heads in the export, then replayed by Store before activation.
+The source floor is fixed at47 rather than computed as current-1, so a future
+schema addition does not silently strand an already supported installation or an
+intermediate recovery schema. Schema47 is the oldest actual signed-binary fixture
+for this bounded update path. Store/export structural prerequisites alone do not
+prove signed-update acceptance for schemas23..46. The export records the actual
+source schema. Export limitations remain as described
 in [backup](backup.md); this is not a full filesystem backup or a promise that an
 arbitrary historical export can be restored. Retain existing private files and
 backup identities along with the source export.

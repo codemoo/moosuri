@@ -647,6 +647,18 @@ pub fn create(root: &Path, output: &Path) -> Result<ExportSummary> {
     create_captured(&offline, output, started)
 }
 
+/// Explicitly supported signed-installer source floor. Keep this fixed when a
+/// new Store schema is added: actual schema47 bundles/data are the explicit
+/// supported update baseline. Earlier structural migration/export formats are not an update
+/// compatibility promise without their own real-binary acceptance evidence.
+pub const MIN_SUPPORTED_UPDATE_SCHEMA: i64 = 47;
+/// Does this build admit the captured source schema for stopped signed updates?
+/// Same-schema maintenance and every intermediate forward-recovery schema remain
+/// admitted; future schemas and unproved older sources fail before migration.
+pub fn supports_update_from(schema: i64) -> bool {
+    (MIN_SUPPORTED_UPDATE_SCHEMA..=CURRENT_SCHEMA_VERSION).contains(&schema)
+}
+
 /// Verified stopped snapshot retaining the original exclusive writer lock.
 /// Original stopped admission remains held through exports and optional forward migration.
 pub struct MaintenanceGuard {
@@ -658,11 +670,11 @@ impl MaintenanceGuard {
             offline: Offline::open(root)?,
         })
     }
-    /// Only the immediately preceding schema and this build's schema are supported.
+    /// Admit the explicit supported source range through this build's schema.
     /// Snapshot validation happens before any live migration or journal replay.
     pub fn open_for_upgrade(root: &Path) -> Result<Self> {
         let (root, lock) = files::stopped_lock(root)?;
-        let offline = Offline::capture_with_floor(root, lock, CURRENT_SCHEMA_VERSION - 1)?;
+        let offline = Offline::capture_with_floor(root, lock, MIN_SUPPORTED_UPDATE_SCHEMA)?;
         crate::cutover::require_active(&offline.conn, &offline.root)?;
         Ok(Self { offline })
     }

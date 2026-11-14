@@ -614,3 +614,14 @@ async fn format2_requires_successor_and_coverage_and_preserves_unapplied_intent_
     assert_eq!(snapshot(data.path()), missing);
     assert!(!exports.path().join("missing.age").exists());
 }
+
+#[test]
+fn signed_update_support_has_fixed_schema47_floor_and_rejects_unproved_or_future_sources() {
+    assert_eq!(MIN_SUPPORTED_UPDATE_SCHEMA, 47);
+    assert!(!supports_update_from(0));
+    assert!(!supports_update_from(MIN_SUPPORTED_UPDATE_SCHEMA - 1));
+    for schema in MIN_SUPPORTED_UPDATE_SCHEMA..=CURRENT_SCHEMA_VERSION {
+        assert!(supports_update_from(schema));
+    }
+    assert!(!supports_update_from(CURRENT_SCHEMA_VERSION + 1));
+}

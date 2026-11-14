@@ -244,3 +244,19 @@ it("an older ACK preserves a later deselect/reselect instance of the same image"
   fireEvent.click(screen.getByText("Acknowledge captured send"));
   expect(screen.getByLabelText("ready count")).toHaveTextContent("1");
 });
+
+function SharedFiles() {
+  const media=useMediaUploads("account-a","original");
+  const mixed=[new File(["raw"],"photo.png",{type:"image/png"}),new File(["synthetic"],"note.txt",{type:"text/plain"})];
+  return <>{media.view}<button onClick={()=>{expect(media.addShared(mixed,"original")).toBe(true);expect(media.addShared([...mixed,...mixed],"original")).toBe(false);}}>Import shared files</button><button onClick={()=>media.sent(media.readySelections)}>Ordinary send</button></>;
+}
+it("mixed shared files use the existing account upload queue and reserve capacity without blocking text",async()=>{
+  render(<SharedFiles/>);fireEvent.click(screen.getByText("Import shared files"));
+  await waitFor(()=>expect(Upload.jobs).toHaveLength(2));
+  expect(Upload.jobs.some(job=>job.url.includes("/media/"))).toBe(true);
+  expect(Upload.jobs.some(job=>job.url.includes("/files/"))).toBe(true);
+  expect(Upload.jobs.every(job=>job.headers["X-Moosuri-Account"]==="account-a")).toBe(true);
+  fireEvent.click(screen.getByText("Ordinary send"));
+  expect(screen.getByText("note.txt")).toBeInTheDocument();
+  expect(prepareImage).toHaveBeenCalledTimes(1);
+});

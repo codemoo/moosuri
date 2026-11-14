@@ -19,9 +19,22 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours·예약별 소식 끄기/다시 받기, opt-in 기기 Push | 전체 proactive 제안 정책·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[소식 제어](reviews/2026-11-14-notification-topics.md) |
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 여러 턴의 자동 명확화·넓은 자연어/시간 해석·Calendar/mail/browser/vault 미션 실행은 미완료. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
 | Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 여러 턴 대상 해석·날짜 간 이동·미션 Calendar·반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
-| 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·파일/음성 공유·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
+| 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·broker 실제 adapter/사용 흐름·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 사진·파일·음성 공유받기
+
+다른 앱에서 공유한 사진·문서·음성을 기존 계정/대화의 초안으로 가져온다. 최대4개/32MiB,
+음성1개와 종류별 한도를 적용하며 사진 미리보기에도 기존 헤더/48MP 사전 검사를 쓴다.
+사진·파일은 기존 업로드 큐로, 음성은 로컬 미리 듣기와 명시적 글 변환으로 이어진다.
+기존 글·첨부·녹음을 덮어쓰지 않고 일반 글 보내기도 계속 사용할 수 있다.
+
+독립 검토에서 최종 인증 중 용량이 바뀌면 공유를 잃는 문제와 사진 미리보기의 사전 검사
+누락을 수정했다. 기존 one-use·세션 철회 경계를 유지하며 같은 창에서만 원래 수명 안에
+다시 삽입할 수 있다. 관련 React/worker·수정 경로·TypeScript·production build·OpenSpec와
+독립 재검토를 통과했다. 실제 휴대폰 OS 공유 메뉴·코덱·음성 인식 품질은 별도다.
+[사용법](pwa.md)·[검증](reviews/2026-11-14-pwa-file-share.md).
 
 ## 최근 수락한 단위 · 예약별 소식 끄기와 다시 받기
 
@@ -257,7 +270,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P4 도구·학습 | typed 도구·bounded 실행·Git 스킬·제안·읽기 미션·제한된 개인 학습/두 입력 proof/재사용 | 복합 절차·학습 export·실모델 효용/품질 검증 |
 | P5 예약·소식 | due loop·반복 회차·알림·quiet hours·예약별 소식 제어·Push | 전체 알림/제안 정책·실기기 수신·예약 외부 작업 |
 | P6 외부 연결 | Gmail/Calendar·공식/커스텀 수집·공개 웹·브라우저 | provider draft·승인된 예약 발송·gws 초대·배송/통화 feed·실계정 |
-| P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크 공유 | 파일/음성 공유·모바일/접근성·실기기 |
+| P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 broker 기반 | broker 실제 adapter/사용 흐름·호환 이전·독립 최신 복구 |
 | P9 이전·전환 | 계약과 제한된 합성 복구 | private importer·대조·drain/cutover/rollback 실증 |
 | P10 출시 | 개발 프리뷰와 공개 문서 | 간편 설치/update/uninstall·서명/SBOM·품질/기기/출시 gate |
@@ -287,7 +300,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    Gmail provider draft·승인된 고정 예약 발송, Calendar 후속 명확화,
    통화 feed·opt-in 작업 세션·공식 배송 parser와 실제 OAuth/계정 검증을 진행한다.
    Calendar 미션·반복/종일/참석자/보조 캘린더는 현재 지원 범위에 포함하지 않는다.
-4. **P7 첨부·모바일**: 파일/음성 공유, 실제 음성 인식·OS 공유 메뉴·Push·키보드/스크롤·
+4. **P7 첨부·모바일**: 파일/음성 공유의 실제 OS 전달, 실제 음성 인식·OS 공유 메뉴·Push·키보드/스크롤·
    접근성을 지원 기기에서 검증한다.
 5. **P8 볼트와 credential 사용**: 수락한 broker 기반에 실제 typed adapter·최초 연결/
    잠금 대기/자동 재사용 UX를 연결하고, online commitment/revoke·offline resume·

@@ -6,6 +6,8 @@ import { canonicalWav, VoiceRecorder, VoiceError, type RecorderState } from "./v
 import "./voice.css";
 export type VoiceComposerHandle = {
     moveSlot: (from: string, to: string) => void;
+    canImport: () => boolean;
+    importAudio: (file: File, slot: string) => boolean;
 };
 const initial: RecorderState = { phase: "idle", seconds: 0, level: 0 };
 const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
@@ -33,7 +35,16 @@ export const VoiceComposer = forwardRef<VoiceComposerHandle, {
     function clear() { stopPreview(); generation.current++; recorder.current?.dispose(); recorder.current = null; cancelJob(); if (urlRef.current)
         scope.releaseUrl(urlRef.current); urlRef.current = null; setUrl(null); setState(initial); setStage("idle"); setTranscript(""); setError(""); setNotice(""); inserted.current = false; }
     useImperativeHandle(ref, () => ({ moveSlot(from, to) { if (origin.current === from)
-            origin.current = to; } }), []);
+            origin.current = to; },
+        canImport: () => live.current && !urlRef.current && !recorder.current && !state.blob && !capturing && !busy,
+        importAudio(file, target) {
+            if (!live.current || urlRef.current || recorder.current || state.blob || capturing || busy || file.size === 0 || file.size > 8 * 1024 * 1024) return false;
+            clear(); origin.current = target;
+            urlRef.current = scope.localUrl(file); setUrl(urlRef.current);
+            setState({phase:"preview",seconds:0,level:0,blob:file}); setOpen(true);
+            setNotice("공유받은 음성입니다. 미리 듣고 글로 바꾸기를 눌러 주세요."); return true;
+        },
+    }));
     useEffect(() => { live.current = true; const stop = () => { stopPreview(); live.current = false; generation.current++; recorder.current?.dispose(); operation.current?.abort(); }; const remove = scope.onClose(stop); return () => { stop(); cancelJob(); remove(); if (urlRef.current)
         scope.releaseUrl(urlRef.current); }; }, [scope]);
     useEffect(() => { if (origin.current !== slot) recorder.current?.interrupt(); }, [slot]);
@@ -116,11 +127,11 @@ export const VoiceComposer = forwardRef<VoiceComposerHandle, {
    <div className="voice-header"><strong>{capturing ? state.phase === "paused" ? "잠시 멈춤" : state.phase === "permission" ? "마이크 권한 확인 중" : state.phase === "stopping" ? "녹음 마무리 중" : "듣고 있어요" : state.blob ? "녹음을 확인하세요" : "말을 글로, 내 속도로"}</strong><time aria-label={`녹음 시간 ${time(state.seconds)}`}>{time(state.seconds)}</time></div>
    {capturing && <div className="voice-meter" role="meter" aria-label="마이크 입력" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(state.level * 100)}><span style={{ width: `${Math.max(3, state.level * 100)}%` }}/></div>}
    {state.interrupted && <p role="status">녹음이 중단되었습니다. 남은 소리를 확인하거나 다시 녹음하세요.</p>}
-   {url && <audio ref={preview} controls src={url} aria-label="녹음 미리 듣기" preload="metadata"/>}
+   {url && <audio ref={preview} controls src={url} aria-label="녹음 미리 듣기" preload="metadata" onLoadedMetadata={e=>{const seconds=e.currentTarget.duration;if(Number.isFinite(seconds))setState(v=>({...v,seconds}));}}/>}
    <div className="voice-actions">
     {!capturing && !state.blob && <button type="button" className="primary" onClick={start}>녹음 시작</button>}
     {(state.phase === "recording" || state.phase === "paused") && <><button type="button" onClick={() => recorder.current?.pause()}>{state.phase === "paused" ? "계속 녹음" : "잠시 멈춤"}</button><button type="button" className="primary" onClick={() => recorder.current?.stop()}>녹음 끝내기</button></>}
-    {state.blob && !busy && <>{!["ready","closed"].includes(stage) && !notice && <button type="button" className="primary" onClick={() => void convert()} disabled={stage!=="recover"&&!settings?.available}>{stage==="recover"?"결과 확인":"글로 바꾸기"}</button>}<button type="button" onClick={start}>다시 녹음</button></>}
+    {state.blob && !busy && <>{!["ready","closed"].includes(stage) && <button type="button" className="primary" onClick={() => void convert()} disabled={stage!=="recover"&&!settings?.available}>{stage==="recover"?"결과 확인":"글로 바꾸기"}</button>}<button type="button" onClick={start}>다시 녹음</button></>}
     {(state.phase !== "idle" || busy) && <button type="button" onClick={clear}>{busy || capturing ? "취소" : "녹음 삭제"}</button>}
    </div>
    {state.blob && !busy && stage !== "ready" && <p className="voice-help">{settings?.available ? "글로 바꾸면 녹음이 OpenAI API로 전송됩니다. 먼저 글을 확인하고 고칠 수 있습니다." : "음성을 글로 바꾸려면 관리자의 음성 연결 설정이 필요합니다. 녹음은 미리 들을 수 있습니다."}</p>}

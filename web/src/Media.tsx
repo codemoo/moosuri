@@ -200,29 +200,34 @@ export function useMediaUploads(accountId: string, slot: string) {
         });
     }
   }
-  function add(files: FileList | null, document = false) {
+  function canAddShared(files: File[], target: string) {
+    return alive.current && files.length + current.current.filter(v => v.slot === target).length <= 4;
+  }
+  function add(files: FileList | File[] | null, document = false, target = slot, automatic = false) {
     if (!files) return;
     for (const file of Array.from(files).slice(
       0,
-      4 - current.current.filter((v) => v.slot === slot).length,
+      4 - current.current.filter((v) => v.slot === target).length,
     )) {
+      const isDocument = automatic ? !/^image\/(png|jpeg|webp)$/.test(file.type) : document;
       const item: Upload = {
         id: crypto.randomUUID(),
         selection: crypto.randomUUID(),
-        slot,
+        slot: target,
         status: "preparing",
         progress: 0,
         controller: new AbortController(),
-        ...(document ? {filename:file.name}:{}),
+        ...(isDocument ? {filename:file.name}:{}),
       };
+      current.current = [...current.current, item];
       setItems((all) => [...all, item]);
       const prepare = async () => {
         try {
-          if (document && !validDocument(file)) throw new PreparationError(documentHelp);
-          const blob = document ? file : await prepareImage(file);
+          if (isDocument && !validDocument(file)) throw new PreparationError(documentHelp);
+          const blob = isDocument ? file : await prepareImage(file);
           if (!alive.current || item.controller.signal.aborted) return;
           item.blob = blob;
-          if (!document) item.url = scope.localUrl(blob);
+          if (!isDocument) item.url = scope.localUrl(blob);
           update(item.selection, { blob, url: item.url });
           await upload(item);
         } catch (e) {
@@ -236,7 +241,7 @@ export function useMediaUploads(accountId: string, slot: string) {
             });
         }
       };
-      if (document) void prepare();
+      if (isDocument) void prepare();
       else serial.current = serial.current.then(prepare);
     }
   }
@@ -318,6 +323,11 @@ export function useMediaUploads(accountId: string, slot: string) {
     .filter((v) => v.status === "ready")
     .map((v) => v.selection);
   return {
+    canAddShared,
+    addShared(files: File[], target: string) {
+      if (!canAddShared(files, target)) return false;
+      add(files, false, target, true); return true;
+    },
     readySelections,
     ready,
     sent,

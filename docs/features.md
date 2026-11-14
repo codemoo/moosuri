@@ -166,15 +166,17 @@ real-model language-understanding/latency success claim. See [missions](missions
 
 ### Bounded recorder/STT implementation unit (F13/F14)
 
-The integrated schema33 voice unit implements local recording/pause/resume/preview/cleanup, canonical sample-bounded WAV, separately verified installation OpenAI STT, original-session ephemeral jobs and editable original-slot draft insertion. Ordinary text admission remains independent and Send remains explicit. Insertion releases the preview, collapses the panel and returns focus to the current draft. Full personal schema32 precedes33 in normal open and sealed restore. Independent review and native/Linux/actual Chrome checks passed; [evidence](reviews/2026-11-14-bounded-voice-input.md) distinguishes synthetic audio/response fixtures from recognition quality or device interruption. Incoming one-use text share (F16) is covered below. Arbitrary audio files, local engine (F43) and actual mobile/provider acceptance remain separate.
+The integrated schema33 voice unit implements local recording/pause/resume/preview/cleanup, canonical sample-bounded WAV, separately verified installation OpenAI STT, original-session ephemeral jobs and editable original-slot draft insertion. Ordinary text admission remains independent and Send remains explicit. Insertion releases the preview, collapses the panel and returns focus to the current draft. Full personal schema32 precedes33 in normal open and sealed restore. Independent review and native/Linux/actual Chrome checks passed; [evidence](reviews/2026-11-14-bounded-voice-input.md) distinguishes synthetic audio/response fixtures from recognition quality or device interruption. Incoming one-use text share (F16) is covered below. Bounded incoming audio shares use the same preview/explicit conversion path; local engine (F43) and actual mobile/provider acceptance remain separate.
 
 F16의 text/title/URL 첫 slice는 별도 5분 plaintext IDB handoff, fresh-session intended-owner
 확인, 단일 창 one-use claim, 편집/명시적 초안 append와 normal Send를 제공한다. 공개 shell만
 Cache API에 두며 API queue/replay는 없다. 일반 만료의 같은 계정 재로그인은 opaque 상태로
-제한하고 never-authenticated intake·파일/음성 share는 보존하지 않는다. 독립 검토와 통합
+제한하고 never-authenticated intake는 보존하지 않는다. 파일/음성 확장은 같은 경계를 따른다. 독립 검토와 통합
 Native/Linux·실제 Chrome multipart navigation/worker 재시작/재사용 차단/다른 탭 로그아웃
 검사를 통과했다. OS 공유 메뉴·모바일 acceptance는 별도 gate이며 aggregate F16/P7 완료가 아니다.
-[PWA 경계](pwa.md)·[bounded delta](../openspec/changes/add-incoming-pwa-share/proposal.md).
+[PWA 경계](pwa.md)·[text delta](../openspec/changes/add-incoming-pwa-share/proposal.md)·[file/audio delta](../openspec/changes/add-incoming-pwa-files/proposal.md).
+파일/사진/음성은 한 handoff의4개/32MiB 한도와 기존 첨부 큐/명시적 음성 변환을 사용한다.
+원래 초안·녹음을 덮어쓰지 않으며 자동 chat/STT 발송은 없다.
 
 
 F59의 개인 ChatGPT text 연결에 보호된 native Linux 전달을 추가했다. 같은 설치의 현재

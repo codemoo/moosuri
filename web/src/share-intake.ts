@@ -1,4 +1,4 @@
-import { bindShareSession, fenceIncomingShares, readShareRow, shareEpoch, stageShare, validSharePayload, type SharePayload, type ShareSession } from "./share-state";
+import { bindShareSession, fenceIncomingShares, readShareRow, shareEpoch, stageShare, validSharePayload, SHARE_BYTES, shareFileKind, type ShareFile, type SharePayload, type ShareSession } from "./share-state";
 export async function boundedBody(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Uint8Array<ArrayBuffer>> {
   if (!body) throw new Error("Missing body");
   const reader = body.getReader();
@@ -24,13 +24,19 @@ export async function boundedBody(body: ReadableStream<Uint8Array> | null, limit
 export async function parseShare(request: Request): Promise<SharePayload> {
   const contentType = request.headers.get("Content-Type") ?? "";
   if (!/^multipart\/form-data;\s*boundary=/i.test(contentType) || contentType.length > 256) throw new Error("Invalid multipart");
-  const data = await new Response(await boundedBody(request.body, 32768), { headers: { "Content-Type": contentType } }).formData();
+  const data = await new Response(await boundedBody(request.body, SHARE_BYTES + 32768), { headers: { "Content-Type": contentType } }).formData();
   const payload: SharePayload = { title: "", text: "", url: "" };
   const seen = new Set<string>();
+  const files: File[] = [];
   data.forEach((value, key) => {
+    if (key === "files" && typeof value !== "string") {
+      if (files.length >= 4 || !shareFileKind(value)) throw new Error("Unsupported file");
+      files.push(value); return;
+    }
     if (!["title", "text", "url"].includes(key) || seen.has(key) || typeof value !== "string") throw new Error("Invalid share fields");
-    seen.add(key); payload[key as keyof SharePayload] = value;
+    seen.add(key); payload[key as "title" | "text" | "url"] = value;
   });
+  if (files.length) payload.files = await Promise.all(files.map(async file => ({ name: file.name, type: file.type, bytes: await file.arrayBuffer() } satisfies ShareFile)));
   if (!validSharePayload(payload)) throw new Error("Invalid share text");
   return payload;
 }

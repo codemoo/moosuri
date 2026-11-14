@@ -6,7 +6,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { IDBFactory } from "fake-indexeddb";
 import { IncomingShare, shareFragment } from "./IncomingShare";
-import { bindShareSession, fenceIncomingShares, readShareRow, stageShare } from "./share-state";
+import { bindShareSession, fenceIncomingShares, readShareRow, stageShare, type ShareFile } from "./share-state";
 const scope = "a".repeat(64);
 const owner = { account: "synthetic-a", scope };
 const network = vi.fn(async (...args: unknown[]) => args[0] === "/api/v1/shares/origin" ? new Response(null, { status: 204 }) : new Response(JSON.stringify({ user: { id: owner.account }, chat_draft_scope: scope })));
@@ -22,6 +22,74 @@ function Fixture({ slot = "new", moveSlot, sessionScope = scope }: { slot?: stri
   return <><textarea aria-label="Ordinary draft" value={draft} onChange={e => setDraft(e.target.value)}/>
     <IncomingShare accountId={owner.account} sessionScope={sessionScope} slot={slot} moveSlot={moveSlot} draft={() => draft} insert={(_, text) => setDraft(text)}/></>;
 }
+
+async function stagedFiles() {
+  vi.stubGlobal("URL", Object.assign(URL, {createObjectURL: vi.fn(()=>"blob:synthetic-share"), revokeObjectURL:vi.fn()}));
+  vi.spyOn(HTMLMediaElement.prototype,"pause").mockImplementation(()=>{});vi.spyOn(HTMLMediaElement.prototype,"load").mockImplementation(()=>{});
+  const row=await bindShareSession(await readShareRow(),owner);
+  const png=new Uint8Array(24);png.set([137,80,78,71]);new DataView(png.buffer).setUint32(16,32);new DataView(png.buffer).setUint32(20,32);
+  const files: ShareFile[]=[{name:"photo.png",type:"image/png",bytes:png.buffer},{name:"note.txt",type:"text/plain",bytes:new TextEncoder().encode("synthetic").buffer},{name:"voice.wav",type:"audio/wav",bytes:new Uint8Array([3,4]).buffer}];
+  const id=await stageShare(row,{title:"",text:"",url:"",files});
+  window.history.replaceState(null,"",`/app#share=${id}`);
+}
+it("mixed file preview stays local; capacity refusal preserves the handoff and file-only insertion keeps the draft",async()=>{
+  await stagedFiles();const insert=vi.fn(),canInsert=vi.fn(()=>"기존 첨부를 줄여 주세요.");
+  const props={accountId:owner.account,sessionScope:scope,slot:"original",draft:()=>"typed meanwhile",insert,canInsertFiles:canInsert};
+  const view=render(<IncomingShare {...props}/>);
+  expect(screen.queryByAltText("photo.png")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button",{name:"이 계정의 초안으로 가져오기"}));
+  await screen.findByAltText("photo.png");await screen.findByLabelText("voice.wav 미리 듣기");
+  expect(screen.getByRole("button",{name:"초안에 넣기"})).toBeDisabled();
+  expect((await readShareRow()).pending).toHaveProperty("payload");
+  fireEvent.click(screen.getByRole("button",{name:"note.txt 공유 제외"}));
+  view.rerender(<IncomingShare {...props} canInsertFiles={()=>null}/>);
+  fireEvent.click(screen.getByRole("button",{name:"초안에 넣기"}));
+  await waitFor(()=>expect(insert).toHaveBeenCalledExactlyOnceWith("original","typed meanwhile",expect.any(Array)));
+  expect((insert.mock.calls[0][2] as ShareFile[]).map(file=>file.name)).toEqual(["photo.png","voice.wav"]);
+  expect((await readShareRow()).pending).not.toHaveProperty("payload");
+  expect(network.mock.calls.every(call=>["/api/v1/auth/session","/api/v1/shares/origin"].includes(String(call[0])))).toBe(true);
+  expect(vi.mocked(URL.revokeObjectURL).mock.calls).toHaveLength(vi.mocked(URL.createObjectURL).mock.calls.length);
+});
+it("retiring the session removes file previews and prevents attachment insertion",async()=>{
+  await stagedFiles();const insert=vi.fn();render(<IncomingShare accountId={owner.account} sessionScope={scope} slot="original" draft={()=>""} insert={insert}/>);
+  fireEvent.click(screen.getByRole("button",{name:"이 계정의 초안으로 가져오기"}));await screen.findByAltText("photo.png");
+  await fenceIncomingShares(true,scope,owner.account);
+  await waitFor(()=>expect(screen.queryByAltText("photo.png")).not.toBeInTheDocument());
+  expect(screen.queryByLabelText("voice.wav 미리 듣기")).not.toBeInTheDocument();expect(insert).not.toHaveBeenCalled();
+  expect((await readShareRow()).pending).toBeUndefined();
+});
+it("capacity changing during final authentication retains local review and later inserts exactly once",async()=>{
+  const row=await bindShareSession(await readShareRow(),owner);
+  const id=await stageShare(row,{title:"",text:"",url:"",files:[{name:"note.txt",type:"text/plain",bytes:new Uint8Array([1,2]).buffer}]});
+  window.history.replaceState(null,"",`/app#share=${id}`);
+  let full=false,auth=0,release!:()=>void,waiting!:()=>void;
+  const held=new Promise<void>(r=>{waiting=r}),gate=new Promise<void>(r=>{release=r});
+  network.mockImplementation(async(path:unknown)=>{
+    if(path==="/api/v1/shares/origin")return new Response(null,{status:204});
+    if(++auth===4){waiting();await gate;}
+    return Response.json({user:{id:owner.account},chat_draft_scope:scope});
+  });
+  const insert=vi.fn(),props={accountId:owner.account,sessionScope:scope,slot:"new",draft:()=>"",canInsertFiles:()=>full?"첨부가 가득 찼습니다.":null,insert};
+  const view=render(<IncomingShare {...props}/>);
+  fireEvent.click(screen.getByRole("button",{name:"이 계정의 초안으로 가져오기"}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:"초안에 넣기"})).toBeEnabled());
+  fireEvent.click(screen.getByRole("button",{name:"초안에 넣기"}));await held;
+  expect((await readShareRow()).pending).toHaveProperty("state","consumed");
+  full=true;release();await waitFor(()=>expect(screen.getByRole("textbox",{name:"공유 글 편집"})).toBeEnabled());
+  expect(screen.getByRole("button",{name:"초안에 넣기"})).toBeDisabled();
+  expect(screen.getByText("note.txt")).toBeInTheDocument();expect(insert).not.toHaveBeenCalled();
+  full=false;view.rerender(<IncomingShare {...props}/>);fireEvent.click(screen.getByRole("button",{name:"초안에 넣기"}));
+  await waitFor(()=>expect(insert).toHaveBeenCalledTimes(1));expect((await readShareRow()).pending).not.toHaveProperty("payload");
+  expect(screen.queryByRole("button",{name:"초안에 넣기"})).not.toBeInTheDocument();
+});
+it("oversized decoded dimensions never reach a preview object URL or image decoder",async()=>{
+  vi.stubGlobal("URL",Object.assign(URL,{createObjectURL:vi.fn(),revokeObjectURL:vi.fn()}));
+  const bytes=new Uint8Array(24);bytes.set([137,80,78,71]);new DataView(bytes.buffer).setUint32(16,12000);new DataView(bytes.buffer).setUint32(20,12000);
+  const row=await bindShareSession(await readShareRow(),owner),id=await stageShare(row,{title:"",text:"",url:"",files:[{name:"large.png",type:"image/png",bytes:bytes.buffer}]});
+  window.history.replaceState(null,"",`/app#share=${id}`);render(<IncomingShare accountId={owner.account} sessionScope={scope} slot="new" draft={()=>""} insert={()=>{}}/>);
+  fireEvent.click(screen.getByRole("button",{name:"이 계정의 초안으로 가져오기"}));await screen.findByText(/이미지 미리보기를 만들 수 없습니다/);
+  expect(URL.createObjectURL).not.toHaveBeenCalled();expect(screen.queryByAltText("large.png")).not.toBeInTheDocument();
+});
 it("explicit import reveals inert editable text, explicit insertion appends latest draft once and never sends", async () => {
   await staged(); render(<Fixture/>);
   expect(screen.queryByRole("textbox", { name: "공유 글 편집" })).not.toBeInTheDocument();

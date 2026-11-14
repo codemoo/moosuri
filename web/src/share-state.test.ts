@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
-import { appendShare, bindShareSession, claimShare, consumeShare, fenceIncomingShares, readShareRow, SHARE_TTL, shareEpoch, stageShare } from "./share-state";
+import { appendShare, bindShareSession, claimShare, consumeShare, fenceIncomingShares, readShareRow, SHARE_TTL, shareEpoch, stageShare, validSharePayload } from "./share-state";
 const a = { account: "synthetic-a", scope: "a".repeat(64) };
 const b = { account: "synthetic-b", scope: "b".repeat(64) };
 const payload = { title: "Synthetic title", text: "<script>inert()</script>", url: "https://example.invalid/private" };
@@ -114,4 +114,31 @@ it("expiry preserves the last authenticated origin namespace for a share receive
   const next = await bindShareSession(await readShareRow(), { ...a, scope: "c".repeat(64) });
   const claim = await claimShare(next, id, crypto.randomUUID(), { ...a, scope: "c".repeat(64) });
   expect(claim.originalScope).toBe(a.scope);
+});
+
+it("file-only bytes survive a worker restart, then consumption erases bytes and prevents replay", async () => {
+  const row = await bindShareSession(await readShareRow(), a);
+  const files = [{ name: "photo.png", type: "image/png", bytes: new Uint8Array([1, 3, 7]).buffer }];
+  const id = await stageShare(row, { title: "", text: "", url: "", files });
+  vi.resetModules();
+  const reopened = await import("./share-state");
+  const claim = await reopened.claimShare(await reopened.readShareRow(), id, crypto.randomUUID(), a);
+  expect(new Uint8Array(claim.payload.files![0].bytes)).toEqual(new Uint8Array([1, 3, 7]));
+  await reopened.consumeShare(claim);
+  expect((await reopened.readShareRow()).pending).not.toHaveProperty("payload");
+  await expect(reopened.claimShare(await reopened.readShareRow(), id, crypto.randomUUID(), a)).rejects.toThrow();
+});
+it("unsupported, oversized and mixed audio shares cannot be stored; total input is bounded", () => {
+  const file = (name: string, type: string, size: number) => ({ name, type, bytes: new ArrayBuffer(size) });
+  const accepted = file("photo.png", "image/png", 1);
+  const valid = (files: ReturnType<typeof file>[]) => validSharePayload({ title: "", text: "", url: "", files });
+  expect(valid([accepted, file("note.txt", "text/plain", 20), file("voice.m4a", "audio/mp4", 20)])).toBe(true);
+  expect(valid([file("active.svg", "image/svg+xml", 20)])).toBe(false);
+  expect(valid([file("../photo.png", "image/png", 20)])).toBe(false);
+  expect(valid([file("note.txt", "text/plain", 24577)])).toBe(false);
+  expect(valid([file("paper.pdf", "application/pdf", 2 * 1024 * 1024 + 1)])).toBe(false);
+  expect(valid([file("voice.m4a", "audio/mp4", 8 * 1024 * 1024 + 1)])).toBe(false);
+  expect(valid([file("a.wav", "audio/wav", 1), file("b.wav", "audio/wav", 1)])).toBe(false);
+  expect(valid(Array(5).fill(accepted))).toBe(false);
+  expect(valid([file("full.png", "image/png", 32 * 1024 * 1024), accepted])).toBe(false);
 });

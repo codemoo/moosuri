@@ -85,3 +85,18 @@ it("a freshly observed password-change restriction destroys the prior pending pa
   expect((await receiveShare(request([["text", "restricted"]]))).headers.get("Location")).toBe("/app#share-error=again");
   expect((await readShareRow()).pending).toBeUndefined();
 });
+
+it("actual multipart file-only and mixed shares stage exact bytes without upload or URL fetch", async () => {
+  const fetch = vi.fn(async () => session()); vi.stubGlobal("fetch", fetch);
+  // Raw wire multipart avoids jsdom's File versus Node Request brand mismatch.
+  const body = new TextEncoder().encode('--moosuri-synthetic-boundary-00000000\r\nContent-Disposition: form-data; name="files"; filename="photo.png"\r\nContent-Type: image/png\r\n\r\n\x01\x03\x07\r\n--moosuri-synthetic-boundary-00000000\r\nContent-Disposition: form-data; name="files"; filename="note.txt"\r\nContent-Type: text/plain\r\n\r\nsynthetic note\r\n--moosuri-synthetic-boundary-00000000--\r\n');
+  const input = new Request("https://example.test/share-target", { method: "POST", headers:{"Content-Type":"multipart/form-data; boundary=moosuri-synthetic-boundary-00000000"}, body });
+  expect((await parseShare(input.clone())).files).toHaveLength(2);
+  const response = await receiveShare(input);
+  expect(response.headers.get("Location")).toMatch(/^\/app#share=[0-9a-f-]{36}$/);
+  const shared = (await readShareRow()).pending!.payload!;
+  expect(shared.text).toBe("");
+  expect(shared.files!.map(file => file.name)).toEqual(["photo.png", "note.txt"]);
+  expect(new Uint8Array(shared.files![0].bytes)).toEqual(new Uint8Array([1, 3, 7]));
+  expect(fetch).toHaveBeenCalledExactlyOnceWith("/api/v1/auth/session", expect.anything());
+});

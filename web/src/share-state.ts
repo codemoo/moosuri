@@ -3,7 +3,24 @@
 export const SHARE_TTL = 5 * 60 * 1000;
 export const SHARE_DB = "moosuri-incoming-share-v1";
 export type ShareSession = { account: string; scope: string };
-export type SharePayload = { title: string; text: string; url: string };
+export const SHARE_BYTES = 32 * 1024 * 1024;
+export type ShareFile = { name: string; type: string; bytes: ArrayBuffer };
+export type SharePayload = { title: string; text: string; url: string; files?: ShareFile[] };
+export function shareFileKind(file: Pick<ShareFile, "name" | "type">): "image" | "document" | "audio" | null {
+  if (/^image\/(png|jpeg|webp)$/.test(file.type)) return "image";
+  if (/\.(txt|md|markdown|csv|json|pdf)$/i.test(file.name) &&
+    ["", "application/octet-stream", "application/pdf", "application/json", "text/plain", "text/markdown", "text/csv"].includes(file.type)) return "document";
+  if (/^audio\/(wav|x-wav|mpeg|mp4|ogg|webm|aac|flac)$/.test(file.type) ||
+    ["", "application/octet-stream"].includes(file.type) && /\.(wav|mp3|m4a|ogg|webm|aac|flac)$/i.test(file.name)) return "audio";
+  return null;
+}
+export function validShareFile(file: ShareFile): boolean {
+  if (!file || typeof file.name !== "string" || !file.name.trim() || /[\x00-\x1f\x7f/\\]/.test(file.name) ||
+    new TextEncoder().encode(file.name).byteLength > 160 || typeof file.type !== "string") return false;
+  try { ArrayBuffer.prototype.slice.call(file.bytes, 0, 0); } catch { return false; }
+  const kind = shareFileKind(file), size = file.bytes.byteLength;
+  return kind !== null && size > 0 && size <= (kind === "image" ? SHARE_BYTES : kind === "audio" ? 8 * 1024 * 1024 : /\.pdf$/i.test(file.name) ? 2 * 1024 * 1024 : 24576);
+}
 type Pending = {
   id: string; created: number; expires: number; device: string; generation: string;
   intended: string; originalScope: string; state: "pending" | "claimed" | "consumed";
@@ -134,8 +151,13 @@ export function consumeShare(claim: ShareClaim, token = epoch): Promise<void> {
   });
 }
 export function validSharePayload(p: SharePayload): boolean {
-  return !!p && [p.title, p.text, p.url].every(v => typeof v === "string") &&
-    new TextEncoder().encode(p.title + p.text + p.url).byteLength <= 8192 && !!(p.title + p.text + p.url).trim();
+  if (!p || ![p.title, p.text, p.url].every(v => typeof v === "string") ||
+    new TextEncoder().encode(p.title + p.text + p.url).byteLength > 8192) return false;
+  const files = p.files ?? [];
+  return Array.isArray(files) && files.length <= 4 && files.every(validShareFile) &&
+    files.reduce((size, file) => size + file.bytes.byteLength, 0) <= SHARE_BYTES &&
+    files.filter(file => shareFileKind(file) === "audio").length <= 1 &&
+    (!!(p.title + p.text + p.url).trim() || files.length > 0);
 }
 export function shareText(p: SharePayload): string { return [p.title, p.text, p.url].filter(Boolean).join("\n"); }
 export function appendShare(draft: string, text: string): string | null {

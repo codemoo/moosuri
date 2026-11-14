@@ -90,3 +90,26 @@ it("missing ACK with no visible receipt resubmits exactly the original UUID and 
  });
  render(<VoiceComposer accountId="a" slot="first" onInsert={()=>true} onExpired={()=>{}}/>);await preview();fireEvent.click(screen.getByText("글로 바꾸기"));await waitFor(()=>expect(Upload.jobs).toHaveLength(1));const original=Upload.jobs[0];act(()=>original.onerror?.());await screen.findByRole("alert");fireEvent.click(screen.getByRole("button",{name:"결과 확인"}));await waitFor(()=>expect(Upload.jobs).toHaveLength(2));expect(Upload.jobs[1].path).toBe(original.path);expect(Upload.jobs[1].body).toBe(original.body);expect(canonicalWav).toHaveBeenCalledTimes(1);act(()=>Upload.jobs[1].finish());await screen.findByLabelText("글을 확인하고 고쳐 주세요");expect(vi.mocked(fetch).mock.calls.some(([,init])=>init?.method==="DELETE")).toBe(false);
 });
+
+it("shared audio is local preview until explicit conversion, and cannot replace existing audio", async () => {
+ const ref=createRef<VoiceComposerHandle>(),insert=vi.fn(()=>true);
+ render(<VoiceComposer ref={ref} accountId="a" slot="first" onInsert={insert} onExpired={()=>{}}/>);
+ const shared=new File(["synthetic"],"voice.m4a",{type:"audio/mp4"});
+ act(()=>{expect(ref.current!.importAudio(shared,"original")).toBe(true);expect(ref.current!.importAudio(shared,"other")).toBe(false);});
+ await screen.findByLabelText("녹음 미리 듣기");
+ expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+ expect(canonicalWav).not.toHaveBeenCalled();expect(Upload.jobs).toHaveLength(0);
+ await waitFor(()=>expect(screen.getByRole("button",{name:"글로 바꾸기"})).toBeEnabled());
+ fireEvent.click(screen.getByRole("button",{name:"글로 바꾸기"}));
+ await waitFor(()=>expect(Upload.jobs).toHaveLength(1));
+ expect(canonicalWav).toHaveBeenCalledWith(shared,expect.any(AbortSignal));
+ act(()=>Upload.jobs[0].finish());await screen.findByLabelText("글을 확인하고 고쳐 주세요");
+ fireEvent.click(screen.getByRole("button",{name:"초안에 넣기"}));expect(insert).toHaveBeenCalledExactlyOnceWith("original","음성 초안");
+});
+it("incoming audio cannot overwrite an active microphone recording", async()=>{
+ const ref=createRef<VoiceComposerHandle>();render(<VoiceComposer ref={ref} accountId="a" slot="first" onInsert={()=>true} onExpired={()=>{}}/>);
+ fireEvent.click(screen.getByText("음성으로 입력"));fireEvent.click(screen.getByText("녹음 시작"));await screen.findByText("녹음 끝내기");
+ expect(ref.current!.canImport()).toBe(false);
+ act(()=>expect(ref.current!.importAudio(new File(["synthetic"],"voice.wav"),"second")).toBe(false));
+ expect(Recorder.latest.state).toBe("recording");expect(stop).not.toHaveBeenCalled();
+});

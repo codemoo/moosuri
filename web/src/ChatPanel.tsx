@@ -1,5 +1,6 @@
 import {VoiceComposer,type VoiceComposerHandle} from "./VoiceComposer";
 import { IncomingShare } from "./IncomingShare";
+import { shareFileKind, type ShareFile } from "./share-state";
 import {CalendarEvidence} from "./CalendarEvidence";
 import type {MissionChatContext,MissionChatTarget} from "../shared/api-types";
 import {useMediaUploads,MediaLibraryView,PrivateImage} from "./Media";
@@ -36,6 +37,8 @@ import {
 } from "./chat-state";
 import { StreamFailure } from "./event-stream";
 import "./chat.css";
+
+function sharedFile(file: ShareFile): File { return new File([file.bytes], file.name, {type:file.type}); }
 
 function missionReceiptLabel(state: string): string {
   const labels: Record<string, string> = {
@@ -1089,7 +1092,20 @@ export function ChatPanel(props: Props) {
         <VoiceComposer ref={voice} accountId={accountId} slot={slot} onExpired={props.onExpired} onInsert={(origin,text)=>{flushRef.current();const current=callbacks.current.memory.drafts[origin]??"";const next=current?`${current}\n${text}`:text;if(new TextEncoder().encode(next).byteLength>8192)return false;callbacks.current.onDraft(origin,next);requestAnimationFrame(()=>{if(origin===(currentThread.current??"new"))textarea.current?.focus();});return true;}}/>
         <IncomingShare accountId={accountId} sessionScope={props.shareScope ?? null} slot={slot} moveSlot={shareSlotMove}
           draft={() => callbacks.current.memory.drafts[slot] ?? ""}
-          insert={(original, text) => {callbacks.current.onDraft(original, text);requestAnimationFrame(()=>{if(original===(currentThread.current??"new"))textarea.current?.focus();});}}/>
+          canInsertFiles={(original, files) => {
+            const attachments=files.filter(file=>shareFileKind(file)!=="audio").map(sharedFile);
+            if(!media.canAddShared(attachments,original))return "첨부는 한 대화에 4개까지 준비할 수 있습니다. 기존 선택이나 공유 파일을 줄여 주세요.";
+            if(files.some(file=>shareFileKind(file)==="audio")&&!voice.current?.canImport())return "현재 녹음이나 변환 중인 음성을 먼저 마무리하거나 삭제해 주세요.";
+            return null;
+          }}
+          insert={(original, text, files=[]) => {
+            const audio=files.find(file=>shareFileKind(file)==="audio");
+            const attachments=files.filter(file=>shareFileKind(file)!=="audio").map(sharedFile);
+            if(!media.canAddShared(attachments,original)||(audio&&!voice.current?.canImport()))return false;
+            if(audio&&!voice.current?.importAudio(sharedFile(audio),original))return false;
+            if(!media.addShared(attachments,original))return false;
+            callbacks.current.onDraft(original, text);requestAnimationFrame(()=>{if(original===(currentThread.current??"new"))textarea.current?.focus();});return true;
+          }}/>
         {media.view}
         <MediaLibraryView accountId={accountId} onSelect={media.select}/>
         {modelError && (

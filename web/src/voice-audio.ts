@@ -1,4 +1,4 @@
-/** Only bounded locally recorded audio is accepted here. This is not a hostile-file sandbox. */
+/** Bounded recorded or explicitly imported audio uses the browser's audio decoder. */
 export class VoiceError extends Error {
 }
 export async function canonicalWav(blob: Blob, signal: AbortSignal): Promise<Blob> {

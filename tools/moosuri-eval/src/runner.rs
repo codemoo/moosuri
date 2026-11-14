@@ -65,6 +65,71 @@ fn value_id(v: &Value) -> EvalResult<String> {
     v["id"].as_str().map(str::to_owned).ok_or("response_id")
 }
 impl World {
+    pub(crate) async fn paired(
+        &mut self,
+        memory: bool,
+        admitted: &std::sync::atomic::AtomicBool,
+    ) -> EvalResult<crate::paired::oracle::Observation> {
+        let mut out = crate::paired::oracle::Observation::default();
+        let mut memory_id = None;
+        if memory {
+            let value=self.checked("POST","/api/v1/knowledge/memories",json!({"request_id":uuid::Uuid::new_v4(),"draft":{"text":crate::paired::MEMORY,"subject":"preference","speaker":null,"valid_from":null,"valid_until":null,"evidence":[]}}),201).await?;
+            memory_id = Some(value_id(&value)?);
+        }
+        out.terminal = true;
+        for index in 0..if memory { 2 } else { 1 } {
+            if index == 1 {
+                self.restart().await?;
+            }
+            let (observation, _, _) = self
+                .turn_observed(
+                    if memory {
+                        crate::paired::MEMORY_QUERY
+                    } else {
+                        crate::paired::CALCULATION
+                    },
+                    false,
+                    Some(admitted),
+                )
+                .await?;
+            out.terminal &= observation.state == "completed";
+            if memory {
+                out.read_revisions.push(
+                    observation
+                        .evidence
+                        .iter()
+                        .filter(|e| {
+                            e.kind == "memory"
+                                && Some(&e.id) == memory_id.as_ref()
+                                && e.owner.as_deref() == Some(&observation.tenant)
+                        })
+                        .map(|e| e.revision)
+                        .max()
+                        .unwrap_or(0),
+                );
+            }
+            out.answers.push(observation.output);
+        }
+        let conn = observe::open(self.dir.path())?;
+        out.memory_count = conn
+            .query_row(
+                "SELECT count(*) FROM knowledge_memories WHERE status='active'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|_| "paired_sqlite_state")?;
+        if let Some(id) = memory_id {
+            (out.memory_text, out.memory_revision) = conn
+                .query_row(
+                    "SELECT json_extract(v.draft,'$.text'),m.revision FROM knowledge_memories m JOIN knowledge_memory_versions v ON v.tenant_id=m.tenant_id AND v.memory_id=m.id AND v.revision=m.revision WHERE m.id=?1 AND m.status='active'",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|_| "paired_sqlite_memory")?;
+        }
+        out.model_calls = self.provider.ledger().len();
+        Ok(out)
+    }
     pub async fn setup(script: Script) -> EvalResult<Self> {
         let dir = tempfile::Builder::new()
             .prefix("moosuri-eval-")
@@ -227,6 +292,14 @@ impl World {
         text: &str,
         disconnect: bool,
     ) -> EvalResult<(Observation, TurnTiming, bool)> {
+        self.turn_observed(text, disconnect, None).await
+    }
+    async fn turn_observed(
+        &self,
+        text: &str,
+        disconnect: bool,
+        admitted: Option<&std::sync::atomic::AtomicBool>,
+    ) -> EvalResult<(Observation, TurnTiming, bool)> {
         let thread = self.new_thread().await?;
         let path = format!("/api/v1/threads/{thread}/messages");
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -237,6 +310,9 @@ impl World {
         let timing_index = self.admitted_timing();
         let admission_ms = ms(started);
         let run_id = accepted["run"]["id"].as_str().ok_or("admission_run_id")?;
+        if let Some(admitted) = admitted {
+            admitted.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         let mut same_run = false;
         if disconnect {
             // Drop the actual admitted response and an actual SSE response body;

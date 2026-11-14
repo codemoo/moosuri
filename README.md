@@ -92,6 +92,7 @@ and lifecycle checks do not establish live account eligibility. Real device/prov
 
 [CONTRIBUTING](CONTRIBUTING.md) · [OpenSpec](openspec/README.md) · [architecture](docs/architecture.md) ·
 [testing](docs/testing.md) · [synthetic outcome runner](docs/agent-evaluation.md) · [source audit](docs/audit.md) · [public release](docs/public-release.md).
+The evaluator also includes a [local paired baseline adapter](docs/agent-evaluation.md#두-공통-세계의-로컬-실행-adapter) for two deterministic common outcomes. Its actual legacy comparison remains unrun because the local host lacks free System V shared-memory slots; this is not a model-quality result.
 [Dependency inventory](docs/dependency-inventory.md) provides an offline Rust generator for a CycloneDX source-lock SBOM.
 [Rust notice evidence](docs/rust-license-evidence.md) and [web notice evidence](docs/web-license-evidence.md)
 collect exact attribution from reviewed local sources and identify missing evidence.

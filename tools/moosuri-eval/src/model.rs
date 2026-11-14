@@ -15,6 +15,8 @@ use tokio::{net::TcpListener, task::JoinHandle};
 
 #[derive(Clone, Copy)]
 pub enum Script {
+    PairedMemory,
+    PairedCalculation,
     Memory,
     Chat,
     Truncated,
@@ -172,6 +174,14 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
         ));
     }
     match model.script {
+        Script::PairedCalculation => {
+            let user = input["messages"]
+                .as_array()
+                .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
+                .and_then(|m| m["content"].as_str())
+                .ok_or("paired_current_input")?;
+            Ok((vec![], Some(crate::paired::fixture::calculate(user)?)))
+        }
         Script::Mission | Script::CancelMission => {
             if input
                 .get("tools")
@@ -226,7 +236,7 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
         }
         Script::ChatMemory | Script::LearnedWorkflow => unreachable!(),
         Script::Chat | Script::Truncated => Ok((vec![], Some("Synthetic response body.".into()))),
-        Script::Memory => {
+        Script::Memory | Script::PairedMemory => {
             if let Some(memory) = results.iter().find(|r| r["kind"] == "memory") {
                 return Ok((
                     vec![],

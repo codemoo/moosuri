@@ -94,6 +94,58 @@ provider 수락·지연 profile은 별도 미완료 범위다.
 
 ## 기존 비서의 소스 기준 고정
 
+### 두 공통 세계의 로컬 실행 adapter
+
+`paired-prepare`는 기존149개 허용 목록만 새0700 Mac capsule로 복사·재검증하고,
+고정 lock의 공개 의존성만 별도 준비한다. 원본에서 실행하지 않으며 옛 테스트·설정·DB는
+복사하지 않는다. 현재 adapter는 Homebrew PostgreSQL16와 Python3.13, macOS Seatbelt가
+필요하다. 다른 OS나 격리 실패는 미실행으로 남는다. 공개 제품·orchestration·fixture·grader는
+Rust이며 Python은 변경하지 않은 private benchmark subject뿐이다.
+
+```sh
+moosuri-eval paired-prepare --source /absolute/legacy-root \
+  --capsule /private/tmp/moosuri-paired-subject-UNIQUE --uv /absolute/uv
+moosuri-eval paired-baseline --capsule /private/tmp/moosuri-paired-subject-UNIQUE \
+  --report /absolute/new-paired-report.json
+```
+
+실행 입구는 원본 source pin만으로 열리지 않는다. canonical `/private/tmp`의 직접 자식인
+`moosuri-paired-subject-*`, 현재 UID·0700·symlink 없는 경로, 허용 목록/manifest에 묶인
+새 copy marker와 준비 완료 marker, 고정 interpreter·전체 venv의 runtime content pin을
+함께 검사한다. 두 marker는 새 복사·dependency 준비 절차에서만 생성한다. 예전 marker 없는
+capsule이나 원본 checkout을 자동 승인하지 않는다. `paired-check --capsule ... --report ...`는
+동일한 검사를 child process 없이 실행한다. 같은 UID의 악의적 관리자를 인증하는 서명 체계는 아니다.
+
+두 번째 명령은 capsule 재검증 후 세계마다 새 private PG16 cluster와 API/runner를 시작한다.
+PG는 private Unix socket만 열고 TCP를 사용하지 않는다. 비어 있는 child 환경에 합성 설정과
+loopback 모델만 주며 background/effects/collector는 시작하지 않는다. Seatbelt는 원래 사용자
+tree와 다른 tmp/volume의 내용 읽기, task state 밖 쓰기, 임의 network와 mach lookup을 막는다.
+`initdb`의 상위 경로 확인에 필요한 `/private/tmp`와 해당 run root의 정확한 metadata만
+허용하며, macOS 유효 사용자 ID 조회용 `com.apple.system.opendirectoryd.libinfo` 하나만
+Mach 예외로 둔다. 내용 읽기나 다른 Mach 서비스 허용으로 확장하지 않는다.
+새 canary 읽기/쓰기 거부·허용 경로 positive control·허용하지 않은 loopback port 거부를
+실제로 확인한 뒤에만 subject를 시작한다. 실행 권한 때문에 child Seatbelt가 불가능한
+상위 sandbox 안에서는 우회하지 않고 `not_run`으로 끝낸다. 기존 service/cron/cluster를
+시작·변경하지 않는다. 소유한 process group은 종료·회수한 뒤 임시 state를 지운다.
+
+공통 범위는 (1) 직접 입력한 timeless 기억의 조회와 정상 종료/재개방 후 조회,
+(2) 현재 사용자 입력의 두 금액 합계뿐이다. 각각 새 DB를 사용한다. legacy Responses와
+현재 compatible-chat fixture는 실제 전달된 문맥/도구 결과/사용자 금액에서 답을 만든다.
+독립 grader가 저장 기억·현재 revision·두 read evidence·최종 사실과 정수 cents를 확인하며,
+성공 문장만 있거나 read evidence가 없거나 금액이 틀린 대조군을 거부한다. 옛 실행기에
+없는 calculator receipt나 다중 사용자 격리를 공통 성공 조건으로 요구하지 않는다.
+
+보고서는 두 세계의 planned/executed/pass/fail/not_run, 고정 오류·체크·digest만 담고
+입출력 본문·host path·설정·secret은 담지 않는다. 일반 실행과 같이 새0600 파일만 만든다.
+backend별 attempted·실제 HTTP admission의 executed·관측 결과 반환 여부를 분리하며,
+접수 이후 observer 실패/timeout도 executed/fail 분모에 남긴다.
+이것은 deterministic protocol/state 비교이며 실제 모델 이해력·같은 모델 성능·비열등성·
+32세계 pilot·시간 사실·abrupt crash·실제 provider 시험을 완료한다는 뜻이 아니다.
+현재 실제 비교는2건 모두 미실행이다. 초기 시작 권한 오류를 고쳤으나 시험 호스트의
+System V 공유 메모리32개 슬롯이 이미 점유되어 PG bootstrap이 막혔다.
+기존 자원을 삭제하거나 전역 설정을 바꾸지 않았다. 실행기 구현·합성 대조군 검증과
+실제 비교의 수락을 구분하며 [단위 기록](reviews/2026-11-15-paired-baseline.md)을 따른다.
+
 첫 안정판의 비교 대상은 기존 비서다. 기존 Git HEAD만으로 추적되지 않는 runtime을
 고정했다고 주장하지 않고, 계획 당시 `audit/source-manifest.tsv`의 소스 bytes를 사용한다.
 이 자료는 일반 설치와 공개 회귀 실행에 필요하지 않다.

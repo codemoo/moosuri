@@ -3,6 +3,7 @@ pub mod baseline;
 mod grader;
 mod model;
 mod observe;
+pub mod paired;
 mod runner;
 mod world;
 

@@ -1,0 +1,5 @@
+- [x] Implement local capsule preparation, Rust supervisor, explicit child isolation, two protocol adapters and independent common-state grader.
+- [x] Prepare the local allowlisted capsule and pinned public dependencies without subject execution.
+- [x] Complete focused native fixture/oracle/capsule/admitted-failure checks and independent R1/R2 supervisor review.
+- [ ] Complete root-owned actual two-world execution. R1 attempted both worlds but initdb prevented admission; repaired startup reached host System V shared-memory exhaustion (32/32 occupied). No existing resources/settings were changed.
+- [x] Freeze exact source/evidence and integrate documentation without broad model-quality claims. Native scoped checks plus integrated Linux paired3/existing outcome suite/Clippy/build passed; actual legacy comparison remains explicitly unaccepted.

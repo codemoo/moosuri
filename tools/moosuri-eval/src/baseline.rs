@@ -245,6 +245,58 @@ pub fn preflight(root: &Path) -> PinReport {
     }
 }
 
+/// A local-only subject capsule. Never copy tests, environment, caches or Git.
+/// The destination must be absent; every source is rechecked before and after.
+pub fn copy_capsule(source: &Path, destination: &Path) -> Result<(), &'static str> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+    if !source.is_absolute() || !destination.is_absolute() || !preflight(source).success {
+        return Err("capsule_source_pin");
+    }
+    let source = source.canonicalize().map_err(|_| "capsule_source_pin")?;
+    if destination
+        .parent()
+        .and_then(|p| p.canonicalize().ok())
+        .as_deref()
+        != Some(Path::new("/private/tmp"))
+        || destination.starts_with(&source)
+        || source.starts_with(destination)
+        || !destination
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("moosuri-paired-subject-"))
+    {
+        return Err("capsule_destination");
+    }
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(destination)
+        .map_err(|_| "capsule_create")?;
+    for entry in entries(MANIFEST)? {
+        let path = destination.join(&entry.name);
+        fs::create_dir_all(path.parent().ok_or("capsule_parent")?)
+            .map_err(|_| "capsule_directory")?;
+        let raw = fs::read(source.join(&entry.name)).map_err(|_| "capsule_read")?;
+        if raw.len() as u64 != entry.size || digest(&raw) != entry.sha256 {
+            return Err("capsule_source_changed");
+        }
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|_| "capsule_write")?;
+        use std::io::Write;
+        file.write_all(&raw)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| "capsule_write")?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o400)).map_err(|_| "capsule_seal")?;
+    }
+    if !preflight(destination).success || !preflight(&source).success {
+        return Err("capsule_recheck");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

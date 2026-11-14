@@ -16,3 +16,6 @@ pub mod push;
 pub mod chatgpt_oauth;
 
 pub mod invitation;
+
+#[cfg(unix)]
+pub mod work_sessions;

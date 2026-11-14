@@ -164,3 +164,14 @@ heartbeat는 아니다. 한 번에 upsert/delete 합계32개, decoded text256KiB
 
 합성 SQLite·HTTP·React와 Linux 검증은 실제 Google/Slack 계정 승인을 대신하지 않는다.
 실계정 opt-in 검증과 운영 배포는 그 증거가 있을 때만 따로 기록한다.
+
+## Opt-in local work-session producer
+
+[The Rust local work-session command](local-work-sessions.md) reuses this existing
+custom HTTP protocol for one dedicated per-account connection. It requires an
+explicit directory, HTTPS origin, connection UUID and private token/state paths.
+Only the documented public Codex user-provenance subset is supported; no default
+history scan, Claude compatibility, tool/assistant trace upload or service/cron
+installation is implied. The bounded once-only scan keeps exact pending batch
+bytes/cursor for batch/finish ACK recovery. Missing run-start ACK remains a
+fail-closed reconciliation limit, described in the command documentation.

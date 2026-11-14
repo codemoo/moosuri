@@ -19,6 +19,7 @@ include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 mod installation;
 mod skills;
 mod subscriptions;
+mod work_sessions;
 
 #[derive(Parser)]
 #[command(
@@ -41,6 +42,11 @@ enum RecoveryRole {
 // One startup value, never a collection or hot-path allocation. Keep clap's flat CLI.
 #[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Opt-in local user-request evidence to a dedicated custom source connection.
+    WorkSessions {
+        #[command(subcommand)]
+        command: work_sessions::Command,
+    },
     /// Verify/install/manage a local signed native bundle. No system services are changed.
     Installation {
         #[command(subcommand)]
@@ -204,6 +210,9 @@ fn main() {
     }
 }
 async fn run(cli: Cli) -> Result<(), String> {
+    if let Command::WorkSessions { command } = &cli.command {
+        return work_sessions::run(command).await;
+    }
     if let Command::Installation { command } = &cli.command {
         return installation::run(command);
     }
@@ -238,7 +247,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             unreachable!("installation runs without ordinary data admission")
         }
         Command::InternalPdfText => unreachable!("PDF extraction does not open installation state"),
-        Command::Skills { .. } | Command::Subscriptions { .. } => {
+        Command::Skills { .. } | Command::Subscriptions { .. } | Command::WorkSessions { .. } => {
             unreachable!("native helpers run without installation state")
         }
         Command::Backup { command } => match command {

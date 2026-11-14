@@ -374,3 +374,183 @@ async fn collector_is_not_a_browser_session_and_cannot_claim_official_or_other_t
     assert!(current["last_completed_at"].is_null());
     assert_eq!(state["local_sequence"], 0);
 }
+
+#[tokio::test]
+async fn keyed_start_http_replays_exact_binding_and_keeps_legacy_clients_compatible() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_tmp, _store, app) = fixture(false).await;
+    let cookie = login(&app, "admin@example.test", PASSWORD).await;
+    let connection = custom(&app, &cookie).await;
+    let id = connection["id"].as_str().unwrap();
+    let grant = value(
+        send(
+            &app,
+            "POST",
+            &format!("/api/v1/source-connections/{id}/token"),
+            Some(&cookie),
+            json!({"ttl_seconds":3600}),
+        )
+        .await,
+    )
+    .await;
+    let token = grant["token"].as_str().unwrap();
+    let status = value(
+        producer_request(
+            &app,
+            "GET",
+            "/api/v1/source-ingest/status",
+            token,
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    let intent = json!({"intent":{"start_binding":status["start_binding"],"request_id":"23000000-0000-4000-8000-000000000001","config_revision":status["config_revision"],"expected_run_generation":status["run_generation"],"expected_sequence":status["local_sequence"],"checkpoint_before":status["checkpoint"]}});
+    let first = producer_request(
+        &app,
+        "POST",
+        "/api/v1/source-ingest/runs",
+        token,
+        intent.clone(),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let first = value(first).await;
+    let replay = value(
+        producer_request(
+            &app,
+            "POST",
+            "/api/v1/source-ingest/runs",
+            token,
+            intent.clone(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(first, replay);
+    assert_eq!(replay["generation"], 1);
+    assert_eq!(replay["state"], "running");
+    let mut changed = intent.clone();
+    changed["intent"]["checkpoint_before"] = json!("changed");
+    assert_eq!(
+        producer_request(&app, "POST", "/api/v1/source-ingest/runs", token, changed)
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let rotated = value(
+        send(
+            &app,
+            "POST",
+            &format!("/api/v1/source-connections/{id}/token"),
+            Some(&cookie),
+            json!({"ttl_seconds":3600}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        producer_request(
+            &app,
+            "POST",
+            "/api/v1/source-ingest/runs",
+            token,
+            intent.clone()
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        producer_request(
+            &app,
+            "POST",
+            "/api/v1/source-ingest/runs",
+            rotated["token"].as_str().unwrap(),
+            intent
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let legacy = custom(&app, &cookie).await;
+    let legacy_id = legacy["id"].as_str().unwrap();
+    let grant = value(
+        send(
+            &app,
+            "POST",
+            &format!("/api/v1/source-connections/{legacy_id}/token"),
+            Some(&cookie),
+            json!({"ttl_seconds":3600}),
+        )
+        .await,
+    )
+    .await;
+    let old = value(
+        producer_request(
+            &app,
+            "POST",
+            "/api/v1/source-ingest/runs",
+            grant["token"].as_str().unwrap(),
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert!(old["run_id"].is_string());
+    assert_eq!(old["generation"], 1);
+    assert!(old.get("request_id").is_none());
+
+    for json_header in [true, false] {
+        let legacy = custom(&app, &cookie).await;
+        let legacy_id = legacy["id"].as_str().unwrap();
+        let grant = value(
+            send(
+                &app,
+                "POST",
+                &format!("/api/v1/source-connections/{legacy_id}/token"),
+                Some(&cookie),
+                json!({"ttl_seconds":3600}),
+            )
+            .await,
+        )
+        .await;
+        let token = grant["token"].as_str().unwrap();
+        // Malformed and unknown-field nonempty requests must not allocate a run.
+        for invalid in ["{", r#"{"unknown":true}"#] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/source-ingest/runs")
+                        .header(header::HOST, HOST)
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(invalid))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/source-ingest/runs")
+            .header(header::HOST, HOST)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"));
+        if json_header {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let old = value(response).await;
+        assert!(old["run_id"].is_string());
+        assert_eq!(old["generation"], 1);
+        assert!(old.get("request_id").is_none());
+    }
+}

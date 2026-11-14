@@ -5,6 +5,8 @@ use moosuri_connectors::gmail::{SecretString, TokenSet};
 use moosuri_core::*;
 use serde::{Serialize, de::DeserializeOwned};
 
+mod start_recovery;
+
 const LEASE_SECONDS: i64 = 300;
 const RECEIPT_LIMIT: i64 = 1024;
 const RUN_LIMIT: i64 = 64;
@@ -469,6 +471,12 @@ impl Store {
                 |r| r.get(0),
             )?;
             Ok(SourceIngestStatus {
+                start_binding: start_recovery::grant_binding(&cap)?,
+                run_generation: db.conn.query_row(
+                    "SELECT run_generation FROM source_connections WHERE tenant_id=?1 AND id=?2",
+                    params![cap.tenant, cap.connection],
+                    |r| r.get(0),
+                )?,
                 connection_id: c.id,
                 config_revision: c.config_revision,
                 local_sequence: c.local_sequence,
@@ -480,16 +488,17 @@ impl Store {
     }
     pub async fn begin_source_run(&self, cap: &SourceIngestCapability) -> Result<SourceRunLease> {
         let cap = cap.clone();
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;guard(&tx,&cap)?;let time=now()?;
-            tx.execute("UPDATE source_sync_runs SET state='unknown',error='lease_expired',finished_at=?3 WHERE tenant_id=?1 AND connection_id=?2 AND state='running' AND lease_until<=?3",params![cap.tenant,cap.connection,time])?;
-            if active_run(&tx,&cap)?.is_some(){return Err(StoreError::Conflict)}
-            tx.execute("UPDATE source_connections SET run_generation=run_generation+1,last_heartbeat=?3 WHERE tenant_id=?1 AND id=?2",params![cap.tenant,cap.connection,time])?;
-            let generation=tx.query_row("SELECT run_generation FROM source_connections WHERE tenant_id=?1 AND id=?2",params![cap.tenant,cap.connection],|r|r.get(0))?;
-            let id=Uuid::new_v4().to_string();let nonce=digest(&random_token()?).to_vec();
-            tx.execute("INSERT INTO source_sync_runs(tenant_id,connection_id,id,generation,config_revision,credential_epoch,nonce,state,started_at,heartbeat_at,lease_until) VALUES(?1,?2,?3,?4,?5,?6,?7,'running',?8,?8,?9)",params![cap.tenant,cap.connection,id,generation,cap.config_revision,cap.credential_epoch,nonce,time,time+LEASE_SECONDS])?;
-            prune_source_history(&tx,&cap.tenant,&cap.connection,RECEIPT_LIMIT,RUN_LIMIT)?;
-            tx.commit()?;Ok(SourceRunLease{cap,id,generation,nonce})
-        }).await
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            guard(&tx, &cap)?;
+            let time = now()?;
+            let lease = start_recovery::begin_in(&tx, &cap, time)?;
+            tx.commit()?;
+            Ok(lease)
+        })
+        .await
     }
     pub async fn source_run_lease(
         &self,

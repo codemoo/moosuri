@@ -214,7 +214,14 @@ producer_report: boolean, };
 export type SourceRunOutcome = "completed" | "partial" | "no_change" | "polled" | "failed" | "unknown" | "needs_reconnect";
 export type SourceBatch = { protocol_version: number, request_id: string, config_revision: number, run_id: string, generation: number, expected_sequence: number, checkpoint_before: string | null, checkpoint_after: string | null, entries: Array<SourceInput>, metadata: Array<SourceObjectMetadata>, tombstones: Array<string>, complete_snapshot: boolean, };
 export type SourceBatchReceipt = { request_id: string, run_id: string, sequence: number, committed_at: number, accepted: number, unchanged: number, source_ids: Array<string>, };
-export type SourceIngestStatus = { connection_id: string, config_revision: number, local_sequence: number, checkpoint: string | null, active_run: SourceSyncRun | null, };
+export type SourceIngestStatus = { start_binding: string, run_generation: number, connection_id: string, config_revision: number, local_sequence: number, checkpoint: string | null, active_run: SourceSyncRun | null, };
+export type SourceRunStart = { intent?: SourceRunStartIntent, };
+export type SourceRunStartIntent = { request_id: string,
+/**
+ * Non-authorizing binding from this current bearer-only status response.
+ */
+start_binding: string, config_revision: number, expected_run_generation: number, expected_sequence: number, checkpoint_before: string | null, };
+export type SourceRunStartReceipt = { request_id: string, expected_run_generation: number, run_id: string, generation: number, state: string, };
 export type SourceProvenance = { connection_id: string, connection_name: string, kind: SourceConnectionKind, scope: string, external_id: string, external_version: string, thread_id: string | null, parent_id: string | null, request_id: string, run_id: string, source_revision: number, received_at: number, };
 export type SourceObjectMetadata = { external_id: string, thread_id: string | null, parent_id: string | null, };
 export type DisconnectMode = "keep" | "delete";

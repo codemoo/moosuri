@@ -130,12 +130,26 @@ ACK recover the same receipt and retry only the original finish. Destination,
 config, position, lease, auth and receipt mismatches stop with state retained.
 Pause/revocation/deletion is enforced by the existing server protocol.
 
-**Run-start ACK loss is a separate limit:** `/runs` has no client idempotency key.
-This producer retains the intent and refuses to borrow an unproven active run or
-allocate another request. Inspect/retire that uncertain run in the existing source
-settings, retain the old state, and use a new dedicated connection/state for later
-collection if needed. Reliable run-start reconciliation remains follow-up work.
-Do not delete state to force a new batch on an uncertain connection.
+**Run-start ACK recovery (schema48):** the producer saves a client UUID,
+expected run generation, current opaque grant binding and exact before-position
+before sending optional `/runs` intent. Repeating it resolves only the same
+original run ID/generation, never an unrelated active run. History pruning cannot
+reuse an old composite intent because connection generation never rolls back.
+There is no permanent start-key quota. UUID alone is not a global perpetual key.
+
+If startup/expiry made that exact start inactive before any batch envelope was
+staged, a later explicit invocation may pin one fresh start/batch attempt from the
+same selected snapshot. It first proves original receipt absence, exact current
+before-position/grant and no conflicting active run. The old unknown run remains
+unknown. If a batch envelope was already staged, an inactive uncommitted attempt
+stays pending; it is not silently rebound. Current authority/scope disagreement
+also retains state. Existing R1 committed-batch recovery remains unchanged.
+
+The server must support schema48 status/start fields. Old `{}` producers and
+normal official pollers still work; legacy pre48 producer states whose unkeyed
+start ACK was already lost cannot be retroactively identified. They stop with
+state retained rather than adopting an unproven active run. Do not delete an
+uncertain state file to force a new request.
 
 Success prints only a fixed status, opaque request UUID and counters for accepted,
 unchanged, examined, deferred and unsupported files. It always labels the bounded

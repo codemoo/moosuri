@@ -140,9 +140,13 @@ async fn status(HttpState(s): HttpState<Shared>, headers: HeaderMap) -> Response
     if s.redirect {
         return (StatusCode::FOUND, [("location", "/trap")]).into_response();
     }
-    Json(json!({"connection_id":s.connection,"config_revision":1,"local_sequence":s.sequence,"checkpoint":s.checkpoint,"active_run":s.active.as_ref().map(|r|json!({"id":r.run_id,"generation":r.generation}))})).into_response()
+    Json(json!({"start_binding":"b".repeat(64),"run_generation":s.starts,"connection_id":s.connection,"config_revision":1,"local_sequence":s.sequence,"checkpoint":s.checkpoint,"active_run":s.active.as_ref().map(|r|json!({"id":r.run_id,"generation":r.generation}))})).into_response()
 }
-async fn begin(HttpState(s): HttpState<Shared>, headers: HeaderMap) -> Response {
+async fn begin(
+    HttpState(s): HttpState<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<moosuri_core::SourceRunStart>,
+) -> Response {
     assert!(authenticated(&headers));
     let mut s = s.lock().unwrap();
     if s.active.is_some() {
@@ -155,6 +159,19 @@ async fn begin(HttpState(s): HttpState<Shared>, headers: HeaderMap) -> Response 
     };
     s.active = Some(run.clone());
     s.last_run = Some(run.clone());
+    if let Some(intent) = input.intent {
+        return (
+            StatusCode::CREATED,
+            Json(SourceRunStartReceipt {
+                request_id: intent.request_id,
+                expected_run_generation: intent.expected_run_generation,
+                run_id: run.run_id,
+                generation: run.generation,
+                state: "running".into(),
+            }),
+        )
+            .into_response();
+    }
     (StatusCode::CREATED, Json(run)).into_response()
 }
 async fn receipt(

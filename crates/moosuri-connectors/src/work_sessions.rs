@@ -1,5 +1,8 @@
 //! Explicit, once-only local Codex user-request ingestion. No session discovery defaults.
-use moosuri_core::{SourceBatch, SourceBatchReceipt, SourceInput, SourceObjectMetadata};
+use moosuri_core::{
+    SourceBatch, SourceBatchReceipt, SourceInput, SourceObjectMetadata, SourceRunStartIntent,
+    SourceRunStartReceipt,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -9,6 +12,7 @@ use std::{
 };
 use uuid::Uuid;
 mod files;
+mod start_recovery;
 #[cfg(test)]
 mod tests;
 mod transport;
@@ -71,6 +75,8 @@ struct State {
 struct Pending {
     request_id: String,
     run_start_attempted: bool,
+    #[serde(default)]
+    start_intent: Option<SourceRunStartIntent>,
     run: Option<Run>,
     envelope: Option<String>,
     entries: Vec<SourceInput>,
@@ -178,7 +184,7 @@ fn committed_position(
     }
     Ok(())
 }
-fn stage(state: &mut State, scan: files::Scan) -> Result<()> {
+fn stage(state: &mut State, scan: files::Scan, status: &transport::Status) -> Result<()> {
     let added = scan
         .objects
         .keys()
@@ -208,6 +214,19 @@ fn stage(state: &mut State, scan: files::Scan) -> Result<()> {
     state.pending = Some(Pending {
         request_id,
         run_start_attempted: false,
+        start_intent: Some(SourceRunStartIntent {
+            start_binding: status
+                .start_binding
+                .clone()
+                .ok_or("start_recovery_server_upgrade_required")?,
+            request_id: Uuid::new_v4().to_string(),
+            config_revision: state.config_revision,
+            expected_run_generation: status
+                .run_generation
+                .ok_or("start_recovery_server_upgrade_required")?,
+            expected_sequence: state.sequence,
+            checkpoint_before: state.checkpoint.clone(),
+        }),
         run: None,
         envelope: None,
         entries: scan.entries,
@@ -282,6 +301,7 @@ async fn run_with_transport(
     };
     binding(&state, options, http.origin(), &status, &root_digest)?;
     transport::save(&state_path, &state)?;
+    let resuming = state.pending.is_some();
     if state.pending.is_none() {
         position(&state, &status)?;
         if status.active_run.is_some() {
@@ -300,31 +320,25 @@ async fn run_with_transport(
                 producer_report: true,
             });
         }
-        stage(&mut state, scan)?;
+        stage(&mut state, scan, &status)?;
         transport::save(&state_path, &state)?;
     }
     if state
         .pending
         .as_ref()
         .ok_or("missing_pending")?
-        .run
+        .envelope
         .is_none()
     {
-        position(&state, &status)?;
-        let pending = state.pending.as_mut().ok_or("missing_pending")?;
-        if pending.run_start_attempted {
-            // Existing protocol has no run-start idempotency key. Do not borrow
-            // an unproven run ID after a lost ACK, even on a dedicated connection.
-            return Err("run_start_outcome_unknown_reconcile_in_source_settings_keep_state");
-        }
-        if status.active_run.is_some() {
-            return Err("unrelated_active_run_keep_state");
-        }
-        pending.run_start_attempted = true;
-        transport::save(&state_path, &state)?;
-        let run = http.start().await?;
-        state.pending.as_mut().ok_or("missing_pending")?.run = Some(run);
-        transport::save(&state_path, &state)?;
+        start_recovery::ensure(
+            &mut state,
+            options,
+            &http,
+            &state_path,
+            &root_digest,
+            resuming,
+        )
+        .await?;
     }
     if state
         .pending

@@ -112,8 +112,44 @@ pub struct SourceBatchReceipt {
     pub unchanged: u32,
     pub source_ids: Vec<String>,
 }
+#[derive(Clone, Default, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRunStart {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub intent: Option<SourceRunStartIntent>,
+}
+/// Composite retry identity: owner/connection/current grant epochs, expected
+/// generation and client UUID. A UUID alone is not a global perpetual key.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRunStartIntent {
+    pub request_id: String,
+    /// Non-authorizing binding from this current bearer-only status response.
+    pub start_binding: String,
+    #[ts(type = "number")]
+    pub config_revision: i64,
+    #[ts(type = "number")]
+    pub expected_run_generation: i64,
+    #[ts(type = "number")]
+    pub expected_sequence: i64,
+    pub checkpoint_before: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct SourceRunStartReceipt {
+    pub request_id: String,
+    #[ts(type = "number")]
+    pub expected_run_generation: i64,
+    pub run_id: String,
+    #[ts(type = "number")]
+    pub generation: i64,
+    pub state: String,
+}
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct SourceIngestStatus {
+    pub start_binding: String,
+    #[ts(type = "number")]
+    pub run_generation: i64,
     pub connection_id: String,
     #[ts(type = "number")]
     pub config_revision: i64,

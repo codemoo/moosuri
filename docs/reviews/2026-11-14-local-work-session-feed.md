@@ -113,3 +113,9 @@ cargo test --locked -p moosuri --features test-fixtures --bin moosuri work_sessi
 Final formatting, strict OpenSpec and whitespace checks passed. Original R0
 manifest/evidence are retained, not overwritten. No broad suites or unchanged CLI
 rebuild were run for this correction.
+
+## Superseding start recovery
+
+The later [schema48 acceptance](2026-11-15-custom-ingest-start-recovery.md) adds
+optional keyed start intent and exact ACK recovery. This original dated evidence
+remains historical; pre48 unkeyed uncertain starts retain the limitation above.

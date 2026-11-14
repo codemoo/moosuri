@@ -136,7 +136,7 @@ Cookie/Origin 또는 사용자 세션을 혼용하지 않는다. Tailscale도 �
 | 메서드·경로 | 동작 |
 | --- | --- |
 | `GET /status` | 자기 connection/config/local sequence/private checkpoint와 active run 확인 |
-| `POST /runs` | 서버 run ID/generation 발급; 한 연결에서 동시에 하나만 실행 |
+| `POST /runs` | 서버 run ID/generation 발급; 한 연결에서 동시에 하나만 실행. schema48의 선택적 `intent`는 같은 시작 ACK를 복구 |
 | `POST /heartbeat` | `{run_id,generation}` 생존 확인, 자료/sequence/checkpoint 변경 없음 |
 | `POST /batches` | version1 envelope의 원문·metadata·명시적 tombstone·checkpoint 원자 반영 |
 | `GET /receipts/{request_id}` | 자기 요청의 안전한 receipt 조회; 원문 읽기 권한은 없음 |
@@ -173,5 +173,40 @@ explicit directory, HTTPS origin, connection UUID and private token/state paths.
 Only the documented public Codex user-provenance subset is supported; no default
 history scan, Claude compatibility, tool/assistant trace upload or service/cron
 installation is implied. The bounded once-only scan keeps exact pending batch
-bytes/cursor for batch/finish ACK recovery. Missing run-start ACK remains a
-fail-closed reconciliation limit, described in the command documentation.
+bytes/cursor for batch/finish ACK recovery. Schema48 adds durable run-start ACK recovery; old pre48 unkeyed uncertain
+starts remain unidentifiable and are retained for manual reconciliation.
+
+## Recoverable custom starts (schema48)
+
+`POST /runs` still accepts the existing `{}` and returns its old run ID/generation.
+Official poller Store starts retain their original API. An opt-in producer may
+send `{"intent":{request_id,start_binding,config_revision,expected_run_generation,
+expected_sequence,checkpoint_before}}` instead. Read `run_generation` and the
+opaque, non-authorizing `start_binding` from that connection's current bearer-only
+status first; persist the complete intent before the first dispatch.
+
+The retry key is composite: owner/connection/current grant/config, expected run
+generation and UUID. It is not a forever-global UUID. Current bearer/config/auth/
+credential authority is rechecked on every allocation/replay. An exact retained
+replay returns `request_id`, `expected_run_generation`, original `run_id`,
+`generation` and current historical `state`. Retained exact readback is historical
+and may succeed after that batch advanced the cursor; only a new allocation needs
+the current exact before-position. Readback never renews the lease or borrows
+another active run. Startup/expired history stays unknown. Payload/grant mismatch,
+wrong before-position or a different intent in the occupied generation fails.
+
+Schema48 metadata cascades with normal run pruning. Monotonic connection generation
+prevents an old pruned intent from allocating again; there is no permanent UUID
+quota that exhausts periodic sync after days. A new expected generation is a new
+explicit composite intent even if a UUID is reused. Checkpoint reset/configuration
+never rolls generation back. Account deletion scopes/cascades metadata; sealed
+restore increments the generation fence and quarantines old credentials/history.
+The binding tag is not a bearer token, contains no raw secret and grants no access
+by itself. It is private protocol state, not ordinary logs or model input.
+
+The [local producer](local-work-sessions.md) uses this optional path. It recovers
+lost starts by repeating its exact saved intent, not by guessing which active run
+belongs to it. A known inactive start may get one fresh attempt on an explicit
+later invocation only before batch staging, with exact current position and no
+conflicting work. Existing committed batch receipt recovery still preserves unknown
+run history. [Focused acceptance](reviews/2026-11-15-custom-ingest-start-recovery.md).

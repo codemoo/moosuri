@@ -14,6 +14,10 @@ use url::Url;
 use zeroize::Zeroizing;
 #[derive(Deserialize)]
 pub(super) struct Status {
+    #[serde(default)]
+    pub start_binding: Option<String>,
+    #[serde(default)]
+    pub run_generation: Option<i64>,
     pub connection_id: String,
     pub config_revision: i64,
     pub local_sequence: i64,
@@ -131,16 +135,25 @@ impl Http {
         }
         serde_json::from_slice(&body).map_err(|_| "invalid_ingest_status")
     }
-    pub async fn start(&self) -> Result<Run> {
-        let (code, body) = self.request(Method::POST, "runs", Some("{}")).await?;
+    pub async fn start(&self, intent: &SourceRunStartIntent) -> Result<SourceRunStartReceipt> {
+        let body = serde_json::to_string(&moosuri_core::SourceRunStart {
+            intent: Some(intent.clone()),
+        })
+        .map_err(|_| "start_intent_encode_failed")?;
+        let (code, body) = self.request(Method::POST, "runs", Some(&body)).await?;
         if code != 201 {
-            return Err("run_start_unconfirmed_keep_state");
+            return Err("run_start_unconfirmed_retry_same_intent");
         }
-        let run: Run = serde_json::from_slice(&body).map_err(|_| "invalid_run_ack_keep_state")?;
-        if Uuid::parse_str(&run.run_id).is_err() || run.generation <= 0 {
-            return Err("invalid_run_ack_keep_state");
+        let ack: SourceRunStartReceipt =
+            serde_json::from_slice(&body).map_err(|_| "invalid_run_ack_keep_state")?;
+        if ack.request_id != intent.request_id
+            || ack.expected_run_generation != intent.expected_run_generation
+            || Some(ack.generation) != intent.expected_run_generation.checked_add(1)
+            || Uuid::parse_str(&ack.run_id).is_err()
+        {
+            return Err("run_start_identity_mismatch_keep_state");
         }
-        Ok(run)
+        Ok(ack)
     }
     pub async fn receipt(&self, id: &str) -> Result<Option<SourceBatchReceipt>> {
         Uuid::parse_str(id).map_err(|_| "invalid_saved_request_id")?;

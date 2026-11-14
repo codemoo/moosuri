@@ -227,8 +227,10 @@ export·실모델 효용 평가는 여전히 별도이며 [검증](reviews/2026-
 
 F04/P3의 제한된 이전 대화 검색·읽기와 출처 철회, F30/P4~P5의 실제 사용 스킬 기반 예약
 정지/명시 재개·보수적 공개 snapshot 정리, F41/P6의 명시적 로컬 Codex 사용자 요청
-producer를 수락했다. 마지막 기능은 확인한 좁은 공개 형식만 지원하며 run-start ACK
-유실은 안전하게 중단한다. 전체 F41이나 실사용 품질 완료가 아니다.
+producer를 수락했다. 마지막 기능은 확인한 좁은 공개 형식만 지원한다. 후속 schema48은
+정확한 시작 intent의 ACK 유실 복구를 지원하며, 구버전의 식별자 없는 불명 시작과
+이미 stage한 비활성 batch는 새 실행으로 몰래 바꾸지 않는다.
+[시작 복구 근거](reviews/2026-11-15-custom-ingest-start-recovery.md). 전체 F41이나 실사용 품질 완료가 아니다.
 [통합 근거](reviews/2026-11-14-recall-skills-producer-integration.md)를 따른다.
 
 F27/F29/P4~P6의 공유 provider 읽기 업무는 명시한 개인 Gmail search/read/thread와

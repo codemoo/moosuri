@@ -31,3 +31,7 @@ stops with a durable intent; do not adopt an unproven active run. Reliable start
 reconciliation is a later connected contract. Initial tests use a mock custom protocol. The bounded R1 regression uses the
 actual Store/router across reopen and proves unknown-run receipt recovery without
 duplicate ingest; it does not establish real client/account/carrier validation.
+
+The subsequent [recover-custom-ingest-start](../recover-custom-ingest-start/proposal.md)
+change supersedes the unkeyed-start limitation for schema48 typed intent. Legacy
+unkeyed uncertainty and already-staged inactive bodies retain their conservative boundary.

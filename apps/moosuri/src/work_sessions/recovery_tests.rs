@@ -22,6 +22,10 @@ use std::{
 };
 struct Counts {
     block_finish: AtomicBool,
+    drop_start_ack: AtomicBool,
+    fail_status_after_start: AtomicBool,
+    deny_status_once: AtomicBool,
+    starts: AtomicUsize,
     batches: AtomicUsize,
     finishes: AtomicUsize,
 }
@@ -38,6 +42,24 @@ fn serve(
             let c = counts.clone();
             async move {
                 match request.uri().path() {
+                    "/api/v1/source-ingest/status"
+                        if c.deny_status_once.swap(false, Ordering::SeqCst) =>
+                    {
+                        return StatusCode::BAD_GATEWAY.into_response();
+                    }
+                    "/api/v1/source-ingest/runs" => {
+                        c.starts.fetch_add(1, Ordering::SeqCst);
+                        let response = next.run(request).await;
+                        if response.status() == StatusCode::CREATED {
+                            if c.drop_start_ack.swap(false, Ordering::SeqCst) {
+                                return StatusCode::BAD_GATEWAY.into_response();
+                            }
+                            if c.fail_status_after_start.swap(false, Ordering::SeqCst) {
+                                c.deny_status_once.store(true, Ordering::SeqCst);
+                            }
+                        }
+                        return response;
+                    }
                     "/api/v1/source-ingest/batches" => {
                         c.batches.fetch_add(1, Ordering::SeqCst);
                     }
@@ -134,6 +156,10 @@ async fn actual_store_router_restart_reconciles_committed_receipt_without_duplic
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let counts = Arc::new(Counts {
         block_finish: AtomicBool::new(true),
+        drop_start_ack: AtomicBool::new(false),
+        fail_status_after_start: AtomicBool::new(false),
+        deny_status_once: AtomicBool::new(false),
+        starts: AtomicUsize::new(0),
         batches: AtomicUsize::new(0),
         finishes: AtomicUsize::new(0),
     });
@@ -205,4 +231,179 @@ async fn actual_store_router_restart_reconciles_committed_receipt_without_duplic
     task.abort();
     let _ = task.await;
     runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn actual_store_router_start_ack_loss_recovers_original_composite_and_only_explicit_unstaged_retry()
+ {
+    // 0: lost ACK, same live run. 1: lost ACK then startup unknown.
+    // 2: ACK persisted, status fails before envelope staging, then startup unknown.
+    for mode in 0..3 {
+        let home = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let data = home.path().join("store");
+        let mut store = Store::open(&data).unwrap();
+        let password = "Synthetic-F41-recovery-password";
+        store
+            .bootstrap(
+                "Synthetic owner".into(),
+                "f41-owner@example.test".into(),
+                password.into(),
+                false,
+            )
+            .await
+            .unwrap();
+        let login = store
+            .login("f41-owner@example.test".into(), password.into())
+            .await
+            .unwrap();
+        let connection = store
+            .create_source_connection(
+                &login.user,
+                CreateSourceConnection {
+                    name: "Synthetic local requests".into(),
+                    kind: SourceConnectionKind::CustomHttp,
+                    scope: "synthetic-selected-work-requests".into(),
+                    remote_account: "external_producer".into(),
+                    mail_connection_id: None,
+                    sync_enabled: false,
+                    poll_interval_seconds: 60,
+                },
+            )
+            .await
+            .unwrap();
+        let token = store
+            .issue_source_token(&login.user, connection.id.clone(), 3600)
+            .await
+            .unwrap()
+            .token;
+        let input = home.path().join("chosen-input");
+        fs::create_dir(&input).unwrap();
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o700)).unwrap();
+        let session = uuid::Uuid::new_v4().to_string();
+        let rows = [
+            json!({"timestamp":"2024-01-01T00:00:00Z","type":"session_meta","payload":{"id":session,"session_id":session,"source":"cli","thread_source":"user","cwd":"/synthetic-unused","originator":"codex_cli_rs","cli_version":"synthetic-verified-shape","timestamp":"2024-01-01T00:00:00Z"}}),
+            json!({"timestamp":"2024-01-01T00:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"fixture-turn","root_turn_id":"fixture-turn","turn_attribution":{"turn_id":"fixture-turn","turn_trigger":"user","parent_turn_id":null,"initiating_agent_path":null,"root_turn_id":"fixture-turn"}}}),
+            json!({"timestamp":"2024-01-01T00:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"Please inspect the synthetic recovery graph."}}),
+            json!({"timestamp":"2024-01-01T00:00:03Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"fixture-turn","last_agent_message":"SYNTHETIC_ASSISTANT_NOT_EVIDENCE","error":null}}),
+        ];
+        let path = input.join("selected.jsonl");
+        fs::write(
+            &path,
+            rows.into_iter()
+                .map(|r| r.to_string() + "\n")
+                .collect::<String>(),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 120;
+        File::open(&path)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(time)))
+            .unwrap();
+        let token_file = home.path().join("token");
+        fs::write(&token_file, &token).unwrap();
+        fs::set_permissions(&token_file, fs::Permissions::from_mode(0o600)).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+
+        let counts = Arc::new(Counts {
+            block_finish: AtomicBool::new(false),
+            drop_start_ack: AtomicBool::new(mode != 2),
+            fail_status_after_start: AtomicBool::new(mode == 2),
+            deny_status_once: AtomicBool::new(false),
+            starts: AtomicUsize::new(0),
+            batches: AtomicUsize::new(0),
+            finishes: AtomicUsize::new(0),
+        });
+        let (mut runtime, mut task) = serve(&listener, store.clone(), &origin, counts.clone());
+        let options = Options {
+            directory: input,
+            origin: origin.clone(),
+            connection_id: connection.id.clone(),
+            token_file,
+            state_file: home.path().join("cursor.json"),
+        };
+        assert!(run_loopback_fixture(&options).await.is_err());
+        let pending: Value =
+            serde_json::from_slice(&fs::read(&options.state_file).unwrap()).unwrap();
+        assert_eq!(pending["sequence"], 0);
+        assert!(pending["pending"]["envelope"].is_null());
+        let original_key: moosuri_core::SourceRunStartIntent =
+            serde_json::from_value(pending["pending"]["start_intent"].clone()).unwrap();
+        let original_batch = pending["pending"]["request_id"].as_str().unwrap();
+        let before = store
+            .source_sync_runs(&login.user, connection.id.clone())
+            .await
+            .unwrap();
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].generation, 1);
+        assert_eq!(counts.batches.load(Ordering::SeqCst), 0);
+        if mode > 0 {
+            task.abort();
+            let _ = task.await;
+            runtime.shutdown().await;
+            drop(runtime);
+            drop(store);
+            store = Store::open(&data).unwrap();
+            (runtime, task) = serve(&listener, store.clone(), &origin, counts.clone());
+            assert_eq!(
+                store
+                    .source_sync_runs(&login.user, connection.id.clone())
+                    .await
+                    .unwrap()[0]
+                    .state,
+                "unknown"
+            );
+        }
+        let result = run_loopback_fixture(&options).await.unwrap();
+        assert_eq!(result.accepted, 1);
+        if mode == 0 {
+            assert_eq!(result.request_id.as_deref(), Some(original_batch));
+        } else {
+            assert_ne!(result.request_id.as_deref(), Some(original_batch));
+        }
+        let cap = store.authenticate_source_token(token).await.unwrap();
+        let status = store.source_ingest_status(&cap).await.unwrap();
+        assert_eq!(status.local_sequence, 1);
+        assert!(status.active_run.is_none());
+        assert_eq!(status.run_generation, if mode == 0 { 1 } else { 2 });
+        let historical = store
+            .begin_source_run_recoverable(&cap, original_key)
+            .await
+            .unwrap();
+        assert_eq!(historical.run_id, before[0].id);
+        assert_eq!(historical.generation, 1);
+        if mode > 0 {
+            assert_eq!(historical.state, "unknown");
+        }
+        let after = store
+            .source_sync_runs(&login.user, connection.id.clone())
+            .await
+            .unwrap();
+        assert_eq!(after.len(), if mode == 0 { 1 } else { 2 });
+        assert_eq!(counts.batches.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            counts.starts.load(Ordering::SeqCst),
+            if mode == 0 { 2 } else { 3 }
+        );
+        let actual = store
+            .source_batch_receipt(
+                &login.user,
+                connection.id.clone(),
+                result.request_id.unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(actual.accepted, 1);
+        assert_eq!(actual.source_ids.len(), 1);
+        task.abort();
+        let _ = task.await;
+        runtime.shutdown().await;
+    }
 }

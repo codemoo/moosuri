@@ -471,6 +471,46 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         .await
         .unwrap();
     let original_push_key = fs::read(data.join(crate::push::KEY_FILE)).unwrap();
+    let start_connection = store
+        .create_source_connection(
+            &a,
+            CreateSourceConnection {
+                name: "Synthetic recoverable ingest".into(),
+                kind: SourceConnectionKind::CustomHttp,
+                scope: "synthetic/restore/start".into(),
+                remote_account: "external_producer".into(),
+                mail_connection_id: None,
+                sync_enabled: false,
+                poll_interval_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    let start_token = store
+        .issue_source_token(&a, start_connection.id.clone(), 3600)
+        .await
+        .unwrap()
+        .token;
+    let start_cap = store
+        .authenticate_source_token(start_token.clone())
+        .await
+        .unwrap();
+    let start_intent = SourceRunStartIntent {
+        start_binding: store
+            .source_ingest_status(&start_cap)
+            .await
+            .unwrap()
+            .start_binding,
+        request_id: Uuid::new_v4().to_string(),
+        config_revision: start_connection.config_revision,
+        expected_run_generation: 0,
+        expected_sequence: 0,
+        checkpoint_before: None,
+    };
+    let start_receipt = store
+        .begin_source_run_recoverable(&start_cap, start_intent.clone())
+        .await
+        .unwrap();
     let at = crate::now().unwrap() + 60;
     let mut followup_input = record("Retained future followup", vec![]);
     followup_input.draft.payload = ArtifactPayload::Followup {
@@ -718,6 +758,7 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         .unwrap(),
         1
     );
+    assert!(conn.query_row("SELECT s.client_request_id=?2 AND r.state='unknown' AND r.error='restore_quarantine' AND c.state='needs_reconnect' AND c.token_hash IS NULL AND c.run_generation>?3 FROM source_run_starts s JOIN source_sync_runs r ON r.tenant_id=s.tenant_id AND r.connection_id=s.connection_id AND r.id=s.run_id JOIN source_connections c ON c.tenant_id=s.tenant_id AND c.id=s.connection_id WHERE s.run_id=?1",params![start_receipt.run_id,start_intent.request_id,start_receipt.generation],|r|r.get::<_,bool>(0)).unwrap());
     drop(conn);
     crate::recover_account(
         &dest,
@@ -736,6 +777,7 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
     .await
     .unwrap();
     let store = Store::open(&dest).unwrap();
+    assert!(store.authenticate_source_token(start_token).await.is_err());
     assert!(
         store
             .vault_authority(moosuri_vault_protocol::AuthorityRequest::Validate {

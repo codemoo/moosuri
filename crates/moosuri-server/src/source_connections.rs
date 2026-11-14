@@ -462,8 +462,25 @@ async fn ingest_status(State(s): State<AppState>, headers: HeaderMap) -> HttpRes
     let cap = producer(&s, &headers).await?;
     Ok(Json(s.store.source_ingest_status(&cap).await?).into_response())
 }
-async fn begin(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
+async fn begin(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> HttpResult {
     let cap = producer(&s, &headers).await?;
+    // Legacy producers send either no bytes (sometimes with a JSON header) or {}.
+    // The router's body limit also bounds this extractor before parsing.
+    let intent = if body.is_empty() {
+        None
+    } else {
+        serde_json::from_slice::<moosuri_core::SourceRunStart>(&body)
+            .map_err(|_| StoreError::InvalidInput)?
+            .intent
+    };
+    if let Some(intent) = intent {
+        let receipt = s.store.begin_source_run_recoverable(&cap, intent).await?;
+        return Ok((StatusCode::CREATED, Json(receipt)).into_response());
+    }
     let lease = s.store.begin_source_run(&cap).await?;
     Ok((
         StatusCode::CREATED,

@@ -143,8 +143,8 @@ receipt can be recovered after the run has finished; finishing a run is retried
 idempotently. The `completed` finish outcome is only the producer's report, not
 server proof that any remote scope was completely collected.
 
-Use this demonstration as the **only producer for its connection**. The server's
-run-start endpoint has no client idempotency key: if its acknowledgement is lost,
+Use this demonstration as the **only producer for its connection**. This legacy example sends `{}` rather than schema48's optional generation-bound
+start intent: if its run-start acknowledgement is lost,
 a persisted run intent plus the same-connection active run permits recovery only
 under that single-producer assumption. An active run found before a new local
 intent is refused, and an uncertain start with no active run is left for manual

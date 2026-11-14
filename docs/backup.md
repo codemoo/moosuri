@@ -95,8 +95,9 @@ checkpoint. Coverage cannot reconstruct unjournaled deletions before0015.
 
 The manifest purpose is `assistant-export`. Its authoritative-file inventory is
 explicitly empty because no authoritative files live outside SQLite. Editable
-documents and schema21 canonical images/thumbnails are inside the database snapshot;
-PDF and external blob storage remain unavailable.
+documents, canonical images/thumbnails and the supported UTF-8/PDF upload bytes and
+extracted text are inside the SQLite snapshot. External blob storage remains
+unavailable; PDF support follows the [bounded text-file contract](private-files.md).
 Provider/OAuth/connector ciphertext may remain in the snapshot, but the server
 key, operator identity, external credential files, browser profiles/capsules and
 user vault keys are excluded. Any future restore must purge/re-register server

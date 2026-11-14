@@ -38,6 +38,7 @@ const FINAL: &str = "Exact synthetic result: 0.3. No external action was perform
 
 fn combined_definitions() -> Vec<FunctionDefinition> {
     let profile = RunToolProfile {
+        credential_github: false,
         version: 5,
         skills: vec![],
         community_metadata: vec![],

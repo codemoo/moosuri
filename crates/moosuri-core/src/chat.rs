@@ -90,6 +90,9 @@ pub struct RunView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub schedule_receipts: Option<Vec<crate::ScheduleChatReceipt>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub credential: Option<CredentialChatStatus>,
     pub can_retry: bool,
     pub can_cancel: bool,
     #[ts(type = "number")]
@@ -182,4 +185,11 @@ pub struct AccountUsage {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AccountUsageResponse {
     pub accounts: Vec<AccountUsage>,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct CredentialChatStatus {
+    pub request_id: String,
+    pub repository: String,
+    pub status: String,
 }

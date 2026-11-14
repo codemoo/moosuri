@@ -13,6 +13,7 @@ fn pin(skill: &moosuri_core::BundledSkill) -> SkillPin {
 
 pub(crate) fn profile() -> RunToolProfile {
     RunToolProfile {
+        credential_github: false,
         version: BUILTIN_TOOLSET_VERSION,
         skills: BUNDLED_SKILLS.iter().map(pin).collect(),
         community_metadata: vec![],

@@ -476,6 +476,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0044_native_credential_adapter.sql"
         ))?;
     }
+    if captured < 45 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0045_credential_chat.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -571,6 +576,7 @@ fn quarantine(
     crate::push::quarantine_for_restore(&tx)?;
     tx.execute_batch("DELETE FROM vault_handoffs; DELETE FROM vault_grants;")?;
     crate::credential_broker::quarantine(&tx)?;
+    crate::credential_chat::quarantine(&tx)?;
     tx.execute_batch("DELETE FROM learned_skill_proofs; DELETE FROM learned_skill_receipts; DELETE FROM learned_skill_uses; UPDATE learned_skills SET state='invalidated',revision=revision+1 WHERE state IN('candidate','usable');")?;
     crate::media::quarantine(&tx)?;
     crate::audio::quarantine_restore(&tx)?;

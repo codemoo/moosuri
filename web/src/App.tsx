@@ -1237,6 +1237,7 @@ function Workspace({
           )
         ) : !chatReady ? <p role="status">Checking your conversations…</p> : (
           <ChatPanel
+            openCredentials={()=>navigate("/settings/credentials")}
             accountId={session.user.id}
             shareScope={draftScope(session)}
             artifactTarget={artifactTarget}

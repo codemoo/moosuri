@@ -8,6 +8,7 @@ license.workspace = true
 
 [features]
 default = []
+credential-broker-chat = ["moosuri-store/credential-broker-chat"]
 test-fixtures = ["moosuri-connectors/test-fixtures"]
 
 [dependencies]
@@ -21,6 +22,7 @@ serde_json.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+moosuri-credential-broker = {path="../moosuri-credential-broker"}
 moosuri-store = { path = "../moosuri-store", features = ["test-fixtures"] }
 moosuri-connectors = { path = "../moosuri-connectors", features = ["test-fixtures"] }
 tokio = { workspace = true, features = ["test-util"] }

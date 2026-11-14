@@ -63,7 +63,7 @@ impl Store {
             let repo=encode(&repository)?;
             if let Some(old)=old {if old!=repo{return Err(StoreError::Conflict)}}else{
                 let n:i64=db.conn.query_row("SELECT count(*) FROM credential_broker_jobs WHERE tenant_id=?1",[&u.tenant.0],|r|r.get(0))?;if n>=1024{return Err(StoreError::Busy)}
-                db.conn.execute("INSERT INTO credential_broker_jobs VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL)",params![u.tenant.0,u.account.id,id,Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),repo,u.epoch,now()?+3600])?;
+                db.conn.execute("INSERT INTO credential_broker_jobs(tenant_id,account_id,request_id,run_id,call_id,invocation_nonce,repository,auth_epoch,expires_at,request) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL)",params![u.tenant.0,u.account.id,id,Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),repo,u.epoch,now()?+3600])?;
             }
             job(&db.conn,&u.tenant.0,&id)
         }).await
@@ -95,8 +95,8 @@ pub(super) fn poll(
         });
     }
     let u = active(conn, p, session)?;
-    let rows=conn.prepare("SELECT request_id,repository,run_id,call_id,invocation_nonce,expires_at FROM credential_broker_jobs WHERE tenant_id=?1 AND account_id=?2 AND auth_epoch=?3 AND expires_at>?4 AND request IS NULL LIMIT 32")?.query_map(params![u.tenant.0,u.account.id,u.epoch,now()?],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    for (id, repo, run, call, nonce, expiry) in rows {
+    let rows=conn.prepare("SELECT request_id,repository,run_id,call_id,invocation_nonce,expires_at,step FROM credential_broker_jobs WHERE tenant_id=?1 AND account_id=?2 AND auth_epoch=?3 AND expires_at>?4 AND request IS NULL LIMIT 32")?.query_map(params![u.tenant.0,u.account.id,u.epoch,now()?],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,u32>(6)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for (id, repo, run, call, nonce, expiry, step) in rows {
         let bindings=conn.prepare("SELECT r.device_id,b.binding FROM credential_broker_repositories r JOIN credential_broker_bindings b USING(device_id,binding_id) JOIN credential_broker_devices d ON d.id=r.device_id JOIN sessions live ON live.digest=d.session_digest WHERE live.expires_at>unixepoch() AND live.auth_epoch=?4 AND d.account_id=?1 AND d.tenant_id=?2 AND d.status='active' AND b.active=1 AND json_extract(b.binding,'$.expires_at')>unixepoch() AND r.repository=?3")?.query_map(params![u.account.id,u.tenant.0,repo,u.epoch],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         if bindings.len() != 1 || bindings[0].0 != p.device.id.to_string() {
             continue;
@@ -110,7 +110,7 @@ pub(super) fn poll(
             device: p.device.clone(),
             invocation: Invocation {
                 run: run.parse().map_err(|_| StoreError::Corrupt)?,
-                step: 1,
+                step,
                 call: call.parse().map_err(|_| StoreError::Corrupt)?,
                 nonce: nonce.parse().map_err(|_| StoreError::Corrupt)?,
             },
@@ -122,8 +122,8 @@ pub(super) fn poll(
         };
         let json = encode(&request)?;
         conn.execute(
-            "INSERT INTO credential_broker_invocations VALUES(?1,?2,1,?3,?4,?5,0)",
-            params![u.tenant.0, run, call, nonce, json],
+            "INSERT INTO credential_broker_invocations VALUES(?1,?2,?6,?3,?4,?5,0)",
+            params![u.tenant.0, run, call, nonce, json, step],
         )?;
         conn.execute("UPDATE credential_broker_jobs SET request=?1 WHERE tenant_id=?2 AND request_id=?3 AND request IS NULL",params![json,u.tenant.0,id])?;
     }

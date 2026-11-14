@@ -2142,6 +2142,7 @@ dependencies = [
  "futures-util",
  "moosuri-connectors",
  "moosuri-core",
+ "moosuri-credential-broker",
  "moosuri-store",
  "moosuri-vault-protocol",
  "ring",

@@ -87,6 +87,7 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
             })),
         });
     }
+    definitions.extend(crate::credential_chat::definitions(profile));
     definitions.extend(crate::mail_tools::definitions(profile));
     definitions.extend(crate::web_tools::definitions(profile));
     definitions
@@ -153,6 +154,9 @@ pub(super) fn system(profile: Option<&RunToolProfile>) -> String {
         system=system.replace("Browser automation, calendar writes and attachments remain unsupported.","Public browser reading is available; calendar writes and attachments remain unsupported.");
         system.push_str(" browser_read is a real fresh isolated browser read, distinct from HTTP web_read and search snippets. Use it for rendered public pages when needed. Operator configuration and the returned warning determine JavaScript availability. Read actual returned title/URL/time; do not claim login, clicking, forms, sending, attachments or arbitrary scripts. Every mail dispatch still requires final explicit human approval; browser reading cannot bypass it. Older recipe availability statements do not override these admitted tools.");
     }
+    if cfg!(feature = "credential-broker-chat") && profile.is_some_and(|p| p.credential_github) {
+        system.push_str(" For a direct request about one exact GitHub owner/repository's metadata, github_repository_metadata is a terminal typed read. Call it alone before any other tool using only the literal current user target. It may suspend this chat while the trusted device is locked/offline, without another model call. Never ask for or receive tokens, passwords or vault items, infer completion, expand to other repos, or retry the old operation. It does not provide Google or arbitrary HTTP credential access.");
+    }
     system.push_str(" Execution has at most six model dispatches and twelve tools total. Reserve a dispatch for the final answer; batch independent reads in one tool round when useful. Search saved memories only when the task needs personal preferences or facts missing from the supplied evidence, not automatically for self-contained source comparisons. If an explicit cost or other required field is absent from the relevant evidence, report it as unknown and explain its effect on the conclusion; unrelated personal-memory searches do not fill it. Do useful work within the remaining budget and deliver a bounded answer with material gaps. Use decimal_calculate for arithmetic that determines a monetary total or recommendation; batch independent calculations. Budget discipline must not skip necessary calculation checks.");
     if profile
         .is_some_and(|p| p.version == 5 && p.web.as_ref().is_some_and(|w| w.browser_pin.is_some()))
@@ -196,6 +200,7 @@ pub(super) enum Invocation {
     External(moosuri_core::ExternalToolRequest),
     Artifact(moosuri_core::ArtifactToolRequest),
     LearnedSkill(moosuri_core::LearnedSkillInvocation),
+    CredentialGitHub { owner: String, repository: String },
     InvalidArguments,
 }
 
@@ -234,6 +239,9 @@ fn parse_learned(arguments: &str) -> Option<moosuri_core::LearnedSkillInvocation
 pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
     if arguments.len() > 16 * 1024 {
         return Invocation::InvalidArguments;
+    }
+    if name == "github_repository_metadata" {
+        return crate::credential_chat::parse(arguments);
     }
     if name.starts_with("artifact_") || name == "followup_briefing" {
         return crate::artifact_tools::parse(name, arguments)
@@ -313,6 +321,7 @@ mod tests {
     #[test]
     fn scoped_profiles_encode_for_each_dialect_without_upgrading_legacy_vocabulary() {
         let profile = RunToolProfile {
+            credential_github: false,
             version: moosuri_core::BUILTIN_TOOLSET_VERSION,
             skills: vec![],
             community_metadata: vec![],

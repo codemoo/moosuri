@@ -53,6 +53,10 @@ pub enum KnowledgeToolInput {
     LearnedSkill {
         invocation: moosuri_core::LearnedSkillInvocation,
     },
+    CredentialGitHub {
+        owner: String,
+        repository: String,
+    },
     InvalidArguments,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -474,6 +478,9 @@ pub(crate) fn read_tool(
         return Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable));
     }
     let read = match input {
+        KnowledgeToolInput::CredentialGitHub { .. } => {
+            Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
+        }
         KnowledgeToolInput::LearnedSkill { .. } => {
             Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
         }
@@ -662,7 +669,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let running: i64=tx.query_row("SELECT count(*) FROM chat_runs WHERE state='running'",[],|r|r.get(0))?;
             if running>=2 {return Ok(None)}
-            let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND tenant_id NOT IN(SELECT tenant_id FROM chat_runs WHERE state='running') AND (NOT EXISTS(SELECT 1 FROM missions m WHERE m.tenant_id=chat_runs.tenant_id AND m.run_id=chat_runs.id) OR NOT EXISTS(SELECT 1 FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE r.state='running')) ORDER BY admitted_order LIMIT 64")?
+            let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND NOT EXISTS(SELECT 1 FROM credential_chat_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status='waiting') AND tenant_id NOT IN(SELECT tenant_id FROM chat_runs WHERE state='running') AND (NOT EXISTS(SELECT 1 FROM missions m WHERE m.tenant_id=chat_runs.tenant_id AND m.run_id=chat_runs.id) OR NOT EXISTS(SELECT 1 FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE r.state='running')) ORDER BY admitted_order LIMIT 64")?
               .query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
             for (tenant,id) in queued {
                 let run=chat::load_run(&tx,&tenant,&id)?;

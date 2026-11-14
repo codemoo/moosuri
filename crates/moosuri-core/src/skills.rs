@@ -16,6 +16,8 @@ pub struct SkillPin {
 #[serde(deny_unknown_fields)]
 pub struct RunToolProfile {
     pub version: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub credential_github: bool,
     pub skills: Vec<SkillPin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub community_metadata: Vec<SkillMetadata>,
@@ -98,4 +100,8 @@ pub enum DecimalOperation {
 pub struct DecimalCalculation {
     pub operation: DecimalOperation,
     pub operands: Vec<String>,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }

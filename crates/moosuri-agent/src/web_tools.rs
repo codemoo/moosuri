@@ -53,6 +53,7 @@ mod tests {
     #[test]
     fn workspace_capability_does_not_expand_old_runs_or_expose_human_inputs() {
         let mut profile = RunToolProfile {
+            credential_github: false,
             version: 4,
             skills: vec![],
             community_metadata: vec![],
@@ -106,6 +107,7 @@ mod tests {
     #[test]
     fn web_requires_new_pinned_profile_and_search_requires_key_capability() {
         let mut profile = RunToolProfile {
+            credential_github: false,
             version: 1,
             skills: vec![],
             community_metadata: vec![],
@@ -136,6 +138,7 @@ mod tests {
     #[test]
     fn browser_schema_is_v4_url_only_and_has_no_action_surface() {
         let mut profile = RunToolProfile {
+            credential_github: false,
             version: 3,
             skills: vec![],
             community_metadata: vec![],
@@ -184,6 +187,7 @@ mod tests {
             tools::{ToolCapabilities, ToolRequest, encode_tool_request},
         };
         let profile = RunToolProfile {
+            credential_github: false,
             version: 3,
             skills: vec![],
             community_metadata: vec![],

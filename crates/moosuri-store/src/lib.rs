@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod push;
 
+pub mod credential_chat;
 mod missions;
 mod recurring_missions;
 mod request_continuations;
@@ -213,7 +214,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 44;
+const CURRENT_SCHEMA_VERSION: i64 = 45;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -660,6 +661,13 @@ impl Store {
             ))?;
         }
         invitations::restart(&conn)?;
+        if version < 45 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0045_credential_chat.sql"),
+                "COMMIT;"
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         audio::restart(&conn)?;
         calendar::restart(&conn)?;

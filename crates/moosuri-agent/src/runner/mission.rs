@@ -330,6 +330,7 @@ mod tests {
     #[test]
     fn mission_definitions_defensively_hide_foreground_learning_even_from_a_stale_profile() {
         let profile = moosuri_core::RunToolProfile {
+            credential_github: false,
             version: 1,
             skills: vec![moosuri_core::SkillPin {
                 id: "private:synthetic".into(),

@@ -453,6 +453,9 @@ fn typed_input(
     call: &moosuri_connectors::model::protocol::tools::CompletedToolCall,
 ) -> KnowledgeToolInput {
     let input = match knowledge_tools::parse(call.name(), call.arguments()) {
+        Invocation::CredentialGitHub { owner, repository } => {
+            KnowledgeToolInput::CredentialGitHub { owner, repository }
+        }
         Invocation::Search(query) => KnowledgeToolInput::Search { query },
         Invocation::ReadSource(v) => KnowledgeToolInput::ReadSource {
             id: v.id,
@@ -892,6 +895,7 @@ pub(crate) async fn execute_with_calendar(
     let mut answer_profile = tool_profile.clone();
     if artifact_write {
         if let Some(profile) = &mut answer_profile {
+            profile.credential_github = false;
             profile.mail_connections.clear();
             profile.web = None;
         }
@@ -1139,6 +1143,23 @@ pub(crate) async fn execute_with_calendar(
             } else {
                 None
             };
+            if matches!(call.input, KnowledgeToolInput::CredentialGitHub { .. }) {
+                match store
+                    .wait_for_github_tool(&step, call.call_id.clone())
+                    .await
+                {
+                    Ok(true) => {
+                        signals.changed();
+                        return;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        let (state, error) = store_failure(&error);
+                        finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
+                        return;
+                    }
+                }
+            }
             let value =
                 match execute_tool(&store, &step, call, &mail, &web, signals.stopping()).await {
                     Ok(value) => value,

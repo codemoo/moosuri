@@ -653,6 +653,7 @@ pub(crate) fn read_profile(
     profile
         .community_metadata
         .retain(|metadata| !metadata.pin.id.starts_with("private:"));
+    profile.credential_github = false;
     profile.mail_connections.clear();
     if let Some(w) = &mut profile.web {
         w.browser_pin = None;

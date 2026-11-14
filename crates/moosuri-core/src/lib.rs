@@ -246,6 +246,7 @@ pub fn typescript_contract() -> String {
         ChatEvidence::decl(),
         WebEvidenceKind::decl(),
         WebEvidence::decl(),
+        CredentialChatStatus::decl(),
         RunView::decl(),
         ChatTurn::decl(),
         ChatPage::decl(),

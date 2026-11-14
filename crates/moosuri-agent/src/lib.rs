@@ -7,6 +7,7 @@ pub mod calendar;
 mod calendar_intent;
 mod calendar_tools;
 pub mod credential_broker;
+mod credential_chat;
 mod knowledge_tools;
 pub mod mail;
 mod mail_tools;
@@ -334,6 +335,7 @@ async fn supervise(
     );
     let workspace = web.workspaces().expect("runtime workspace service");
     let mut browser_worker = tokio::spawn(async move { workspace.maintenance().await });
+    let mut credential_check = tokio::time::Instant::now();
     let mut tasks = JoinSet::new();
     let mut leases = HashMap::new();
     let mut retired = Vec::new();
@@ -350,6 +352,14 @@ async fn supervise(
             _ = signals.wake.notified() => (),
         }
         settle_retired(&mut retired, &store, &signals).await;
+        if cfg!(feature = "credential-broker-chat")
+            && credential_check.elapsed() >= Duration::from_secs(2)
+        {
+            credential_check = tokio::time::Instant::now();
+            if store.settle_credential_chats().await.is_ok_and(|n| n > 0) {
+                signals.changed();
+            }
+        }
         if push_worker.is_finished() {
             let _ = (&mut push_worker).await;
             push_worker = tokio::spawn(push::worker(store.clone(), signals.clone()));

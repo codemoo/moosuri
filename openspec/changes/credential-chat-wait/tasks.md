@@ -1,0 +1,6 @@
+- [x] Explicit feature propagation and frozen typed metadata tool
+- [x] Original run/slot/job identity, deadline and claim-free wait lifecycle
+- [x] Paired signed result adoption and fixed same-run answer without LLM redispatch
+- [x] Chat wait/status/action UI and cancel/delete/restore fences
+- [x] Focused native/UI verification
+- [ ] Independent integration/security review

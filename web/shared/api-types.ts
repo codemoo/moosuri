@@ -175,11 +175,12 @@ export type AssistantMessage = { id: string, text: string, phase: MessagePhase |
 export type ChatEvidence = { kind: KnowledgeKind, id: string, revision: number, title: string, };
 export type WebEvidenceKind = "page" | "search_hit" | "browser_page";
 export type WebEvidence = { url: string, title: string, retrieved_at_unix_ms: number, kind: WebEvidenceKind, truncated: boolean, };
+export type CredentialChatStatus = { request_id: string, repository: string, status: string, };
 export type RunView = { id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**
  * Fixed application error category, never provider text.
  */
-error: string | null, usage: RunUsage, evidence: Array<ChatEvidence>, web_evidence?: Array<WebEvidence>, artifact_receipts?: Array<ArtifactReceipt>, mission_receipt?: MissionChatReceipt, calendar_receipt?: CalendarChatReceipt, schedule_receipts?: Array<ScheduleChatReceipt>, can_retry: boolean, can_cancel: boolean, created_at: number, };
+error: string | null, usage: RunUsage, evidence: Array<ChatEvidence>, web_evidence?: Array<WebEvidence>, artifact_receipts?: Array<ArtifactReceipt>, mission_receipt?: MissionChatReceipt, calendar_receipt?: CalendarChatReceipt, schedule_receipts?: Array<ScheduleChatReceipt>, credential?: CredentialChatStatus, can_retry: boolean, can_cancel: boolean, created_at: number, };
 export type ChatTurn = { attachments?: Array<MediaSummary>, sequence: number, user_text: string, assistant: Array<AssistantMessage>, run: RunView, };
 export type ChatPage = { thread_id: string,
 /**

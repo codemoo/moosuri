@@ -8,7 +8,7 @@ license.workspace = true
 
 [features]
 default = []
-credential-broker-foundation = []
+credential-broker-foundation = ["moosuri-agent/credential-broker-chat","moosuri-store/credential-broker-chat"]
 test-fixtures = ["moosuri-store/test-fixtures","moosuri-connectors/test-fixtures", "moosuri-agent/test-fixtures"]
 
 [dependencies]

@@ -23,6 +23,14 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·CredentialBroker·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
+## 최근 수락한 단위 · 여러 연결을 함께 쓰는 대화
+
+메일·웹·브라우저·기록·Calendar를 함께 연결했을 때 최대21개 도구가 기존16개 제한을
+넘어 대화가 시작 전에 실패하던 문제를 수정했다. 정의 수만32개로 늘리고 요청 크기·
+실행 횟수·현재 권한 검사는 유지한다. 기존 실패를 재현한 뒤 실제 plan/compatible HTTP,
+32/33 경계·리눅스 프로토콜 회귀와 독립 검토를 통과했다.
+[검증](reviews/2026-11-14-combined-tool-profiles.md).
+
 ## 최근 수락한 단위 · 개인 ChatGPT 기억과 기록 변경
 
 현재 사용자의 명확한 요청으로 기억을 저장·정정·삭제하고, 저장 근거로 문서/목표/후속
@@ -45,8 +53,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 독립 검토·React391·리눅스 에이전트/HTTP/프로토콜 검사를 통과했다. 복구 시험의 이전
 형식 데이터를 수정하고 실제 격리 복구를 다시 확인했다. 일반 사용자 초대·비밀번호
 변경부터 native SSH 전달, 실제 API 도구 확인, 계산/자료 읽기, 서버 재시작 후 답변·근거
-재조회까지 합성 제공업체로 검증했다. 복합 읽기 도구가 기존16개 상한을 넘는 문제는
-별도 수정 단위다. 기억/자료 변경은 다음 단위로 수락했으며 개인 Calendar 변경·미디어·백그라운드 및 실계정은 남는다.
+재조회까지 합성 제공업체로 검증했다. 복합 읽기 도구 수 제한은 이후 별도 단위로 수정했다. 기억/자료 변경은 다음 단위로 수락했으며 개인 Calendar 변경·미디어·백그라운드 및 실계정은 남는다.
 [검증](reviews/2026-11-14-personal-chatgpt-tools.md).
 
 ## 최근 수락한 단위 · 제안에서 공개 스킬 발견

@@ -192,9 +192,13 @@ F24/F59의 개인 ChatGPT foreground 도구는 schema36의 소유자/연결 revi
 readiness를 확인하며 기존 저장 읽기·계산·연결 읽기/로컬 초안 경계를 재사용한다. 일반 member의
 native SSH 전달→실제 API text/tool 확인→저장 자료/계산→서버 재시작 후 답변·근거 보존을
 검증했다. [근거](reviews/2026-11-14-personal-chatgpt-tools.md). 개인 Calendar 변경/media/background,
-실계정 및 기존 복합 도구16개 상한의 별도 수정까지 완료했다는 뜻은 아니다.
+실계정 수락을 뜻하지 않는다. 기존 복합 도구 수 상한은 아래 별도 단위로 수정했다.
 
 F19/F15의 기존 현재 사용자 typed 기억/자료 변경을 개인 ChatGPT foreground에도 연결했다.
 정확한 text/tool proof·원래 의도·현재 대상/근거·실제 영수증 경계를 재사용하고, 분류와 대상
 선택마다 access readiness를 확인한다. 개인과 공유 기록 쓰기에서 외부 읽기 정의를 제외하며
 기존 출처 검사는 유지한다. [검증](reviews/2026-11-14-personal-chatgpt-writes.md).
+
+F24의 기존 전체 읽기/초안21개 정의가16개 transport 제한으로 실패하던 결함은32개 상한으로
+수정했다. 크기/실행/권한 제한을 유지하며 실제 실패·두 transport의 이어지는 호출·경계값과
+리눅스 프로토콜 회귀를 검증했다. [근거](reviews/2026-11-14-combined-tool-profiles.md).

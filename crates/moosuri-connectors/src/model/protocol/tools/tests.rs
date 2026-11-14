@@ -11,6 +11,119 @@ fn text() -> TextRequest {
         effort: None,
     }
 }
+fn bounded_definitions(count: usize) -> Vec<FunctionDefinition> {
+    (0..count).map(|index| FunctionDefinition {
+        name: if index == 0 { "knowledge_search".into() } else { format!("synthetic_read_{index}") },
+        description: "Synthetic bounded read definition".into(),
+        parameters: json!({"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}),
+    }).collect()
+}
+
+#[test]
+fn definition_ceiling_accepts_32_without_truncation_and_rejects_33_in_every_dialect() {
+    let text = text();
+    let caps = ToolCapabilities {
+        function_tools: true,
+    };
+    let text_caps = TextCapabilities::default();
+    for count in [32, 33] {
+        let definitions = bounded_definitions(count);
+        let request = ToolRequest {
+            text: &text,
+            tools: &definitions,
+            continuation: None,
+            results: &[],
+        };
+        for protocol in [
+            Protocol::Responses,
+            Protocol::AnthropicMessages,
+            Protocol::OpenRouterChat,
+            Protocol::ChatCompletions,
+        ] {
+            let result = encode_tool_request(protocol, &request, &text_caps, &caps);
+            if count == 32 {
+                let body = result.unwrap();
+                assert_eq!(body["tools"].as_array().unwrap().len(), 32);
+            } else {
+                assert_eq!(result.err(), Some(ProtocolError::LimitExceeded));
+            }
+        }
+        let result = encode_chatgpt_plan_tool_request(&request, &text_caps, &caps);
+        if count == 32 {
+            assert_eq!(
+                result.unwrap()["tools"][0]["tools"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                32
+            );
+        } else {
+            assert_eq!(result.err(), Some(ProtocolError::LimitExceeded));
+        }
+    }
+}
+
+#[test]
+fn larger_definition_count_retains_aggregate_schema_budget_and_closed_names() {
+    let text = text();
+    let caps = ToolCapabilities {
+        function_tools: true,
+    };
+    let text_caps = TextCapabilities::default();
+    let mut definitions = bounded_definitions(32);
+    // Each schema/description is individually valid; only their 64KiB sum fails.
+    for definition in &mut definitions {
+        definition.description = "d".repeat(1024);
+        definition.parameters = json!({"type":"object","properties":{
+            "q":{"type":"string","description":"q".repeat(1024)},
+            "other":{"type":"string","description":"o".repeat(1024)}
+        },"required":["q","other"],"additionalProperties":false});
+        assert!(serde_json::to_vec(&definition.parameters).unwrap().len() < 16 * 1024);
+    }
+    let request = ToolRequest {
+        text: &text,
+        tools: &definitions,
+        continuation: None,
+        results: &[],
+    };
+    assert_eq!(
+        encode_tool_request(Protocol::Responses, &request, &text_caps, &caps).err(),
+        Some(ProtocolError::LimitExceeded)
+    );
+    assert_eq!(
+        encode_chatgpt_plan_tool_request(&request, &text_caps, &caps).err(),
+        Some(ProtocolError::LimitExceeded)
+    );
+
+    let definitions = bounded_definitions(32);
+    let request = ToolRequest {
+        text: &text,
+        tools: &definitions,
+        continuation: None,
+        results: &[],
+    };
+    for plan in [false, true] {
+        let mut decoder = if plan {
+            ToolRoundDecoder::chatgpt_plan(&request, &text_caps, &caps)
+        } else {
+            ToolRoundDecoder::new(Protocol::Responses, &request, &text_caps, &caps)
+        }
+        .unwrap();
+        let mut frames = if plan {
+            plan_frames()
+        } else {
+            response_frames()
+        };
+        frames[9]["item"]["name"] = json!("not_in_admitted_definitions");
+        let rejected = decoder
+            .push(wire(Protocol::Responses, &frames).as_bytes())
+            .error;
+        assert!(
+            rejected.is_some(),
+            "raising the ceiling must not admit unknown calls"
+        );
+    }
+}
 fn tools() -> Vec<FunctionDefinition> {
     vec![FunctionDefinition {
         name: "knowledge_search".into(),

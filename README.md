@@ -50,7 +50,8 @@ support saved reads, exact calculation and the existing connected read/local-dra
 Explicit current-user memory changes and source-grounded record creation/anchored edits
 use typed local operations and stored confirmations. Personal Calendar mutations,
 media and background work remain pending.
-See [foreground-tool acceptance](docs/reviews/2026-11-14-personal-chatgpt-tools.md), including the inherited combined-tool limit. Synthetic protocol
+See [foreground-tool acceptance](docs/reviews/2026-11-14-personal-chatgpt-tools.md)
+and the [combined-tool limit repair](docs/reviews/2026-11-14-combined-tool-profiles.md). Synthetic protocol
 and lifecycle checks do not establish live account eligibility. Real device/provider acceptance remains bounded by
 [current status](docs/status.md); a model name or connection label does not prove support.
 

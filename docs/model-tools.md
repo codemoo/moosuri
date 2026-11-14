@@ -48,7 +48,7 @@ runtime must branch on outcome before continuing or reporting success.
 ## Bounds and validation
 
 - 12 calls per round; 16 KiB arguments/result per call.
-- 16 definitions; 64 KiB schemas/descriptions; closed, depth-bounded schema subset.
+- 32 definitions; 64 KiB schemas/descriptions; closed, depth-bounded schema subset.
 - 256 KiB private checkpoint; 512 KiB encoded protocol request.
 - Existing SSE, response, backpressure and transport deadlines remain active.
 
@@ -56,6 +56,19 @@ These are per-round bounds; the runtime must separately limit cumulative steps,
 tools, output, deadline and mutations. Synthetic streams and real loopback HTTP
 cover fragmented/interleaved arguments, all four continuation encodings,
 identity, phase/reasoning and checkpoint correlation. No live model was called.
+
+The definition ceiling admits the current combined foreground read composition:
+knowledge/recipes/decimal5, Gmail4, HTTP/search/browser6, read-only artifacts3,
+and Calendar3 (21 total). Definitions are never silently truncated. A larger
+definition budget grants no new operation: exact admitted names, schemas, account
+pins, capability proof and runtime authority checks still apply. The 12-call round
+cap and six-dispatch run budget remain separate from definition count.
+
+The combined-profile regression builds these actual production definitions and
+passes all21 through plan and shared-compatible HTTP transports, a decoded decimal
+call, an explicit synthetic result and a completed final continuation. This is
+definition-composition/transport evidence, not full Store profile admission,
+external Gmail/Calendar/browser execution or live-provider acceptance.
 
 Independent review found chunk-dependent authorization when transport returned at
 a terminal before reading the next chunk. The corrected tool path waits for EOF.

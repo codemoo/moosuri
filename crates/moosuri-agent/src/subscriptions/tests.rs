@@ -1485,5 +1485,7 @@ async fn vm_import_waiting_for_real_jwks_cannot_outlive_authority_or_binding() {
     }
 }
 
+#[path = "combined_tools_tests.rs"]
+mod combined_tools_tests;
 #[path = "foreground_tools_tests.rs"]
 mod foreground_tools_tests;

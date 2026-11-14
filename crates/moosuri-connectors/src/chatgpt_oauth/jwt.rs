@@ -167,3 +167,26 @@ pub(super) fn verify(
     }
     Ok(claims.sub)
 }
+
+/// External transfer requires current signed evidence from this ticket's fresh OAuth.
+pub(super) fn verify_fresh(
+    token: &str,
+    jwks: &[u8],
+    client: &str,
+    nonce: &str,
+    now: u64,
+    issued: u64,
+) -> Result<String, AuthError> {
+    let subject = verify(token, jwks, client, nonce, true, now)?;
+    let payload = Zeroizing::new(
+        URL_SAFE_NO_PAD
+            .decode(token.split('.').nth(1).ok_or(AuthError::IdentityInvalid)?)
+            .map_err(|_| AuthError::IdentityInvalid)?,
+    );
+    let claims: Claims =
+        serde_json::from_slice(&payload).map_err(|_| AuthError::IdentityInvalid)?;
+    if claims.iat.saturating_add(600) < now || claims.iat.saturating_add(60) < issued {
+        return Err(AuthError::IdentityInvalid);
+    }
+    Ok(subject)
+}

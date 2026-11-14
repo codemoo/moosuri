@@ -7,7 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [features]
-test-fixtures = ["moosuri-connectors/test-fixtures"]
+test-fixtures = ["moosuri-connectors/test-fixtures", "moosuri-agent/test-fixtures"]
 
 [dependencies]
 moosuri-documents = { path = "../moosuri-documents" }

@@ -1,6 +1,73 @@
 use super::*;
 use crate::tests::{PASSWORD, TEST_LOCK, admin, directory, member};
 use moosuri_core::{AccountManagementAction, AccountManagementInput};
+
+#[tokio::test]
+async fn share_origin_excludes_helper_current_and_original_sessions_without_losing_normal_expiry() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let owner = admin(&store).await;
+    let normal_scope = owner.user.chat_draft_scope().unwrap();
+    let helper = store
+        .login_chatgpt_helper("admin@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap();
+    assert!(helper.user.chat_draft_scope().is_none());
+    assert_eq!(
+        store
+            .validate_share_origin(&helper.user, normal_scope.clone())
+            .await,
+        Err(StoreError::Forbidden)
+    );
+    let mut relabelled = helper.user.clone();
+    relabelled.helper = false;
+    relabelled.absolute_deadline = None;
+    assert_eq!(
+        store
+            .validate_share_origin(&relabelled, normal_scope.clone())
+            .await,
+        Err(StoreError::Forbidden)
+    );
+    // Even an internally reconstructed namespace cannot make a transfer-only
+    // session an ordinary composer origin, before or after natural expiry.
+    let helper_scope = draft_scope(
+        &helper.user.digest,
+        &helper.user.account.id,
+        helper.user.epoch,
+    );
+    assert_eq!(
+        store
+            .validate_share_origin(&owner.user, helper_scope.clone())
+            .await,
+        Err(StoreError::Forbidden)
+    );
+    let digest = helper.user.digest;
+    let normal_digest = owner.user.digest;
+    store
+        .call(move |db| {
+            db.conn.execute(
+                "UPDATE sessions SET expires_at=0 WHERE digest=?1 OR digest=?2",
+                params![digest.as_slice(), normal_digest.as_slice()],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let fresh = store
+        .login("admin@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        store.validate_share_origin(&fresh.user, helper_scope).await,
+        Err(StoreError::Forbidden)
+    );
+    assert_eq!(
+        store.validate_share_origin(&fresh.user, normal_scope).await,
+        Ok(())
+    );
+}
+
 async fn manage(
     store: &Store,
     actor: &UserContext,
@@ -185,12 +252,12 @@ async fn share_origin_epoch_recovery_origin_restriction_corruption_and_scan_boun
             // Foreign-epoch and restricted rows cannot act as an origin.
             let digest = [23u8; 32];
             db.conn.execute(
-                "INSERT INTO sessions VALUES(?1,?2,?3,?4,0,0)",
+                "INSERT INTO sessions(digest,tenant_id,account_id,auth_epoch,password_change_only,expires_at) VALUES(?1,?2,?3,?4,0,0)",
                 params![digest.as_slice(), tenant, account, epoch - 1],
             )?;
             let digest = [24u8; 32];
             db.conn.execute(
-                "INSERT INTO sessions VALUES(?1,?2,?3,?4,1,0)",
+                "INSERT INTO sessions(digest,tenant_id,account_id,auth_epoch,password_change_only,expires_at) VALUES(?1,?2,?3,?4,1,0)",
                 params![digest.as_slice(), tenant, account, epoch],
             )?;
             Ok(())
@@ -243,7 +310,7 @@ async fn share_origin_epoch_recovery_origin_restriction_corruption_and_scan_boun
                 let mut digest = [0u8; 32];
                 digest[..8].copy_from_slice(&(n as u64).to_be_bytes());
                 db.conn.execute(
-                    "INSERT INTO sessions VALUES(?1,?2,?3,?4,0,0)",
+                    "INSERT INTO sessions(digest,tenant_id,account_id,auth_epoch,password_change_only,expires_at) VALUES(?1,?2,?3,?4,0,0)",
                     params![digest.as_slice(), tenant, account, epoch],
                 )?;
             }

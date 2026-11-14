@@ -172,3 +172,11 @@ Cache API에 두며 API queue/replay는 없다. 일반 만료의 같은 계정 �
 Native/Linux·실제 Chrome multipart navigation/worker 재시작/재사용 차단/다른 탭 로그아웃
 검사를 통과했다. OS 공유 메뉴·모바일 acceptance는 별도 gate이며 aggregate F16/P7 완료가 아니다.
 [PWA 경계](pwa.md)·[bounded delta](../openspec/changes/add-incoming-pwa-share/proposal.md).
+
+
+F59의 개인 ChatGPT text 연결에 보호된 native Linux 전달을 추가했다. 같은 설치의 현재
+세션을 보존하며 staged revision과 서명 검증 후 원자적으로 교체하고, 응답 유실은 원래
+영수증으로 확인한다. 전송용 로그인은 발급 시10분/purpose 제한이며 일반 계정·볼트·대화
+권한이 없다. Native/Linux·독립 검토·실제 OpenSSH/Rust/합성 제공업체 네 장애 시나리오와
+저장 대화를 검증했다. [근거](reviews/2026-11-14-chatgpt-vm-handoff.md). 개인 tools/media/background,
+Claude 실행, 실계정/운영 trust와 릴리스 설치까지 완료했다는 뜻은 아니다.

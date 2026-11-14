@@ -2108,9 +2108,12 @@ name = "moosuri"
 version = "0.1.0-dev.1"
 dependencies = [
  "axum",
+ "base64 0.23.1",
  "clap",
+ "fs2",
  "libc",
  "moosuri-agent",
+ "moosuri-connectors",
  "moosuri-core",
  "moosuri-documents",
  "moosuri-server",
@@ -2118,10 +2121,13 @@ dependencies = [
  "rand 0.8.8",
  "reqwest",
  "rpassword",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "url",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]

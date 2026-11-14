@@ -1,5 +1,7 @@
 //! Personal ChatGPT storage. Network IO never runs on the SQLite writer.
+mod handoff;
 use super::*;
+pub use handoff::*;
 use moosuri_connectors::chatgpt_oauth::{
     IssuedRegistration, TokenBundle, VerifiedIdentity, sealed::SessionSealer,
 };
@@ -44,6 +46,7 @@ pub struct SubscriptionSummary {
     pub label: String,
     pub status: String,
     pub remote_revoke: String,
+    pub handoff_phase: Option<String>,
 }
 // TS is exported explicitly from core DTOs, not from private store carriers.
 fn sealer(key: &[u8; 32]) -> SessionSealer {
@@ -98,6 +101,7 @@ fn authorize(
     }
 }
 pub(super) fn initialize(c: &Connection) -> Result<()> {
+    handoff::expire(c)?;
     if c.query_row("SELECT count(*) FROM subscription_runtime", [], |r| {
         r.get::<_, i64>(0)
     })? == 0
@@ -189,14 +193,50 @@ pub(super) fn binding(
         subscription: Some(b),
     })
 }
+/// Both same-host OAuth and VM staging allocate above every retained reservation.
+/// Only sealed verified history supplies subject authority; incomplete client IDs
+/// remain non-authoritative metadata, retained for a fresh code attempt.
+fn next_registration_revision(
+    c: &Connection,
+    key: &[u8; 32],
+    u: &UserContext,
+    id: &str,
+) -> Result<(i64, Option<String>, Option<Vec<u8>>)> {
+    let maximum:i64=c.query_row("SELECT COALESCE(MAX(revision),0) FROM chatgpt_binding_revisions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3",params![u.tenant.0,u.account.id,id],|r|r.get(0))?;
+    let identity:Option<Vec<u8>>=c.query_row("SELECT identity FROM chatgpt_binding_revisions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND identity IS NOT NULL ORDER BY revision DESC LIMIT 1",params![u.tenant.0,u.account.id,id],|r|r.get(0)).optional()?;
+    let client = if let Some(ref cipher) = identity {
+        let b = SubscriptionRef {
+            tenant: u.tenant.0.clone(),
+            account: u.account.id.clone(),
+            id: id.into(),
+            revision: maximum,
+            model: String::new(),
+            effort: None,
+        };
+        Some(
+            sealer(key)
+                .open_identity(cipher, &context(c, &b, None)?)
+                .map_err(|_| StoreError::Corrupt)?
+                .client_id()
+                .to_owned(),
+        )
+    } else {
+        c.query_row("SELECT client_id FROM chatgpt_binding_revisions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND client_id IS NOT NULL ORDER BY revision DESC LIMIT 1",params![u.tenant.0,u.account.id,id],|r|r.get(0)).optional()?
+    };
+    Ok((
+        maximum.checked_add(1).ok_or(StoreError::Conflict)?,
+        client,
+        identity,
+    ))
+}
 impl Store {
     pub async fn subscriptions(&self, u: &UserContext) -> Result<Vec<SubscriptionSummary>> {
         let u = u.clone();
         self.call(move|db|{
             validate(&db.conn,&u,true,false)?;
-            let mut q=db.conn.prepare("SELECT b.id,b.current_revision,r.label,b.status,b.remote_revoke FROM chatgpt_bindings b JOIN chatgpt_binding_revisions r ON r.tenant_id=b.tenant_id AND r.account_id=b.account_id AND r.binding_id=b.id AND r.revision=b.current_revision WHERE b.tenant_id=?1 AND b.account_id=?2 ORDER BY r.label,b.id")?;
+            let mut q=db.conn.prepare("SELECT b.id,b.current_revision,r.label,b.status,b.remote_revoke,(SELECT h.phase FROM chatgpt_handoffs h WHERE h.tenant_id=b.tenant_id AND h.account_id=b.account_id AND h.binding_id=b.id ORDER BY h.issued_at DESC,h.rowid DESC LIMIT 1) FROM chatgpt_bindings b JOIN chatgpt_binding_revisions r ON r.tenant_id=b.tenant_id AND r.account_id=b.account_id AND r.binding_id=b.id AND r.revision=b.current_revision WHERE b.tenant_id=?1 AND b.account_id=?2 ORDER BY r.label,b.id")?;
             Ok(q.query_map(params![u.tenant.0,u.account.id],|r|Ok(SubscriptionSummary{
-                id:r.get(0)?,revision:r.get(1)?,label:r.get(2)?,status:r.get(3)?,remote_revoke:r.get(4)?}
+                id:r.get(0)?,revision:r.get(1)?,label:r.get(2)?,status:r.get(3)?,remote_revoke:r.get(4)?,handoff_phase:r.get(5)?}
             ))?.collect::<std::result::Result<Vec<_>,_>>()?) }
         ).await
     }
@@ -218,8 +258,8 @@ impl Store {
                     tenant:u.tenant.0.clone(),account:u.account.id.clone(),id:id.clone(),revision:expected,model:String::new(),effort:None}
                 ;
                 owned(&tx,&old)?;
-                let (client,identity):(Option<String>,Option<Vec<u8>>)=tx.query_row("SELECT client_id,identity FROM chatgpt_binding_revisions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4",params![old.tenant,old.account,id,expected],|r|Ok((r.get(0)?,r.get(1)?)))?;
-                (id,expected.checked_add(1).ok_or(StoreError::Conflict)?,client,identity)}
+                let (revision,client,identity)=next_registration_revision(&tx,&db.provider_key,&u,&id)?;
+                (id,revision,client,identity)}
             else{
                 let count:i64=tx.query_row("SELECT count(*) FROM chatgpt_bindings WHERE tenant_id=?1 AND account_id=?2",params![u.tenant.0,u.account.id],|r|r.get(0))?;
                 if count>=16{
@@ -530,3 +570,7 @@ fn refresh_failure(c: &Connection, l: &SubscriptionRefresh, state: &str) -> Resu
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "subscriptions/handoff_tests.rs"]
+mod handoff_tests;

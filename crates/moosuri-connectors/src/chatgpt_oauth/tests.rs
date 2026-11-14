@@ -1085,3 +1085,134 @@ async fn refresh_http200_followed_by_jwks_temporary_failure_is_rotation_unknown(
         assert!(!format!("{error:?} {error}").contains("synthetic-secret"));
     }
 }
+
+#[tokio::test]
+async fn external_handoff_rechecks_fresh_signature_pins_commitment_and_context() {
+    use super::handoff::*;
+    let f = Fixture::new().await;
+    let context = HandoffContext {
+        version: 1,
+        ticket: "synthetic-ticket".into(),
+        runtime: "synthetic-target-runtime".into(),
+        tenant: "synthetic-tenant".into(),
+        account: "synthetic-account".into(),
+        target_host: "urn:uuid:synthetic-target".into(),
+        binding: "synthetic-binding".into(),
+        expected_revision: 0,
+        staged_revision: 1,
+    };
+    let key = HandoffKey::generate().unwrap();
+    let client = f.client();
+    let (attempt, _) = client
+        .begin_registration("urn:uuid:synthetic-source", 12345)
+        .unwrap();
+    let committed = attempt.handoff_nonce_commitment(&context.ticket).unwrap();
+    let nonce = attempt.nonce.to_string();
+    let callback = successful_callback(&attempt);
+    let pending = attempt.accept_callback(&callback).unwrap();
+    f.queue(Response::json(200, token(&nonce, SCOPES)));
+    f.queue(Response::json(200, jwks()));
+    let bundle = client.exchange(pending).await.unwrap();
+    let envelope = seal_handoff(bundle, &context, &key).unwrap();
+    let mut expected = HandoffExpectation {
+        context: context.clone(),
+        commitment: committed,
+        client_id: "issued-synthetic-client".into(),
+        subject: Some("synthetic-subject".into()),
+        source_host: "urn:uuid:synthetic-source".into(),
+        issued_at: unix_now().unwrap(),
+    };
+    expected.commitment[0] ^= 1;
+    assert!(
+        client
+            .verify_handoff(&envelope, &key, &expected)
+            .await
+            .is_err()
+    );
+    expected.commitment = committed;
+    expected.context.runtime = "another-runtime".into();
+    assert!(
+        client
+            .verify_handoff(&envelope, &key, &expected)
+            .await
+            .is_err()
+    );
+    expected.context = context.clone();
+    expected.subject = Some("another-subject".into());
+    f.queue(Response::json(200, jwks()));
+    assert!(
+        client
+            .verify_handoff(&envelope, &key, &expected)
+            .await
+            .is_err()
+    );
+    expected.subject = Some("synthetic-subject".into());
+    f.queue(Response::json(200, jwks()));
+    let imported = client
+        .verify_handoff(&envelope, &key, &expected)
+        .await
+        .unwrap()
+        .into_target_bundle(&context, &envelope_digest(&envelope))
+        .unwrap();
+    assert_eq!(imported.identity().host_id(), context.target_host);
+    assert_eq!(imported.identity().client_id(), "issued-synthetic-client");
+    let wrong = HandoffKey::generate().unwrap();
+    assert!(
+        client
+            .verify_handoff(&envelope, &wrong, &expected)
+            .await
+            .is_err()
+    );
+    let mut bad = envelope.clone();
+    bad[30] ^= 1;
+    assert!(client.verify_handoff(&bad, &key, &expected).await.is_err());
+    // A local carrier labelled verified is still independently checked at target.
+    for mutate in [
+        "issuer",
+        "audience",
+        "nonce",
+        "expired",
+        "stale",
+        "signature",
+    ] {
+        let mut b = TokenBundle {
+            identity: imported.identity.clone(),
+            access: Zeroizing::new("synthetic-access".into()),
+            refresh: Zeroizing::new("synthetic-refresh".into()),
+            id_token: Zeroizing::new(String::new()),
+            nonce: Zeroizing::new(nonce.clone()),
+            scopes: imported.scopes.clone(),
+            received_at: unix_now().unwrap(),
+            expires_at: unix_now().unwrap() + 3600,
+            earliest_refresh_at: None,
+        };
+        b.identity.host_id = "urn:uuid:synthetic-source".into();
+        let mut c = claims(&nonce);
+        match mutate {
+            "issuer" => c["iss"] = json!("https://attacker.example"),
+            "audience" => c["aud"] = json!("another-client"),
+            "nonce" => c["nonce"] = json!("chosen-after-commit"),
+            "expired" => {
+                c["iat"] = json!(unix_now().unwrap() - 100);
+                c["exp"] = json!(unix_now().unwrap() - 1);
+            }
+            "stale" => c["iat"] = json!(unix_now().unwrap() - 700),
+            _ => (),
+        };
+        let mut id = signed(&c);
+        if mutate == "signature" {
+            id.pop();
+            id.push('x');
+        }
+        b.id_token = Zeroizing::new(id);
+        let cipher = seal_handoff(b, &context, &key).unwrap();
+        f.queue(Response::json(200, jwks()));
+        assert!(
+            client
+                .verify_handoff(&cipher, &key, &expected)
+                .await
+                .is_err(),
+            "{mutate}"
+        );
+    }
+}

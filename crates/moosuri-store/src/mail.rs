@@ -680,7 +680,7 @@ impl Store {
                 return Ok(None)};
 
             let user=UserContext{
-                account:summary,tenant:TenantId(tenant.clone()),epoch:current_epoch,restricted:false,digest:[0;
+                account:summary,tenant:TenantId(tenant.clone()),epoch:current_epoch,restricted:false,helper:false,absolute_deadline:None,digest:[0;
                 32]};
 
             let c=connection(&tx,&user,&connection_id)?;

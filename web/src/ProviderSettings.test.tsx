@@ -680,3 +680,23 @@ describe("personal ChatGPT settings", () => {
     expect(settings.effective).toBeNull();
   });
 });
+
+it("guides local-helper server sign-in without requesting private launch material in the browser", async () => {
+  const user = userEvent.setup();
+  const {calls} = server((call) => call.path === "/settings/chatgpt" ? response([
+    {id:"synthetic-returning-binding",revision:7,label:"My VM connection",status:"active",remote_revoke:"not_requested"},
+  ]) : undefined, member);
+  open("/settings/model");
+  await user.click(await screen.findByRole("button", {name:"Continue with ChatGPT"}));
+  expect(screen.getByRole("region",{name:"ChatGPT 로그인 안내"})).toBeInTheDocument();
+  expect(screen.getByText("새 ChatGPT 연결")).toBeInTheDocument();
+  await user.click(screen.getByText("터미널 안내"));
+  expect(screen.getByText(new RegExp("moosuri subscriptions chatgpt-vm --server"))).toBeInTheDocument();
+  expect(screen.getByRole("link",{name:"도우미 빌드·실행 안내"})).toHaveAttribute("href","https://github.com/codemoo/moosuri/blob/main/docs/development.md");
+  await user.click(screen.getByRole("button",{name:"이 연결로 다시 로그인"}));
+  expect(screen.getByText("My VM connection 다시 연결")).toBeInTheDocument();
+  expect(screen.getAllByText(/--binding synthetic-returning-binding --revision 7/).length).toBe(2);
+  expect(calls.some(call=>/handoffs|local-login/.test(call.path))).toBe(false);
+  const content=screen.getByRole("region",{name:"ChatGPT 로그인 안내"}).textContent ?? "";
+  for (const secret of ["transfer_key","authorization_url","refresh_token","access_token","session="]) expect(content).not.toContain(secret);
+});

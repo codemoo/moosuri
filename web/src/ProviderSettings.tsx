@@ -1045,10 +1045,13 @@ type PersonalBinding = {
   label: string;
   status: string;
   remote_revoke: string;
+  handoff_phase?: string | null;
 };
 function PersonalChatGpt({accountId, onExpired, onVerified}: Props & {onVerified: () => void}) {
   const scope = useScope(accountId);
   const [items, setItems] = useState<PersonalBinding[]>([]);
+  const [guide, setGuide] = useState(false);
+  const [guideBinding, setGuideBinding] = useState<PersonalBinding | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<Record<string, string>>({});
@@ -1097,14 +1100,34 @@ function PersonalChatGpt({accountId, onExpired, onVerified}: Props & {onVerified
   return (
     <section className="admin-card">
       <h3>내 ChatGPT</h3>
-      <p>이 컴퓨터에서 <code>moosuri subscriptions chatgpt-login --server 로컬주소 --email 내주소</code> 명령으로 로그인하세요. 원격 VM 연결은 후속 지원입니다.</p>
+      <button onClick={() => {setGuideBinding(null); setGuide(true);}}>Continue with ChatGPT</button>
+      {guide && <div role="region" aria-label="ChatGPT 로그인 안내">
+        <h4>{guideBinding ? `${guideBinding.label} 다시 연결` : "새 ChatGPT 연결"}</h4>
+        <p>로그인하는 컴퓨터에서 설치한 Moosuri 도우미를 실행하세요. 같은 컴퓨터의 서버와 개인 Linux 서버를 지원합니다.</p>
+        <ol>
+          <li>서버와 같은 버전의 도우미에서 서버 주소, Moosuri 계정과 기존 SSH 연결 이름을 입력하고, 이 컴퓨터의 브라우저에서 로그인하세요.</li>
+          <li>도우미가 서버 연결을 확인하면 여기에 돌아와 새로고침하고 모델 목록과 텍스트 연결을 확인하세요.</li>
+        </ol>
+        <p role="status">이 컴퓨터에서 로그인 · 도우미의 전송 확인을 기다리는 중</p>
+        <details><summary>터미널 안내</summary>
+          <p>개인 HTTPS 서버:</p>
+          <code>{`moosuri subscriptions chatgpt-vm --server ${window.location.origin}${guideBinding ? ` --binding ${guideBinding.id} --revision ${guideBinding.revision}` : ""}`}</code>
+          <p>서버도 이 컴퓨터에서 실행 중이라면:</p>
+          <code>{`moosuri subscriptions chatgpt-login --server ${window.location.origin} --email 내주소${guideBinding ? ` --binding ${guideBinding.id} --revision ${guideBinding.revision}` : ""}`}</code>
+          <p>미완료 전송은 같은 도우미를 다시 실행하면 확인합니다. 새 로그인이 필요한 경우 도우미 안내에 따라 <code>--restart</code>를 사용하세요.</p>
+          <a href="https://github.com/codemoo/moosuri/blob/main/docs/development.md" target="_blank" rel="noreferrer">도우미 빌드·실행 안내</a>
+        </details>
+        <button onClick={() => setGuide(false)}>안내 닫기</button>
+      </div>}
+      <button disabled={busy} onClick={() => {void scope.request<PersonalBinding[]>("/settings/chatgpt").then(setItems).catch(fail);}}>연결 새로고침</button>
       <p>개인 연결은 공유 기본값으로 등록되지 않습니다. 현재 텍스트 대화를 지원하며 도구·첨부·백그라운드 업무는 지원하지 않습니다. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">ChatGPT 사용량</a></p>
       {notice && <p role="status">{notice}</p>}
       {items.map((binding) => (
         <div key={binding.id} role="group" aria-label={binding.label}>
           <strong>{binding.label}</strong>
           <p>{binding.status} · 원격 해제: {binding.remote_revoke}</p>
-          <p>다시 로그인: <code>--binding {binding.id} --revision {binding.revision}</code></p>
+          <p>{binding.handoff_phase === "validating" ? "보호된 연결을 서버에서 확인하는 중" : binding.handoff_phase === "prepared" || binding.handoff_phase === "committed" ? "이 컴퓨터에서 로그인·전송 대기 중" : binding.status === "active" ? "연결됨 · 텍스트 모델 확인 가능" : "다시 연결 필요"}</p>
+          <button disabled={busy} onClick={() => {setGuideBinding(binding); setGuide(true);}}>이 연결로 다시 로그인</button>
           {binding.status === "active" && <>
             <button disabled={busy} onClick={() => void act(binding, "models")}>내 모델 목록</button>
             <label>정확한 모델<input value={model[binding.id] ?? ""} onChange={(event) => setModel((old) => ({...old, [binding.id]: event.target.value}))} list={`personal-models-${binding.id}`} disabled={busy} /></label>

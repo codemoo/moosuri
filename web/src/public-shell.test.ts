@@ -8,7 +8,7 @@ const origin = "https://moosuri.example.test";
 const assets = ["/index.html", "/assets/app-fixed.js", "/assets/app-fixed.css", "/manifest.webmanifest", "/icon.svg"];
 const code = ts.transpileModule(readFileSync(resolve("service-worker.ts"), "utf8"), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-}).outputText.replace(/^import .*push-state.*\n/m, "").replace(/^export \{\};?\s*$/m, "");
+}).outputText.replace(/^import .*push-state.*\n/m, "").replace(/^import .*share-intake.*\n/m, "").replace(/^export \{\};?\s*$/m, "");
 
 function worker() {
   const events = new Map<string, (e: any) => void>();

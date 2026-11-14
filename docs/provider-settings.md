@@ -90,7 +90,7 @@ Use the exact configured local origin; the server must already be running in its
 normal local development configuration. Enter your Moosuri password in the hidden
 prompt, then complete official ChatGPT consent in the system browser. Tokens and
 OAuth callback parameters are not printed. The helper does not read Codex login
-files. Remote VM protected handoff is not implemented in this slice.
+files. For a separate Linux server, use the [personal server guide](#personal-server-chatgpt-guide) below.
 
 At `/settings/model`, open **내 모델 목록**, choose an exact slug and optional effort,
 then **텍스트 연결 확인**. The fixed text probe uses only synthetic verification
@@ -143,3 +143,7 @@ actual account acceptance remain separate gates.
 관리자 모델 설정의 **음성을 글로**에서 현재 유효한 설치용 OpenAI API 연결을 선택한다. 고정 공개 문장 “The blue bird sings beside the quiet river.”가 들리는15초 이하 녹음을 선택하고 **음성 연결 확인하고 저장**을 누른다. 실제 API 응답의 단어가 일치해야 저장한다. 기대 문장을 provider prompt에 넣지 않는다. 현재 모델은 `gpt-4o-mini-transcribe`이며 text/vision/tools 연결 확인과 독립적이다. 설정 변경·API key 회전/disable 뒤 다시 확인해야 한다. 구독/SIWC token은 Audio API로 보내지 않는다. 이 설치용 API key는 현재 server-managed 경계이며 개인 vault CredentialBroker 지원을 주장하지 않는다. 제공업체 처리 비용은 별도로 발생할 수 있다.
 
 음성 설정은 provider revision과 별도의 단조 증가 authority 세대를 갖는다. 끄기/성공한 재설정은 이전 음성 job을 취소하고 임시 글을 지우며, 이전 세대의 지연된 연결 확인 결과가 다시 설정을 활성화하지 못하게 한다. 같은 연결을 다시 확인하더라도 이전 job은 재개되지 않는다.
+
+### Personal server ChatGPT guide
+
+**Continue with ChatGPT** now explains the same-computer helper and the personal HTTPS Linux-server helper. Run the matching native binary on the browser computer; the helper prompts for missing origin/account/SSH alias. The settings page never holds the handoff key, owner session, authorization URL or encrypted file. The native helper’s password login issues a transfer-only session capped at ten minutes immediately; it cannot change the account password, create users/credentials or run conversation/tools. Add-account omits the returning binding flags; reconnect explicitly names an existing binding/revision. After the helper confirms transfer, refresh connections, verify the exact server-side model and save the personal selection. A guide's waiting message is instruction, never proof that remote web OAuth succeeded. The build instructions are linked; signed production downloads/installers are not yet supplied.

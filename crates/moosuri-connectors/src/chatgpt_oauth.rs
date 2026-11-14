@@ -4,6 +4,7 @@
 //! issued-client persistence **before** exchange, encrypted atomic bundle storage,
 //! cross-process refresh leases/generation CAS, and logout dispatch cancellation.
 //! Consuming Rust values prevent local reuse; they are not durable authorization.
+pub mod handoff;
 mod jwt;
 pub mod sealed;
 #[cfg(test)]

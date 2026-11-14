@@ -26,7 +26,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use moosuri_core::{ApiError, SessionView, SystemStatus, ThreadsResponse};
 use moosuri_store::{Store, StoreError, UserContext};
@@ -280,6 +280,26 @@ pub fn router_with_runtime(
     Router::new()
         .route("/api/v1/settings/chatgpt", get(subscriptions::list))
         .route(
+            "/api/v1/settings/chatgpt/handoffs",
+            post(subscriptions::handoff_prepare),
+        )
+        .route(
+            "/api/v1/settings/chatgpt/handoffs/{id}",
+            get(subscriptions::handoff_status).delete(subscriptions::handoff_cancel),
+        )
+        .route(
+            "/api/v1/settings/chatgpt/handoffs/{id}/nonce",
+            put(subscriptions::handoff_nonce),
+        )
+        .route(
+            "/api/v1/settings/chatgpt/handoffs/{id}/registration",
+            put(subscriptions::handoff_registration),
+        )
+        .route(
+            "/api/v1/settings/chatgpt/handoffs/{id}/import",
+            post(subscriptions::handoff_import).layer(DefaultBodyLimit::max(192 * 1024)),
+        )
+        .route(
             "/api/v1/settings/chatgpt/local-login",
             post(subscriptions::login),
         )
@@ -522,6 +542,13 @@ fn cookie_token(headers: &HeaderMap) -> Result<String, StoreError> {
     found.ok_or(StoreError::Unauthorized)
 }
 async fn current(state: &AppState, headers: &HeaderMap) -> Result<UserContext, HttpError> {
+    let user = current_handoff(state, headers).await?;
+    if user.is_chatgpt_helper() {
+        return Err(StoreError::Forbidden.into());
+    }
+    Ok(user)
+}
+async fn current_handoff(state: &AppState, headers: &HeaderMap) -> Result<UserContext, HttpError> {
     let user = state.store.authenticate(cookie_token(headers)?).await?;
     expected_account(headers, &user)?;
     Ok(user)
@@ -545,7 +572,9 @@ fn session_view(user: &UserContext) -> SessionView {
 }
 fn session_response(user: &UserContext, token: &str, secure: bool) -> Response {
     let mut result = Json(session_view(user)).into_response();
-    let max_age = if user.password_change_required() {
+    let max_age = if user.is_chatgpt_helper() {
+        600
+    } else if user.password_change_required() {
         24 * 60 * 60
     } else {
         COOKIE_MAX_AGE
@@ -584,6 +613,15 @@ async fn system(State(state): State<AppState>) -> HttpResult {
 struct LoginRequest {
     email: String,
     password: String,
+    #[serde(default)]
+    purpose: LoginPurpose,
+}
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LoginPurpose {
+    #[default]
+    Normal,
+    ChatgptHelper,
 }
 async fn login(
     State(state): State<AppState>,
@@ -656,7 +694,15 @@ async fn login(
             .insert(header::RETRY_AFTER, HeaderValue::from_static("300"));
         return Ok(response);
     }
-    let result = state.store.login(input.email, input.password).await?;
+    let result = match input.purpose {
+        LoginPurpose::Normal => state.store.login(input.email, input.password).await?,
+        LoginPurpose::ChatgptHelper => {
+            state
+                .store
+                .login_chatgpt_helper(input.email, input.password)
+                .await?
+        }
+    };
     Ok(session_response(
         &result.user,
         &result.token,

@@ -7,7 +7,17 @@ publish.workspace = true
 license.workspace = true
 build = "build.rs"
 
+[features]
+default = []
+test-fixtures = ["moosuri-connectors/test-fixtures", "moosuri-server/test-fixtures"]
+
 [dependencies]
+moosuri-connectors = { path = "../../crates/moosuri-connectors" }
+serde.workspace = true
+uuid.workspace = true
+zeroize = "1.8"
+fs2 = "0.4"
+base64 = "0.23"
 moosuri-documents = { path = "../../crates/moosuri-documents" }
 moosuri-core = { path = "../../crates/moosuri-core" }
 moosuri-store = { path = "../../crates/moosuri-store" }

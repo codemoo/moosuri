@@ -126,10 +126,18 @@ pub struct UserContext {
     digest: [u8; 32],
     epoch: i64,
     restricted: bool,
+    helper: bool,
+    absolute_deadline: Option<i64>,
 }
 impl UserContext {
     pub fn account(&self) -> &AccountSummary {
         &self.account
+    }
+    pub fn is_chatgpt_helper(&self) -> bool {
+        self.helper
+    }
+    pub fn helper_deadline(&self) -> Option<i64> {
+        self.absolute_deadline
     }
     pub fn password_change_required(&self) -> bool {
         self.restricted
@@ -138,7 +146,7 @@ impl UserContext {
     /// Domain separation hides the opaque session digest and prevents reuse as
     /// a session token. Restricted sessions never receive a recovery namespace.
     pub fn chat_draft_scope(&self) -> Option<String> {
-        if self.restricted {
+        if self.restricted || self.helper {
             return None;
         }
         Some(share_origin::draft_scope(
@@ -199,7 +207,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 33;
+const CURRENT_SCHEMA_VERSION: i64 = 34;
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.
@@ -564,6 +572,13 @@ impl Store {
                 "COMMIT;"
             ))?;
         }
+        if version < 34 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0034_chatgpt_vm_handoff.sql"),
+                "COMMIT;"
+            ))?;
+        }
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         audio::restart(&conn)?;
         calendar::restart(&conn)?;
@@ -674,6 +689,22 @@ impl Store {
         .await
     }
     pub async fn login(&self, email: String, password: String) -> Result<LoginResult> {
+        self.login_with_purpose(email, password, false).await
+    }
+    /// Password-authenticated transfer-only session; deadline exists before response/cookie.
+    pub async fn login_chatgpt_helper(
+        &self,
+        email: String,
+        password: String,
+    ) -> Result<LoginResult> {
+        self.login_with_purpose(email, password, true).await
+    }
+    async fn login_with_purpose(
+        &self,
+        email: String,
+        password: String,
+        helper: bool,
+    ) -> Result<LoginResult> {
         let password = Zeroizing::new(password);
         // Invalid account names still execute the same bounded dummy verification.
         let email = email_valid(email).ok();
@@ -710,7 +741,7 @@ impl Store {
             {
                 return Err(StoreError::Unauthorized);
             }
-            let result = issue_session(&tx, current)?;
+            let result = issue_session_for(&tx, current, helper)?;
             tx.commit()?;
             Ok(result)
         })
@@ -722,7 +753,7 @@ impl Store {
             return Err(StoreError::Unauthorized);
         }
         let digest = digest(&token);
-        self.call(move |db| load_context(&db.conn, digest, true))
+        self.call(move |db| load_session_context(&db.conn, digest, true))
             .await
     }
     pub async fn change_password(
@@ -754,7 +785,13 @@ impl Store {
     pub async fn logout(&self, user: &UserContext) -> Result<()> {
         let user = user.clone();
         self.call(move |db| {
-            validate(&db.conn, &user, false, false)?;
+            let current = load_session_context(&db.conn, user.digest, false)?;
+            if current.epoch != user.epoch
+                || current.tenant.0 != user.tenant.0
+                || current.account.id != user.account.id
+            {
+                return Err(StoreError::Unauthorized);
+            }
             db.conn.execute(
                 "DELETE FROM sessions WHERE digest=?1",
                 [user.digest.as_slice()],
@@ -887,15 +924,28 @@ fn insert_account(
     })
 }
 fn issue_session(conn: &Connection, account: LoginAccount) -> Result<LoginResult> {
+    issue_session_for(conn, account, false)
+}
+fn issue_session_for(
+    conn: &Connection,
+    account: LoginAccount,
+    helper: bool,
+) -> Result<LoginResult> {
+    if helper && account.summary.must_change_password {
+        return Err(StoreError::Forbidden);
+    }
     let token = random_token()?;
     let digest = digest(&token);
     let restricted = account.summary.must_change_password;
-    let expiry = if restricted {
+    let absolute_deadline = if helper { Some(now()? + 600) } else { None };
+    let expiry = if let Some(deadline) = absolute_deadline {
+        deadline
+    } else if restricted {
         account.temporary_expiry.ok_or(StoreError::Corrupt)?
     } else {
         now()? + SESSION_SECONDS
     };
-    conn.execute("INSERT INTO sessions(digest,tenant_id,account_id,auth_epoch,password_change_only,expires_at) VALUES (?1,?2,?3,?4,?5,?6)",params![digest.as_slice(),account.tenant.0,account.summary.id,account.epoch,restricted,expiry])?;
+    conn.execute("INSERT INTO sessions(digest,tenant_id,account_id,auth_epoch,password_change_only,expires_at,purpose,absolute_deadline) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![digest.as_slice(),account.tenant.0,account.summary.id,account.epoch,restricted,expiry,if helper{"chatgpt_helper"}else{"normal"},absolute_deadline])?;
     Ok(LoginResult {
         token,
         user: UserContext {
@@ -904,19 +954,46 @@ fn issue_session(conn: &Connection, account: LoginAccount) -> Result<LoginResult
             digest,
             epoch: account.epoch,
             restricted,
+            helper,
+            absolute_deadline,
         },
     })
 }
+/// Default operational loader rejects transfer-only sessions even for callers that
+/// revalidate run/vault/stream authority directly rather than through validate().
 fn load_context(conn: &Connection, digest: [u8; 32], renew: bool) -> Result<UserContext> {
+    let user = load_session_context(conn, digest, renew)?;
+    if user.helper {
+        return Err(StoreError::Forbidden);
+    }
+    Ok(user)
+}
+fn load_session_context(conn: &Connection, digest: [u8; 32], renew: bool) -> Result<UserContext> {
     let time = now()?;
-    let result=conn.query_row("SELECT a.id,a.name,a.email,a.role,a.must_change_password,a.tenant_id,a.auth_epoch,s.password_change_only FROM sessions s JOIN accounts a ON a.tenant_id=s.tenant_id AND a.id=s.account_id WHERE s.digest=?1 AND s.auth_epoch=a.auth_epoch AND a.recovery_required=0 AND a.status='active' AND s.expires_at>?2 AND s.password_change_only=a.must_change_password AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?2)",params![digest.as_slice(),time],|r| Ok(UserContext { account:summary_row(r)?,tenant:TenantId(r.get(5)?),epoch:r.get(6)?,restricted:r.get(7)?,digest })).optional()?.ok_or(StoreError::Unauthorized)?;
-    if renew && !result.restricted {
+    let result=conn.query_row("SELECT a.id,a.name,a.email,a.role,a.must_change_password,a.tenant_id,a.auth_epoch,s.password_change_only,s.purpose,s.absolute_deadline FROM sessions s JOIN accounts a ON a.tenant_id=s.tenant_id AND a.id=s.account_id WHERE s.digest=?1 AND s.auth_epoch=a.auth_epoch AND a.recovery_required=0 AND a.status='active' AND s.expires_at>?2 AND (s.absolute_deadline IS NULL OR s.absolute_deadline>?2) AND s.password_change_only=a.must_change_password AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?2)",params![digest.as_slice(),time],|r| Ok(UserContext { account:summary_row(r)?,tenant:TenantId(r.get(5)?),epoch:r.get(6)?,restricted:r.get(7)?,helper:r.get::<_,String>(8)?=="chatgpt_helper",absolute_deadline:r.get(9)?,digest })).optional()?.ok_or(StoreError::Unauthorized)?;
+    if renew && !result.restricted && !result.helper {
         conn.execute(
             "UPDATE sessions SET expires_at=?1 WHERE digest=?2",
             params![time + SESSION_SECONDS, digest.as_slice()],
         )?;
     }
     Ok(result)
+}
+/// Narrow safe-session/handoff authorization; no operational caller may use it.
+fn validate_handoff(conn: &Connection, user: &UserContext) -> Result<UserContext> {
+    let current = load_session_context(conn, user.digest, false)?;
+    if current.epoch != user.epoch
+        || current.tenant.0 != user.tenant.0
+        || current.account.id != user.account.id
+        || current.helper != user.helper
+        || current.absolute_deadline != user.absolute_deadline
+    {
+        return Err(StoreError::Unauthorized);
+    }
+    if current.restricted {
+        return Err(StoreError::Forbidden);
+    }
+    Ok(current)
 }
 fn validate(conn: &Connection, user: &UserContext, full: bool, admin: bool) -> Result<UserContext> {
     let current = load_context(conn, user.digest, false)?;

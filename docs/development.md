@@ -209,3 +209,11 @@ Matching sealed cutover [restore](restore.md) verifies and quarantines a private
 ## Optional separate vault
 
 The [vault service/client guide](vault-service-client.md) documents actual Rust/WASM/React build order, separate UID/origin/cookie setup and exact incomplete release boundaries. Build `vault-web` before its Rust binary and avoid concurrent dist rebuilds during cargo/rustdoc. Assistant schema0024 is reserved for root integration; this standalone increment uses schema21.
+
+### Personal ChatGPT native helper
+
+The existing `moosuri` executable contains both the browser-computer helper and Linux SSH-stdin receiver. Build the normal locked native application with `cargo build --locked -p moosuri`; place a matching locally built binary in the Linux user's normal SSH command path using the project's existing deployment process. This work adds no automatic installer or signed download channel.
+
+On the browser computer run `moosuri subscriptions chatgpt-vm --server https://your-server.example`. Missing email and existing SSH host alias are prompted; the password is hidden. Both initial and recovery login request a password-authenticated transfer-only session with an immutable ten-minute deadline, before any preparation. It cannot change passwords, create account/vault/source authority or run chat. Normal TLS validation and existing SSH host-key trust are required. Reconnect adds `--binding ID --revision N`; a distinct add-account omits both. If a transfer acknowledgement is lost, rerun the same helper before starting another login. An unfinished fresh-login attempt uses `--restart` and its retained issued registration. Never copy another tool's credentials or put tokens/cookies/keys in arguments.
+
+The remote fixed command is `moosuri subscriptions chatgpt-receive --stdin`. It reads one bounded frame from the authenticated SSH channel and calls the running server's owner API. It does not open the installation DB, need an operator account or own a sealing key. After confirmed transfer, return to personal model settings for catalog/text proof and selection. Real owner OAuth/SSH/live plan availability remains separate acceptance from synthetic tests. GitHub Actions/automatic CI stays disabled.

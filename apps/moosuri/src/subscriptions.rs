@@ -1,12 +1,42 @@
 //! Native same-host helper. Authentication stays in memory; no token CLI arguments.
+#[cfg(unix)]
+mod private_state;
+#[cfg(unix)]
+mod vm;
 use clap::Subcommand;
 use reqwest::{Client, header};
 use serde_json::{Value, json};
 use std::time::Duration;
 #[derive(Subcommand)]
 pub enum Command {
+    /// Continue with ChatGPT on this computer and transfer to your HTTPS server over SSH.
+    #[command(name = "chatgpt-vm")]
+    Vm {
+        #[arg(long)]
+        server: Option<String>,
+        #[arg(long)]
+        email: Option<String>,
+        #[arg(long)]
+        ssh: Option<String>,
+        #[arg(long, default_value = "My ChatGPT")]
+        label: String,
+        #[arg(long)]
+        binding: Option<String>,
+        #[arg(long)]
+        revision: Option<i64>,
+        /// Cancel an incomplete attempt and perform fresh OAuth using its saved registration.
+        #[arg(long)]
+        restart: bool,
+    },
+    /// Receive a protected handoff over SSH stdin using the running server's owner API.
+    #[command(name = "chatgpt-receive")]
+    Receive {
+        #[arg(long)]
+        stdin: bool,
+    },
     /// Sign in on the computer running Moosuri and open the system browser.
-    ChatgptLogin {
+    #[command(name = "chatgpt-login")]
+    Login {
         #[arg(long)]
         server: String,
         #[arg(long)]
@@ -20,13 +50,33 @@ pub enum Command {
     },
 }
 pub async fn run(command: &Command) -> Result<(), String> {
-    let Command::ChatgptLogin {
+    match command {
+        #[cfg(unix)]
+        Command::Vm {
+            server,
+            email,
+            ssh,
+            label,
+            binding,
+            revision,
+            restart,
+        } => return vm::run(server, email, ssh, label, binding, revision, *restart).await,
+        #[cfg(unix)]
+        Command::Receive { stdin } => return vm::receive(*stdin).await,
+        Command::Login { .. } => (),
+        #[cfg(not(unix))]
+        _ => return Err("native_vm_helper_requires_unix".into()),
+    }
+    let Command::Login {
         server,
         email,
         label,
         binding,
         revision,
-    } = command;
+    } = command
+    else {
+        return Err("unsupported_subscription_command".into());
+    };
     let url = url::Url::parse(server).map_err(|_| "invalid_local_server")?;
     if !["http", "https"].contains(&url.scheme())
         || url

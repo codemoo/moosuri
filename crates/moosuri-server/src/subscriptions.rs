@@ -219,3 +219,114 @@ pub(super) async fn probe(
     }
     Ok(Json(s.store.record_subscription_probe(&u, b).await?).into_response())
 }
+
+// Native HTTPS capability responses are never part of public/browser DTOs.
+#[derive(serde::Serialize)]
+struct PrivateHandoffPreparation {
+    context: moosuri_connectors::chatgpt_oauth::handoff::HandoffContext,
+    transfer_key: zeroize::Zeroizing<String>,
+    expires_at: i64,
+    client_id: Option<String>,
+    subject: Option<String>,
+}
+pub(super) async fn handoff_prepare(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Json(i): Json<LoginInput>,
+) -> HttpResult {
+    let u = current_handoff(&s, &h).await?;
+    let origin = url::Url::parse(&s.config.origin).map_err(|_| StoreError::InvalidInput)?;
+    let allowed = origin.scheme() == "https";
+    #[cfg(feature = "test-fixtures")]
+    let allowed = allowed
+        || (origin.scheme() == "http"
+            && origin.host_str() == Some("127.0.0.1")
+            && origin.port().is_some());
+    if !allowed {
+        return Ok(failure(StatusCode::CONFLICT, "https_handoff_required"));
+    }
+    let existing = match (i.binding_id, i.expected_revision) {
+        (Some(id), Some(r)) => Some((id, r)),
+        (None, None) => None,
+        _ => return Err(StoreError::InvalidInput.into()),
+    };
+    let p = s
+        .store
+        .prepare_chatgpt_handoff(&u, existing, i.label)
+        .await?;
+    Ok(Json(PrivateHandoffPreparation {
+        context: p.context,
+        transfer_key: p.key.for_private_transport(),
+        expires_at: p.expires_at,
+        client_id: p.client_id,
+        subject: p.subject,
+    })
+    .into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NonceInput {
+    commitment: Vec<u8>,
+    source_host: String,
+}
+pub(super) async fn handoff_nonce(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(i): Json<NonceInput>,
+) -> HttpResult {
+    let u = current_handoff(&s, &h).await?;
+    s.store
+        .commit_chatgpt_handoff_nonce(&u, id, i.commitment, i.source_host)
+        .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RegistrationInput {
+    client_id: String,
+}
+pub(super) async fn handoff_registration(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(i): Json<RegistrationInput>,
+) -> HttpResult {
+    let u = current_handoff(&s, &h).await?;
+    s.store
+        .save_chatgpt_handoff_registration(&u, id, i.client_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+pub(super) async fn handoff_import(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> HttpResult {
+    let u = current_handoff(&s, &h).await?;
+    Ok(Json(
+        s.runtime
+            .subscription_service()
+            .import_handoff(&u, id, body.to_vec())
+            .await?,
+    )
+    .into_response())
+}
+pub(super) async fn handoff_status(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+) -> HttpResult {
+    let u = current_handoff(&s, &h).await?;
+    Ok(Json(s.store.chatgpt_handoff_status(&u, id).await?).into_response())
+}
+pub(super) async fn handoff_cancel(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+) -> HttpResult {
+    let u = current_handoff(&s, &h).await?;
+    s.store.cancel_chatgpt_handoff(&u, id).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}

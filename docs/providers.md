@@ -34,7 +34,7 @@ run은 provider version/model/effort/capability/budget policy를 고정한다. �
 
 2026-11-12 확인한 공식 SIWC 문서는 오픈소스 앱의 선택적 ChatGPT plan usage를 지원한다. 사용자/workspace 동의와 앱 등록 조건을 준수하며 ChatGPT의 기존 대화 기록을 가져오는 기능으로 설명하지 않는다. PKCE/state/nonce·scope·logout/revoke/refresh 수명을 구현한다. host별 불투명 `ext_agent_host_id`를 지속 저장하며 다른 VM/laptop의 host ID를 복제하지 않는다.
 
-원격 Linux 설치는 공식 self-hosted VM 흐름에 맞게 로컬 브라우저 인증·보호된 credential 전달·VM refresh 소유를 설계한다. hosted/유료 서비스는 그에 맞는 공식 통합 조건을 다시 확인한다. app-server의 과거 로그인 예제를 소비자 token 공유 API로 쓰지 않는다.
+원격 Linux 설치는 공식 self-hosted VM 흐름에 맞게 로컬 브라우저 인증·보호된 credential 전달·VM refresh 소유를 구현했다. 실제 개인 계정·HTTPS/SSH 운영 수락은 별도다. hosted/유료 서비스는 그에 맞는 공식 통합 조건을 다시 확인한다. app-server의 과거 로그인 예제를 소비자 token 공유 API로 쓰지 않는다.
 
 preview adapter는 `store:false`, `stream:true`, input array와 로컬 durable history를 사용한다. HTTP `previous_response_id`에 의존하지 않는다. `max_output_tokens` 등 미지원 필드, hosted file/tool search·code interpreter·computer use·hosted MCP·이미지 생성·Files/audio/video 경로를 별도 capability로 차단한다. 앱의 도구 발견은 자체 ToolRegistry이며 Responses hosted tool_search와 다르다. 사용량/시간/반복 상한은 지원되는 기능과 앱 admission에서 관리하고 provider가 지원하지 않는 hard output cap을 보장하지 않는다. 출시 시 최신 공식 제한과 실제 계정 access를 재검증한다.
 
@@ -44,7 +44,7 @@ Connector에만 `ModelClient::chatgpt_plan`과 opt-in `ResponsesDialect::ChatGpt
 
 function tools는 명시적으로 검증한 capability만 사용하며 고정 `moosuri` namespace로 감싼다. decoder와 private continuation은 namespace/name/call ID·정확한 model·dialect를 보존하고 foreign/missing namespace와 다른 dialect 재생을 거절한다. API의 flat function tools 경로는 유지한다. 계획/사용량 오류는 알려진 안전한 code만 노출하고 중간 text·usage 관측을 완료로 표시하지 않는다. failed-frame usage는 검증된 response.created 이후 명시적인 동일 response ID/model이 있을 때만 정산 관측으로 보존한다. progress/queued 등 후속 full snapshot의 누락·충돌 identity도 실패하며, 이후의 올바른 terminal로 덮지 않는다. synthetic fragmented stream·loopback HTTP 시험은 실계정 capability 증명이 아니다.
 
-현재 P1은 같은 컴퓨터의 native loopback 로그인, 개인 소유 저장·refresh CAS·해제, 실제 text probe와 개인 선택·저장 대화를 연결한다. 공유 provider 설정은 그대로 유지한다. VM credential 전달·개인 tools·이미지·파일·hosted search·기타 media·백그라운드는 아직 노출하지 않는다. 연결 후 해당 계정의 정확한 모델/effort text probe를 통과해야 선택할 수 있다. 합성 로그인·전송·대화 검증을 실계정 OAuth/eligibility 수락으로 부르지 않는다. [사용법](provider-settings.md#personal-chatgpt-text-same-computer)을 따른다. 근거: [SIWC inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference), [preview limits](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [namespace schema](https://developers.openai.com/api/docs/guides/function-calling#defining-namespaces).
+현재 P1은 같은 컴퓨터의 native loopback 로그인, 개인 소유 저장·refresh CAS·해제, 실제 text probe와 개인 선택·저장 대화를 연결한다. 공유 provider 설정은 그대로 유지한다. 별도 native helper의 VM 전달도 연결했다. 개인 tools·이미지·파일·hosted search·기타 media·백그라운드는 아직 노출하지 않는다. 연결 후 해당 계정의 정확한 모델/effort text probe를 통과해야 선택할 수 있다. 합성 로그인·전송·대화 검증을 실계정 OAuth/eligibility 수락으로 부르지 않는다. [사용법](provider-settings.md#personal-chatgpt-text-same-computer)을 따른다. 근거: [SIWC inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference), [preview limits](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [namespace schema](https://developers.openai.com/api/docs/guides/function-calling#defining-namespaces).
 
 ### SIWC authentication foundation
 
@@ -53,7 +53,7 @@ function tools는 명시적으로 검증한 capability만 사용하며 고정 `m
 반환 callback의 선택적 client_id와 최초 교환 실패 뒤 issued registration 재사용을 수정하고
 독립 재검토·Native/Linux 검사를 통과했다. [검증 기록](reviews/2026-11-14-chatgpt-authentication.md).
 이 connector 위에 같은 컴퓨터의 개인 credential 저장·native loopback helper·개인 text
-모델 선택을 연결했다. 원격 VM 전달과 개인 도구/media는 후속이다. 기존 Codex 로그인
+모델 선택과 원격 VM 전달을 연결했다. 개인 도구/media는 후속이다. 기존 Codex 로그인
 정보를 추출하지 않으며 합성 검증을 실계정 로그인·모델 수락으로 설명하지 않는다.
 
 ## Claude 공식 실행 연결
@@ -89,3 +89,5 @@ gws는 Google Workspace 조직의 Rust CLI지만 upstream은 공식 지원 Googl
 ## 개인 볼트와 credential 선택
 
 기존 server-managed API/OAuth 연결과 [user-key vault broker](credential-use.md)는 구분한다. 연결된 개인 binding은 같은 사용자·서비스·허용 operation/resource/recipient 범위에서 자동 재사용한다. 첫 계정 선택·실제 모호함·인증 만료 때만 연결 화면을 연다. 모델에게 비밀번호/API key/TOTP를 읽어오게 하지 않는다. 공유 LLM profile의 설치 credential이 가족의 private vault 접근 권한을 의미하지 않는다. broker가 unavailable이면 대기하며 서버 보관 token으로 조용히 우회하지 않는다.
+
+Personal ChatGPT connections can be transferred from fresh local loopback OAuth to a personal HTTPS Linux installation with the matching native helper and existing SSH trust. The VM independently verifies fresh ID evidence and becomes sole refresh owner after atomic import. The helper has no inference or refresh surface, and its password-authenticated API session is limited to handoff/session/status/logout with an immutable ten-minute deadline at issuance. Import preserves the VM host and leaves exact catalog/text proof and personal selection to the existing P1 paths; shared providers and tool/media/background routes are unchanged. See [authentication](chatgpt-authentication.md) for nonce commitment, protected-source trust, receipts and failure recovery.

@@ -1,4 +1,5 @@
 //! Bounded personal SIWC orchestration. SQLite owns refresh admission and CAS.
+mod handoff;
 use crate::*;
 use moosuri_connectors::chatgpt_oauth::{AuthError, ChatGptAuthClient};
 use moosuri_store::{SubscriptionAccess, SubscriptionAuthority, SubscriptionRef, UserContext};
@@ -11,7 +12,7 @@ pub struct SubscriptionService {
     store: Store,
     signals: Signals,
     logins: Arc<tokio::sync::Semaphore>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     fixture: Option<(String, String)>,
 }
 /// Private launch payload for the native helper. Never Debug/log its URL.
@@ -24,7 +25,7 @@ pub struct LocalLoginLaunch {
 }
 impl SubscriptionService {
     async fn auth_client(&self) -> Result<ChatGptAuthClient, AuthError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-fixtures"))]
         if let Some((origin, _)) = &self.fixture {
             return ChatGptAuthClient::synthetic_fixture(origin).await;
         }
@@ -35,9 +36,9 @@ impl SubscriptionService {
         authority: SubscriptionAuthority,
         binding: SubscriptionRef,
     ) -> Result<ModelClient, StoreError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-fixtures"))]
         let fixture = self.fixture.as_ref();
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-fixtures")))]
         let fixture: Option<&(String, String)> = None;
         personal_client_inner(&self.store, authority, binding, fixture).await
     }
@@ -49,6 +50,10 @@ impl SubscriptionService {
             logins: Arc::new(tokio::sync::Semaphore::new(2)),
             #[cfg(test)]
             fixture: None,
+            #[cfg(all(not(test), feature = "test-fixtures"))]
+            fixture: std::env::var("MOOSURI_TEST_CHATGPT_ORIGIN")
+                .ok()
+                .map(|origin| (origin.clone(), origin)),
         }
     }
     pub async fn local_login(
@@ -231,7 +236,7 @@ async fn personal_client_inner(
                 let caps = TextCapabilities {
                     efforts: binding.effort.iter().cloned().collect(),
                 };
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-fixtures"))]
                 if let Some((_, origin)) = fixture {
                     return ModelClient::synthetic_chatgpt_plan(origin, token, caps)
                         .map_err(|_| StoreError::Unavailable);
@@ -245,13 +250,13 @@ async fn personal_client_inner(
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
             SubscriptionAccess::Refresh(lease, bundle) => {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-fixtures"))]
                 let discovered = if let Some((origin, _)) = fixture {
                     ChatGptAuthClient::synthetic_fixture(origin).await
                 } else {
                     ChatGptAuthClient::discover().await
                 };
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "test-fixtures")))]
                 let discovered = {
                     let _ = fixture;
                     ChatGptAuthClient::discover().await

@@ -60,13 +60,27 @@ to a shared provider. Durable claim/retry/output guards repeat the fence before
 loading private attachment bodies; the runner checks again before plan IO. Shared
 conversation attachment inheritance remains supported. Protocol
 namespace support alone is not a personal tool capability proof. Protected VM
-handoff and independent fresh import verification remain P2; no plaintext token
-paste/upload or remote HTTPS OAuth callback is provided. Account/workspace
+handoff and independent fresh import verification are implemented below; no plaintext
+token paste/upload or remote HTTPS OAuth callback is provided. Account/workspace
 eligibility, actual OAuth/catalog/text acceptance, personal tools and hosted approval
-where applicable remain unexecuted. Internal independent authentication/storage/
-restore review is required before publication.
+where applicable remain unexecuted. The bounded authentication/storage/restore repairs
+and current-root integration passed independent review; see the [P2 evidence](reviews/2026-11-14-chatgpt-vm-handoff.md).
 
 The committed `synthetic-test-key.pk8` is a deliberately public signing fixture,
 never a real credential. Optional `test-fixtures` constructors accept only exact
 127.0.0.1 HTTP origins with nondefault ports; default production builds have no
 alternate auth/model destination. Synthetic tests do not establish live readiness.
+
+## Personal self-hosted Linux transfer
+
+Run the matching installed `moosuri subscriptions chatgpt-vm --server https://your-server.example` binary on the browser computer. It prompts for an ordinary Moosuri login and an existing SSH host alias, then starts **Continue with ChatGPT** through the official exact `127.0.0.1` callback. Use `--binding ID --revision N` to reconnect an explicitly selected registration; omit both to add a distinct account. Equal email/subject never merges issued clients.
+
+Before launching the browser, the native helper commits a ticket-separated nonce hash to the authenticated server. It persists issued client metadata before code exchange, verifies locally, and sends only a protected envelope through SSH stdin to `moosuri subscriptions chatgpt-receive --stdin`. The receiver uses the running server's ordinary owner API, without opening SQLite or receiving its root key. HTTPS uses normal TLS validation, no proxy/redirect, and SSH retains the user's established host trust. Tokens/cookies/keys are absent from command arguments and ordinary output. The helper uses a password-authenticated session with persisted `chatgpt_helper` purpose and an immutable absolute ten-minute deadline at issuance, before a cookie/response is returned. This applies to initial login and receipt reauthentication, including crashes before preparation. It permits only typed handoff operations, safe session/status and logout; password/account/admin/vault/source/chat/external authority is denied by the Store’s default operational validator and server routes. Browser and same-host P1 sessions keep their normal purpose and renewal. A fresh password-authenticated helper login can retrieve an already-imported receipt afterward.
+
+The target independently checks fresh official signed ID evidence against the committed nonce and returning pins. This verifier is distinct from trusted local sealed-session reopening, which may retain expired historical ID evidence. A valid signature establishes subject/client/nonce; the authorized helper/OS is trusted to carry the real token-endpoint tuple. No portable signed refresh-token binding or helper-binary attestation is claimed. Transfer preserves the VM's preexisting host; current provider guidance does not offer host-specific usage attribution or revocation for transferred sessions.
+
+Schema34 reserves a staged revision while the active target session stays usable. P1 and P2 share monotonic revision reservation above every retained stage, inherit only sealed verified subject pins, and reuse incomplete issued-client metadata for fresh codes after cancellation/expiry. Successful verification atomically installs generation1 with an HMAC-authenticated receipt and removes the target transfer key. Exact encrypted retries return that durable receipt. Session logout/epoch changes, disconnect/reconnect, stale revision and restore fence late installs; restore deletes tickets and receipts and regenerates runtime/host. Model proof and personal selection are never created by import.
+
+The native helper rejects grant/unsupported ACLs on pinned ancestor/state/file descriptors before private reads/writes (deny-only macOS ACLs are supported), creates directories with mode0700 from the start, and checks files for owner/mode/single link. The source's owner-private encrypted journal is stored under `~/.local/state/moosuri/chatgpt-vm`. A durable pending marker precedes any transfer, and this helper has no refresh/inference/revoke path. Rerun the same command to reconcile lost acknowledgement. The helper independently fetches and verifies the target receipt before removing the encrypted renewable envelope and its transfer key; SSH stdout alone is insufficient. `--restart` explicitly cancels an unfinished attempt and starts fresh OAuth using retained staged issued metadata. Expired ID evidence is never refreshed locally to rescue a transfer. Removal is logical and does not promise SSD/snapshot erasure. Keep helper state outside VM backups and public artifacts.
+
+Only personal text-model use is supported. Verify the target catalog and exact text model, save the personal selection, then send a normal streamed conversation. Tools, attachment history, media and background use keep their existing exclusion fences. This flow does not authorize managed hosting or extract Codex/browser credentials.

@@ -28,8 +28,8 @@ impl Store {
             let current = validate(&db.conn, &user, true, false)?;
             // Retained naturally expired rows are meaningful provenance. Logout
             // deletes a row; password/admin/recovery transitions delete/epoch it.
-            // Never accept an old epoch or password-change-only origin.
-            let mut statement = db.conn.prepare("SELECT digest,auth_epoch,password_change_only FROM sessions WHERE tenant_id=?1 AND account_id=?2 LIMIT ?3")?;
+            // Never accept an old epoch, restricted or transfer-only origin.
+            let mut statement = db.conn.prepare("SELECT digest,auth_epoch,password_change_only FROM sessions WHERE tenant_id=?1 AND account_id=?2 AND purpose='normal' LIMIT ?3")?;
             let rows = statement.query_map(params![current.tenant.0, current.account.id, (MAX_ORIGIN_SESSIONS + 1) as i64], |r| Ok((r.get::<_, Vec<u8>>(0)?,r.get::<_, i64>(1)?,r.get::<_, bool>(2)?)))?;
             let mut count = 0;
             let mut found = false;

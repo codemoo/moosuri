@@ -9,7 +9,7 @@
 
 ## Dependent availability gates
 
-- [ ] Integrate owner-scoped OAuth/JWKS/refresh/revoke and VM lifecycle.
+- [x] Integrate owner-scoped OAuth/JWKS/refresh/revoke and bounded native VM lifecycle in add-personal-chatgpt and add-chatgpt-vm-handoff; live acceptance stays separate.
 - [ ] Verify an actual consenting account's exact model/effort/text/tool capabilities in an authorized separate test connection.
 
 ## Independent review repair P2-1

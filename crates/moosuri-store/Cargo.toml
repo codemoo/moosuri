@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[features]
+default = []
+test-fixtures = []
+
 [dependencies]
 moosuri-vault-protocol = { path = "../moosuri-vault-protocol" }
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }

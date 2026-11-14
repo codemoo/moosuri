@@ -25,6 +25,7 @@ const JSON_LIMIT: u64 = 16 * 1024;
 const STAGE_PREFIX: &str = ".vault-recovery-stage-";
 pub mod historical;
 pub mod online;
+pub mod publication;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

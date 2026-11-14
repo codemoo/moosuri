@@ -1,0 +1,7 @@
+- [x] Exact live-mutex capture and frozen source semantic checks; opt-in sequential worker.
+- [x] Restricted fixed-argv pinned SSH with bounded pipes/deadline/cancellation and receiver watchdog.
+- [x] Explicit baseline target initialization, streaming typed chain/exact-prefix validation and encrypted-only retention.
+- [x] Durable no-overwrite generation/linked receipt publication, ACK-loss idempotency and independent exact-pin status.
+- [x] Native publisher library8 + flags1 + actual receiver/status/restore CLI1; existing historical unit/CLI/rotation-deletion-nonce compatibility; all-target Clippy; frozen patch/hash manifest.
+- [x] Root independent review and integrated Linux acceptance.
+- [ ] Actual off-host operator deployment/SSH/device/hardware durability acceptance (outside synthetic unit).

@@ -14,7 +14,7 @@ use std::{
 #[command(about = "Separate-origin client-encrypted vault; never accepts unlock secrets")]
 struct Args {
     #[arg(long)]
-    data_dir: PathBuf,
+    data_dir: Option<PathBuf>,
     #[arg(long, default_value = "127.0.0.1:3220")]
     bind: SocketAddr,
     #[arg(long)]
@@ -35,6 +35,19 @@ struct Args {
     /// Delay after each completed snapshot (300..604800 seconds; default3600).
     #[arg(long, requires = "backup_directory")]
     backup_interval_seconds: Option<u64>,
+    /// Opt-in independent full journal publication (all companion flags required).
+    #[arg(long, requires_all = ["journal_recipient", "journal_snapshot_head", "journal_ssh_target", "journal_target_id"])]
+    journal_directory: Option<PathBuf>,
+    #[arg(long, requires = "journal_directory")]
+    journal_recipient: Option<String>,
+    #[arg(long, requires = "journal_directory")]
+    journal_snapshot_head: Option<PathBuf>,
+    #[arg(long, requires = "journal_directory")]
+    journal_ssh_target: Option<String>,
+    #[arg(long, requires = "journal_directory")]
+    journal_target_id: Option<String>,
+    #[arg(long, requires = "journal_directory")]
+    journal_interval_seconds: Option<u64>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -48,6 +61,31 @@ enum Command {
 }
 #[derive(Subcommand)]
 enum Recovery {
+    /// Initialize a new independent receiver from an explicitly selected copied snapshot.
+    TargetInit {
+        #[arg(long)]
+        target_id: String,
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        snapshot_head: PathBuf,
+        #[arg(long)]
+        recipient: String,
+    },
+    /// Fixed SSH forced-command admission. Not a web route or arbitrary command.
+    ReceiveJournal {
+        #[arg(long)]
+        target_id: String,
+    },
+    /// Query the independently retained exact historical recovery pin.
+    TargetStatus {
+        #[arg(long)]
+        target_id: String,
+    },
     /// Export a non-sealing full journal checkpoint under stopped local admission.
     JournalCheckpoint {
         #[arg(long)]
@@ -142,13 +180,44 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     if let Some(Command::Recovery { command }) = args.command {
         match command {
+            Recovery::TargetInit {
+                target_id,
+                artifacts,
+                ledger,
+                snapshot,
+                snapshot_head,
+                recipient,
+            } => {
+                let root =
+                    moosuri_vault_service::recovery::publication::target_root(&target_id, true)?;
+                moosuri_vault_service::recovery::publication::init_target(
+                    &root,
+                    &artifacts,
+                    &ledger,
+                    &snapshot,
+                    &snapshot_head,
+                    &recipient,
+                )?;
+            }
+            Recovery::ReceiveJournal { target_id } => {
+                let root =
+                    moosuri_vault_service::recovery::publication::target_root(&target_id, false)?;
+                let ack = moosuri_vault_service::recovery::publication::receive_command(&root)?;
+                println!("{}", serde_json::to_string(&ack)?);
+            }
+            Recovery::TargetStatus { target_id } => {
+                let root =
+                    moosuri_vault_service::recovery::publication::target_root(&target_id, false)?;
+                let status = moosuri_vault_service::recovery::publication::target_status(&root)?;
+                println!("{}", serde_json::to_string(&status)?);
+            }
             Recovery::JournalCheckpoint {
                 recipient,
                 output,
                 trusted_head,
             } => {
                 let head = moosuri_vault_service::recovery::historical::journal_checkpoint(
-                    &args.data_dir,
+                    args.data_dir.as_deref().ok_or("vault_data_dir_required")?,
                     &recipient,
                     &output,
                     &trusted_head,
@@ -174,7 +243,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     identity_file: &journal_identity_file,
                 };
                 moosuri_vault_service::recovery::historical::restore_historical(
-                    &args.data_dir,
+                    args.data_dir.as_deref().ok_or("vault_data_dir_required")?,
                     &snapshot,
                     &snapshot_head,
                     &snapshot_identity_file,
@@ -188,7 +257,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 seal_source,
             } => {
                 moosuri_vault_service::recovery::checkpoint(
-                    &args.data_dir,
+                    args.data_dir.as_deref().ok_or("vault_data_dir_required")?,
                     &recipient,
                     &output,
                     &trusted_head,
@@ -201,7 +270,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 identity_file,
             } => {
                 moosuri_vault_service::recovery::restore(
-                    &args.data_dir,
+                    args.data_dir.as_deref().ok_or("vault_data_dir_required")?,
                     &checkpoint,
                     &trusted_head,
                     &identity_file,
@@ -213,7 +282,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 identity_file,
             } => {
                 moosuri_vault_service::recovery::restore_snapshot(
-                    &args.data_dir,
+                    args.data_dir.as_deref().ok_or("vault_data_dir_required")?,
                     &checkpoint,
                     &trusted_head,
                     &identity_file,
@@ -222,6 +291,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    let data_dir = args.data_dir.as_deref().ok_or("vault_data_dir_required")?;
     let origin = args.origin.ok_or("vault_origin_required")?;
     let assistant_origin = args.assistant_origin.ok_or("assistant_origin_required")?;
     let adapter_key_file = args.adapter_key_file.ok_or("adapter_key_file_required")?;
@@ -233,9 +303,32 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let config = Config::new(&origin, &assistant_origin, args.dev)?;
     let adapter = Adapter::new(&args.adapter_url, private_key(&adapter_key_file)?)?;
-    let db = Arc::new(Mutex::new(Database::open(&args.data_dir)?));
+    let db = Arc::new(Mutex::new(Database::open(data_dir)?));
     let app = router_shared(db.clone(), adapter, config);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
+    let publisher = if let Some(directory) = args.journal_directory {
+        Some(moosuri_vault_service::recovery::publication::Worker::start(
+            db.clone(),
+            moosuri_vault_service::recovery::publication::WorkerConfig {
+                directory,
+                recipient: args
+                    .journal_recipient
+                    .ok_or("vault_publication_configuration_incomplete")?,
+                snapshot_head: args
+                    .journal_snapshot_head
+                    .ok_or("vault_publication_configuration_incomplete")?,
+                ssh_target: args
+                    .journal_ssh_target
+                    .ok_or("vault_publication_configuration_incomplete")?,
+                target_id: args
+                    .journal_target_id
+                    .ok_or("vault_publication_configuration_incomplete")?,
+                interval_seconds: args.journal_interval_seconds.unwrap_or(30),
+            },
+        )?)
+    } else {
+        None
+    };
     let worker = match (args.backup_directory, args.backup_recipient) {
         (Some(directory), Some(recipient)) => {
             Some(moosuri_vault_service::recovery::online::Worker::start(
@@ -253,6 +346,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             shutdown_signal().await;
         })
         .await;
+    if let Some(publisher) = publisher {
+        publisher.shutdown().await;
+    }
     if let Some(worker) = worker {
         worker.shutdown().await;
     }
@@ -275,6 +371,47 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn publisher_flags_are_opt_in_complete_and_receiver_has_no_source_data_dir() {
+        assert!(
+            Args::try_parse_from([
+                "vault-service",
+                "--data-dir",
+                "/private/source",
+                "--journal-directory",
+                "/private/scratch"
+            ])
+            .is_err()
+        );
+        let args = Args::try_parse_from([
+            "vault-service",
+            "--data-dir",
+            "/private/source",
+            "--journal-directory",
+            "/private/scratch",
+            "--journal-recipient",
+            "age1SYNTHETIC",
+            "--journal-snapshot-head",
+            "/private/snapshot.json",
+            "--journal-ssh-target",
+            "backup-host",
+            "--journal-target-id",
+            "vault-1",
+        ])
+        .unwrap();
+        assert_eq!(args.journal_ssh_target.as_deref(), Some("backup-host"));
+        for command in ["receive-journal", "target-status"] {
+            let args = Args::try_parse_from([
+                "vault-service",
+                "recovery",
+                command,
+                "--target-id",
+                "vault-1",
+            ])
+            .unwrap();
+            assert!(args.data_dir.is_none());
+        }
+    }
     #[test]
     fn historical_journal_restore_requires_explicit_receipt_pin() {
         let flags = [

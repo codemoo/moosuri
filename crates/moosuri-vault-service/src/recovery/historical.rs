@@ -1,15 +1,15 @@
 //! Manual independently pinned full journal checkpoints and exact-prefix forward recovery.
 use super::*;
-const FORMAT: &str = "moosuri-vault-journal-checkpoint";
-const WIRE: &[u8; 8] = b"MVJC0001";
+pub(super) const FORMAT: &str = "moosuri-vault-journal-checkpoint";
+pub(super) const WIRE: &[u8; 8] = b"MVJC0001";
 const RESTORE_FORMAT: &str = "moosuri-vault-historical-restore";
-const LIMIT: u64 = JOURNAL_LIMIT + 1024 * 1024;
+pub(super) const LIMIT: u64 = JOURNAL_LIMIT + 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalTrustedHead {
-    journal: CheckpointBinding,
-    ciphertext_size: u64,
-    ciphertext_sha256: String,
+    pub(super) journal: CheckpointBinding,
+    pub(super) ciphertext_size: u64,
+    pub(super) ciphertext_sha256: String,
 }
 impl JournalTrustedHead {
     /// Independently retain this exact receipt hash; adjacent files are not authenticity/latestness proof.
@@ -19,10 +19,10 @@ impl JournalTrustedHead {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct JournalManifest {
-    journal: CheckpointBinding,
-    journal_size: u64,
-    journal_sha256: String,
+pub(super) struct JournalManifest {
+    pub(super) journal: CheckpointBinding,
+    pub(super) journal_size: u64,
+    pub(super) journal_sha256: String,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

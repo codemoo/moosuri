@@ -25,7 +25,10 @@ Both backup directory and recipient are required together. The interval is300 to
 attempts one snapshot immediately, then runs sequentially; idle waiting makes no
 model or adapter calls. It neither creates keys nor installs services or network
 configuration. Existing vault web build/origin/adapter requirements still apply.
-There is no HTTP export endpoint or remote backup transport.
+There is no HTTP export endpoint. A separate opt-in
+[periodic journal publisher](vault-journal-publication.md) can retain later journal
+checkpoints on an independently configured SSH receiver; initial snapshot transfer
+remains an explicit operator task.
 
 The worker shares the exact mutex used by HTTP ciphertext storage. Under that
 writer exclusion it checks DB/head identity, copies committed WAL through SQLite
@@ -89,7 +92,9 @@ can therefore recover older ciphertext; it must not be called latest, deletion-s
 through a later date, or zero-loss. Choose/retain snapshots according to their
 actual capture coverage. The manual historical path requires its distinct encrypted
 format and independent head hash; no live source journal is silently attached and
-no latest head is inferred. Automatic off-host journal transport/pinning remains pending.
+no latest head is inferred. The optional periodic receiver can supply its latest
+accepted head pin through an independent connection. Periodic gaps, actual target
+setup and changes after the last accepted checkpoint remain outside that coverage.
 
 The original service stays live, and restored copies have distinct service UUIDs.
 They can accept fresh grants independently; there is no distributed singleton or

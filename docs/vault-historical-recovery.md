@@ -31,8 +31,9 @@ Export captures actual DB/WAL and full journal consistently and verifies complet
 applied head and semantic replay. Only the fixed journal entry is encrypted; the
 private DB copy is cleaned up. `CapturedSnapshot::encrypt_journal` can also consume
 a capture taken under the existing live service mutex, encrypting after release.
-This unit adds no HTTP export endpoint or periodic journal receiver/transport and
-does not change the existing snapshot worker. Healthy source DB/journal evidence
+The separate opt-in [periodic publisher](vault-journal-publication.md) now uses this
+capture and checkpoint format with a pinned SSH receiver. This manual command
+adds no HTTP export endpoint and does not change the existing snapshot worker. Healthy source DB/journal evidence
 must agree. Missing files, poisoned/general unapplied crash gaps are not repaired,
 truncated or guessed, and absent sources are not initialized.
 
@@ -89,8 +90,9 @@ rerun preserves subsequent destination work; different pins, plain restore mode,
 unrelated occupied roots and reserved staging destinations cannot adopt/replace
 it. No database rollback or source authority change occurs.
 
-There is no automatic off-host receiver, independently current pin, remote
-monotonic coordinator or zero-loss guarantee. An old valid pin selects old
+The optional receiver supplies an independently queried pin of its latest accepted
+checkpoint; actual off-host configuration is an operator task. Neither path
+proves all-source latestness or provides a zero-loss guarantee. An old valid pin selects old
 coverage; post-pin deletion/nonce use cannot be reconstructed. Source/restored
 copies may accept fresh grants independently: anti-fork/singleton enforcement is
 separate. Retain original encrypted evidence and identities under the existing

@@ -291,3 +291,9 @@ F50/P8은 명시적인 구 musuri-vault v1 암호화 내보내기를 기기에�
 이전한다. 전체 manifest/payload 확인 뒤 새 ID·현재 키로 저장하며256개/26MiB와 현재 필드
 한도를 적용한다. 원본 서버·실제 개인 자료의 최신성/완전성 검증은 별도다.
 [이전 계약](vault-v1-migration.md)·[검증](reviews/2026-11-15-vault-v1-migration.md).
+
+F51/P8에 선택한 baseline과 recipient를 고정하는 주기적 SSH journal publisher/receiver를
+추가했다. receiver는 암호화된 기록과 연결된 영수증만 보관하며 독립 조회한 head pin으로
+기존 과거 복원을 실행한다. ACK 유실 재시도·오래된/fork 기록·중단된 게시를 검증했다.
+source 준비는 크기 제한만 있으며 종료 시 완료까지 기다릴 수 있다. 실제 off-host 배치,
+주기 사이의 변경과 무손실 최신 복구는 별도다. [계약](vault-journal-publication.md).

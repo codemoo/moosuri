@@ -112,3 +112,12 @@ Chrome 설치 가능성 검사도 오류가 없었지만 실제 OS 공유 메뉴
 따른다. 파일/음성도 글과 같은 one-use·원래 계정/대화·철회·만료 경계를 사용한다.
 초안 삽입을 확정한 후에는 첨부/녹음의 기존 수명으로 넘어가며, handoff의 TTL이
 이미 가져온 첨부를 자동 삭제하지는 않는다.
+
+## Secondary screen loading
+
+The default chat keeps its account and draft state while settings, knowledge,
+Calendar and other secondary screen code loads on demand. A failed code download
+offers return to chat or an explicit reload; it does not submit drafts or replay
+actions. The public worker still precaches every emitted public chunk in the
+background, so this reduces the foreground entry module, not total PWA install
+bytes. [Verification](reviews/2026-11-15-deferred-workspace.md).

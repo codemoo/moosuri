@@ -8,6 +8,7 @@ import {activatePushAccount,clearBrowserPushBinding} from "./push-binding";
 
 import {VaultLaunch,lockVaultWindows} from "./VaultLaunch";
 import {
+  lazy,
   useEffect,
   useLayoutEffect,
   useId,
@@ -33,22 +34,22 @@ import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
 import { PwaInstallButton } from "./PwaInstallButton";
-import { NativeCredentials } from "./NativeCredentials";
-import { MailConnections } from "./MailConnections";
-import { GoogleSetup } from "./GoogleSetup";
-import { Artifacts, type ArtifactDrafts } from "./Artifacts";
-import { CommunitySkills } from "./CommunitySkills";
-import { Missions } from "./Missions";
-import { Calendar } from "./Calendar";
-import { Schedules } from "./Schedules";
-import { SourceConnections } from "./SourceConnections";
-import { UsageView } from "./UsageView";
-import { KnowledgeView } from "./KnowledgeView";
+const NativeCredentials = lazy(() => import("./NativeCredentials").then(module => ({default: module.NativeCredentials})));
+const MailConnections = lazy(() => import("./MailConnections").then(module => ({default: module.MailConnections})));
+const GoogleSetup = lazy(() => import("./GoogleSetup").then(module => ({default: module.GoogleSetup})));
+import type { ArtifactDrafts } from "./Artifacts";
+const Artifacts = lazy(() => import("./Artifacts").then(module => ({default: module.Artifacts})));
+const CommunitySkills = lazy(() => import("./CommunitySkills").then(module => ({default: module.CommunitySkills})));
+const Missions = lazy(() => import("./Missions").then(module => ({default: module.Missions})));
+const Calendar = lazy(() => import("./Calendar").then(module => ({default: module.Calendar})));
+const Schedules = lazy(() => import("./Schedules").then(module => ({default: module.Schedules})));
+const SourceConnections = lazy(() => import("./SourceConnections").then(module => ({default: module.SourceConnections})));
+const UsageView = lazy(() => import("./UsageView").then(module => ({default: module.UsageView})));
+const KnowledgeView = lazy(() => import("./KnowledgeView").then(module => ({default: module.KnowledgeView})));
 import { initialKnowledgeDrafts } from "./KnowledgeState";
-import {
-  AdminProviderSettings,
-  PersonalModelSettings,
-} from "./ProviderSettings";
+import { DeferredPage } from "./DeferredPage";
+const AdminProviderSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.AdminProviderSettings})));
+const PersonalModelSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.PersonalModelSettings})));
 
 function Mark({ large = false }: { large?: boolean }) {
   return (
@@ -1198,6 +1199,7 @@ function Workspace({
             </button>
           </nav>
         )}
+        <DeferredPage key={path} back={() => navigate("/app")}>
         {missionsPage ? <Missions accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : schedulesPage ? <Schedules accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} openMission={id=>navigate(`/app/missions#mission-${id}`)} openArtifact={id=>navigate(`/app/artifacts/${id}`)}/> : artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
         ) : calendarPage ? <Calendar accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} setup={allowedAdmin?()=>navigate("/admin/google"):undefined}/> : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
@@ -1333,6 +1335,7 @@ function Workspace({
             }}
           />
         )}
+        </DeferredPage>
       </section>
       {drawer && (
         <Modal

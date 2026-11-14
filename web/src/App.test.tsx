@@ -128,7 +128,7 @@ it("bypasses long navigation, marks only the destination and leaves draft focus 
   expect(await screen.findByRole("heading",{level:1,name:"내 Calendar"})).toHaveFocus();
   expect(screen.getByRole("button",{name:thread.title})).not.toHaveAttribute("aria-current");
   expect(screen.getByRole("button",{name:/내 Calendar/})).toHaveAttribute("aria-current","page");
-  await user.click(screen.getByRole("button",{name:"← 대화로"}));
+  await user.click(await screen.findByRole("button",{name:"← 대화로"}));
   expect(screen.getByRole("heading",{level:1,name:thread.title})).toHaveFocus();
   const restored=await screen.findByRole("textbox",{name:"메시지"});
   expect(restored).toHaveValue("Keep this unsent draft");

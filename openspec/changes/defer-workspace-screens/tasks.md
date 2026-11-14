@@ -1,0 +1,4 @@
+- [x] Defer secondary page modules; keep chat/account/drafts eager.
+- [x] Loading/error boundary with explicit return/reload and no automatic replay.
+- [x] React App checks and production build; actual browser initial graph and failed-chunk draft return.
+- [x] Final integrated asset measurement and publication.

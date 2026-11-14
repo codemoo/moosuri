@@ -497,8 +497,8 @@ async fn exited_worker_without_terminal_checkpoint_is_settled_without_replay() {
     assert_eq!(f.state.calls.load(Ordering::SeqCst), 0);
 }
 
-mod knowledge;
 mod conversation_recall;
+mod knowledge;
 mod memory;
 
 mod live_memory;

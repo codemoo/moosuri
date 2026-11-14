@@ -471,8 +471,8 @@ async fn upgrade_never_backfills_existing_dates_until_explicit_resave() {
     let r = s.write_artifact(&u, v.clone()).await.unwrap();
     // Reconstruct the pre-followup snapshot: the record exists without its scheduler.
     s.call(|db| {
-        db.conn.execute_batch("DELETE FROM followup_reminders;DELETE FROM reminder_schedules;DROP TABLE followup_reminders;")?;
-        db.conn.pragma_update(None,"user_version",crate::CURRENT_SCHEMA_VERSION-1)?;
+        db.conn.execute_batch("DELETE FROM followup_reminders;DELETE FROM reminder_schedules;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;")?;
+        db.conn.pragma_update(None,"user_version",45)?;
         Ok(())
     }).await.unwrap();
     drop(s);

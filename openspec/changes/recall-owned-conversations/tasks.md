@@ -3,4 +3,4 @@
 - [x] Track every returned candidate and inherited upstream/context provenance.
 - [x] Expand destructive learned/recall closure; block recalled artifact publication.
 - [x] Verify focused Store4/4, actual Runtime/old-profile2/2 and affected existing knowledge chain1/1; exact DTO export, web typecheck and strict OpenSpec validation.
-- [ ] Complete source-pinned independent review and parent integration validation.
+- [x] Complete source-pinned independent review and parent integration validation.

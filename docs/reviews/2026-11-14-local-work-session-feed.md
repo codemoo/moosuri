@@ -71,9 +71,9 @@ or claim that older-base broad lint passed.
 The custom `/runs` endpoint has no client idempotency key. A lost run-start ACK
 retains intent and fails closed; it does not adopt another active run. Automatic
 verified run-start reconciliation is a next connected contract. Batch/finish ACK
-recovery is implemented and tested as above. Real Store/HTTP integration, Linux
-integration, actual selected client/account use and independent review remain
-separate acceptance steps. Full history coverage, other formats and cursor GC
+recovery is implemented and tested as above. Actual Store/HTTP restart recovery is covered by R1 below; Linux and independent
+acceptance are recorded in the [joined integration evidence](2026-11-14-recall-skills-producer-integration.md).
+Actual selected client/account use remains separate. Full history coverage, other formats and cursor GC
 remain outside this first bounded unit.
 
 ## R1 independent-review corrections

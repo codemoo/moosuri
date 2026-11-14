@@ -3,8 +3,8 @@
 pub mod audio;
 pub mod push;
 
-pub mod credential_chat;
 mod conversation_recall;
+pub mod credential_chat;
 mod missions;
 mod recurring_missions;
 mod request_continuations;

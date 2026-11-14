@@ -4,7 +4,8 @@ A self-hosted assistant for individuals, families and friends.
 
 **Early development preview. Start with [current support and remaining work](docs/status.md).**
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
-accounts, durable chat with bounded tab-refresh draft recovery, private knowledge and memories, editable records, bounded
+accounts, durable chat with bounded tab-refresh draft recovery and older-conversation recall,
+private knowledge and memories, editable records, bounded
 read-only missions from chat or forms, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with provider drafts and approved fixed scheduled sends, bounded Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
 opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
@@ -20,6 +21,8 @@ have conservative read-only Sent checks and are never automatically resent.
 
 Suggestions can discover an explicitly configured public GitHub skill catalog,
 verify selected original packages and keep each user's installations separate.
+Disabling a used recipe pauses its dependent recurring tasks until the original
+version is available and the owner explicitly resumes; unrelated schedules continue.
 See [community skills](docs/community-skills.md) for configuration and remaining limits.
 
 This is the public development repository [codemoo/moosuri](https://github.com/codemoo/moosuri),
@@ -40,12 +43,13 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 - [Accounts](docs/account-management.md) · [onboarding](docs/onboarding.md) · [isolation](docs/accounts-isolation.md) · [model settings](docs/provider-settings.md) · [provider support](docs/providers.md).
 - [Chat](docs/chat.md) · [private knowledge](docs/knowledge.md) · [conversational memory](docs/conversational-memory.md) · [automatic extraction](docs/automatic-memory.md) · [documents, goals and followups](docs/artifacts.md).
 - [Task skills](docs/task-skills.md) · [private learned routes](docs/learned-skills.md) · [community packages](docs/community-skills.md) · [missions](docs/missions.md) · [reminders/inbox](docs/schedules.md) · [Web Push](docs/web-push.md).
-- [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [public web research](docs/web-research.md) · [Japan Post tracking](docs/parcel-tracking.md) · [private browser workspaces](docs/browser-workspaces.md).
+- [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [selected local work sessions](docs/local-work-sessions.md) · [public web research](docs/web-research.md) · [Japan Post tracking](docs/parcel-tracking.md) · [private browser workspaces](docs/browser-workspaces.md).
 - [Images](docs/media.md) · [files and text PDFs](docs/private-files.md) · [PWA](docs/pwa.md) · [vault service/client](docs/vault-service-client.md) · [encrypted vault archive](docs/vault-archive.md) · [vault service recovery](docs/vault-service-recovery.md) · [credential broker contract](docs/credential-use.md).
 - [Stopped encrypted export](docs/backup.md) · [sealed-current restore](docs/restore.md) · [release/installation contracts](docs/public-release.md). Ongoing historical/off-host recovery and cross-schema updates are still pending.
 
 Account-owned Gmail/Slack collection and generic custom ingest expose scope, sync
-receipts and provenance. The operator configures one Google OAuth app; each member
+receipts and provenance. An explicit once-only CLI can import selected human Codex
+requests from a chosen local directory; other client formats remain unsupported. The operator configures one Google OAuth app; each member
 grants their own account access. Slack uses a personal user token. Synthetic acceptance
 does not establish live-provider readiness. Kakao collection is private and excluded
 from public code/packages; independent producers can use the custom protocol.

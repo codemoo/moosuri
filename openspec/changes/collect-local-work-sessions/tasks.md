@@ -4,4 +4,4 @@
 - [x] Reuse custom source ingest with private immutable pending envelope/cursor.
 - [x] Add local-file→mock HTTP lost-ACK/dedup/privacy/failure outcomes.
 - [x] Record final focused native gates and freeze exact files.
-- [ ] Complete independent review and root integration before publication.
+- [x] Complete independent review and root integration before publication.

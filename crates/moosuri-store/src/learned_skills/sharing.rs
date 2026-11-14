@@ -8,6 +8,56 @@ use moosuri_core::{SkillShareInput, SkillSharePreview};
 use std::collections::BTreeMap;
 
 fn reconstruct(route: &str) -> Result<SkillSharePreview> {
+    if let Some(plan) = evidence::plan(route) {
+        let inputs = (0..plan.graph.input_count)
+            .map(|v| (100 + u32::from(v)).to_string())
+            .collect::<Vec<_>>();
+        let calls =
+            crate::agent_execution::arithmetic::evidence_workflow(&moosuri_core::DecimalWorkflow {
+                graph: plan.graph.clone(),
+                inputs: inputs.clone(),
+            })
+            .map_err(|_| StoreError::Corrupt)?;
+        let exact = calls
+            .last()
+            .and_then(|(_, value)| value.as_ref().ok())
+            .ok_or(StoreError::Corrupt)?;
+        let source_at = plan
+            .origins
+            .iter()
+            .position(|v| matches!(v, moosuri_core::EvidenceOrigin::Source))
+            .ok_or(StoreError::Corrupt)?;
+        let scalars = inputs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != source_at)
+            .map(|(_, v)| v.as_str())
+            .collect::<Vec<_>>();
+        let slug = format!("source-exact-calculation-{}", &hash(route)[..12]);
+        let procedure = format!(
+            "1. Require a fresh literal saved-source search phrase, exact numeric field prefix and each scalar in the current user's message. Ask for missing parameters; never reuse examples, private anchors, source IDs or remembered offsets.\n2. Call knowledge_search kind=source without filters/cursor. Require exactly one result, no next_cursor and no truncation. Ambiguous results require a narrower current-user phrase. Read that exact ID/revision from byte0 with max_bytes4096; require complete current evidence.\n3. Call evidence_calculate with this structure: {}. Bind its search/source to the actual returned receipt addresses. Query, prefix and scalars are exact literal quotes occurring uniquely in the current user's message. The server resolves disjoint UTF8 ranges. The server requires exactly one prefix and derives the immediately adjacent plain decimal itself. Never extract a number semantically or guess an offset.\n4. Use the actual exact result and identify the source title, literal prefix and observed number. Missing/ambiguous/truncated evidence or invalid decimals are failures, never zero or a stored fallback. All inputs and operations must contribute; no numeric constants or arbitrary code.\n\nRepository-owned synthetic fixture precondition (prepare separately, never during package installation): exactly one saved source titled `Synthetic price worksheet` contains `synthetic_amount: {}` and has no competing search match. Keep this setup outside the current task request; absent fixtures require a missing-evidence response, never an example-value fallback.",
+            encode(&plan)?,
+            inputs[source_at]
+        );
+        let request = format!(
+            "Search phrase `Synthetic price worksheet`; numeric prefix `synthetic_amount:`; fresh scalar slots {}. Apply the supplied structure. If the separately prepared source is absent, report missing evidence without using an example value as a fallback.",
+            encode(&scalars)?
+        );
+        return package(
+            &slug,
+            "Calculate exactly from one unique current saved source and fresh explicit inputs.",
+            &procedure,
+            vec![
+                "knowledge_search",
+                "knowledge_read_source",
+                "evidence_calculate",
+            ],
+            &request,
+            &format!(
+                "Use actual fresh search/read and bound calculation receipts. With the separate synthetic fixture present the exact result is {exact}; without it decline. The package creates no source, performs no IO on installation and carries no proof."
+            ),
+        );
+    }
     if let Some(graph) = workflow::graph(route) {
         let inputs = (1..=graph.input_count)
             .map(|n| n.to_string())

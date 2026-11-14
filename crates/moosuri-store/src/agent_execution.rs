@@ -44,6 +44,9 @@ pub enum KnowledgeToolInput {
     DecimalCalculate {
         calculation: moosuri_core::DecimalCalculation,
     },
+    EvidenceCalculate {
+        calculation: moosuri_core::EvidenceCalculation,
+    },
     DecimalWorkflow {
         workflow: moosuri_core::DecimalWorkflow,
     },
@@ -106,8 +109,18 @@ pub enum KnowledgeToolResult {
     Source(SourceExcerpt),
     Memory(MemoryDocument),
     Skill(moosuri_core::SkillDocument),
-    Decimal { exact: String },
-    DecimalWorkflow { results: Vec<String>, exact: String },
+    Decimal {
+        exact: String,
+    },
+    DecimalWorkflow {
+        results: Vec<String>,
+        exact: String,
+    },
+    EvidenceCalculation {
+        results: Vec<String>,
+        exact: String,
+        evidence: moosuri_core::EvidenceDecimalReceipt,
+    },
     External(serde_json::Value),
     Error(ToolReadError),
 }
@@ -530,7 +543,8 @@ pub(crate) fn read_tool(
         KnowledgeToolInput::SkillRead { pin } => {
             crate::recurring_missions::read_skill(conn, run, pin)
         }
-        KnowledgeToolInput::DecimalWorkflow { .. } => {
+        KnowledgeToolInput::EvidenceCalculate { .. }
+        | KnowledgeToolInput::DecimalWorkflow { .. } => {
             Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
         }
         KnowledgeToolInput::DecimalCalculate { calculation } => {
@@ -705,6 +719,7 @@ pub(crate) fn read_tool(
         | KnowledgeToolResult::External(_)
         | KnowledgeToolResult::Error(_)
         | KnowledgeToolResult::Skill(_)
+        | KnowledgeToolResult::EvidenceCalculation { .. }
         | KnowledgeToolResult::DecimalWorkflow { .. }
         | KnowledgeToolResult::Decimal { .. } => {}
     }
@@ -845,6 +860,7 @@ impl Store {
             if matches!(&input,KnowledgeToolInput::Artifact{request:moosuri_core::ArtifactToolRequest::Write{..}}) && tx.query_row("SELECT count(*) FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get::<_,i64>(0))?!=1{return Err(StoreError::InvalidInput)}
             let (result,cost)=match &input {
                 KnowledgeToolInput::LearnedSkill{invocation}=>crate::learned_skills::execute(&tx,&run,invocation,lease.step,&call_id)?,
+                KnowledgeToolInput::EvidenceCalculate{calculation}=>crate::learned_skills::execute_evidence(&tx,&run,calculation,lease.step,&call_id)?,
                 KnowledgeToolInput::DecimalWorkflow{workflow}=>crate::learned_skills::execute_workflow(&tx,&run,workflow,lease.step,&call_id)?,
                 _=>(read_tool(&tx,&run,&input)?,1),
             };

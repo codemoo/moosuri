@@ -1,0 +1,116 @@
+# Exact calculation bound to a current saved source
+
+`evidence_calculate` composes existing saved-source search/read receipts with exact
+arithmetic. It does not choose a source among multiple matches or extract numbers
+by meaning. A current request supplies a literal search phrase, an exact numeric
+field prefix and all other decimal inputs. For example:
+
+> 🌱 자료 Garden order C; 숫자 앞 문구 unit_price:; 수량 3; 수수료 0.25.
+> 자료의 숫자에 수량을 곱하고 수수료를 더해줘.
+
+The model sends those exact query/prefix/scalar **quotes**, never UTF-8 offsets or
+its own extracted source amount. The server requires each quote to occur exactly
+once in the current user message and resolves disjoint UTF-8 ranges itself. A
+missing, repeated, overlapping or attached numeric substring is rejected. Korean
+and emoji before a parameter do not change this contract. Values only available
+in history, another message or a learned example cannot fill a current parameter. A single sentence-final period may delimit a current numeric
+quote. Only explicit ordinary separators (whitespace, quotes, brackets and
+semicolon, with bounded comma/colon/terminal-period handling) delimit numbers.
+Grouping and expression fragments such as `1` in `1,234` or `3` in `1/3`,
+including adjacent Unicode operator symbols, are rejected.
+
+## One unambiguous complete source
+
+The normal tools first execute `knowledge_search(kind=source)` with the current
+literal phrase, no filters and no cursor. Exactly one hit, no next cursor and no
+truncation are required. The source read must use that exact current identity and
+revision, `start_byte=0,max_bytes=4096`, and return a complete nonempty source.
+Ambiguous search results require a narrower current-user phrase/title; the first
+of several matches is never sufficient. A bounded incomplete source requires a
+smaller complete source, not guessed coverage or hidden continuation.
+
+The calculation references the actual earlier same-run search/read receipts that
+the server returned. It rechecks current search uniqueness and identity/revision,
+compares the complete current document with the read result, and requires exactly
+one occurrence of the user's fresh prefix. After only ASCII space/tab following
+that prefix, it parses one whitespace-delimited plain signed decimal. The server
+derives the literal value and its actual source byte range. Exponents, currency
+symbols, thousands separators, expressions and missing/ambiguous fields are not
+converted. The existing six-fractional-place, size and checked arithmetic bounds
+remain. Source text is untrusted data, never execution authority.
+
+## Explicit structure and actual receipts
+
+A plan contains input origin kinds (`source` or `current`) and a typed1–4-step
+sum/difference/product graph. Exactly one input is the source number; the other
+inputs are fresh current-message scalars in declared order. Every input and step
+must contribute to the last result. Graph constants, self/forward references,
+unrelated extra operations and equality-inferred edges are rejected. The existing
+2–4-step `decimal_workflow` contract is unchanged; the bound arithmetic primitive
+also supports a single operation through the same checked evaluator.
+
+Actual arithmetic operations have private child input/result receipts linked to
+the parent slot. The typed result records the selected source identity/revision,
+title, literal numeric range, actual read addresses and server-resolved current
+parameter ranges. It does not prove that a literal field is semantically suitable
+for the user's wider decision, that units match or that the source assertion is
+true. Missing semantic/quantity/unit information still requires clarification.
+
+## Learning and fresh reuse
+
+Two distinct finalized current-owner runs must use this explicit bound tool, use
+distinct current source subjects and canonical parameter inputs, and adopt the
+actual source title/prefix/number and exact final result in the terminal final
+answer. Earlier commentary, unused tools, a success flag or a model claim do not
+qualify. The Store re-resolves origin bindings and independently recomputes every
+arithmetic child receipt. Separate reads and ordinary calculations are never
+silently inferred into this mixed plan.
+
+The private route stores only origin-slot kinds and canonical arithmetic
+structure. It stores no source IDs, search phrases, field prefixes, values,
+byte offsets or training text. Existing maximum64 routes/tombstones, candidate/
+usable states, owner isolation, hide/disable/delete and withdrawal contracts apply.
+
+A fresh learned invocation accepts only current-user query/prefix/scalar quotes.
+Within the existing learned-route executor it reuses the normal source primitive
+with strict uniqueness, performs new search/read calls and evaluates the pinned
+structure. Read children0/1 and arithmetic children2 onward retain their actual
+inputs/results and costs. This is not a new orchestration runner. Source edits,
+deletion, disconnection, proof-thread withdrawal and route disable/remove retain
+the existing dependency and late-output fences. Discovery alone is not use.
+
+Direct bound arithmetic reserves/charges its actual1–4 operations; prior reads
+were already charged. Learned execution conservatively needs6 remaining tool
+units and charges the actual search/read/arithmetic work. Missing search results
+charge one read; a rejected binding after two reads charges those reads plus the
+minimum failed-tool unit. Same-slot replay returns the committed result without
+new reads, child receipts or tool charge. Existing6model/12tool/120second bounds
+remain. Missing/ambiguous current evidence or unsupported current parameters do
+not count toward three-attributable-failures quarantine; arithmetic overflow does.
+Private learned execution and this new primitive are excluded from missions.
+
+## Generation and sharing
+
+Native toolset generation3 replaces generation2 eligibility. The new additive
+`evidence_calculation` profile flag defaults false when absent in older persisted
+profiles, and only fresh foreground profiles gain it. Old runs retain their old
+vocabulary and cannot qualify as generation3 examples. Original private runs,
+observations and tool receipts remain; the existing schema-drift policy retires
+the disposable eligibility proof index. Two fresh independent examples are needed
+before an invalidated procedure becomes usable. Tombstones, user disable and
+failure quarantine are not cleared by schema drift.
+
+Explicit sharing reconstructs the four existing instruction-package files from
+the plan only. It generates a repository-owned synthetic source precondition,
+query/prefix and input values, and calculates the synthetic expected result. The
+recipient must supply fresh parameters and actual current source evidence. An
+absent synthetic fixture returns missing evidence; its example value is never a
+fallback. Installation does not create a source, perform a lookup, transfer a proof
+or grant authority. No private anchor, source ID, amount, account, run link or trace
+is an export input. The existing package checker and license contract apply.
+
+Public URL adapters, multiple source joins, JSON/CSS selection, semantic field
+extraction, transformations/unit conversion, multimodal inputs, arbitrary code and
+external writes remain unsupported. Synthetic evidence is recorded in the
+[dated review](reviews/2026-11-15-evidence-calculation.md); it is not a real-model
+quality or full F26/P4 acceptance claim.

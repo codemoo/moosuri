@@ -20,6 +20,21 @@ fn object(properties: Value) -> Value {
 fn nullable_text(description: &str) -> Value {
     json!({"type":["string","null"],"description":description})
 }
+fn receipt_schema() -> Value {
+    object(
+        json!({"step":{"type":"integer"},"call_id":{"type":"string"},"ordinal":{"type":["integer","null"],"description":"Null for a direct tool receipt; copy the server receipt address, never guess."}}),
+    )
+}
+fn evidence_parameters_schema() -> Value {
+    object(
+        json!({"query":{"type":"string"},"prefix":{"type":"string"},"scalars":{"type":"array","items":{"type":"string"}}}),
+    )
+}
+fn evidence_plan_schema() -> Value {
+    object(
+        json!({"origins":{"type":"array","items":{"type":"string","enum":["source","current"]}},"graph":object(json!({"input_count":{"type":"integer"},"steps":{"type":"array","items":object(json!({"operation":{"type":"string","enum":["sum","difference","product"]},"operands":{"type":"array","items":object(json!({"kind":{"type":"string","enum":["input","result"]},"index":{"type":"integer"}}))}}))}}))}),
+    )
+}
 pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefinition> {
     let mut definitions = vec![
         FunctionDefinition {
@@ -85,15 +100,42 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
             })),
         });
     }
+    if profile.is_some_and(|p| p.evidence_calculation) {
+        definitions.push(FunctionDefinition {
+            name:"evidence_calculate".into(),
+            description:"Exact arithmetic bound to one fresh saved source. First search a literal phrase supplied in the current user message and require exactly one untruncated result, then read its complete current revision from byte0 with max_bytes4096. Copy both returned receipt addresses. The user must supply an exact literal field prefix and fresh scalar values; query/prefix/scalars are exact quotes from that current user message, each occurring exactly once. The server resolves disjoint UTF8 ranges. The server requires a unique prefix and reads the immediately following plain decimal itself. Never select among multiple hits, guess offsets/values, infer semantic fields or use truncation. Ask for a narrower phrase or explicit prefix when ambiguous. A 1..4-step graph binds exactly one source input and all remaining current scalar inputs; every input/operation contributes. Report the actual source title, prefix, source number and exact final result. Each arithmetic operation costs one tool; prior reads were already charged.".into(),
+            parameters:object(json!({"plan":evidence_plan_schema(),"binding":object(json!({"search":receipt_schema(),"source":receipt_schema(),"query":{"type":"string"},"prefix":{"type":"string"},"scalars":{"type":"array","items":{"type":"string"}}}))})),
+        });
+    }
     if profile.is_some_and(|p| {
         matches!(p.version, 1..=5) && p.skills.iter().any(|pin| pin.id.starts_with("private:"))
     }) {
+        let mut arguments = object(json!({
+            "kind":{"type":"string","enum":["source","decimal","workflow","parcel"]},
+            "text":{"type":["string","null"]},
+            "operands":{"type":["array","null"],"items":{"type":"string"}},
+            "inputs":{"type":["array","null"],"items":{"type":"string"}},
+            "tracking_number":{"type":["string","null"]}
+        }));
+        if profile.is_some_and(|p| p.evidence_calculation) {
+            arguments["properties"]["kind"]["enum"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("evidence"));
+            let mut parameters = evidence_parameters_schema();
+            parameters["type"] = json!(["object", "null"]);
+            arguments["properties"]["parameters"] = parameters;
+            arguments["required"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("parameters"));
+        }
         definitions.push(FunctionDefinition {
             name: "learned_skill_execute".into(),
-            description: "Execute an admitted private learned route with fresh task parameters. Source lookup uses the first fresh saved-source hit; arithmetic uses the learned exact operation. Parcel uses only a fresh current-request Japan Post number and performs a new official latest-summary lookup; never reuse proof/history numbers or status. It grants no new authority. Do not use A/B proof inputs or invent success.".into(),
+            description: "Execute an admitted private learned route with fresh task parameters. Source lookup uses the first fresh saved-source hit; arithmetic uses the learned exact operation. Parcel uses only a fresh current-request Japan Post number and performs a new official latest-summary lookup; never reuse proof/history numbers or status. Evidence uses current-user query/prefix/scalar quotes and performs unique fresh saved-source search/read before the pinned arithmetic; ask for missing/ambiguous literal fields. It grants no new authority. Do not use A/B proof inputs or invent success.".into(),
             parameters: object(json!({
                 "pin":object(json!({"id":{"type":"string"},"revision":{"type":"string"},"digest":{"type":"string"}})),
-                "arguments":object(json!({"kind":{"type":"string","enum":["source","decimal","workflow","parcel"]},"text":{"type":["string","null"],"description":"Fresh literal source search phrase for source route; null for decimal."},"operands":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh decimal operand strings for decimal route; null otherwise."},"inputs":{"type":["array","null"],"items":{"type":"string"},"description":"Fresh workflow input strings matching the pinned structural graph input slots; null otherwise."},"tracking_number":{"type":["string","null"],"description":"For parcel only: exactly one fresh tracking number explicitly supplied with Japan Post in the current user request. No history or cached status; null for other routes."}}))
+                "arguments":arguments
             })),
         });
     }
@@ -212,6 +254,7 @@ pub(super) enum Invocation {
     SkillRead(SkillPin),
     DecimalCalculate(DecimalCalculation),
     DecimalWorkflow(moosuri_core::DecimalWorkflow),
+    EvidenceCalculate(moosuri_core::EvidenceCalculation),
     External(moosuri_core::ExternalToolRequest),
     Artifact(moosuri_core::ArtifactToolRequest),
     LearnedSkill(moosuri_core::LearnedSkillInvocation),
@@ -235,6 +278,7 @@ struct LearnedArgumentsWire {
     operands: Option<Vec<String>>,
     inputs: Option<Vec<String>>,
     tracking_number: Option<String>,
+    parameters: Option<moosuri_core::EvidenceParameters>,
 }
 fn parse_learned(arguments: &str) -> Option<moosuri_core::LearnedSkillInvocation> {
     let wire: LearnedWire = serde_json::from_str(arguments).ok()?;
@@ -244,18 +288,22 @@ fn parse_learned(arguments: &str) -> Option<moosuri_core::LearnedSkillInvocation
         wire.arguments.operands,
         wire.arguments.inputs,
         wire.arguments.tracking_number,
+        wire.arguments.parameters,
     ) {
-        ("source", Some(text), None, None, None) => {
+        ("source", Some(text), None, None, None, None) => {
             moosuri_core::LearnedSkillArguments::Source { text }
         }
-        ("decimal", None, Some(operands), None, None) => {
+        ("decimal", None, Some(operands), None, None, None) => {
             moosuri_core::LearnedSkillArguments::Decimal { operands }
         }
-        ("workflow", None, None, Some(inputs), None) => {
+        ("workflow", None, None, Some(inputs), None, None) => {
             moosuri_core::LearnedSkillArguments::Workflow { inputs }
         }
-        ("parcel", None, None, None, Some(tracking_number)) => {
+        ("parcel", None, None, None, Some(tracking_number), None) => {
             moosuri_core::LearnedSkillArguments::Parcel { tracking_number }
+        }
+        ("evidence", None, None, None, None, Some(parameters)) => {
+            moosuri_core::LearnedSkillArguments::Evidence { parameters }
         }
         _ => return None,
     };
@@ -308,6 +356,11 @@ pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
         "skill_read" => serde_json::from_str::<SkillPin>(arguments)
             .map(Invocation::SkillRead)
             .unwrap_or(Invocation::InvalidArguments),
+        "evidence_calculate" => {
+            serde_json::from_str::<moosuri_core::EvidenceCalculation>(arguments)
+                .map(Invocation::EvidenceCalculate)
+                .unwrap_or(Invocation::InvalidArguments)
+        }
         "decimal_workflow" => serde_json::from_str::<moosuri_core::DecimalWorkflow>(arguments)
             .map(Invocation::DecimalWorkflow)
             .unwrap_or(Invocation::InvalidArguments),
@@ -395,6 +448,7 @@ mod tests {
     #[test]
     fn scoped_profiles_encode_for_each_dialect_without_upgrading_legacy_vocabulary() {
         let profile = RunToolProfile {
+            evidence_calculation: false,
             credential_github: false,
             credential_google: false,
             credential_google_preview: false,

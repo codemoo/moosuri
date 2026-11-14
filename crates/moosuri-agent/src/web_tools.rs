@@ -57,6 +57,7 @@ mod tests {
     #[test]
     fn workspace_capability_does_not_expand_old_runs_or_expose_human_inputs() {
         let mut profile = RunToolProfile {
+            evidence_calculation: false,
             credential_github: false,
             credential_google: false,
             credential_google_preview: false,
@@ -115,6 +116,7 @@ mod tests {
     #[test]
     fn web_requires_new_pinned_profile_and_search_requires_key_capability() {
         let mut profile = RunToolProfile {
+            evidence_calculation: false,
             credential_github: false,
             credential_google: false,
             credential_google_preview: false,
@@ -150,6 +152,7 @@ mod tests {
     #[test]
     fn browser_schema_is_v4_url_only_and_has_no_action_surface() {
         let mut profile = RunToolProfile {
+            evidence_calculation: false,
             credential_github: false,
             credential_google: false,
             credential_google_preview: false,
@@ -203,6 +206,7 @@ mod tests {
             tools::{ToolCapabilities, ToolRequest, encode_tool_request},
         };
         let profile = RunToolProfile {
+            evidence_calculation: false,
             credential_github: false,
             credential_google: false,
             credential_google_preview: false,

@@ -1,0 +1,467 @@
+//! Outcome and authority failures for the common source-bound arithmetic tool.
+use super::*;
+use moosuri_core::{
+    DecimalGraph, DecimalReference, DecimalStep, EvidenceBinding, EvidenceCalculation,
+    EvidenceOrigin, EvidencePlan, ToolReceiptReference,
+};
+fn plan() -> EvidencePlan {
+    EvidencePlan {
+        origins: vec![EvidenceOrigin::Source, EvidenceOrigin::Current],
+        graph: DecimalGraph {
+            input_count: 2,
+            steps: vec![DecimalStep {
+                operation: DecimalOperation::Product,
+                operands: vec![
+                    DecimalReference::Input { index: 0 },
+                    DecimalReference::Input { index: 1 },
+                ],
+            }],
+        },
+    }
+}
+async fn start(s: &Store, u: &UserContext, text: &str) -> AgentClaim {
+    let t = s
+        .create_thread(u, "Synthetic evidence calculation".into())
+        .await
+        .unwrap();
+    s.submit_turn(u, t.id, Uuid::new_v4().to_string(), text.into())
+        .await
+        .unwrap();
+    s.claim_agent_run().await.unwrap().unwrap()
+}
+async fn execute(
+    s: &Store,
+    r: &AgentClaim,
+    id: &str,
+    input: KnowledgeToolInput,
+) -> (StepLease, KnowledgeToolResult) {
+    let context = s.agent_context(&r.lease).await.unwrap();
+    let step = s
+        .begin_agent_step(&r.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &step,
+        capsule("synthetic source binding"),
+        vec![PendingKnowledgeCall {
+            call_id: id.into(),
+            input,
+        }],
+    )
+    .await
+    .unwrap();
+    let result = s.execute_knowledge_tool(&step, id.into()).await.unwrap();
+    (step, result)
+}
+async fn prepare(
+    s: &Store,
+    r: &AgentClaim,
+    _text: &str,
+    q: &str,
+    prefix: &str,
+    number: &str,
+) -> EvidenceCalculation {
+    let (search, page) = execute(
+        s,
+        r,
+        "search",
+        KnowledgeToolInput::Search { query: query(q) },
+    )
+    .await;
+    let KnowledgeToolResult::Search(page) = page else {
+        panic!("search result")
+    };
+    let hit = page.hits.first().unwrap();
+    let (read, _) = execute(
+        s,
+        r,
+        "source",
+        KnowledgeToolInput::ReadSource {
+            id: hit.id.clone(),
+            revision: hit.revision,
+            start_byte: 0,
+            max_bytes: 4096,
+        },
+    )
+    .await;
+    EvidenceCalculation {
+        plan: plan(),
+        binding: EvidenceBinding {
+            search: ToolReceiptReference {
+                step: search.step() as u32,
+                call_id: "search".into(),
+                ordinal: None,
+            },
+            source: ToolReceiptReference {
+                step: read.step() as u32,
+                call_id: "source".into(),
+                ordinal: None,
+            },
+            query: q.into(),
+            prefix: prefix.into(),
+            scalars: vec![number.into()],
+        },
+    }
+}
+async fn stop(s: &Store, r: &AgentClaim) {
+    s.finish_agent_execution(&r.lease, RunState::Cancelled, Some(RunFailure::Interrupted))
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn evidence_calculation_declines_ambiguous_incomplete_stale_forged_and_noncurrent_origins() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    // Ambiguous current identities, duplicate fields and bounded incomplete reads
+    // are real source/read outcomes, not model assertions or parser-only tests.
+    for (q, body) in [
+        ("AmbiguousLookup", "price: 2.35".to_string()),
+        ("DuplicateLookup", "price: 2.35\nprice: 4.50".into()),
+        ("LongLookup", format!("price: 2.35 {}", "z".repeat(4200))),
+        ("ExponentLookup", "price: 2.35e2".into()),
+        ("GroupedLookup", "price: 2.35".into()),
+    ] {
+        source(&s, &u, &format!("{q} {body}")).await;
+        if q == "AmbiguousLookup" {
+            source(&s, &u, &format!("{q} price: 9.00")).await;
+        }
+        let quantity = if q == "GroupedLookup" { "1,234" } else { "4" };
+        let quoted = if q == "GroupedLookup" { "1" } else { "4" };
+        let text = format!("Find {q}; prefix price:; quantity {quantity}");
+        let r = start(&s, &u, &text).await;
+        let calc = prepare(&s, &r, &text, q, "price:", quoted).await;
+        let (_, result) = execute(
+            &s,
+            &r,
+            "bound",
+            KnowledgeToolInput::EvidenceCalculate { calculation: calc },
+        )
+        .await;
+        assert!(
+            matches!(
+                result,
+                KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+            ),
+            "{q}"
+        );
+        stop(&s, &r).await;
+    }
+    let (collection, id) = source(&s, &u, "FreshLookup price: 2.35").await;
+    let text = "Find FreshLookup; prefix price:; quantity 4; ambiguous ambiguous";
+    let r = start(&s, &u, text).await;
+    let calc = prepare(&s, &r, text, "FreshLookup", "price:", "4").await;
+    // Reject a forged address and overlapping/current-substring scalar before
+    // evaluating any arithmetic. The source-derived amount is never an argument.
+    for variant in 0..3 {
+        let mut bad = calc.clone();
+        match variant {
+            0 => bad.binding.source.call_id = "not-receipted".into(),
+            1 => bad.binding.scalars[0] = bad.binding.prefix.clone(),
+            _ => bad.binding.prefix = "ambiguous".into(),
+        }
+        let (_, result) = execute(
+            &s,
+            &r,
+            &format!("bad-{variant}"),
+            KnowledgeToolInput::EvidenceCalculate { calculation: bad },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+        ));
+    }
+    let (valid, result) = execute(
+        &s,
+        &r,
+        "valid",
+        KnowledgeToolInput::EvidenceCalculate {
+            calculation: calc.clone(),
+        },
+    )
+    .await;
+    assert!(matches!(result,KnowledgeToolResult::EvidenceCalculation{exact,..} if exact=="9.4"));
+    assert!(
+        matches!(s.execute_knowledge_tool(&valid,"valid".into()).await.unwrap(),KnowledgeToolResult::EvidenceCalculation{exact,..} if exact=="9.4")
+    );
+    let run = r.lease.run_id().to_owned();
+    let counts=s.call(move|db|Ok(db.conn.query_row("SELECT tool_calls,(SELECT count(*) FROM learned_skill_receipts WHERE run_id=?1) FROM agent_execution WHERE run_id=?1",[run],|v|Ok((v.get::<_,i64>(0)?,v.get::<_,i64>(1)?)))?)).await.unwrap();
+    assert_eq!(counts, (6, 1));
+    // New run/owner cannot point back to this run's otherwise valid receipts.
+    stop(&s, &r).await;
+    let outsider = member(&s, &u, "evidence-other@example.test").await.user;
+    let other = start(&s, &outsider, text).await;
+    let (_, result) = execute(
+        &s,
+        &other,
+        "foreign",
+        KnowledgeToolInput::EvidenceCalculate {
+            calculation: calc.clone(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+    ));
+    stop(&s, &other).await;
+    let r = start(&s, &u, text).await;
+    let calc = prepare(&s, &r, text, "FreshLookup", "price:", "4").await;
+    // A source revision change between read and execution revokes the run before
+    // any new calculation or late output can be published.
+    let mut update = input("one", "FreshLookup price: 8.00");
+    update.expected_revision = Some(1);
+    update.version = "v2".into();
+    s.ingest_text(&u, collection.id, batch(1, vec![update]))
+        .await
+        .unwrap();
+    assert!(s.agent_context(&r.lease).await.is_err());
+    assert!(s.learned_skills(&u).await.unwrap().is_empty());
+    assert!(!id.is_empty() && calc.plan.valid());
+}
+#[tokio::test]
+async fn evidence_calculation_old_profiles_stay_unavailable_and_generation_drift_requires_fresh_proofs()
+ {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    source(&s, &u, "OldLookup price: 2.35").await;
+    let text = "Find OldLookup; prefix price:; quantity 4";
+    let r = start(&s, &u, text).await;
+    let calc = prepare(&s, &r, text, "OldLookup", "price:", "4").await;
+    let run = r.lease.run_id().to_owned();
+    let tenant = u.tenant.0.clone();
+    s.call(move |db| {
+        let mut model: serde_json::Value =
+            serde_json::from_str(&db.conn.query_row::<String, _, _>(
+                "SELECT model FROM chat_runs WHERE tenant_id=?1 AND id=?2",
+                params![tenant, run],
+                |row| row.get(0),
+            )?)
+            .map_err(|_| StoreError::Corrupt)?;
+        model["agent_profile"]["evidence_calculation"] = serde_json::Value::Bool(false);
+        db.conn.execute(
+            "UPDATE chat_runs SET model=?3 WHERE tenant_id=?1 AND id=?2",
+            params![tenant, run, model.to_string()],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let (_, result) = execute(
+        &s,
+        &r,
+        "old",
+        KnowledgeToolInput::EvidenceCalculate { calculation: calc },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        KnowledgeToolResult::Error(ToolReadError::Unavailable)
+    ));
+    stop(&s, &r).await;
+    learned_math_example(&s, &u, &["1", "2"], Some("3")).await;
+    learned_math_example(&s, &u, &["3", "4"], Some("7")).await;
+    let card = s.learned_skills(&u).await.unwrap().remove(0);
+    let id = card.id.clone();
+    let account = u.account.id.clone();
+    let tenant = u.tenant.0.clone();
+    s.call(move|db| {db.conn.execute("UPDATE learned_skills SET schema_version=2 WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id])?;Ok(())}).await.unwrap();
+    assert_eq!(
+        s.learned_skills(&u).await.unwrap()[0].readiness,
+        "invalidated"
+    );
+    learned_math_example(&s, &u, &["5", "6"], Some("11")).await;
+    assert_eq!(
+        s.learned_skills(&u).await.unwrap()[0].readiness,
+        "candidate"
+    );
+    learned_math_example(&s, &u, &["7", "8"], Some("15")).await;
+    assert_eq!(s.learned_skills(&u).await.unwrap()[0].readiness, "ready");
+}
+
+#[tokio::test]
+async fn evidence_calculation_export_example_executes_with_many_unique_current_scalars() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    source(&s, &u, "PrivateExportTraining PRIVATE_EXPORT_FIELD: 17").await;
+    let training_scalars = (201..212).map(|v| v.to_string()).collect::<Vec<_>>();
+    let training = format!(
+        "Search PrivateExportTraining; prefix PRIVATE_EXPORT_FIELD:; scalars {}",
+        serde_json::to_string(&training_scalars).unwrap()
+    );
+    let r = start(&s, &u, &training).await;
+    let mut calculation = prepare(
+        &s,
+        &r,
+        &training,
+        "PrivateExportTraining",
+        "PRIVATE_EXPORT_FIELD:",
+        &training_scalars[0],
+    )
+    .await;
+    calculation.plan = EvidencePlan {
+        origins: std::iter::once(EvidenceOrigin::Source)
+            .chain(std::iter::repeat_n(EvidenceOrigin::Current, 11))
+            .collect(),
+        graph: DecimalGraph {
+            input_count: 12,
+            steps: vec![DecimalStep {
+                operation: DecimalOperation::Sum,
+                operands: (0..12)
+                    .map(|index| DecimalReference::Input { index })
+                    .collect(),
+            }],
+        },
+    };
+    calculation.binding.scalars = training_scalars.clone();
+    let (_, result) = execute(
+        &s,
+        &r,
+        "large-plan",
+        KnowledgeToolInput::EvidenceCalculate { calculation },
+    )
+    .await;
+    let KnowledgeToolResult::EvidenceCalculation {
+        exact, evidence, ..
+    } = result
+    else {
+        panic!("actual training calculation");
+    };
+    let context = s.agent_context(&r.lease).await.unwrap();
+    let final_step = s
+        .begin_agent_step(&r.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    s.append_agent_output(
+        &final_step,
+        vec![OutputPatch::Append {
+            item: format!("step-{}-answer", final_step.step()),
+            text: format!(
+                "{} PRIVATE_EXPORT_FIELD: {}; exact result {exact}",
+                evidence.source_title, evidence.literal
+            ),
+            phase: Some(MessagePhase::FinalAnswer),
+            refusal: false,
+        }],
+    )
+    .await
+    .unwrap();
+    s.commit_agent_step(
+        &final_step,
+        capsule("final synthetic export training"),
+        vec![],
+    )
+    .await
+    .unwrap();
+    s.finish_agent_run(&final_step, RunState::Completed, None)
+        .await
+        .unwrap();
+    let card = s.learned_skills(&u).await.unwrap().remove(0);
+    assert_eq!(card.readiness, "candidate");
+    let preview = s
+        .preview_learned_skill_share(
+            &u,
+            card.id,
+            SkillShareInput {
+                expected_revision: card.revision,
+            },
+        )
+        .await
+        .unwrap();
+    crate::skill_author::check(&preview.slug, preview.files.clone()).unwrap();
+    let examples: serde_json::Value =
+        serde_json::from_str(&preview.files["examples.json"]).unwrap();
+    let example = examples["examples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["kind"] == "normal")
+        .unwrap();
+    let request = example["request"].as_str().unwrap();
+    let instructions = &preview.files["SKILL.md"];
+    let exported: EvidencePlan = serde_json::from_str(
+        instructions
+            .split("with this structure: ")
+            .nth(1)
+            .unwrap()
+            .split(". Bind its")
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    let quoted = request.split('`').skip(1).step_by(2).collect::<Vec<_>>();
+    let (query, prefix) = (quoted[0], quoted[1]);
+    let scalars: Vec<String> = serde_json::from_str(
+        request
+            .split("fresh scalar slots ")
+            .nth(1)
+            .unwrap()
+            .split(". Apply")
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(scalars.len(), 11);
+    let synthetic_source = instructions
+        .split("contains `")
+        .nth(1)
+        .unwrap()
+        .split('`')
+        .next()
+        .unwrap();
+    let collection = s
+        .create_collection(
+            &u,
+            "Separate synthetic export fixture".into(),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .unwrap();
+    let mut fixture = input("export-fixture", synthetic_source);
+    fixture.title = query.into();
+    s.ingest_text(&u, collection.id, batch(0, vec![fixture]))
+        .await
+        .unwrap();
+    // Execute the exact exported current request and its exported graph, rather
+    // than restating or patching the example into a passing handwritten request.
+    let fresh = start(&s, &u, request).await;
+    let mut calculation = prepare(&s, &fresh, request, query, prefix, &scalars[0]).await;
+    calculation.plan = exported;
+    calculation.binding.scalars = scalars;
+    let (_, result) = execute(
+        &s,
+        &fresh,
+        "exported-example",
+        KnowledgeToolInput::EvidenceCalculate { calculation },
+    )
+    .await;
+    let KnowledgeToolResult::EvidenceCalculation {
+        exact, evidence, ..
+    } = result
+    else {
+        panic!("exported normal example must execute");
+    };
+    assert_eq!(evidence.literal, "100");
+    assert!(
+        example["expected"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("exact result is {exact}"))
+    );
+    let raw = serde_json::to_string(&preview.files).unwrap();
+    for private in [
+        "PrivateExportTraining",
+        "PRIVATE_EXPORT_FIELD",
+        "201",
+        "211",
+    ] {
+        assert!(!raw.contains(private), "{private}");
+    }
+    stop(&s, &fresh).await;
+}

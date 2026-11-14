@@ -1123,8 +1123,8 @@ async fn learned_schema_drift_and_attributable_failures_stop_reuse_but_infrastru
     store
         .call(|db| {
             db.conn.execute(
-                "UPDATE learned_skills SET state='usable',failures=0,schema_version=3",
-                [],
+                "UPDATE learned_skills SET state='usable',failures=0,schema_version=?1",
+                [i64::from(moosuri_core::BUILTIN_TOOLSET_VERSION - 1)],
             )?;
             Ok(())
         })
@@ -1780,3 +1780,5 @@ async fn compound_graph_rejects_false_edges_replay_proof_and_budget_bypass() {
         Err(StoreError::BudgetExhausted)
     ));
 }
+
+mod evidence;

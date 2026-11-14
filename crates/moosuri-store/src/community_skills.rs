@@ -129,6 +129,7 @@ fn compatible_contents(package: Package) -> std::result::Result<Validated, autho
         "knowledge_read_memory",
         "decimal_calculate",
         "decimal_workflow",
+        "evidence_calculate",
         "mail_search",
         "mail_read",
         "mail_thread",

@@ -124,8 +124,33 @@ pub(crate) type WorkflowReceipt = (DecimalCalculation, Result<String, ToolReadEr
 pub(crate) fn workflow(
     input: &moosuri_core::DecimalWorkflow,
 ) -> Result<Vec<WorkflowReceipt>, ToolReadError> {
+    workflow_with_minimum(input, false)
+}
+pub(crate) fn evidence_workflow(
+    input: &moosuri_core::DecimalWorkflow,
+) -> Result<Vec<WorkflowReceipt>, ToolReadError> {
+    workflow_with_minimum(input, true)
+}
+fn workflow_with_minimum(
+    input: &moosuri_core::DecimalWorkflow,
+    evidence: bool,
+) -> Result<Vec<WorkflowReceipt>, ToolReadError> {
     use moosuri_core::DecimalReference;
-    if !input.graph.valid() || input.inputs.len() != usize::from(input.graph.input_count) {
+    let valid = if evidence {
+        let mut origins =
+            vec![moosuri_core::EvidenceOrigin::Current; usize::from(input.graph.input_count)];
+        if let Some(first) = origins.first_mut() {
+            *first = moosuri_core::EvidenceOrigin::Source;
+        }
+        moosuri_core::EvidencePlan {
+            origins,
+            graph: input.graph.clone(),
+        }
+        .valid()
+    } else {
+        input.graph.valid()
+    };
+    if !valid || input.inputs.len() != usize::from(input.graph.input_count) {
         return Err(ToolReadError::InvalidInput);
     }
     let inputs = input

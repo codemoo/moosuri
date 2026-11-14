@@ -11,12 +11,14 @@ use moosuri_core::{
 };
 use std::collections::BTreeSet;
 
-const NAMES: [&str; 21] = [
+const NAMES: [&str; 23] = [
     "knowledge_search",
     "knowledge_read_source",
     "knowledge_read_memory",
     "skill_read",
     "decimal_calculate",
+    "decimal_workflow",
+    "evidence_calculate",
     "mail_search",
     "mail_read",
     "mail_thread",
@@ -38,6 +40,7 @@ const FINAL: &str = "Exact synthetic result: 0.3. No external action was perform
 
 fn combined_definitions() -> Vec<FunctionDefinition> {
     let profile = RunToolProfile {
+        evidence_calculation: true,
         credential_github: false,
         credential_google: false,
         credential_google_preview: false,
@@ -58,7 +61,7 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
         }),
     };
     let mut definitions = crate::knowledge_tools::definitions(Some(&profile));
-    assert_eq!(definitions.len(), 15);
+    assert_eq!(definitions.len(), 17);
     definitions.extend(crate::artifact_tools::definitions(Some(
         &ArtifactRunProfile {
             schema_version: 1,
@@ -68,7 +71,7 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
             kind: None,
         },
     )));
-    assert_eq!(definitions.len(), 18);
+    assert_eq!(definitions.len(), 20);
     definitions.extend(crate::calendar_tools::definitions(Some(
         &CalendarRunProfile {
             version: 1,
@@ -83,7 +86,7 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
             }],
         },
     )));
-    assert_eq!(definitions.len(), 21);
+    assert_eq!(definitions.len(), NAMES.len());
     definitions
 }
 
@@ -107,7 +110,7 @@ fn assert_definitions(body: &Value, plan: bool) {
         .iter()
         .map(|d| d["name"].as_str().unwrap())
         .collect::<BTreeSet<_>>();
-    assert_eq!(functions.len(), 21); // Provider sees every definition; none is silently dropped.
+    assert_eq!(functions.len(), NAMES.len()); // Provider sees every definition; none is silently dropped.
     assert_eq!(names, NAMES.into_iter().collect());
     for definition in functions {
         assert_eq!(definition["strict"], true);

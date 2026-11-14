@@ -503,6 +503,9 @@ fn typed_input(
         },
         Invocation::LearnedSkill(invocation) => KnowledgeToolInput::LearnedSkill { invocation },
         Invocation::SkillRead(pin) => KnowledgeToolInput::SkillRead { pin },
+        Invocation::EvidenceCalculate(calculation) => {
+            KnowledgeToolInput::EvidenceCalculate { calculation }
+        }
         Invocation::DecimalWorkflow(workflow) => KnowledgeToolInput::DecimalWorkflow { workflow },
         Invocation::DecimalCalculate(calculation) => {
             KnowledgeToolInput::DecimalCalculate { calculation }
@@ -1278,7 +1281,13 @@ pub(crate) async fn execute_with_calendar(
                 signals.changed();
                 return;
             }
-            let output = match serde_json::to_string(&value) {
+            let output = match serde_json::to_value(&value).and_then(|mut output| {
+                if tool_profile.as_ref().is_some_and(|p|p.evidence_calculation)
+                    && matches!(value,KnowledgeToolResult::Search(_)|KnowledgeToolResult::Source(_)) {
+                    output["receipt"]=serde_json::json!({"step":step.step(),"call_id":call.call_id,"ordinal":null});
+                }
+                serde_json::to_string(&output)
+            }) {
                 Ok(output) => output,
                 Err(_) => {
                     finish(

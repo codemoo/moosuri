@@ -16,7 +16,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/schema47부터 현재까지 stopped update/데이터 보존 제거도 구현했다. 공식 release·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
 | 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량·실제 실행 단계 시간/누락 집계, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 오래된/다른 소유 대화의 제한 검색·읽기, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경·명시적 일회/반복 읽기 미션 | 개인 Claude 공식 CLI의 설정·text probe·선택·저장 대화도 구현했다. Claude 실제 rootless Linux/공식 로그인과 media/background·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·검색, 직접 기억·정정·망각, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
-| 도구·스킬 | 검증된 bounded tool loop, 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회·일본우편 최근 요약의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 2–4단계 정확 계산의 구조 학습·새 입력 재사용·합성 export도 구현했다. 일반 외부 복합 업무 학습/export·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
+| 도구·스킬 | 검증된 bounded tool loop, 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회·일본우편 최근 요약의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 2–4단계 정확 계산과 유일한 저장 자료의 숫자를 읽는 근거 계산의 구조 학습·새 입력 재사용·합성 export도 구현했다. 일반 외부 복합 업무 학습/export·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
 | 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·로컬/Google 초안 CRUD·승인된 즉시/고정 예약 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. 인증된 자동 폼/장기 profile 복구·실제 Gmail 계정 검증은 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
 | 공식·custom 자료 연결 | 개인 Gmail/Slack 수집·custom ingest, 선택한 Codex 사용자 요청·정규화 통화 전사의 일회 수집, scope/cursor/receipt/provenance·상태 화면·철회, 일본우편 최근 상태 조회 | 합성 Linux 검증은 실제 OAuth/계정 scope/rate 검증을 대신하지 않는다. 카톡 코드는 공개 패키지에서 제외. schema48에서 시작 ACK 유실 복구를 추가했다. 통화 원본 기기/포맷·실제 전사 품질·다른 작업 세션 형식·다른 배송사/전체 이력은 남음. [연결](data-connections.md)·[검증](reviews/2026-11-13-source-connections.md) |
 | 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours·예약별 소식 끄기/다시 받기, 저장한 followup 마감/재확인/미룬 날짜 알림, opt-in 기기 Push | 전체 proactive 제안 정책·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[소식 제어](reviews/2026-11-14-notification-topics.md) |
@@ -30,6 +30,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 자료 읽기·정확 계산 학습 | 현재 요청의 문구로 유일한 원문·숫자 항목을 확인해 계산; 독립 두 사례 뒤 새 원문으로 재사용·합성 공유, 기존 학습은 generation3의 새 근거 필요 | [사용법](evidence-calculation.md)·[검증](reviews/2026-11-15-evidence-calculation.md) |
 | 기기 Gmail 미리보기 | 별도로 연결한 계정의 제목·보낸 사람·날짜·짧은 내용 최대5개를 원래 채팅/설정에 표시; 이후 모델 문맥·회상·학습에서 제외 | [사용법](native-google-inbox-preview.md)·[검증](reviews/2026-11-15-native-google-inbox-preview.md) |
 | 알림 후속 대화 | 빠진 시간·내용·제한된 오전/오후·날짜를 다음 답변으로 보완; 제공한 값·시간대·같은 요청 재시도를 유지 | [사용법](reminder-followups.md)·[검증](reviews/2026-11-15-reminder-followups.md) |
 | 격리 비교 실행기 | 두 공통 세계의 소스 사본·실행 adapter·독립 판정 구현; 실제 비교는 Mac의 기존 공유 메모리 슬롯 부족으로2건 미실행 | [사용법](agent-evaluation.md#두-공통-세계의-로컬-실행-adapter)·[기록](reviews/2026-11-15-paired-baseline.md) |
@@ -63,7 +64,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기와 두 세계 비교 adapter를 구현했다. 기존 비서의 실제 비교 실행은
 호스트 공유 메모리 부족으로 미완료이며 넓은 품질 평가도 남는다.
-P4의 정확 계산·저장 자료 조회·일본우편 최근 요약과2–4단계 계산 그래프 학습·새 입력 재사용·합성 공유를 수락했다. 일반 외부 복합 업무·실모델
+P4의 정확 계산·저장 자료 조회·일본우편 최근 요약과2–4단계 계산 그래프, 유일한 원문 숫자에 묶은1–4단계 계산의 학습·새 입력 재사용·합성 공유를 수락했다. 일반 외부 복합 업무·실모델
 검증은 남은 계약으로 유지한다. 새로운 내부 작업명을 제품 계획의 P 번호로 사용하지 않는다.
 CI는 사용자 지시에 따라 계속 비활성이다.
 
@@ -85,7 +86,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
 2. **P3/P4 기억·학습·업무 수행**: 초기 합성 평가와 계산/자료 조회의 typed 학습·
    두 입력 proof와 대화 기억/전이 망각/업무 취소/학습 재사용의 실제 결과 평가를 구현했다.
    넓은 시간 사실·실모델 이해력·복합 외부 절차의 독립 평가로 확장한다.
-   정확 계산 그래프의 합성 export는 구현했으며 일반 외부 복합 절차·전체 이력 보존/정리 정책,
+   정확 계산 그래프와 유일한 저장 원문 숫자에 묶은 계산의 합성 export는 구현했으며 일반 외부 복합 절차·전체 이력 보존/정리 정책,
    구현한 제한된 여러 턴 명확화를 넓은 시간 해석·계획/검증/보완으로 확장한다.
 3. **P5/P6 예약·외부 연결**: 전체 알림/제안 정책,
    구현한 Gmail provider draft·승인된 고정 예약 발송과 Calendar 후속 명확화의 실계정 검증,

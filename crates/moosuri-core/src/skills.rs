@@ -2,7 +2,7 @@
 //! The execution profile is server-generated private state, not a browser DTO.
 use serde::{Deserialize, Serialize};
 
-pub const BUILTIN_TOOLSET_VERSION: u32 = 2;
+pub const BUILTIN_TOOLSET_VERSION: u32 = 3;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +16,8 @@ pub struct SkillPin {
 #[serde(deny_unknown_fields)]
 pub struct RunToolProfile {
     pub version: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub evidence_calculation: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub credential_github: bool,
     #[serde(default, skip_serializing_if = "is_false")]

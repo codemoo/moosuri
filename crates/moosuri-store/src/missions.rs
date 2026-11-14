@@ -308,7 +308,8 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
                         };
                         ("공개 웹 관측".into(), detail)
                     }
-                    KnowledgeToolResult::DecimalWorkflow { .. }
+                    KnowledgeToolResult::EvidenceCalculation { .. }
+                    | KnowledgeToolResult::DecimalWorkflow { .. }
                     | KnowledgeToolResult::ConversationSearch(_)
                     | KnowledgeToolResult::ConversationTurn(_)
                     | KnowledgeToolResult::Error(_) => continue,
@@ -700,6 +701,7 @@ pub(crate) fn create_pinned_in(
 pub(crate) fn read_profile(
     mut profile: moosuri_core::RunToolProfile,
 ) -> moosuri_core::RunToolProfile {
+    profile.evidence_calculation = false;
     profile.skills.retain(|pin| !pin.id.starts_with("private:"));
     profile
         .community_metadata

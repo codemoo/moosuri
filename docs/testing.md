@@ -81,6 +81,8 @@ Recall@5는 답 가능한 사례에서 `|유효 gold evidence ∩ top5| / |유�
 
 학습 시험은 입력A/B의 독립 finalized 성공→candidate/usable 전이→보지 않은 입력C에 parameterized 재사용을 검증한다. 같은 입력 replay·본문만 읽기·완료 전 checkpoint·다른 사용자의 proof·외부 배포자의 성공 이력은2회 증거가 되지 않는다. schema drift·사용자 수정/삭제·귀속 실패3회와 infrastructure/cancel 실패를 구별한다.
 
+[원문 근거 계산](evidence-calculation.md)은 실제 검색·완전한 원문 읽기·계산 영수증을 연결해 A/B→새 C를 관측한다. 여러 결과·중복 항목·잘린 원문·바뀐 revision·다른 실행의 영수증·수치 일부만 인용한 인수는 거절하고, 현재 자료 부족을 학습 결함으로 누적하지 않는다. 한글/emoji 인수의 위치는 서버가 결정한다. 공유 예제는 별도 합성 자료를 준비한 뒤 실제 공개된 요청 문구로 실행해야 하며 파일 형식 검사만으로 사용 가능하다고 판정하지 않는다. 원문/학습 근거를 철회하면 C의 파생 답변까지 사라져야 한다.
+
 no-skill / discovery-only / learned-route를 같은 model/effort·초기 world·budget으로 비교한다. 품질 퇴행 없이 필요한 도구 호출·context token·latency가 줄었는지 보고한다. 무조건 스킬 사용률을 올리는 목표는 없다. 없는 배송사/API를 스킬로 연결 완료했다고 말하면 실패다.
 
 커뮤니티는 GitHub 기여→정적 catalog→기존 ‘제안/할 수 있는 일’ 카드→추가/연결/실행을 실제 흐름으로 검증한다. ready/연결 필요/미지원·dismiss/mute·개인별 설치·version pin/update rollback/remove를 검사한다. private 문맥을 catalog에 보내는 추천, 설치만으로 자동 외부 실행, 다른 사용자의 skill proof 승계, scripts/hooks 실행은 실패다. 상세는 [커뮤니티 설계](community-skills.md)를 따른다.

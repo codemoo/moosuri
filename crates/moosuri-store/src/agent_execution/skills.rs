@@ -19,6 +19,7 @@ pub(crate) fn current_skill(profile: Option<&RunToolProfile>, id: &str) -> bool 
 }
 pub(crate) fn profile() -> RunToolProfile {
     RunToolProfile {
+        evidence_calculation: true,
         credential_github: false,
         credential_google: false,
         credential_google_preview: false,

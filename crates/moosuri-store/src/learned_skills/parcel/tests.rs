@@ -187,7 +187,10 @@ async fn learned_parcel_requires_two_independent_final_observations_not_tool_fla
     let first = example(&s, &u, A, "observed", Some(answer(A))).await;
     let card = s.learned_skills(&u).await.unwrap().remove(0);
     assert_eq!(card.readiness, "candidate");
-    assert_eq!(card.version, "2");
+    assert_eq!(
+        card.version,
+        moosuri_core::BUILTIN_TOOLSET_VERSION.to_string()
+    );
     example(&s, &u, A, "observed", Some(answer(A))).await;
     assert_eq!(
         s.learned_skills(&u).await.unwrap()[0].readiness,

@@ -286,6 +286,7 @@ pub(crate) fn finish_deletions(conn: &mut Connection) -> Result<()> {
             "account_deletions",
             "vault_lifecycle_outbox",
             "model_call_receipts",
+            "claude_code_usage",
             "automatic_memory_budget",
             // Immutable forward admission lower bounds contain opaque IDs, kind,
             // counts/duration/time only; no content, credential or provider data.
@@ -348,7 +349,7 @@ pub(crate) fn finish_deletions(conn: &mut Connection) -> Result<()> {
         // Receipt rows contain only opaque IDs/digests and may reference a deleted
         // target, so other administrators can reconcile the same request.
         tx.execute(
-            "UPDATE account_deletions SET local_state='complete' WHERE account_id=?1",
+            "UPDATE account_deletions SET local_state='complete' WHERE account_id=?1 AND NOT EXISTS(SELECT 1 FROM claude_code_retirements r WHERE r.account_id=account_deletions.account_id AND r.state='pending')",
             [&account],
         )?;
         tx.commit()?;

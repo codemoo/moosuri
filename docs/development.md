@@ -276,3 +276,7 @@ protocol development only, `cargo build --locked -p moosuri --features moosuri-s
 there is no companion executable or production invocation-minting path. Synthetic
 probe authority exists only in `test-fixtures`. See the [foundation guide](credential-broker-foundation.md)
 and its [verification record](reviews/2026-11-14-credential-broker-foundation.md).
+
+Optional personal Claude text execution uses an unchanged official CLI and a pinned
+rootless Linux profile. See [Claude setup](claude-execution.md) for deployment,
+owner login, exact model probe and the current synthetic/live acceptance boundary.

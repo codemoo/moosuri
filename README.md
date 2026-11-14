@@ -64,6 +64,10 @@ Explicit current-user memory changes and source-grounded record creation/anchore
 use typed local operations and stored confirmations. Personal Calendar also supports
 explicit primary-calendar timed solo-event creation, same-day edits and deletion
 through the existing typed service. Media and background work remain pending.
+An optional [official Claude Code text connection](docs/claude-execution.md) provides
+owner settings, an exact-model probe and saved chat through a separate pinned
+rootless Linux execution profile. Actual official login and production-profile
+isolation acceptance remain pending; tools/media/background are unavailable.
 See [foreground-tool acceptance](docs/reviews/2026-11-14-personal-chatgpt-tools.md),
 [personal Calendar](docs/reviews/2026-11-14-personal-chatgpt-calendar.md),
 and the [combined-tool limit repair](docs/reviews/2026-11-14-combined-tool-profiles.md). Synthetic protocol

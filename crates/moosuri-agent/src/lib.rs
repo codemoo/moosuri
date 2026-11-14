@@ -6,6 +6,7 @@ pub mod browser;
 pub mod calendar;
 mod calendar_intent;
 mod calendar_tools;
+pub mod claude_execution;
 mod conversation_tools;
 pub mod credential_broker;
 mod credential_chat;
@@ -179,6 +180,7 @@ impl Runtime {
             oauth,
             web::Service::new(web).with_browser(browser),
             Some(redirect_uri),
+            None,
         )
     }
     fn start_with_web_service(
@@ -186,13 +188,30 @@ impl Runtime {
         oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
         web: web::Service,
     ) -> Self {
-        Self::start_with_services(store, oauth, web, None)
+        Self::start_with_services(store, oauth, web, None, None)
+    }
+    pub fn start_with_google_setup_claude(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: Option<Arc<moosuri_connectors::web::WebClient>>,
+        browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
+        redirect_uri: String,
+        claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
+    ) -> Self {
+        Self::start_with_services(
+            store,
+            oauth,
+            web::Service::new(web).with_browser(browser),
+            Some(redirect_uri),
+            claude,
+        )
     }
     fn start_with_services(
         store: Store,
         oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
         mut web: web::Service,
         redirect_uri: Option<String>,
+        claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
     ) -> Self {
         let (changes, _) = watch::channel(0);
         let (done_tx, done) = watch::channel(false);
@@ -207,7 +226,9 @@ impl Runtime {
         let browser =
             browser::BrowserService::new(store.clone(), web.reader(), signals.stop.clone());
         web.set_workspaces(browser.clone());
-        let subscriptions = subscriptions::SubscriptionService::new(store.clone(), signals.clone());
+        let mut subscriptions =
+            subscriptions::SubscriptionService::new(store.clone(), signals.clone());
+        subscriptions.claude = claude;
         let supervisor = tokio::spawn(supervise(
             store,
             signals.clone(),
@@ -326,6 +347,9 @@ async fn supervise(
     web: web::Service,
     subscriptions: subscriptions::SubscriptionService,
 ) {
+    let claude_service = subscriptions.clone();
+    let claude_worker =
+        tokio::spawn(async move { claude_service.claude_retirement_worker().await });
     let mut extraction_worker =
         tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
     let mut schedule_worker = tokio::spawn(schedules::worker(store.clone(), signals.clone()));
@@ -408,6 +432,8 @@ async fn supervise(
     }
     // Cancelling the shared signal interrupts network IO. The bounded deadline
     // also covers a blocked checkpoint; dropping JoinSet aborts every child.
+    claude_worker.abort();
+    let _ = claude_worker.await;
     let drain = async {
         while let Some(result) = tasks.join_next_with_id().await {
             reap(result, &mut leases, &mut retired);

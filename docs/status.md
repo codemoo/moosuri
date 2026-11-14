@@ -14,7 +14,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 영역 | 구현한 범위 | 남은 경계와 사용·증거 |
 | --- | --- | --- |
 | 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/현재·직전 schema의 stopped update/데이터 보존 제거도 구현했다. 공식 release·두 단계 이상 schema update·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
-| 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량·실제 실행 단계 시간/누락 집계, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 오래된/다른 소유 대화의 제한 검색·읽기, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경 | media/background·Claude 실행·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
+| 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량·실제 실행 단계 시간/누락 집계, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 오래된/다른 소유 대화의 제한 검색·읽기, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경 | 개인 Claude 공식 CLI의 설정·text probe·선택·저장 대화도 구현했다. Claude 실제 rootless Linux/공식 로그인과 media/background·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·검색, 직접 기억·정정·망각, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 여섯 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 2–4단계 정확 계산의 구조 학습·새 입력 재사용·합성 export도 구현했다. 일반 외부 복합 업무 학습/export·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
 | 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·로컬/Google 초안 CRUD·승인된 즉시/고정 예약 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. 인증된 자동 폼/장기 profile 복구·실제 Gmail 계정 검증은 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
@@ -25,6 +25,18 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·live-vault rotation·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 개인 Claude 공식 CLI 텍스트 연결
+
+사용자별 설정·공식 로그인 도우미·정확한 모델 text probe·선택·저장 대화를 연결했다.
+공식 CLI를 선택적인 rootless Linux 환경에서 실행하며 구독 토큰을 자체 HTTP adapter로
+옮기지 않는다. 실행별 영수증·취소·결과 불명 보존·사용량을 기존 대화 흐름에 연결했다.
+계정 삭제는 해당 로그인 환경 정리의 응답까지 기다리고, 복원한 설치의 새 호출 한도도
+프로세스 실행 전에 반영한다. 마지막으로 허용한 호출은 정상적으로 완료할 수 있다.
+
+독립 검토, Linux 합성 실제 subprocess/Store/Runtime/HTTP/복원과 React20 검사를 통과했다.
+실제 rootless 배치·공식 CLI 로그인·실계정 모델은 별도 검증이며 도구·미디어·background는
+지원 범위에 포함하지 않는다. [설정](claude-execution.md) · [검증](reviews/2026-11-15-official-claude-text.md).
 
 ## 최근 수락한 단위 · 복합 계산 학습과 재사용
 
@@ -447,7 +459,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | --- | --- | --- |
 | P0 공개 기반 | 공개 저장소·Rust/React/Linux 빌드·기여/OpenSpec·합성 결과 runner/독립 grader·실행 단계 시간/실패·누락 집계·기존149개 소스 내용 검사 | 격리 실행 baseline/공통 adapter·넓은 사례/실모델·통계 평가 |
 | P1 영속 상태 | SQLite 격리·실행/외부 영수증·journal·봉인된 현재 복원·수동 pin을 사용한 과거 복원·명시적 새 사용 한도 | 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export |
-| P2 대화 | 계정·설정·스트림·취소/재시도·개인 ChatGPT | 지원 구독의 전체 실행 범위·실계정 검증 |
+| P2 대화 | 계정·설정·스트림·취소/재시도·개인 ChatGPT·선택 Claude 공식 CLI text 실행 | 지원 구독의 전체 실행 범위·실계정 검증 |
 | P3 자료·기억 | 출처·기억 정정/망각·제한 추출·문서·이전/다른 소유 대화의 근거 검색 | 장기/시간 사실·추출 품질의 독립 검증 |
 | P4 도구·학습 | typed 도구·bounded 실행·Git 스킬·제안·연결 Gmail/Calendar 읽기 미션·예약 스킬 의존성/정리·제한된 개인 학습/두 입력 proof/재사용 | 일반 외부 복합 절차·범용 학습 export·실모델 효용/품질 검증 |
 | P5 예약·소식 | due loop·반복 회차·알림·quiet hours·예약별 소식 제어·followup 날짜 알림·Push | 전체 알림/제안 정책·실기기 수신·고정 메일 외 예약 외부 작업 |

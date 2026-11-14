@@ -29,6 +29,7 @@ pub struct ProviderChange {
 }
 /// Private server credential carrier: intentionally no Debug or serialization.
 pub struct ProviderBinding {
+    pub claude_code: Option<crate::ClaudeExecutionRef>,
     pub subscription: Option<crate::SubscriptionRef>,
     pub id: String,
     pub revision: i64,
@@ -294,6 +295,7 @@ pub(super) fn binding(
         return Err(StoreError::Unavailable);
     }
     Ok(ProviderBinding {
+        claude_code: None,
         subscription: None,
         id: row.id,
         revision: row.revision,
@@ -399,11 +401,13 @@ fn verified(conn: &Connection, selection: &ModelSelection) -> Result<ModelChoice
         .ok_or(StoreError::Conflict)
 }
 fn settings(conn: &Connection, user: &UserContext) -> Result<ModelSettings> {
-    let subscription = subscriptions::selected(conn, user)?;
+    let subscription =
+        crate::claude_execution::selected(conn, user)?.or(subscriptions::selected(conn, user)?);
     let personal = selected(conn, Some(user))?;
     if let Some(s) = subscription {
         let mut all = choices(conn, None)?;
         all.extend(subscriptions::choices(conn, user)?);
+        all.extend(crate::claude_execution::choices(conn, user)?);
         let effective = all
             .iter()
             .find(|c| {
@@ -423,6 +427,7 @@ fn settings(conn: &Connection, user: &UserContext) -> Result<ModelSettings> {
     let effective = personal.clone().or(selected(conn, None)?);
     let mut all = choices(conn, None)?;
     all.extend(subscriptions::choices(conn, user)?);
+    all.extend(crate::claude_execution::choices(conn, user)?);
     let effective = effective.and_then(|s| {
         all.iter()
             .find(|c| {
@@ -537,6 +542,13 @@ impl Store {
             let current=validate(&db.conn,&user,true,false)?;
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             if let Some(s)=selection {
+                if s.source==moosuri_core::ModelSource::PersonalClaudeCode {
+                    let choice=crate::claude_execution::verified(&tx,&current,&s)?;
+                    tx.execute("INSERT INTO personal_claude_selections VALUES(?1,?2,?3,?4,?5) ON CONFLICT(tenant_id,account_id) DO UPDATE SET binding_id=excluded.binding_id,revision=excluded.revision,model=excluded.model",params![current.tenant.0,current.account.id,s.provider_id,choice.provider_revision,s.model])?;
+                    tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;
+                    tx.execute("DELETE FROM personal_subscription_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;
+                    let result=settings(&tx,&current)?;tx.commit()?;return Ok(result);
+                }
                 if s.source==moosuri_core::ModelSource::PersonalChatGpt {
                     let choice=subscriptions::verified(&tx,&current,&s)?;
                     tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;
@@ -545,7 +557,7 @@ impl Store {
                 }
                 let choice=verified(&tx,&s)?;
                 tx.execute("INSERT INTO personal_model_selections(tenant_id,account_id,provider_id,revision,model,effort) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant_id,account_id) DO UPDATE SET provider_id=excluded.provider_id,revision=excluded.revision,model=excluded.model,effort=excluded.effort",params![current.tenant.0,current.account.id,s.provider_id,choice.provider_revision,s.model,s.effort.unwrap_or_default()])?;
-            } else {tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;tx.execute("DELETE FROM personal_subscription_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;}
+            } else {tx.execute("DELETE FROM personal_claude_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;tx.execute("DELETE FROM personal_subscription_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;}
             let result=settings(&tx,&current)?;tx.commit()?;Ok(result)
         }).await
     }
@@ -678,6 +690,15 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             let current = validate(&db.conn, &user, true, false)?;
+            if let Some(s) = crate::claude_execution::selected(&db.conn, &current)? {
+                let choice = crate::claude_execution::verified(&db.conn, &current, &s)?;
+                return crate::claude_execution::binding(
+                    &db.conn,
+                    &current.tenant.0,
+                    &current.account.id,
+                    &choice,
+                );
+            }
             if let Some(s) = subscriptions::selected(&db.conn, &current)? {
                 let choice = subscriptions::verified(&db.conn, &current, &s)?;
                 return subscriptions::binding(
@@ -743,7 +764,9 @@ pub(super) fn binding_for_owner_choice(
     account: &str,
     choice: &ModelChoice,
 ) -> Result<ProviderBinding> {
-    if choice.source == moosuri_core::ModelSource::PersonalChatGpt {
+    if choice.source == moosuri_core::ModelSource::PersonalClaudeCode {
+        crate::claude_execution::binding(conn, tenant, account, choice)
+    } else if choice.source == moosuri_core::ModelSource::PersonalChatGpt {
         subscriptions::binding(conn, tenant, account, choice)
     } else {
         binding_for_choice(conn, key, choice)

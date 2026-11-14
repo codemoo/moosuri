@@ -12,6 +12,7 @@ default = []
 test-fixtures = []
 
 [dependencies]
+tempfile.workspace = true
 moosuri-core = { path = "../moosuri-core" }
 uuid.workspace = true
 libc = "0.2"

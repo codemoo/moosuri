@@ -179,6 +179,7 @@ pub(super) fn binding(
         return Err(StoreError::Conflict);
     }
     Ok(providers::ProviderBinding {
+        claude_code: None,
         id: b.id.clone(),
         revision: b.revision,
         config: moosuri_core::ProviderConfig {

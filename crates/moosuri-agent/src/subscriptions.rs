@@ -9,9 +9,11 @@ use tokio::{
 };
 #[derive(Clone)]
 pub struct SubscriptionService {
-    store: Store,
-    signals: Signals,
+    pub(crate) store: Store,
+    pub(crate) signals: Signals,
     logins: Arc<tokio::sync::Semaphore>,
+    pub(crate) claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
+    pub(crate) claude_ready: Arc<tokio::sync::OnceCell<Result<(), ()>>>,
     #[cfg(any(test, feature = "test-fixtures"))]
     fixture: Option<(String, String)>,
 }
@@ -47,6 +49,8 @@ impl SubscriptionService {
         Self {
             store,
             signals,
+            claude: None,
+            claude_ready: Arc::new(tokio::sync::OnceCell::new()),
             logins: Arc::new(tokio::sync::Semaphore::new(2)),
             #[cfg(test)]
             fixture: None,

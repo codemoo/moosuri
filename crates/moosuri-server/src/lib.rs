@@ -6,6 +6,7 @@ mod automatic_memory;
 mod browser;
 mod calendar;
 mod chat;
+mod claude_execution;
 mod community_skills;
 mod credential_broker;
 mod google_setup;
@@ -86,6 +87,7 @@ pub struct ServerConfig {
     google: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
     web: Option<Arc<moosuri_connectors::web::WebClient>>,
     browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
+    claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
     vault_origin: Option<String>,
     pdf_extractor: Option<std::path::PathBuf>,
     invitation_sender: Option<moosuri_connectors::invitation::GwsInvitationSender>,
@@ -130,6 +132,7 @@ impl ServerConfig {
             google: None,
             web: None,
             browser: None,
+            claude: None,
             vault_origin: None,
             pdf_extractor: None,
             invitation_sender: None,
@@ -269,13 +272,21 @@ impl ServerConfig {
         )?);
         Ok(self)
     }
+    pub fn with_claude_profile_json(mut self, json: &str) -> Result<Self, &'static str> {
+        self.claude = Some(Arc::new(
+            moosuri_connectors::claude_code::Profile::from_json(json)
+                .map_err(|_| "invalid_claude_execution_profile")?,
+        ));
+        Ok(self)
+    }
     pub fn start_runtime(&self, store: Store) -> moosuri_agent::Runtime {
-        moosuri_agent::Runtime::start_with_google_setup(
+        moosuri_agent::Runtime::start_with_google_setup_claude(
             store,
             self.google.clone(),
             self.web.clone(),
             self.browser.clone(),
             self.google_redirect_uri(),
+            self.claude.clone(),
         )
     }
     pub fn with_trusted_proxy(
@@ -380,6 +391,22 @@ pub fn router_with_runtime(
         .route(
             "/api/v1/settings/chatgpt/{id}/tool-probe",
             post(subscriptions::tool_probe),
+        )
+        .route(
+            "/api/v1/settings/claude",
+            get(claude_execution::list).post(claude_execution::create),
+        )
+        .route(
+            "/api/v1/settings/claude/{id}",
+            delete(claude_execution::disconnect),
+        )
+        .route(
+            "/api/v1/settings/claude/{id}/native",
+            post(claude_execution::native),
+        )
+        .route(
+            "/api/v1/settings/claude/{id}/probe",
+            post(claude_execution::probe),
         )
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
         .route("/health/ready", get(ready))

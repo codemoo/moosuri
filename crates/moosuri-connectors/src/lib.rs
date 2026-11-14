@@ -19,3 +19,6 @@ pub mod invitation;
 
 #[cfg(unix)]
 pub mod work_sessions;
+
+#[cfg(unix)]
+pub mod claude_code;

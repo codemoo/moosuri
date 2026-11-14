@@ -107,7 +107,7 @@ pub(crate) fn admit(c: &Connection, r: &Run) -> Result<()> {
         |row| row.get(0),
     )?;
     if selected.is_none()
-        && r.model.source != ModelSource::PersonalChatGpt
+        && r.model.source == ModelSource::Shared
         && task_control_candidate(&r.text)
     {
         let receipt: Option<String> = c

@@ -14,6 +14,106 @@ const PASSWORD: &str = "Synthetic-Account-Password-42";
 const HOST: &str = "assistant.example.test";
 const ORIGIN: &str = "https://assistant.example.test";
 
+#[tokio::test]
+async fn claude_settings_require_owner_and_keep_unconfigured_runtime_unavailable() {
+    let _g = TEST_LOCK.lock().await;
+    let (_tmp, store, app) = fixture(false).await;
+    let admin = store
+        .login("admin@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap();
+    let invited = store
+        .create_user(
+            &admin.user,
+            "Member".into(),
+            "claude-member@example.test".into(),
+        )
+        .await
+        .unwrap();
+    let member = store
+        .login(
+            "claude-member@example.test".into(),
+            invited.temporary_password,
+        )
+        .await
+        .unwrap();
+    store
+        .change_password(&member.user, "Synthetic-Claude-member-password".into())
+        .await
+        .unwrap();
+    let binding = store
+        .create_claude_binding(
+            &admin.user,
+            "Private Claude".into(),
+            "a".repeat(64),
+            "b".repeat(64),
+        )
+        .await
+        .unwrap();
+    let a = login(&app, "admin@example.test", PASSWORD).await;
+    let b = login(
+        &app,
+        "claude-member@example.test",
+        "Synthetic-Claude-member-password",
+    )
+    .await;
+    let base = "/api/v1/settings/claude";
+    assert_eq!(
+        send(&app, "GET", base, None, json!({})).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let listed = value(send(&app, "GET", base, Some(&a), json!({})).await).await;
+    assert_eq!(listed["runtime_configured"], false);
+    assert_eq!(listed["bindings"][0]["id"], binding.id);
+    let other = value(send(&app, "GET", base, Some(&b), json!({})).await).await;
+    assert_eq!(other["bindings"], json!([]));
+    for (method, suffix) in [("POST", "/native"), ("POST", "/probe"), ("DELETE", "")] {
+        let path = format!("{base}/{}{suffix}", binding.id);
+        assert_eq!(
+            send(
+                &app,
+                method,
+                &path,
+                Some(&b),
+                json!({"revision":1,"model":"claude-fixture-v1"})
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            &format!("{base}/{}/probe", binding.id),
+            Some(&a),
+            json!({"revision":1,"model":"claude-fixture-v1"})
+        )
+        .await
+        .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        send(
+            &app,
+            "DELETE",
+            &format!("{base}/{}", binding.id),
+            Some(&a),
+            json!({"revision":1})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert!(
+        store
+            .claude_launch_ref(&admin.user, binding.id, 1)
+            .await
+            .is_err()
+    );
+}
+
 async fn fixture(temporary: bool) -> (tempfile::TempDir, Store, Router) {
     let tmp = tempfile::Builder::new()
         .prefix("moosuri-http-")

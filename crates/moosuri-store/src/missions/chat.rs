@@ -30,7 +30,7 @@ pub(crate) fn admit(
     if r.tool_profile.is_none() || crate::media::has_context(c, &r.tenant, &r.id)? {
         return Ok(());
     }
-    if r.model.source == ModelSource::PersonalChatGpt {
+    if r.model.source != ModelSource::Shared {
         if context.and_then(|v| v.target.as_ref()).is_some() {
             return Err(StoreError::Forbidden);
         }
@@ -177,7 +177,7 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
 // Personal foreground Calendar shares the envelope, never mission authority.
 // Repeat this predicate before effect preflight/application as well as recording.
 fn allowed_mission_decision(r: &Run, d: &MissionChatDecision) -> Result<()> {
-    if r.model.source == ModelSource::PersonalChatGpt
+    if r.model.source != ModelSource::Shared
         && (d.decision != "no_command"
             || d.action.is_some()
             || d.target_kind.is_some()

@@ -27,6 +27,7 @@ pub enum ModelSource {
     #[default]
     Shared,
     PersonalChatGpt,
+    PersonalClaudeCode,
 }
 impl ModelSource {
     pub fn is_shared(&self) -> bool {

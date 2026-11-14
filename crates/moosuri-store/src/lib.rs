@@ -61,7 +61,9 @@ mod mail;
 mod web;
 pub use browser::BrowserAccess;
 pub use mail::*;
+mod claude_execution;
 mod providers;
+pub use claude_execution::{ClaudeBindingSummary, ClaudeExecutionRef};
 mod subscriptions;
 pub use subscriptions::*;
 mod recovery;
@@ -222,7 +224,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 49;
+const CURRENT_SCHEMA_VERSION: i64 = 50;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -700,6 +702,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0049_recovery_forward_budget.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 50 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0050_personal_claude_code.sql"),
                 "COMMIT;"
             ))?;
         }

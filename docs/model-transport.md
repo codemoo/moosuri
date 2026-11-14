@@ -24,7 +24,7 @@ excludes tools/media; tool-looking prose never executes a tool.
 There is no native Ollama NDJSON decoder or claim that every compatible server
 implements all parameters. Connection probes must verify the selected model/server.
 Personal ChatGPT authentication and bounded foreground tools use the owner-scoped
-[provider flow](providers.md). Claude official CLI execution remains pending.
+[provider flow](providers.md). Claude official CLI text has a separate optional process transport and saved Runtime path; see [official CLI execution](claude-execution.md). Actual Linux isolation and official-account acceptance remain pending. Tools, catalog and observed effort are unavailable.
 Protocol support alone does not establish account eligibility or enable a capability.
 
 Events distinguish text, explicit refusal, message metadata, optional usage and

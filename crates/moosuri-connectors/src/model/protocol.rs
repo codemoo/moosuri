@@ -103,6 +103,8 @@ pub enum ModelEvent {
         phase: Option<AssistantPhase>,
     },
     UsageSnapshot(Usage),
+    /// Cumulative per-model CLI query-pipeline evidence, independent of answer model.
+    UsageBreakdown(Vec<(String, Usage)>),
     Finished {
         outcome: FinishOutcome,
         /// A validated protocol reason, never an arbitrary provider error body.
@@ -2164,6 +2166,7 @@ mod tests {
                 ModelEvent::RefusalDelta { .. } => "refusal",
                 ModelEvent::UsageSnapshot(_) => "usage",
                 ModelEvent::Finished { .. } => "finished",
+                ModelEvent::UsageBreakdown(_) => "usage_breakdown",
             })
             .collect()
     }

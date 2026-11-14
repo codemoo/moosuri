@@ -11,7 +11,7 @@
 | OpenAI API | 설치 공용 또는 개인 API key | Rust Responses adapter, 실제 모델별 tools/stream/effort/media/usage 지원 검사 |
 | ChatGPT plan | 공식 Sign in with ChatGPT의 사용자별 동의·workspace | 자체 OSS 앱용 공식 흐름. plan usage 허용과 모델 가용성을 검사; 한 사용자의 구독을 전체 가족 pool로 취급하지 않음 |
 | Anthropic API | 공용 또는 개인 API key | Rust Messages adapter. 구독과 별도 과금이며 tool result/stop reason/token 의미를 자체 변환 |
-| Claude 구독 | 각 사용자 본인의 공식 Claude Code 로그인 | 변경하지 않은 CLI를 격리 실행하는 선택 통합. 자체 Rust ModelPort에 Claude.ai OAuth token을 전달하는 방식은 제공하지 않음. durable/tool/격리 검증 전 unavailable |
+| Claude 구독 | 각 사용자 본인의 공식 Claude Code 로그인 | 변경하지 않은 CLI를 격리 실행하는 선택 통합. 자체 Rust ModelPort에 Claude.ai OAuth token을 전달하는 방식은 제공하지 않음. 선택적 텍스트 실행·개인 설정/probe/선택·저장 Runtime 경로 구현; 실제 Linux 격리·공식 로그인 수락 전 unavailable |
 | OpenRouter | 공용 또는 개인 API key | Responses 또는 검증한 Chat Completions adapter, model catalog·실제 route·privacy/fallback·usage를 기록 |
 | Ollama | 설치자가 등록한 local/LAN endpoint, 필요시 proxy auth | OpenAI-compatible subset 또는 native adapter; 설치된 model별 tool/stream/image 지원 확인 |
 | LM Studio | 등록한 local/LAN endpoint·server auth 설정 | OpenAI-compatible Responses/Chat endpoint, model별 tool/chat template와 capability 확인 |
@@ -61,6 +61,8 @@ function tools는 명시적으로 검증한 capability만 사용하며 고정 `m
 Anthropic 문서는 자체 제품/Agent SDK에는 API key 또는 지원 cloud를 사용하도록 한다. Claude.ai OAuth/session cookie 추출·중계는 지원하지 않는다. 별도 조건을 지킨 변경 없는 공식 Claude Code hosting은 가능하며 각 사용자가 자기 계정으로 인증하고 직접 과금된다. CLI를 선택 설치할 때 외부 runtime/라이선스/버전·기능 차이를 표시한다. 기본 Rust 서버 실행에 필수로 넣지 않는다.
 
 독립 user home·공식 auth UX·세션 mapping·OS sandbox를 유지한다. Moosuri가 subscription bearer token을 읽어 자체 HTTP adapter로 재사용하지 않는다. CLI가 직접 내는 임의 shell/외부 효과와 Moosuri receipt 계약을 자동 동등 취급하지 않는다. typed tool bridge·취소·미완료 checkpoint 재개·outcome_unknown 처리·리소스 격리를 검증해야 해당 업무를 활성화한다. 이 검증이 안 되면 API adapter를 기본으로 유지하고 공식 CLI 연결은 제한 상태로 남긴다.
+
+[공식 CLI 텍스트 실행](claude-execution.md)에 byte-pinned rootless Docker profile, 개인 로그인 도우미, 정확한 text probe와 저장 Runtime, 삭제·철회·정리 ACK 범위를 기록했다. tools/catalog/관측 effort는 제공하지 않으며 합성 child 검사를 실제 CLI·계정 수락으로 표시하지 않는다.
 
 ## 로컬 모델과 네트워크
 

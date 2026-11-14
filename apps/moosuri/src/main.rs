@@ -65,6 +65,12 @@ enum Command {
     },
     #[command(hide = true, name = "internal-pdf-text")]
     InternalPdfText,
+    #[command(hide = true, name = "internal-claude-run")]
+    InternalClaudeRun {
+        mode: String,
+        model: Option<String>,
+        session: Option<String>,
+    },
     /// Author or check local instruction packages without an installation.
     Skills {
         #[command(subcommand)]
@@ -139,6 +145,9 @@ enum Command {
         /// Owner-only JSON for an already verified isolated Linux browser deployment.
         #[arg(long)]
         browser_capsule_file: Option<PathBuf>,
+        /// Optional verified rootless Linux official Claude Code execution profile.
+        #[arg(long)]
+        claude_profile_file: Option<PathBuf>,
         /// Public GitHub repository hosting contributor-generated static catalog files.
         #[arg(long,requires_all=["community_catalog_ref","community_catalog_directory"])]
         community_catalog_repository: Option<String>,
@@ -285,6 +294,21 @@ fn main() {
     }
 }
 async fn run(cli: Cli) -> Result<(), String> {
+    if let Command::InternalClaudeRun {
+        mode,
+        model,
+        session,
+    } = &cli.command
+    {
+        return moosuri_connectors::claude_code::helper_main(
+            mode,
+            model.as_deref(),
+            session.as_deref(),
+        )
+        .await
+        .map_err(|_| "claude_execution_failed".into());
+    }
+
     if let Command::WorkSessions { command } = &cli.command {
         return work_sessions::run(command).await;
     }
@@ -398,6 +422,9 @@ async fn run(cli: Cli) -> Result<(), String> {
             unreachable!("installation runs without ordinary data admission")
         }
         Command::InternalPdfText => unreachable!("PDF extraction does not open installation state"),
+        Command::InternalClaudeRun { .. } => {
+            unreachable!("container helper does not open installation state")
+        }
         Command::Skills { .. } | Command::Subscriptions { .. } | Command::WorkSessions { .. } => {
             unreachable!("native helpers run without installation state")
         }
@@ -616,6 +643,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             recovery_target_id,
             web_search_key_file,
             browser_capsule_file,
+            claude_profile_file,
             community_catalog_repository,
             community_catalog_ref,
             community_catalog_directory,
@@ -668,6 +696,12 @@ async fn run(cli: Cli) -> Result<(), String> {
                         .transpose()?,
                 )
                 .map_err(str::to_owned)?;
+            if let Some(path) = claude_profile_file {
+                let json = read_browser_capsule_file(&path)?;
+                config = config
+                    .with_claude_profile_json(&json)
+                    .map_err(str::to_owned)?;
+            }
             if let Some(path) = browser_capsule_file {
                 config = config
                     .with_browser_capsule_json(&read_browser_capsule_file(&path)?)

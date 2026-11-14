@@ -1,3 +1,4 @@
+import {ClaudeExecutionSettings} from "./ClaudeExecutionSettings";
 import {AudioSettingsPanel} from "./AudioSettings";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type {
@@ -35,7 +36,7 @@ const names: Record<ProviderKind, string> = {
 function selectionKey(selection: ModelSelection | null) {
   return selection
     ? JSON.stringify([
-        ...(selection.source === "personal_chat_gpt" ? [selection.source] : []),
+        ...(selection.source && selection.source !== "shared" ? [selection.source] : []),
         selection.provider_id,
         selection.provider_revision,
         selection.model,
@@ -45,7 +46,7 @@ function selectionKey(selection: ModelSelection | null) {
 }
 function choiceSelection(choice: ModelChoice): ModelSelection {
   return {
-    ...(choice.source === "personal_chat_gpt" ? {source:choice.source} : {}),
+    ...(choice.source && choice.source !== "shared" ? {source:choice.source} : {}),
     provider_id: choice.provider_id,
     provider_revision: choice.provider_revision,
     model: choice.model,
@@ -53,7 +54,7 @@ function choiceSelection(choice: ModelChoice): ModelSelection {
   };
 }
 function choiceLabel(choice: ModelChoice) {
-  return `${choice.source === "personal_chat_gpt" ? "내 ChatGPT · " : ""}${choice.provider_name} · ${choice.model} · ${choice.effort ?? "기본 강도"}`;
+  return `${choice.source === "personal_chat_gpt" ? "내 ChatGPT · " : choice.source === "personal_claude_code" ? "내 공식 Claude · " : ""}${choice.provider_name} · ${choice.model} · ${choice.effort ?? "기본 강도"}`;
 }
 function currentChoices(provider: ProviderSummary) {
   if (
@@ -213,6 +214,7 @@ export function PersonalModelSettings({ accountId, onExpired }: Props) {
           {notice}
         </p>
       )}
+      <ClaudeExecutionSettings accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} />
       <PersonalChatGpt accountId={accountId} onExpired={onExpired} choices={settings?.choices ?? []} onVerified={()=>setRetry(v=>v+1)} />
       <section className="admin-card">
         <div className="section-heading">

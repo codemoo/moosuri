@@ -277,6 +277,16 @@ async fn event(
             }
             pending.identity = true;
         }
+        ModelEvent::UsageBreakdown(values) => {
+            checkpoint
+                .store
+                .record_claude_usage_breakdown(
+                    checkpoint.lease,
+                    values.into_iter().map(|(m, u)| (m, usage(u))).collect(),
+                )
+                .await
+                .map_err(|_| RunFailure::ConnectionFailed)?;
+        }
         ModelEvent::UsageSnapshot(value) => {
             pending.usage = Some(usage(value));
         }
@@ -552,8 +562,17 @@ struct Observation {
     round: Option<ToolRound>,
     pending: Pending,
 }
-async fn stream_round(
-    client: &ModelClient,
+enum TextExecutor<'a> {
+    Http(&'a ModelClient),
+    Claude(&'a moosuri_connectors::claude_code::Profile, &'a str),
+}
+impl<'a> From<&'a ModelClient> for TextExecutor<'a> {
+    fn from(client: &'a ModelClient) -> Self {
+        Self::Http(client)
+    }
+}
+async fn stream_round<'a>(
+    client: impl Into<TextExecutor<'a>>,
     request: &TextRequest,
     tools: Option<&ToolRequest<'_>>,
     checkpoint: &Checkpoint<'_>,
@@ -568,15 +587,20 @@ async fn stream_round(
         function_tools: true,
     };
     let operation = async {
-        match tools {
-            Some(tools) => client
+        match (client.into(), tools) {
+            (TextExecutor::Http(client), Some(tools)) => client
                 .stream_tool_round(tools, &capability, &tx, &cancellation)
                 .await
                 .map(Some),
-            None => client
+            (TextExecutor::Http(client), None) => client
                 .stream_text(request, &tx, &cancellation)
                 .await
                 .map(|()| None),
+            (TextExecutor::Claude(profile, environment), None) => profile
+                .stream_text(environment, request, &tx, &cancellation)
+                .await
+                .map(|()| None),
+            _ => Err(TransportError::InvalidConfiguration),
         }
     };
     tokio::pin!(operation);
@@ -727,6 +751,20 @@ pub(crate) async fn execute_with_calendar(
             RunState::Failed,
             Some(RunFailure::ProviderUnavailable),
             &signals,
+        )
+        .await;
+        return;
+    }
+    if let Some(reference) = binding.claude_code.take() {
+        execute_claude_text(
+            &store,
+            &lease,
+            &signals,
+            &subscriptions,
+            reference,
+            messages,
+            context,
+            media_context || !images.is_empty() || !documents.is_empty(),
         )
         .await;
         return;
@@ -1021,7 +1059,7 @@ pub(crate) async fn execute_with_calendar(
             expected_model: &request.model,
         };
         let observed = match stream_round(
-            &client,
+            TextExecutor::Http(&client),
             &request,
             model.function_tools.then_some(&tool_request),
             &checkpoint,
@@ -1366,6 +1404,172 @@ async fn execute_tool_inner(
                 }
             };
             retry_local(|| store.complete_external_tool(&permit, result.clone())).await
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // Preserve the existing run/step/authority lifetimes explicitly.
+async fn execute_claude_text(
+    store: &Store,
+    lease: &RunLease,
+    signals: &Signals,
+    subscriptions: &crate::subscriptions::SubscriptionService,
+    reference: moosuri_store::ClaudeExecutionRef,
+    messages: Vec<ContextMessage>,
+    context: AgentContext,
+    has_media: bool,
+) {
+    if has_media || context.checkpoint.is_some() || !context.calls.is_empty() {
+        finish(
+            store,
+            lease,
+            None,
+            RunState::Failed,
+            Some(RunFailure::ProtocolFailed),
+            signals,
+        )
+        .await;
+        return;
+    }
+    let profile = match subscriptions.claude_profile().await {
+        Ok(p) if p.digest() == reference.profile_digest => p,
+        _ => {
+            finish(
+                store,
+                lease,
+                None,
+                RunState::Failed,
+                Some(RunFailure::ProviderUnavailable),
+                signals,
+            )
+            .await;
+            return;
+        }
+    };
+    let model = match store.check_run(lease).await {
+        Ok(()) => match store.claude_run_model(lease).await {
+            Ok(v) => v,
+            Err(_) => return,
+        },
+        Err(_) => return,
+    };
+    let request = TextRequest {
+        model: model.clone(),
+        effort: None,
+        max_output_tokens: 4096,
+        messages: project(messages, false),
+    };
+    // Pure local validation cannot consume a remote dispatch reservation.
+    if moosuri_connectors::claude_code::protocol::input(
+        &request,
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002",
+    )
+    .is_err()
+    {
+        finish(
+            store,
+            lease,
+            None,
+            RunState::Incomplete,
+            Some(RunFailure::ContextLimit),
+            signals,
+        )
+        .await;
+        return;
+    }
+    // This durable existing dispatch receipt precedes process launch and stdin.
+    let step = match store.begin_agent_step(lease, context.checkpoint_seq).await {
+        Ok(s) => s,
+        Err(e) => {
+            let (state, error) = store_failure(&e);
+            finish(store, lease, None, state, Some(error), signals).await;
+            return;
+        }
+    };
+    let checkpoint = Checkpoint {
+        store,
+        lease: &step,
+        signals,
+        expected_model: &model,
+    };
+    let observed = stream_round(
+        TextExecutor::Claude(&profile, &reference.environment_id),
+        &request,
+        None,
+        &checkpoint,
+        lease,
+        0,
+        true,
+    )
+    .await;
+    match observed {
+        Ok(o) if o.pending.terminal == Some(FinishOutcome::Completed) && o.pending.has_text => {
+            if retry_local(|| {
+                store.commit_agent_step(
+                    &step,
+                    PrivateCheckpoint {
+                        bytes: br#"{"v":1,"kind":"text_terminal"}"#.to_vec(),
+                    },
+                    vec![],
+                )
+            })
+            .await
+            .is_ok()
+            {
+                finish(
+                    store,
+                    lease,
+                    Some(&step),
+                    RunState::Completed,
+                    None,
+                    signals,
+                )
+                .await;
+            } else {
+                finish(
+                    store,
+                    lease,
+                    Some(&step),
+                    RunState::OutcomeUnknown,
+                    Some(RunFailure::ConnectionFailed),
+                    signals,
+                )
+                .await;
+            }
+        }
+        Ok(_) => {
+            finish(
+                store,
+                lease,
+                Some(&step),
+                RunState::OutcomeUnknown,
+                Some(RunFailure::ProtocolFailed),
+                signals,
+            )
+            .await
+        }
+        Err((_, failure)) => {
+            let reason = if matches!(
+                failure,
+                RunFailure::Interrupted
+                    | RunFailure::TimedOut
+                    | RunFailure::ProtocolFailed
+                    | RunFailure::ConnectionFailed
+            ) {
+                failure
+            } else {
+                RunFailure::ProtocolFailed
+            };
+            finish(
+                store,
+                lease,
+                Some(&step),
+                RunState::OutcomeUnknown,
+                Some(reason),
+                signals,
+            )
+            .await
         }
     }
 }

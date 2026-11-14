@@ -1,6 +1,6 @@
 # 설치·관리자·사용자 흐름
 
-목표는 **설치 한 번, 웹 설정 몇 단계**다. 아래 통합 초기 마법사는 목표 명세다. 현재 `init`/`serve`, 계정·로그인·로컬 초대, 웹 모델 설정과 Google 설치 설정을 사용할 수 있다. [개발 실행 안내](development.md)를 따른다. `/admin/google`의 [Google 마법사](mail.md)는 콜백 복사·웹 클라이언트 JSON 등록·본인 연결 확인을 제공한다. 각 회원의 Google 동의와 메일함은 분리되며 선택한 시스템 발신자의 초대 이메일은 아래 별도 최종 확인 흐름을 제공한다. 통합 웹 bootstrap·일반 설치 패키지는 아직 미구현이다.
+목표는 **설치 한 번, 웹 설정 몇 단계**다. 아래 통합 초기 마법사는 목표 명세다. 현재 `init`/`serve`, 계정·로그인·로컬 초대, 웹 모델 설정과 Google 설치 설정을 사용할 수 있다. [개발 실행 안내](development.md)를 따른다. `/admin/google`의 [Google 마법사](mail.md)는 콜백 복사·웹 클라이언트 JSON 등록·본인 연결 확인을 제공한다. 각 회원의 Google 동의와 메일함은 분리되며 선택한 시스템 발신자의 초대 이메일은 아래 별도 최종 확인 흐름을 제공한다. [로컬 서명 bundle 설치/관리](local-installation.md)는 명시적 key pin과 같은 schema의 stopped update에 한해 제공한다. 공식 release package·통합 웹 bootstrap과 전체 설치 수락은 아직 미완료다.
 
 ## 설치 방식
 

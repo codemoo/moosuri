@@ -18,6 +18,10 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 fn main() {
+    println!(
+        "cargo:rustc-env=MOOSURI_BUILD_TARGET={}",
+        env::var("TARGET").unwrap()
+    );
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../../web/dist");
     println!("cargo:rerun-if-changed={}", root.display());
     let mut files = Vec::new();

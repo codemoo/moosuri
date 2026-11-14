@@ -3,5 +3,5 @@
 - [x] Native pairing/signed transport, polling and retained-work reconciliation
 - [x] Durable user request/status/reuse and personal experimental page
 - [x] Focused synthetic native/server/web verification
-- [ ] Independent security/integration acceptance
+- [x] Independent security review accepted expiry repair; integrated Linux native/Store/HTTP, migration/restore and web acceptance recorded.
 - [ ] Google and model-tool waiting integration (next slice, not P8 complete)

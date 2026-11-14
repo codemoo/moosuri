@@ -10,7 +10,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 영역 | 구현한 범위 | 남은 경계와 사용·증거 |
 | --- | --- | --- |
-| 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 초대 메일/gws·일반 installer/update/uninstall은 진행 중. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
+| 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/같은 schema의 stopped update/데이터 보존 제거도 구현했다. 공식 release·cross-schema update·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
 | 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경 | media/background·Claude 실행·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·검색, 직접 기억·정정·망각, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 여섯 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 복합 업무 학습/export·예약 needs_skill/GC는 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
@@ -20,8 +20,27 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 빠진 값을 다음 답변으로 보완하고 직전 업무 영수증으로 제어한다. 넓은 자연어/시간 해석·Calendar/mail/browser/vault 미션 실행은 미완료. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
 | Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 확인 질문의 다음 답변·직전 일정 지칭·기간을 유지한 날짜 이동을 지원한다. 미션 Calendar·반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
-| 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·broker 실제 adapter/사용 흐름·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
+| 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽는다. 채팅 연결·live-vault rotation·Google adapter·ongoing/off-host journal·과거 복구·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 초대 메일·native credential·설치
+
+People에서 계정 생성/암호 재발급 후 초대 내용을 미리 보고 명시적으로 허락해 보낸다.
+선택한 gws 시스템 발신자를 사용하고, 결과 불명은 재발송하지 않는다. 계정 삭제 후 도착한
+늦은 발송 영수증도 지운 수신인/본문 정보를 되살리지 않는다. 실제 Gmail 발송은 검증하지 않았다.
+
+실험적 native companion은 사용자가 로컬에서 연 암호화 vault archive의 credential로
+정확히 지정한 GitHub 저장소를 읽고, 같은 범위의 연결을 재사용한다. secret은 모델이나
+비서 서버에 전달하지 않는다. 현재는 설정 화면의 명시적 요청이며 채팅 연결·Google·현재
+live-vault 회전 추적·서명 companion 배포는 남는다. 기본 서버에서는 feature가 꺼져 있다.
+
+명시적 공개 키로 신뢰한 로컬 bundle을 설치하고, 서비스를 멈춘 상태에서 같은 DB schema의
+새 바이너리로 업데이트한다. 중단된 활성화 복구와 데이터 보존 제거도 제공한다. 독립 검토에서
+ACL 경계·Tailscale 로그인·credential 만료 시각 결함을 수정했다. Linux 실제 설치 생명주기,
+관련 저장/복구/스키마/HTTP와 React 검사를 통과했다. 공식 release나 전체 P8/P10 완료는 아니다.
+[초대 메일](reviews/2026-11-14-invitation-email.md) ·
+[native credential](reviews/2026-11-14-native-github-credential.md) ·
+[설치](reviews/2026-11-14-local-installation.md).
 
 ## 최근 수락한 단위 · 개인 절차 공유
 
@@ -303,15 +322,15 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P3 자료·기억 | 출처·기억 정정/망각·제한 추출·문서 | 장기/시간 사실·추출 품질의 독립 검증 |
 | P4 도구·학습 | typed 도구·bounded 실행·Git 스킬·제안·읽기 미션·제한된 개인 학습/두 입력 proof/재사용 | 복합 절차·범용 학습 export·실모델 효용/품질 검증 |
 | P5 예약·소식 | due loop·반복 회차·알림·quiet hours·예약별 소식 제어·Push | 전체 알림/제안 정책·실기기 수신·고정 메일 외 예약 외부 작업 |
-| P6 외부 연결 | Gmail/Calendar·공식/커스텀 수집·공개 웹·브라우저 | gws 초대·배송/통화 feed·실계정 |
+| P6 외부 연결 | Gmail/Calendar·공식/커스텀 수집·공개 웹·브라우저·승인된 gws 초대 | 배송/통화 feed·실계정 |
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
-| P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 broker 기반 | broker 실제 adapter/사용 흐름·호환 이전·독립 최신 복구 |
+| P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 native GitHub credential 조회 | 채팅 waiting/resume·Google adapter·live-vault rotation·호환 이전·독립 최신 복구 |
 | P9 이전·전환 | 계약과 제한된 합성 복구 | private importer·대조·drain/cutover/rollback 실증 |
-| P10 출시 | 개발 프리뷰와 공개 문서 | 간편 설치/update/uninstall·서명/SBOM·품질/기기/출시 gate |
+| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/같은 schema update/제거 | 공식 서명 배포·arm64·cross-schema update·SBOM·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기를 수락했고, 고정 비교 baseline과 넓은 품질 평가는 남는다.
-P4의 정확 계산·저장 자료 조회 학습과 새 입력 재사용도 수락했다. 복합 업무·공유·실모델
+P4의 정확 계산·저장 자료 조회 학습·새 입력 재사용·알려진 절차의 합성 공유도 수락했다. 복합 업무·실모델
 검증은 남은 계약으로 유지한다. 새로운 내부 작업명을 제품 계획의 P 번호로 사용하지 않는다.
 CI는 사용자 지시에 따라 계속 비활성이다.
 
@@ -324,7 +343,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    이를 고정한 격리 실행 baseline·공통 fixture adapter와 실행 설정을 연결한다.
    초기 독립 상태/영수증 grader와 실패를 포함한 관측
    latency/usage 집계는 구현했으며 넓은 사례·실모델·단계별 계측으로 확장한다.
-   ongoing/off-host journal·과거 복구, 지원 구독 실행 범위·gws 초대는
+   ongoing/off-host journal·과거 복구와 지원 구독 실행 범위는
    해당 저장/연결 의존성과 함께 닫는다.
 2. **P3/P4 기억·학습·업무 수행**: 초기 합성 평가와 계산/자료 조회의 typed 학습·
    두 입력 proof는 구현했다. 기억·대화·미션·스킬의 독립 품질 평가와 복합 절차로
@@ -336,11 +355,11 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    Calendar 미션·반복/종일/참석자/보조 캘린더는 현재 지원 범위에 포함하지 않는다.
 4. **P7 첨부·모바일**: 파일/음성 공유의 실제 OS 전달, 실제 음성 인식·OS 공유 메뉴·Push·키보드/스크롤·
    접근성을 지원 기기에서 검증한다.
-5. **P8 볼트와 credential 사용**: 수락한 broker 기반에 실제 typed adapter·최초 연결/
-   잠금 대기/자동 재사용 UX를 연결하고, online commitment/revoke·offline resume·
-   secret 비노출·독립 최신 복구·구 v1 호환/이전을 검증한다. 계정 삭제 outbox는 구현·통합 검증했다.
+5. **P8 볼트와 credential 사용**: 실제 native GitHub adapter·archive unlock·scope 재사용과
+   명시적 요청 화면은 구현했다. 채팅 잠금 대기/재개·Google adapter·live-vault rotation,
+   독립 최신 복구·구 v1 호환/이전·서명 배포를 이어 구현한다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: private importer/대조·제한 cutover·rollback,
-   signed Linux x86_64/arm64 설치·update/drain/uninstall·SBOM,
+   수락한 Linux x86_64 로컬 서명 설치/같은 schema update/제거를 공식 artifact·arm64·cross-schema update·SBOM으로 확장하고,
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 
@@ -366,3 +385,5 @@ F14의 bounded STT는 구현했고 실제 provider/device 검증은 남는다. �
 
 과거 단위별 경과·시험 수·수정 내용은 [정리 전 누적 기록](reviews/2026-11-13-status-history.md)에 보존했다.
 새 세션은 README → 이 문서 → 필요한 영역 문서/날짜별 증거 순서로 읽는다.
+
+새 [실모델 평가 연결 진단](reviews/2026-11-14-live-quality-probe.md)에서는 공식 로그인으로 텍스트 probe가 통과했으나 도구 결과 후 최종 답이 빈 상태가 두 번 관측됐다. 도구 capability를 우회하지 않았으며 새11개 의미 시나리오는 `not_run`이다. 기존 성적을 새 검증 결과로 재사용하지 않는다.

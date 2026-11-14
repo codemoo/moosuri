@@ -8,9 +8,10 @@ accounts, durable chat with bounded tab-refresh draft recovery, private knowledg
 read-only missions from chat or forms, personal Gmail with provider drafts and approved fixed scheduled sends, bounded Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
 opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
-The experimental [credential-broker foundation](docs/credential-broker-foundation.md)
-adds device pairing and signed commitments behind a default-off feature; actual vault
-credential use in tasks remains unfinished.
+The experimental [native credential companion](docs/native-credential-github.md)
+can unlock an encrypted vault archive locally and read one exact GitHub repository
+with a selected credential. Its routes remain default-off; general chat integration,
+live-vault rotation and signed companion distribution remain unfinished.
 Account deletion clears active private data and delivers durable deletion to the separate vault.
 Every mail send needs the user's explicit approval of its final preview, including scheduled timing. Unknown sends
 have conservative read-only Sent checks and are never automatically resent.
@@ -28,6 +29,7 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 ## Start
 
 - [Development quickstart](docs/development.md): build, init, shared API/local model settings and run the embedded web app. LLM configuration can be skipped while setting up accounts.
+- [Local signed installation](docs/local-installation.md): install an explicitly trusted native bundle, update a stopped installation within the same schema, recover interrupted activation and remove runtime files while retaining data. Official release bundles are not yet published.
 - [Current status](docs/status.md): implemented bounds, evidence and next work. Optional vault/broker packages are still required v1 deliverables; the full product is not complete.
 - [Requirements](docs/requirements.md) · [feature contracts](docs/features.md) · [rewrite plan](docs/plan.md) · [migration order](docs/migration.md).
 
@@ -38,7 +40,7 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 - [Task skills](docs/task-skills.md) · [private learned routes](docs/learned-skills.md) · [community packages](docs/community-skills.md) · [missions](docs/missions.md) · [reminders/inbox](docs/schedules.md) · [Web Push](docs/web-push.md).
 - [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [public web research](docs/web-research.md) · [private browser workspaces](docs/browser-workspaces.md).
 - [Images](docs/media.md) · [files and text PDFs](docs/private-files.md) · [PWA](docs/pwa.md) · [vault service/client](docs/vault-service-client.md) · [encrypted vault archive](docs/vault-archive.md) · [vault service recovery](docs/vault-service-recovery.md) · [credential broker contract](docs/credential-use.md).
-- [Stopped encrypted export](docs/backup.md) · [sealed-current restore](docs/restore.md) · [release/installation contracts](docs/public-release.md). Ongoing historical/off-host recovery and general update/uninstall are still pending.
+- [Stopped encrypted export](docs/backup.md) · [sealed-current restore](docs/restore.md) · [release/installation contracts](docs/public-release.md). Ongoing historical/off-host recovery and cross-schema updates are still pending.
 
 Account-owned Gmail/Slack collection and generic custom ingest expose scope, sync
 receipts and provenance. The operator configures one Google OAuth app; each member

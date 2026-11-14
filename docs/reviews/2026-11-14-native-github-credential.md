@@ -47,3 +47,14 @@ the actual workflow regression; subsequent native entry performs zero additional
 HTTP requests and settles positively not-dispatched. The affected workflow1/1 and
 broker all-target Clippy/CLI compilation passed after this narrow repair. No full
 suite expansion or live provider activity was performed for it.
+
+## Integrated acceptance
+
+The original independent reviewer accepted the fresh-clock repair. The integrated
+Linux actual signed Store/archive/HTTP workflow and existing native/writer suites
+passed with schemas42/43/44 preserved, followed by related accounts, migration,
+restore/backup and experimental broker HTTP. Personal UI2 and web type/build passed.
+No real repository credential or provider account was used. General chat use,
+Google, live-vault current-head tracking and signed distribution remain separate.
+
+The final integrated Linux Clippy (`-D warnings`), default app/companion build, generated API type comparison and plan verifier passed. The first Clippy pass flagged the one-time CLI command enum size after the new options; it is explicitly documented as a single startup value. Only the affected Clippy/build/type/plan phases reran; previously passing behavior checks were not repeated.

@@ -641,6 +641,28 @@ pub(crate) fn write_archive<W: Write>(
 pub fn create(root: &Path, output: &Path) -> Result<ExportSummary> {
     let started = Instant::now();
     let offline = Offline::open(root)?;
+    create_captured(&offline, output, started)
+}
+
+/// Verified stopped snapshot retaining the original exclusive writer lock.
+/// Same-schema binary maintenance only; no migration or historical rollback.
+pub struct MaintenanceGuard {
+    offline: Offline,
+}
+impl MaintenanceGuard {
+    pub fn open(root: &Path) -> Result<Self> {
+        Ok(Self {
+            offline: Offline::open(root)?,
+        })
+    }
+    pub fn schema_version(&self) -> i64 {
+        CURRENT_SCHEMA_VERSION
+    }
+    pub fn encrypted_export(&self, output: &Path) -> Result<ExportSummary> {
+        create_captured(&self.offline, output, Instant::now())
+    }
+}
+fn create_captured(offline: &Offline, output: &Path, started: Instant) -> Result<ExportSummary> {
     let output = files::output_path(&offline.root, output)?;
     let config = configuration(&offline.conn)?;
     let epoch = config.retained_epochs.last().ok_or(Error::Unconfigured)?;

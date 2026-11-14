@@ -68,3 +68,16 @@ and multiline React text matcher. No failed gate is represented as passed.
 Independent review, HTTP/platform integration and real operator/device/provider
 readiness are separate remaining acceptance. No changes were made to legacy
 collector/cron/services/DB, CI or personal account auth state.
+
+## Integrated acceptance
+
+Independent review accepted the frozen invitation unit. Integration preserves
+continuation42, invitation43 and native credential44 in ordinary open and restore.
+The Linux Store3 and native connector2 checks passed; the existing Store case now
+also deletes a committed target account, accepts the original late provider receipt,
+and verifies that erased recipient/subject/text/provider metadata stay erased.
+Related account deletion, migrations, encrypted restore/backup and experimental
+broker HTTP passed in the same integrated gate. React12 and the complete web
+TypeScript/production build passed. This is not live gws/Google send acceptance.
+
+The final integrated Linux Clippy (`-D warnings`), default app/companion build, generated API type comparison and plan verifier passed. The first Clippy pass flagged the one-time CLI command enum size after the new options; it is explicitly documented as a single startup value. Only the affected Clippy/build/type/plan phases reran; previously passing behavior checks were not repeated.

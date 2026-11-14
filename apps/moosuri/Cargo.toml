@@ -13,6 +13,9 @@ test-fixtures = ["moosuri-connectors/test-fixtures", "moosuri-server/test-fixtur
 
 [dependencies]
 moosuri-connectors = { path = "../../crates/moosuri-connectors" }
+ring = "0.17"
+sha2 = "0.10"
+semver = "1"
 serde.workspace = true
 uuid.workspace = true
 zeroize = "1.8"

@@ -1,7 +1,7 @@
 # Run the development preview
 
 Build and run the current development preview with the commands below. This is not
-an installer or a stable release. [Current status](status.md) is the canonical map
+a stable release. The separate [local signed bundle manager](local-installation.md) supports explicitly pinned local previews and stopped same-schema updates. [Current status](status.md) is the canonical map
 of supported behavior, validation limits and remaining work. Every email send
 requires explicit approval of its final preview.
 

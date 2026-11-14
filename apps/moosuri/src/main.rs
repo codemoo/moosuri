@@ -16,6 +16,7 @@ use std::{
 };
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+mod installation;
 mod skills;
 mod subscriptions;
 
@@ -37,7 +38,14 @@ enum RecoveryRole {
 }
 
 #[derive(Subcommand)]
+// One startup value, never a collection or hot-path allocation. Keep clap's flat CLI.
+#[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Verify/install/manage a local signed native bundle. No system services are changed.
+    Installation {
+        #[command(subcommand)]
+        command: installation::Command,
+    },
     /// Personal model sign-in on this computer.
     Subscriptions {
         #[command(subcommand)]
@@ -196,6 +204,9 @@ fn main() {
     }
 }
 async fn run(cli: Cli) -> Result<(), String> {
+    if let Command::Installation { command } = &cli.command {
+        return installation::run(command);
+    }
     if let Command::Subscriptions { command } = &cli.command {
         return subscriptions::run(command).await;
     }
@@ -214,6 +225,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         print!("{}", moosuri_core::typescript_contract());
         return Ok(());
     }
+    let _managed_lock = installation::guard_managed_executable()?;
     let data = cli
         .data_dir
         .or_else(default_data_dir)
@@ -222,6 +234,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         return Err("data_directory_must_be_absolute".into());
     }
     match cli.command {
+        Command::Installation { .. } => {
+            unreachable!("installation runs without ordinary data admission")
+        }
         Command::InternalPdfText => unreachable!("PDF extraction does not open installation state"),
         Command::Skills { .. } | Command::Subscriptions { .. } => {
             unreachable!("native helpers run without installation state")

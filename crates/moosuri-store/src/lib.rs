@@ -214,6 +214,10 @@ struct LoginAccount {
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
 const CURRENT_SCHEMA_VERSION: i64 = 44;
+/// Public compatibility metadata; opening state still requires normal admission.
+pub fn schema_version() -> i64 {
+    CURRENT_SCHEMA_VERSION
+}
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const TEMP_SECONDS: i64 = 24 * 60 * 60;
 // Public dummy PHC with the same Argon2id work parameters as account hashes.

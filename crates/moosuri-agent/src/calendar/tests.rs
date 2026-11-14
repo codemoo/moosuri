@@ -39,7 +39,7 @@ impl FixtureObservation {
             && moosuri_connectors::calendar::matches_fields(&self.event, mutation)
     }
 }
-pub(super) struct FixtureIo {
+pub(crate) struct FixtureIo {
     primary_calls: AtomicUsize,
     event_calls: Mutex<Vec<String>>,
     writes: Mutex<Vec<WriteRecord>>,
@@ -76,15 +76,24 @@ impl FixtureIo {
             self.release.acquire().await.unwrap().forget();
         }
     }
-    async fn reached(&self) {
+    pub(crate) async fn reached(&self) {
         tokio::time::timeout(std::time::Duration::from_secs(5), self.entered.acquire())
             .await
             .unwrap()
             .unwrap()
             .forget();
     }
-    fn write_count(&self) -> usize {
+    pub(crate) fn write_count(&self) -> usize {
         self.writes.lock().unwrap().len()
+    }
+    pub(crate) fn set_write_mode(&self, mode: u8) {
+        self.write_mode.store(mode, Ordering::SeqCst);
+    }
+    pub(crate) fn hold_next_mutation(&self) {
+        self.hold_mutation.store(true, Ordering::SeqCst);
+    }
+    pub(crate) fn release_mutation(&self) {
+        self.release.add_permits(1);
     }
     pub(super) async fn primary(&self) -> Result<CalendarInfo, GmailError> {
         self.primary_calls.fetch_add(1, Ordering::SeqCst);
@@ -277,14 +286,31 @@ async fn fixture() -> (
         .await
         .unwrap()
         .user;
-    let begin = store.start_calendar_oauth(&owner, pin()).await.unwrap();
+    let (changes, _) = watch::channel(0);
+    let signals = Signals {
+        stop: CancellationToken::new(),
+        wake: Arc::new(Notify::new()),
+        changes,
+        delivery: Arc::new(tokio::sync::RwLock::new(())),
+    };
+    let (service, connection, io) = fixture_for_owner(store, &owner, signals).await;
+    (d, service, owner, connection, io)
+}
+/// Attach existing counted typed IO through ordinary Calendar OAuth completion.
+/// No alternate production endpoint or unchecked account carrier is introduced.
+pub(crate) async fn fixture_for_owner(
+    store: Store,
+    owner: &UserContext,
+    signals: Signals,
+) -> (CalendarService, CalendarConnection, Arc<FixtureIo>) {
+    let begin = store.start_calendar_oauth(owner, pin()).await.unwrap();
     let handle = store
         .capture_calendar_oauth(begin.state, Some(secret("synthetic-code")))
         .await
         .unwrap()
         .unwrap();
     let exchange = store
-        .claim_calendar_oauth(&owner, handle, pin())
+        .claim_calendar_oauth(owner, handle, pin())
         .await
         .unwrap();
     let connection = store
@@ -305,13 +331,6 @@ async fn fixture() -> (
         )
         .await
         .unwrap();
-    let (changes, _) = watch::channel(0);
-    let signals = Signals {
-        stop: CancellationToken::new(),
-        wake: Arc::new(Notify::new()),
-        changes,
-        delivery: Arc::new(tokio::sync::RwLock::new(())),
-    };
     let mail = MailService::new(
         store.clone(),
         Some(Arc::new(OAuthClient {
@@ -327,7 +346,7 @@ async fn fixture() -> (
         mail,
         io: Arc::new(CalendarIo::Fixture(io.clone())),
     };
-    (d, service, owner, connection, io)
+    (service, connection, io)
 }
 fn create(c: &CalendarConnection) -> CalendarChange {
     CalendarChange {

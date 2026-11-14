@@ -178,7 +178,7 @@ F59의 개인 ChatGPT text 연결에 보호된 native Linux 전달을 추가했�
 세션을 보존하며 staged revision과 서명 검증 후 원자적으로 교체하고, 응답 유실은 원래
 영수증으로 확인한다. 전송용 로그인은 발급 시10분/purpose 제한이며 일반 계정·볼트·대화
 권한이 없다. Native/Linux·독립 검토·실제 OpenSSH/Rust/합성 제공업체 네 장애 시나리오와
-저장 대화를 검증했다. [근거](reviews/2026-11-14-chatgpt-vm-handoff.md). 이후 개인 foreground 도구는 아래 단위로 수락했으며, 개인 Calendar 변경/media/background,
+저장 대화를 검증했다. [근거](reviews/2026-11-14-chatgpt-vm-handoff.md). 이후 개인 foreground 도구는 아래 단위로 수락했으며, media/background,
 Claude 실행, 실계정/운영 trust와 릴리스 설치까지 완료했다는 뜻은 아니다.
 
 F67/F68의 공개 GitHub 스킬에 설정한 정적 목록의 발견·ETag/offline 캐시·선택 패키지의
@@ -191,7 +191,7 @@ F24/F59의 개인 ChatGPT foreground 도구는 schema36의 소유자/연결 revi
 확인을 통과해야 한다. 이전 text run을 승격하지 않고, 매 모델 round의 현재 연결과 token
 readiness를 확인하며 기존 저장 읽기·계산·연결 읽기/로컬 초안 경계를 재사용한다. 일반 member의
 native SSH 전달→실제 API text/tool 확인→저장 자료/계산→서버 재시작 후 답변·근거 보존을
-검증했다. [근거](reviews/2026-11-14-personal-chatgpt-tools.md). 개인 Calendar 변경/media/background,
+검증했다. [근거](reviews/2026-11-14-personal-chatgpt-tools.md). media/background,
 실계정 수락을 뜻하지 않는다. 기존 복합 도구 수 상한은 아래 별도 단위로 수정했다.
 
 F19/F15의 기존 현재 사용자 typed 기억/자료 변경을 개인 ChatGPT foreground에도 연결했다.
@@ -202,3 +202,9 @@ F19/F15의 기존 현재 사용자 typed 기억/자료 변경을 개인 ChatGPT 
 F24의 기존 전체 읽기/초안21개 정의가16개 transport 제한으로 실패하던 결함은32개 상한으로
 수정했다. 크기/실행/권한 제한을 유지하며 실제 실패·두 transport의 이어지는 호출·경계값과
 리눅스 프로토콜 회귀를 검증했다. [근거](reviews/2026-11-14-combined-tool-profiles.md).
+
+F37/F59의 제한된 현재 대화 Calendar 생성·같은 날짜 수정·삭제를 개인 ChatGPT에도 연결했다.
+정확한 개인 text/tool 확인과 현재 연결을 요구하며 기존 단일 timed solo-event 서비스와
+영수증을 재사용한다. 구독 연결 해제 시 미완료 작업은 철회하고 완료한 기록은 보존한다.
+연결이 없으면 설정으로 안내하고 새 요청을 받는다. 미션·반복/종일/참석자/보조 캘린더·
+실계정 및 언어 이해 평가는 포함하지 않는다. [검증](reviews/2026-11-14-personal-chatgpt-calendar.md).

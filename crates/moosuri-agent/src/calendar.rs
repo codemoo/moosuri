@@ -376,6 +376,12 @@ impl CalendarService {
                 )
                 .await;
         }
+        if cmd.profile.connections.is_empty() {
+            return self
+                .store
+                .finish_calendar_chat(l, Some("connection_needed".into()))
+                .await;
+        }
         let result = async {
             let q = self.store.calendar_agent_range(l).await?;
             let b = self.binding(&cmd.user, q.connection_id.clone()).await?;
@@ -535,4 +541,4 @@ fn lookup_result(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

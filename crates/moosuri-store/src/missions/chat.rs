@@ -10,6 +10,7 @@ pub struct Planning {
     pub timezone: Option<String>,
     pub selected_kind: Option<String>,
     pub calendar: Option<CalendarRunProfile>,
+    pub calendar_only: bool,
 }
 fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|_| StoreError::InvalidInput)
@@ -25,6 +26,14 @@ pub(crate) fn admit(
 ) -> Result<()> {
     if r.tool_profile.is_none() || crate::media::has_context(c, &r.tenant, &r.id)? {
         return Ok(());
+    }
+    if r.model.source == ModelSource::PersonalChatGpt {
+        if context.and_then(|v| v.target.as_ref()).is_some() {
+            return Err(StoreError::Forbidden);
+        }
+        if crate::calendar::agent::profile(c, &r.tenant, &r.id)?.is_none() {
+            return Ok(());
+        }
     }
     if let Some(t) = context.and_then(|v| v.target.as_ref())
         && (!matches!(t.kind.as_str(), "one_off" | "recurring")
@@ -160,6 +169,26 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
     }
     Ok(())
 }
+// Personal foreground Calendar shares the envelope, never mission authority.
+// Repeat this predicate before effect preflight/application as well as recording.
+fn allowed_mission_decision(r: &Run, d: &MissionChatDecision) -> Result<()> {
+    if r.model.source == ModelSource::PersonalChatGpt
+        && (d.decision != "no_command"
+            || d.action.is_some()
+            || d.target_kind.is_some()
+            || d.intent_quote.is_some()
+            || d.task_quote.is_some()
+            || d.constraints_quote.is_some()
+            || d.time_quote.is_some()
+            || d.target_quote.is_some()
+            || d.instruction_quote.is_some()
+            || d.time.is_some()
+            || d.clarification.is_some())
+    {
+        return Err(StoreError::Forbidden);
+    }
+    Ok(())
+}
 /// Called only inside the same transaction that acknowledges the completed model step.
 pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
     let value: serde_json::Value =
@@ -191,6 +220,7 @@ pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
     )
     .map_err(|_| StoreError::InvalidInput)?;
     original_authority(c, r)?;
+    allowed_mission_decision(r, &d)?;
     validate(&r.text, &d)?;
     let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting') AND EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
     if !valid || crate::media::has_context(c, &r.tenant, &r.id)? {
@@ -753,6 +783,7 @@ fn preflight(db: &mut Database, l: &crate::RunLease) -> Result<Option<StoreError
     };
     let u = original_authority(&tx, &r)?;
     let d: MissionChatDecision = decode(&raw)?;
+    allowed_mission_decision(&r, &d)?;
     validate(&r.text, &d)?;
     let pristine:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|row|row.get(0))?;
     if !pristine || crate::media::has_context(&tx, &r.tenant, &r.id)? {
@@ -831,7 +862,7 @@ impl Store {
         self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
         retry_authority(&tx,&r)?;
         let attempted:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans p JOIN agent_execution e ON e.tenant_id=p.tenant_id AND e.run_id=p.run_id WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.state='awaiting' AND e.remote_calls>0)",params![r.tenant,r.id],|r|r.get(0))?;if attempted{return Err(StoreError::Conflict)}
-        let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{calendar:crate::calendar::agent::profile(&tx,&r.tenant,&r.id)?,anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
+        let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{calendar_only:r.model.source==ModelSource::PersonalChatGpt,calendar:crate::calendar::agent::profile(&tx,&r.tenant,&r.id)?,anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
     }
     /// None means not yet decided; Some(false) continues ordinary chat without reclassification.
     pub async fn apply_mission_chat(&self, lease: &crate::RunLease) -> Result<Option<bool>> {
@@ -849,7 +880,7 @@ impl Store {
             if state=="awaiting"{original_authority(&tx,&r)?;return Ok(None)}
  if state=="passed"{return Ok(Some(false))}
  if state!="decided"{return Err(StoreError::Conflict)}
-            let u=original_authority(&tx,&r)?;let d:MissionChatDecision=decode(&decision.ok_or(StoreError::Corrupt)?)?;validate(&r.text,&d)?;
+            let u=original_authority(&tx,&r)?;let d:MissionChatDecision=decode(&decision.ok_or(StoreError::Corrupt)?)?;allowed_mission_decision(&r,&d)?;validate(&r.text,&d)?;
             if crate::media::has_context(&tx,&r.tenant,&r.id)?{return Err(StoreError::Conflict)}
             let pristine:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
             if !pristine{return Err(StoreError::Conflict)}

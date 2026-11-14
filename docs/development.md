@@ -224,7 +224,12 @@ Each planner resolves current personal access before its model request. Confirma
 come from actual Store receipts; a prepared memory retry can finish without another
 model call. Record-writing stages use saved evidence only and omit live external read
 definitions. See [local-write acceptance](reviews/2026-11-14-personal-chatgpt-writes.md).
-Personal Calendar mutations, background delegation and media remain separate.
+Tool-verified personal chat can also create, edit within the same date, or delete an
+explicit timed solo event on the connected primary Calendar. Missing Calendar access
+links to `/settings/calendar`; connect there and send a new request. A disconnected
+personal model retires unfinished Calendar work while retaining completed history.
+See [Calendar acceptance](reviews/2026-11-14-personal-chatgpt-calendar.md). Background
+delegation, recurring/all-day/attendee/secondary-calendar writes and media remain separate.
 
 ### Optional public community catalog
 

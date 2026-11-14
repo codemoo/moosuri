@@ -136,8 +136,41 @@ pub(crate) fn cancel(c: &Connection, r: &Run) -> Result<()> {
     )?;
     Ok(())
 }
+/// A personal model disconnect retires unfinished Calendar commands, including
+/// retryable attempts. Completed history belongs to the user and remains intact.
+pub(crate) fn invalidate_subscription(
+    c: &Connection,
+    tenant: &str,
+    account: &str,
+    binding: &str,
+    revision: i64,
+) -> Result<()> {
+    let runs = c.prepare("SELECT r.id FROM chat_runs r JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.state!='completed' AND e.invalidated=0 AND json_extract(r.model,'$.source')='personal_chat_gpt' AND json_extract(r.model,'$.provider_id')=?3 AND json_extract(r.model,'$.provider_revision')=?4 AND (EXISTS(SELECT 1 FROM calendar_command_plans p WHERE p.tenant_id=r.tenant_id AND p.run_id=r.id) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins o WHERE o.tenant_id=r.tenant_id AND o.run_id=r.id))")?
+        .query_map(params![tenant, account, binding, revision], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for run in &runs {
+        c.execute(
+            "UPDATE calendar_agent_action_origins SET withdrawn=1 WHERE tenant_id=?1 AND run_id=?2",
+            params![tenant, run],
+        )?;
+    }
+    agent_execution::purge_runs(c, tenant, runs)
+}
 pub(crate) fn action_private_current(c: &Connection, t: &str, id: &str) -> Result<bool> {
-    Ok(c.query_row("SELECT NOT EXISTS(SELECT 1 FROM calendar_agent_action_origins WHERE tenant_id=?1 AND action_id=?2) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins o JOIN calendar_agent_profiles p ON p.tenant_id=o.tenant_id AND p.run_id=o.run_id JOIN chat_runs r ON r.tenant_id=p.tenant_id AND r.id=p.run_id JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE o.tenant_id=?1 AND o.action_id=?2 AND o.withdrawn=0 AND e.invalidated=0 AND r.state IN('running','completed'))",params![t,id],|r|r.get(0))?)
+    let current: bool = c.query_row("SELECT NOT EXISTS(SELECT 1 FROM calendar_agent_action_origins WHERE tenant_id=?1 AND action_id=?2) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins o JOIN calendar_agent_profiles p ON p.tenant_id=o.tenant_id AND p.run_id=o.run_id JOIN chat_runs r ON r.tenant_id=p.tenant_id AND r.id=p.run_id JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE o.tenant_id=?1 AND o.action_id=?2 AND o.withdrawn=0 AND e.invalidated=0 AND r.state IN('running','completed'))",params![t,id],|r|r.get(0))?;
+    if !current {
+        return Ok(false);
+    }
+    // Fence late in-flight settlement even when personal authority disappears
+    // through another lifecycle path. Do not hide already-completed history.
+    let running: Option<String> = c.query_row("SELECT r.id FROM calendar_agent_action_origins o JOIN chat_runs r ON r.tenant_id=o.tenant_id AND r.id=o.run_id WHERE o.tenant_id=?1 AND o.action_id=?2 AND r.state='running'",params![t,id],|r|r.get(0)).optional()?;
+    if let Some(id) = running {
+        let r = crate::chat::load_run(c, t, &id)?;
+        if r.model.source == ModelSource::PersonalChatGpt {
+            return Ok(crate::subscriptions::binding(c, &r.tenant, &r.account, &r.model).is_ok());
+        }
+    }
+    Ok(true)
 }
 pub(crate) fn purge_thread(c: &Connection, t: &str, thread: &str) -> Result<()> {
     c.execute("UPDATE calendar_actions SET payload=NULL,event=NULL,state=CASE WHEN state='dispatch_committed' THEN 'outcome_unknown' ELSE state END,version=version+1 WHERE tenant_id=?1 AND id IN(SELECT o.action_id FROM calendar_agent_action_origins o JOIN chat_runs r ON r.tenant_id=o.tenant_id AND r.id=o.run_id WHERE r.tenant_id=?1 AND r.thread_id=?2)",params![t,thread])?;
@@ -590,6 +623,9 @@ pub(crate) fn receipt(c: &Connection, r: &Run) -> Result<Option<CalendarChatRece
 }
 fn message(state: &str) -> &'static str {
     match state {
+        "connection_needed" => {
+            "Calendar 연결이 필요해요. /settings/calendar 에서 내 Google Calendar를 연결한 뒤 새 요청을 보내 주세요. 아직 변경하지 않았어요. / Connect your Calendar in settings and send a new request. No change was made."
+        }
         "applied" => "일정 변경을 적용했어요. / Calendar change applied.",
         "conflict" => "일정이 변경되어 적용하지 않았어요. / Event changed; no update was applied.",
         "failed_definite" => "일정 변경이 거절되었어요. / Calendar change was rejected.",
@@ -685,7 +721,7 @@ impl Store {
         state: Option<String>,
     ) -> Result<bool> {
         let l = l.clone();
-        self.call(move|db|{let tx=db.conn.transaction()?;let r=crate::chat::guard(&tx,&db.provider_key,&l)?;let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_command_plans WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;if !exists{return Ok(false)}
+        self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l) {Ok(r)=>r,Err(error)=>{tx.commit()?;return Err(error)}};let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_command_plans WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;if !exists{return Ok(false)}
             let receipt=if let Some(state)=state {let cmd=command(&tx,&db.provider_key,&l)?.ok_or(StoreError::Conflict)?;CalendarChatReceipt{action_id:None,operation:cmd.decision.operation.unwrap_or_else(||cmd.decision.decision.clone()),state:state.clone(),event_id:None,provider_etag:None,message:message(&state).into()}}else{let Some(receipt)=receipt(&tx,&r)? else{return Ok(false)};receipt};finish(&tx,&r,receipt)?;tx.commit()?;Ok(true)}).await
     }
     pub async fn calendar_read_event_id(

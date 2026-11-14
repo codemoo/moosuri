@@ -1256,3 +1256,131 @@ async fn target_guard_survives_failed_confirmation_and_revocation_purge_is_not_a
         assert!(receipt.target.is_none());
     }
 }
+
+#[tokio::test]
+async fn personal_source_envelope_rejects_mission_record_and_corrupted_decided_effect_before_control()
+ {
+    let _g = TEST_LOCK.lock().await;
+    for action in [
+        "create_now",
+        "pause",
+        "resume",
+        "cancel",
+        "steer",
+        "edit_time",
+    ] {
+        let (_d, s, u) = setup().await;
+        let text = "Synthetic task pause resume cancel steer every day at 09:00";
+        let (_, l) = source(&s, &u, text, None).await;
+        let login = s
+            .begin_subscription_login(&u, None, "Synthetic metadata guard".into())
+            .await
+            .unwrap();
+        let b = login.binding;
+        let seed = b.clone();
+        s.call(move|db|{
+            // Metadata-only guard test, following subscription capability tests.
+            // No fake cipher is decrypted and no verified identity is constructed.
+            db.conn.execute("UPDATE chatgpt_bindings SET status='active' WHERE id=?1",[&seed.id])?;
+            db.conn.execute("INSERT INTO chatgpt_sessions(tenant_id,account_id,binding_id,revision,generation,cipher,expires_at,plan_enabled) VALUES(?1,?2,?3,?4,1,x'00',9999999999,1)",params![seed.tenant,seed.account,seed.id,seed.revision])?;Ok(())
+        }).await.unwrap();
+        let b = crate::SubscriptionRef {
+            model: "synthetic".into(),
+            effort: None,
+            ..b
+        };
+        s.record_subscription_probe(&u, b.clone()).await.unwrap();
+        s.record_subscription_tool_probe(&u, b.clone())
+            .await
+            .unwrap();
+        let lease = l.clone();
+        s.call(move |db| {
+            let raw: String = db.conn.query_row(
+                "SELECT model FROM chat_runs WHERE tenant_id=?1 AND id=?2",
+                params![lease.tenant, lease.run],
+                |r| r.get(0),
+            )?;
+            let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            v["source"] = serde_json::json!("personal_chat_gpt");
+            v["provider_id"] = serde_json::json!(b.id);
+            v["provider_revision"] = serde_json::json!(b.revision);
+            db.conn.execute(
+                "UPDATE chat_runs SET model=?3 WHERE tenant_id=?1 AND id=?2",
+                params![lease.tenant, lease.run, encode(&v)?],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let mut d = decision(text, false);
+        d.action = Some(action.into());
+        if action != "create_now" {
+            d.task_quote = None;
+            d.target_kind = Some("one_off".into());
+            d.target_quote = Some("Synthetic task".into());
+        }
+        if action == "steer" {
+            d.instruction_quote = Some("steer".into());
+        }
+        if action == "edit_time" {
+            d.time_quote = Some("every day at 09:00".into());
+            d.time = Some(MissionChatTime::Daily {
+                time: "09:00".into(),
+            });
+        }
+        let ctx = s.agent_context(&l).await.unwrap();
+        let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+        let bytes = serde_json::json!({"kind":"mission_chat_decision","decision":d})
+            .to_string()
+            .into_bytes();
+        assert!(matches!(
+            s.commit_agent_step(&step, PrivateCheckpoint { bytes }, vec![])
+                .await,
+            Err(StoreError::Forbidden)
+        ));
+        let lease = l.clone();
+        let raw = encode(&d).unwrap();
+        s.call(move|db|{
+            let state:String=db.conn.query_row("SELECT state FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2",params![lease.tenant,lease.run],|r|r.get(0))?;assert_eq!(state,"awaiting");
+            // Simulate an old/misrouted persisted decision independently of recorder.
+            db.conn.execute("UPDATE mission_chat_plans SET state='decided',decision=?3 WHERE tenant_id=?1 AND run_id=?2",params![lease.tenant,lease.run,raw])?;Ok(())
+        }).await.unwrap();
+        assert!(matches!(
+            s.apply_mission_chat(&l).await,
+            Err(StoreError::Forbidden)
+        ));
+        assert!(s.missions(&u).await.unwrap().is_empty());
+        assert!(s.recurring_missions(&u).await.unwrap().is_empty());
+        let old = l.clone();
+        s.call(move |db| {
+            db.conn.execute(
+                "DELETE FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2",
+                params![old.tenant, old.run],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(
+            s.mission_chat_planning(&l).await.unwrap().is_none(),
+            "old personal runs are never backfilled with an envelope"
+        );
+        s.call(|db| {
+            assert_eq!(
+                db.conn
+                    .query_row("SELECT count(*) FROM mission_chat_commands", [], |r| r
+                        .get::<_, i64>(0))?,
+                0
+            );
+            assert_eq!(
+                db.conn
+                    .query_row("SELECT count(*) FROM calendar_actions", [], |r| r
+                        .get::<_, i64>(0))?,
+                0
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+}

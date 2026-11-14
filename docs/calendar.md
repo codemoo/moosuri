@@ -113,3 +113,20 @@ literal 기억 명령은 기존 격리·정확 인용 계약을 유지한다.
 같은 취소 transaction에서 제거한다. 취소 뒤 Retry는 이전 요청을 다시 분류하거나 쓰기를
 되살리지 않는다. 이미 나간 작업의 늦은 성공도 최소 영수증만 기록하며, 새 명시적 사용자
 메시지는 별도 요청이다. 이 취소 철회는 로그아웃 시 완료된 저장 대화를 보존하는 정책과 별개다.
+
+
+## 개인 ChatGPT foreground 연결
+
+정확한 개인 계정/연결 revision/model/effort의 text와 tools 확인을 마친 모델도 위의 현재 요청 Calendar 작업을 사용한다. 별도 write probe나 승인 창은 추가하지 않는다. 현재 메시지만 분류하는 plan namespace 호출이 Calendar domain 또는 모든 추가 값이 null인 no_command만 제안할 수 있다. 개인 mission 생성·예약·제어는 Store의 결정 저장·preflight·실행 경계에서 거절하며, Calendar 작업을 미래에 실행하는 위임으로 바꾸지 않는다.
+
+분류 전에는 P4와 같은 RunLease/token refresh CAS 및 plan preflight를 사용한다. 이미 봉인한 Calendar 요청은 새 모델 client나 분류보다 먼저 같은 UUID로 이어 간다. 실제 작업 영수증이 있으면 새 Google 쓰기나 마지막 모델 문장으로 재확인하지 않는다. 불명 결과 조회는 원래 ID만 읽으며 자동 재전송하지 않는다. 현재 요청 취소·로그아웃·연결/app 철회는 기존 private 결과 철회와 최소 영수증 계약을 유지한다. 개인 연결을 사용할 때도 참석자·반복·종일·보조 캘린더·background·첨부의 범위를 확대하지 않는다.
+
+기존 개인 실행에 Calendar 해석 envelope를 소급 추가하지 않는다. 새 개인 turn에는 현재 Calendar profile을 고정하고 제한된 해석 경로를 접수한다. 연결 pin이 없으면 기존 typed receipt가 연결 필요 상태와 `/settings/calendar` 안내를 표시하며 쓰기를 하지 않는다. 이후 연결해도 이전 pin이 비어 있던 요청을 자동 실행하지 않고 새 요청을 받아야 한다. 계정이나 provider 이름으로 Calendar 권한을 추정하지 않는다. 합성 signed OAuth/plan classifier와 counted typed Calendar IO 검증은 실제 ChatGPT/Google 계정 동의·정책·모델 의미 정확도 검증을 대신하지 않는다.
+
+
+개인 ChatGPT 연결을 해제하면 그 정확한 연결 revision에 봉인한 미완료 Calendar 명령과
+진행 중 효과의 private payload/event·계획·관측·출력을 같은 transaction에서 철회한다.
+이미 Google에 나간 작업은 적용됐을 수 있으므로 원래 UUID와 최소 영수증/불명 상태는
+보존하지만, 늦은 응답이나 같은 개인 계정의 재연결·Retry가 private 결과나 이전 쓰기를
+되살리지 않는다. 이미 완료된 Calendar 대화의 문장·영수증·이벤트는 모델 연결 해제만으로
+삭제하지 않으며, Calendar 자체 철회와 기존 계정·세션 정책은 별도로 적용한다.

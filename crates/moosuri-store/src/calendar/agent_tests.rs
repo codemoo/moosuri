@@ -884,3 +884,78 @@ async fn calendar_cancellation_withdrawal_and_private_purge_commit_atomically_an
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn calendar_personal_disconnect_retires_private_storage_before_late_settlement() {
+    let _g = TEST_LOCK.lock().await;
+    for state in ["applied", "outcome_unknown"] {
+        let (_dir, s, u, connection) = setup().await;
+        let (_thread, lease) = source(&s, &u, TEXT, None).await;
+        commit(&s, &lease, &decision(TEXT)).await;
+        let binding = s.calendar_binding(&u, connection.id, app()).await.unwrap();
+        let CalendarAdmission::Dispatch(dispatch) = s
+            .admit_calendar_agent_change(&lease, &binding, primary(), None)
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let registration = s
+            .begin_subscription_login(&u, None, "Synthetic missing-token metadata".into())
+            .await
+            .unwrap();
+        let personal = registration.binding;
+        let run = lease.run_id().to_owned();
+        let tenant = u.tenant.0.clone();
+        s.call({ let b=personal.clone(); let run=run.clone(); move |db| {
+            // Metadata-only lifecycle test: no session, fake cipher or verified
+            // identity is created. Signed end-to-end auth is covered in agent.
+            db.conn.execute("UPDATE chatgpt_bindings SET status='active' WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![b.tenant,b.account,b.id])?;
+            let raw:String=db.conn.query_row("SELECT model FROM chat_runs WHERE tenant_id=?1 AND id=?2",params![b.tenant,run],|r|r.get(0))?;
+            let mut choice:serde_json::Value=serde_json::from_str(&raw).unwrap();
+            choice["source"]=serde_json::json!("personal_chat_gpt");
+            choice["provider_id"]=serde_json::json!(b.id);
+            choice["provider_revision"]=serde_json::json!(b.revision);
+            db.conn.execute("UPDATE chat_runs SET model=?3 WHERE tenant_id=?1 AND id=?2",params![b.tenant,run,json(&choice)?])?;
+            Ok(())
+        }}).await.unwrap();
+        assert!(
+            s.begin_subscription_disconnect(&u, personal.id, personal.revision)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let mut observed = event(&dispatch);
+        if let CalendarMutation::Create { fields } = &dispatch.change.mutation {
+            observed.fields = fields.clone();
+        }
+        let result = s
+            .settle_calendar_change(
+                &dispatch,
+                state.into(),
+                if state == "applied" {
+                    Some(observed)
+                } else {
+                    None
+                },
+                "minimum-late-receipt".into(),
+                None,
+            )
+            .await;
+        let id = dispatch.change.request_id.clone();
+        s.call(move |db| {
+            let raw:(bool,bool,bool,String,bool)=db.conn.query_row("SELECT a.payload IS NULL,a.event IS NULL,o.withdrawn,r.state,e.invalidated FROM calendar_actions a JOIN calendar_agent_action_origins o ON o.tenant_id=a.tenant_id AND o.action_id=a.id JOIN chat_runs r ON r.tenant_id=o.tenant_id AND r.id=o.run_id JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE a.tenant_id=?1 AND a.id=?2",params![tenant,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
+            assert_eq!(raw,(true,true,true,"incomplete".into(),true),"raw private storage and active origin must be retired before any conversation projection");
+            let ledger:(String,String)=db.conn.query_row("SELECT state,receipt FROM calendar_actions WHERE tenant_id=?1 AND id=?2",params![tenant,id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            assert_eq!(ledger,(state.into(),"minimum-late-receipt".into()));
+            assert_eq!(db.conn.query_row("SELECT count(*) FROM chat_output WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|r.get::<_,i64>(0))?,0);
+            Ok(())
+        }).await.unwrap();
+        assert!(matches!(result, Err(StoreError::Unauthorized)));
+        assert!(
+            s.retry_run(&u, lease.run_id().into(), lease.attempt())
+                .await
+                .is_err()
+        );
+    }
+}

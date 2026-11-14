@@ -104,6 +104,9 @@ async fn fixture() -> Fixture {
   ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],format!("data: {text}\n\ndata: {done}\n\ndata: [DONE]\n\n")).into_response()
  }))
  .route("/v1/responses",post(|State(s):State<Arc<Provider>>,headers:axum::http::HeaderMap,Json(body):Json<Value>|async move{
+  if body.get("tools").is_some() && s.tool_mode.load(Ordering::SeqCst)>=20 {
+    return calendar_tests::response(&s,&headers,&body).await;
+  }
   if body.get("tools").is_some() && s.tool_mode.load(Ordering::SeqCst)>0 {
     return foreground_tools_tests::tool_response(&s,&headers,&body).await;
   }
@@ -132,8 +135,15 @@ fn service(store: Store, f: &Fixture) -> SubscriptionService {
     s
 }
 async fn login(s: &SubscriptionService, u: &UserContext) -> LocalLoginLaunch {
+    login_binding(s, u, None).await
+}
+async fn login_binding(
+    s: &SubscriptionService,
+    u: &UserContext,
+    binding: Option<(String, i64)>,
+) -> LocalLoginLaunch {
     let launch = s
-        .local_login(u, None, "Personal fixture".into())
+        .local_login(u, binding, "Personal fixture".into())
         .await
         .unwrap();
     let url = url::Url::parse(&launch.authorization_url).unwrap();
@@ -1489,3 +1499,6 @@ async fn vm_import_waiting_for_real_jwks_cannot_outlive_authority_or_binding() {
 mod combined_tools_tests;
 #[path = "foreground_tools_tests.rs"]
 mod foreground_tools_tests;
+
+#[path = "calendar_tests.rs"]
+mod calendar_tests;

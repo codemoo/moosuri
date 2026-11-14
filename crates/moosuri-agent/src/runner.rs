@@ -631,6 +631,20 @@ pub(crate) async fn execute(
     web: crate::web::Service,
     subscriptions: crate::subscriptions::SubscriptionService,
 ) {
+    let calendar = crate::calendar::CalendarService::new(store.clone(), mail.clone());
+    execute_with_calendar(store, claimed, signals, mail, web, subscriptions, calendar).await;
+}
+// Normal execution always constructs the fixed official Calendar service above.
+// Tests can supply the existing counted typed IO without an alternate HTTP origin.
+pub(crate) async fn execute_with_calendar(
+    store: Store,
+    claimed: AgentClaim,
+    signals: Signals,
+    mail: crate::mail::MailService,
+    web: crate::web::Service,
+    subscriptions: crate::subscriptions::SubscriptionService,
+    calendar: crate::calendar::CalendarService,
+) {
     match store.mission_execution(&claimed.lease).await {
         Ok(Some(_)) => {
             mission::execute(store, claimed, signals, mail, web).await;
@@ -678,19 +692,16 @@ pub(crate) async fn execute(
         .await;
         return;
     }
-    let calendar = crate::calendar::CalendarService::new(store.clone(), mail.clone());
-    if !personal {
-        match calendar.chat(&lease).await {
-            Ok(true) => {
-                signals.changed();
-                return;
-            }
-            Ok(false) => {}
-            Err(_) => return,
+    match calendar.chat(&lease).await {
+        Ok(true) => {
+            signals.changed();
+            return;
         }
+        Ok(false) => {}
+        Err(_) => return,
     }
     // A completed typed intent resumes before any classifier or ordinary capsule handling.
-    if !personal {
+    {
         match store.apply_mission_chat(&lease).await {
             Ok(Some(true)) => {
                 signals.changed();
@@ -843,13 +854,11 @@ pub(crate) async fn execute(
                 .as_ref()
                 .map(|reference| (&subscriptions, reference)),
         };
-        if !personal {
-            let Some(next) = mission_chat::run(&planning, context, current_text, &mail).await
-            else {
-                return;
-            };
-            context = next;
-        }
+        let Some(next) = mission_chat::run(&planning, context, current_text, &calendar).await
+        else {
+            return;
+        };
+        context = next;
         let Some((next, next_profile)) =
             artifact_intent::plan(&planning, context, artifact_profile, current_text).await
         else {
@@ -874,7 +883,7 @@ pub(crate) async fn execute(
             .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
     }
     if personal && model.function_tools {
-        request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. Calendar changes, background delegation and media attachments remain unavailable; do not claim to perform them. Earlier descriptions of a Calendar mutation flow do not apply to this stage.");
+        request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. One explicit current-user solo-event Calendar command uses its separate typed action and actual receipt. Background delegation and media attachments remain unavailable; do not claim to perform them.");
     }
     // A write grant supports saved-evidence provenance only. Keep this common
     // across personal/shared providers; undeclared calls fail in the decoder.

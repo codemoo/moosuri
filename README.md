@@ -48,9 +48,11 @@ text-probed personal model selection and saved streamed chat, plus protected nat
 transfer to a personal HTTPS Linux server. Separately verified personal foreground tools
 support saved reads, exact calculation and the existing connected read/local-draft flows.
 Explicit current-user memory changes and source-grounded record creation/anchored edits
-use typed local operations and stored confirmations. Personal Calendar mutations,
-media and background work remain pending.
-See [foreground-tool acceptance](docs/reviews/2026-11-14-personal-chatgpt-tools.md)
+use typed local operations and stored confirmations. Personal Calendar also supports
+explicit primary-calendar timed solo-event creation, same-day edits and deletion
+through the existing typed service. Media and background work remain pending.
+See [foreground-tool acceptance](docs/reviews/2026-11-14-personal-chatgpt-tools.md),
+[personal Calendar](docs/reviews/2026-11-14-personal-chatgpt-calendar.md),
 and the [combined-tool limit repair](docs/reviews/2026-11-14-combined-tool-profiles.md). Synthetic protocol
 and lifecycle checks do not establish live account eligibility. Real device/provider acceptance remains bounded by
 [current status](docs/status.md); a model name or connection label does not prove support.

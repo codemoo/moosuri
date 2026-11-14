@@ -1051,14 +1051,12 @@ fn submit_turn_context_in(
         && context.as_ref().and_then(|c| c.target.as_ref()).is_none()
     {
         crate::calendar::agent::admit(tx, &current, context.as_ref().map(|c| c.timezone.as_str()))?;
-        if current.model.source != moosuri_core::ModelSource::PersonalChatGpt {
-            crate::missions::chat::admit(
-                tx,
-                &current,
-                context.as_ref().map(|c| c.timezone.as_str()),
-                mission.as_ref(),
-            )?;
-        }
+        crate::missions::chat::admit(
+            tx,
+            &current,
+            context.as_ref().map(|c| c.timezone.as_str()),
+            mission.as_ref(),
+        )?;
     }
     let run = load_run(tx, &run.tenant, &run.id)?;
     let result = turn(tx, &run)?;

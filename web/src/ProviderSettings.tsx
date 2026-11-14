@@ -1131,7 +1131,7 @@ function PersonalChatGpt({accountId, onExpired, onVerified, choices}: Props & {o
         <button onClick={() => setGuide(false)}>안내 닫기</button>
       </div>}
       <button disabled={busy} onClick={() => {void scope.request<PersonalBinding[]>("/settings/chatgpt").then(setItems).catch(fail);}}>연결 새로고침</button>
-      <p>개인 연결은 공유 기본값으로 등록되지 않습니다. 텍스트 확인 뒤 정확한 모델과 강도의 도구 연결을 따로 확인할 수 있습니다. 도구 확인 시 개인 자료·메일·Calendar 읽기와 로컬 메일 초안, 설정된 웹·브라우저를 사용할 수 있습니다. 메일 발송은 최종 내용을 보고 매번 허락해야 합니다. 명확한 현재 요청의 기억 저장/정정/망각과 문서/목표/요청 기록 생성·수정은 실제 저장 확인과 함께 지원합니다. 첨부·백그라운드 업무·Calendar 변경은 아직 지원하지 않습니다. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">ChatGPT 사용량</a></p>
+      <p>개인 연결은 공유 기본값으로 등록되지 않습니다. 텍스트 확인 뒤 정확한 모델과 강도의 도구 연결을 따로 확인할 수 있습니다. 도구 확인 시 개인 자료·메일·Calendar 읽기와 로컬 메일 초안, 설정된 웹·브라우저를 사용할 수 있습니다. 메일 발송은 최종 내용을 보고 매번 허락해야 합니다. 명확한 현재 요청의 기억 저장/정정/망각과 문서/목표/요청 기록 생성·수정은 실제 저장 확인과 함께 지원합니다. 명확한 단일 기본 Calendar 시간 일정의 생성·같은 날짜 수정·삭제도 별도 실제 영수증으로 확인합니다. 참석자·반복·종일 일정, 첨부·백그라운드 업무는 아직 지원하지 않습니다. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">ChatGPT 사용량</a></p>
       {notice && <p role="status">{notice}</p>}
       {items.map((binding) => (
         <div key={binding.id} role="group" aria-label={binding.label}>

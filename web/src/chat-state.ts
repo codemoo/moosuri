@@ -73,7 +73,7 @@ export function validRun(value: unknown): value is RunView {
       (object(value.calendar_receipt) &&
         (value.calendar_receipt.action_id===null || id(value.calendar_receipt.action_id)) &&
         ["create","update","delete","clarify","unsupported"].includes(String(value.calendar_receipt.operation)) &&
-        ["applied","dispatch_committed","outcome_unknown","conflict","failed_definite","observed_absent","quarantined","clarify","unsupported"].includes(String(value.calendar_receipt.state)) &&
+        ["applied","dispatch_committed","outcome_unknown","conflict","failed_definite","observed_absent","quarantined","clarify","unsupported","connection_needed"].includes(String(value.calendar_receipt.state)) &&
         (value.calendar_receipt.event_id===null || (typeof value.calendar_receipt.event_id==="string" && value.calendar_receipt.event_id.length<=1024)) &&
         (value.calendar_receipt.provider_etag===null || (typeof value.calendar_receipt.provider_etag==="string" && value.calendar_receipt.provider_etag.length<=512)) &&
         typeof value.calendar_receipt.message==="string" && value.calendar_receipt.message.length<=1024)) &&

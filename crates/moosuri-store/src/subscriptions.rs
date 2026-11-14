@@ -597,11 +597,16 @@ impl Store {
             let b=SubscriptionRef{
                 tenant:u.tenant.0,account:u.account.id,id,revision,model:String::new(),effort:None}
             ;
-            owned(&db.conn,&b)?;
-            let row:Option<(i64,Option<Vec<u8>>)>=db.conn.query_row("SELECT generation,cipher FROM chatgpt_sessions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4",params![b.tenant,b.account,b.id,b.revision],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-            db.conn.execute("UPDATE chatgpt_bindings SET status='revoking',remote_revoke='unconfirmed' WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND current_revision=?4",params![b.tenant,b.account,b.id,b.revision])?;
-            let bundle=row.and_then(|(g,c)|c.map(|v|(g,v))).map(|(g,c)|sealer(&db.provider_key).open(&c,&context(&db.conn,&b,Some(g))?).map_err(|_|StoreError::Corrupt)).transpose();
-            db.conn.execute("DELETE FROM chatgpt_sessions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3",params![b.tenant,b.account,b.id])?;
+            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            owned(&tx,&b)?;
+            let row:Option<(i64,Option<Vec<u8>>)>=tx.query_row("SELECT generation,cipher FROM chatgpt_sessions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4",params![b.tenant,b.account,b.id,b.revision],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+            let bundle=row.and_then(|(g,c)|c.map(|v|(g,v))).map(|(g,c)|sealer(&db.provider_key).open(&c,&context(&tx,&b,Some(g))?).map_err(|_|StoreError::Corrupt)).transpose();
+            tx.execute("UPDATE chatgpt_bindings SET status='revoking',remote_revoke='unconfirmed' WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND current_revision=?4",params![b.tenant,b.account,b.id,b.revision])?;
+            // Retire only unfinished Calendar work frozen to this exact binding.
+            // Completed conversation/effect history is not revoked by model sign-out.
+            crate::calendar::agent::invalidate_subscription(&tx,&b.tenant,&b.account,&b.id,b.revision)?;
+            tx.execute("DELETE FROM chatgpt_sessions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3",params![b.tenant,b.account,b.id])?;
+            tx.commit()?;
             bundle}
         ).await
     }

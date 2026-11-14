@@ -16,7 +16,7 @@ pub(super) async fn run(
     session: &PlanningSession<'_>,
     context: AgentContext,
     text: &str,
-    mail: &crate::mail::MailService,
+    calendar: &crate::calendar::CalendarService,
 ) -> Option<AgentContext> {
     let planning = match session.store.mission_chat_planning(session.lease).await {
         Ok(Some(v)) => v,
@@ -26,7 +26,12 @@ pub(super) async fn run(
             return None;
         }
     };
-    if !crate::mission_intent::candidate(text, planning.selected_kind.is_some()) {
+    let candidate = if planning.calendar_only {
+        crate::calendar_intent::candidate(text)
+    } else {
+        crate::mission_intent::candidate(text, planning.selected_kind.is_some())
+    };
+    if !candidate {
         if let Err(error) = session.store.skip_mission_chat(session.lease).await {
             failed(session, None, error).await;
             return None;
@@ -34,15 +39,27 @@ pub(super) async fn run(
         return Some(context);
     }
     let metadata = serde_json::to_string(&planning).ok()?;
-    let request = crate::mission_intent::request(
-        session.request.model.clone(),
-        session.request.effort.clone(),
-        text,
-        &metadata,
-    );
-    let definitions = crate::mission_intent::definitions();
+    let request = if planning.calendar_only {
+        crate::calendar_intent::personal_request(
+            session.request.model.clone(),
+            session.request.effort.clone(),
+            text,
+            &metadata,
+        )
+    } else {
+        crate::mission_intent::request(
+            session.request.model.clone(),
+            session.request.effort.clone(),
+            text,
+            &metadata,
+        )
+    };
+    let definitions = if planning.calendar_only {
+        crate::calendar_intent::personal_definitions()
+    } else {
+        crate::mission_intent::definitions()
+    };
     let (_, next, _) = planning_round(session, &context, &request, &definitions).await?;
-    let calendar = crate::calendar::CalendarService::new(session.store.clone(), mail.clone());
     match calendar.chat(session.lease).await {
         Ok(true) => {
             session.signals.changed();
@@ -84,16 +101,15 @@ async fn planning_round(
         continuation: None,
         results: &[],
     };
-    if encode_tool_request(
-        session.protocol,
-        &tools,
-        session.capabilities,
-        &ToolCapabilities {
-            function_tools: true,
-        },
-    )
-    .is_err()
-    {
+    let ready = match session.ready_client().await {
+        Ok(client) => client,
+        Err(e) => {
+            failed(session, None, e).await;
+            return None;
+        }
+    };
+    let client = ready.as_ref().unwrap_or(session.client);
+    if preflight_tools(client, session.protocol, &tools, session.capabilities).is_err() {
         finish(
             session.store,
             session.lease,
@@ -124,7 +140,7 @@ async fn planning_round(
         expected_model: &request.model,
     };
     let observed = match stream_round(
-        session.client,
+        client,
         request,
         Some(&tools),
         &checkpoint,

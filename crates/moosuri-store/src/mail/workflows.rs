@@ -73,10 +73,10 @@ impl Store {
             if c.status!="active" || pin!=(c.epoch,user.epoch) {return Err(StoreError::Conflict)}
             let expires=if let Some(s)=&input.schedule {
                 // One instant, <= one year; retain an explicit IANA zone for the
-                // preview. The worker gets at most 24h lateness after that instant.
+                // preview. F36 permits at most five minutes of lateness.
                 if s.due_at<=now()? || s.due_at>now()?+366*86400 || s.timezone.parse::<chrono_tz::Tz>().is_err() {return Err(StoreError::InvalidInput)}
                 tx.execute("INSERT INTO mail_schedules(tenant_id,action_id,due_at,timezone) VALUES(?1,?2,?3,?4) ON CONFLICT(tenant_id,action_id) DO UPDATE SET due_at=excluded.due_at,timezone=excluded.timezone,approved_revision=NULL,auth_epoch=NULL",params![user.tenant.0,id,s.due_at,s.timezone])?;
-                s.due_at+86400
+                s.due_at+300
             }else{
                 tx.execute("DELETE FROM mail_schedules WHERE tenant_id=?1 AND action_id=?2",params![user.tenant.0,id])?;
                 now()?+3600

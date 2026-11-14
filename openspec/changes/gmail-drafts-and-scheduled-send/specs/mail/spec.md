@@ -31,7 +31,7 @@ account, epoch, connection, source and background grant fences.
 #### Scenario: Logout, revocation and expiry
 - **WHEN** logout occurs alone
 - **THEN** separately approved scheduled work may remain active
-- **WHEN** account eligibility/epoch, connection, source or pinned grant is invalid or due+24h expires
+- **WHEN** account eligibility/epoch, connection, source or pinned grant is invalid or due+5min expires
 - **THEN** no new dispatch is authorized
 
 #### Scenario: Restart or uncertain scheduled result

@@ -253,5 +253,5 @@ This uses schema40 `mail_schedules` and the existing immutable mail dispatch bou
 not a reminder or recurring-mission grant. Saving timing alone cannot send. Timing
 or content edits require another full human approval; source/account/connection
 withdrawal fences it, logout alone leaves its separate approved background grant
-active, and due+24h expires it. Restore cancels/quarantines uncommitted mail authority.
+active, and due+5min expires it. Restore cancels/quarantines uncommitted mail authority.
 No recurring mail or due-time content generation is supported. See [mail](mail.md).

@@ -51,3 +51,15 @@ by hand for this handoff and need the normal generated-export equality check.
 No live Gmail account, OAuth exchange, email send, credential, production DB,
 collector, cron or legacy service was used or changed. All test mail addresses,
 HTTP origins, credentials and SQLite fixtures are synthetic.
+
+## Integrated acceptance
+
+The root regenerated shared DTOs and integrated schema40 alongside account deletion41
+and request continuations42. Linux actual Store/agent/connector mail tests, authenticated
+mail HTTP, predecessor migration and encrypted restore checks passed. Independent
+review additionally reproduced a stale timing callback enabling the wrong mail's
+approval; editor lifetime and identity fencing plus both held-response/reselection
+regressions passed. React affected flows, generated TypeScript and production build
+passed. The final dispatch limit now follows F36's five-minute lateness window;
+independent review confirmed expiry is checked at both claim and dispatch, and the
+focused assertion/expired regression passed on Linux. No real email was sent.

@@ -185,7 +185,7 @@ v1 비교는 CRLF/LF·헤더 줄접기·생성 Date만 정규화한다. 전체 �
 
 승인한 예약은 로그아웃 후에도 별도 background grant로 유지된다. 계정 상태·auth epoch·
 임시 계정 만료·연결 epoch/status/send scope·원문 철회와 pinned grant를 worker가 확인한다.
-시각이 지난 뒤 새 승인은 거절하며, 이미 승인한 작업은 due+24시간까지만 지연 실행한다.
+시각이 지난 뒤 새 승인은 거절하며, 이미 승인한 작업은 due+5분까지만 지연 실행한다.
 발송 commitment 전에는 **발송 취소**와 수정이 가능하고, 먼저 commitment가 된 요청은
 회수할 수 없다. 복원된 예약의 실행 grant는 제거되고 미발송 승인은 취소된다.
 

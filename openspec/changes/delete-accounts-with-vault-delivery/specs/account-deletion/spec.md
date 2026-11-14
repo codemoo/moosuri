@@ -32,3 +32,8 @@ encrypted historical journal/checkpoint bytes. Minimum opaque accounting and
 external-effect state MAY survive; unknown dispatch outcomes SHALL NOT be called
 cancelled. Active logical deletion SHALL NOT imply provider remote deletion,
 physical media secure erase or erasure of copies already exported to the user.
+
+#### Scenario: Completed logical deletion with retained encrypted backup
+- **WHEN** local cleanup and vault delivery have completed but historical encrypted copies remain
+- **THEN** People SHALL show completed delivery separately from historical retention
+- **AND** documentation SHALL preserve the limits on physical erasure and remote effects

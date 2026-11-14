@@ -5,13 +5,14 @@ A self-hosted assistant for individuals, families and friends.
 **Early development preview. Start with [current support and remaining work](docs/status.md).**
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat with bounded tab-refresh draft recovery, private knowledge and memories, editable records, bounded
-read-only missions from chat or forms, personal Gmail, bounded Calendar actions from chat or forms, browser workspaces, local reminders,
+read-only missions from chat or forms, personal Gmail with provider drafts and approved fixed scheduled sends, bounded Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
 opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
 The experimental [credential-broker foundation](docs/credential-broker-foundation.md)
 adds device pairing and signed commitments behind a default-off feature; actual vault
 credential use in tasks remains unfinished.
-Every mail send needs the user's explicit approval of its final preview. Unknown sends
+Account deletion clears active private data and delivers durable deletion to the separate vault.
+Every mail send needs the user's explicit approval of its final preview, including scheduled timing. Unknown sends
 have conservative read-only Sent checks and are never automatically resent.
 
 Suggestions can discover an explicitly configured public GitHub skill catalog,

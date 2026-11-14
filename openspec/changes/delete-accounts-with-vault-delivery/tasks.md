@@ -4,4 +4,4 @@
 - [x] Vault lifecycle outbox, exact idempotent delivery/ACK and service owner fence
 - [x] People deletion flow, separate local/vault status and retained-history disclosure
 - [x] Focused native and web verification
-- [ ] Independent integration/security review and publication evidence
+- [x] Independent integration/security review and publication evidence

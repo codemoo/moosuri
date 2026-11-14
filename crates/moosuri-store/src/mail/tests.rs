@@ -1250,6 +1250,7 @@ async fn scheduled_mail_account_grant_connection_source_and_cancel_fences() {
         "source",
         "cancel",
         "scope",
+        "expired",
     ] {
         let dir = directory();
         let store = Store::open(dir.path()).unwrap();
@@ -1277,6 +1278,7 @@ async fn scheduled_mail_account_grant_connection_source_and_cancel_fences() {
             .decide_mail(&a.user, s.id.clone(), approval(&s), true)
             .await
             .unwrap();
+        assert_eq!(s.expires_at, s.schedule.as_ref().unwrap().due_at + 300);
         if mode == "cancel" {
             store
                 .decide_mail(&a.user, s.id.clone(), approval(&s), false)
@@ -1295,6 +1297,7 @@ async fn scheduled_mail_account_grant_connection_source_and_cancel_fences() {
                 "connection"=>{db.conn.execute("UPDATE mail_connections SET epoch=epoch+1 WHERE id=?1",[connection])?;},
                 "source"=>{db.conn.execute("UPDATE mail_actions SET state='cancelled',content=NULL,raw=NULL WHERE id=?1",[&id])?;},
                 "scope"=>{db.conn.execute("UPDATE mail_connections SET scopes='[]' WHERE id=?1",[connection])?;},
+                "expired"=>{db.conn.execute("UPDATE mail_schedules SET due_at=unixepoch()-301 WHERE action_id=?1",[&id])?;db.conn.execute("UPDATE mail_actions SET expires_at=unixepoch()-1 WHERE id=?1",[&id])?;},
                 _=>(),
             }Ok(())
         }).await.unwrap();

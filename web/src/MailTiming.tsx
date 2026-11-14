@@ -31,7 +31,7 @@ export function MailTiming({ action, request, changed, editing, fail, disabled }
   }
   return <section aria-label="메일 예약 시각">
     <p>{action.schedule ? `예약 발송: ${formatMailTime(action.schedule)}` : "지금 발송 · 최종 허락 후 실행"}</p>
-    <p>예약은 고정한 한 통만 보냅니다. 로그아웃 후에도 승인한 예약은 유지되며, 시각이나 내용을 바꾸면 다시 전체 확인이 필요합니다. 최대 24시간 지연 후에는 만료됩니다.</p>
+    <p>예약은 고정한 한 통만 보냅니다. 로그아웃 후에도 승인한 예약은 유지되며, 시각이나 내용을 바꾸면 다시 전체 확인이 필요합니다. 최대 5분 지연 후에는 만료됩니다.</p>
     {!open ? <button disabled={disabled} onClick={() => { setOpen(true); editing(true); }}>예약 시각 설정·변경</button> : <div>
       <label>발송할 날짜와 현지 시각<input type="datetime-local" value={local} disabled={busy} onChange={e => { setLocal(e.target.value); invalidate(); }} /></label>
       <label>IANA 시간대<input value={zone} disabled={busy} onChange={e => { setZone(e.target.value); invalidate(); }} /></label>

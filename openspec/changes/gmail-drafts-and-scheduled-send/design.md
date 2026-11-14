@@ -32,7 +32,7 @@ A content/connection edit removes old timing and requires a new full preview.
 Logout leaves this explicit grant active; account status/epoch/temporary validity,
 connection epoch/status/send scope, source withdrawal and grant revision fence due
 execution. Approval after the displayed due time is rejected. Due work expires
-24 hours after its original instant; there is no recurring/coalesced mail policy.
+five minutes after its original instant; there is no recurring/coalesced mail policy.
 
 The existing single-writer transaction selects only due approved mail, validates
 current authority, freezes equality evidence, and commits dispatch before one exact

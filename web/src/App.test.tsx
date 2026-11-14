@@ -845,7 +845,7 @@ it("opens Calendar and returns with the unsent chat draft intact",async()=>{cons
 
 it("opens a typed inbox mission link in the app without losing the chat draft",async()=>{
  const id="00000000-0000-4000-8000-000000000001";
- const calls=server(path=>path.startsWith("/notifications?")?response({items:[{id:"notice",title:"예약한 일의 실행 기록",message:"실행 상태: achieved",mission_id:id,scheduled_for:1,delivered_at:1,read:false,dismissed:false,quiet:false,delayed:false}],next_cursor:null}):path==="/notifications/settings"?response({revision:1,enabled:false,timezone:"UTC",start_minute:1320,end_minute:420}):["/missions","/recurring-missions","/schedules"].includes(path)?response([]):response({threads:[]}));
+ const calls=server(path=>path.startsWith("/notifications?")?response({items:[{id:"notice",title:"예약한 일의 실행 기록",message:"실행 상태: achieved",mission_id:id,scheduled_for:1,delivered_at:1,read:false,dismissed:false,quiet:false,delayed:false}],next_cursor:null}):path==="/notifications/settings"?response({revision:1,enabled:false,timezone:"UTC",start_minute:1320,end_minute:420}):["/missions","/recurring-missions","/schedules","/notifications/sources"].includes(path)?response([]):response({threads:[]}));
  const user=userEvent.setup();render(<App/>);
  await user.type(await screen.findByRole("textbox",{name:"메시지"}),"소식함 확인 후 이어 쓸 초안");
  await user.click(screen.getByRole("button",{name:/예약 · 소식/}));

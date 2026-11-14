@@ -6,4 +6,4 @@
 - [x] Gate due worker claims and dispatch bindings on current authority; retain unknown/no-resend semantics.
 - [x] Add React provider draft and one-off scheduling flows with full final send approval.
 - [x] Add synthetic HTTP/SQLite/React verification and current mail/schedule documentation.
-- [ ] Complete independent review and integrated platform evidence (root integration).
+- [x] Complete independent review and integrated platform evidence (root integration).

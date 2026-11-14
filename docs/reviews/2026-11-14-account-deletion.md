@@ -31,9 +31,11 @@ the final passing runs. Existing ts-rs serde-attribute and bundle-size warnings
 remain unrelated to this tranche.
 
 No real account/provider deletion, production DB, external credential, collector,
-cron or running operational service was used. Native evidence is macOS only;
-independent security/integration review, Linux checks and publication belong to
-the root integration gate. This is logical active-service deletion. Historical
+cron or running operational service was used. The standalone evidence above was macOS. Subsequent independent review found no material blockers.
+Root integrated schema41 with mail40 and continuation42. Linux account, vault
+authority, migration, actual encrypted restore, vault lib/HTTP/storage/recovery and
+authenticated account HTTP checks all passed on the integrated source. Related
+React and generated TypeScript/build checks passed; CI remains disabled. This is logical active-service deletion. Historical
 encrypted vault intent/checkpoint/backup bytes and storage-media remnants remain
 under retention/disposal policy; no secure media erase or provider-side remote
 content deletion is claimed. Minimal opaque accounting/effect evidence survives,

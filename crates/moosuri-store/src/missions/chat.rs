@@ -146,10 +146,10 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
         if d.target_kind.is_some() || d.target_quote.is_some() || d.instruction_quote.is_some() {
             return Err(StoreError::InvalidInput);
         }
-    } else if !matches!(
+    } else if !(matches!(
         d.target_kind.as_deref(),
         Some("one_off" | "recurring" | "selected")
-    ) && !(d.decision == "clarify" && d.target_kind.is_none())
+    ) || d.decision == "clarify" && d.target_kind.is_none())
     {
         return Err(StoreError::InvalidInput);
     }

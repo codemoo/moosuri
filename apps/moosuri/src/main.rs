@@ -17,6 +17,7 @@ use std::{
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 mod backup_live;
+mod import_private;
 mod installation;
 mod skills;
 mod subscriptions;
@@ -43,6 +44,8 @@ enum RecoveryRole {
 // One startup value, never a collection or hot-path allocation. Keep clap's flat CLI.
 #[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Import an explicitly selected private normalized export into a NEW staging data root.
+    ImportPrivate(import_private::Command),
     /// Allocate new forward requests after historical recovery; old usage stays unknown.
     RecoveryBudget {
         #[command(subcommand)]
@@ -387,6 +390,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         return Err("data_directory_must_be_absolute".into());
     }
     match cli.command {
+        Command::ImportPrivate(command) => import_private::run(&data, command).await?,
         Command::RecoveryBudget { command } => {
             let status = match command {
                 RecoveryBudgetCommand::Status => {

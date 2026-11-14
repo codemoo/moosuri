@@ -53,3 +53,10 @@ P8의 볼트/지원 broker는 v1 제공 대상으로 남으며 선택은 사용�
 →custom 수신과 합성 sender→공식 Gmail/Slack→React 추적 순으로 검증한다. 기존 수동 모음은
 이름만으로 외부 연결에 붙이지 않는다. private 카톡 producer의 실제 설정·데이터 전환은 별도
 비공개 작업이며 공개 배포·installer가 기존 collector/cron/DB를 교체하지 않는다.
+
+## 구현된 첫 private 이전 경로
+
+[정규화 bundle importer](legacy-import.md)는 명시한 소유자의 원문/기억/문서 이력과
+정정·철회를 새 SQLite 계정으로 반영하고 모든 행의 대조·격리 보고서를 남긴다.
+기존 PostgreSQL dump/23개 schema exporter나 media/vault 이전·운영 전환은 이 경로의
+구현 완료에 포함하지 않는다. [실제 Store/CLI 증거](reviews/2026-11-15-private-transfer-import.md).

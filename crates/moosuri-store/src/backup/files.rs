@@ -140,7 +140,7 @@ pub(crate) fn output_path(root: &Path, output: &Path) -> Result<PathBuf> {
     }
     Ok(output)
 }
-pub(super) fn private_output_path(output: &Path) -> Result<PathBuf> {
+pub(crate) fn private_output_path(output: &Path) -> Result<PathBuf> {
     let name = output.file_name().ok_or(Error::InvalidInput)?;
     let parent = directory(output.parent().ok_or(Error::InvalidInput)?)?;
     for ancestor in parent.ancestors() {

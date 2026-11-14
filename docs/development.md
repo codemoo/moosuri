@@ -280,3 +280,7 @@ and its [verification record](reviews/2026-11-14-credential-broker-foundation.md
 Optional personal Claude text execution uses an unchanged official CLI and a pinned
 rootless Linux profile. See [Claude setup](claude-execution.md) for deployment,
 owner login, exact model probe and the current synthetic/live acceptance boundary.
+
+For a selected normalized private source/memory/document export, see
+[private transfer import](legacy-import.md). It creates a new account/data root and
+separate reconciliation reports; it never opens or changes the old installation.

@@ -173,6 +173,12 @@ executable comparison; runtime, model profile and fixture-adapter gates stay ope
 
 ## Local verification
 
+Schedule inbox cards also control source-specific notification mute. Schema39 keeps
+preferences separate from execution grants, records withheld publications and never
+replays old Push after unmute. The muted-source list remains on the same page, including
+revoked sources. See [notification delivery policy](schedules.md#silence-one-reservations-notices)
+for bounds; this does not stop or resume a task.
+
 CI/Actions are disabled at the owner's request. Run locally before committing a
 coherent unit, then push the verified unit. No live model or production secret is
 needed for these checks:

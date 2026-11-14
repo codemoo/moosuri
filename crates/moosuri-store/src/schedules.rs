@@ -6,6 +6,7 @@ pub(crate) mod chat;
 #[cfg(test)]
 mod tests;
 mod time;
+mod topics;
 #[cfg(test)]
 thread_local! { static TEST_TIME: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) }; }
 fn clock() -> Result<i64> {
@@ -286,8 +287,9 @@ fn notification(
     account: &str,
     id: &str,
 ) -> Result<LocalNotification> {
+    let source = topics::for_notification(conn, tenant, account, id)?;
     let mission_id: Option<String>=conn.query_row("SELECT m.id FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN reminder_schedules s ON s.tenant_id=o.tenant_id AND s.id=o.schedule_id JOIN accounts a ON a.tenant_id=m.tenant_id AND a.id=m.account_id WHERE o.tenant_id=?1 AND o.notification_id=?2 AND m.account_id=?3 AND m.state NOT IN('deleted','quarantined') AND s.state IN('active','completed') AND s.revision=o.schedule_revision AND s.auth_epoch=m.auth_epoch AND a.auth_epoch=m.auth_epoch AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?4) AND (s.valid_until IS NULL OR s.valid_until>?4)",params![tenant,id,account,now()?],|r|r.get(0)).optional()?;
-    conn.query_row("SELECT id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,is_read,dismissed FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(LocalNotification{mission_id:mission_id.clone(),id:r.get(0)?,schedule_id:r.get(1)?,occurrence_id:r.get(2)?,title:r.get(3)?,message:r.get(4)?,scheduled_for:r.get(5)?,delivered_at:r.get(6)?,delayed:r.get(7)?,quiet:r.get(8)?,read:r.get(9)?,dismissed:r.get(10)?})).optional()?.ok_or(StoreError::NotFound)
+    conn.query_row("SELECT id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,is_read,dismissed FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(LocalNotification{source:source.clone(),mission_id:mission_id.clone(),id:r.get(0)?,schedule_id:r.get(1)?,occurrence_id:r.get(2)?,title:r.get(3)?,message:r.get(4)?,scheduled_for:r.get(5)?,delivered_at:r.get(6)?,delayed:r.get(7)?,quiet:r.get(8)?,read:r.get(9)?,dismissed:r.get(10)?})).optional()?.ok_or(StoreError::NotFound)
 }
 
 fn finish(conn: &Connection, lease: &ReminderLease, now: i64) -> Result<LocalNotification> {
@@ -317,8 +319,9 @@ fn finish(conn: &Connection, lease: &ReminderLease, now: i64) -> Result<LocalNot
     let delayed = delayed || now - at > 5;
     let settings = quiet_settings(conn, &lease.tenant, &lease.account)?;
     let quiet = time::quiet(&settings, now)?;
+    let suppressed = topics::muted(conn, &lease.tenant, &lease.account, &schedule)?;
     let id = Uuid::new_v4().to_string();
-    conn.execute("INSERT INTO local_notifications(tenant_id,id,account_id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,quiet_revision) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",params![lease.tenant,id,lease.account,schedule,lease.occurrence,title,message,at,now,delayed,quiet,settings.revision])?;
+    conn.execute("INSERT INTO local_notifications(tenant_id,id,account_id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,quiet_revision,source_suppressed,push_suppressed) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13)",params![lease.tenant,id,lease.account,schedule,lease.occurrence,title,message,at,now,delayed,quiet,settings.revision,suppressed])?;
     conn.execute("UPDATE reminder_occurrences SET state='delivered',notification_id=?3,deadline=NULL,updated_at=?4,delayed=?5 WHERE tenant_id=?1 AND id=?2",params![lease.tenant,lease.occurrence,id,now,delayed])?;
     if s.slot.is_none() {
         let reason = if matches!(s.view.rule, ScheduleRule::Once { .. }) {
@@ -411,7 +414,7 @@ impl Store {
         id: String,
     ) -> Result<ScheduleHistory> {
         let user = user.clone();
-        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;owned(&db.conn,&u,&id)?;let occurrences=db.conn.prepare("SELECT id,revision,scheduled_for,local_slot,state,reason,notification_id,delayed FROM reminder_occurrences WHERE tenant_id=?1 AND schedule_id=?2 ORDER BY created_at DESC,id DESC LIMIT 50")?.query_map(params![u.tenant.0,id],|r|Ok(ScheduleOccurrence{id:r.get(0)?,revision:r.get(1)?,scheduled_for:r.get(2)?,local_slot:r.get(3)?,state:r.get(4)?,reason:r.get(5)?,notification_id:r.get(6)?,delayed:r.get(7)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;let skipped_ranges=db.conn.prepare("SELECT from_slot,to_slot,count,reason,revision FROM reminder_skipped_ranges WHERE tenant_id=?1 AND schedule_id=?2 ORDER BY created_at DESC,id DESC LIMIT 50")?.query_map(params![u.tenant.0,id],|r|Ok(ScheduleSkippedRange{from_slot:r.get(0)?,to_slot:r.get(1)?,count:r.get(2)?,reason:r.get(3)?,revision:r.get(4)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;Ok(ScheduleHistory{occurrences,skipped_ranges})}).await
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;owned(&db.conn,&u,&id)?;let occurrences=db.conn.prepare("SELECT id,revision,scheduled_for,local_slot,state,reason,notification_id,delayed,coalesce((SELECT source_suppressed FROM local_notifications n WHERE n.tenant_id=reminder_occurrences.tenant_id AND n.id=reminder_occurrences.notification_id),0) FROM reminder_occurrences WHERE tenant_id=?1 AND schedule_id=?2 ORDER BY created_at DESC,id DESC LIMIT 50")?.query_map(params![u.tenant.0,id],|r|Ok(ScheduleOccurrence{id:r.get(0)?,revision:r.get(1)?,scheduled_for:r.get(2)?,local_slot:r.get(3)?,state:r.get(4)?,reason:r.get(5)?,notification_id:r.get(6)?,delayed:r.get(7)?,notification_suppressed:r.get(8)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;let skipped_ranges=db.conn.prepare("SELECT from_slot,to_slot,count,reason,revision FROM reminder_skipped_ranges WHERE tenant_id=?1 AND schedule_id=?2 ORDER BY created_at DESC,id DESC LIMIT 50")?.query_map(params![u.tenant.0,id],|r|Ok(ScheduleSkippedRange{from_slot:r.get(0)?,to_slot:r.get(1)?,count:r.get(2)?,reason:r.get(3)?,revision:r.get(4)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;Ok(ScheduleHistory{occurrences,skipped_ranges})}).await
     }
     /// Trusted runtime clock entry point; never registered as an HTTP/model tool.
     pub async fn enqueue_scheduled_reminders(&self) -> Result<u32> {
@@ -493,7 +496,7 @@ impl Store {
         dismissed: bool,
     ) -> Result<NotificationPage> {
         let user = user.clone();
-        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let cursor=before.as_deref().map(|v|{if v.len()>80{return Err(StoreError::InvalidInput)}let(t,id)=v.split_once(':').ok_or(StoreError::InvalidInput)?;uuid(id)?;Ok::<_,StoreError>((t.parse::<i64>().map_err(|_|StoreError::InvalidInput)?,id.to_owned()))}).transpose()?;let ids=db.conn.prepare("SELECT id,delivered_at FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND (?3 OR dismissed=0) AND (?4 IS NULL OR delivered_at<?4 OR(delivered_at=?4 AND id<?5)) ORDER BY delivered_at DESC,id DESC LIMIT 101")?.query_map(params![u.tenant.0,u.account.id,dismissed,cursor.as_ref().map(|c|c.0),cursor.as_ref().map(|c|c.1.as_str())],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;let next_cursor=if ids.len()>100{let(id,time)=&ids[99];Some(format!("{time}:{id}"))}else{None};let items=ids.iter().take(100).map(|(id,_)|notification(&db.conn,&u.tenant.0,&u.account.id,id)).collect::<Result<Vec<_>>>()?;Ok(NotificationPage{items,next_cursor})}).await
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let cursor=before.as_deref().map(|v|{if v.len()>80{return Err(StoreError::InvalidInput)}let(t,id)=v.split_once(':').ok_or(StoreError::InvalidInput)?;uuid(id)?;Ok::<_,StoreError>((t.parse::<i64>().map_err(|_|StoreError::InvalidInput)?,id.to_owned()))}).transpose()?;let ids=db.conn.prepare("SELECT id,delivered_at FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND source_suppressed=0 AND (?3 OR dismissed=0) AND (?4 IS NULL OR delivered_at<?4 OR(delivered_at=?4 AND id<?5)) ORDER BY delivered_at DESC,id DESC LIMIT 101")?.query_map(params![u.tenant.0,u.account.id,dismissed,cursor.as_ref().map(|c|c.0),cursor.as_ref().map(|c|c.1.as_str())],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;let next_cursor=if ids.len()>100{let(id,time)=&ids[99];Some(format!("{time}:{id}"))}else{None};let items=ids.iter().take(100).map(|(id,_)|notification(&db.conn,&u.tenant.0,&u.account.id,id)).collect::<Result<Vec<_>>>()?;Ok(NotificationPage{items,next_cursor})}).await
     }
     pub async fn mark_notification(
         &self,
@@ -741,7 +744,8 @@ pub(super) fn publish_mission_notice(
 ) -> Result<String> {
     let settings = quiet_settings(conn, tenant, account)?;
     let quiet = time::quiet(&settings, time)?;
+    let suppressed = topics::muted(conn, tenant, account, schedule)?;
     let id = Uuid::new_v4().to_string();
-    conn.execute("INSERT INTO local_notifications(tenant_id,id,account_id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,quiet_revision) VALUES(?1,?2,?3,?4,?5,'예약한 일의 실행 기록',?6,?7,?8,?9,?10,?11)",params![tenant,id,account,schedule,occurrence,message,at,time,time-at>5,quiet,settings.revision])?;
+    conn.execute("INSERT INTO local_notifications(tenant_id,id,account_id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,quiet_revision,source_suppressed,push_suppressed) VALUES(?1,?2,?3,?4,?5,'예약한 일의 실행 기록',?6,?7,?8,?9,?10,?11,?12,?12)",params![tenant,id,account,schedule,occurrence,message,at,time,time-at>5,quiet,settings.revision,suppressed])?;
     Ok(id)
 }

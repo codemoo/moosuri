@@ -10,7 +10,7 @@ schedules are allowed per account; deleting releases a slot and preserves receip
 This is the first F29/F30/F32 slice. A reminder delivers the saved text to the local
 inbox; it does not execute the requested text as an agent task, send mail, run a
 browser task or call a provider. Bounded conversational capture and weekly rules are implemented;
-schema28 direct recurring read-only model tasks and narrow exact comparison are described below; accepted bounds are in [status](status.md). Topic mute remains next work.
+schema28 direct recurring read-only model tasks and narrow exact comparison are described below; accepted bounds are in [status](status.md). Stable-source mute is described below.
 Optional [Web Push](web-push.md) uses a separate account/device binding and requests
 browser permission only from its explicit settings action.
 
@@ -82,6 +82,41 @@ the existing account RequestScope plus synchronous request ownership/generations
 preserves unsaved edit/CAS state through refresh and fences old-account responses.
 Navigating there preserves the existing chat draft in the parent workspace state.
 
+## Silence one reservation's notices
+
+On an inbox card, **이 예약 소식 끄기** silences future notices from that exact
+fixed reminder or recurring mission schedule. **받지 않는 예약 소식** on the same
+page lists every muted reservation, including paused/deleted ones, and offers
+**소식 다시 받기**. This does not pause/resume/delete work or change model/tool
+execution authority. The stable owned schedule ID identifies the source; title
+edits do not reset it, and matching words in other reservations do not group them.
+This bounded F32 slice does not implement arbitrary semantic topics or a general
+proactive recommendation policy.
+
+Mute and publication are ordered by the Store transaction. Publications while
+muted keep actual occurrence/mission receipts and an immutable suppression snapshot;
+they are never listed in the inbox, even with hidden notices included or after
+unmute. History distinguishes those withheld notices. Previously visible entries
+retain their read/dismiss state and stay available. Unmute affects future
+publications only and does not replay withheld notices. Ordinary quiet hours still
+retain inbox entries and independently suppress Push.
+
+Each mute also permanently latches Push suppression on existing notices from that
+source, including notices not yet scanned by the Push worker. Queued/claimed jobs
+become terminal suppressed; dispatch and passive display authorization recheck
+both the current preference and this latch. A dispatch committed before mute may
+already have reached the push service/device: it cannot be recalled. Its actual
+result remains recorded; unmute does not revive its retry or display authority.
+See [Web Push](web-push.md) for session/epoch/device and unknown-outcome fences.
+
+Preferences use a separate expected revision, independent of the schedule's
+execution revision. Another owner's source, stale revision or stale login fails
+without mutation. Up to128 sources may be muted per account, so the same-page list
+is complete and bounded. Muted preferences, historical suppression snapshots and
+Push latches survive reopen and sanitized restore. Restore still quarantines work
+and retires old Push authority; unmute alone never resumes either. Historical
+receipt/preference pruning remains unimplemented.
+
 ## API
 
 Authenticated current-account routes are `/api/v1/schedules` (GET/POST),
@@ -89,10 +124,12 @@ Authenticated current-account routes are `/api/v1/schedules` (GET/POST),
 `/schedules/{id}/control` (POST pause/resume/revoke), and
 `/schedules/{id}/history` (GET). Inbox routes are `/api/v1/notifications` (GET with
 optional `before` cursor/`dismissed=true`), `/notifications/{id}/read` and
-`/notifications/{id}/dismiss` (POST), and `/notifications/settings` (GET/PUT).
+`/notifications/{id}/dismiss` (POST), and `/notifications/settings` (GET/PUT). Source delivery routes are
+`/notifications/sources` (GET complete muted list) and
+`/notifications/sources/{id}` (PUT `{expected_revision, muted}`).
 No route accepts a caller-chosen account, clock, model or dispatch capability.
 
-Schema0017 introduced the local scheduler. The current integrated schema0022 also
+Schema0039 adds source preferences and notification suppression flags; schema0017 introduced the local scheduler. The current integrated schema0022 also
 includes account lifecycle, sealed-current restore and media. See the original
 [local reminder evidence](reviews/2026-11-13-local-reminders.md) and current
 [conversational reminder integration](reviews/2026-11-13-conversational-reminders.md).
@@ -158,7 +195,7 @@ or fabricated session. Existing epoch/revision/quarantine checks continue to
 fence later background publication. Mail/browser execution remains outside this reminder grant.
 [Web Push](web-push.md) is separately implemented with account/device binding. Schema28
 scheduled read-only missions and narrow exact comparison are separately implemented
-below; schema29 conversational capture is described at the end. Semantic comparison and topic mute remain open.
+below; schema29 conversational capture is described at the end. Semantic comparison and wider proactive policies remain open.
 
 Migration0022 adds the versioned chat receipt sidecar atomically after
 recovery19/20 and media21. Confirmation uses the saved outcome and local date/time;

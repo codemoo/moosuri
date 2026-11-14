@@ -1220,7 +1220,7 @@ async fn learned_schema37_upgrade_preserves_ordinary_thread_deletion() {
         .create_thread(&user, "Existing schema37 thread".into())
         .await
         .unwrap();
-    store.call(|db|{db.conn.execute_batch("DROP TABLE learned_skill_receipts; DROP TABLE learned_skill_observations; DROP TABLE learned_skill_uses; DROP TABLE learned_skill_proofs; DROP TABLE learned_skills; PRAGMA user_version=37;")?;Ok(())}).await.unwrap();
+    store.call(|db|{db.conn.execute_batch("DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts; DROP TABLE learned_skill_observations; DROP TABLE learned_skill_uses; DROP TABLE learned_skill_proofs; DROP TABLE learned_skills; PRAGMA user_version=37;")?;Ok(())}).await.unwrap();
     drop(store);
     let store = Store::open(dir.path()).unwrap();
     store.delete_thread(&user, thread.id).await.unwrap();

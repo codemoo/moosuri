@@ -16,12 +16,26 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 도구·스킬 | 검증된 bounded tool loop, 여섯 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 복합 업무 학습·합성 export·예약 needs_skill/GC는 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
 | 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·로컬 답장 초안·승인된 frozen 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. Gmail provider 초안 CRUD·고정 예약 발송, 인증된 자동 폼/장기 profile 복구는 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
 | 공식·custom 자료 연결 | 개인 Gmail/Slack 수집·custom ingest, scope/cursor/receipt/provenance·상태 화면·철회 | 합성 Linux 검증은 실제 OAuth/계정 scope/rate 검증을 대신하지 않는다. 카톡 코드는 공개 패키지에서 제외. 통화·작업 세션·배송 adapter는 남음. [연결](data-connections.md)·[검증](reviews/2026-11-13-source-connections.md) |
-| 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours, opt-in 기기 Push | topic mute·전체 proactive 제안 정책·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[검증](reviews/2026-11-13-web-push.md) |
+| 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours·예약별 소식 끄기/다시 받기, opt-in 기기 Push | 전체 proactive 제안 정책·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[소식 제어](reviews/2026-11-14-notification-topics.md) |
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 여러 턴의 자동 명확화·넓은 자연어/시간 해석·Calendar/mail/browser/vault 미션 실행은 미완료. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
 | Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 여러 턴 대상 해석·날짜 간 이동·미션 Calendar·반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·파일/음성 공유·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구·실험적 broker 기기/서명/철회 기반 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·broker 실제 adapter/사용 흐름·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 예약별 소식 끄기와 다시 받기
+
+소식함의 기존 알림·반복 업무 카드에서 같은 예약의 새 소식을 끄고 다시 받을 수 있다.
+예약과 맡긴 일은 계속 실행하고 회차 기록은 보존한다. 이미 받은 소식은 그대로 남으며,
+꺼 둔 동안의 소식은 다시 켜도 소식함이나 Push로 몰아서 보내지 않는다. 숨긴 카드의
+예약도 같은 화면의 ‘받지 않는 예약 소식’에서 다시 켤 수 있다.
+
+계정별 설정과 별도 revision, 영구적인 과거 Push 억제, 새 소식의 발행 시점 설정을
+저장한다. 대기·claim·전송·재시도·기기 표시, 재시작과 암호화 복원 경계를 확인했다.
+이미 전송된 Push를 회수한다고 주장하지 않는다. 독립 검토·Native/React와 Linux의
+예약/Push/반복 업무·마이그레이션/복원·HTTP·Clippy·빌드를 통과했다. 의미상 주제를 자동 분류하는 기능이나 전체
+proactive 정책·실제 휴대폰 수신 검증은 포함하지 않는다.
+[범위](schedules.md#silence-one-reservations-notices)·[검증](reviews/2026-11-14-notification-topics.md).
 
 ## 최근 수락한 단위 · 기존 비서의 내용 고정 검사
 
@@ -241,7 +255,7 @@ foreground 도구는 별도 수락했고, 개인 Calendar 변경도 후속 수�
 | P2 대화 | 계정·설정·스트림·취소/재시도·개인 ChatGPT | 지원 구독의 전체 실행 범위·실계정 검증 |
 | P3 자료·기억 | 출처·기억 정정/망각·제한 추출·문서 | 장기/시간 사실·추출 품질의 독립 검증 |
 | P4 도구·학습 | typed 도구·bounded 실행·Git 스킬·제안·읽기 미션·제한된 개인 학습/두 입력 proof/재사용 | 복합 절차·학습 export·실모델 효용/품질 검증 |
-| P5 예약·소식 | due loop·반복 회차·알림·quiet hours·Push | 알림 정책/topic mute·실기기 수신·예약 외부 작업 |
+| P5 예약·소식 | due loop·반복 회차·알림·quiet hours·예약별 소식 제어·Push | 전체 알림/제안 정책·실기기 수신·예약 외부 작업 |
 | P6 외부 연결 | Gmail/Calendar·공식/커스텀 수집·공개 웹·브라우저 | provider draft·승인된 예약 발송·gws 초대·배송/통화 feed·실계정 |
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크 공유 | 파일/음성 공유·모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·실험적 broker 기반 | broker 실제 adapter/사용 흐름·호환 이전·독립 최신 복구 |
@@ -269,7 +283,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    두 입력 proof는 구현했다. 기억·대화·미션·스킬의 독립 품질 평가와 복합 절차로
    확장하고, 합성 export/catalog·예약 needs_skill/GC,
    여러 턴 명확화·넓은 시간 해석·계획/검증/보완을 구현한다.
-3. **P5/P6 예약·외부 연결**: followup/topic mute/알림 정책,
+3. **P5/P6 예약·외부 연결**: followup·전체 알림/제안 정책,
    Gmail provider draft·승인된 고정 예약 발송, Calendar 후속 명확화,
    통화 feed·opt-in 작업 세션·공식 배송 parser와 실제 OAuth/계정 검증을 진행한다.
    Calendar 미션·반복/종일/참석자/보조 캘린더는 현재 지원 범위에 포함하지 않는다.

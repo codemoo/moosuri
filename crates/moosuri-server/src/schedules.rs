@@ -2,7 +2,8 @@
 use super::*;
 use axum::extract::Query;
 use moosuri_core::{
-    QuietHoursChange, ScheduleControl, ScheduleCreate, ScheduleDraft, ScheduleEdit,
+    NotificationSourceChange, QuietHoursChange, ScheduleControl, ScheduleCreate, ScheduleDraft,
+    ScheduleEdit,
 };
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
@@ -15,6 +16,11 @@ pub(super) fn routes() -> Router<AppState> {
         .route(
             "/api/v1/notifications/settings",
             get(settings).put(set_settings),
+        )
+        .route("/api/v1/notifications/sources", get(muted_sources))
+        .route(
+            "/api/v1/notifications/sources/{id}",
+            axum::routing::put(set_source),
         )
         .route("/api/v1/notifications/{id}/read", post(read))
         .route("/api/v1/notifications/{id}/dismiss", post(dismiss))
@@ -117,4 +123,19 @@ async fn dismiss(
 ) -> HttpResult {
     let u = current(&s, &headers).await?;
     Ok(Json(s.store.mark_notification(&u, id, true).await?).into_response())
+}
+
+async fn muted_sources(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    Ok(Json(s.store.muted_notification_sources(&u).await?).into_response())
+}
+async fn set_source(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<NotificationSourceChange>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    Ok(Json(s.store.set_notification_source(&u, id, input).await?).into_response())
 }

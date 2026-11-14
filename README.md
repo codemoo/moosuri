@@ -6,7 +6,7 @@ A self-hosted assistant for individuals, families and friends.
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat with bounded tab-refresh draft recovery, private knowledge and memories, editable records, bounded
 read-only missions from chat or forms, personal Gmail, bounded Calendar actions from chat or forms, browser workspaces, local reminders,
-opt-in Web Push, private images/UTF-8 files/text PDFs, bounded voice dictation through a
+opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/link sharing, and a separate encrypted vault.
 The experimental [credential-broker foundation](docs/credential-broker-foundation.md)
 adds device pairing and signed commitments behind a default-off feature; actual vault

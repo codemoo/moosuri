@@ -866,7 +866,7 @@ async fn recurring_schema28_late_failure_rolls_back_the_complete_new_authority_u
     let d = directory();
     drop(Store::open(d.path()).unwrap());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;CREATE TABLE recurring_mission_occurrences(conflict INTEGER);PRAGMA user_version=27;").unwrap();
+    c.execute_batch("DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;CREATE TABLE recurring_mission_occurrences(conflict INTEGER);PRAGMA user_version=27;").unwrap();
     drop(c);
     assert!(Store::open(d.path()).is_err());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
@@ -1111,4 +1111,107 @@ async fn recurring_acknowledged_verify_expiry_commits_before_poll_and_notifies_r
     assert!(!recent[0].exact_unchanged);
     assert_eq!(recent[0].state, "partial");
     assert!(s.claim_agent_run().await.unwrap().is_none());
+}
+
+// A muted recurring task must still execute/verify and retain its actual mission receipt.
+#[tokio::test]
+async fn source_mute_recurring_tasks_execute_keep_history_and_only_future_notices_resume() {
+    let _g = TEST_LOCK.lock().await;
+    let (d, s, u) = setup().await;
+    let at = now().unwrap() + 60;
+    let mut request = input(at);
+    request.changes_only = false;
+    let saved = s.create_recurring_mission(&u, request).await.unwrap();
+    let id = saved.schedule.id.clone();
+    let muted = s
+        .set_notification_source(
+            &u,
+            id.clone(),
+            NotificationSourceChange {
+                expected_revision: 0,
+                muted: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(muted.kind, "recurring_mission");
+    assert_eq!(due(&s, at).await, 1);
+    let run = exact(&s, "muted-result").await;
+    s.poll_recurring_missions_at(at).await.unwrap();
+    let view = s.recurring_missions(&u).await.unwrap().remove(0);
+    assert_eq!(view.schedule.revision, 1);
+    assert_eq!(view.schedule.state, "active");
+    assert_eq!(view.recent[0].state, "achieved");
+    assert!(view.recent[0].notification_id.is_some());
+    assert!(view.history.occurrences[0].notification_suppressed);
+    assert!(
+        s.notifications(&u, None, true)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    assert_eq!(
+        s.missions(&u)
+            .await
+            .unwrap()
+            .iter()
+            .find(|m| m.id == view.recent[0].mission_id)
+            .unwrap()
+            .receipts
+            .len(),
+        1
+    );
+    s.call(move |db| {
+        assert_eq!(
+            db.conn
+                .query_row("SELECT state FROM chat_runs WHERE id=?1", [run], |r| r
+                    .get::<_, String>(
+                    0
+                ))?,
+            "completed"
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+    drop(s);
+    let s = Store::open(d.path()).unwrap();
+    s.set_notification_source(
+        &u,
+        id,
+        NotificationSourceChange {
+            expected_revision: 1,
+            muted: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        s.notifications(&u, None, true)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    assert_eq!(due(&s, at + 60).await, 1);
+    exact(&s, "future-result").await;
+    s.poll_recurring_missions_at(at + 60).await.unwrap();
+    let page = s.notifications(&u, None, false).await.unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert!(page.items[0].mission_id.is_some());
+    assert_eq!(
+        page.items[0].source.as_ref().unwrap().kind,
+        "recurring_mission"
+    );
+    let view = s.recurring_missions(&u).await.unwrap().remove(0);
+    assert_eq!(view.recent.len(), 2);
+    assert_eq!(
+        view.history
+            .occurrences
+            .iter()
+            .filter(|o| o.notification_suppressed)
+            .count(),
+        1
+    );
 }

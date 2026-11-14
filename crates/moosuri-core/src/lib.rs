@@ -120,6 +120,8 @@ pub fn typescript_contract() -> String {
         ScheduleHistory::decl(),
         QuietHours::decl(),
         QuietHoursChange::decl(),
+        NotificationSource::decl(),
+        NotificationSourceChange::decl(),
         LocalNotification::decl(),
         NotificationPage::decl(),
         CalendarConnection::decl(),

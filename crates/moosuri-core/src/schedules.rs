@@ -93,6 +93,7 @@ pub struct ScheduleOccurrence {
     pub state: String,
     pub reason: Option<String>,
     pub notification_id: Option<String>,
+    pub notification_suppressed: bool,
     pub delayed: bool,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
@@ -130,7 +131,26 @@ pub struct QuietHoursChange {
     pub end_minute: u16,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
+pub struct NotificationSource {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    pub muted: bool,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationSourceChange {
+    #[ts(type = "number")]
+    pub expected_revision: i64,
+    pub muted: bool,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct LocalNotification {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<NotificationSource>,
     /// Resolved from current owned mission state, never copied result text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

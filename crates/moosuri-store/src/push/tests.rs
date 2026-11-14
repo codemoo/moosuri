@@ -678,3 +678,123 @@ async fn browser_intent_order_preserves_account_session_and_foreign_off_boundari
             .unwrap()
     );
 }
+
+// Catches queue-only suppression that loses unscanned notifications or revives on unmute.
+#[tokio::test]
+async fn source_mute_latches_unscanned_queued_claimed_and_dispatched_notices_without_replay() {
+    let _g = TEST_LOCK.lock().await;
+    let d = directory();
+    let s = Store::open(d.path()).unwrap();
+    let u = admin(&s).await.user;
+    let b = member(&s, &u, "mute-push-other@example.test").await.user;
+    let binding = enrolled(&s, &u).await;
+    enrolled(&s, &b).await;
+    let unscanned = notify(&s, &u).await;
+    let mutate = |revision, muted| moosuri_core::NotificationSourceChange {
+        expected_revision: revision,
+        muted,
+    };
+    s.set_notification_source(&u, unscanned.schedule_id.clone(), mutate(0, true))
+        .await
+        .unwrap();
+    s.set_notification_source(&u, unscanned.schedule_id.clone(), mutate(1, false))
+        .await
+        .unwrap();
+    s.poll_push_queue().await.unwrap();
+    assert!(s.claim_push().await.unwrap().is_none());
+    let queued = notify(&s, &u).await;
+    s.poll_push_queue().await.unwrap();
+    s.set_notification_source(&u, queued.schedule_id.clone(), mutate(0, true))
+        .await
+        .unwrap();
+    s.set_notification_source(&u, queued.schedule_id.clone(), mutate(1, false))
+        .await
+        .unwrap();
+    assert!(s.claim_push().await.unwrap().is_none());
+    let held_note = notify(&s, &u).await;
+    let held = claim(&s).await;
+    s.set_notification_source(&u, held_note.schedule_id.clone(), mutate(0, true))
+        .await
+        .unwrap();
+    assert_eq!(state(&s, &held.lease).await, "suppressed");
+    s.set_notification_source(&u, held_note.schedule_id.clone(), mutate(1, false))
+        .await
+        .unwrap();
+    assert!(s.commit_push_dispatch(&held.lease).await.is_err());
+    let sent_note = notify(&s, &u).await;
+    let sent = claim(&s).await;
+    s.commit_push_dispatch(&sent.lease).await.unwrap();
+    s.authorize_push_display(&u, binding.binding_id.clone(), sent_note.id.clone())
+        .await
+        .unwrap();
+    s.set_notification_source(&u, sent_note.schedule_id.clone(), mutate(0, true))
+        .await
+        .unwrap();
+    assert_eq!(state(&s, &sent.lease).await, "dispatched");
+    s.finish_push(&sent.lease, PushOutcome::Accepted)
+        .await
+        .unwrap();
+    assert_eq!(state(&s, &sent.lease).await, "accepted");
+    assert!(
+        s.authorize_push_display(&u, binding.binding_id.clone(), sent_note.id.clone())
+            .await
+            .is_err()
+    );
+    s.set_notification_source(&u, sent_note.schedule_id.clone(), mutate(1, false))
+        .await
+        .unwrap();
+    assert!(
+        s.authorize_push_display(&u, binding.binding_id.clone(), sent_note.id)
+            .await
+            .is_err()
+    );
+    let retry_note = notify(&s, &u).await;
+    let retry = claim(&s).await;
+    s.commit_push_dispatch(&retry.lease).await.unwrap();
+    s.set_notification_source(&u, retry_note.schedule_id.clone(), mutate(0, true))
+        .await
+        .unwrap();
+    s.set_notification_source(&u, retry_note.schedule_id, mutate(1, false))
+        .await
+        .unwrap();
+    s.finish_push(&retry.lease, PushOutcome::Retry(30))
+        .await
+        .unwrap();
+    assert_eq!(state(&s, &retry.lease).await, "rejected");
+    // Independent owner and source still dispatch; no provider/device is called.
+    let other = notify(&s, &b).await;
+    let unrelated = notify(&s, &u).await;
+    let first = claim(&s).await;
+    s.commit_push_dispatch(&first.lease).await.unwrap();
+    s.finish_push(&first.lease, PushOutcome::Accepted)
+        .await
+        .unwrap();
+    let second = claim(&s).await;
+    s.commit_push_dispatch(&second.lease).await.unwrap();
+    s.finish_push(&second.lease, PushOutcome::Accepted)
+        .await
+        .unwrap();
+    let mut actual = vec![first.lease.notification, second.lease.notification];
+    actual.sort();
+    let mut expected = vec![other.id, unrelated.id];
+    expected.sort();
+    assert_eq!(actual, expected);
+    drop(s);
+    let s = Store::open(d.path()).unwrap();
+    s.poll_push_queue().await.unwrap();
+    assert!(s.claim_push().await.unwrap().is_none());
+    let n = unscanned.id;
+    s.call(move |db| {
+        assert!(
+            db.conn
+                .execute(
+                    "UPDATE local_notifications SET push_suppressed=0 WHERE id=?1",
+                    [n]
+                )
+                .is_err()
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+}

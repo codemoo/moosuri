@@ -975,3 +975,255 @@ async fn account_suspend_resume_fences_claim_and_requires_explicit_owner_reactiv
         1
     );
 }
+
+// Catches replay of withheld publications and preference writes accidentally pausing work.
+#[tokio::test]
+async fn source_mute_keeps_receipts_and_read_state_across_reopen_without_inbox_replay() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let u = admin(&store).await.user;
+    let b = member(&store, &u, "source-other@example.test").await.user;
+    let base = now().unwrap();
+    set_clock(&store, base).await;
+    let schedule = store
+        .create_schedule(
+            &u,
+            input(ScheduleRule::Interval {
+                anchor: base + 60,
+                seconds: 60,
+            }),
+        )
+        .await
+        .unwrap();
+    let visible = deliver(&store, base + 60).await;
+    store
+        .mark_notification(&u, visible.id.clone(), false)
+        .await
+        .unwrap();
+    let change = |expected_revision, muted| NotificationSourceChange {
+        expected_revision,
+        muted,
+    };
+    assert!(matches!(
+        store
+            .set_notification_source(&b, schedule.id.clone(), change(0, true))
+            .await,
+        Err(StoreError::NotFound)
+    ));
+    let muted = store
+        .set_notification_source(&u, schedule.id.clone(), change(0, true))
+        .await
+        .unwrap();
+    assert_eq!(muted.revision, 1);
+    assert_eq!(muted.kind, "reminder");
+    assert!(matches!(
+        store
+            .set_notification_source(&u, schedule.id.clone(), change(0, false))
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let suppressed = deliver(&store, base + 120).await;
+    assert!(suppressed.source.unwrap().muted);
+    let history = store
+        .schedule_history(&u, schedule.id.clone())
+        .await
+        .unwrap();
+    assert!(
+        history
+            .occurrences
+            .iter()
+            .any(|o| o.notification_id.as_deref() == Some(&suppressed.id)
+                && o.notification_suppressed
+                && o.state == "delivered")
+    );
+    let current = store.schedules(&u).await.unwrap().remove(0);
+    assert_eq!(current.revision, 1);
+    assert_eq!(current.state, "active");
+    assert!(
+        store
+            .muted_notification_sources(&b)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    drop(store);
+    let store = Store::open(dir.path()).unwrap();
+    set_clock(&store, base + 120).await;
+    assert_eq!(
+        store.muted_notification_sources(&u).await.unwrap()[0].id,
+        schedule.id
+    );
+    store
+        .set_notification_source(&u, schedule.id.clone(), change(1, false))
+        .await
+        .unwrap();
+    let page = store.notifications(&u, None, true).await.unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].id, visible.id);
+    assert!(page.items[0].read);
+    assert!(!page.items[0].dismissed);
+    let future = deliver(&store, base + 180).await;
+    let page = store.notifications(&u, None, false).await.unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert!(page.items.iter().any(|n| n.id == future.id));
+    assert!(!page.items.iter().any(|n| n.id == suppressed.id));
+    store
+        .set_notification_source(&u, schedule.id.clone(), change(2, true))
+        .await
+        .unwrap();
+    store
+        .control_schedule(
+            &u,
+            schedule.id.clone(),
+            ScheduleControl {
+                expected_revision: 1,
+                action: "revoke".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.muted_notification_sources(&u).await.unwrap()[0].title,
+        schedule.title
+    );
+    store
+        .set_notification_source(&u, schedule.id.clone(), change(3, false))
+        .await
+        .unwrap();
+    assert!(store.schedules(&u).await.unwrap().is_empty());
+    store.logout(&u).await.unwrap();
+    assert!(matches!(
+        store
+            .set_notification_source(&u, schedule.id, change(4, true))
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+}
+
+// Failed migration must not leave a half-upgraded installation; defaults preserve old inbox.
+#[tokio::test]
+async fn source_mute_schema38_upgrade_is_atomic_and_preserves_old_visible_receipts() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let u = admin(&store).await.user;
+    let at = now().unwrap() + 60;
+    store
+        .create_schedule(&u, input(ScheduleRule::Once { at }))
+        .await
+        .unwrap();
+    let visible = deliver(&store, at).await;
+    drop(store);
+    let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+    c.execute_batch("DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;PRAGMA user_version=38;CREATE TABLE notification_source_preferences(conflict INTEGER);").unwrap();
+    assert!(Store::open(dir.path()).is_err());
+    assert_eq!(
+        c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        38
+    );
+    assert!(
+        c.prepare("SELECT source_suppressed FROM local_notifications")
+            .is_err()
+    );
+    c.execute_batch("DROP TABLE notification_source_preferences;")
+        .unwrap();
+    drop(c);
+    let store = Store::open(dir.path()).unwrap();
+    let page = store.notifications(&u, None, false).await.unwrap();
+    assert_eq!(page.items[0].id, visible.id);
+    assert_eq!(page.items[0].source.as_ref().unwrap().revision, 0);
+    store
+        .call(|db| {
+            assert_eq!(
+                db.conn.query_row(
+                    "SELECT source_suppressed+push_suppressed FROM local_notifications",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )?,
+                0
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+// A complete management list must not silently omit older muted/deleted sources.
+#[tokio::test]
+async fn source_mute_capacity_is_bounded_and_unmuting_revoked_sources_releases_a_slot() {
+    let _g = TEST_LOCK.lock().await;
+    let d = directory();
+    let s = Store::open(d.path()).unwrap();
+    let u = admin(&s).await.user;
+    let at = now().unwrap() + 3600;
+    let mut first = None;
+    for _ in 0..128 {
+        let source = s
+            .create_schedule(&u, input(ScheduleRule::Once { at }))
+            .await
+            .unwrap();
+        s.set_notification_source(
+            &u,
+            source.id.clone(),
+            NotificationSourceChange {
+                expected_revision: 0,
+                muted: true,
+            },
+        )
+        .await
+        .unwrap();
+        s.control_schedule(
+            &u,
+            source.id.clone(),
+            ScheduleControl {
+                expected_revision: 1,
+                action: "revoke".into(),
+            },
+        )
+        .await
+        .unwrap();
+        if first.is_none() {
+            first = Some(source.id);
+        }
+    }
+    assert_eq!(s.muted_notification_sources(&u).await.unwrap().len(), 128);
+    let next = s
+        .create_schedule(&u, input(ScheduleRule::Once { at }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.set_notification_source(
+            &u,
+            next.id.clone(),
+            NotificationSourceChange {
+                expected_revision: 0,
+                muted: true
+            }
+        )
+        .await,
+        Err(StoreError::Conflict)
+    ));
+    s.set_notification_source(
+        &u,
+        first.unwrap(),
+        NotificationSourceChange {
+            expected_revision: 1,
+            muted: false,
+        },
+    )
+    .await
+    .unwrap();
+    s.set_notification_source(
+        &u,
+        next.id,
+        NotificationSourceChange {
+            expected_revision: 0,
+            muted: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(s.muted_notification_sources(&u).await.unwrap().len(), 128);
+}

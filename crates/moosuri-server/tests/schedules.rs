@@ -167,6 +167,74 @@ async fn owner_http_creation_control_and_worker_inbox_survive_actual_restart_wit
     assert_eq!(notification["schedule_id"], schedule["id"]);
     assert_eq!(notification["message"], once["message"]);
     assert!(store.list_threads(&a.user).await.unwrap().is_empty());
+    let source_path = format!("/api/v1/notifications/sources/{id}");
+    assert_eq!(notification["source"]["id"], schedule["id"]);
+    assert_eq!(notification["source"]["revision"], 0);
+    assert_eq!(
+        send(
+            &app,
+            "GET",
+            "/api/v1/notifications/sources",
+            None,
+            None,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send(
+            &app,
+            "PUT",
+            &source_path,
+            Some(&b.token),
+            Some(&b.user.account().id),
+            json!({"expected_revision":0,"muted":true})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let changed = send(
+        &app,
+        "PUT",
+        &source_path,
+        Some(&a.token),
+        Some(&a.user.account().id),
+        json!({"expected_revision":0,"muted":true}),
+    )
+    .await;
+    assert_eq!(changed.0, StatusCode::OK);
+    assert_eq!(changed.1["muted"], true);
+    assert_eq!(changed.1["revision"], 1);
+    assert_eq!(
+        send(
+            &app,
+            "PUT",
+            &source_path,
+            Some(&a.token),
+            Some(&a.user.account().id),
+            json!({"expected_revision":0,"muted":false})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        send(
+            &app,
+            "GET",
+            "/api/v1/notifications/sources",
+            Some(&b.token),
+            Some(&b.user.account().id),
+            Value::Null
+        )
+        .await
+        .1,
+        json!([])
+    );
+
     assert_eq!(
         send(
             &app,
@@ -317,6 +385,35 @@ async fn owner_http_creation_control_and_worker_inbox_survive_actual_restart_wit
     assert_eq!(page["items"].as_array().unwrap().len(), 1);
     assert_eq!(page["items"][0]["id"], notification["id"]);
     assert_eq!(page["items"][0]["read"], true);
+    assert_eq!(page["items"][0]["source"]["muted"], true);
+    assert_eq!(
+        send(
+            &app,
+            "GET",
+            "/api/v1/notifications/sources",
+            Some(&a.token),
+            Some(&a.user.account().id),
+            Value::Null
+        )
+        .await
+        .1
+        .as_array()
+        .unwrap()
+        .len(),
+        1
+    );
+    let changed = send(
+        &app,
+        "PUT",
+        &source_path,
+        Some(&a.token),
+        Some(&a.user.account().id),
+        json!({"expected_revision":1,"muted":false}),
+    )
+    .await;
+    assert_eq!(changed.0, StatusCode::OK);
+    assert_eq!(changed.1["muted"], false);
+
     for _ in 0..2 {
         assert_eq!(
             send(

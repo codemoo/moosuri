@@ -56,9 +56,21 @@ entries are retained.
 
 A claim is not send authority. After request preparation, an actor transaction
 rechecks current account/session/epoch/generation, unread/dismissed state, quiet
-hours and a one-hour notification display window, then records dispatch. Reads,
+hours, current owned source preference, permanent notification suppression latches
+and a one-hour notification display window, then records dispatch. Reads,
 dismissals and quiet hours suppress new display; inbox text is retained. Quiet
 pushes are suppressed rather than replayed in a morning burst.
+
+**이 예약 소식 끄기** on the existing inbox page mutes one stable owned fixed
+reminder or recurring mission schedule. It does not pause work. Muted publications
+retain receipts/history without entering the inbox. Mute also permanently latches
+Push suppression on existing source notices, including unscanned notices, and
+terminalizes queued/claimed jobs atomically. Scanning, claim/dispatch and passive
+service-worker authorization check both the latch and current preference. Unmute
+allows future publications only: no old Push job, retry or display authorization
+is revived. Already dispatched notices may have reached the service/device and
+cannot be recalled; their actual result is preserved. Other owners/sources retain
+their existing delivery policy. See [source mute](schedules.md#silence-one-reservations-notices).
 
 HTTP2xx records only push-service acceptance, never phone display/read.404/410
 retires the endpoint;429/bounded5xx responses use capped backoff, at most four

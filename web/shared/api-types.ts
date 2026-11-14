@@ -14,12 +14,14 @@ export type ScheduleEdit = { expected_revision: number, draft: ScheduleDraft, };
 export type ScheduleControl = { expected_revision: number, action: string, };
 export type ScheduleView = { id: string, revision: number, title: string, message: string, rule: ScheduleRule, state: string, reason: string | null, next_fire_at: number | null, next_local_slot: string | null, valid_until: number | null, timezone_db: string, created_at: number, updated_at: number, };
 export type SchedulePreview = { next_fire_at: number, local_slot: string, timezone_db: string, skipped_gap: string | null, };
-export type ScheduleOccurrence = { id: string, revision: number, scheduled_for: number | null, local_slot: string, state: string, reason: string | null, notification_id: string | null, delayed: boolean, };
+export type ScheduleOccurrence = { id: string, revision: number, scheduled_for: number | null, local_slot: string, state: string, reason: string | null, notification_id: string | null, notification_suppressed: boolean, delayed: boolean, };
 export type ScheduleSkippedRange = { from_slot: string, to_slot: string, count: number, reason: string, revision: number, };
 export type ScheduleHistory = { occurrences: Array<ScheduleOccurrence>, skipped_ranges: Array<ScheduleSkippedRange>, };
 export type QuietHours = { revision: number, enabled: boolean, timezone: string, start_minute: number, end_minute: number, };
 export type QuietHoursChange = { expected_revision: number, enabled: boolean, timezone: string, start_minute: number, end_minute: number, };
-export type LocalNotification = {
+export type NotificationSource = { id: string, title: string, kind: string, revision: number, muted: boolean, };
+export type NotificationSourceChange = { expected_revision: number, muted: boolean, };
+export type LocalNotification = { source?: NotificationSource,
 /**
  * Resolved from current owned mission state, never copied result text.
  */

@@ -1,4 +1,5 @@
 import {VoiceComposer,type VoiceComposerHandle} from "./VoiceComposer";
+import { IncomingShare } from "./IncomingShare";
 import {CalendarEvidence} from "./CalendarEvidence";
 import type {MissionChatContext,MissionChatTarget} from "../shared/api-types";
 import {useMediaUploads,MediaLibraryView,PrivateImage} from "./Media";
@@ -63,6 +64,7 @@ export type ChatMemory = {
 };
 type Props = {
   accountId: string;
+  shareScope?: string | null;
   name: string;
   threadId: string | null;
   memory: ChatMemory;
@@ -147,6 +149,7 @@ export function ChatPanel(props: Props) {
   const readScope = useScope(accountId, threadId);
   const sendScope = useScope(accountId);
   const slot = threadId ?? "new";
+  const shareSlotMove = useRef<((from: string, to: string) => void) | null>(null);
   const media=useMediaUploads(accountId,slot);
   const voice=useRef<VoiceComposerHandle>(null);
   const draft = memory.drafts[slot] ?? "";
@@ -772,6 +775,7 @@ export function ChatPanel(props: Props) {
         thread = await callbacks.current.createThread();
         media.moveSlot("new",thread);
         voice.current?.moveSlot("new",thread);
+        shareSlotMove.current?.("new", thread);
         callbacks.current.onCreated(thread, value.request_id);
       } catch (error) {
         callbacks.current.onPending("new", null, value.request_id);
@@ -1083,6 +1087,9 @@ export function ChatPanel(props: Props) {
       )}
       <footer className="chat-composer-area">
         <VoiceComposer ref={voice} accountId={accountId} slot={slot} onExpired={props.onExpired} onInsert={(origin,text)=>{flushRef.current();const current=callbacks.current.memory.drafts[origin]??"";const next=current?`${current}\n${text}`:text;if(new TextEncoder().encode(next).byteLength>8192)return false;callbacks.current.onDraft(origin,next);requestAnimationFrame(()=>{if(origin===(currentThread.current??"new"))textarea.current?.focus();});return true;}}/>
+        <IncomingShare accountId={accountId} sessionScope={props.shareScope ?? null} slot={slot} moveSlot={shareSlotMove}
+          draft={() => callbacks.current.memory.drafts[slot] ?? ""}
+          insert={(original, text) => {callbacks.current.onDraft(original, text);requestAnimationFrame(()=>{if(original===(currentThread.current??"new"))textarea.current?.focus();});}}/>
         {media.view}
         <MediaLibraryView accountId={accountId} onSelect={media.select}/>
         {modelError && (

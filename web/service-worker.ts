@@ -1,3 +1,4 @@
+import { receiveShare } from "./src/share-intake";
 import {
   readPushBinding,
   clearPushBinding,
@@ -77,6 +78,11 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
+  if (url.origin === self.location.origin && url.pathname === "/share-target" && !url.search &&
+    request.method === "POST" && request.mode === "navigate") {
+    event.respondWith(receiveShare(request));
+    return;
+  }
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
   const artifactPage =
     /^\/app\/artifacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(

@@ -12,6 +12,7 @@ pub use schedules::ReminderLease;
 mod calendar;
 pub use calendar::*;
 mod accounts;
+mod share_origin;
 pub use accounts::{AccountManagementResult, PreparedAccountManagement};
 mod automatic_memory;
 pub use automatic_memory::{ExtractionClaim, ExtractionLease, ExtractionUnit};
@@ -140,13 +141,11 @@ impl UserContext {
         if self.restricted {
             return None;
         }
-        let mut hash = Sha256::new();
-        hash.update(b"moosuri/chat-drafts/scope/v1\0");
-        hash.update(self.digest);
-        hash.update((self.account.id.len() as u64).to_be_bytes());
-        hash.update(self.account.id.as_bytes());
-        hash.update(self.epoch.to_be_bytes());
-        Some(format!("{:x}", hash.finalize()))
+        Some(share_origin::draft_scope(
+            &self.digest,
+            &self.account.id,
+            self.epoch,
+        ))
     }
 }
 /// Contains a bearer token; deliberately does not implement Debug.

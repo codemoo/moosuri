@@ -16,6 +16,7 @@ mod private_files;
 mod providers;
 mod push;
 mod schedules;
+mod share_origin;
 mod source_connections;
 mod subscriptions;
 pub mod vault;
@@ -303,6 +304,10 @@ pub fn router_with_runtime(
         .route("/api/v1/system", get(system))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/session", get(session))
+        .route(
+            "/api/v1/shares/origin",
+            post(share_origin::validate_origin).layer(DefaultBodyLimit::max(256)),
+        )
         .route("/api/v1/auth/password", post(change_password))
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/vault", get(vault::status))

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
+import { build } from "vite";
 const root = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   plugins: [react(), {
@@ -13,7 +13,7 @@ export default defineConfig({
     enforce: "post",
     generateBundle: {
       order: "post",
-      handler(_options, bundle) {
+      async handler(_options, bundle) {
         // Package the original raster in a scalable SVG without changing its pixels.
         // Chromium rejects manifest raster sizes above its supported icon bound.
         const raster = readFileSync(resolve(root, "public/moosuri-attendant.png"));
@@ -33,13 +33,19 @@ export default defineConfig({
           paths.push(`/${name}`);
         }
         if (!paths.includes("/index.html")) throw new Error("Public shell is missing index.html");
-        const worker = readFileSync(resolve(root, "service-worker.ts"), "utf8");
-        const binding = readFileSync(resolve(root,"src/push-state.ts"),"utf8");
-        hash.update(worker).update(binding);
+        // Real module bundling: worker dependencies share no window/React runtime.
+        const result = await build({
+          configFile: false, root, publicDir: false, logLevel: "error",
+          build: { write: false, emptyOutDir: false, minify: false, target: "es2022",
+            lib: { entry: resolve(root, "service-worker.ts"), formats: ["iife"], name: "MoosuriWorker" },
+          },
+        });
+        const outputs = Array.isArray(result) ? result : [result];
+        const chunks = outputs.flatMap(output => "output" in output ? output.output : []);
+        if (chunks.length !== 1 || chunks[0].type !== "chunk") throw new Error("Worker must be one bundled script");
+        const compiled = chunks[0].code;
+        hash.update(compiled);
         const prefix = `const MOOSURI_SHELL_VERSION=${JSON.stringify(hash.digest("hex").slice(0, 24))};\nconst MOOSURI_SHELL_ASSETS=${JSON.stringify(paths)};\n`;
-        const compiled = ts.transpileModule(binding.replace(/^export\s+/gm, "") + "\n" + worker.replace(/import\s*\{[^}]*\}\s*from\s*["']\.\/src\/push-state["'];?\s*/m, ""), {
-          compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-        }).outputText.replace(/^export \{\};?\s*$/m, "");
         this.emitFile({ type: "asset", fileName: "service-worker.js", source: prefix + compiled });
       },
     },

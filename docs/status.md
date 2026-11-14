@@ -19,9 +19,20 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours, opt-in 기기 Push | topic mute·전체 proactive 제안 정책·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[검증](reviews/2026-11-13-web-push.md) |
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 여러 턴의 자동 명확화·넓은 자연어/시간 해석·Calendar/mail/browser/vault 미션 실행은 미완료. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
 | Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 여러 턴 대상 해석·날짜 간 이동·미션 Calendar·반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
-| 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, 공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·PWA 공유받기·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
+| 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·파일/음성 공유·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·CredentialBroker·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 다른 앱의 글과 링크 공유받기
+
+제목·글·URL을 제한된 임시 공유함으로 받아, 현재 계정에서 편집한 뒤 초안에 한 번만
+넣는다. 자동으로 메시지를 보내거나 공유 URL을 방문하지 않는다. 기존 초안을 보존하고
+삽입 후 편집창을 접어 입력창으로 돌아온다. 세션 철회·다른 탭의 늦은 응답·재로그인
+경합을 독립 재현·수정하고 Native/Linux·통합 React106·실제 Chrome 검사를 통과했다.
+
+Chrome의 실제 multipart navigation·서비스 워커 중지/재시작·사용한 링크 재사용 차단·
+다른 탭 로그아웃을 확인했다. 휴대폰 OS의 공유 메뉴나 실제 기기 수락은 별도다.
+[검증](reviews/2026-11-14-incoming-pwa-share.md).
 
 ## 최근 수락한 단위 · 녹음과 초안 입력
 
@@ -110,7 +121,7 @@ identity의 실패 사용량이 섞이는 결함을 수정하고 독립 재검�
 2. **볼트 broker와 복구**: device pairing·local grant·online commitment/revoke·secret 비노출·offline resume,
    완료한 standalone 현재 checkpoint 복구에 이어 ongoing/off-host 복구·구 v1 호환/이전,
    전체 계정 삭제/outbox를 작은 경계별 단위로 구현한다.
-3. **미디어·외부 연결**: one-use share와 실제 음성/기기 검증; Gmail provider draft·승인된 고정 예약 발송,
+3. **미디어·외부 연결**: 파일/음성 공유와 실제 음성·OS 공유 메뉴·기기 검증; Gmail provider draft·승인된 고정 예약 발송,
    통화 feed·opt-in 작업 세션·공식 배송 parser를 각각 receipt/실패 계약과 구현한다.
 4. **학습·품질·소식**: typed 성공 절차와 독립2입력 proof, 합성 export/catalog·예약 lifecycle,
    대화의 여러 턴 명확화·넓은 시간 해석, followup/topic mute/알림 정책,

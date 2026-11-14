@@ -16,6 +16,7 @@ const code = ts
     },
   })
   .outputText.replace(/^import .*push-state.*\n/m, "")
+  .replace(/^import .*share-intake.*\n/m, "")
   .replace(/^export \{\};?\s*$/m, "");
 function fixture() {
   const events = new Map<string, (e: any) => void>();

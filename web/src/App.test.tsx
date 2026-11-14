@@ -797,6 +797,7 @@ describe("authentication mutation overlap", () => {
       ).has("X-Moosuri-Account"),
     ).toBe(false);
     expect(signals.sent).toEqual([
+      { type: "auth-changed", retired: true },
       { type: "auth-changed" },
       { type: "auth-changed" },
     ]);

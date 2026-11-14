@@ -21,7 +21,7 @@
 | F13 | 녹음 인터페이스 · 기본 | web recorder·UX tests | web · P7 | 권한 요청, pause/resume, 시간·입력 상태, preview/re-record/delete, 통화/화면전환 중 track 정리 |
 | F14 | 음성·이미지·PDF 텍스트 처리 · 기본 | `attachment_text.py`, `media.py`, `mail_text.py` | connectors/agent · P3/P7 | 처리 완료 뒤 답변, STT는 초안 확인 후 전송, page/bytes/time 상한, lease 만료 후 늦은 처리 금지; codec 불가를 숨기지 않음 |
 | F15 | 문서·목표 편집·내보내기 · 기본 | `workspace.py`, `workspace_tools.py`, web editors | agent/server/web · P3 | same ID/revision 갱신, 충돌 초안 보존, 근거 철회, Markdown·스크립트 차단 print HTML |
-| F16 | PWA 설치·공유·offline shell · 기본 | `web/public/service-worker.js`, manifest, `pwa.spec.ts` | React web + TypeScript service worker · P0/P7 | public shell만 cache, private offline queue 없음, one-use 공유 초안, TTL·worker 재시작·로그인, 자동 전송0 |
+| F16 | PWA 설치·공유·offline shell · 기본 | `web/service-worker.ts`, manifest, `share-*`, `IncomingShare` | React web + TypeScript service worker · P0/P7 | public shell만 cache, private offline queue 없음, one-use 공유 초안, TTL·worker 재시작·로그인, 자동 전송0 |
 | F17 | Web Push·알림 열기 · 기본 | `push.py`, `proactive.py`, web push/service-worker | effects/web · P0/P5/P7 | 최초 gesture 동의, 기존 endpoint repair, 멀티탭 세대, 일반 payload+opaque ID, 클릭 초안 보존, 만료 endpoint 제거 |
 | F18 | 공개 demo/미리보기 · 기본 | `web/app/preview.tsx`, `model.ts`, preview tests | web/synthetic fixtures · P7/P10 | 개인 API와 완전 분리, 샘플이 개인 공간에 섞이지 않음, 공개 screenshot에 합성 자료만 |
 
@@ -163,4 +163,12 @@ real-model language-understanding/latency success claim. See [missions](missions
 
 ### Bounded recorder/STT implementation unit (F13/F14)
 
-The integrated schema33 voice unit implements local recording/pause/resume/preview/cleanup, canonical sample-bounded WAV, separately verified installation OpenAI STT, original-session ephemeral jobs and editable original-slot draft insertion. Ordinary text admission remains independent and Send remains explicit. Insertion releases the preview, collapses the panel and returns focus to the current draft. Full personal schema32 precedes33 in normal open and sealed restore. Independent review and native/Linux/actual Chrome checks passed; [evidence](reviews/2026-11-14-bounded-voice-input.md) distinguishes synthetic audio/response fixtures from recognition quality or device interruption. Incoming one-use share (F16), arbitrary audio files, local engine (F43) and actual mobile/provider acceptance remain separate.
+The integrated schema33 voice unit implements local recording/pause/resume/preview/cleanup, canonical sample-bounded WAV, separately verified installation OpenAI STT, original-session ephemeral jobs and editable original-slot draft insertion. Ordinary text admission remains independent and Send remains explicit. Insertion releases the preview, collapses the panel and returns focus to the current draft. Full personal schema32 precedes33 in normal open and sealed restore. Independent review and native/Linux/actual Chrome checks passed; [evidence](reviews/2026-11-14-bounded-voice-input.md) distinguishes synthetic audio/response fixtures from recognition quality or device interruption. Incoming one-use text share (F16) is covered below. Arbitrary audio files, local engine (F43) and actual mobile/provider acceptance remain separate.
+
+F16의 text/title/URL 첫 slice는 별도 5분 plaintext IDB handoff, fresh-session intended-owner
+확인, 단일 창 one-use claim, 편집/명시적 초안 append와 normal Send를 제공한다. 공개 shell만
+Cache API에 두며 API queue/replay는 없다. 일반 만료의 같은 계정 재로그인은 opaque 상태로
+제한하고 never-authenticated intake·파일/음성 share는 보존하지 않는다. 독립 검토와 통합
+Native/Linux·실제 Chrome multipart navigation/worker 재시작/재사용 차단/다른 탭 로그아웃
+검사를 통과했다. OS 공유 메뉴·모바일 acceptance는 별도 gate이며 aggregate F16/P7 완료가 아니다.
+[PWA 경계](pwa.md)·[bounded delta](../openspec/changes/add-incoming-pwa-share/proposal.md).

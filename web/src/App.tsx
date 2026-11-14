@@ -1,3 +1,6 @@
+import { fenceIncomingShares } from "./share-state";
+import { refreshShareSession } from "./share-intake";
+import { IncomingShareNotice } from "./IncomingShare";
 import {ChatDraftRecovery,draftScope,type ChatDraftSession} from "./chat-drafts";
 import {activatePushAccount,clearBrowserPushBinding} from "./push-binding";
 
@@ -154,7 +157,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   const authMutation = useRef<symbol | null>(null);
   const logoutIdentity = useRef<string | null>(null);
   const authChannel = useRef<BroadcastChannel | null>(null);
-  const revalidateRef = useRef<() => void>(() => {});
+  const revalidateRef = useRef<(destructive?: boolean) => void>(() => {});
   const retryBootRef = useRef<() => void>(() => {});
   const checkSessionRef = useRef<() => void>(() => {});
   const [path, setPath] = useState(window.location.pathname);
@@ -180,6 +183,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     logoutScope.current?.close();
     logoutScope.current = null;
   }
+  useEffect(()=>{if(session)void refreshShareSession().catch(()=>{});},[session?.user.id, session?.chat_draft_scope]);
   useEffect(()=>{if(session)void activatePushAccount(session.user.id).catch(()=>{});},[session?.user.id]);
   useEffect(()=>{const listener=(event:MessageEvent)=>{if(event.data?.type==="moosuri-open-schedules"&&session)navigate("/app/schedules");};navigator.serviceWorker?.addEventListener("message",listener);return()=>navigator.serviceWorker?.removeEventListener("message",listener);},[session?.user.id]);
   function retryBoot() {
@@ -191,7 +195,8 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     setLoading(true);
     setBoot((value) => value + 1);
   }
-  function revalidate() {
+  function revalidate(destructive = false) {
+    void fenceIncomingShares(destructive, session ? draftScope(session) : null, session?.user.id).catch(()=>{});
     draftRecovery.clear();
     setDraftSession(null);
     if(session)void clearBrowserPushBinding(session.user.id);
@@ -206,6 +211,8 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   revalidateRef.current = revalidate;
   retryBootRef.current = retryBoot;
   function beginMutation() {
+    void fenceIncomingShares(!!session, session ? draftScope(session) : null, session?.user.id).catch(()=>{});
+    if (session) announceTransition(true);
     draftRecovery.clear();
     setDraftSession(null);
     const owner = Symbol();
@@ -251,7 +258,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
         const channel = new BroadcastChannel("moosuri-auth");
         authChannel.current = channel;
         channel.onmessage = (event) => {
-          if (event.data?.type === "auth-changed") revalidateRef.current();
+          if (event.data?.type === "auth-changed") revalidateRef.current(event.data?.retired === true);
         };
       } catch {
         /* The account assertion still protects requests without messaging. */
@@ -269,9 +276,9 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
       document.removeEventListener("visibilitychange", check);
     };
   }, []);
-  function announceTransition() {
+  function announceTransition(retired = false) {
     try {
-      authChannel.current?.postMessage({ type: "auth-changed" });
+      authChannel.current?.postMessage(retired ? { type: "auth-changed", retired: true } : { type: "auth-changed" });
     } catch {
       /* Optional cross-tab hint. */
     }
@@ -348,7 +355,9 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     if (!expectedAccount || logoutScope.current) return;
     draftRecovery.clear();
     setDraftSession(null);
+    void fenceIncomingShares(true, session ? draftScope(session) : null, expectedAccount).catch(()=>{});
     void clearBrowserPushBinding(expectedAccount);
+    announceTransition(true);
     logoutIdentity.current = expectedAccount;
     focusScope.current?.close();
     focusScope.current = null;
@@ -531,6 +540,7 @@ function Login({
           Welcome back<span className="brand-dot">.</span>
         </h1>
         <p className="muted">Sign in to your own moosuri space.</p>
+        <IncomingShareNotice/>
         {(error || message) && <Notice>{error || message}</Notice>}
         {onRetryLogout && (
           <button
@@ -1224,6 +1234,7 @@ function Workspace({
         ) : !chatReady ? <p role="status">Checking your conversations…</p> : (
           <ChatPanel
             accountId={session.user.id}
+            shareScope={draftScope(session)}
             artifactTarget={artifactTarget}
             clearArtifactTarget={()=>setArtifactTarget(null)}
             openArtifact={id=>navigate(`/app/artifacts/${id}`)}

@@ -760,3 +760,216 @@ async fn chat_draft_scope_is_public_non_authenticating_and_bound_to_exact_server
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn incoming_share_origin_is_authenticated_bounded_private_and_revocation_aware() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_tmp, _store, app) = fixture(false).await;
+    let old = login(&app, "admin@example.test", PASSWORD).await;
+    let original =
+        value(send(&app, "GET", "/api/v1/auth/session", Some(&old), json!({})).await).await;
+    let scope = original["chat_draft_scope"].as_str().unwrap();
+    let current = login(&app, "admin@example.test", PASSWORD).await;
+    let current_view = value(
+        send(
+            &app,
+            "GET",
+            "/api/v1/auth/session",
+            Some(&current),
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    let expected = current_view["chat_draft_scope"].as_str().unwrap();
+    let mismatch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/shares/origin")
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, ORIGIN)
+                .header(header::COOKIE, &current)
+                .header("x-moosuri-account", "synthetic-other-account")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"origin_scope":scope,"expected_current_scope":expected}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mismatch.status(), StatusCode::UNAUTHORIZED);
+    let check = send(
+        &app,
+        "POST",
+        "/api/v1/shares/origin",
+        Some(&current),
+        json!({"origin_scope":scope,"expected_current_scope":expected}),
+    )
+    .await;
+    assert_eq!(check.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        check.headers().get(header::CACHE_CONTROL).unwrap(),
+        "no-store"
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/shares/origin",
+            None,
+            json!({"origin_scope":scope,"expected_current_scope":expected})
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    for input in [
+        json!({"origin_scope":"x","expected_current_scope":expected}),
+        json!({"origin_scope":scope,"expected_current_scope":expected,"account":"forged"}),
+        json!({"origin_scope":"x".repeat(400),"expected_current_scope":expected}),
+    ] {
+        assert_eq!(
+            send(&app, "POST", "/api/v1/shares/origin", Some(&current), input)
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        send(
+            &app,
+            "GET",
+            "/api/v1/shares/origin",
+            Some(&current),
+            json!({})
+        )
+        .await
+        .status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    assert_eq!(
+        send(&app, "POST", "/api/v1/auth/logout", Some(&old), json!({}))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/shares/origin",
+            Some(&current),
+            json!({"origin_scope":scope,"expected_current_scope":expected})
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    let changed = send(
+        &app,
+        "POST",
+        "/api/v1/auth/password",
+        Some(&current),
+        json!({"password":"Synthetic-new-password-42"}),
+    )
+    .await;
+    assert_eq!(changed.status(), StatusCode::OK);
+    let next = session_cookie(&changed);
+    let next_view =
+        value(send(&app, "GET", "/api/v1/auth/session", Some(&next), json!({})).await).await;
+    let expected = next_view["chat_draft_scope"].as_str().unwrap();
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/shares/origin",
+            Some(&next),
+            json!({"origin_scope":scope,"expected_current_scope":expected})
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn incoming_share_origin_pins_actual_current_session_but_allows_unclaimed_same_owner_continuity()
+ {
+    let _guard = TEST_LOCK.lock().await;
+    let (_tmp, _store, app) = fixture(false).await;
+    let a = login(&app, "admin@example.test", PASSWORD).await;
+    let a_view = value(send(&app, "GET", "/api/v1/auth/session", Some(&a), json!({})).await).await;
+    let a_scope = a_view["chat_draft_scope"].as_str().unwrap();
+    let b = login(&app, "admin@example.test", PASSWORD).await;
+    let b_view = value(send(&app, "GET", "/api/v1/auth/session", Some(&b), json!({})).await).await;
+    let b_scope = b_view["chat_draft_scope"].as_str().unwrap();
+    assert_ne!(a_scope, b_scope);
+    // A was already claimed. Cookie B arrives at final proof despite the last
+    // GET returning A: account assertion alone must never approve this request.
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/shares/origin",
+            Some(&b),
+            json!({"origin_scope":a_scope,"expected_current_scope":a_scope})
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    // An unclaimed origin A explicitly adopted under current B remains valid.
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/shares/origin",
+            Some(&b),
+            json!({"origin_scope":a_scope,"expected_current_scope":b_scope})
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/shares/origin",
+            Some(&a),
+            json!({"origin_scope":a_scope,"expected_current_scope":a_scope})
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/shares/origin",
+            Some(&b),
+            json!({"origin_scope":a_scope})
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    for expected in ["".to_string(), "x".repeat(64), "a".repeat(63)] {
+        assert_eq!(
+            send(
+                &app,
+                "POST",
+                "/api/v1/shares/origin",
+                Some(&b),
+                json!({"origin_scope":a_scope,"expected_current_scope":expected})
+            )
+            .await
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+}

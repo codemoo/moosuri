@@ -18,6 +18,10 @@ const MAX_FILES: usize = 20;
 const SETTLE_SECONDS: i64 = 60;
 const PARTIAL_IDLE_SECONDS: i64 = 3600;
 const MAX_TEXT: usize = 2048;
+pub(super) struct Snapshot {
+    pub bytes: Zeroizing<Vec<u8>>,
+    pub fingerprint: Fingerprint,
+}
 pub(super) struct Root {
     path: PathBuf,
     file: File,
@@ -31,6 +35,7 @@ pub(super) struct Scan {
     pub examined: u32,
     pub deferred: u32,
     pub unsupported: u32,
+    pub call_report: Option<crate::calls::Counts>,
 }
 #[derive(Deserialize)]
 struct Line {
@@ -335,14 +340,14 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
     }
     Ok(result)
 }
-fn same_stat(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+pub(super) fn same_stat(a: &fs::Metadata, b: &fs::Metadata) -> bool {
     a.dev() == b.dev()
         && a.ino() == b.ino()
         && a.len() == b.len()
         && a.mtime() == b.mtime()
         && a.mtime_nsec() == b.mtime_nsec()
 }
-fn source_file(file: &File) -> Result<fs::Metadata> {
+pub(super) fn source_file(file: &File) -> Result<fs::Metadata> {
     let m = file.metadata().map_err(|_| "source_metadata_failed")?;
     // SAFETY: geteuid has no arguments or memory contract.
     if !m.is_file()
@@ -380,7 +385,7 @@ impl Root {
     pub fn path(&self) -> &Path {
         &self.path
     }
-    fn open_relative(&self, path: &Path) -> Result<File> {
+    pub(super) fn open_relative(&self, path: &Path) -> Result<File> {
         let mut directory = self
             .file
             .try_clone()
@@ -412,7 +417,7 @@ impl Root {
         }
         Ok(directory)
     }
-    fn discover(&self) -> Result<BTreeMap<String, PathBuf>> {
+    pub(super) fn discover(&self, extension: &str) -> Result<BTreeMap<String, PathBuf>> {
         let mut todo = vec![(self.path.clone(), 0usize)];
         let mut found = BTreeMap::new();
         let mut examined = 0usize;
@@ -441,7 +446,7 @@ impl Root {
                     todo.push((item.path(), depth + 1));
                     continue;
                 }
-                if !kind.is_file() || item.path().extension().is_none_or(|v| v != "jsonl") {
+                if !kind.is_file() || item.path().extension().is_none_or(|v| v != extension) {
                     continue;
                 }
                 let relative = item
@@ -457,6 +462,69 @@ impl Root {
         }
         Ok(found)
     }
+    pub(super) fn identity(&self) -> Result<(u64, u64)> {
+        let pinned = self
+            .file
+            .metadata()
+            .map_err(|_| "source_root_changed_retry")?;
+        let named = fs::symlink_metadata(&self.path).map_err(|_| "source_root_changed_retry")?;
+        if pinned.dev() != named.dev()
+            || pinned.ino() != named.ino()
+            || named.file_type().is_symlink()
+        {
+            return Err("source_root_changed_retry");
+        }
+        Ok((pinned.dev(), pinned.ino()))
+    }
+    pub(super) fn matches(&self, path: &Path, expected: &Fingerprint) -> bool {
+        self.open_relative(path)
+            .and_then(|f| source_file(&f))
+            .is_ok_and(|m| {
+                m.dev() == expected.device
+                    && m.ino() == expected.inode
+                    && m.len() == expected.bytes
+                    && m.mtime() == expected.modified_sec
+                    && m.mtime_nsec() == expected.modified_nsec
+            })
+    }
+    pub(super) fn snapshot(
+        &self,
+        path: &Path,
+        time: i64,
+        max_file: u64,
+        remaining: u64,
+    ) -> Result<Snapshot> {
+        let file = self.open_relative(path)?;
+        let before = source_file(&file)?;
+        if before.len() > max_file
+            || before.len() > remaining
+            || time.saturating_sub(before.mtime()) < SETTLE_SECONDS
+        {
+            return Err("source_not_settled_or_bounded");
+        }
+        let mut bytes = Zeroizing::new(Vec::new());
+        (&file)
+            .take(max_file + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "source_read_changed_retry")?;
+        if bytes.len() as u64 != before.len()
+            || !same_stat(&before, &source_file(&file)?)
+            || !same_stat(&before, &source_file(&self.open_relative(path)?)?)
+        {
+            return Err("source_read_changed_retry");
+        }
+        Ok(Snapshot {
+            fingerprint: Fingerprint {
+                device: before.dev(),
+                inode: before.ino(),
+                bytes: before.len(),
+                modified_sec: before.mtime(),
+                modified_nsec: before.mtime_nsec(),
+                sha256: hash(&bytes),
+            },
+            bytes,
+        })
+    }
     pub fn scan(&self, state: &State, time: i64) -> Result<Scan> {
         let pinned = self
             .file
@@ -469,7 +537,7 @@ impl Root {
         {
             return Err("source_root_changed_retry");
         }
-        let paths = self.discover()?;
+        let paths = self.discover("jsonl")?;
         let mut ordered = paths.into_iter().collect::<Vec<_>>();
         if let Some(after) = &state.scan_after {
             let offset = ordered.partition_point(|(id, _)| id <= after);
@@ -484,67 +552,22 @@ impl Root {
             examined: 0,
             deferred: 0,
             unsupported: 0,
+            call_report: None,
         };
         let mut total = 0u64;
         for (key, path) in ordered.into_iter().take(MAX_FILES) {
             out.examined += 1;
             out.scan_after = Some(key.clone());
-            let file = match self.open_relative(&path) {
-                Ok(file) => file,
-                Err(_) => {
-                    out.deferred += 1;
-                    continue;
-                }
-            };
-            let before = match source_file(&file) {
-                Ok(m) => m,
-                Err(_) => {
-                    out.deferred += 1;
-                    continue;
-                }
-            };
-            if before.len() > MAX_FILE || time.saturating_sub(before.mtime()) < SETTLE_SECONDS {
-                out.deferred += 1;
-                continue;
-            }
-            if total.saturating_add(before.len()) > MAX_TOTAL {
-                out.deferred += 1;
-                break;
-            }
-            total += before.len();
-            let mut bytes = Zeroizing::new(Vec::new());
-            if (&file).take(MAX_FILE + 1).read_to_end(&mut bytes).is_err()
-                || bytes.len() as u64 != before.len()
-            {
-                out.deferred += 1;
-                continue;
-            }
-            let after = match source_file(&file) {
-                Ok(m) => m,
-                Err(_) => {
-                    out.deferred += 1;
-                    continue;
-                }
-            };
-            let named = match self.open_relative(&path).and_then(|f| source_file(&f)) {
-                Ok(m) => m,
-                Err(_) => {
-                    out.deferred += 1;
-                    continue;
-                }
-            };
-            if !same_stat(&before, &after) || !same_stat(&before, &named) {
-                out.deferred += 1;
-                continue;
-            }
-            let fingerprint = Fingerprint {
-                device: before.dev(),
-                inode: before.ino(),
-                bytes: before.len(),
-                modified_sec: before.mtime(),
-                modified_nsec: before.mtime_nsec(),
-                sha256: hash(&bytes),
-            };
+            let snapshot =
+                match self.snapshot(&path, time, MAX_FILE, MAX_TOTAL.saturating_sub(total)) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        out.deferred += 1;
+                        continue;
+                    }
+                };
+            total += snapshot.bytes.len() as u64;
+            let Snapshot { bytes, fingerprint } = snapshot;
             if state.files.get(&key).is_some_and(|old| {
                 old.device == fingerprint.device
                     && old.inode == fingerprint.inode

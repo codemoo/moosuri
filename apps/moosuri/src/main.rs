@@ -18,6 +18,7 @@ use std::{
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 mod backup_live;
 mod backup_snapshots;
+mod calls;
 mod import_private;
 mod installation;
 mod legacy_relations;
@@ -59,6 +60,11 @@ enum Command {
     WorkSessions {
         #[command(subcommand)]
         command: work_sessions::Command,
+    },
+    /// Explicit normalized call transcript/audio feed; no discovery or background worker.
+    Calls {
+        #[command(subcommand)]
+        command: calls::Command,
     },
     /// Verify/install/manage a local signed native bundle. No system services are changed.
     Installation {
@@ -322,6 +328,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::Calls { command } = &cli.command {
+        return calls::run(command).await;
+    }
     if let Command::WorkSessions { command } = &cli.command {
         return work_sessions::run(command).await;
     }
@@ -440,7 +449,10 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::Skills { .. } | Command::Subscriptions { .. } | Command::WorkSessions { .. } => {
+        Command::Skills { .. }
+        | Command::Subscriptions { .. }
+        | Command::WorkSessions { .. }
+        | Command::Calls { .. } => {
             unreachable!("native helpers run without installation state")
         }
         Command::Backup { command } => match command {

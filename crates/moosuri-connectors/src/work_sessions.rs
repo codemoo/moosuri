@@ -11,6 +11,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
+#[path = "calls/scan.rs"]
+mod call_files;
 mod files;
 mod start_recovery;
 #[cfg(test)]
@@ -38,6 +40,8 @@ pub struct Receipt {
     pub unsupported_files: u32,
     /// A bounded scan is never proof of complete external history.
     pub producer_report: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription: Option<crate::calls::Counts>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,7 +49,7 @@ struct Run {
     run_id: String,
     generation: i64,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fingerprint {
     device: u64,
@@ -55,10 +59,17 @@ struct Fingerprint {
     modified_nsec: i64,
     sha256: String,
 }
+fn codex_producer() -> String {
+    "local-codex-v1".into()
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct State {
     version: u32,
+    #[serde(default = "codex_producer")]
+    producer: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    transcriptions: BTreeMap<String, crate::calls::Transcription>,
     origin: String,
     connection_id: String,
     config_revision: i64,
@@ -89,6 +100,8 @@ struct Pending {
     deferred_files: u32,
     unsupported_files: u32,
     committed: bool,
+    #[serde(default)]
+    call_report: Option<crate::calls::Counts>,
 }
 fn hash(bytes: impl AsRef<[u8]>) -> String {
     format!("{:x}", Sha256::digest(bytes.as_ref()))
@@ -121,6 +134,7 @@ fn binding(
         || state.sequence < 0
         || state.files.len() > 1024
         || state.objects.len() > MAX_OBJECTS
+        || state.transcriptions.len() > 64
     {
         return Err("saved_scope_or_destination_changed_keep_state");
     }
@@ -203,7 +217,8 @@ fn stage(state: &mut State, scan: files::Scan, status: &transport::Status) -> Re
     let request_id = Uuid::new_v4().to_string();
     // This is an opaque commit cursor, not an assertion that all history was scanned.
     let checkpoint_after = format!(
-        "local-codex-v1:{}",
+        "{}:{}",
+        state.producer,
         hash(encode(&(
             &scan.files,
             &scan.objects,
@@ -239,6 +254,7 @@ fn stage(state: &mut State, scan: files::Scan, status: &transport::Status) -> Re
         deferred_files: scan.deferred,
         unsupported_files: scan.unsupported,
         committed: false,
+        call_report: scan.call_report,
     });
     Ok(())
 }
@@ -261,6 +277,27 @@ async fn run_with_transport(
     time: i64,
     loopback_fixture: bool,
 ) -> Result<Receipt> {
+    run_feed(options, time, loopback_fixture, None).await
+}
+pub(crate) async fn run_calls(
+    options: &Options,
+    key: Option<&std::path::Path>,
+    audio: crate::audio::AudioClient,
+    loopback: bool,
+) -> Result<Receipt> {
+    run_feed(options, now()?, loopback, Some((key, audio))).await
+}
+async fn run_feed(
+    options: &Options,
+    time: i64,
+    loopback_fixture: bool,
+    calls: Option<(Option<&std::path::Path>, crate::audio::AudioClient)>,
+) -> Result<Receipt> {
+    let producer = if calls.is_some() {
+        "normalized-call-v1"
+    } else {
+        "local-codex-v1"
+    };
     Uuid::parse_str(&options.connection_id).map_err(|_| "invalid_connection_id")?;
     let source = files::Root::open(&options.directory)?;
     let root_digest = hash(source.path().as_os_str().as_encoded_bytes());
@@ -271,6 +308,11 @@ async fn run_with_transport(
         || state_path == token_path
     {
         return Err("token_and_state_must_be_separate_outside_source_directory");
+    }
+    if let Some((Some(key), _)) = &calls
+        && (*key == token_path || *key == state_path || key.starts_with(source.path()))
+    {
+        return Err("transcription_key_must_be_separate_outside_source");
     }
     let _lock = transport::lock(&state_path)?;
     let http = transport::Http::new(&options.origin, &token_path, loopback_fixture)?;
@@ -287,6 +329,8 @@ async fn run_with_transport(
         }
         State {
             version: 1,
+            producer: producer.into(),
+            transcriptions: BTreeMap::new(),
             origin: http.origin().into(),
             connection_id: status.connection_id.clone(),
             config_revision: status.config_revision,
@@ -299,6 +343,9 @@ async fn run_with_transport(
             pending: None,
         }
     };
+    if state.producer != producer {
+        return Err("saved_producer_changed_keep_state");
+    }
     binding(&state, options, http.origin(), &status, &root_digest)?;
     transport::save(&state_path, &state)?;
     let resuming = state.pending.is_some();
@@ -307,10 +354,18 @@ async fn run_with_transport(
         if status.active_run.is_some() {
             return Err("unrelated_active_run_keep_state");
         }
-        let scan = source.scan(&state, time)?;
+        let scan = if let Some((key, audio)) = &calls {
+            call_files::scan(&source, &mut state, time, &state_path, *key, audio).await?
+        } else {
+            source.scan(&state, time)?
+        };
         if scan.entries.is_empty() && scan.files.is_empty() && scan.scan_after == state.scan_after {
             return Ok(Receipt {
-                status: "no_change",
+                status: if calls.is_some() && scan.deferred > 0 {
+                    "calls_deferred_no_new_data"
+                } else {
+                    "no_change"
+                },
                 request_id: None,
                 accepted: 0,
                 unchanged: 0,
@@ -318,6 +373,7 @@ async fn run_with_transport(
                 deferred_files: scan.deferred,
                 unsupported_files: scan.unsupported,
                 producer_report: true,
+                transcription: scan.call_report,
             });
         }
         stage(&mut state, scan, &status)?;
@@ -420,6 +476,7 @@ async fn run_with_transport(
         deferred_files: pending.deferred_files,
         unsupported_files: pending.unsupported_files,
         producer_report: true,
+        transcription: pending.call_report,
     };
     state.files.extend(pending.files_after);
     state.objects.extend(pending.objects_after);

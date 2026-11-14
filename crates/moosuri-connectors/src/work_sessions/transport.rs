@@ -261,6 +261,11 @@ pub(super) fn state_path(path: &Path) -> Result<PathBuf> {
     let _ = read_private(path, STATE_LIMIT)?;
     Ok(path.to_owned())
 }
+pub(super) fn credential_path(path: &Path, limit: usize) -> Result<PathBuf> {
+    canonical_parent(path)?;
+    let _ = read_private(path, limit)?.ok_or("credential_file_missing")?;
+    Ok(path.to_owned())
+}
 pub(super) fn token_path(path: &Path) -> Result<PathBuf> {
     canonical_parent(path)?;
     let _ = read_private(path, 128)?.ok_or("token_file_missing")?;

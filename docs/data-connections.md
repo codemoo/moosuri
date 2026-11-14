@@ -210,3 +210,13 @@ belongs to it. A known inactive start may get one fresh attempt on an explicit
 later invocation only before batch staging, with exact current position and no
 conflicting work. Existing committed batch receipt recovery still preserves unknown
 run history. [Focused acceptance](reviews/2026-11-15-custom-ingest-start-recovery.md).
+
+
+## Explicit normalized call producer
+
+The [call-feed CLI](call-feed.md) uses a separate dedicated per-user custom
+connection and private producer state. It accepts selected normalized transcripts,
+with optional bounded fixed-provider WAV transcription, and reuses the same
+start/batch/receipt/finish recovery. It is not phone/vendor discovery or original
+audio archival. An explicit unknown/mixed-speaker marker excludes automatic
+personal-memory extraction even under a collection-specified speaker policy.

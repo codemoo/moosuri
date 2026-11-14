@@ -767,3 +767,75 @@ async fn crlf_mail_larger_than_one_unit_keeps_exact_selected_paragraph_evidence(
         None
     );
 }
+
+#[tokio::test]
+async fn call_unknown_marker_excludes_both_attribution_modes_and_cannot_be_a_specified_grant() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let u = configured(&store).await;
+    for mode in ["reported", "specified"] {
+        let c = collection(&store, &u).await;
+        let mut setting = change(0, true);
+        setting.attribution_mode = mode.into();
+        if mode == "reported" {
+            setting.reported_speaker.clear();
+        }
+        store
+            .set_memory_extraction(&u, c.id.clone(), setting)
+            .await
+            .unwrap();
+        source(
+            &store,
+            &u,
+            &c,
+            "I prefer synthetic tea.",
+            Some(UNATTRIBUTED_CALL_SPEAKER),
+        )
+        .await;
+        assert!(store.claim_memory_extraction().await.unwrap().is_none());
+        let status = store
+            .memory_extraction_status(&u, c.id.clone())
+            .await
+            .unwrap();
+        assert_eq!(status.reason.as_deref(), Some("unknown_attribution"));
+        let calls: i64 = store
+            .call(|db| {
+                Ok(db.conn.query_row(
+                    "SELECT coalesce(sum(calls),0) FROM automatic_memory_budget",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(calls, 0);
+        assert!(store.memories(&u, None).await.unwrap().items.is_empty());
+    }
+    let c = collection(&store, &u).await;
+    let mut bad = change(0, true);
+    bad.reported_speaker = UNATTRIBUTED_CALL_SPEAKER.into();
+    assert!(matches!(
+        store.set_memory_extraction(&u, c.id, bad).await,
+        Err(StoreError::InvalidInput)
+    ));
+    // Known single reported speakers continue through the existing admission path.
+    let c = collection(&store, &u).await;
+    let mut setting = change(0, true);
+    setting.attribution_mode = "reported".into();
+    setting.reported_speaker.clear();
+    store
+        .set_memory_extraction(&u, c.id.clone(), setting)
+        .await
+        .unwrap();
+    source(
+        &store,
+        &u,
+        &c,
+        "I prefer synthetic coffee.",
+        Some("Synthetic Mina"),
+    )
+    .await;
+    let claim = store.claim_memory_extraction().await.unwrap().unwrap();
+    assert_eq!(claim.reported_speaker, "Synthetic Mina");
+}

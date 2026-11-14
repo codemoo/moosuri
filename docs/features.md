@@ -261,3 +261,9 @@ Operator export, production comparison and full cutover remain separate.
 추가 단계별 승인 창을 만들지 않는다. 대화 등록은 새로 수락한 실행에만 적용한다.
 메일/일정 쓰기·browser/vault·Claude background는 이 범위가 아니다.
 [개인 읽기 업무 검증](reviews/2026-11-15-personal-chatgpt-missions.md).
+
+F40의 정규화 통화 전사 feed를 구현했다. 선택한 settled 파일·정확 해시·동일 source ID의
+수정/중복·원래 ingest 영수증 복구와 불명 화자의 자동 기억 제외를 지원한다. 명시적 API 키로
+최대 20분 canonical WAV를 분할 전사하는 선택 경로가 있다. 원본 음성은 로컬에 남으며,
+vendor 포맷·원본 음성 라이브러리 이전·실제 provider/device·F40 전체 수락은 별도다.
+[지원 경계](call-feed.md).

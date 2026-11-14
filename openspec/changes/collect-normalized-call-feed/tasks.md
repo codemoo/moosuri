@@ -1,0 +1,12 @@
+## Implementation
+- [x] Define a closed normalized call export and a complete synthetic descriptor/CLI example.
+- [x] Reuse anchored settled-file reading, custom ingest start/batch/receipt/finish and private cursor binding.
+- [x] Preserve raw descriptor/audio hashes, stable call identity/revisions and reported speaker evidence.
+- [x] Support optional canonical WAV up to20minutes via≤120-second chunks and per-chunk durable intent/result receipts; require complete bounded transcript before staging.
+- [x] Exclude unknown/mixed call attribution in both automatic-memory modes with an explicit shared marker and reserved-grant rejection.
+- [x] Pass focused native parser/WAV, both attribution modes, actual Store/router unknown-STT/settle/dedup/receipt workflows and shared Codex regression.
+- [x] Pass scoped all-target Clippy with warnings denied and freeze exact source.
+- [x] Complete R0 independent review; isolate the definite-rejection recovery blocker.
+- [x] Add bounded durable retryable rejection/history and same-scan no-retry fencing; leave Unknown/Response permanently fenced.
+- [x] Pass the affected R1 actual401/key-repair/unknown fixture and scoped root Linux Clippy/build; root accepts the independent-review repair.
+- [ ] Separately evaluate actual vendor export/device/provider quality/account limits; this unit is not full F40/P6/P7 acceptance.

@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "kind": "moosuri_call_export",
+  "call_id": "00000000-0000-4000-8000-000000000040",
+  "ended_at": 1704067200,
+  "settled": true,
+  "title": "Synthetic call example",
+  "audio": null,
+  "transcript": {
+    "segments": [
+      {"speaker": "Synthetic Mina", "text": "I prefer quiet meetings."},
+      {"speaker": null, "text": "This reply has no reliable speaker label."}
+    ]
+  }
+}

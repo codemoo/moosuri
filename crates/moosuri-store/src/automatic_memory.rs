@@ -53,7 +53,8 @@ fn eligible(conn: &Connection, tenant: &str, collection: &str, g: &Grant) -> Res
     Ok(g.enabled && conn.query_row("SELECT EXISTS(SELECT 1 FROM accounts a JOIN knowledge_collections c ON c.tenant_id=a.tenant_id WHERE a.tenant_id=?1 AND a.id=?2 AND a.auth_epoch=?3 AND a.recovery_required=0 AND a.must_change_password=0 AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?5) AND c.id=?4 AND c.connected=1 AND c.deleted=0)",params![tenant,g.account,g.epoch,collection,now()?],|r|r.get(0))?)
 }
 fn speaker_label(s: &str) -> bool {
-    !s.trim().is_empty()
+    s != moosuri_core::UNATTRIBUTED_CALL_SPEAKER
+        && !s.trim().is_empty()
         && s.len() <= 160
         && !s.chars().any(|c| c.is_control() || ",;<>|&/\\".contains(c))
         && ![" and ", " 및 ", " 와 ", " 과 "]
@@ -61,6 +62,9 @@ fn speaker_label(s: &str) -> bool {
             .any(|p| s.contains(p))
 }
 fn attribution(g: &Grant, source: &moosuri_core::SourceDocument) -> Option<String> {
+    if source.source.speaker.as_deref() == Some(moosuri_core::UNATTRIBUTED_CALL_SPEAKER) {
+        return None;
+    }
     if g.mode == "reported" {
         source.source.speaker.clone().filter(|s| speaker_label(s))
     } else if source

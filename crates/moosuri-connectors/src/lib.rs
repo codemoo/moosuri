@@ -18,6 +18,8 @@ pub mod chatgpt_oauth;
 pub mod invitation;
 
 #[cfg(unix)]
+pub mod calls;
+#[cfg(unix)]
 pub mod work_sessions;
 
 #[cfg(unix)]

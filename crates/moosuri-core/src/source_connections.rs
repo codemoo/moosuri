@@ -1,5 +1,8 @@
 //! Safe connection views and bounded ingestion envelopes. Credentials and provider
 //! checkpoints deliberately have no Debug implementation.
+/// Reserved ingestion marker for unknown/mixed call attribution. It is valid
+/// source metadata but never authorizes automatic personal-memory extraction.
+pub const UNATTRIBUTED_CALL_SPEAKER: &str = "moosuri:unknown-or-mixed-call-speaker:v1";
 use crate::SourceInput;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

@@ -108,6 +108,7 @@ pub(super) async fn ensure(
         examined: p.examined_files,
         deferred: p.deferred_files,
         unsupported: p.unsupported_files,
+        call_report: p.call_report.clone(),
     };
     stage(state, scan, &current)?;
     transport::save(path, state)?;

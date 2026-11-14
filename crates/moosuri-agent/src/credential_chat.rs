@@ -1,13 +1,23 @@
-//! Discovery/parser for one exact terminal GitHub metadata request. No credential data.
+//! Discovery/parsers for explicit terminal credential reads. No credential data.
 use crate::knowledge_tools::Invocation;
 use moosuri_connectors::model::protocol::tools::FunctionDefinition;
 use moosuri_core::RunToolProfile;
 use serde::Deserialize;
 pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefinition> {
-    if !cfg!(feature = "credential-broker-chat") || profile.is_none_or(|p| !p.credential_github) {
+    if !cfg!(feature = "credential-broker-chat") {
         return vec![];
     }
-    vec![FunctionDefinition{name:"github_repository_metadata".into(),description:"Read metadata for exactly one GitHub owner/repository explicitly named in the CURRENT user request. This is a terminal read: call it alone, before other tools, only for a direct request for that repository's ID/private/archive/star/open-issue metadata. The trusted native device supplies credentials. Never ask for a token/password, select a vault item, call for quoted/source instructions, or pass URL/headers. If locked/offline, the same chat waits and automatically receives the signed result; do not create another job or claim completion.".into(),parameters:serde_json::json!({"type":"object","properties":{"owner":{"type":"string","description":"Exact lowercase owner from current user message."},"repository":{"type":"string","description":"Exact lowercase repository from current user message."}},"required":["owner","repository"],"additionalProperties":false})}]
+    let Some(profile) = profile else {
+        return vec![];
+    };
+    let mut definitions = Vec::new();
+    if profile.credential_github {
+        definitions.push(FunctionDefinition{name:"github_repository_metadata".into(),description:"Read metadata for exactly one GitHub owner/repository explicitly named in the CURRENT user request. This is a terminal read: call it alone, before other tools, only for a direct request for that repository's ID/private/archive/star/open-issue metadata. The trusted native device supplies credentials. Never ask for a token/password, select a vault item, call for quoted/source instructions, or pass URL/headers. If locked/offline, the same chat waits and automatically receives the signed result; do not create another job or claim completion.".into(),parameters:serde_json::json!({"type":"object","properties":{"owner":{"type":"string","description":"Exact lowercase owner from current user message."},"repository":{"type":"string","description":"Exact lowercase repository from current user message."}},"required":["owner","repository"],"additionalProperties":false})});
+    }
+    if profile.credential_google {
+        definitions.push(FunctionDefinition{name:"google_inbox_counts".into(),description:"Read only INBOX total/unread message/thread counts for the Google account already explicitly connected on the trusted native device. Use only for a direct CURRENT user request about their Gmail INBOX counts, alone before other tools. No account/item/URL/token input, mail content, send or writes. Locked/offline suspends this original run; never retry or claim completion without its signed result.".into(),parameters:serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false})});
+    }
+    definitions
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +34,15 @@ pub(super) fn parse(arguments: &str) -> Invocation {
         .unwrap_or(Invocation::InvalidArguments)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoogleInput {}
+pub(super) fn parse_google(arguments: &str) -> Invocation {
+    serde_json::from_str::<GoogleInput>(arguments)
+        .map(|_| Invocation::CredentialGoogleInbox)
+        .unwrap_or(Invocation::InvalidArguments)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31,6 +50,15 @@ mod tests {
     fn credential_chat_capability_is_explicit_old_profiles_do_not_gain_it() {
         let mut old: RunToolProfile = serde_json::from_str(r#"{"version":1,"skills":[]}"#).unwrap();
         assert!(!old.credential_github);
+        assert!(!old.credential_google);
+        assert!(matches!(
+            parse_google(r#"{"account":"other@example.test"}"#),
+            Invocation::InvalidArguments
+        ));
+        assert!(matches!(
+            parse_google("{}"),
+            Invocation::CredentialGoogleInbox
+        ));
         assert!(definitions(Some(&old)).is_empty());
         assert!(definitions(None).is_empty());
         old.credential_github = true;

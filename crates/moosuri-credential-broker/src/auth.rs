@@ -55,7 +55,8 @@ pub fn projection_digest(projection: moosuri_vault_protocol::broker::Projection)
     let code = match projection {
         moosuri_vault_protocol::broker::Projection::None => 0,
         moosuri_vault_protocol::broker::Projection::FixedProbeOk => 1,
-        p @ moosuri_vault_protocol::broker::Projection::GitHubRepository { .. } => {
+        p @ (moosuri_vault_protocol::broker::Projection::GitHubRepository { .. }
+        | moosuri_vault_protocol::broker::Projection::GoogleInbox { .. }) => {
             return hash(&p.bytes());
         }
     };

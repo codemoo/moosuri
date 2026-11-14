@@ -300,3 +300,9 @@ source 준비는 크기 제한만 있으며 종료 시 완료까지 기다릴 �
 
 F09/F16/P7의 키보드 건너뛰기·명시적 메뉴 이동 초점·현재 페이지 표시·삭제 후 초점 복귀를
 보완했다. 배경 갱신은 입력 초점을 유지한다. [검증](reviews/2026-11-15-workspace-navigation.md).
+
+F69/P8의 native Google adapter는 기기에서 고른 OAuth credential로 계정·실제 scope를
+대조한 후 INBOX 메시지/스레드의 전체·읽지 않은 개수만 반환한다. 설정의 명시적 요청과
+제한된 긍정형 채팅 요청을 같은 원래 실행으로 완료하며, 같은 항목의 archive revision/key
+갱신은 기존 만료 시각·이미 실행한 기록을 보존한다. 일반 Google 본문/쓰기/browser 도구와
+공식 서명 배포·실계정 수락은 별도다. [계약](native-credential-google.md).

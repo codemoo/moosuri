@@ -348,14 +348,22 @@ impl LiveVault {
         self.state().await?;
         Ok(items)
     }
-    async fn selection(&mut self, item: Uuid) -> Result<(Uuid, u64, u64, policy::LivePin)> {
-        let result = self.selection_inner(item).await;
+    async fn selection(
+        &mut self,
+        item: Uuid,
+        google: bool,
+    ) -> Result<(Uuid, u64, u64, policy::LivePin)> {
+        let result = self.selection_inner(item, google).await;
         if matches!(result, Err(Error::Reconnect)) {
             self.retire();
         }
         result
     }
-    async fn selection_inner(&mut self, item: Uuid) -> Result<(Uuid, u64, u64, policy::LivePin)> {
+    async fn selection_inner(
+        &mut self,
+        item: Uuid,
+        google: bool,
+    ) -> Result<(Uuid, u64, u64, policy::LivePin)> {
         let state = self.state().await?;
         let encrypted = state
             .items
@@ -368,7 +376,11 @@ impl LiveVault {
             .ok_or(Error::Locked)?
             .open_item(encrypted)
             .map_err(|_| Error::Reconnect)?;
-        github_fields(&fields)?;
+        if google {
+            crate::google::fields(&fields).map_err(|_| Error::Reconnect)?;
+        } else {
+            github_fields(&fields)?;
+        }
         let pin = policy::LivePin {
             origin: self.origin.clone(),
             head: head_of(&state)?,
@@ -441,7 +453,7 @@ impl Engine {
         if vault.owner != self.device().owner {
             return Err(Error::Policy);
         }
-        let (id, item_epoch, key_epoch, pin) = vault.selection(item).await?;
+        let (id, item_epoch, key_epoch, pin) = vault.selection(item, false).await?;
         vault.state().await?;
         if let Some(at) = self.state.grants.iter().position(|g| {
             g.repository() == Some(&repository)
@@ -469,6 +481,94 @@ impl Engine {
             .select_live(pin)?,
         )
     }
+    pub async fn live_google_grant(
+        &mut self,
+        vault: &mut LiveVault,
+        item: Uuid,
+        identity: crate::google::GoogleIdentity,
+        expires: i64,
+    ) -> Result<Binding> {
+        if vault.owner != self.device().owner {
+            return Err(Error::Policy);
+        }
+        let (id, item_epoch, key_epoch, pin) = vault.selection(item, true).await?;
+        vault.state().await?;
+        if let Some(at) = self.state.grants.iter().position(|g| {
+            g.google().is_some() && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
+        }) {
+            let grant = &mut self.state.grants[at];
+            if grant.google() != Some(&identity)
+                || grant.item() != item
+                || grant.vault() != Some(id)
+            {
+                return Err(Error::Policy);
+            }
+            grant.refresh_live(item_epoch, key_epoch, pin)?;
+            grant.resume_google();
+            let binding = grant.binding.clone();
+            self.save()?;
+            return Ok(binding);
+        }
+        self.select(
+            policy::LocalGrant::select_google(
+                self.device().clone(),
+                item,
+                id,
+                identity,
+                item_epoch,
+                key_epoch,
+                expires,
+            )?
+            .select_live(pin)?,
+        )
+    }
+    pub(crate) async fn execute_live_google(
+        &mut self,
+        vault: &mut LiveVault,
+        invocation: &Invocation,
+        adapter: &crate::google::GoogleAdapter,
+    ) -> Result<SignedReceipt> {
+        let request = &self
+            .state
+            .entries
+            .iter()
+            .find(|e| e.request.invocation == *invocation)
+            .ok_or(Error::Policy)?
+            .request;
+        let grant = self
+            .grants()
+            .iter()
+            .find(|g| g.binding.id == request.binding.id)
+            .ok_or(Error::Policy)?
+            .clone();
+        let state = vault.check(&grant).await?;
+        let encrypted = state
+            .items
+            .iter()
+            .find(|i| i.id == grant.item())
+            .ok_or(Error::Reconnect)?;
+        let fields = vault
+            .active
+            .as_mut()
+            .ok_or(Error::Locked)?
+            .open_item(encrypted)
+            .map_err(|_| Error::Reconnect)?;
+        crate::google::fields(&fields).map_err(|_| Error::Reconnect)?;
+        vault.check(&grant).await?;
+        let receipt = self
+            .execute_google_secret(
+                invocation,
+                adapter,
+                fields.secret.expose(),
+                grant.binding.item_epoch,
+                grant.binding.key_epoch,
+            )
+            .await?;
+        if receipt.receipt.outcome == Outcome::Rejected {
+            vault.retire()
+        }
+        Ok(receipt)
+    }
     pub(crate) fn confirm_live_refresh(&mut self, binding: &Binding) -> Result<()> {
         self.state
             .grants
@@ -483,8 +583,10 @@ impl Engine {
         vault: &mut LiveVault,
         request: Request,
     ) -> Result<()> {
-        if request.operation != Operation::GitHubRepositoryRead
-            || vault.owner != self.device().owner
+        if !matches!(
+            request.operation,
+            Operation::GitHubRepositoryRead | Operation::GoogleInboxRead
+        ) || vault.owner != self.device().owner
         {
             return Err(Error::Policy);
         }

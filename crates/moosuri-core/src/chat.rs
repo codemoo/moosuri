@@ -195,6 +195,9 @@ pub struct AccountUsageResponse {
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct CredentialChatStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub service: Option<String>,
     pub request_id: String,
     pub repository: String,
     pub status: String,

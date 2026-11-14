@@ -11,3 +11,11 @@ pub async fn github_metadata(
         .request_github_metadata(user, request_id, repository)
         .await
 }
+
+pub async fn google_inbox(
+    store: &Store,
+    user: &UserContext,
+    request_id: String,
+) -> Result<moosuri_store::credential_broker::github::ScopedJob, StoreError> {
+    store.request_google_inbox(user, request_id).await
+}

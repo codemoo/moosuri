@@ -1,4 +1,4 @@
-//! Opt-in signed device protocol and explicit typed GitHub metadata requests.
+//! Opt-in signed device protocol and explicit typed credential read requests.
 use super::*;
 #[cfg(not(feature = "credential-broker-foundation"))]
 pub(super) fn routes() -> Router<AppState> {
@@ -9,6 +9,10 @@ pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/credential-broker/status", get(enabled::status))
         .route("/api/v1/credential-broker/github", post(enabled::github))
+        .route(
+            "/api/v1/credential-broker/google-inbox",
+            post(enabled::google_inbox),
+        )
         .route("/api/v1/credential-broker/pair", post(enabled::challenge))
         .route(
             "/api/v1/credential-broker/{id}/revoke",
@@ -31,7 +35,7 @@ mod enabled {
     use moosuri_vault_protocol::broker::*;
     pub(super) async fn status(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
         let u = current(&s, &headers).await?;
-        Ok(Json(serde_json::json!({"devices":s.store.broker_devices(&u).await?,"jobs":s.store.github_metadata_jobs(&u).await?})).into_response())
+        Ok(Json(serde_json::json!({"devices":s.store.broker_devices(&u).await?,"jobs":s.store.github_metadata_jobs(&u).await?,"google_jobs":s.store.google_inbox_jobs(&u).await?})).into_response())
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -53,6 +57,22 @@ mod enabled {
                 input.repository,
             )
             .await?,
+        )
+        .into_response())
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct GoogleInput {
+        request_id: String,
+    }
+    pub(super) async fn google_inbox(
+        State(s): State<AppState>,
+        headers: HeaderMap,
+        Json(input): Json<GoogleInput>,
+    ) -> HttpResult {
+        let u = current(&s, &headers).await?;
+        Ok(Json(
+            moosuri_agent::credential_broker::google_inbox(&s.store, &u, input.request_id).await?,
         )
         .into_response())
     }

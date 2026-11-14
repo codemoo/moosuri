@@ -178,11 +178,36 @@ impl Transport {
         }
         Ok(())
     }
+    pub async fn register_google(&self, engine: &mut Engine, binding: &Binding) -> Result<()> {
+        let grant = engine
+            .grants()
+            .iter()
+            .find(|g| &g.binding == binding && g.google().is_some())
+            .ok_or(Error::Policy)?;
+        let refresh = grant.pending_refresh().cloned();
+        let command = match &refresh {
+            Some(expected) => Command::RefreshGoogleInbox {
+                expected: expected.clone(),
+                binding: binding.clone(),
+            },
+            None => Command::RegisterGoogleInbox {
+                binding: binding.clone(),
+            },
+        };
+        if !matches!(self.command(engine, command).await?, Reply::Registered) {
+            return Err(Error::Authentication);
+        }
+        if refresh.is_some() {
+            engine.confirm_live_refresh(binding)?
+        }
+        Ok(())
+    }
     async fn live_pending(
         &self,
         engine: &mut Engine,
         vault: &mut live_vault::LiveVault,
         adapter: &github::GitHubAdapter,
+        google: &google::GoogleAdapter,
     ) -> Result<usize> {
         let invocation = vault.pending.clone().ok_or(Error::Policy)?;
         // A dropped poll future can leave pending after provider admission or
@@ -196,12 +221,26 @@ impl Transport {
             .ok_or(Error::Policy)?
             .phase
             .clone();
+        let operation = engine
+            .state
+            .entries
+            .iter()
+            .find(|e| e.request.invocation == invocation)
+            .ok_or(Error::Policy)?
+            .request
+            .operation;
         let result = match phase {
-            Phase::Committed(_) => {
-                engine
-                    .execute_live_github(vault, &invocation, adapter)
-                    .await
-            }
+            Phase::Committed(_) => match operation {
+                Operation::GoogleInboxRead => {
+                    engine.execute_live_google(vault, &invocation, google).await
+                }
+                Operation::GitHubRepositoryRead => {
+                    engine
+                        .execute_live_github(vault, &invocation, adapter)
+                        .await
+                }
+                _ => Err(Error::Policy),
+            },
             _ => engine.settle_without_retry(&invocation),
         };
         let receipt = match result {
@@ -248,7 +287,17 @@ impl Transport {
         vault: &mut live_vault::LiveVault,
         adapter: &github::GitHubAdapter,
     ) -> Result<usize> {
-        let result = self.poll_live_inner(engine, vault, adapter).await;
+        self.poll_live_with_google(engine, vault, adapter, &google::GoogleAdapter::new()?)
+            .await
+    }
+    pub async fn poll_live_with_google(
+        &self,
+        engine: &mut Engine,
+        vault: &mut live_vault::LiveVault,
+        adapter: &github::GitHubAdapter,
+        google: &google::GoogleAdapter,
+    ) -> Result<usize> {
+        let result = self.poll_live_inner(engine, vault, adapter, google).await;
         if matches!(result, Err(Error::Authentication | Error::Reconnect)) {
             vault.retire();
         }
@@ -259,10 +308,11 @@ impl Transport {
         engine: &mut Engine,
         vault: &mut live_vault::LiveVault,
         adapter: &github::GitHubAdapter,
+        google: &google::GoogleAdapter,
     ) -> Result<usize> {
         let mut completed = 0;
         if vault.pending.is_some() {
-            completed += self.live_pending(engine, vault, adapter).await?;
+            completed += self.live_pending(engine, vault, adapter, google).await?;
         }
         if !vault.is_unlocked() {
             return Err(Error::Reconnect);
@@ -300,7 +350,7 @@ impl Transport {
             };
             engine.accept_commitment(*commitment)?;
             vault.pending = Some(invocation);
-            completed += self.live_pending(engine, vault, adapter).await?;
+            completed += self.live_pending(engine, vault, adapter, google).await?;
         }
         Ok(completed)
     }
@@ -310,6 +360,16 @@ impl Transport {
         engine: &mut Engine,
         archive: &mut moosuri_vault_core::UnlockedArchive,
         adapter: &github::GitHubAdapter,
+    ) -> Result<usize> {
+        self.poll_with_google(engine, archive, adapter, &google::GoogleAdapter::new()?)
+            .await
+    }
+    pub async fn poll_with_google(
+        &self,
+        engine: &mut Engine,
+        archive: &mut moosuri_vault_core::UnlockedArchive,
+        adapter: &github::GitHubAdapter,
+        google: &google::GoogleAdapter,
     ) -> Result<usize> {
         self.sync_retained(engine).await?;
         let Reply::Waiting {
@@ -327,7 +387,16 @@ impl Transport {
         let mut completed = 0;
         for request in requests {
             let invocation = request.invocation.clone();
-            engine.prepare_github(archive, request, current_time()?)?;
+            let operation = request.operation;
+            match operation {
+                Operation::GoogleInboxRead => {
+                    engine.prepare_google(archive, request, current_time()?)?
+                }
+                Operation::GitHubRepositoryRead => {
+                    engine.prepare_github(archive, request, current_time()?)?
+                }
+                _ => return Err(Error::Policy),
+            }
             let Reply::Commitment { commitment } = self
                 .command(
                     engine,
@@ -340,7 +409,15 @@ impl Transport {
                 return Err(Error::Authentication);
             };
             engine.accept_commitment(*commitment)?;
-            let receipt = engine.execute_github(archive, &invocation, adapter).await?;
+            let receipt = match operation {
+                Operation::GoogleInboxRead => {
+                    engine.execute_google(archive, &invocation, google).await?
+                }
+                Operation::GitHubRepositoryRead => {
+                    engine.execute_github(archive, &invocation, adapter).await?
+                }
+                _ => return Err(Error::Policy),
+            };
             self.command(
                 engine,
                 Command::Settle {

@@ -58,6 +58,7 @@ mod tests {
     fn workspace_capability_does_not_expand_old_runs_or_expose_human_inputs() {
         let mut profile = RunToolProfile {
             credential_github: false,
+            credential_google: false,
             conversation_recall: false,
             mission_reads: None,
             version: 4,
@@ -114,6 +115,7 @@ mod tests {
     fn web_requires_new_pinned_profile_and_search_requires_key_capability() {
         let mut profile = RunToolProfile {
             credential_github: false,
+            credential_google: false,
             conversation_recall: false,
             mission_reads: None,
             version: 1,
@@ -147,6 +149,7 @@ mod tests {
     fn browser_schema_is_v4_url_only_and_has_no_action_surface() {
         let mut profile = RunToolProfile {
             credential_github: false,
+            credential_google: false,
             conversation_recall: false,
             mission_reads: None,
             version: 3,
@@ -198,6 +201,7 @@ mod tests {
         };
         let profile = RunToolProfile {
             credential_github: false,
+            credential_google: false,
             conversation_recall: false,
             mission_reads: None,
             version: 3,

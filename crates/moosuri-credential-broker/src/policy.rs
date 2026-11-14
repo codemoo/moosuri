@@ -25,6 +25,10 @@ pub struct LocalGrant {
     revoked: bool,
     #[serde(default)]
     repository: Option<GitHubRepository>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    google: Option<crate::google::GoogleIdentity>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    google_suspended: bool,
     #[serde(default)]
     vault: Option<Uuid>,
     #[serde(default)]
@@ -69,6 +73,8 @@ impl LocalGrant {
             resource,
             revoked: false,
             repository: None,
+            google: None,
+            google_suspended: false,
             vault: None,
             live: None,
             previous: None,
@@ -129,6 +135,90 @@ impl LocalGrant {
         g.binding.grant_hash = hash(&bytes);
         Ok(g)
     }
+    pub fn select_google(
+        device: Device,
+        item: Uuid,
+        vault: Uuid,
+        identity: crate::google::GoogleIdentity,
+        item_epoch: u64,
+        key_epoch: u64,
+        expires_at: i64,
+    ) -> Result<Self> {
+        if !identity.valid() || vault.is_nil() {
+            return Err(Error::Policy);
+        }
+        let mut g = Self::select_fixed_probe(
+            device,
+            item,
+            Uuid::new_v4(),
+            item_epoch,
+            key_epoch,
+            expires_at,
+        )?;
+        g.service = "google-inbox".into();
+        g.origin = "https://gmail.googleapis.com".into();
+        g.vault = Some(vault);
+        g.google = Some(identity);
+        g.bind_archive_google()?;
+        Ok(g)
+    }
+    fn bind_archive_google(&mut self) -> Result<()> {
+        let mut binding = self.binding.clone();
+        binding.grant_hash = [0; 32];
+        let mut bytes = Vec::from(crate::google::LOCAL_POLICY);
+        bytes.extend(
+            serde_json::to_vec(&(
+                &self.device,
+                &binding,
+                self.item,
+                self.vault,
+                self.google.as_ref(),
+            ))
+            .map_err(|_| Error::Policy)?,
+        );
+        self.binding.grant_hash = hash(&bytes);
+        Ok(())
+    }
+    /// Explicit snapshot reconnection. The original account/item/vault/expiry
+    /// ceiling stays unchanged and the previous binding remains until exact ACK.
+    pub(crate) fn refresh_archive_google(&mut self, item_epoch: u64, key_epoch: u64) -> Result<()> {
+        if self.revoked
+            || self.live.is_some()
+            || self.google.is_none()
+            || item_epoch < self.binding.item_epoch
+            || key_epoch < self.binding.key_epoch
+        {
+            return Err(Error::Policy);
+        }
+        if item_epoch == self.binding.item_epoch && key_epoch == self.binding.key_epoch {
+            return Ok(());
+        }
+        if self.previous.is_some() {
+            return Err(Error::Policy);
+        }
+        let mut next = self.clone();
+        next.previous = Some(self.binding.clone());
+        next.binding.epoch = next.binding.epoch.checked_add(1).ok_or(Error::Policy)?;
+        next.binding.grant_version = next
+            .binding
+            .grant_version
+            .checked_add(1)
+            .ok_or(Error::Policy)?;
+        next.binding.item_epoch = item_epoch;
+        next.binding.key_epoch = key_epoch;
+        next.bind_archive_google()?;
+        *self = next;
+        Ok(())
+    }
+    pub(crate) fn suspend_google(&mut self) {
+        self.google_suspended = true;
+    }
+    pub(crate) fn resume_google(&mut self) {
+        self.google_suspended = false;
+    }
+    pub fn google(&self) -> Option<&crate::google::GoogleIdentity> {
+        self.google.as_ref()
+    }
     pub fn live(&self) -> Option<&LivePin> {
         self.live.as_ref()
     }
@@ -151,7 +241,14 @@ impl LocalGrant {
     }
     fn bind_live(&mut self) -> Result<()> {
         let pin = self.live.as_ref().ok_or(Error::Policy)?;
-        let mut bytes = Vec::from(b"moosuri/local-live-github-grant/v1".as_slice());
+        let mut bytes = if self.google.is_some() {
+            Vec::from(crate::google::LOCAL_POLICY)
+        } else {
+            Vec::from(b"moosuri/local-live-github-grant/v1".as_slice())
+        };
+        if let Some(google) = self.google.as_ref() {
+            bytes.extend(serde_json::to_vec(google).map_err(|_| Error::Policy)?)
+        }
         bytes.extend(
             serde_json::to_vec(&(
                 self.item,
@@ -220,6 +317,9 @@ impl LocalGrant {
         self.item
     }
     pub fn digest(&self) -> [u8; 32] {
+        if self.google.is_some() {
+            return crate::google::resource_digest();
+        }
         self.repository
             .as_ref()
             .map(|r| hash(&r.bytes()))
@@ -236,6 +336,7 @@ impl LocalGrant {
         key_epoch: u64,
     ) -> Result<()> {
         if self.revoked
+            || self.google_suspended
             || self.previous.is_some()
             || request.device != self.device
             || request.binding != self.binding
@@ -255,9 +356,18 @@ impl LocalGrant {
                     && self.origin == "https://fixed-probe.invalid"
                     && request.repository.is_none()
                     && self.repository.is_none()
+                    && self.google.is_none()
+            }
+            Operation::GoogleInboxRead => {
+                self.service == "google-inbox"
+                    && self.origin == "https://gmail.googleapis.com"
+                    && self.google.as_ref().is_some_and(|g| g.valid())
+                    && self.repository.is_none()
+                    && request.repository.is_none()
             }
             Operation::GitHubRepositoryRead => {
-                self.service == "github"
+                self.google.is_none()
+                    && self.service == "github"
                     && self.origin == "https://api.github.com"
                     && request.repository == self.repository
                     && self.repository.as_ref().is_some_and(|r| r.valid())

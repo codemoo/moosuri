@@ -7,7 +7,26 @@ pub struct GitHubJob {
     pub status: String,
     pub projection: Option<Projection>,
 }
+#[derive(serde::Serialize)]
+pub struct ScopedJob {
+    pub request_id: String,
+    pub resource: Resource,
+    pub status: String,
+    pub projection: Option<Projection>,
+}
 fn job(conn: &Connection, tenant: &str, id: &str) -> Result<GitHubJob> {
+    let j = scoped_job(conn, tenant, id)?;
+    let Resource::GitHub(repository) = j.resource else {
+        return Err(StoreError::InvalidInput);
+    };
+    Ok(GitHubJob {
+        request_id: j.request_id,
+        repository,
+        status: j.status,
+        projection: j.projection,
+    })
+}
+fn scoped_job(conn: &Connection, tenant: &str, id: &str) -> Result<ScopedJob> {
     let (repo,run,expires,request):(String,String,i64,Option<String>)=conn.query_row("SELECT repository,run_id,expires_at,request FROM credential_broker_jobs WHERE tenant_id=?1 AND request_id=?2",params![tenant,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::NotFound)?;
     let row:Option<(String,Option<String>)>=conn.query_row("SELECT commitment,receipt FROM credential_broker_commitments WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     let mut projection = None;
@@ -39,9 +58,9 @@ fn job(conn: &Connection, tenant: &str, id: &str) -> Result<GitHubJob> {
     } else {
         "waiting_for_credential"
     };
-    Ok(GitHubJob {
+    Ok(ScopedJob {
         request_id: id.into(),
-        repository: decode(&repo)?,
+        resource: decode(&repo)?,
         status: status.into(),
         projection,
     })
@@ -71,8 +90,29 @@ impl Store {
     pub async fn github_metadata_jobs(&self, user: &UserContext) -> Result<Vec<GitHubJob>> {
         let user = user.clone();
         self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;
-            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox') IS NULL ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             ids.iter().map(|i|job(&db.conn,&u.tenant.0,i)).collect()
+        }).await
+    }
+    pub async fn request_google_inbox(&self, user: &UserContext, id: String) -> Result<ScopedJob> {
+        if Uuid::parse_str(&id).is_err() {
+            return Err(StoreError::InvalidInput);
+        }
+        let user = user.clone();
+        self.call(move|db|{
+            let u=validate(&db.conn,&user,true,false)?;let resource=encode(&Resource::google_inbox())?;
+            let old:Option<String>=db.conn.query_row("SELECT repository FROM credential_broker_jobs WHERE tenant_id=?1 AND request_id=?2",params![u.tenant.0,id],|r|r.get(0)).optional()?;
+            if let Some(old)=old{if old!=resource{return Err(StoreError::Conflict)}}else{
+                let n:i64=db.conn.query_row("SELECT count(*) FROM credential_broker_jobs WHERE tenant_id=?1",[&u.tenant.0],|r|r.get(0))?;if n>=1024{return Err(StoreError::Busy)}
+                db.conn.execute("INSERT INTO credential_broker_jobs(tenant_id,account_id,request_id,run_id,call_id,invocation_nonce,repository,auth_epoch,expires_at,request) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL)",params![u.tenant.0,u.account.id,id,Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),resource,u.epoch,now()?+3600])?;
+            }scoped_job(&db.conn,&u.tenant.0,&id)
+        }).await
+    }
+    pub async fn google_inbox_jobs(&self, user: &UserContext) -> Result<Vec<ScopedJob>> {
+        let user = user.clone();
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;
+            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox')='counts_v1' ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            ids.iter().map(|id|scoped_job(&db.conn,&u.tenant.0,id)).collect()
         }).await
     }
     pub async fn broker_devices(&self, user: &UserContext) -> Result<Vec<(String, String)>> {
@@ -109,7 +149,10 @@ pub(super) fn poll(
         if b.expires_at <= now()? {
             continue;
         }
-        let repository: GitHubRepository = decode(&repo)?;
+        let resource: Resource = decode(&repo)?;
+        if !resource.valid() {
+            return Err(StoreError::Corrupt);
+        }
         let request = Request {
             device: p.device.clone(),
             invocation: Invocation {
@@ -119,9 +162,9 @@ pub(super) fn poll(
                 nonce: nonce.parse().map_err(|_| StoreError::Corrupt)?,
             },
             binding: b.clone(),
-            operation: Operation::GitHubRepositoryRead,
-            repository: Some(repository.clone()),
-            digest: Sha256::digest(repository.bytes()).into(),
+            operation: resource.operation(),
+            repository: resource.repository().cloned(),
+            digest: Sha256::digest(resource.bytes()).into(),
             expires_at: expiry.min(b.expires_at),
         };
         let json = encode(&request)?;
@@ -160,13 +203,29 @@ pub(super) fn refresh_uncommitted(
     binding: &Binding,
     repository: &GitHubRepository,
 ) -> Result<()> {
+    refresh_resource(
+        conn,
+        device,
+        expected,
+        binding,
+        &Resource::GitHub(repository.clone()),
+    )
+}
+pub(super) fn refresh_resource(
+    conn: &Connection,
+    device: &Device,
+    expected: &Binding,
+    binding: &Binding,
+    resource: &Resource,
+) -> Result<()> {
     let tenant = device.owner.tenant.to_string();
     let rows=conn.prepare("SELECT i.request FROM credential_broker_invocations i WHERE i.tenant_id=?1 AND i.cancelled=0 AND NOT EXISTS(SELECT 1 FROM credential_broker_commitments c WHERE c.tenant_id=i.tenant_id AND c.run_id=i.run_id AND c.step=i.step AND c.call_id=i.call_id AND c.invocation_nonce=i.invocation_nonce)")?.query_map([&tenant],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     for text in rows {
         let mut request: Request = decode(&text)?;
         if request.device != *device
             || request.binding != *expected
-            || request.repository.as_ref() != Some(repository)
+            || request.operation != resource.operation()
+            || request.repository.as_ref() != resource.repository()
         {
             continue;
         }
@@ -518,5 +577,207 @@ mod tests {
         .await
         .unwrap();
         server.abort();
+    }
+    #[tokio::test]
+    async fn google_archive_binding_refresh_lost_ack_keeps_committed_identity_and_expiry() {
+        use moosuri_credential_broker::auth::authenticated_bytes;
+        async fn issue(
+            s: &Store,
+            device: &Device,
+            key: &SigningKey,
+            command: Command,
+        ) -> Result<Reply> {
+            let challenge = s.broker_auth_challenge(device.id).await?;
+            s.broker_command(SignedCommand {
+                challenge: challenge.nonce,
+                signature: key
+                    .sign(&authenticated_bytes(&challenge, "POST", DEVICE_PATH, &command).unwrap()),
+                command,
+            })
+            .await
+        }
+        let _serial = TEST_LOCK.lock().await;
+        let dir = directory();
+        let s = Store::open(dir.path()).unwrap();
+        let user = admin(&s).await.user;
+        let key = SigningKey::from_pkcs8(&SigningKey::generate_pkcs8().unwrap()).unwrap();
+        let pair = s
+            .broker_pair_challenge(
+                &user,
+                "https://assistant.example.test".into(),
+                key.public_key(),
+            )
+            .await
+            .unwrap();
+        let device = s
+            .broker_pair(PairProof {
+                challenge: pair.nonce,
+                signature: key.sign(&pairing_bytes(&pair).unwrap()),
+            })
+            .await
+            .unwrap();
+        let old = moosuri_credential_broker::policy::LocalGrant::select_google(
+            device.clone(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            moosuri_credential_broker::google::GoogleIdentity {
+                subject: "synthetic-subject".into(),
+                email: "synthetic@example.test".into(),
+            },
+            1,
+            1,
+            now().unwrap() + 600,
+        )
+        .unwrap()
+        .binding;
+        issue(
+            &s,
+            &device,
+            &key,
+            Command::RegisterGoogleInbox {
+                binding: old.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let committed_id = Uuid::new_v4().to_string();
+        s.request_google_inbox(&user, committed_id.clone())
+            .await
+            .unwrap();
+        let Reply::Waiting { mut requests, .. } =
+            issue(&s, &device, &key, Command::Poll).await.unwrap()
+        else {
+            panic!("waiting")
+        };
+        let committed_request = requests.remove(0);
+        let Reply::Commitment { commitment } = issue(
+            &s,
+            &device,
+            &key,
+            Command::CommitCurrent {
+                invocation: committed_request.invocation.clone(),
+                request_digest: moosuri_credential_broker::auth::hash(&request_bytes(
+                    &committed_request,
+                )),
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("commit")
+        };
+        let exact = *commitment;
+        let waiting_id = Uuid::new_v4().to_string();
+        s.request_google_inbox(&user, waiting_id).await.unwrap();
+        let Reply::Waiting { mut requests, .. } =
+            issue(&s, &device, &key, Command::Poll).await.unwrap()
+        else {
+            panic!("waiting")
+        };
+        assert_eq!(requests.len(), 1);
+        let waiting = requests.remove(0);
+        let mut revised = old.clone();
+        revised.epoch += 1;
+        revised.grant_version += 1;
+        revised.item_epoch = 2;
+        revised.grant_hash = [77; 32];
+        let refresh = Command::RefreshGoogleInbox {
+            expected: old.clone(),
+            binding: revised.clone(),
+        };
+        assert!(matches!(
+            issue(&s, &device, &key, refresh.clone()).await.unwrap(),
+            Reply::Registered
+        ));
+        // Registration committed; its reply is lost before the native pending CAS clears.
+        drop(s);
+        let s = Store::open(dir.path()).unwrap();
+        assert!(matches!(
+            issue(&s, &device, &key, refresh).await.unwrap(),
+            Reply::Registered
+        ));
+        let mut rotated = revised.clone();
+        rotated.epoch += 1;
+        rotated.grant_version += 1;
+        rotated.item_epoch = 3;
+        rotated.key_epoch = 2;
+        rotated.grant_hash = [78; 32];
+        issue(
+            &s,
+            &device,
+            &key,
+            Command::RefreshGoogleInbox {
+                expected: revised,
+                binding: rotated.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let Reply::Waiting { requests, .. } =
+            issue(&s, &device, &key, Command::Poll).await.unwrap()
+        else {
+            panic!("waiting")
+        };
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].invocation == waiting.invocation);
+        assert!(requests[0].binding == rotated);
+        assert_eq!(requests[0].expires_at, waiting.expires_at);
+        let Reply::Commitment { commitment } = issue(
+            &s,
+            &device,
+            &key,
+            Command::Recover {
+                invocation: committed_request.invocation.clone(),
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("recover")
+        };
+        assert!(*commitment == exact);
+        assert_eq!(rotated.expires_at, old.expires_at);
+        let receipt = Receipt {
+            commitment: exact,
+            outcome: Outcome::Unknown,
+            projection: Projection::None,
+            projection_digest: moosuri_credential_broker::auth::projection_digest(Projection::None),
+        };
+        let signed = SignedReceipt {
+            signature: key.sign(&receipt_bytes(&receipt)),
+            receipt,
+        };
+        for _ in 0..2 {
+            issue(
+                &s,
+                &device,
+                &key,
+                Command::Settle {
+                    receipt: Box::new(signed.clone()),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            s.google_inbox_jobs(&user)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|j| j.request_id == committed_id)
+                .unwrap()
+                .status,
+            "outcome_unknown"
+        );
+        let tenant = user.tenant.0.clone();
+        s.call(move |db| {
+            let count: i64 = db.conn.query_row(
+                "SELECT count(*) FROM credential_broker_commitments WHERE tenant_id=?1",
+                [tenant],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count, 1);
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 }

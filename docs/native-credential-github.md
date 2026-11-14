@@ -7,7 +7,7 @@ API token held only in a trusted native process. It is behind the existing
 A dedicated personal page at `/settings/credentials` starts durable requests and
 shows waiting, completion or unknown. The typed agent facade is shared by that
 explicit user operation. General model-tool/chat/Gmail/Calendar/browser credential
-routing and the Google adapter remain open. This is progress on P8, not P8 completion.
+routing and broader Google adapters remain open. The separate [Google INBOX-count adapter](native-credential-google.md) uses the same native machinery with its own strict local OAuth/account grant. This is progress on P8, not P8 completion.
 
 ## Trusted-device connection
 
@@ -148,7 +148,7 @@ Restoration quarantines pairing/bindings under existing policy and requires fres
 pairing for new use. Account deletion includes these scoped jobs and repository
 binding children in local cleanup while retaining existing minimal receipt evidence.
 
-Google API/OAuth refresh/scope/account matching, TOTP/challenge adapters,
+The separate [Google INBOX-count adapter](native-credential-google.md) adds bounded OAuth refresh/scope/account matching. Broader Google APIs, TOTP/challenge adapters,
 general credential tools, native packaging/signing and production real-account
 acceptance are explicitly next gates. Existing explicit GitHub chat waiting uses
 the same signed result path; this change does not generalize its adapter scope. No real token/provider/account was used for implementation verification.

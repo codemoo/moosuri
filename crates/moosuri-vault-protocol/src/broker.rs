@@ -42,6 +42,7 @@ pub struct AuthChallenge {
 pub enum Operation {
     FixedProbe,
     GitHubRepositoryRead,
+    GoogleInboxRead,
 }
 /// Exact, canonical repository selection. Never a URL or HTTP header.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +74,54 @@ impl GitHubRepository {
         b.blob(self.owner.as_bytes());
         b.blob(self.repository.as_bytes());
         b.0
+    }
+}
+/// Resource JSON preserves the original untagged GitHub object exactly.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Resource {
+    GitHub(GitHubRepository),
+    GoogleInbox(GoogleInboxResource),
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoogleInboxResource {
+    pub google_inbox: GoogleInboxVersion,
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleInboxVersion {
+    CountsV1,
+}
+impl Resource {
+    pub fn google_inbox() -> Self {
+        Self::GoogleInbox(GoogleInboxResource {
+            google_inbox: GoogleInboxVersion::CountsV1,
+        })
+    }
+    pub fn valid(&self) -> bool {
+        match self {
+            Self::GitHub(r) => r.valid(),
+            Self::GoogleInbox(_) => true,
+        }
+    }
+    pub fn operation(&self) -> Operation {
+        match self {
+            Self::GitHub(_) => Operation::GitHubRepositoryRead,
+            Self::GoogleInbox(_) => Operation::GoogleInboxRead,
+        }
+    }
+    pub fn repository(&self) -> Option<&GitHubRepository> {
+        match self {
+            Self::GitHub(r) => Some(r),
+            Self::GoogleInbox(_) => None,
+        }
+    }
+    pub fn bytes(&self) -> Vec<u8> {
+        match self {
+            Self::GitHub(r) => r.bytes(),
+            Self::GoogleInbox(_) => b"moosuri/google-inbox-counts/v1".to_vec(),
+        }
     }
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +175,12 @@ pub enum Outcome {
 pub enum Projection {
     None,
     FixedProbeOk,
+    GoogleInbox {
+        messages_total: u32,
+        messages_unread: u32,
+        threads_total: u32,
+        threads_unread: u32,
+    },
     GitHubRepository {
         id: u64,
         private: bool,
@@ -140,6 +195,22 @@ impl Projection {
         match self {
             Self::None => b.0.push(0),
             Self::FixedProbeOk => b.0.push(1),
+            Self::GoogleInbox {
+                messages_total,
+                messages_unread,
+                threads_total,
+                threads_unread,
+            } => {
+                b.0.push(3);
+                for value in [
+                    messages_total,
+                    messages_unread,
+                    threads_total,
+                    threads_unread,
+                ] {
+                    b.u(value as u64);
+                }
+            }
             Self::GitHubRepository {
                 id,
                 private,
@@ -176,6 +247,13 @@ pub struct SignedReceipt {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Register {
+        binding: Binding,
+    },
+    RegisterGoogleInbox {
+        binding: Binding,
+    },
+    RefreshGoogleInbox {
+        expected: Binding,
         binding: Binding,
     },
     RegisterRepository {
@@ -279,6 +357,17 @@ impl Bytes {
         self.binding(&r.binding);
         match r.operation {
             Operation::FixedProbe => self.0.push(1),
+            Operation::GoogleInboxRead => {
+                self.0.push(3);
+                match &r.repository {
+                    None => self.0.push(0),
+                    Some(repo) => {
+                        self.0.push(1);
+                        self.blob(repo.owner.as_bytes());
+                        self.blob(repo.repository.as_bytes());
+                    }
+                }
+            }
             Operation::GitHubRepositoryRead => {
                 self.0.push(2);
                 if let Some(repo) = &r.repository {
@@ -305,6 +394,7 @@ impl Bytes {
         self.0.push(match r.projection {
             Projection::None => 0,
             Projection::FixedProbeOk => 1,
+            Projection::GoogleInbox { .. } => 3,
             Projection::GitHubRepository { .. } => 2,
         });
         if let Projection::GitHubRepository {
@@ -320,6 +410,22 @@ impl Bytes {
             self.0.push(archived as u8);
             self.u(stars);
             self.u(open_issues);
+        }
+        if let Projection::GoogleInbox {
+            messages_total,
+            messages_unread,
+            threads_total,
+            threads_unread,
+        } = r.projection
+        {
+            for value in [
+                messages_total,
+                messages_unread,
+                threads_total,
+                threads_unread,
+            ] {
+                self.u(value as u64);
+            }
         }
         self.0.extend_from_slice(&r.projection_digest);
     }
@@ -357,6 +463,15 @@ pub fn command_bytes(
     }
     let mut body = Bytes::new(b"command-body");
     match command {
+        Command::RegisterGoogleInbox { binding } => {
+            body.0.push(10);
+            body.binding(binding);
+        }
+        Command::RefreshGoogleInbox { expected, binding } => {
+            body.0.push(11);
+            body.binding(expected);
+            body.binding(binding);
+        }
         Command::Register { binding } => {
             body.0.push(0);
             body.binding(binding)

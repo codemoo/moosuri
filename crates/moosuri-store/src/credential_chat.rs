@@ -1,16 +1,135 @@
-//! One terminal typed GitHub read per explicit chat run. No HTTP or model polling.
+//! One terminal typed credential read per explicit chat run. No HTTP or model polling.
 use super::*;
 use crate::agent_execution::{KnowledgeToolInput, KnowledgeToolResult, StepLease};
 use crate::chat::{self, Run};
 use moosuri_core::{CredentialChatStatus, MessagePhase, RunState};
 use moosuri_vault_protocol::broker::{
-    GitHubRepository, Operation, Outcome, Projection, SignedReceipt,
+    GitHubRepository, Outcome, Projection, Resource, SignedReceipt,
 };
 fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|_| StoreError::Corrupt)
 }
 fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
     serde_json::from_str(v).map_err(|_| StoreError::Corrupt)
+}
+fn profile_enabled(profile: Option<&moosuri_core::RunToolProfile>, resource: &Resource) -> bool {
+    profile.is_some_and(|p| match resource {
+        Resource::GitHub(_) => p.credential_github,
+        Resource::GoogleInbox(_) => p.credential_google,
+    })
+}
+fn resource_name(resource: &Resource) -> String {
+    match resource {
+        Resource::GitHub(r) => format!("{}/{}", r.owner, r.repository),
+        Resource::GoogleInbox(_) => "INBOX".into(),
+    }
+}
+fn service(resource: &Resource) -> &'static str {
+    match resource {
+        Resource::GitHub(_) => "github",
+        Resource::GoogleInbox(_) => "google",
+    }
+}
+fn service_label(resource: &Resource) -> &'static str {
+    match resource {
+        Resource::GitHub(_) => "GitHub",
+        Resource::GoogleInbox(_) => "Gmail INBOX",
+    }
+}
+// A deliberately small whole-message command grammar. A matching topic inside
+// negation, translation, quotation or source-analysis prose grants no authority.
+fn literal_google(text: &str) -> bool {
+    if text.len() > 512 || text.contains(['\n', '\r']) {
+        return false;
+    }
+    let text = text.trim().trim_end_matches(['.', '!', '?']).to_lowercase();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let english = text.strip_prefix("please ").unwrap_or(&text);
+    let english = english.strip_suffix(" please").unwrap_or(english);
+    for action in ["read ", "show ", "check ", "get ", "tell me "] {
+        if let Some(count) = english
+            .strip_prefix(action)
+            .and_then(|s| s.strip_prefix("my gmail inbox "))
+            && [
+                "count",
+                "counts",
+                "unread count",
+                "unread counts",
+                "message count",
+                "message counts",
+                "thread count",
+                "thread counts",
+                "unread message count",
+                "unread message counts",
+                "unread thread count",
+                "unread thread counts",
+                "message and thread counts",
+                "total and unread message and thread counts",
+            ]
+            .contains(&count)
+        {
+            return true;
+        }
+    }
+    for owner in ["내 ", "나의 "] {
+        let Some(rest) = text.strip_prefix(owner) else {
+            continue;
+        };
+        for service in ["gmail ", "지메일 "] {
+            let Some(rest) = rest.strip_prefix(service) else {
+                continue;
+            };
+            for inbox in [
+                "inbox ",
+                "받은편지함 ",
+                "받은 편지함 ",
+                "받은편지함(inbox) ",
+            ] {
+                let Some(rest) = rest.strip_prefix(inbox) else {
+                    continue;
+                };
+                if [
+                    "읽지 않은 메일 몇 개야",
+                    "읽지 않은 메일이 몇 개야",
+                    "읽지 않은 메일은 몇 개야",
+                    "읽지않은 메일 몇 개야",
+                ]
+                .contains(&rest)
+                {
+                    return true;
+                }
+                for counts in [
+                    "개수 ",
+                    "개수를 ",
+                    "읽지 않은 개수 ",
+                    "읽지 않은 개수를 ",
+                    "읽지 않은 메일 개수 ",
+                    "읽지 않은 메일 개수를 ",
+                    "읽지않은 개수 ",
+                    "메시지와 스레드 개수 ",
+                    "메시지와 스레드 개수를 ",
+                ] {
+                    if let Some(action) = rest.strip_prefix(counts)
+                        && [
+                            "알려줘",
+                            "알려 줘",
+                            "알려주세요",
+                            "알려 주세요",
+                            "조회해줘",
+                            "조회해 줘",
+                            "조회해 주세요",
+                            "보여줘",
+                            "보여 줘",
+                        ]
+                        .contains(&action)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 pub(crate) fn has(c: &Connection, tenant: &str, run: &str) -> Result<bool> {
     Ok(c.query_row(
@@ -45,12 +164,15 @@ pub(crate) fn dispatch_current(
         return Ok(false);
     }
     let run = chat::load_run(c, tenant, run_id)?;
+    let resource: String = c.query_row(
+        "SELECT repository FROM credential_chat_waits WHERE tenant_id=?1 AND run_id=?2",
+        params![tenant, run_id],
+        |r| r.get(0),
+    )?;
+    let resource: Resource = decode(&resource)?;
     if run.state != RunState::Queued
         || run.attempt != attempt
-        || run
-            .tool_profile
-            .as_ref()
-            .is_none_or(|p| !p.credential_github)
+        || !profile_enabled(run.tool_profile.as_ref(), &resource)
         || chat::authority(c, &run).is_err()
     {
         return Ok(false);
@@ -69,10 +191,15 @@ fn millis_now() -> Result<i64> {
 pub(crate) fn status(c: &Connection, r: &Run) -> Result<Option<CredentialChatStatus>> {
     let row:Option<(String,String,String)>=c.query_row("SELECT request_id,repository,status FROM credential_chat_waits WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|v|Ok((v.get(0)?,v.get(1)?,v.get(2)?))).optional()?;
     row.map(|(request_id, repo, status)| {
-        let repo: GitHubRepository = decode(&repo)?;
+        let resource: Resource = decode(&repo)?;
         Ok(CredentialChatStatus {
             request_id,
-            repository: format!("{}/{}", repo.owner, repo.repository),
+            service: if matches!(resource, Resource::GoogleInbox(_)) {
+                Some("google".into())
+            } else {
+                None
+            },
+            repository: resource_name(&resource),
             status: if status == "settled" {
                 match r.state {
                     RunState::Completed => "complete",
@@ -114,15 +241,25 @@ impl Store {
     /// Called only for an already stored current model tool slot. Returns false for
     /// unsupported/mixed plans, so the ordinary bounded tool error path can answer.
     pub async fn wait_for_github_tool(&self, lease: &StepLease, call_id: String) -> Result<bool> {
+        self.wait_for_credential_tool(lease, call_id).await
+    }
+    pub async fn wait_for_credential_tool(
+        &self,
+        lease: &StepLease,
+        call_id: String,
+    ) -> Result<bool> {
         let lease = lease.clone();
         self.call(move|db|{
    let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
    let run=match agent_execution::guard_step(&tx,&db.provider_key,&lease){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
-   if !cfg!(feature="credential-broker-chat") || run.tool_profile.as_ref().is_none_or(|p|!p.credential_github) || crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::media::has_context(&tx,&run.tenant,&run.id)? || crate::artifacts::agent::profile(&tx,&run.tenant,&run.id)?.is_some_and(|p|p.write) {return Ok(false)}
+   if !cfg!(feature="credential-broker-chat") || crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::media::has_context(&tx,&run.tenant,&run.id)? || crate::artifacts::agent::profile(&tx,&run.tenant,&run.id)?.is_some_and(|p|p.write) {return Ok(false)}
    let (input,saved):(String,Option<String>)=tx.query_row("SELECT input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step(),call_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
    if saved.is_some() {return Ok(false)}
-   let KnowledgeToolInput::CredentialGitHub{owner,repository}=decode(&input)? else{return Ok(false)};
-   let repo=GitHubRepository{owner,repository};if !repo.valid()||!literal_target(&run.text,&repo){return Ok(false)}
+   let resource=match decode(&input)?{
+    KnowledgeToolInput::CredentialGitHub{owner,repository}=>{let repo=GitHubRepository{owner,repository};if !repo.valid()||!literal_target(&run.text,&repo){return Ok(false)}Resource::GitHub(repo)},
+    KnowledgeToolInput::CredentialGoogleInbox{}=>{if !literal_google(&run.text){return Ok(false)}Resource::google_inbox()},
+    _=>return Ok(false)
+   };if !profile_enabled(run.tool_profile.as_ref(),&resource){return Ok(false)}
    let (calls,used):(i64,i64)=tx.query_row("SELECT (SELECT count(*) FROM agent_tool_slots t WHERE t.tenant_id=?1 AND t.run_id=?2),tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
    if calls!=1||used!=0||has(&tx,&run.tenant,&run.id)? {return Ok(false)}
    let (bytes,items):(i64,i64)=tx.query_row("SELECT coalesce(sum(length(CAST(text AS BLOB))),0),count(*) FROM chat_output WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
@@ -135,7 +272,7 @@ impl Store {
    let deadline:i64=tx.query_row("SELECT deadline_ms FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
    let expires=deadline/1000;
    if expires<=now()?{return Ok(false)}
-   let request_id=Uuid::new_v4().to_string();let broker_call=Uuid::new_v4().to_string();let nonce=Uuid::new_v4().to_string();let repository=encode(&repo)?;
+   let request_id=Uuid::new_v4().to_string();let broker_call=Uuid::new_v4().to_string();let nonce=Uuid::new_v4().to_string();let repository=encode(&resource)?;
    tx.execute("INSERT INTO credential_broker_jobs(tenant_id,account_id,request_id,run_id,call_id,invocation_nonce,repository,auth_epoch,expires_at,request,step) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL,?10)",params![run.tenant,user.account.id,request_id,run.id,broker_call,nonce,repository,run.epoch,expires,lease.step()])?;
    tx.execute("INSERT INTO credential_chat_waits VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'waiting',?10)",params![run.tenant,run.id,run.attempt,lease.step(),call_id,broker_call,nonce,request_id,repository,expires])?;
    tx.execute("UPDATE agent_execution SET tool_calls=tool_calls+1,checkpoint_seq=checkpoint_seq+1 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id])?;
@@ -165,7 +302,7 @@ impl Store {
     let invalid:bool=tx.query_row("SELECT invalidated FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![tenant,id],|r|r.get(0))?;
     if invalid {chat::transition(&tx,&run,RunState::Cancelled,Some(RunFailure::AuthorityRevoked))?;changed+=1;continue}
     let commitment:Option<Option<String>>=tx.query_row("SELECT receipt FROM credential_broker_commitments WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,id,step,broker_call,nonce],|r|r.get(0)).optional()?;
-    let repo:GitHubRepository=decode(&repo)?;
+    let resource:Resource=decode(&repo)?;
     let (text,result,state,status)=if let Some(Some(receipt))=commitment.as_ref() {
      let receipt:SignedReceipt=decode(receipt)?;let r=&receipt.receipt;let request=&r.commitment.request;
      let key:Vec<u8>=tx.query_row("SELECT public_key FROM credential_broker_devices WHERE id=?1 AND account_id=?2 AND tenant_id=?3",params![request.device.id.to_string(),run.account,tenant],|row|row.get(0))?;
@@ -174,24 +311,26 @@ impl Store {
      let original:moosuri_vault_protocol::broker::Request=decode(&stored)?;
      if original!=*request{return Err(StoreError::Corrupt)}
 
-     if request.operation!=Operation::GitHubRepositoryRead||request.repository.as_ref()!=Some(&repo)||request.device.owner.account.to_string()!=run.account||request.device.owner.tenant.to_string()!=tenant||request.device.owner.epoch!=run.epoch||request.invocation.run.to_string()!=id||request.invocation.step as i64!=step||request.invocation.call.to_string()!=broker_call||request.invocation.nonce.to_string()!=nonce {return Err(StoreError::Corrupt)}
-     let (text,state,status)=match (r.outcome,r.projection) {
-      (Outcome::ProjectedSuccess,Projection::GitHubRepository{id:repository_id,private,archived,stars,open_issues})=>(format!("GitHub {}/{}\nRepository ID: {}\nPrivate: {} · Archived: {}\nStars: {} · Open issues: {}\n신뢰 기기의 인증된 메타데이터 읽기 영수증으로 확인했습니다.",repo.owner,repo.repository,repository_id,private,archived,stars,open_issues),RunState::Completed,"complete"),
-      (Outcome::Unknown,_) =>("GitHub 읽기 결과가 미확정입니다. 원래 요청의 영수증만 확인하며 다시 실행하지 않습니다.".into(),RunState::OutcomeUnknown,"outcome_unknown"),
-      (Outcome::Rejected,_) =>("기기 credential이 거절되었습니다. 신뢰 기기 연결에서 credential을 갱신한 뒤 새로 요청하세요. 이 요청을 재전송하지 않았습니다.".into(),RunState::Incomplete,"credential_rejected"),
-      _ =>("원래 GitHub 요청은 기기에서 실행되지 않았습니다. 다시 실행하지 않았으며, 필요하면 새 요청을 작성하세요.".into(),RunState::Incomplete,"not_dispatched"),
+     if request.operation!=resource.operation()||request.repository.as_ref()!=resource.repository()||request.device.owner.account.to_string()!=run.account||request.device.owner.tenant.to_string()!=tenant||request.device.owner.epoch!=run.epoch||request.invocation.run.to_string()!=id||request.invocation.step as i64!=step||request.invocation.call.to_string()!=broker_call||request.invocation.nonce.to_string()!=nonce {return Err(StoreError::Corrupt)}
+     let (text,state,status)=match (&resource,r.outcome,r.projection) {
+      (Resource::GitHub(repo),Outcome::ProjectedSuccess,Projection::GitHubRepository{id:repository_id,private,archived,stars,open_issues})=>(format!("GitHub {}/{}\nRepository ID: {}\nPrivate: {} · Archived: {}\nStars: {} · Open issues: {}\n신뢰 기기의 인증된 메타데이터 읽기 영수증으로 확인했습니다.",repo.owner,repo.repository,repository_id,private,archived,stars,open_issues),RunState::Completed,"complete"),
+      (Resource::GoogleInbox(_),Outcome::ProjectedSuccess,Projection::GoogleInbox{messages_total,messages_unread,threads_total,threads_unread})=>(format!("Gmail INBOX\n메시지 전체: {messages_total} · 읽지 않음: {messages_unread}\n스레드 전체: {threads_total} · 읽지 않음: {threads_unread}\n신뢰 기기에서 계정과 실제 권한을 확인한 인증된 읽기 영수증입니다."),RunState::Completed,"complete"),
+      (_,Outcome::ProjectedSuccess,_)=>return Err(StoreError::Corrupt),
+      (_,Outcome::Unknown,_) =>(format!("{} 읽기 결과가 미확정입니다. 원래 요청의 영수증만 확인하며 다시 실행하지 않습니다.",service_label(&resource)),RunState::OutcomeUnknown,"outcome_unknown"),
+      (_,Outcome::Rejected,_) =>("기기 credential이 거절되었습니다. 신뢰 기기 연결에서 credential을 갱신한 뒤 새로 요청하세요. 이 요청을 재전송하지 않았습니다.".into(),RunState::Incomplete,"credential_rejected"),
+      _ =>(format!("원래 {} 요청은 기기에서 실행되지 않았습니다. 다시 실행하지 않았으며, 필요하면 새 요청을 작성하세요.",service_label(&resource)),RunState::Incomplete,"not_dispatched"),
      };
-     (text,KnowledgeToolResult::External(serde_json::json!({"service":"github","repository":repo,"request_id":request_id,"status":status,"projection":r.projection})),state,status)
+     (text,KnowledgeToolResult::External(serde_json::json!({"service":service(&resource),"repository":resource,"request_id":request_id,"status":status,"projection":r.projection})),state,status)
     }else if expires<=now()? && commitment.is_some() {
-     ("GitHub 읽기가 이미 시작됐을 수 있지만 영수증이 도착하지 않았습니다. 미확정으로 보존하며 다시 실행하지 않습니다.".into(),KnowledgeToolResult::Error(agent_execution::ToolReadError::OutcomeUnknown),RunState::OutcomeUnknown,"outcome_unknown")
+     (format!("{} 읽기가 이미 시작됐을 수 있지만 영수증이 도착하지 않았습니다. 미확정으로 보존하며 다시 실행하지 않습니다.",service_label(&resource)),KnowledgeToolResult::Error(agent_execution::ToolReadError::OutcomeUnknown),RunState::OutcomeUnknown,"outcome_unknown")
     }else if expires<=now()? {
-     ("GitHub credential 대기 시간이 만료되었습니다. 원래 요청을 실행하지 않았으며 다시 보내지 않습니다.".into(),KnowledgeToolResult::Error(agent_execution::ToolReadError::Unavailable),RunState::Incomplete,"expired")
+     (format!("{} credential 대기 시간이 만료되었습니다. 원래 요청을 실행하지 않았으며 다시 보내지 않습니다.",service_label(&resource)),KnowledgeToolResult::Error(agent_execution::ToolReadError::Unavailable),RunState::Incomplete,"expired")
     }else{continue};
     let old:Option<String>=tx.query_row("SELECT result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![tenant,id,step,call],|r|r.get(0)).optional()?.ok_or(StoreError::Corrupt)?;
     if old.is_some(){return Err(StoreError::Corrupt)}
     tx.execute("UPDATE agent_tool_slots SET result=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![tenant,id,step,call,encode(&result)?])?;
     tx.execute("UPDATE credential_chat_waits SET status='settled' WHERE tenant_id=?1 AND run_id=?2",params![tenant,id])?;
-    chat::apply_patches(&tx,&run,vec![OutputPatch::Append{item:"credential-github-result".into(),text,phase:Some(MessagePhase::FinalAnswer),refusal:false}])?;
+    chat::apply_patches(&tx,&run,vec![OutputPatch::Append{item:if matches!(resource,Resource::GoogleInbox(_)){"credential-google-result".into()}else{"credential-github-result".into()},text,phase:Some(MessagePhase::FinalAnswer),refusal:false}])?;
     chat::transition(&tx,&run,state,if state==RunState::OutcomeUnknown{Some(RunFailure::ConnectionFailed)}else{None})?;
     let _=status;changed+=1;
    }
@@ -203,6 +342,37 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn google_inbox_literal_request_uses_only_current_personal_count_scope() {
+        for text in [
+            "내 Gmail INBOX 개수 알려줘",
+            "나의 지메일 받은편지함 개수 알려주세요!",
+            "내 Gmail 받은편지함 읽지 않은 메일 몇 개야?",
+            "show my gmail inbox unread count",
+            "Please show my Gmail inbox message count.",
+            "check my Gmail inbox thread counts please!",
+            "read my Gmail inbox counts",
+        ] {
+            assert!(literal_google(text), "affirmative grammar");
+        }
+        for text in [
+            "Do not read my Gmail INBOX unread count",
+            "Please don't show my Gmail inbox counts",
+            "Translate my Gmail inbox unread count",
+            "Explain the phrase show my Gmail inbox counts",
+            "내 Gmail INBOX 개수 알려주지 마",
+            "내 Gmail INBOX 개수 알려줘 문장을 번역해줘",
+            "문서 내용: 내 Gmail INBOX 개수 알려줘",
+            "내 Gmail 받은편지함 개수에 대한 문장을 분석해줘",
+            "Gmail INBOX 개수",
+            "내 Gmail 메일 보내줘",
+            "내 Gmail INBOX counts for other@example.test",
+            "문서 내용: \"내 Gmail INBOX 개수\"",
+            "내 Gmail INBOX https://evil.invalid count",
+        ] {
+            assert!(!literal_google(text), "non-authorizing wrapper");
+        }
+    }
     #[test]
     fn credential_chat_literal_target_is_exact_and_accepts_the_canonical_github_url() {
         let repo = GitHubRepository {

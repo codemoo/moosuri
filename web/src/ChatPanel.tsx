@@ -1028,7 +1028,7 @@ export function ChatPanel(props: Props) {
                     </p>
                   )}
                 {turn.run.credential && <section className="run-explanation" aria-label="볼트 작업 상태">
-                  <p>GitHub {turn.run.credential.repository} · {({waiting:"연결 대기",complete:"조회 완료",outcome_unknown:"결과 확인 필요",not_completed:"조회하지 못했어요",cancelled:"취소됨"} as Record<string,string>)[turn.run.credential.status]??"상태 확인"}</p>
+                  <p>{turn.run.credential.service==='google'?'Gmail':'GitHub'} {turn.run.credential.repository} · {({waiting:"연결 대기",complete:"조회 완료",outcome_unknown:"결과 확인 필요",not_completed:"조회하지 못했어요",cancelled:"취소됨"} as Record<string,string>)[turn.run.credential.status]??"상태 확인"}</p>
                   {turn.run.credential.status==="waiting" && <p>연결한 기기에서 볼트를 열면 이 대화에 결과가 이어집니다. 기다리는 동안 다른 대화를 계속할 수 있어요.</p>}
                   <button className="text-button" onClick={()=>props.openCredentials?.()}>볼트 연결 확인 ↗</button>
                 </section>}

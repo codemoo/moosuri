@@ -193,7 +193,7 @@ export type AssistantMessage = { id: string, text: string, phase: MessagePhase |
 export type ChatEvidence = { kind: KnowledgeKind, id: string, revision: number, title: string, };
 export type WebEvidenceKind = "page" | "search_hit" | "browser_page";
 export type WebEvidence = { url: string, title: string, retrieved_at_unix_ms: number, kind: WebEvidenceKind, truncated: boolean, };
-export type CredentialChatStatus = { request_id: string, repository: string, status: string, };
+export type CredentialChatStatus = { service?: string, request_id: string, repository: string, status: string, };
 export type RunView = { timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**
  * Fixed application error category, never provider text.

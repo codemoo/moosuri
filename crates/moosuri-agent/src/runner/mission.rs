@@ -394,6 +394,7 @@ mod tests {
     fn mission_definitions_defensively_hide_foreground_learning_even_from_a_stale_profile() {
         let profile = moosuri_core::RunToolProfile {
             credential_github: false,
+            credential_google: false,
             conversation_recall: false,
             mission_reads: None,
             version: 1,

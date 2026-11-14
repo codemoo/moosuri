@@ -20,6 +20,7 @@ pub(crate) fn current_skill(profile: Option<&RunToolProfile>, id: &str) -> bool 
 pub(crate) fn profile() -> RunToolProfile {
     RunToolProfile {
         credential_github: false,
+        credential_google: false,
         conversation_recall: false,
         mission_reads: None,
         version: BUILTIN_TOOLSET_VERSION,

@@ -12,7 +12,7 @@ use std::{
 use tokio::io::AsyncBufReadExt;
 use zeroize::Zeroizing;
 #[derive(Parser)]
-#[command(about = "Experimental trusted-device GitHub credential adapter; no signed distribution")]
+#[command(about = "Experimental trusted-device credential reads; no signed distribution")]
 struct Args {
     #[arg(long)]
     state_dir: PathBuf,
@@ -135,7 +135,7 @@ async fn run() -> Result<(), Error> {
     }
     let mut vault: Option<Vault> = None;
     println!(
-        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | poll | lock | quit"
+        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | select-google ITEM_UUID GOOGLE_SUB EMAIL | poll | lock | quit"
     );
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
     loop {
@@ -172,7 +172,7 @@ async fn run() -> Result<(), Error> {
                     let master=password("Vault master password (local decrypt only)")?;
                     live.unlock(&master).await?;drop(master);
                     vault=Some(Vault::Live(live));
-                    println!("Live vault unlocked only on this device. Select an exact GitHub item/repository locally.");
+                    println!("Live vault unlocked only on this device. Select the exact GitHub repository or Google account locally.");
                 }
                 "unlock" => {
                     vault = None;
@@ -221,6 +221,18 @@ async fn run() -> Result<(), Error> {
                     println!(
                         "Exact repository connected; compatible requests reuse this selection."
                     );
+                }
+                "select-google"=>{
+                    let id=parts.next().ok_or(Error::Policy)?.parse().map_err(|_|Error::Policy)?;
+                    let identity=moosuri_credential_broker::google::GoogleIdentity{subject:parts.next().ok_or(Error::Policy)?.into(),email:parts.next().ok_or(Error::Policy)?.into()};
+                    if parts.next().is_some(){return Err(Error::Policy)}
+                    transport.sync_retained(&mut engine).await?;
+                    let binding=match vault.as_mut().ok_or(Error::Locked)?{
+                        Vault::Archive(v)=>engine.archive_google_grant(v,id,identity,now()+30*86400)?,
+                        Vault::Live(v)=>{engine.live_google_grant(v,id,identity,now()+30*86400).await?}
+                    };
+                    transport.register_google(&mut engine,&binding).await?;
+                    println!("Exact Google account INBOX-count grant connected; compatible requests reuse it automatically. Provider identity and read-only scope are checked before each result.");
                 }
                 "poll" => {
                     if vault.is_none() {

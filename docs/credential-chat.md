@@ -59,6 +59,6 @@ requires existing account/device re-enrollment policy.
 
 The archive snapshot/rotation, trusted-native binary/OS and malicious-server-inside-
 local-grant limits are unchanged. There is no new signed distribution or live vault
-current-head watcher. Google, general chat credential kinds, composite multi-tool
+current-head watcher. The separate [Google INBOX-count route](native-credential-google.md) uses the same original-run machinery and its own persisted admission flag. Broader Google operations, general chat credential kinds, composite multi-tool
 continuation and live provider acceptance remain separate gates; this is a bounded
 P8 increment rather than a claim that the whole credential roadmap is complete.

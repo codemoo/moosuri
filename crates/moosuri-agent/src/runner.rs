@@ -477,6 +477,7 @@ fn typed_input(
     call: &moosuri_connectors::model::protocol::tools::CompletedToolCall,
 ) -> KnowledgeToolInput {
     let input = match knowledge_tools::parse(call.name(), call.arguments()) {
+        Invocation::CredentialGoogleInbox => KnowledgeToolInput::CredentialGoogleInbox {},
         Invocation::CredentialGitHub { owner, repository } => {
             KnowledgeToolInput::CredentialGitHub { owner, repository }
         }
@@ -973,6 +974,7 @@ pub(crate) async fn execute_with_calendar(
         }
         if let Some(profile) = &mut answer_profile {
             profile.credential_github = false;
+            profile.credential_google = false;
             profile.conversation_recall = false;
             profile.mail_connections.clear();
             profile.web = None;
@@ -1221,9 +1223,13 @@ pub(crate) async fn execute_with_calendar(
             } else {
                 None
             };
-            if matches!(call.input, KnowledgeToolInput::CredentialGitHub { .. }) {
+            if matches!(
+                call.input,
+                KnowledgeToolInput::CredentialGitHub { .. }
+                    | KnowledgeToolInput::CredentialGoogleInbox {}
+            ) {
                 match store
-                    .wait_for_github_tool(&step, call.call_id.clone())
+                    .wait_for_credential_tool(&step, call.call_id.clone())
                     .await
                 {
                     Ok(true) => {

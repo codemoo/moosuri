@@ -1,6 +1,7 @@
-//! Trusted native credential enforcement, archive unlock and one fixed GitHub adapter.
+//! Trusted native credential enforcement with fixed GitHub and Google read adapters.
 pub mod auth;
 pub mod github;
+pub mod google;
 mod journal;
 pub mod live_vault;
 pub mod policy;
@@ -225,6 +226,28 @@ impl Engine {
         match &command {
             Command::Register { binding } => {
                 if self.state.revoked || !self.state.grants.iter().any(|g| &g.binding == binding) {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::RegisterGoogleInbox { binding } => {
+                if self.state.revoked
+                    || !self
+                        .state
+                        .grants
+                        .iter()
+                        .any(|g| &g.binding == binding && g.google().is_some())
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::RefreshGoogleInbox { expected, binding } => {
+                if self.state.revoked
+                    || !self.state.grants.iter().any(|g| {
+                        &g.binding == binding
+                            && g.google().is_some()
+                            && g.pending_refresh() == Some(expected)
+                    })
+                {
                     return Err(Error::Policy);
                 }
             }

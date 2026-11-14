@@ -705,6 +705,7 @@ pub(crate) fn read_profile(
         .community_metadata
         .retain(|metadata| !metadata.pin.id.starts_with("private:"));
     profile.credential_github = false;
+    profile.credential_google = false;
     profile.conversation_recall = false;
     profile.mail_connections.clear();
     profile.mission_reads = None;

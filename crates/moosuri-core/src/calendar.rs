@@ -39,7 +39,9 @@ pub struct CalendarFields {
     pub title: String,
     pub description: String,
     pub location: String,
+    /// RFC3339 timestamps, or two strict YYYY-MM-DD civil dates for an all-day event.
     pub start: String,
+    /// Exclusive in both representations. All-day spans count civil dates, never elapsed hours.
     pub end: String,
     pub time_zone: Option<String>,
 }
@@ -154,6 +156,14 @@ pub struct CalendarChatDecision {
     pub move_date_quote: Option<String>,
     #[serde(default)]
     pub move_date: Option<String>,
+    /// Exact explicit all-day request; absent for edits that retain the observed event kind.
+    #[serde(default)]
+    pub all_day_quote: Option<String>,
+    /// Optional explicitly supplied inclusive last day for an all-day create/span edit.
+    #[serde(default)]
+    pub last_date_quote: Option<String>,
+    #[serde(default)]
+    pub last_date: Option<String>,
     pub start_quote: Option<String>,
     pub start: Option<String>,
     pub end_quote: Option<String>,

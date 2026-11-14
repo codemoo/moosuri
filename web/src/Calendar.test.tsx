@@ -37,3 +37,66 @@ it.each([false,true])("lookup advances only its matching connection editing base
  await waitFor(()=>expect(writes.some(v=>v.path==="/calendar/actions")).toBe(true));
  expect(writes.find(v=>v.path==="/calendar/actions")!.body).toMatchObject({connection_id:current.id,mutation:{kind:"update",event_id:event.id,etag:otherConnection?event.etag:'"etag2"',fields:{title:"Preserved later draft"}}});
 });
+
+it("creates all-day dates from inclusive form days and keeps unknown intent exact",async()=>{
+ let attempts=0;
+ const writes=server((path,init)=>path==="/calendar/actions"&&init.method==="POST"?(++attempts===1?Promise.reject(new TypeError("synthetic ACK loss")):response({...action,id:JSON.parse(String(init.body)).request_id,state:"outcome_unknown"})):undefined);
+ render(<Calendar accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ await screen.findByRole("heading",{name:event.fields.title});
+ fireEvent.change(screen.getByLabelText("제목"),{target:{value:"Synthetic holiday"}});
+ fireEvent.click(screen.getByLabelText("종일"));
+ fireEvent.change(screen.getByLabelText("시작일"),{target:{value:"2027-03-14"}});
+ fireEvent.change(screen.getByLabelText("마지막 날"),{target:{value:"2027-03-16"}});
+ fireEvent.click(screen.getByRole("button",{name:"일정 만들기"}));
+ await screen.findByRole("alert");
+ await waitFor(()=>expect(screen.getByRole("button",{name:"일정 만들기"})).toBeEnabled());
+ fireEvent.click(screen.getByRole("button",{name:"일정 만들기"}));
+ await waitFor(()=>expect(attempts).toBe(2));
+ const calls=writes.filter(v=>v.path==="/calendar/actions");
+ expect(calls[1].body).toEqual(calls[0].body);
+ expect(calls[0].body.mutation.fields).toEqual({title:"Synthetic holiday",description:"",location:"",start:"2027-03-14",end:"2027-03-17",time_zone:null});
+ expect(screen.getByLabelText("시작일")).toHaveValue("2027-03-14");
+ expect(screen.getByLabelText("마지막 날")).toHaveValue("2027-03-16");
+});
+it("moves an observed all-day span across DST and deletes with the acknowledged ETag",async()=>{
+ const allDay={...event,all_day:true,fields:{...event.fields,start:"2027-03-14",end:"2027-03-17",time_zone:null}};
+ const writes=server((path,init)=>{
+  if(path==="/calendar/events")return response({events:[allDay],partial:false,next_page_token:null,primary_id:connection.primary_id});
+  if(path==="/calendar/actions"&&init.method==="POST"){
+   const sent=JSON.parse(String(init.body));
+   return response({...action,id:sent.request_id,state:"applied",provider_etag:'"etag2"',event:sent.mutation.kind==="delete"?null:{...allDay,etag:'"etag2"',fields:sent.mutation.fields}});
+  }
+ });
+ render(<Calendar accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ await screen.findByText("2027-03-14 → 2027-03-16 · 종일");
+ // Keep the confirmed moved event inside the currently displayed range.
+ fireEvent.change(screen.getByLabelText("조회 시작"),{target:{value:"2027-11-06T00:00"}});
+ fireEvent.change(screen.getByLabelText("조회 종료"),{target:{value:"2027-11-12T00:00"}});
+ fireEvent.click(screen.getByRole("button",{name:"일정 불러오기"}));
+ await waitFor(()=>expect(screen.getByRole("button",{name:"수정"})).toBeEnabled());
+ fireEvent.click(screen.getByRole("button",{name:"수정"}));
+ expect(screen.getByLabelText("종일")).toBeChecked(); expect(screen.getByLabelText("종일")).toBeDisabled();
+ expect(screen.getByLabelText("마지막 날")).toHaveValue("2027-03-16");
+ fireEvent.change(screen.getByLabelText("시작일"),{target:{value:"2027-11-07"}});
+ expect(screen.getByLabelText("마지막 날")).toHaveValue("2027-11-09");
+ fireEvent.click(screen.getByRole("button",{name:"변경사항 저장"}));
+ await screen.findByText("2027-11-07 → 2027-11-09 · 종일");
+ await waitFor(()=>expect(screen.getByRole("button",{name:"삭제"})).toBeEnabled());
+ fireEvent.click(screen.getByRole("button",{name:"삭제"}));
+ await waitFor(()=>expect(screen.queryByRole("heading",{name:event.fields.title})).toBeNull());
+ const calls=writes.filter(v=>v.path==="/calendar/actions");
+ expect(calls).toHaveLength(2);
+ expect(calls[0].body.mutation).toMatchObject({kind:"update",event_id:event.id,etag:event.etag,fields:{start:"2027-11-07",end:"2027-11-10",time_zone:null}});
+ expect(calls[1].body.mutation).toEqual({kind:"delete",event_id:event.id,etag:'"etag2"'});
+});
+it("rejects reversed and oversized all-day form spans before sending",async()=>{
+ const writes=server();render(<Calendar accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ await screen.findByRole("heading",{name:event.fields.title});
+ fireEvent.change(screen.getByLabelText("제목"),{target:{value:"Synthetic holiday"}});fireEvent.click(screen.getByLabelText("종일"));
+ fireEvent.change(screen.getByLabelText("시작일"),{target:{value:"2027-03-14"}});
+ for(const last of ["2027-03-13","2027-04-14"]){
+  fireEvent.change(screen.getByLabelText("마지막 날"),{target:{value:last}});fireEvent.click(screen.getByRole("button",{name:"일정 만들기"}));
+  await screen.findByRole("alert");
+ }
+ expect(writes.filter(v=>v.path==="/calendar/actions")).toHaveLength(0);
+});

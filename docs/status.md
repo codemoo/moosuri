@@ -21,10 +21,21 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 공식·custom 자료 연결 | 개인 Gmail/Slack 수집·custom ingest, 선택한 Codex 사용자 요청·정규화 통화 전사의 일회 수집, scope/cursor/receipt/provenance·상태 화면·철회, 일본우편 최근 상태 조회 | 합성 Linux 검증은 실제 OAuth/계정 scope/rate 검증을 대신하지 않는다. 카톡 코드는 공개 패키지에서 제외. schema48에서 시작 ACK 유실 복구를 추가했다. 통화 원본 기기/포맷·실제 전사 품질·다른 작업 세션 형식·다른 배송사/전체 이력은 남음. [연결](data-connections.md)·[검증](reviews/2026-11-13-source-connections.md) |
 | 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours·예약별 소식 끄기/다시 받기, 저장한 followup 마감/재확인/미룬 날짜 알림, opt-in 기기 Push | 전체 proactive 제안 정책·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[소식 제어](reviews/2026-11-14-notification-topics.md) |
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP·명시한 개인 Gmail/기본 Calendar 읽기 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 빠진 값을 다음 답변으로 보완하고 직전 업무 영수증으로 제어한다. 넓은 자연어/시간 해석·메일/일정 쓰기·browser/vault 미션 실행·Claude background는 미완료. 개인 ChatGPT의 명시적 읽기 미션은 지원한다. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
-| Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 확인 질문의 다음 답변·직전 일정 지칭·기간을 유지한 날짜 이동을 지원한다. 반복/종일/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
+| Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed/종일 solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 확인 질문의 다음 답변·직전 일정 지칭·기간을 유지한 날짜 이동을 지원한다. 반복/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint·운영 중 암호화 snapshot/시점 복구·실험적 broker 기기/서명/철회 기반 | 실험적 native companion이 현재 독립 vault 또는 명시한 암호화 archive의 선택 credential로 정확한 GitHub 저장소를 읽고 명시적 채팅 요청의 같은 실행에 결과를 돌려준다. 일반 credential 도구·Google adapter·자동 off-host journal·구 v1 이전·서명 client·실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint와 수동 최신 journal을 고정한 과거 export 복원·격리, SQLite 이미지/파일/문서 보존 | 과거 사용량 불명을 유지하면서 운영자가 새 호출·음성 길이 한도를 부여할 수 있다. 주기적 live journal·고정 SSH receiver와 실행 중 전체 자료의 암호화된 로컬 export를 구현했다. 실제 off-host 배치·무손실 최신 삭제·live 전체 DB export의 실제 운영 수락·실운영 이전은 남음. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
+
+## 최근 수락한 단위 · 종일 일정과 날짜 이동
+
+개인 기본 Calendar의 참석자 없는 종일 일정을 양식과 대화에서 만들고 수정·삭제한다.
+사용자는 시작일과 포함할 마지막 날을 지정하며, 날짜 이동은 기존 날짜 수를 유지한다.
+시간대·DST를 경과 시간으로 계산하지 않고 날짜 자체로 처리한다. 기존 현재 소유권·
+ETag·영수증과 결과 불명의 조회 전용 복구를 유지하며 별도 DB 이전이나 OAuth 동의 확대는 없다.
+
+독립 소스 검토, 실제 Linux Store/Runtime/loopback provider의 종일 흐름과 시간 일정 회귀,
+Clippy·생성 타입·React·내장 웹 빌드를 통과했다. 실계정과 넓은 자연어 이해력 수락은 별도다.
+[Calendar](calendar.md) · [검증](reviews/2026-11-15-calendar-all-day.md).
 
 ## 최근 수락한 단위 · 과거 볼트 백업에 이후 기록 반영
 
@@ -632,7 +643,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    선택한 Codex 요청과 정규화 통화 전사 수집·schema48 시작 ACK 복구는 구현했다. 통화 vendor 포맷/실제 전사·다른 작업 형식·
    배송 전체 이력/다른 배송사와 실제 OAuth/계정 검증을 진행한다.
    공유 provider와 개인 ChatGPT의 명시한 Gmail/기본 Calendar 읽기 미션은 구현했다. 미션의 메일/일정 쓰기,
-   반복/종일/참석자/보조 캘린더 쓰기와 Claude background는 현재 지원 범위에 포함하지 않는다.
+   반복/참석자/보조 캘린더 쓰기와 Claude background는 현재 지원 범위에 포함하지 않는다.
 4. **P7 첨부·모바일**: 파일/음성 공유의 실제 OS 전달, 실제 음성 인식·OS 공유 메뉴·Push·키보드/스크롤·
    접근성을 지원 기기에서 검증한다.
 5. **P8 볼트와 credential 사용**: 실제 native GitHub adapter·archive unlock·scope 재사용과

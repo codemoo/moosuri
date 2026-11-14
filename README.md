@@ -6,7 +6,7 @@ A self-hosted assistant for individuals, families and friends.
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat with bounded tab-refresh draft recovery and older-conversation recall,
 private knowledge and memories, editable records, bounded
-read-only missions from chat or forms, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with provider drafts and approved fixed scheduled sends, bounded Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
+read-only missions from chat or forms, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with provider drafts and approved fixed scheduled sends, bounded timed/all-day Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
 opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
 The experimental [native credential companion](docs/native-credential-github.md)
@@ -68,7 +68,7 @@ transfer to a personal HTTPS Linux server. Separately verified personal foregrou
 support saved reads, exact calculation and the existing connected read/local-draft flows.
 Explicit current-user memory changes and source-grounded record creation/anchored edits
 use typed local operations and stored confirmations. Personal Calendar also supports
-explicit primary-calendar timed solo-event creation, same-day edits and deletion
+explicit primary-calendar timed/all-day solo-event creation, date edits and deletion
 through the existing typed service. Explicit one-off and recurring read-only missions
 can use the owner's separately verified personal model after logout, including
 delegated Gmail/primary Calendar reads. Media, automatic memory extraction and

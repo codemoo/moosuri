@@ -1,0 +1,6 @@
+- [x] Strict date-only provider read/write/reconciliation and kind-conversion fences without migration.
+- [x] Existing Store/CalendarService typed effects, current-command date arithmetic and bounded last-day continuation.
+- [x] Inclusive form date selection, span-preserving start move, date display and exact ETag/unknown behavior.
+- [x] Focused native7 + affected timed3, React Calendar15, typecheck/build, generated types and all-target Clippy.
+- [x] Root independent review and integrated Linux gates.
+- [ ] Real consenting-account/provider acceptance (outside this synthetic slice).

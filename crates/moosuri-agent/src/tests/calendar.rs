@@ -53,6 +53,9 @@ fn decision(text: &str) -> CalendarChatDecision {
         date: Some("2026-12-01".into()),
         move_date_quote: None,
         move_date: None,
+        all_day_quote: None,
+        last_date_quote: None,
+        last_date: None,
         start_quote: Some("10:00".into()),
         start: Some("10:00".into()),
         end_quote: Some("11:00".into()),
@@ -68,18 +71,33 @@ async fn sealed(
     text: &str,
     d: CalendarChatDecision,
 ) -> (String, RunLease) {
-    let t = s
-        .create_thread(u, "Synthetic Calendar chat".into())
-        .await
-        .unwrap();
+    sealed_in(s, u, text, d, None, "Asia/Seoul").await
+}
+async fn sealed_in(
+    s: &Store,
+    u: &UserContext,
+    text: &str,
+    d: CalendarChatDecision,
+    thread: Option<String>,
+    zone: &str,
+) -> (String, RunLease) {
+    let thread = match thread {
+        Some(t) => t,
+        None => {
+            s.create_thread(u, "Synthetic Calendar chat".into())
+                .await
+                .unwrap()
+                .id
+        }
+    };
     s.submit_turn_with_schedule_context(
         u,
-        t.id.clone(),
+        thread.clone(),
         uuid::Uuid::new_v4().to_string(),
         text.into(),
         None,
         Some(ScheduleChatContext {
-            timezone: "Asia/Seoul".into(),
+            timezone: zone.into(),
             target: None,
         }),
     )
@@ -101,7 +119,7 @@ async fn sealed(
     )
     .await
     .unwrap();
-    (t.id, claim.lease)
+    (thread, claim.lease)
 }
 #[tokio::test]
 async fn sealed_calendar_create_uses_one_exact_write_and_trusted_receipt_without_final_model() {
@@ -680,4 +698,150 @@ async fn request_continuation_receipt_stale_etag_never_writes_or_retargets() {
             .state,
         "clarify"
     );
+}
+
+#[tokio::test]
+async fn all_day_natural_create_move_and_delete_keep_civil_span_and_exact_receipt_target() {
+    let _g = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, service, u, _connection, io) = fixture().await;
+    configure(&service.store, &u).await;
+    let text = "Create all-day Synthetic meeting from 2027-03-14 through 2027-03-16";
+    assert!(crate::mission_intent::candidate(text, false));
+    let mut d = decision(text);
+    d.date = Some("2027-03-14".into());
+    d.date_quote = d.date.clone();
+    d.start = None;
+    d.start_quote = None;
+    d.end = None;
+    d.end_quote = None;
+    d.all_day_quote = Some("all-day".into());
+    d.last_date = Some("2027-03-16".into());
+    d.last_date_quote = d.last_date.clone();
+    let (thread, l) = sealed_in(&service.store, &u, text, d, None, "America/Los_Angeles").await;
+    assert!(service.chat(&l).await.unwrap());
+    let created = io.writes.lock().unwrap()[0].clone();
+    let CalendarMutation::Create { fields } = &created.mutation else {
+        panic!()
+    };
+    assert_eq!((&*fields.start, &*fields.end), ("2027-03-14", "2027-03-17"));
+    assert!(fields.time_zone.is_none());
+
+    let text = "Move that event to 2027-11-07";
+    let mut d = decision(text);
+    d.operation = Some("update".into());
+    d.title_quote = None;
+    d.target_quote = Some("that event".into());
+    d.date = None;
+    d.date_quote = None;
+    d.start = None;
+    d.start_quote = None;
+    d.end = None;
+    d.end_quote = None;
+    d.move_date = Some("2027-11-07".into());
+    d.move_date_quote = d.move_date.clone();
+    let (_, l) = sealed_in(
+        &service.store,
+        &u,
+        text,
+        d.clone(),
+        Some(thread.clone()),
+        "America/Los_Angeles",
+    )
+    .await;
+    assert!(service.chat(&l).await.unwrap());
+    let moved = io.writes.lock().unwrap()[1].clone();
+    assert_eq!(moved.event_id, created.event_id);
+    let CalendarMutation::Update { fields, etag, .. } = moved.mutation else {
+        panic!()
+    };
+    assert_eq!((&*fields.start, &*fields.end), ("2027-11-07", "2027-11-10"));
+    assert!(fields.time_zone.is_none());
+    assert_eq!(etag, "\"etag-prior\"");
+
+    let text = "Delete that event";
+    d.intent_quote = Some(text.into());
+    d.operation = Some("delete".into());
+    d.move_date = None;
+    d.move_date_quote = None;
+    let (_, l) = sealed_in(
+        &service.store,
+        &u,
+        text,
+        d,
+        Some(thread),
+        "America/Los_Angeles",
+    )
+    .await;
+    assert!(service.chat(&l).await.unwrap());
+    let removed = io.writes.lock().unwrap()[2].clone();
+    assert_eq!(removed.event_id, created.event_id);
+    assert!(matches!(removed.mutation, CalendarMutation::Delete { .. }));
+    let actions = service.store.calendar_actions(&u).await.unwrap();
+    assert_eq!(actions.len(), 3);
+    assert!(
+        actions
+            .iter()
+            .all(|a| a.state == "applied" && a.receipt.is_some())
+    );
+    assert!(
+        actions
+            .iter()
+            .find(|a| a.id == created.id)
+            .unwrap()
+            .event
+            .as_ref()
+            .unwrap()
+            .all_day
+    );
+    assert!(service.chat(&l).await.is_err());
+    assert_eq!(io.write_count(), 3);
+}
+
+#[tokio::test]
+async fn all_day_missing_last_day_continuation_preserves_frozen_kind_and_start_date() {
+    let _g = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, service, u, _c, io) = fixture().await;
+    configure(&service.store, &u).await;
+    let text = "Create all-day Synthetic meeting on 2027-03-14 for several days";
+    let mut d = decision(text);
+    d.decision = "clarify".into();
+    d.clarification = Some("duration".into());
+    d.date = Some("2027-03-14".into());
+    d.date_quote = d.date.clone();
+    d.start = None;
+    d.start_quote = None;
+    d.end = None;
+    d.end_quote = None;
+    d.all_day_quote = Some("all-day".into());
+    let (thread, l) = sealed_in(
+        &service.store,
+        &u,
+        text,
+        d.clone(),
+        None,
+        "America/Los_Angeles",
+    )
+    .await;
+    assert!(service.chat(&l).await.unwrap());
+    assert_eq!(io.write_count(), 0);
+    d.decision = "command".into();
+    d.clarification = None;
+    d.last_date = Some("2027-03-16".into());
+    d.last_date_quote = d.last_date.clone();
+    let (_, l) = sealed_in(
+        &service.store,
+        &u,
+        "2027-03-16",
+        d,
+        Some(thread),
+        "America/Los_Angeles",
+    )
+    .await;
+    assert!(service.chat(&l).await.unwrap());
+    assert_eq!(io.write_count(), 1);
+    let record = io.writes.lock().unwrap()[0].clone();
+    let CalendarMutation::Create { fields } = record.mutation else {
+        panic!()
+    };
+    assert_eq!((&*fields.start, &*fields.end), ("2027-03-14", "2027-03-17"));
 }

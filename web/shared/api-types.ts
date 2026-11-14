@@ -40,7 +40,15 @@ export type CalendarConnection = { id: string, primary_id: string, title: string
 export type CalendarConnections = { configured: boolean, connections: Array<CalendarConnection>, };
 export type CalendarInfo = { id: string, title: string, time_zone: string, primary: boolean, access_role: string, email_notifications: boolean, };
 export type CalendarList = { items: Array<CalendarInfo>, next_page_token: string | null, partial: boolean, };
-export type CalendarFields = { title: string, description: string, location: string, start: string, end: string, time_zone: string | null, };
+export type CalendarFields = { title: string, description: string, location: string,
+/**
+ * RFC3339 timestamps, or two strict YYYY-MM-DD civil dates for an all-day event.
+ */
+start: string,
+/**
+ * Exclusive in both representations. All-day spans count civil dates, never elapsed hours.
+ */
+end: string, time_zone: string | null, };
 export type CalendarEvent = { id: string, etag: string, status: string, fields: CalendarFields, html_link: string | null, writable: boolean, all_day: boolean, updated: string | null, };
 export type CalendarEvents = { events: Array<CalendarEvent>, next_page_token: string | null, partial: boolean, primary_id: string, };
 export type CalendarRange = { connection_id: string, start: string, end: string, page_token: string | null, };

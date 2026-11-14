@@ -245,6 +245,7 @@ fn fields() -> CalendarFields {
     }
 }
 fn event(id: &str, fields: CalendarFields) -> CalendarEvent {
+    let all_day = moosuri_connectors::calendar::date_range(&fields.start, &fields.end).is_ok();
     CalendarEvent {
         id: id.into(),
         etag: "\"etag-prior\"".into(),
@@ -252,7 +253,7 @@ fn event(id: &str, fields: CalendarFields) -> CalendarEvent {
         fields,
         html_link: None,
         writable: true,
-        all_day: false,
+        all_day,
         updated: None,
     }
 }
@@ -604,3 +605,91 @@ fn missing_event_is_unknown_for_create_and_only_observed_absence_for_delete() {
 
 #[path = "../tests/calendar.rs"]
 mod conversation;
+
+#[tokio::test]
+async fn all_day_form_effect_range_etag_conversion_and_unknown_are_fenced_without_resend() {
+    let _g = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, service, u, c, io) = fixture().await;
+    let mut f = fields();
+    f.start = "2027-03-14".into();
+    f.end = "2027-03-17".into();
+    f.time_zone = None;
+    let mut change = create(&c);
+    change.mutation = CalendarMutation::Create { fields: f.clone() };
+    for (start, end) in [
+        ("2027-03-14", "2027-03-14"),
+        ("2027-03-14", "2027-04-15"),
+        ("2027-02-29", "2027-03-01"),
+        ("2027-03-14", "2027-03-17T00:00:00Z"),
+    ] {
+        let mut invalid = change.clone();
+        invalid.request_id = uuid::Uuid::new_v4().to_string();
+        let mut bad = f.clone();
+        bad.start = start.into();
+        bad.end = end.into();
+        invalid.mutation = CalendarMutation::Create { fields: bad };
+        assert!(service.change(&u, invalid).await.is_err());
+    }
+    assert_eq!(io.write_count(), 0);
+    io.write_mode.store(1, Ordering::SeqCst);
+    let unknown = service.change(&u, change.clone()).await.unwrap();
+    assert_eq!(unknown.state, "outcome_unknown");
+    assert_eq!(service.change(&u, change).await.unwrap().id, unknown.id);
+    assert_eq!(io.write_count(), 1);
+    io.lookup_mode.store(3, Ordering::SeqCst);
+    assert_eq!(
+        service.lookup(&u, unknown.id.clone()).await.unwrap().state,
+        "outcome_unknown"
+    );
+    io.lookup_mode.store(0, Ordering::SeqCst);
+    let applied = service.lookup(&u, unknown.id).await.unwrap();
+    assert_eq!(applied.state, "applied");
+    let event = applied.event.unwrap();
+    assert!(event.all_day);
+    assert_eq!(io.write_count(), 1);
+    let mut update = create(&c);
+    f.start = "2027-11-07".into();
+    f.end = "2027-11-10".into();
+    update.mutation = CalendarMutation::Update {
+        event_id: event.id.clone(),
+        etag: "stale-etag".into(),
+        fields: f.clone(),
+    };
+    assert!(matches!(
+        service.change(&u, update.clone()).await,
+        Err(StoreError::Conflict)
+    ));
+    update.request_id = uuid::Uuid::new_v4().to_string();
+    update.mutation = CalendarMutation::Update {
+        event_id: event.id.clone(),
+        etag: event.etag.clone(),
+        fields: fields(),
+    };
+    assert!(matches!(
+        service.change(&u, update.clone()).await,
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(io.write_count(), 1);
+    io.write_mode.store(0, Ordering::SeqCst);
+    update.request_id = uuid::Uuid::new_v4().to_string();
+    update.mutation = CalendarMutation::Update {
+        event_id: event.id.clone(),
+        etag: event.etag.clone(),
+        fields: f,
+    };
+    let moved = service.change(&u, update).await.unwrap();
+    assert_eq!(moved.state, "applied");
+    let event = moved.event.unwrap();
+    assert_eq!(event.fields.end, "2027-11-10");
+    let mut delete = create(&c);
+    delete.mutation = CalendarMutation::Delete {
+        event_id: event.id,
+        etag: event.etag,
+    };
+    let deleted = service.change(&u, delete.clone()).await.unwrap();
+    assert_eq!(deleted.state, "applied");
+    assert!(deleted.event.is_none());
+    assert!(deleted.receipt.as_ref().unwrap().contains("204"));
+    assert_eq!(service.change(&u, delete).await.unwrap().id, deleted.id);
+    assert_eq!(io.write_count(), 3);
+}

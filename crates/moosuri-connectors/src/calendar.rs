@@ -252,6 +252,7 @@ impl CalendarClient {
                     || event_id != id
                     || !p.event.writable
                     || p.event.etag != *etag
+                    || p.event.all_day != date_range(&fields.start, &fields.end).is_ok()
                 {
                     return Err(GmailError::InvalidInput);
                 }
@@ -312,6 +313,9 @@ fn event_body(f: &CalendarFields, operation: &str, digest: &str, private: &Value
     p.insert("moosuri_operation".into(), json!(operation));
     p.insert("moosuri_digest".into(), json!(digest));
     let stamp = |v: &str| {
+        if date_range(&f.start, &f.end).is_ok() {
+            return json!({"date":v});
+        }
         let mut t = json!({"dateTime":v});
         if let Some(z) = &f.time_zone {
             t["timeZone"] = json!(z)
@@ -354,7 +358,20 @@ fn observation(v: &Value, primary: &str) -> Result<EventObservation, GmailError>
     if etag.chars().any(char::is_control) {
         return Err(GmailError::InvalidResponse);
     }
+    // Reject mixed/dual date and dateTime representations instead of granting
+    // mutation authority to a malformed provider observation.
     let all_day = v.pointer("/start/date").is_some();
+    let shape = |name: &str| {
+        v[name]
+            .get(if all_day { "date" } else { "dateTime" })
+            .is_some()
+            && v[name]
+                .get(if all_day { "dateTime" } else { "date" })
+                .is_none()
+    };
+    if !shape("start") || !shape("end") {
+        return Err(GmailError::InvalidResponse);
+    }
     let stamp = |name: &str| -> Result<String, GmailError> {
         let s = v[name]
             .get("dateTime")
@@ -371,7 +388,16 @@ fn observation(v: &Value, primary: &str) -> Result<EventObservation, GmailError>
         .get("attendees")
         .is_none_or(|a| a.as_array().is_some_and(|a| a.is_empty()))
         && !v["attendeesOmitted"].as_bool().unwrap_or(false);
-    let writable = !all_day
+    let start = stamp("start")?;
+    let end = stamp("end")?;
+    if all_day {
+        civil_dates(&start, &end).map_err(|_| GmailError::InvalidResponse)?;
+    } else {
+        chrono::DateTime::parse_from_rfc3339(&start).map_err(|_| GmailError::InvalidResponse)?;
+        chrono::DateTime::parse_from_rfc3339(&end).map_err(|_| GmailError::InvalidResponse)?;
+    }
+    let bounded = !all_day || date_range(&start, &end).is_ok();
+    let writable = bounded
         && status == "confirmed"
         && no_attendees
         && v.get("recurrence").is_none()
@@ -401,9 +427,13 @@ fn observation(v: &Value, primary: &str) -> Result<EventObservation, GmailError>
                 title: optional(v, "summary", 1024)?.unwrap_or_default(),
                 description: optional(v, "description", 12000)?.unwrap_or_default(),
                 location: optional(v, "location", 2000)?.unwrap_or_default(),
-                start: stamp("start")?,
-                end: stamp("end")?,
-                time_zone: optional(&v["start"], "timeZone", 128)?,
+                start,
+                end,
+                time_zone: if all_day {
+                    None
+                } else {
+                    optional(&v["start"], "timeZone", 128)?
+                },
             },
             html_link: optional(v, "htmlLink", 2048)?,
             writable,
@@ -431,6 +461,36 @@ pub fn validate_range(start: &str, end: &str) -> Result<(), GmailError> {
     }
     Ok(())
 }
+/// Strict date-only range. The end is exclusive; DST has no elapsed-hour role.
+pub fn date_range(
+    start: &str,
+    end: &str,
+) -> Result<(chrono::NaiveDate, chrono::NaiveDate), GmailError> {
+    let (a, b) = civil_dates(start, end)?;
+    if b.signed_duration_since(a).num_days() > 31 {
+        return Err(GmailError::InvalidInput);
+    }
+    Ok((a, b))
+}
+fn civil_dates(
+    start: &str,
+    end: &str,
+) -> Result<(chrono::NaiveDate, chrono::NaiveDate), GmailError> {
+    let date = |v: &str| {
+        let parsed = chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d")
+            .map_err(|_| GmailError::InvalidInput)?;
+        if v.len() != 10 || v.starts_with("0000") || parsed.format("%Y-%m-%d").to_string() != v {
+            return Err(GmailError::InvalidInput);
+        }
+        Ok(parsed)
+    };
+    let (a, b) = (date(start)?, date(end)?);
+    let days = b.signed_duration_since(a).num_days();
+    if days <= 0 {
+        return Err(GmailError::InvalidInput);
+    }
+    Ok((a, b))
+}
 pub fn validate_fields(f: &CalendarFields) -> Result<(), GmailError> {
     if f.title.trim().is_empty()
         || f.title.len() > 1024
@@ -445,7 +505,16 @@ pub fn validate_fields(f: &CalendarFields) -> Result<(), GmailError> {
     {
         return Err(GmailError::InvalidInput);
     }
-    validate_range(&f.start, &f.end)
+    if date_range(&f.start, &f.end).is_ok() {
+        // Google all-day values carry calendar dates. Do not attach a timezone
+        // or invent midnight/UTC timestamps in the mutation payload.
+        if f.time_zone.is_some() {
+            return Err(GmailError::InvalidInput);
+        }
+        Ok(())
+    } else {
+        validate_range(&f.start, &f.end)
+    }
 }
 /// Lookup can prove only this exact operation's requested current fields.
 pub fn observed_change(
@@ -465,13 +534,18 @@ pub fn matches_fields(e: &CalendarEvent, m: &CalendarMutation) -> bool {
         CalendarMutation::Create { fields } | CalendarMutation::Update { fields, .. } => fields,
         CalendarMutation::Delete { .. } => return false,
     };
+    let all_day = date_range(&f.start, &f.end).is_ok();
     let same = |a: &str, b: &str| {
+        if all_day {
+            return a == b;
+        }
         chrono::DateTime::parse_from_rfc3339(a)
             .ok()
             .zip(chrono::DateTime::parse_from_rfc3339(b).ok())
             .is_some_and(|(a, b)| a == b)
     };
     e.fields.title == f.title
+        && e.all_day == all_day
         && e.fields.description == f.description
         && e.fields.location == f.location
         && same(&e.fields.start, &f.start)

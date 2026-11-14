@@ -297,3 +297,217 @@ async fn actual_calendar_chat_page_limit_is_five_and_never_silently_drops_provid
     );
     task.abort();
 }
+
+fn all_day_event(id: &str, start: &str, end: &str) -> Value {
+    let mut v = event(id);
+    v["start"] = json!({"date":start});
+    v["end"] = json!({"date":end});
+    v
+}
+#[test]
+fn all_day_dates_are_strict_exclusive_and_malformed_shapes_never_writable() {
+    let v = all_day_event("synthetic1", "2027-03-14", "2027-03-17");
+    let observed = observation(&v, "calendar-owner@example.test").unwrap();
+    assert!(observed.event.writable && observed.event.all_day);
+    assert!(observed.event.fields.time_zone.is_none());
+    assert!(validate_fields(&observed.event.fields).is_ok());
+    for (start, end) in [
+        ("2027-03-14", "2027-03-14"),
+        ("2027-03-15", "2027-03-14"),
+        ("2027-02-29", "2027-03-01"),
+        ("2027-3-14", "2027-03-15"),
+        ("2027-03-14", "2027-03-15T00:00:00Z"),
+        ("0000-01-01", "0000-01-02"),
+    ] {
+        assert!(
+            observation(
+                &all_day_event("synthetic1", start, end),
+                "calendar-owner@example.test"
+            )
+            .is_err()
+        );
+    }
+    let mut dual = v.clone();
+    dual["start"]["dateTime"] = json!("2027-03-14T00:00:00Z");
+    assert!(observation(&dual, "calendar-owner@example.test").is_err());
+    let mut mixed = v.clone();
+    mixed["end"] = json!({"dateTime":"2027-03-17T00:00:00Z"});
+    assert!(observation(&mixed, "calendar-owner@example.test").is_err());
+    // Longer observed all-day events remain readable but outside this write bound.
+    assert!(
+        !observation(
+            &all_day_event("synthetic1", "2027-03-01", "2027-05-01"),
+            "calendar-owner@example.test"
+        )
+        .unwrap()
+        .event
+        .writable
+    );
+    for update in [
+        json!({"attendees":[{"email":"other@example.test"}]}),
+        json!({"recurrence":["RRULE:FREQ=DAILY"]}),
+        json!({"organizer":{"self":false,"email":"other@example.test"}}),
+    ] {
+        let mut changed = v.clone();
+        for (k, val) in update.as_object().unwrap() {
+            changed[k] = val.clone();
+        }
+        assert!(
+            !observation(&changed, "calendar-owner@example.test")
+                .unwrap()
+                .event
+                .writable
+        );
+    }
+}
+#[tokio::test]
+async fn all_day_wire_lifecycle_uses_dates_exact_if_match_and_lookup_never_accepts_timed_shape() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let recorded = seen.clone();
+    let app = Router::new().fallback(any(move |request: Request| {
+        let recorded = recorded.clone();
+        async move {
+            let method = request.method().clone();
+            let headers = request.headers().clone();
+            assert!(
+                request
+                    .uri()
+                    .query()
+                    .unwrap()
+                    .contains("sendUpdates=none&sendNotifications=false")
+            );
+            let bytes = to_bytes(request.into_body(), 32768).await.unwrap();
+            if method == Method::DELETE {
+                assert_eq!(headers["if-match"], "\"synthetic-etag\"");
+                recorded.lock().unwrap().push(Value::Null);
+                return StatusCode::NO_CONTENT.into_response();
+            }
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(body["start"].get("dateTime").is_none());
+            assert!(body["start"].get("timeZone").is_none());
+            assert!(body["end"].get("dateTime").is_none());
+            assert!(body.get("attendees").is_none());
+            if method == Method::PATCH {
+                assert_eq!(headers["if-match"], "\"synthetic-etag\"");
+            }
+            let mut v = all_day_event(
+                body["id"].as_str().unwrap_or("synthetic1"),
+                "2027-03-14",
+                "2027-03-17",
+            );
+            for (k, val) in body.as_object().unwrap() {
+                v[k] = val.clone();
+            }
+            recorded.lock().unwrap().push(body);
+            response(v)
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = CalendarClient::fixture(format!("http://{}", listener.local_addr().unwrap()));
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cancel = CancellationToken::new();
+    let op = "00000000-0000-4000-8000-000000000001";
+    let digest = "a".repeat(64);
+    let mut f = observation(
+        &all_day_event("synthetic1", "2027-03-14", "2027-03-17"),
+        "calendar-owner@example.test",
+    )
+    .unwrap()
+    .event
+    .fields;
+    let create = CalendarMutation::Create { fields: f.clone() };
+    let prior = client
+        .mutate(
+            &secret(),
+            CalendarWrite {
+                primary: "calendar-owner@example.test",
+                id: "synthetic1",
+                change: &create,
+                operation: op,
+                digest: &digest,
+                prior: None,
+            },
+            &cancel,
+        )
+        .await
+        .unwrap()
+        .event
+        .unwrap();
+    assert!(observed_change(&prior, "synthetic1", op, &digest, &create));
+    let mut wrong = prior.event.clone();
+    wrong.all_day = false;
+    assert!(!matches_fields(&wrong, &create));
+    f.start = "2027-11-07".into();
+    f.end = "2027-11-10".into();
+    let moved = CalendarMutation::Update {
+        event_id: "synthetic1".into(),
+        etag: prior.event.etag.clone(),
+        fields: f,
+    };
+    let after = client
+        .mutate(
+            &secret(),
+            CalendarWrite {
+                primary: "calendar-owner@example.test",
+                id: "synthetic1",
+                change: &moved,
+                operation: op,
+                digest: &digest,
+                prior: Some(&prior),
+            },
+            &cancel,
+        )
+        .await
+        .unwrap()
+        .event
+        .unwrap();
+    assert!(after.event.all_day);
+    assert_eq!(after.event.fields.end, "2027-11-10");
+    let conversion = CalendarMutation::Update {
+        event_id: "synthetic1".into(),
+        etag: after.event.etag.clone(),
+        fields: fields(),
+    };
+    assert!(matches!(
+        client
+            .mutate(
+                &secret(),
+                CalendarWrite {
+                    primary: "calendar-owner@example.test",
+                    id: "synthetic1",
+                    change: &conversion,
+                    operation: op,
+                    digest: &digest,
+                    prior: Some(&after)
+                },
+                &cancel
+            )
+            .await,
+        Err(GmailError::InvalidInput)
+    ));
+    let delete = CalendarMutation::Delete {
+        event_id: "synthetic1".into(),
+        etag: after.event.etag.clone(),
+    };
+    assert_eq!(
+        client
+            .mutate(
+                &secret(),
+                CalendarWrite {
+                    primary: "calendar-owner@example.test",
+                    id: "synthetic1",
+                    change: &delete,
+                    operation: op,
+                    digest: &digest,
+                    prior: Some(&after)
+                },
+                &cancel
+            )
+            .await
+            .unwrap()
+            .status,
+        204
+    );
+    assert_eq!(seen.lock().unwrap().len(), 3);
+    task.abort();
+}

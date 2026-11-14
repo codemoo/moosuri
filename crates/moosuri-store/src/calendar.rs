@@ -363,7 +363,12 @@ fn admit_change_in(
             moosuri_connectors::calendar::validate_fields(fields)
                 .map_err(|_| StoreError::InvalidInput)?;
             let p = prior.as_ref().ok_or(StoreError::InvalidInput)?;
-            if !p.writable || p.id != *event_id || p.etag != *etag {
+            if !p.writable
+                || p.id != *event_id
+                || p.etag != *etag
+                || p.all_day
+                    != moosuri_connectors::calendar::date_range(&fields.start, &fields.end).is_ok()
+            {
                 return Err(StoreError::Conflict);
             }
             ("update", event_id.clone(), Some(etag.clone()))

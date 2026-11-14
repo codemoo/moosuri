@@ -60,6 +60,9 @@ fn decision(text: &str, mode: usize) -> CalendarChatDecision {
         },
         move_date_quote: None,
         move_date: None,
+        all_day_quote: None,
+        last_date_quote: None,
+        last_date: None,
         start_quote: if mode == 20 {
             Some("10:00".into())
         } else if mode == 21 {

@@ -283,6 +283,8 @@ fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
         (&d.target_quote, 512),
         (&d.date_quote, 128),
         (&d.move_date_quote, 128),
+        (&d.all_day_quote, 32),
+        (&d.last_date_quote, 128),
         (&d.start_quote, 256),
         (&d.end_quote, 256),
         (&d.duration_quote, 128),
@@ -296,12 +298,17 @@ fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
             || d.target_quote.is_some()
             || d.date_quote.is_some()
             || d.date.is_some()
+            || d.move_date_quote.is_some()
+            || d.move_date.is_some()
             || d.start_quote.is_some()
             || d.start.is_some()
             || d.end_quote.is_some()
             || d.end.is_some()
             || d.duration_quote.is_some()
             || d.duration_minutes.is_some()
+            || d.all_day_quote.is_some()
+            || d.last_date_quote.is_some()
+            || d.last_date.is_some()
         {
             return Err(StoreError::InvalidInput);
         }
@@ -323,6 +330,17 @@ fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
     {
         return Err(StoreError::InvalidInput);
     }
+    if d.last_date.is_some() != d.last_date_quote.is_some()
+        || d.all_day_quote
+            .as_ref()
+            .is_some_and(|q| !matches!(q.to_lowercase().as_str(), "종일" | "all-day" | "all day"))
+        || d.all_day_quote.is_some()
+            && (d.start.is_some() || d.end.is_some() || d.duration_minutes.is_some())
+        || d.last_date.is_some()
+            && (d.start.is_some() || d.end.is_some() || d.duration_minutes.is_some())
+    {
+        return Err(StoreError::InvalidInput);
+    }
     if d.operation.as_deref() == Some("create") {
         exact(text, &d.title_quote, 512, d.decision == "command")?;
     } else {
@@ -340,6 +358,8 @@ fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
             || d.start.is_some()
             || d.end.is_some()
             || d.duration_minutes.is_some())
+        || d.operation.as_deref() == Some("delete")
+            && (d.all_day_quote.is_some() || d.last_date.is_some())
     {
         return Err(StoreError::InvalidInput);
     }
@@ -363,11 +383,7 @@ fn selected<'a>(
     }
     Ok(matches[0])
 }
-fn time_proposal(
-    _d: &CalendarChatDecision,
-    time: MissionChatTime,
-    q: String,
-) -> MissionChatDecision {
+fn time_proposal(time: MissionChatTime, q: String) -> MissionChatDecision {
     MissionChatDecision {
         decision: "command".into(),
         action: None,
@@ -399,7 +415,6 @@ fn moment(
 ) -> Result<chrono::DateTime<chrono::Utc>> {
     let zone = zone(p, d)?;
     let proposal = time_proposal(
-        d,
         MissionChatTime::LocalOnce {
             date: d.date.clone().ok_or(StoreError::InvalidInput)?,
             time: time.into(),
@@ -429,6 +444,37 @@ fn moment(
         .single()
         .ok_or(StoreError::InvalidInput)?
         .with_timezone(&chrono::Utc))
+}
+/// Validate the date quote using the existing civil oracle, without resolving
+/// any local midnight. A civil day is not a UTC instant or a 24-hour duration.
+fn civil_date(p: &CalendarRunProfile, date: &str, quote: &str) -> Result<NaiveDate> {
+    let z: chrono_tz::Tz = p
+        .timezone
+        .as_deref()
+        .ok_or(StoreError::InvalidInput)?
+        .parse()
+        .map_err(|_| StoreError::InvalidInput)?;
+    let proposal = time_proposal(
+        MissionChatTime::LocalOnce {
+            date: date.into(),
+            time: "00:00".into(),
+        },
+        format!("{quote} 00:00"),
+    );
+    if !crate::missions::chat::civil_consistent(&proposal, p.reference, &z.to_string()) {
+        return Err(StoreError::InvalidInput);
+    }
+    let base = chrono::DateTime::from_timestamp(p.reference, 0)
+        .ok_or(StoreError::Corrupt)?
+        .with_timezone(&z)
+        .date_naive();
+    match date {
+        "today" => Ok(base),
+        "tomorrow" => base
+            .checked_add_days(Days::new(1))
+            .ok_or(StoreError::InvalidInput),
+        v => NaiveDate::parse_from_str(v, "%Y-%m-%d").map_err(|_| StoreError::InvalidInput),
+    }
 }
 pub(crate) fn range(p: &CalendarRunProfile, d: &CalendarChatDecision) -> Result<CalendarRange> {
     let start = moment(p, d, "00:00", "00:00")?;
@@ -507,10 +553,19 @@ fn command_range(
 ) -> Result<CalendarRange> {
     if let Some(target) = receipt_target(c, r, d)? {
         let zone = zone(p, d)?;
-        let start = chrono::DateTime::parse_from_rfc3339(&target.event.fields.start)
-            .map_err(|_| StoreError::Corrupt)?
-            .with_timezone(&zone)
-            .date_naive();
+        let start = if target.event.all_day {
+            moosuri_connectors::calendar::date_range(
+                &target.event.fields.start,
+                &target.event.fields.end,
+            )
+            .map_err(|_| StoreError::InvalidInput)?
+            .0
+        } else {
+            chrono::DateTime::parse_from_rfc3339(&target.event.fields.start)
+                .map_err(|_| StoreError::Corrupt)?
+                .with_timezone(&zone)
+                .date_naive()
+        };
         let next = start
             .checked_add_days(Days::new(1))
             .ok_or(StoreError::InvalidInput)?;
@@ -537,6 +592,12 @@ fn fields(
     prior: Option<&CalendarEvent>,
     text: &str,
 ) -> Result<CalendarFields> {
+    if prior.is_some_and(|v| v.all_day) || d.all_day_quote.is_some() {
+        return all_day_fields(p, d, prior, text);
+    }
+    if d.last_date.is_some() {
+        return Err(StoreError::InvalidInput);
+    }
     let mut f = prior.map(|v| v.fields.clone()).unwrap_or(CalendarFields {
         title: String::new(),
         description: String::new(),
@@ -596,7 +657,6 @@ fn fields(
             return Err(StoreError::InvalidInput);
         }
         let proposal = time_proposal(
-            d,
             MissionChatTime::Relative {
                 seconds: minutes * 60,
             },
@@ -639,6 +699,132 @@ fn fields(
     }
     moosuri_connectors::calendar::validate_fields(&f).map_err(|_| StoreError::InvalidInput)?;
     Ok(f)
+}
+fn all_day_fields(
+    p: &CalendarRunProfile,
+    d: &CalendarChatDecision,
+    prior: Option<&CalendarEvent>,
+    text: &str,
+) -> Result<CalendarFields> {
+    if prior.is_some_and(|v| !v.all_day)
+        || d.start.is_some()
+        || d.end.is_some()
+        || d.duration_minutes.is_some()
+        || prior.is_none() && d.all_day_quote.is_none()
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    // A single-day default belongs only to a single explicit civil date. If a
+    // range was requested, a missing last day must clarify rather
+    // than silently truncate it to one day.
+    let lower = text.to_lowercase();
+    if ["exclusive", "미포함", "제외"]
+        .iter()
+        .any(|word| lower.contains(word))
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    if prior.is_none() && d.last_date.is_none() {
+        let iso_dates = lower
+            .as_bytes()
+            .windows(10)
+            .filter(|w| {
+                w[4] == b'-'
+                    && w[7] == b'-'
+                    && w.iter()
+                        .enumerate()
+                        .all(|(i, b)| matches!(i, 4 | 7) || b.is_ascii_digit())
+            })
+            .count();
+        if iso_dates > 1
+            || [
+                "부터", "까지", "through", "until", " to ", "between", "days", "일간", "동안",
+            ]
+            .iter()
+            .any(|v| lower.contains(v))
+        {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    let old = prior
+        .map(|v| {
+            moosuri_connectors::calendar::date_range(&v.fields.start, &v.fields.end)
+                .map_err(|_| StoreError::InvalidInput)
+        })
+        .transpose()?;
+    let start = if let Some(date) = &d.move_date {
+        civil_date(
+            p,
+            date,
+            d.move_date_quote
+                .as_deref()
+                .ok_or(StoreError::InvalidInput)?,
+        )?
+    } else if let Some((start, _)) = old {
+        start
+    } else {
+        civil_date(
+            p,
+            d.date.as_deref().ok_or(StoreError::InvalidInput)?,
+            d.date_quote.as_deref().ok_or(StoreError::InvalidInput)?,
+        )?
+    };
+    let end = if let Some(date) = &d.last_date {
+        let quote = d
+            .last_date_quote
+            .as_deref()
+            .ok_or(StoreError::InvalidInput)?;
+        civil_date(p, date, quote)?
+            .checked_add_days(Days::new(1))
+            .ok_or(StoreError::InvalidInput)?
+    } else {
+        let days = old.map(|(a, b)| (b - a).num_days()).unwrap_or(1);
+        start
+            .checked_add_days(Days::new(
+                days.try_into().map_err(|_| StoreError::InvalidInput)?,
+            ))
+            .ok_or(StoreError::InvalidInput)?
+    };
+    if prior.is_some() && d.move_date.is_none() && d.last_date.is_none() && d.title_quote.is_none()
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    let f = CalendarFields {
+        title: d
+            .title_quote
+            .clone()
+            .or_else(|| prior.map(|v| v.fields.title.clone()))
+            .ok_or(StoreError::InvalidInput)?,
+        description: prior
+            .map(|v| v.fields.description.clone())
+            .unwrap_or_default(),
+        location: prior.map(|v| v.fields.location.clone()).unwrap_or_default(),
+        start: start.format("%Y-%m-%d").to_string(),
+        end: end.format("%Y-%m-%d").to_string(),
+        time_zone: None,
+    };
+    moosuri_connectors::calendar::validate_fields(&f).map_err(|_| StoreError::InvalidInput)?;
+    Ok(f)
+}
+fn event_in_range(e: &CalendarEvent, q: &CalendarRange, p: &CalendarRunProfile) -> Result<bool> {
+    let start =
+        chrono::DateTime::parse_from_rfc3339(&q.start).map_err(|_| StoreError::InvalidInput)?;
+    let end = chrono::DateTime::parse_from_rfc3339(&q.end).map_err(|_| StoreError::InvalidInput)?;
+    if e.all_day {
+        let (date, _) = moosuri_connectors::calendar::date_range(&e.fields.start, &e.fields.end)
+            .map_err(|_| StoreError::InvalidInput)?;
+        let zone: chrono_tz::Tz = p
+            .timezone
+            .as_deref()
+            .ok_or(StoreError::InvalidInput)?
+            .parse()
+            .map_err(|_| StoreError::InvalidInput)?;
+        Ok(date == start.with_timezone(&zone).date_naive())
+    } else {
+        let actual = chrono::DateTime::parse_from_rfc3339(&e.fields.start)
+            .map_err(|_| StoreError::InvalidInput)?;
+        Ok(actual >= start && actual < end)
+    }
 }
 pub(crate) fn record(c: &Connection, r: &Run, raw: serde_json::Value) -> Result<()> {
     let d: CalendarChatDecision =
@@ -780,10 +966,10 @@ fn message(state: &str) -> &'static str {
             "현재 일정이 없음을 확인했어요. 이전 삭제의 성공 여부는 확정할 수 없어요. / Event currently absent; deletion causality unknown."
         }
         "unsupported" => {
-            "반복·종일·참석자·예약 실행은 아직 지원하지 않아요. / Recurrence, all-day, attendees and scheduled execution are unsupported."
+            "반복·참석자·예약 실행과 일정 종류 변환은 아직 지원하지 않아요. / Recurrence, attendees, scheduled execution and timed/all-day conversion are unsupported."
         }
         _ => {
-            "한 개의 캘린더와 일정 제목·날짜·명확한 시작 및 종료 시각(또는 기간)을 말씀해 주세요. / Specify one calendar, exact event title/date, and explicit start/end or duration. No change was made."
+            "한 개의 캘린더와 일정 제목·날짜를 말씀해 주세요. 시간 일정은 시작·종료(또는 기간), 종일 일정은 마지막 날이 필요해요. / Specify one calendar, exact title/date and timed start/end or all-day last day. No change was made."
         }
     }
 }
@@ -794,7 +980,11 @@ fn clarification_message(d: &CalendarChatDecision) -> &'static str {
         }
         Some("date") => "어느 날짜인가요? / Which date should I use?",
         Some("duration") => {
-            "언제 끝나나요? 종료 시각이나 기간을 알려 주세요. / What end time or duration should I use?"
+            if d.all_day_quote.is_some() {
+                "마지막 날은 언제인가요? 그 날짜까지 포함할게요. / What is the last day, inclusive?"
+            } else {
+                "언제 끝나나요? 종료 시각이나 기간을 알려 주세요. / What end time or duration should I use?"
+            }
         }
         Some("target") => {
             "어느 일정을 변경할까요? 제목과 날짜를 알려 주세요. / Which event do you mean? Give its title and date."
@@ -868,7 +1058,7 @@ impl Store {
         self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let cmd=command(&tx,&db.provider_key,&l)?.ok_or(StoreError::Conflict)?;let r=crate::chat::guard(&tx,&db.provider_key,&l)?;
             let d=&cmd.decision;validate_decision(&crate::request_continuations::text(&tx,&r)?,d)?;let p=selected(&cmd.profile,d)?;
             if p.id!=conn.id || p.epoch!=conn.epoch || p.client_id!=app.client_id || p.app_revision!=app.revision || cmd.user.digest!=u.digest || cmd.user.epoch!=u.epoch {return Err(StoreError::Forbidden)} admit_pin(&tx,&r,p)?;
-            let mutation=match d.operation.as_deref(){Some("create")=>CalendarMutation::Create{fields:fields(&cmd.profile,d,None,&crate::request_continuations::text(&tx,&r)?)?},Some("update"|"delete")=>{let old=prior.as_ref().ok_or(StoreError::InvalidInput)?;let receipt=receipt_target(&tx,&r,d)?;if !old.writable || if let Some(target)=&receipt {target.event.id!=old.id || target.event.etag!=old.etag} else {d.target_quote.as_ref()!=Some(&old.fields.title)} {return Err(StoreError::Conflict)}let q=command_range(&tx,&r,&cmd.profile,d)?;let start=chrono::DateTime::parse_from_rfc3339(&old.fields.start).map_err(|_|StoreError::InvalidInput)?;if start<chrono::DateTime::parse_from_rfc3339(&q.start).map_err(|_|StoreError::InvalidInput)? || start>=chrono::DateTime::parse_from_rfc3339(&q.end).map_err(|_|StoreError::InvalidInput)? {return Err(StoreError::Conflict)}
+            let mutation=match d.operation.as_deref(){Some("create")=>CalendarMutation::Create{fields:fields(&cmd.profile,d,None,&crate::request_continuations::text(&tx,&r)?)?},Some("update"|"delete")=>{let old=prior.as_ref().ok_or(StoreError::InvalidInput)?;let receipt=receipt_target(&tx,&r,d)?;if !old.writable || if let Some(target)=&receipt {target.event.id!=old.id || target.event.etag!=old.etag} else {d.target_quote.as_ref()!=Some(&old.fields.title)} {return Err(StoreError::Conflict)}let q=command_range(&tx,&r,&cmd.profile,d)?;if !event_in_range(old,&q,&cmd.profile)? {return Err(StoreError::Conflict)}
                 let proof:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_agent_observations WHERE tenant_id=?1 AND run_id=?2 AND handle='sealed-target' AND event_id=?3 AND etag=?4)",params![r.tenant,r.id,old.id,old.etag],|r|r.get(0))?;if !proof {return Err(StoreError::Conflict)}
                 if d.operation.as_deref()==Some("delete"){CalendarMutation::Delete{event_id:old.id.clone(),etag:old.etag.clone()}}else{CalendarMutation::Update{event_id:old.id.clone(),etag:old.etag.clone(),fields:fields(&cmd.profile,d,Some(old),&crate::request_continuations::text(&tx,&r)?)?}}
             },_=>return Err(StoreError::InvalidInput)};
@@ -1012,6 +1202,9 @@ mod civil_tests {
             date: Some(date.into()),
             move_date_quote: None,
             move_date: None,
+            all_day_quote: None,
+            last_date_quote: None,
+            last_date: None,
             start_quote: None,
             start: None,
             end_quote: None,
@@ -1087,5 +1280,117 @@ mod move_tests {
         d.move_date = Some("2027-11-07".into());
         d.move_date_quote = d.move_date.clone();
         assert!(fields(&p, &d, Some(&old), "move Synthetic to 2027-11-07").is_err());
+    }
+}
+
+#[cfg(test)]
+mod all_day_tests {
+    use super::*;
+    fn profile(zone: &str) -> CalendarRunProfile {
+        CalendarRunProfile {
+            version: 1,
+            reference: chrono::DateTime::parse_from_rfc3339("2026-12-31T15:30:00Z")
+                .unwrap()
+                .timestamp(),
+            timezone: Some(zone.into()),
+            connections: vec![],
+        }
+    }
+    fn decision(text: &str, date: &str) -> CalendarChatDecision {
+        serde_json::from_value(serde_json::json!({"domain":"calendar","decision":"command","operation":"create","intent_quote":text,"title_quote":"Synthetic holiday","date_quote":date,"date":date,"all_day_quote":"all-day","connection_quote":null,"target_quote":null,"start_quote":null,"start":null,"end_quote":null,"end":null,"duration_quote":null,"duration_minutes":null,"clarification":null})).unwrap()
+    }
+    #[test]
+    fn all_day_civil_dates_inclusive_last_day_relative_zone_and_span_preservation() {
+        let text = "Create all-day Synthetic holiday on 2027-03-14 through 2027-03-16";
+        let mut d = decision(text, "2027-03-14");
+        d.last_date = Some("2027-03-16".into());
+        d.last_date_quote = d.last_date.clone();
+        validate_decision(text, &d).unwrap();
+        let f = fields(&profile("America/Los_Angeles"), &d, None, text).unwrap();
+        assert_eq!((&*f.start, &*f.end), ("2027-03-14", "2027-03-17"));
+        assert!(f.time_zone.is_none());
+        let old = CalendarEvent {
+            id: "synthetic".into(),
+            etag: "etag".into(),
+            status: "confirmed".into(),
+            fields: f,
+            all_day: true,
+            writable: true,
+            html_link: None,
+            updated: None,
+        };
+        d.operation = Some("update".into());
+        d.title_quote = None;
+        d.all_day_quote = None;
+        d.last_date = None;
+        d.last_date_quote = None;
+        d.move_date = Some("2027-11-07".into());
+        d.move_date_quote = d.move_date.clone();
+        let moved = fields(
+            &profile("America/Los_Angeles"),
+            &d,
+            Some(&old),
+            "Move that event to 2027-11-07",
+        )
+        .unwrap();
+        assert_eq!((&*moved.start, &*moved.end), ("2027-11-07", "2027-11-10"));
+        assert!(moved.time_zone.is_none());
+        assert_eq!(
+            civil_date(&profile("Asia/Seoul"), "today", "오늘")
+                .unwrap()
+                .to_string(),
+            "2027-01-01"
+        );
+        assert_eq!(
+            civil_date(&profile("America/Los_Angeles"), "today", "today")
+                .unwrap()
+                .to_string(),
+            "2026-12-31"
+        );
+    }
+    #[test]
+    fn all_day_invalid_quotes_ranges_and_kind_conversions_do_not_form_payloads() {
+        let text = "Create all-day Synthetic holiday on 2027-03-14 through 2027-03-16";
+        let mut d = decision(text, "2027-03-14");
+        let p = profile("America/Los_Angeles");
+        assert!(fields(&p, &d, None, text).is_err()); // Never drop a requested range.
+        d.last_date = Some("2027-03-17".into());
+        d.last_date_quote = Some("2027-03-16".into());
+        assert!(fields(&p, &d, None, text).is_err());
+        for last in ["2027-03-13", "2027-04-14", "2027-02-29"] {
+            d.last_date = Some(last.into());
+            d.last_date_quote = d.last_date.clone();
+            assert!(fields(&p, &d, None, text).is_err());
+        }
+        d.last_date = None;
+        d.last_date_quote = None;
+        let f = fields(
+            &p,
+            &d,
+            None,
+            "Create all-day Synthetic holiday on 2027-03-14",
+        )
+        .unwrap();
+        assert_eq!(f.end, "2027-03-15");
+        let mut old = CalendarEvent {
+            id: "synthetic".into(),
+            etag: "etag".into(),
+            status: "confirmed".into(),
+            fields: f,
+            all_day: true,
+            writable: true,
+            html_link: None,
+            updated: None,
+        };
+        d.operation = Some("update".into());
+        d.all_day_quote = None;
+        d.start = Some("10:00".into());
+        d.start_quote = d.start.clone();
+        assert!(fields(&p, &d, Some(&old), "Move that event to 10:00").is_err());
+        old.all_day = false;
+        d.start = None;
+        d.start_quote = None;
+        d.all_day_quote = Some("all-day".into());
+        assert!(fields(&p, &d, Some(&old), "Make that event all-day").is_err());
     }
 }

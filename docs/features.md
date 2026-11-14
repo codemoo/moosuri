@@ -281,3 +281,8 @@ F51/P8은 과거 live snapshot과 명시적으로 고정한 이후 full-journal�
 복구를 제공한다. 이후 삭제·회전·nonce/영수증을 보존하고 fresh identity/session/pending
 격리를 적용한다. 같은 완료 복원은 새 작업을 유지한다. 자동 off-host 최신 기록과
 실운영/무손실 수락은 별도다. [계약](vault-historical-recovery.md).
+
+F37/F59는 기본 캘린더의 단일/최대31일 종일 solo-event를 직접 양식과 제한된 현재 대화에서
+생성·수정·삭제한다. 시작일/포함하는 마지막 날을 받고 날짜 이동에서 civil-day 수를 유지한다.
+기존 ETag/영수증·불명 결과 조회를 재사용하며 시간↔종일 변환·반복/참석자는 제외한다.
+[지원·검증](reviews/2026-11-15-calendar-all-day.md)을 따르며 실계정 품질 완료는 아니다.

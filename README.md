@@ -5,13 +5,15 @@ A self-hosted assistant for individuals, families and friends.
 **Early development preview. Start with [current support and remaining work](docs/status.md).**
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat with bounded tab-refresh draft recovery, private knowledge and memories, editable records, bounded
-read-only missions from chat or forms, personal Gmail with provider drafts and approved fixed scheduled sends, bounded Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
+read-only missions from chat or forms, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with provider drafts and approved fixed scheduled sends, bounded Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
 opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
 The experimental [native credential companion](docs/native-credential-github.md)
 can unlock an encrypted vault archive locally and read one exact GitHub repository
-with a selected credential. Its routes remain default-off; general chat integration,
-live-vault rotation and signed companion distribution remain unfinished.
+with a selected credential. An explicit exact-repository chat request can wait for the
+same signed result and finish in its original conversation without another model call.
+Its routes remain default-off; general credential tools, live-vault rotation and signed
+companion distribution remain unfinished.
 Account deletion clears active private data and delivers durable deletion to the separate vault.
 Every mail send needs the user's explicit approval of its final preview, including scheduled timing. Unknown sends
 have conservative read-only Sent checks and are never automatically resent.
@@ -38,7 +40,7 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 - [Accounts](docs/account-management.md) · [onboarding](docs/onboarding.md) · [isolation](docs/accounts-isolation.md) · [model settings](docs/provider-settings.md) · [provider support](docs/providers.md).
 - [Chat](docs/chat.md) · [private knowledge](docs/knowledge.md) · [conversational memory](docs/conversational-memory.md) · [automatic extraction](docs/automatic-memory.md) · [documents, goals and followups](docs/artifacts.md).
 - [Task skills](docs/task-skills.md) · [private learned routes](docs/learned-skills.md) · [community packages](docs/community-skills.md) · [missions](docs/missions.md) · [reminders/inbox](docs/schedules.md) · [Web Push](docs/web-push.md).
-- [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [public web research](docs/web-research.md) · [private browser workspaces](docs/browser-workspaces.md).
+- [Personal Gmail](docs/mail.md) · [personal Calendar](docs/calendar.md) · [source connections](docs/data-connections.md) · [public web research](docs/web-research.md) · [Japan Post tracking](docs/parcel-tracking.md) · [private browser workspaces](docs/browser-workspaces.md).
 - [Images](docs/media.md) · [files and text PDFs](docs/private-files.md) · [PWA](docs/pwa.md) · [vault service/client](docs/vault-service-client.md) · [encrypted vault archive](docs/vault-archive.md) · [vault service recovery](docs/vault-service-recovery.md) · [credential broker contract](docs/credential-use.md).
 - [Stopped encrypted export](docs/backup.md) · [sealed-current restore](docs/restore.md) · [release/installation contracts](docs/public-release.md). Ongoing historical/off-host recovery and cross-schema updates are still pending.
 

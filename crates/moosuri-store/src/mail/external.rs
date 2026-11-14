@@ -15,7 +15,7 @@ pub struct ExternalToolPermit {
     user: Option<UserContext>,
     browser_pin: Option<String>,
     thread_id: String,
-    parcel_origin: Option<crate::web::ParcelOrigin>,
+    parcel_origin: Option<Box<crate::web::ParcelOrigin>>,
 }
 
 impl ExternalToolPermit {
@@ -142,7 +142,7 @@ impl Store {
             tx.execute("INSERT INTO external_tool_dispatches VALUES(?1,?2,?3,?4,?5,'started')",params![run.tenant,run.id,lease.step,call_id,nonce])?;
             tx.commit()?;
             Ok(ExternalToolStart::Dispatch(ExternalToolPermit{
-                lease,call_id,nonce,request:Box::new(request),user,browser_pin,thread_id:run.thread,parcel_origin}
+                lease,call_id,nonce,request:Box::new(request),user,browser_pin,thread_id:run.thread,parcel_origin:parcel_origin.map(Box::new)}
             ))}
         ).await
     }

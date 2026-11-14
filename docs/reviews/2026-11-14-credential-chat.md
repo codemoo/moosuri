@@ -34,7 +34,8 @@ unchanged open boundaries. Native archive-snapshot rotation limitations continue
 
 No new approval layer or LLM polling was added. Waiting keeps the existing run
 cumulative deadline, consumes one tool cost and retains the original model usage.
-Independent root review, Linux gates and publication are separate acceptance.
+Independent source review and the affected Linux gates passed in the
+[integrated acceptance](2026-11-14-assistant-flows-integration.md).
 
 Independent review found and the author repaired a P2 two-session race. The first
 implementation checked the native enrollment session at Poll/Commit, while the

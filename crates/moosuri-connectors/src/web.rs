@@ -122,7 +122,7 @@ impl WebClient {
     pub fn with_parcel_test_endpoint(mut self, endpoint: &str) -> Result<Self, WebError> {
         let u = Url::parse(endpoint).map_err(|_| WebError::InvalidUrl)?;
         if u.scheme() != "http"
-            || !u.host_str().is_some_and(|h| h == "127.0.0.1")
+            || u.host_str().is_none_or(|h| h != "127.0.0.1")
             || u.path() != "/services/srv/search"
             || u.query().is_some()
             || !u.username().is_empty()

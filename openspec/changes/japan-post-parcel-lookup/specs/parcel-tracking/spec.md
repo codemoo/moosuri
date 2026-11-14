@@ -12,7 +12,7 @@ The system SHALL expose an available Japan Post typed parcel lookup only through
 - **THEN** it SHALL return provider_changed with no successful status claim.
 
 ### Requirement: Literal input and same-thread typed receipt reuse
-Store SHALL bind the number to the current literal user request and explicit Japan Post identification, or to a latest unique actual typed lookup receipt from the same account/thread within32turns. It SHALL stamp current request and original number-source request/run provenance itself. Source/model text SHALL NOT supply authority-bearing IDs or another carrier. Current explicit literal numbers SHALL take precedence over prior receipt reuse: a unique current Japan Post number MAY resolve even when the model argument is null, but contradictory/ambiguous current literals SHALL NOT silently dispatch the old number. Ambiguous/missing receipt identity SHALL require the number again.
+Store SHALL prioritize an explicit current Japan Post number, otherwise reuse only a unique actual typed receipt from the same account/thread within32turns. Store SHALL stamp current and original request/run provenance. Source/model text SHALL NOT supply authority-bearing IDs or another carrier. Ambiguous, conflicting or missing identity SHALL require clarification without dispatching an old number.
 
 #### Scenario: Follow-up reuses number but refreshes observation
 - **WHEN** the same owner asks where that parcel is after its actual lookup
@@ -24,6 +24,10 @@ Store SHALL bind the number to the current literal user request and explicit Jap
 #### Scenario: A new current number overrides prior identity
 - **WHEN** a prior actual lookup used A and the current owner explicitly supplies Japan Post number B but the model omits its number argument
 - **THEN** Store SHALL query B, never A, and stamp the current request as B’s number source.
+
+#### Scenario: Conflicting current numbers cannot reuse an old receipt
+- **WHEN** current literals are ambiguous or contradict the proposed tracking number
+- **THEN** Store SHALL refuse dispatch rather than silently fall back to the old receipt.
 
 ### Requirement: Honest coverage and preserved execution fences
 The adapter SHALL claim latest-summary coverage only, not full history, real delivery acceptance, prediction or inferred overseas timezone. Existing tenant/session/provider/read-capability/budget/cancellation, completed-slot reuse and unknown-outcome rules SHALL remain. No email, notification subscription, purchase/cancellation or mission capability SHALL be granted.

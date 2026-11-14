@@ -57,13 +57,12 @@ User artifact deletion SHALL use the existing durable typed destructive journal.
 - **THEN** effect, receipt and watermark converge without recreating a conversation
 
 ### Requirement: Safe exports and honest followup briefing
-The system SHALL escape Markdown in preview/HTML export, prohibit active or remote
-content, and reject withdrawn exports. Briefing SHALL return at most five valid
-pending records with continuation/coverage, excluding resolved/cancelled, muted
-and currently snoozed records. A local record SHALL NOT attest a message or future monitoring. Future followup
-dates explicitly saved by the owner SHALL expose actual fixed reminder receipts
-under the followup date notification contract; a draft date alone SHALL NOT attest
-a schedule.
+The system SHALL escape Markdown in preview/export, prohibit active/remote content
+and reject withdrawn exports. Briefing SHALL return at most five valid pending
+records with continuation/coverage, excluding resolved/cancelled, muted and snoozed
+records. Local records SHALL NOT attest external messages. Only explicitly saved
+future followup dates SHALL expose fixed reminder receipts under the date notification
+contract; draft dates SHALL NOT attest a schedule.
 
 #### Scenario: Script-like Markdown is printed
 - **WHEN** a stored body includes raw HTML, script links or remote images

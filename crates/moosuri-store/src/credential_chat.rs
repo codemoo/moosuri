@@ -19,6 +19,53 @@ pub(crate) fn has(c: &Connection, tenant: &str, run: &str) -> Result<bool> {
         |r| r.get(0),
     )?)
 }
+/// Called inside the broker writer transaction for NEW authority only. Device
+/// enrollment may use another live session; it cannot replace the original chat
+/// session or a cancelled/revised wait. Existing commitments bypass this guard
+/// solely for non-authorizing recovery/settlement.
+pub(crate) fn dispatch_current(
+    c: &Connection,
+    tenant: &str,
+    run_id: &str,
+    step: u32,
+    call: &str,
+    nonce: &str,
+) -> Result<bool> {
+    let wait:Option<(i32,i64,String,String,String,i64)>=c.query_row("SELECT attempt,step,broker_call,invocation_nonce,status,expires_at FROM credential_chat_waits WHERE tenant_id=?1 AND run_id=?2",params![tenant,run_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
+    let Some((attempt, pinned_step, pinned_call, pinned_nonce, status, expires)) = wait else {
+        return Ok(true);
+    }; // settings-only request
+    if !cfg!(feature = "credential-broker-chat")
+        || status != "waiting"
+        || expires <= now()?
+        || pinned_step != i64::from(step)
+        || pinned_call != call
+        || pinned_nonce != nonce
+    {
+        return Ok(false);
+    }
+    let run = chat::load_run(c, tenant, run_id)?;
+    if run.state != RunState::Queued
+        || run.attempt != attempt
+        || run
+            .tool_profile
+            .as_ref()
+            .is_none_or(|p| !p.credential_github)
+        || chat::authority(c, &run).is_err()
+    {
+        return Ok(false);
+    }
+    let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM agent_execution a JOIN credential_chat_waits w ON w.tenant_id=a.tenant_id AND w.run_id=a.run_id JOIN agent_tool_slots t ON t.tenant_id=w.tenant_id AND t.run_id=w.run_id AND t.step=w.step AND t.call_id=w.call_id JOIN credential_broker_jobs j ON j.tenant_id=w.tenant_id AND j.request_id=w.request_id WHERE w.tenant_id=?1 AND w.run_id=?2 AND a.invalidated=0 AND a.deadline_ms>?3 AND t.result IS NULL AND j.run_id=w.run_id AND j.account_id=?4 AND j.auth_epoch=?5 AND j.expires_at>?6)",params![tenant,run_id,millis_now()?,run.account,run.epoch,now()?],|r|r.get(0))?;
+    Ok(valid)
+}
+fn millis_now() -> Result<i64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| StoreError::Unavailable)?
+        .as_millis()
+        .try_into()
+        .map_err(|_| StoreError::Unavailable)
+}
 pub(crate) fn status(c: &Connection, r: &Run) -> Result<Option<CredentialChatStatus>> {
     let row:Option<(String,String,String)>=c.query_row("SELECT request_id,repository,status FROM credential_chat_waits WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|v|Ok((v.get(0)?,v.get(1)?,v.get(2)?))).optional()?;
     row.map(|(request_id, repo, status)| {
@@ -172,5 +219,338 @@ mod tests {
         ] {
             assert!(!literal_target(text, &repo));
         }
+    }
+}
+
+#[cfg(all(test, feature = "credential-broker-chat"))]
+mod session_tests {
+    use super::*;
+    use crate::tests::{PASSWORD, TEST_LOCK, admin, directory};
+    use moosuri_core::{ModelSelection, ProviderConfig, ProviderKind};
+    use moosuri_credential_broker::{
+        auth::{SigningKey, authenticated_bytes, projection_digest},
+        policy::LocalGrant,
+    };
+    use moosuri_vault_protocol::broker::{
+        Binding, Command, Commitment, Device, Invocation, PairProof, Receipt, Reply, SignedCommand,
+    };
+    async fn command(s: &Store, d: &Device, k: &SigningKey, command: Command) -> Result<Reply> {
+        let challenge = s.broker_auth_challenge(d.id).await?;
+        s.broker_command(SignedCommand {
+            challenge: challenge.nonce,
+            signature: k.sign(
+                &authenticated_bytes(
+                    &challenge,
+                    "POST",
+                    moosuri_vault_protocol::broker::DEVICE_PATH,
+                    &command,
+                )
+                .unwrap(),
+            ),
+            command,
+        })
+        .await
+    }
+    async fn wait(s: &Store, a: &UserContext) -> String {
+        let thread = s
+            .create_thread(a, "Synthetic session race".into())
+            .await
+            .unwrap();
+        let turn = s
+            .submit_turn(
+                a,
+                thread.id,
+                Uuid::new_v4().to_string(),
+                "GitHub owner/repo metadata".into(),
+            )
+            .await
+            .unwrap();
+        let claimed = s.claim_agent_run().await.unwrap().unwrap();
+        assert_eq!(claimed.lease.run_id(), turn.run.id);
+        let step = s
+            .begin_agent_step(&claimed.lease, claimed.context.checkpoint_seq)
+            .await
+            .unwrap();
+        s.commit_agent_step(
+            &step,
+            PrivateCheckpoint {
+                bytes: b"{}".to_vec(),
+            },
+            vec![PendingKnowledgeCall {
+                call_id: "model-call".into(),
+                input: KnowledgeToolInput::CredentialGitHub {
+                    owner: "owner".into(),
+                    repository: "repo".into(),
+                },
+            }],
+        )
+        .await
+        .unwrap();
+        assert!(
+            s.wait_for_github_tool(&step, "model-call".into())
+                .await
+                .unwrap()
+        );
+        turn.run.id
+    }
+    async fn revoke(s: &Store, a: &UserContext, expiry: bool) {
+        if expiry {
+            let digest = a.digest;
+            s.call(move |db| {
+                db.conn.execute(
+                    "UPDATE sessions SET expires_at=0 WHERE digest=?1",
+                    [digest.as_slice()],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        } else {
+            s.logout(a).await.unwrap();
+        }
+    }
+    fn invocation(r: &moosuri_vault_protocol::broker::Request) -> Invocation {
+        r.invocation.clone()
+    }
+    #[tokio::test]
+    async fn original_chat_session_is_fenced_at_mint_reissue_and_first_commit_without_sweep() {
+        let _serial = TEST_LOCK.lock().await;
+        let dir = directory();
+        let s = Store::open(dir.path()).unwrap();
+        let b = admin(&s).await.user;
+        let provider = s
+            .create_provider(
+                &b,
+                ProviderChange {
+                    name: "Synthetic".into(),
+                    enabled: true,
+                    config: ProviderConfig {
+                        kind: ProviderKind::Compatible,
+                        base_url: Some("http://127.0.0.1:11434/v1".into()),
+                        allowed_ips: vec!["127.0.0.1".into()],
+                        router_providers: vec![],
+                        zero_data_retention: false,
+                    },
+                    credential: CredentialChange::Clear,
+                },
+            )
+            .await
+            .unwrap();
+        s.record_model_probe(&b, provider.id.clone(), 1, "synthetic".into(), None)
+            .await
+            .unwrap();
+        s.record_tool_probe(&b, provider.id.clone(), 1, "synthetic".into(), None)
+            .await
+            .unwrap();
+        s.set_default_model(
+            &b,
+            Some(ModelSelection {
+                source: Default::default(),
+                provider_id: provider.id,
+                provider_revision: 1,
+                model: "synthetic".into(),
+                effort: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let key = SigningKey::from_pkcs8(&SigningKey::generate_pkcs8().unwrap()).unwrap();
+        let pair = s
+            .broker_pair_challenge(
+                &b,
+                "https://assistant.example.test".into(),
+                key.public_key(),
+            )
+            .await
+            .unwrap();
+        let d = s
+            .broker_pair(PairProof {
+                challenge: pair.nonce,
+                signature: key.sign(&moosuri_vault_protocol::broker::pairing_bytes(&pair).unwrap()),
+            })
+            .await
+            .unwrap();
+        let repo = GitHubRepository {
+            owner: "owner".into(),
+            repository: "repo".into(),
+        };
+        let binding: Binding = LocalGrant::select_github(
+            d.clone(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            repo.clone(),
+            1,
+            1,
+            now().unwrap() + 600,
+        )
+        .unwrap()
+        .binding;
+        command(
+            &s,
+            &d,
+            &key,
+            Command::RegisterRepository {
+                binding,
+                repository: repo.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        for expiry in [false, true] {
+            for after_poll in [false, true] {
+                let a = s
+                    .login("admin@example.test".into(), PASSWORD.into())
+                    .await
+                    .unwrap()
+                    .user;
+                let run = wait(&s, &a).await;
+                let request = if after_poll {
+                    let Reply::Waiting { requests, .. } =
+                        command(&s, &d, &key, Command::Poll).await.unwrap()
+                    else {
+                        panic!("no poll")
+                    };
+                    Some(
+                        requests
+                            .into_iter()
+                            .find(|r| r.invocation.run.to_string() == run)
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                };
+                revoke(&s, &a, expiry).await;
+                // Enrollment B remains live, and no two-second settlement sweep runs here.
+                assert!(s.list_threads(&b).await.is_ok());
+                let Reply::Waiting { requests, .. } =
+                    command(&s, &d, &key, Command::Poll).await.unwrap()
+                else {
+                    panic!("no poll")
+                };
+                assert!(!requests.iter().any(|r| r.invocation.run.to_string() == run));
+                if let Some(request) = request {
+                    assert!(matches!(
+                        command(
+                            &s,
+                            &d,
+                            &key,
+                            Command::Commit {
+                                invocation: invocation(&request)
+                            }
+                        )
+                        .await,
+                        Err(StoreError::Forbidden)
+                    ));
+                }
+                let checked = run.clone();
+                s.call(move |db| {
+                    assert_eq!(
+                        db.conn.query_row(
+                            "SELECT count(*) FROM credential_broker_commitments WHERE run_id=?1",
+                            [&checked],
+                            |r| r.get::<_, i64>(0)
+                        )?,
+                        0
+                    );
+                    assert_eq!(
+                        db.conn.query_row(
+                            "SELECT count(*) FROM credential_broker_invocations WHERE run_id=?1",
+                            [&checked],
+                            |r| r.get::<_, i64>(0)
+                        )?,
+                        if after_poll { 1 } else { 0 }
+                    );
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            }
+        }
+        // Already-adopted work is still recoverable/settleable after A loses authority.
+        let a = s
+            .login("admin@example.test".into(), PASSWORD.into())
+            .await
+            .unwrap()
+            .user;
+        let run = wait(&s, &a).await;
+        let Reply::Waiting { requests, .. } = command(&s, &d, &key, Command::Poll).await.unwrap()
+        else {
+            panic!("no poll")
+        };
+        let request = requests
+            .into_iter()
+            .find(|r| r.invocation.run.to_string() == run)
+            .unwrap();
+        let Reply::Commitment { commitment } = command(
+            &s,
+            &d,
+            &key,
+            Command::Commit {
+                invocation: invocation(&request),
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("no commit")
+        };
+        let original: Commitment = *commitment;
+        revoke(&s, &a, false).await;
+        for cmd in [
+            Command::Commit {
+                invocation: invocation(&request),
+            },
+            Command::Recover {
+                invocation: invocation(&request),
+            },
+        ] {
+            let Reply::Commitment { commitment } = command(&s, &d, &key, cmd).await.unwrap() else {
+                panic!("no recovery")
+            };
+            assert!(*commitment == original);
+        }
+        let receipt = Receipt {
+            commitment: original,
+            outcome: Outcome::Unknown,
+            projection: Projection::None,
+            projection_digest: projection_digest(Projection::None),
+        };
+        let signed = SignedReceipt {
+            signature: key.sign(&moosuri_vault_protocol::broker::receipt_bytes(&receipt)),
+            receipt,
+        };
+        assert!(matches!(
+            command(
+                &s,
+                &d,
+                &key,
+                Command::Settle {
+                    receipt: Box::new(signed)
+                }
+            )
+            .await
+            .unwrap(),
+            Reply::Settled
+        ));
+        // Settings-only jobs still use B's own live session, not a nonexistent chat A.
+        let id = Uuid::new_v4().to_string();
+        s.request_github_metadata(&b, id, repo).await.unwrap();
+        let Reply::Waiting { requests, .. } = command(&s, &d, &key, Command::Poll).await.unwrap()
+        else {
+            panic!("no poll")
+        };
+        assert_eq!(requests.len(), 1);
+        assert!(matches!(
+            command(
+                &s,
+                &d,
+                &key,
+                Command::Commit {
+                    invocation: invocation(&requests[0])
+                }
+            )
+            .await
+            .unwrap(),
+            Reply::Commitment { .. }
+        ));
     }
 }

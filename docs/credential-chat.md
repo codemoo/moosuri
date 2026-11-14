@@ -47,6 +47,8 @@ The signature, exact stored job, account, epoch, operation, repository, run, ste
 mapped call and nonce are checked again before adoption. Unknown, rejected and
 positively not-dispatched receipts remain distinct from completed reads.
 
+Before minting or reissuing an uncommitted job and again at its first writer commitment, the original chat session, wait/attempt/slot, account/epoch, deadline and execution invalidation are revalidated in that same writer transaction. A separately live native enrollment session cannot replace a logged-out or expired chat session. Existing commitments still recover/settle without authorizing new dispatch.
+
 Cancel/logout/account epoch or suspension, conversation deletion, recovery/restore
 and account deletion prevent new authority and visible resurrection. Explicit
 cancel expires the original job and cancels its minted invocation; a committed

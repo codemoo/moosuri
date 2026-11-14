@@ -97,6 +97,10 @@ pub(super) fn poll(
     let u = active(conn, p, session)?;
     let rows=conn.prepare("SELECT request_id,repository,run_id,call_id,invocation_nonce,expires_at,step FROM credential_broker_jobs WHERE tenant_id=?1 AND account_id=?2 AND auth_epoch=?3 AND expires_at>?4 AND request IS NULL LIMIT 32")?.query_map(params![u.tenant.0,u.account.id,u.epoch,now()?],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,u32>(6)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     for (id, repo, run, call, nonce, expiry, step) in rows {
+        if !crate::credential_chat::dispatch_current(conn, &u.tenant.0, &run, step, &call, &nonce)?
+        {
+            continue;
+        }
         let bindings=conn.prepare("SELECT r.device_id,b.binding FROM credential_broker_repositories r JOIN credential_broker_bindings b USING(device_id,binding_id) JOIN credential_broker_devices d ON d.id=r.device_id JOIN sessions live ON live.digest=d.session_digest WHERE live.expires_at>unixepoch() AND live.auth_epoch=?4 AND d.account_id=?1 AND d.tenant_id=?2 AND d.status='active' AND b.active=1 AND json_extract(b.binding,'$.expires_at')>unixepoch() AND r.repository=?3")?.query_map(params![u.account.id,u.tenant.0,repo,u.epoch],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         if bindings.len() != 1 || bindings[0].0 != p.device.id.to_string() {
             continue;
@@ -127,7 +131,20 @@ pub(super) fn poll(
         )?;
         conn.execute("UPDATE credential_broker_jobs SET request=?1 WHERE tenant_id=?2 AND request_id=?3 AND request IS NULL",params![json,u.tenant.0,id])?;
     }
-    let requests=conn.prepare("SELECT i.request FROM credential_broker_invocations i WHERE i.tenant_id=?1 AND i.cancelled=0 AND NOT EXISTS(SELECT 1 FROM credential_broker_commitments c WHERE c.tenant_id=i.tenant_id AND c.run_id=i.run_id) LIMIT 64")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().map(|s|decode::<Request>(&s)).collect::<Result<Vec<_>>>()?.into_iter().filter(|r|r.device==p.device && r.expires_at>now().unwrap_or(i64::MAX)).collect();
+    let candidates=conn.prepare("SELECT i.request FROM credential_broker_invocations i WHERE i.tenant_id=?1 AND i.cancelled=0 AND NOT EXISTS(SELECT 1 FROM credential_broker_commitments c WHERE c.tenant_id=i.tenant_id AND c.run_id=i.run_id) LIMIT 64")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().map(|s|decode::<Request>(&s)).collect::<Result<Vec<_>>>()?.into_iter().filter(|r|r.device==p.device && r.expires_at>now().unwrap_or(i64::MAX)).collect::<Vec<_>>();
+    let mut requests = Vec::new();
+    for r in candidates {
+        if crate::credential_chat::dispatch_current(
+            conn,
+            &u.tenant.0,
+            &r.invocation.run.to_string(),
+            r.invocation.step,
+            &r.invocation.call.to_string(),
+            &r.invocation.nonce.to_string(),
+        )? {
+            requests.push(r);
+        }
+    }
     Ok(Reply::Waiting {
         requests,
         revocation_pending: false,

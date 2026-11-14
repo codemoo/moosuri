@@ -209,6 +209,7 @@ impl Store {
     }else{
      active(&tx,&p,&session)?;if status!="active"{return Err(StoreError::Forbidden)}
      let r=stored_request(&tx,&tenant,&invocation)?;
+     if !crate::credential_chat::dispatch_current(&tx,&tenant,&invocation.run.to_string(),invocation.step,&invocation.call.to_string(),&invocation.nonce.to_string())? {return Err(StoreError::Forbidden)}
      if r.device!=c.device || r.expires_at<=now()? || r.expires_at>r.binding.expires_at{return Err(StoreError::Forbidden)}
      let bs:String=tx.query_row("SELECT binding FROM credential_broker_bindings WHERE device_id=?1 AND binding_id=?2 AND active=1",params![device,r.binding.id.to_string()],|r|r.get(0)).optional()?.ok_or(StoreError::Forbidden)?;
      let b:Binding=decode(&bs)?;if b!=r.binding || b.expires_at<=now()?{return Err(StoreError::Forbidden)}

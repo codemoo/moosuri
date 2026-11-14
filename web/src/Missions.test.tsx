@@ -4,6 +4,28 @@ import {Missions} from "./Missions";
 import type {MissionView} from "../shared/api-types";
 const mission:MissionView={id:"m",revision:1,state:"paused",request:{request_id:"r",task:"Synthetic task",constraints:"Keep original",checks:[{kind:"user_review",description:"Owner review"}],execution_mode:"durable"},steering:[],plan:["Find evidence","Verify"],completed_steps:1,receipts:[],result:null,report:[],uncertain:false,expires_at_ms:0};
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
+it("edits paused acceptance without another approval, retaining fields and exact UUID after lost acknowledgement",async()=>{
+ const writes:any[]=[];let item={...mission,revision:2};
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>{
+  if(init?.method==="PUT"){
+   expect(String(url)).toBe("/api/v1/missions/m/acceptance");const body=JSON.parse(String(init.body));writes.push(body);
+   if(writes.length===1)throw new TypeError("synthetic lost acknowledgement");
+   item={...item,state:"queued",revision:3,request:{...mission.request,task:body.task,constraints:body.constraints,checks:body.checks}};
+   return new Response(JSON.stringify(item));
+  }
+  return new Response(JSON.stringify([item]));
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole("button",{name:"조건과 확인 기준 변경"}));
+ fireEvent.change(screen.getByLabelText("변경할 일"),{target:{value:"Compute 2 plus 3"}});
+ fireEvent.change(screen.getByLabelText("변경할 조건"),{target:{value:""}});
+ fireEvent.change(screen.getByLabelText("변경할 확인 내용"),{target:{value:""}});
+ fireEvent.change(screen.getByLabelText("변경할 정확한 값"),{target:{value:"5"}});
+ fireEvent.click(screen.getByRole("button",{name:"새 조건으로 다시 계획"}));
+ await screen.findByRole("alert");expect(screen.getByLabelText("변경할 일")).toHaveValue("Compute 2 plus 3");expect(screen.getByLabelText("변경할 정확한 값")).toHaveValue("5");
+ fireEvent.click(screen.getByRole("button",{name:"새 조건으로 다시 계획"}));
+ await screen.findByRole("heading",{name:"Compute 2 plus 3"});expect(writes).toHaveLength(2);expect(writes[1]).toEqual(writes[0]);expect(writes[0]).toMatchObject({expected_revision:2,checks:[{kind:"decimal_equals",expected:"5"}]});expect(screen.queryByRole("form",{name:"미션 조건 변경"})).not.toBeInTheDocument();
+});
 it.each(["", "배송 조건도 모두 확인"])("keeps prose conditions reviewable without an extra approval prompt: %s", async constraints=>{
  const requests:any[]=[];
  vi.stubGlobal("fetch",vi.fn(async(_url,init)=>{

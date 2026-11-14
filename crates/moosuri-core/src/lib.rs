@@ -168,6 +168,8 @@ pub fn typescript_contract() -> String {
         MissionCheck::decl(),
         MissionCreate::decl(),
         MissionControl::decl(),
+        MissionAcceptanceUpdate::decl(),
+        MissionAcceptanceSnapshot::decl(),
         MissionAction::decl(),
         MissionEvidence::decl(),
         MissionCandidate::decl(),

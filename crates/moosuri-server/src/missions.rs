@@ -17,6 +17,10 @@ pub(super) fn routes() -> Router<AppState> {
         )
         .route("/api/v1/missions", get(list).post(create))
         .route("/api/v1/missions/{id}/control", post(control))
+        .route(
+            "/api/v1/missions/{id}/acceptance",
+            axum::routing::put(revise),
+        )
         .route("/api/v1/missions/{id}", axum::routing::delete(remove))
 }
 async fn list(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
@@ -94,6 +98,19 @@ async fn recurring_edit(
     let u = current(&s, &headers).await?;
     let _gate = s.delivery.write().await;
     let out = s.store.edit_recurring_mission(&u, id, input).await?;
+    s.runtime.wake();
+    Ok(Json(out).into_response())
+}
+
+async fn revise(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::MissionAcceptanceUpdate>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    let out = s.store.revise_mission_acceptance(&u, id, input).await?;
     s.runtime.wake();
     Ok(Json(out).into_response())
 }

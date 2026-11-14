@@ -1,6 +1,8 @@
 //! Mission authority and deterministic verification live in the SQLite writer.
 //! A durable grant is never converted to a session UserContext.
 use super::*;
+mod acceptance;
+pub(crate) use acceptance::floor as acceptance_floor;
 pub(crate) mod chat;
 pub(crate) mod connected;
 use crate::agent_execution::{KnowledgeToolInput, KnowledgeToolResult};
@@ -325,7 +327,11 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
         id: raw.0,
         revision: raw.1,
         state: if invalid { "quarantined".into() } else { raw.2 },
-        request: parse(&raw.3)?,
+        request: acceptance::current(c, t, &raw.10)?,
+        acceptance_history: {
+            let h = acceptance::history(c, t, id)?;
+            (!h.is_empty()).then_some(h)
+        },
         steering: parse(&raw.4)?,
         plan: parse(&raw.5)?,
         completed_steps,
@@ -344,6 +350,8 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MissionPendingRound {
+    #[serde(default = "initial_acceptance")]
+    pub acceptance_revision: i64,
     pub step: i64,
     pub planning: bool,
     pub text: String,
@@ -351,9 +359,14 @@ pub struct MissionPendingRound {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MissionRoundInput {
+    #[serde(default = "initial_acceptance")]
+    acceptance_revision: i64,
     kind: String,
     planning: bool,
     text: String,
+}
+fn initial_acceptance() -> i64 {
+    1
 }
 pub(crate) fn record_round(c: &Connection, run: &Run, step: i64, bytes: &[u8]) -> Result<()> {
     if !is_mission(c, &run.tenant, &run.id)? {
@@ -369,7 +382,9 @@ pub(crate) fn record_round(c: &Connection, run: &Run, step: i64, bytes: &[u8]) -
     if proposal.kind != "mission_round" || proposal.text.len() > 24000 {
         return Err(StoreError::InvalidInput);
     }
+    acceptance::check(c, run, step, proposal.acceptance_revision)?;
     let record = MissionPendingRound {
+        acceptance_revision: proposal.acceptance_revision,
         step,
         planning: proposal.planning,
         text: proposal.text,
@@ -392,7 +407,10 @@ pub(crate) fn local_final_recovery(c: &Connection, tenant: &str, run: &str) -> R
         return Ok(false);
     };
     let pending: MissionPendingRound = parse(&raw)?;
-    if pending.planning || pending.step < 1 {
+    if pending.planning
+        || pending.step < acceptance::floor(c, tenant, run)?
+        || pending.acceptance_revision != acceptance::revision(c, tenant, run)?
+    {
         return Ok(false);
     }
     let Ok(candidate) = serde_json::from_str::<MissionCandidate>(&pending.text) else {
@@ -405,8 +423,8 @@ pub(crate) fn local_final_recovery(c: &Connection, tenant: &str, run: &str) -> R
         return Ok(false);
     }
     Ok(c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='completed' AND step=(SELECT max(step) FROM agent_steps WHERE tenant_id=?1 AND run_id=?2)) AND NOT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND result IS NULL) AND NOT EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",
-        params![tenant, run, pending.step], |r| r.get(0),
+        "SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='completed' AND step=(SELECT max(step) FROM agent_steps WHERE tenant_id=?1 AND run_id=?2)) AND NOT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND result IS NULL AND step>=?4) AND NOT EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",
+        params![tenant, run, pending.step,acceptance::floor(c,tenant,run)?], |r| r.get(0),
     )?)
 }
 /// The execution projection contains no credentials or session capability.
@@ -426,6 +444,10 @@ pub(crate) fn apply_delete(c: &Connection, t: &str, id: &str) -> Result<()> {
         .optional()?;
     if let Some(thread) = thread {
         c.execute("UPDATE missions SET state='deleted',grant_enabled=0,payload='',steering='[]',plan='[]',candidate=NULL,report='[]',round_text=NULL WHERE tenant_id=?1 AND id=?2",params![t,id])?;
+        c.execute(
+            "DELETE FROM mission_acceptances WHERE tenant_id=?1 AND mission_id=?2",
+            params![t, id],
+        )?;
         c.execute(
             "DELETE FROM mission_revisions WHERE tenant_id=?1 AND mission_id=?2",
             params![t, id],
@@ -496,7 +518,25 @@ impl Store {
         step: i64,
     ) -> Result<crate::StepLease> {
         let l = lease.clone();
-        self.call(move|db|{let r=crate::chat::guard(&db.conn,&db.provider_key,&l)?;if !is_mission(&db.conn,&r.tenant,&r.id)?{return Err(StoreError::Forbidden)}db.conn.execute("UPDATE agent_steps SET attempt=?4 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='completed' AND NOT EXISTS(SELECT 1 FROM external_tool_dispatches d WHERE d.tenant_id=?1 AND d.run_id=?2 AND d.step=?3 AND d.state='started')",params![r.tenant,r.id,step,r.attempt])?;let bytes:Vec<u8>=db.conn.query_row("SELECT nonce FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='completed'",params![r.tenant,r.id,step],|r|r.get(0))?;Ok(crate::StepLease{run:l,step,nonce:bytes.try_into().map_err(|_|StoreError::Corrupt)?})}).await
+        self.call(move |db| {
+            let r = crate::chat::guard(&db.conn, &db.provider_key, &l)?;
+            if !is_mission(&db.conn, &r.tenant, &r.id)? {
+                return Err(StoreError::Forbidden);
+            }
+            if step < acceptance::floor(&db.conn, &r.tenant, &r.id)? {
+                return Err(StoreError::Conflict);
+            }
+            db.conn.execute("UPDATE agent_steps SET attempt=?4 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='completed' AND NOT EXISTS(SELECT 1 FROM external_tool_dispatches d WHERE d.tenant_id=?1 AND d.run_id=?2 AND d.step=?3 AND d.state='started')",params![r.tenant,r.id,step,r.attempt])?;
+            let bytes: Vec<u8> = db.conn.query_row(
+                "SELECT nonce FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='completed'",
+                params![r.tenant,r.id,step], |r| r.get(0),
+            )?;
+            Ok(crate::StepLease {
+                run: l,
+                step,
+                nonce: bytes.try_into().map_err(|_| StoreError::Corrupt)?,
+            })
+        }).await
     }
 
     pub async fn create_mission(
@@ -562,7 +602,7 @@ impl Store {
     ) -> Result<Option<MissionExecution>> {
         let l = lease.clone();
         self.call(move|db|{if !is_mission(&db.conn,&l.tenant,&l.run)?{return Ok(None)}let r=crate::chat::guard(&db.conn,&db.provider_key,&l)?;let(id,repairs):(String,i64)=db.conn.query_row("SELECT id,repairs FROM missions WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
- let receipts=db.conn.prepare("SELECT step,call_id,input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 ORDER BY step,call_id LIMIT 12")?.query_map(params![r.tenant,r.id],|r|Ok(serde_json::json!({"step":r.get::<_,i64>(0)?,"call_id":r.get::<_,String>(1)?,"input":r.get::<_,Option<String>>(2)?,"result":r.get::<_,Option<String>>(3)?})))?.collect::<std::result::Result<Vec<_>,_>>()?;
+ let receipts=db.conn.prepare("SELECT step,call_id,input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step>=?3 ORDER BY step,call_id LIMIT 12")?.query_map(params![r.tenant,r.id,acceptance::floor(&db.conn,&r.tenant,&r.id)?],|r|Ok(serde_json::json!({"step":r.get::<_,i64>(0)?,"call_id":r.get::<_,String>(1)?,"input":r.get::<_,Option<String>>(2)?,"result":r.get::<_,Option<String>>(3)?})))?.collect::<std::result::Result<Vec<_>,_>>()?;
  Ok(Some(MissionExecution{view:view(&db.conn,&r.tenant,&id)?,receipts:serde_json::json!(receipts),repairs,pending_round:db.conn.query_row("SELECT round_text FROM missions WHERE tenant_id=?1 AND id=?2",params![r.tenant,id],|r|r.get::<_,Option<String>>(0))?.as_deref().map(parse).transpose()?}))}).await
     }
     pub async fn mission_save_plan(
@@ -570,8 +610,16 @@ impl Store {
         lease: &crate::StepLease,
         plan: Vec<String>,
     ) -> Result<()> {
+        self.mission_save_plan_at(lease, 1, plan).await
+    }
+    pub async fn mission_save_plan_at(
+        &self,
+        lease: &crate::StepLease,
+        acceptance_revision: i64,
+        plan: Vec<String>,
+    ) -> Result<()> {
         let l = lease.clone();
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
     }
     /// Evidence references are resolved exclusively against this run's committed typed slots.
     pub async fn mission_verify(
@@ -579,13 +627,23 @@ impl Store {
         lease: &crate::StepLease,
         candidate: MissionCandidate,
     ) -> Result<bool> {
+        self.mission_verify_at(lease, 1, candidate).await
+    }
+    pub async fn mission_verify_at(
+        &self,
+        lease: &crate::StepLease,
+        acceptance_revision: i64,
+        candidate: MissionCandidate,
+    ) -> Result<bool> {
         let l = lease.clone();
         self.call(move|db|{
  let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};
+ acceptance::check(&tx,&r,l.step,acceptance_revision)?;
  if candidate.text.trim().is_empty()||candidate.text.len()>24000||candidate.evidence.len()>12{return Err(StoreError::InvalidInput)}
- let(id,payload,repairs):(String,String,i64)=tx.query_row("SELECT id,payload,repairs FROM missions WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;let input:MissionCreate=parse(&payload)?;
+ let(id,repairs):(String,i64)=tx.query_row("SELECT id,repairs FROM missions WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|r|Ok((r.get(0)?,r.get(1)?)))?;let input=acceptance::current(&tx,&r.tenant,&r.id)?;
  let mut evidence=Vec::new();let mut report=Vec::new();let mut unknown=false;
  for e in &candidate.evidence {
+ if e.step<acceptance::floor(&tx,&r.tenant,&r.id)? {report.push("Receipt precedes current acceptance".into());continue}
  let raw:Option<String>=tx.query_row("SELECT t.result FROM agent_tool_slots t JOIN agent_steps s USING(tenant_id,run_id,step) WHERE t.tenant_id=?1 AND t.run_id=?2 AND t.step=?3 AND t.call_id=?4 AND s.state='completed'",params![r.tenant,r.id,e.step,e.call_id],|r|r.get(0)).optional()?.flatten();
  match raw {Some(raw)=>{let v:KnowledgeToolResult=parse(&raw)?;if matches!(v,KnowledgeToolResult::Error(crate::ToolReadError::OutcomeUnknown)){unknown=true;}
 if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} is a failed tool result",e.step,e.call_id));}else{evidence.push(v)}},None=>report.push(format!("Missing receipt {}:{}",e.step,e.call_id))}

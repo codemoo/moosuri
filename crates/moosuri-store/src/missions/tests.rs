@@ -4,6 +4,7 @@ use crate::{PendingKnowledgeCall, PrivateCheckpoint, StepLease};
 use moosuri_core::*;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+mod acceptance;
 pub(crate) async fn setup() -> (tempfile::TempDir, Store, UserContext) {
     let d = directory();
     let s = Store::open_with_web(
@@ -540,6 +541,23 @@ async fn mission_owned_search_source_receipt_withdrawal_erases_result_and_retry_
         quote: "Apples cost 0.1.".into(),
     }];
     let m = s.create_mission(&u, req).await.unwrap();
+    let initial_pause = s
+        .control_mission(&u, m.id.clone(), ctl(1, MissionAction::Pause))
+        .await
+        .unwrap();
+    s.revise_mission_acceptance(
+        &u,
+        m.id.clone(),
+        MissionAcceptanceUpdate {
+            request_id: Uuid::new_v4().to_string(),
+            expected_revision: initial_pause.revision,
+            task: "Read revised source evidence".into(),
+            constraints: String::new(),
+            checks: m.request.checks.clone(),
+        },
+    )
+    .await
+    .unwrap();
     let c = s.claim_agent_run().await.unwrap().unwrap();
     let st = begin(
         &s,
@@ -556,18 +574,19 @@ async fn mission_owned_search_source_receipt_withdrawal_erases_result_and_retry_
     )
     .await;
     s.execute_knowledge_tool(&st, "read".into()).await.unwrap();
-    let pause = ctl(1, MissionAction::Pause);
+    let pause = ctl(3, MissionAction::Pause);
     s.control_mission(&u, m.id.clone(), pause.clone())
         .await
         .unwrap();
     let resumed = s
-        .control_mission(&u, m.id.clone(), ctl(2, MissionAction::Resume))
+        .control_mission(&u, m.id.clone(), ctl(4, MissionAction::Resume))
         .await
         .unwrap();
     let claim = s.claim_agent_run().await.unwrap().unwrap();
     let st = s.mission_step_lease(&claim.lease, 1).await.unwrap();
-    s.mission_verify(
+    s.mission_verify_at(
         &st,
+        2,
         MissionCandidate {
             text: "Apples cost 0.1.".into(),
             evidence: vec![MissionEvidence {
@@ -617,6 +636,25 @@ async fn mission_actual_encrypted_restore_quarantines_unfinished_grants_and_keep
         .create_mission(&u, input(MissionMode::Durable))
         .await
         .unwrap();
+    let paused = s
+        .control_mission(&u, pending.id.clone(), ctl(1, MissionAction::Pause))
+        .await
+        .unwrap();
+    s.revise_mission_acceptance(
+        &u,
+        pending.id.clone(),
+        MissionAcceptanceUpdate {
+            request_id: Uuid::new_v4().to_string(),
+            expected_revision: paused.revision,
+            task: "Revised restore calculation".into(),
+            constraints: String::new(),
+            checks: vec![MissionCheck::DecimalEquals {
+                expected: "5".into(),
+            }],
+        },
+    )
+    .await
+    .unwrap();
     let account = u.account.id.clone();
     drop(c);
     drop(s);
@@ -681,6 +719,23 @@ async fn mission_actual_encrypted_restore_quarantines_unfinished_grants_and_keep
     assert_eq!(historical.receipts[0].detail, "0.3");
     let unfinished = results.iter().find(|m| m.id == pending.id).unwrap();
     assert_eq!(unfinished.state, "quarantined");
+    assert_eq!(unfinished.acceptance_history.as_ref().unwrap().len(), 2);
+    assert!(matches!(
+        restored
+            .revise_mission_acceptance(
+                &owner,
+                pending.id.clone(),
+                MissionAcceptanceUpdate {
+                    request_id: Uuid::new_v4().to_string(),
+                    expected_revision: unfinished.revision,
+                    task: "Cannot resume restore".into(),
+                    constraints: String::new(),
+                    checks: unfinished.request.checks.clone()
+                }
+            )
+            .await,
+        Err(StoreError::Conflict)
+    ));
     assert!(matches!(
         restored
             .control_mission(
@@ -1446,7 +1501,7 @@ async fn migration25_rolls_back_late_failure_and_preserves_prior_authority_table
     let dir = crate::tests::directory();
     drop(Store::open(dir.path()).unwrap());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    conn.execute_batch("DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal; CREATE TABLE mission_controls(conflict INTEGER); PRAGMA user_version=24;").unwrap();
+    conn.execute_batch("DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal; CREATE TABLE mission_controls(conflict INTEGER); PRAGMA user_version=24;").unwrap();
     drop(conn);
     assert!(Store::open(dir.path()).is_err());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

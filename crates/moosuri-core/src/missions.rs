@@ -43,6 +43,23 @@ pub struct MissionControl {
     pub expected_revision: i64,
     pub action: MissionAction,
 }
+/// Explicit owner save, separate from additive steering and budget changes.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MissionAcceptanceUpdate {
+    pub request_id: String,
+    #[ts(type = "number")]
+    pub expected_revision: i64,
+    pub task: String,
+    pub constraints: String,
+    pub checks: Vec<MissionCheck>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct MissionAcceptanceSnapshot {
+    #[ts(type = "number")]
+    pub revision: i64,
+    pub request: MissionCreate,
+}
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MissionAction {
@@ -75,6 +92,10 @@ pub struct MissionView {
     pub revision: i64,
     pub state: String,
     pub request: MissionCreate,
+    /// Absent for unchanged/recurring missions; request is the active snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub acceptance_history: Option<Vec<MissionAcceptanceSnapshot>>,
     pub steering: Vec<String>,
     pub plan: Vec<String>,
     #[ts(type = "number")]

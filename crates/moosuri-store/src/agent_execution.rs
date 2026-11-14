@@ -428,7 +428,8 @@ fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
         params![tenant, run],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
-    let latest: Option<(i64,String,Option<Vec<u8>>)>=conn.query_row("SELECT step,state,checkpoint FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 ORDER BY step DESC LIMIT 1",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    let floor = crate::missions::acceptance_floor(conn, tenant, run)?;
+    let latest: Option<(i64,String,Option<Vec<u8>>)>=conn.query_row("SELECT step,state,checkpoint FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step>=?3 ORDER BY step DESC LIMIT 1",params![tenant,run,floor],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let mut calls = Vec::new();
     let (status, checkpoint) = if let Some((_step, state, checkpoint)) = latest {
         let status = match state.as_str() {
@@ -438,7 +439,7 @@ fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
             "purged" => AgentStepStatus::Purged,
             _ => return Err(StoreError::Corrupt),
         };
-        let completed_step: i64=conn.query_row("SELECT coalesce(max(step),0) FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='completed'",params![tenant,run],|r|r.get(0))?;
+        let completed_step: i64=conn.query_row("SELECT coalesce(max(step),0) FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='completed' AND step>=?3",params![tenant,run,floor],|r|r.get(0))?;
         let rows=conn.prepare("SELECT call_id,input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 ORDER BY call_id")?
           .query_map(params![tenant,run,completed_step],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
         for (call_id, input, result) in rows {
@@ -453,7 +454,7 @@ fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
         let checkpoint = if checkpoint.is_some() {
             checkpoint
         } else {
-            conn.query_row("SELECT checkpoint FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND checkpoint IS NOT NULL ORDER BY step DESC LIMIT 1",params![tenant,run],|r|r.get::<_,Vec<u8>>(0)).optional()?
+            conn.query_row("SELECT checkpoint FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND checkpoint IS NOT NULL AND step>=?3 ORDER BY step DESC LIMIT 1",params![tenant,run,floor],|r|r.get::<_,Vec<u8>>(0)).optional()?
         };
         (
             Some(status),
@@ -472,6 +473,9 @@ fn context(conn: &Connection, tenant: &str, run: &str) -> Result<AgentContext> {
 }
 pub(crate) fn guard_step(conn: &Connection, key: &[u8; 32], lease: &StepLease) -> Result<Run> {
     let run = chat::guard(conn, key, &lease.run)?;
+    if lease.step < crate::missions::acceptance_floor(conn, &run.tenant, &run.id)? {
+        return Err(StoreError::Conflict);
+    }
     let row: Option<(Vec<u8>,i32,String)>=conn.query_row("SELECT nonce,attempt,state FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let Some((nonce, attempt, state)) = row else {
         return Err(StoreError::Conflict);
@@ -797,7 +801,7 @@ impl Store {
             let (seq,remote):(i64,i64)=tx.query_row("SELECT checkpoint_seq,remote_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if seq!=expected_checkpoint_seq {return Err(StoreError::Conflict)}
             if remote>=6 {return Err(StoreError::BudgetExhausted)}
-            let pending: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND result IS NULL)",params![run.tenant,run.id],|r|r.get(0))?;
+            let pending: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND result IS NULL AND step>=?3)",params![run.tenant,run.id,crate::missions::acceptance_floor(&tx,&run.tenant,&run.id)?],|r|r.get(0))?;
             let dispatched: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='dispatched')",params![run.tenant,run.id],|r|r.get(0))?;
             if pending || dispatched {return Err(StoreError::Conflict)}
             let clock=millis()?;let step=remote+1;let n=nonce()?;

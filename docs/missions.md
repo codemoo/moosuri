@@ -46,6 +46,10 @@ An uncertain owner control retains its UUID/payload only for an explicit retry o
 
 Stable mission controls and restarts cannot strand execution at the shared chat attempt32 boundary. Within the same writer transaction, mission continuations retire the old run lease and use a fresh nonce on claim; no old run/step capability can change the resumed result. Step accounting receipts remain available for late usage, and original model/tool/time limits remain unchanged. Ordinary chat retries retain their existing limit. Unknown dispatches never enter this path.
 
+## 정지한 일의 조건 바꾸기
+
+안정적으로 정지한 일회성 업무에서 **조건과 확인 기준 변경**을 열어 일·조건·확인 기준을 바꾸고 저장하면 새 기준으로 다시 계획한다. 원래 요청과 조건 변경 이력은 남으며, 이미 쓴 호출·시간·최대 두 번의 보완 한도도 그대로다. 추가 지시·시간 연장과는 별도 기능이다. [조건 수정과 이력](mission-revisions.md)에 지원 범위와 재시도 동작을 설명한다.
+
 ## 명시적으로 예약하는 읽기 업무
 
 **예약해서 맡기기**에서 일·조건·계산 확인값과 한 번/간격/매일/매주 시간을 직접 저장한다.

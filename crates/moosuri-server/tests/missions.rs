@@ -163,6 +163,57 @@ async fn mission_http_owner_admission_deduplication_controls_and_scope() {
         2
     );
     assert_eq!(send(&app,"POST",&control,Some(&u.token),Some("00000000-0000-4000-8000-000000000099"),json!({"request_id":"00000000-0000-4000-8000-000000000003","expected_revision":2,"action":{"kind":"resume"}})).await.0,StatusCode::UNAUTHORIZED);
+    let acceptance = format!("/api/v1/missions/{}/acceptance", m["id"].as_str().unwrap());
+    let amendment = json!({"request_id":"00000000-0000-4000-8000-000000000004","expected_revision":2,"task":"Compute 0.2 + 0.4","constraints":"Use exact receipts","checks":[{"kind":"decimal_equals","expected":"0.6"}]});
+    assert_eq!(
+        send(&app, "PUT", &acceptance, None, None, amendment.clone())
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send(
+            &app,
+            "PUT",
+            &acceptance,
+            Some(&u.token),
+            Some("wrong-account"),
+            amendment.clone()
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, revised) = send(
+        &app,
+        "PUT",
+        &acceptance,
+        Some(&u.token),
+        Some(&u.user.account().id),
+        amendment.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{revised}");
+    assert_eq!(revised["state"], "queued");
+    assert_eq!(revised["request"]["checks"][0]["expected"], "0.6");
+    assert_eq!(
+        revised["acceptance_history"][0]["request"]["task"],
+        "Compute 0.1 + 0.2"
+    );
+    assert_eq!(revised["acceptance_history"][1]["revision"], 2);
+    let (status, replay) = send(
+        &app,
+        "PUT",
+        &acceptance,
+        Some(&u.token),
+        Some(&u.user.account().id),
+        amendment,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay, revised);
+    // The stopped worker must not dispatch merely because the new route wakes it.
+    assert_eq!(s.usage_summary(&u.user).await.unwrap().dispatched_calls, 0);
     let recurring = json!({"request_id":"00000000-0000-4000-8000-000000000010","template":{"request_id":"00000000-0000-4000-8000-000000000011","task":"Compute synthetic total","constraints":"","checks":[{"kind":"decimal_equals","expected":"0.3"}],"execution_mode":"durable"},"schedule":{"title":"Synthetic scheduled task","message":"Not notification content","rule":{"kind":"daily","time":"09:00","timezone":"Asia/Seoul"},"valid_until":null},"changes_only":true});
     assert_eq!(
         send(

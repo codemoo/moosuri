@@ -76,8 +76,7 @@ fn load(conn: &Connection, run: &chat::Run) -> Result<Option<Plan>> {
     let Some((nonce, encoded, digest, generation, planning_step, snapshot)) = row else {
         return Ok(None);
     };
-    let intent: MemoryCommandIntent = decode(&encoded)?;
-    validate_intent(&run.text, &intent)?;
+    let intent = temporal::load(run, &encoded)?.intent;
     if intent_digest(&run.text, &intent)?.as_slice() != digest
         || intent.target_quote.is_none()
         || intent.action == MemoryCommandAction::Remember
@@ -200,6 +199,10 @@ impl Store {
                 tx.commit()?;return Ok(MemoryCommandPreparation::Resolve(candidates))
             }
             if abandoned(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
+            if temporal::derive(&run,&intent)==temporal::Scope::Clarify {
+                let prepared=prepare_slot(&tx,&run,&step,&intent,None)?;
+                tx.commit()?;return Ok(MemoryCommandPreparation::Prepared(prepared))
+            }
             let literal=match intent.target_quote.as_deref() {Some(q)=>resolve(&tx,&run.tenant,q)?,None=>(None,None)};
             if literal.1!=Some(MemoryCommandClarification::NoTarget) {
                 let prepared=prepare_slot(&tx,&run,&step,&intent,Some(literal))?;
@@ -223,7 +226,7 @@ impl Store {
                 tx.execute("INSERT OR IGNORE INTO agent_dependencies VALUES(?1,?2,'memory',?3,?4)",params![run.tenant,run.id,candidate.id,candidate.effective])?;
                 tx.execute("INSERT OR IGNORE INTO agent_dependencies SELECT tenant_id,?2,'source',source_id,source_revision FROM knowledge_evidence WHERE tenant_id=?1 AND memory_id=?3 AND memory_revision=?4",params![run.tenant,run.id,candidate.id,candidate.effective])?;
             }
-            tx.execute("INSERT INTO memory_target_plans VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![run.tenant,run.id,nonce.as_slice(),encode(&intent)?,intent_digest(&run.text,&intent)?.as_slice(),generation,step.step,encode(&snapshot)?])?;
+            tx.execute("INSERT INTO memory_target_plans VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![run.tenant,run.id,nonce.as_slice(),temporal::seal(&run,&intent)?,intent_digest(&run.text,&intent)?.as_slice(),generation,step.step,encode(&snapshot)?])?;
             let candidates=capsule(&step.run,&Plan{nonce:nonce.to_vec(),intent,generation,planning_step:step.step,snapshot})?;
             tx.commit()?;Ok(MemoryCommandPreparation::Resolve(candidates))
         }).await

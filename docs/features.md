@@ -109,6 +109,8 @@
 
 Kakao 발송·전화 발신·Slack 쓰기·reply-all·첨부 메일 발송·미래 생성 본문의 자동 발송·자동 구매/웹 예약·임의 shell/code 설치는 현재 기본 계약에 없다. 새 서비스 요청을 재사용 절차로 기록하는 것과 실제 adapter 구현은 다르다. 공식 adapter는 Rust 코드·합성 fixture·계약 시험·버전 배포로 추가한다. 커스텀 외부 수집기는 [공통 HTTP 수집 계약](data-connections.md)으로 연결하고 서버가 그 코드를 실행하지 않는다. 카톡 수집기는 R29에 따라 공개 구현·패키징 대상에서 제외한다. 스킬은 이를 자동으로 만들어진 연결처럼 표시하지 않는다.
 
+F19의 대화 경로는 메시지 앞의 제한된 절대 날짜 지시를 원래 메시지 시간대에서 해석하여 기존 기억 유효기간으로 저장한다. 미래 시작 전과 종료일 이후의 현재 조회 제외, 날짜를 지정한 정정, 재시도·재시작과 이전 undated 계획 호환을 확인한다. 인식하는 미지원 시각 표현은 편집기로 안내하며 넓은 자연어 시간 이해를 보장하지 않는다. [동작과 예제](conversational-memory.md)·[검증](reviews/2026-11-15-dated-conversational-memory.md).
+
 ## 시험 선정 규칙
 
 원본에서 정적으로 확인한 Python test 함수772개와 TypeScript test 선언215개는 전체 source 표면의 정적 수다. parametrize·dynamic tests·skip·과거 릴리스 실행 수와 같지 않다. 기존 backend1,121·UI150을 새 Rust 통과 수로 쓰지 않는다. 파일별 test 목록은 `audit/test-surfaces.tsv`에 역사적 근거로만 둔다. 기존112 test/support 파일은108 reference·4 exclude이며 자동 이식 대상은0개다. 새 검사는 [평가 계획](testing.md)과 [시나리오](../audit/evaluation-scenarios.tsv)의 사용자 결과·실제 결함·독립 oracle로 선정한다. 구현을 따라 쓴 검사·동일 CRUD 중복·고정 prompt 문구·폐기한 framework 검사는 버린다. F ID 연결은 누락 탐지이며 테스트 개수나 품질 증명이 아니다.

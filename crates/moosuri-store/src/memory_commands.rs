@@ -9,6 +9,7 @@ pub enum MemoryCommandClarification {
     NoTarget,
     AmbiguousTarget,
     TargetChanged,
+    Temporal,
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -244,7 +245,7 @@ fn current_target_at(
                 current_id == id && *current_head == head && *current_effective == effective
             }))
 }
-fn load_intent(conn: &Connection, run: &chat::Run, value: &Slot) -> Result<MemoryCommandIntent> {
+fn load_intent(conn: &Connection, run: &chat::Run, value: &Slot) -> Result<temporal::SealedIntent> {
     let encoded: String = conn
         .query_row(
             "SELECT intent FROM memory_command_plans WHERE tenant_id=?1 AND run_id=?2",
@@ -253,14 +254,13 @@ fn load_intent(conn: &Connection, run: &chat::Run, value: &Slot) -> Result<Memor
         )
         .optional()?
         .ok_or(StoreError::Conflict)?;
-    let intent: MemoryCommandIntent = decode(&encoded)?;
-    validate_intent(&run.text, &intent)?;
-    if intent_digest(&run.text, &intent)?.as_slice() != value.digest
-        || action_name(intent.action) != value.action
+    let sealed = temporal::load(run, &encoded)?;
+    if intent_digest(&run.text, &sealed.intent)?.as_slice() != value.digest
+        || action_name(sealed.intent.action) != value.action
     {
         return Err(StoreError::Corrupt);
     }
-    Ok(intent)
+    Ok(sealed)
 }
 fn capability(lease: &RunLease, value: &Slot) -> Result<PreparedMemoryCommand> {
     Ok(PreparedMemoryCommand {
@@ -302,6 +302,9 @@ fn receipt_access(conn: &Connection, prepared: &PreparedMemoryCommand, value: &S
 }
 fn confirmation(value: &MemoryCommandOutcome) -> &'static str {
     match value {
+        MemoryCommandOutcome::Clarify {
+            reason: MemoryCommandClarification::Temporal,
+        } => moosuri_core::MEMORY_TEMPORAL_GUIDANCE,
         MemoryCommandOutcome::Applied {
             action: MemoryCommandAction::Remember,
             ..
@@ -377,7 +380,7 @@ fn finalize(
         &run,
         vec![OutputPatch::Append {
             item: "memory-command-confirmation".into(),
-            text: confirmation(outcome).into(),
+            text: temporal::confirmation(conn, &run, outcome)?,
             phase: Some(moosuri_core::MessagePhase::FinalAnswer),
             refusal: false,
         }],
@@ -498,12 +501,17 @@ fn prepare_slot(
     if resolution.is_none() && targets::has_plan(conn, &run.tenant, &run.id)? {
         return Err(StoreError::Conflict);
     }
-    let (target, clarification) = match resolution {
-        Some(value) => value,
-        None => match &intent.target_quote {
-            Some(target) => resolve(conn, &run.tenant, target)?,
-            None => (None, None),
-        },
+    let scope = temporal::derive(run, intent);
+    let (target, clarification) = if scope == temporal::Scope::Clarify {
+        (None, Some(MemoryCommandClarification::Temporal))
+    } else {
+        match resolution {
+            Some(value) => value,
+            None => match &intent.target_quote {
+                Some(target) => resolve(conn, &run.tenant, target)?,
+                None => (None, None),
+            },
+        }
     };
     let command = Uuid::new_v4().to_string();
     let mut nonce = [0; 32];
@@ -516,7 +524,7 @@ fn prepare_slot(
     conn.execute("INSERT INTO memory_command_slots(tenant_id,run_id,command_id,nonce,account_id,intent_digest,action,target_id,target_revision,target_effective_revision,clarification,proof_attempt,proof_step,bound_attempt,bound_nonce,session_digest,auth_epoch,state) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?16,?10,?11,?12,?11,?13,?14,?15,'prepared')",params![run.tenant,run.id,command,nonce.as_slice(),run.account,digest.as_slice(),action_name(intent.action),target,revision,clarification.map(|v|encode(&v)).transpose()?,run.attempt,step.step,step.run.nonce.as_slice(),run.session.as_slice(),run.epoch,effective])?;
     conn.execute(
         "INSERT INTO memory_command_plans VALUES(?1,?2,?3)",
-        params![run.tenant, run.id, encode(intent)?],
+        params![run.tenant, run.id, temporal::seal(run, intent)?],
     )?;
     Ok(PreparedMemoryCommand {
         lease: step.run.clone(),
@@ -591,21 +599,24 @@ impl Store {
                 }
             };
             no_tools(&tx, &run.tenant, &run.id)?;
-            let intent = load_intent(&tx, &run, &value)?;
-            let clarification = value.clarification.as_deref().map(decode).transpose()?.or(
-                if value.action != "remember"
-                    && !current_target(
-                        &tx,
-                        &run.tenant,
-                        &value,
-                        intent.target_quote.as_deref().ok_or(StoreError::Corrupt)?,
-                    )?
-                {
-                    Some(MemoryCommandClarification::TargetChanged)
-                } else {
-                    None
-                },
-            );
+            let sealed = load_intent(&tx, &run, &value)?;
+            let intent = sealed.intent;
+            let clarification = if sealed.scope == temporal::Scope::Clarify {
+                Some(MemoryCommandClarification::Temporal)
+            } else if let Some(reason) = value.clarification.as_deref() {
+                Some(decode(reason)?)
+            } else if value.action != "remember"
+                && !current_target(
+                    &tx,
+                    &run.tenant,
+                    &value,
+                    intent.target_quote.as_deref().ok_or(StoreError::Corrupt)?,
+                )?
+            {
+                Some(MemoryCommandClarification::TargetChanged)
+            } else {
+                None
+            };
             if let Some(reason) = clarification {
                 let outcome = MemoryCommandOutcome::Clarify { reason };
                 finalize(&tx, &run.tenant, &run.id, &outcome)?;
@@ -641,12 +652,21 @@ impl Store {
             } else {
                 None
             };
+            let (valid_from, valid_until) = match sealed.scope {
+                temporal::Scope::Undated => (None, None),
+                temporal::Scope::Dated {
+                    valid_from,
+                    valid_until,
+                    ..
+                } => (valid_from, valid_until),
+                temporal::Scope::Clarify => return Err(StoreError::Corrupt),
+            };
             let draft = MemoryDraft {
                 text: intent.fact_quote.ok_or(StoreError::Corrupt)?,
                 subject: intent.subject.ok_or(StoreError::Corrupt)?,
                 speaker: None,
-                valid_from: None,
-                valid_until: None,
+                valid_from,
+                valid_until,
                 evidence: vec![],
             };
             let memory = knowledge::memories::write_in_transaction(
@@ -688,6 +708,7 @@ impl Store {
     }
 }
 mod targets;
+mod temporal;
 #[cfg(test)]
 mod tests;
 pub use targets::{

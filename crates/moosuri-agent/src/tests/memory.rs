@@ -78,7 +78,22 @@ async fn memory_response(
         return Response::builder().status(503).body(Body::empty()).unwrap();
     }
     let selecting = input["tools"][0]["function"]["name"] == "memory_target_decision";
-    let (delta, finish) = if selecting {
+    let domain = input["tools"][0]["function"]["name"] == "mission_chat_decision";
+    let (delta, finish) = if domain {
+        // Civil dates enter the existing Calendar/mission classifier first.
+        // A memory request has no operation in that domain, then continues to
+        // its isolated memory classifier under the same run-wide budget.
+        assert_eq!(input["max_tokens"], 3072);
+        let args = json!({"decision":"no_command","action":null,"target_kind":null,
+            "intent_quote":null,"task_quote":null,"constraints_quote":null,
+            "time_quote":null,"target_quote":null,"instruction_quote":null,
+            "time":null,"clarification":null});
+        (
+            json!({"tool_calls":[{"index":0,"id":format!("domain-{call}"),"type":"function",
+            "function":{"name":"mission_chat_decision","arguments":args.to_string()}}]}),
+            "tool_calls",
+        )
+    } else if selecting {
         assert_eq!(input["max_tokens"], 1024);
         assert_eq!(
             messages.len(),
@@ -119,7 +134,7 @@ async fn memory_response(
                 None,
             ),
             Mode::Commands | Mode::Hold => match current {
-                REMEMBER => command(
+                text if text.ends_with(REMEMBER) => command(
                     "remember",
                     "기억해 줘",
                     Some("나는 홍차를 좋아해"),
@@ -180,7 +195,7 @@ async fn memory_response(
     let id = format!("memory-response-{call}");
     let head = frame(
         json!({"id":id,"model":"fixture-model","choices":[{"index":0,"delta":{
-        "role":"assistant","content":if planning || selecting {PRIVATE_PREVIEW}else{""}},"finish_reason":null}],
+        "role":"assistant","content":if planning || selecting || domain {PRIVATE_PREVIEW}else{""}},"finish_reason":null}],
         "usage":{"prompt_tokens":7,"completion_tokens":1}}),
     );
     let tail = frame(
@@ -561,5 +576,56 @@ async fn retry_after_a_knowledge_read_skips_new_memory_planning() {
     );
     drop(requests);
     assert_eq!(store.memories(&user, None).await.unwrap().items.len(), 1);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn dated_command_runtime_saves_server_bounds_without_model_continuation() {
+    let _guard = TEST_LOCK.lock().await;
+    let model = memory_model(Mode::Commands).await;
+    let (_dir, store, user, thread) = enabled(&model.base).await;
+    let runtime = Runtime::start(store.clone());
+    let text = format!("2098-01-01부터 2098-01-02까지, {REMEMBER}");
+    let run = store
+        .submit_turn_with_schedule_context(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            text,
+            None,
+            Some(moosuri_core::ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    runtime.wake();
+    let result = completed(&store, &user, &thread, &run.run.id).await;
+    assert!(
+        result.assistant[0]
+            .text
+            .contains("2098-01-01부터 2098-01-02까지 적용할게요. (Asia/Seoul)")
+    );
+    let saved = store.memories(&user, None).await.unwrap().items.remove(0);
+    assert_eq!(saved.draft.text, "나는 홍차를 좋아해");
+    assert_eq!(saved.draft.valid_from, Some(4039340400));
+    assert_eq!(saved.draft.valid_until, Some(4039513200));
+    assert_eq!(
+        model.state.calls.load(Ordering::SeqCst),
+        2,
+        "domain no-command plus memory classification, no post-write model call"
+    );
+    let count = store.memories(&user, None).await.unwrap().items.len();
+    let text = format!("내일부터, {REMEMBER}");
+    let run = ask_memory(&store, &user, &thread, &text).await;
+    runtime.wake();
+    let result = completed(&store, &user, &thread, &run.run.id).await;
+    assert!(result.assistant[0].text.contains("기억 편집기"));
+    assert_eq!(
+        store.memories(&user, None).await.unwrap().items.len(),
+        count
+    );
+    assert_eq!(model.state.calls.load(Ordering::SeqCst), 4);
     runtime.shutdown().await;
 }

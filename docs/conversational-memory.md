@@ -62,9 +62,35 @@ live7/10 score is preserved; this path has not yet been live-model evaluated.
 The effective temporal revision determines the match, while the latest head revision
 provides mutation CAS. Both are pinned; changing either, or newly ambiguous matching,
 requires clarification with zero mutation. A bounded search that cannot establish a
-unique target also asks for a narrower request. The initial command path supports one
-undated assertion at a time. Effective-time changes use the existing manual memory
-editor. References such as “remember that” without the literal fact need clarification.
+unique target also asks for a narrower request. Commands support one assertion at a
+time. References such as “remember that” without the literal fact need clarification.
+
+## Explicit dates
+
+Put an absolute date directive first, followed by a comma or newline and the request:
+
+- `2027-01-01부터, 나는 홍차를 좋아해. 기억해 줘.`
+- `2027년 1월 1일부터 2027년 1월 31일까지, 홍차 취향을 수정해 줘. 나는 녹차를 좋아해.`
+- `2027-01-31까지, 나는 홍차를 좋아해. 기억해 줘.`
+
+Only exact ISO `YYYY-MM-DD` and Korean `YYYY년 M월 D일` dates are supported. Start
+means local midnight inclusive; end includes the requested day, storing next local
+midnight as exclusive. The server uses the timezone submitted with the original
+message, including through retry/reopen and continuation-profile changes. It never
+uses the host timezone or guesses a relative date. Confirmation shows the inclusive
+application dates reconstructed from the actual saved bounds in the original timezone.
+Future/expired memories follow the same current/as-of retrieval rules as editor-created
+validity ranges.
+
+Recognized unsupported effective-time expressions, conflicting scopes, invalid dates,
+missing original timezone and ambiguous/nonexistent local midnight require the memory
+editor; no undated write is substituted. This check uses the complete message even if the model
+omits the date from its fact quote. Dated forget requests also clarify. Plain dates
+inside birthdate/event facts remain facts. The grammar and temporal phrase detection
+are bounded Korean/English support, not general language understanding. Ambiguous
+words such as ‘기준’, ‘적용’ or “through” need explicit date/relative-time or
+effective-boundary context to trigger temporal clarification; ordinary facts remain
+usable with and without a supported leading date directive.
 
 ## Commit, retry and recovery
 

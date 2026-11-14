@@ -100,13 +100,26 @@ pub(super) async fn planning(
     user: &UserContext,
     text: &str,
 ) -> (String, AgentClaim, StepLease) {
+    planning_with_zone(store, user, text, None).await
+}
+async fn planning_with_zone(
+    store: &Store,
+    user: &UserContext,
+    text: &str,
+    zone: Option<&str>,
+) -> (String, AgentClaim, StepLease) {
     let thread = store.create_thread(user, "Command".into()).await.unwrap();
     store
-        .submit_turn(
+        .submit_turn_with_schedule_context(
             user,
             thread.id.clone(),
             Uuid::new_v4().to_string(),
             text.into(),
+            None,
+            zone.map(|timezone| ScheduleChatContext {
+                timezone: timezone.into(),
+                target: None,
+            }),
         )
         .await
         .unwrap();
@@ -1496,4 +1509,370 @@ async fn successor_forget_records_direct_target_independent_of_post_snapshot_com
         "forgotten"
     );
     // This is only a component proof of the direct mapping, not a restore API.
+}
+
+async fn texts_at(store: &Store, user: &UserContext, at: i64) -> Vec<String> {
+    store
+        .search_knowledge(
+            user,
+            KnowledgeQuery {
+                kind: KnowledgeKind::Memory,
+                text: String::new(),
+                collection_id: None,
+                subject: None,
+                speaker: None,
+                valid_at: Some(at),
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap()
+        .hits
+        .into_iter()
+        .map(|v| v.snippet)
+        .collect()
+}
+fn utc(value: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .unwrap()
+        .timestamp()
+}
+
+#[tokio::test]
+async fn dated_remember_future_and_expired_bounds_control_real_search_and_confirmation() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let (base, intent) = remember();
+    let text = format!("2098-01-01부터 2098-01-02까지, {base}");
+    let (thread, _, step) = planning_with_zone(&store, &user, &text, Some("Asia/Seoul")).await;
+    let prepared = store
+        .prepare_memory_command(&step, intent.clone())
+        .await
+        .unwrap();
+    let id = applied_id(&store.execute_memory_command(&prepared).await.unwrap());
+    let saved = store.memory(&user, id, None).await.unwrap();
+    let from = utc("2098-01-01T00:00:00+09:00");
+    let until = utc("2098-01-03T00:00:00+09:00");
+    assert_eq!(
+        (saved.draft.valid_from, saved.draft.valid_until),
+        (Some(from), Some(until))
+    );
+    assert!(texts_at(&store, &user, now().unwrap()).await.is_empty());
+    assert!(texts_at(&store, &user, from - 1).await.is_empty());
+    assert_eq!(
+        texts_at(&store, &user, from).await,
+        vec!["I prefer green tea."]
+    );
+    assert_eq!(texts_at(&store, &user, until - 1).await.len(), 1);
+    assert!(texts_at(&store, &user, until).await.is_empty());
+    let output = &store.conversation(&user, thread, None).await.unwrap().turns[0].assistant[0].text;
+    assert!(output.contains("2098-01-01부터 2098-01-02까지 적용할게요. (Asia/Seoul)"));
+    let text = format!("2000년 1월 1일까지, {base}");
+    let (thread, _, step) =
+        planning_with_zone(&store, &user, &text, Some("America/New_York")).await;
+    let prepared = store.prepare_memory_command(&step, intent).await.unwrap();
+    let id = applied_id(&store.execute_memory_command(&prepared).await.unwrap());
+    let saved = store.memory(&user, id, None).await.unwrap();
+    assert_eq!(saved.draft.valid_from, None);
+    assert_eq!(
+        saved.draft.valid_until,
+        Some(utc("2000-01-02T00:00:00-05:00"))
+    );
+    assert!(
+        store.conversation(&user, thread, None).await.unwrap().turns[0].assistant[0]
+            .text
+            .contains("2000-01-01까지 적용할게요. (America/New_York)")
+    );
+    assert!(texts_at(&store, &user, now().unwrap()).await.is_empty());
+}
+
+#[tokio::test]
+async fn dated_correction_switches_at_start_and_expiry_does_not_revive_prior_revision() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let old = store
+        .create_memory(
+            &user,
+            Uuid::new_v4().to_string(),
+            draft("I prefer green tea."),
+        )
+        .await
+        .unwrap();
+    let (base, intent) = correct();
+    let text = format!("2098년 4월 1일부터 2098년 4월 2일까지, {base}");
+    let (_, _, step) = planning_with_zone(&store, &user, &text, Some("UTC")).await;
+    let prepared = store.prepare_memory_command(&step, intent).await.unwrap();
+    let outcome = store.execute_memory_command(&prepared).await.unwrap();
+    assert_eq!(applied_id(&outcome), old.id);
+    assert_eq!(store.memory(&user, old.id, None).await.unwrap().revision, 2);
+    let from = utc("2098-04-01T00:00:00Z");
+    let until = utc("2098-04-03T00:00:00Z");
+    assert_eq!(
+        texts_at(&store, &user, from - 1).await,
+        vec!["I prefer green tea."]
+    );
+    assert_eq!(
+        texts_at(&store, &user, from).await,
+        vec!["I prefer black coffee."]
+    );
+    assert!(texts_at(&store, &user, until).await.is_empty());
+}
+
+#[tokio::test]
+async fn dated_retry_reopen_uses_original_zone_even_if_continuation_profile_changes() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let (base, intent) = remember();
+    let text = format!("2098-01-01부터, {base}");
+    let (_, claim, step) = planning_with_zone(&store, &user, &text, Some("Asia/Seoul")).await;
+    let prepared = store.prepare_memory_command(&step, intent).await.unwrap();
+    let tenant = user.tenant.0.clone();
+    let run = claim.lease.run.clone();
+    let account = user.account.id.clone();
+    store
+        .call(move |db| {
+            // Continuations inherit this mutable profile. It is deliberately not
+            // the original message context used by dated memory authority.
+            let profile = CalendarRunProfile {
+                version: 1,
+                reference: now()?,
+                timezone: Some("America/Chicago".into()),
+                connections: vec![],
+            };
+            db.conn.execute(
+                "INSERT OR REPLACE INTO calendar_agent_profiles VALUES(?1,?2,?3,1,?4)",
+                params![tenant, run, account, encode(&profile)?],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    drop(store);
+    let store = Store::open(dir.path()).unwrap();
+    store
+        .retry_run(&user, claim.lease.run.clone(), 1)
+        .await
+        .unwrap();
+    let retry = store.claim_agent_run().await.unwrap().unwrap();
+    let resumed = store
+        .resume_memory_command(&retry.lease)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.command, prepared.command);
+    let id = applied_id(&store.execute_memory_command(&resumed).await.unwrap());
+    assert_eq!(
+        store
+            .memory(&user, id, None)
+            .await
+            .unwrap()
+            .draft
+            .valid_from,
+        Some(utc("2098-01-01T00:00:00+09:00"))
+    );
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        1,
+        "retry must preserve the single synthetic planning dispatch"
+    );
+}
+
+#[tokio::test]
+async fn dated_full_text_gate_blocks_stripped_dates_invalid_scopes_and_dated_forget() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let (base, intent) = remember();
+    for (header, zone) in [
+        ("내일부터,", Some("UTC")),
+        ("2098-02-30부터,", Some("UTC")),
+        ("2098-01-02부터 2098-01-01까지,", Some("UTC")),
+        ("2098-01-01부터,", None),
+        ("2011-12-30부터,", Some("Pacific/Apia")),
+        ("2098-01-01T09:00:00Z부터,", Some("UTC")),
+        ("2098-01-01부터, 내일부터 적용해서", Some("UTC")),
+        ("", Some("UTC")),
+    ] {
+        let text = if header.is_empty() {
+            format!("{base} 2098-01-01부터 적용해")
+        } else {
+            format!("{header} {base}")
+        };
+        let (thread, _, step) = planning_with_zone(&store, &user, &text, zone).await;
+        let prepared = match store
+            .prepare_memory_command_resolution(&step, intent.clone())
+            .await
+            .unwrap()
+        {
+            MemoryCommandPreparation::Prepared(v) => v,
+            MemoryCommandPreparation::Resolve(_) => panic!("temporal gate must precede selector"),
+        };
+        assert!(matches!(
+            store.execute_memory_command(&prepared).await.unwrap(),
+            MemoryCommandOutcome::Clarify {
+                reason: MemoryCommandClarification::Temporal
+            }
+        ));
+        assert_eq!(memory_count(&store).await, 0);
+        assert!(
+            store.conversation(&user, thread, None).await.unwrap().turns[0].assistant[0]
+                .text
+                .contains("기억 편집기")
+        );
+    }
+    let (base, intent) = forget();
+    let text = format!("2098-01-01부터, {base}");
+    let (_, _, step) = planning_with_zone(&store, &user, &text, Some("UTC")).await;
+    let prepared = store
+        .prepare_memory_command_resolution(&step, intent)
+        .await
+        .unwrap();
+    let MemoryCommandPreparation::Prepared(prepared) = prepared else {
+        panic!("no target model call")
+    };
+    assert!(matches!(
+        store.execute_memory_command(&prepared).await.unwrap(),
+        MemoryCommandOutcome::Clarify {
+            reason: MemoryCommandClarification::Temporal
+        }
+    ));
+}
+
+#[tokio::test]
+async fn dated_forged_seal_and_legacy_temporal_intent_fail_closed_but_undated_legacy_recovers() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let (base, intent) = remember();
+    for dated in [true, false] {
+        let text = if dated {
+            format!("2098-01-01부터, {base}")
+        } else {
+            base.clone()
+        };
+        let (_, _, step) = planning_with_zone(&store, &user, &text, Some("UTC")).await;
+        let prepared = store
+            .prepare_memory_command(&step, intent.clone())
+            .await
+            .unwrap();
+        let tenant = user.tenant.0.clone();
+        let run = prepared.run_id().to_owned();
+        let original = intent.clone();
+        store.call(move |db| {
+            if dated {
+                let encoded: String = db.conn.query_row("SELECT intent FROM memory_command_plans WHERE tenant_id=?1 AND run_id=?2", params![tenant,run], |r|r.get(0))?;
+                let mut value: serde_json::Value = decode(&encoded)?;
+                value["scope"]["valid_from"] = serde_json::json!(0);
+                db.conn.execute("UPDATE memory_command_plans SET intent=?3 WHERE tenant_id=?1 AND run_id=?2", params![tenant,run,encode(&value)?])?;
+            } else {
+                db.conn.execute("UPDATE memory_command_plans SET intent=?3 WHERE tenant_id=?1 AND run_id=?2", params![tenant,run,encode(&original)?])?;
+            }
+            Ok(())
+        }).await.unwrap();
+        if dated {
+            assert!(matches!(
+                store.execute_memory_command(&prepared).await,
+                Err(StoreError::Corrupt)
+            ));
+            assert_eq!(memory_count(&store).await, 0);
+            let tenant = user.tenant.0.clone();
+            let run = prepared.run_id().to_owned();
+            let original = intent.clone();
+            store.call(move |db| {
+                db.conn.execute("UPDATE memory_command_plans SET intent=?3 WHERE tenant_id=?1 AND run_id=?2", params![tenant,run,encode(&original)?])?;
+                Ok(())
+            }).await.unwrap();
+            assert!(matches!(
+                store.execute_memory_command(&prepared).await,
+                Err(StoreError::Corrupt)
+            ));
+            store
+                .finish_agent_execution(&step.run, RunState::Failed, None)
+                .await
+                .unwrap();
+        } else {
+            let id = applied_id(&store.execute_memory_command(&prepared).await.unwrap());
+            let saved = store.memory(&user, id, None).await.unwrap();
+            assert_eq!(
+                (saved.draft.valid_from, saved.draft.valid_until),
+                (None, None)
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn dated_ordinary_boundary_vocabulary_saves_undated_dated_and_legacy_commands() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    for (body, fact, quote) in [
+        (
+            "나는 원칙과 기준을 중요하게 생각해. 기억해 줘.",
+            "나는 원칙과 기준을 중요하게 생각해",
+            "기억해 줘",
+        ),
+        (
+            "Remember I commute through Seoul.",
+            "I commute through Seoul.",
+            "Remember",
+        ),
+    ] {
+        for mode in ["undated", "dated", "legacy"] {
+            let text = if mode == "dated" {
+                format!("2098-01-01부터, {body}")
+            } else {
+                body.into()
+            };
+            let intent = MemoryCommandIntent {
+                action: MemoryCommandAction::Remember,
+                intent_quote: quote.into(),
+                fact_quote: Some(fact.into()),
+                subject: Some("Synthetic fact".into()),
+                target_quote: None,
+            };
+            let (thread, _, step) =
+                planning_with_zone(&store, &user, &text, Some("Asia/Seoul")).await;
+            let prepared = store
+                .prepare_memory_command(&step, intent.clone())
+                .await
+                .unwrap();
+            if mode == "legacy" {
+                let tenant = user.tenant.0.clone();
+                let run = prepared.run_id().to_owned();
+                store.call(move |db| {
+                    db.conn.execute("UPDATE memory_command_plans SET intent=?3 WHERE tenant_id=?1 AND run_id=?2", params![tenant,run,encode(&intent)?])?;
+                    Ok(())
+                }).await.unwrap();
+            }
+            let outcome = store.execute_memory_command(&prepared).await.unwrap();
+            let saved = store
+                .memory(&user, applied_id(&outcome), None)
+                .await
+                .unwrap();
+            assert_eq!(saved.draft.text, fact);
+            assert_eq!(
+                saved.draft.valid_from,
+                (mode == "dated").then(|| utc("2098-01-01T00:00:00+09:00"))
+            );
+            assert_eq!(saved.draft.valid_until, None);
+            let output =
+                &store.conversation(&user, thread, None).await.unwrap().turns[0].assistant[0].text;
+            if mode == "dated" {
+                assert!(output.contains("2098-01-01부터 적용할게요. (Asia/Seoul)"));
+            } else {
+                assert_eq!(output, "기억을 저장했습니다.");
+            }
+        }
+    }
+    assert_eq!(memory_count(&store).await, 6);
 }

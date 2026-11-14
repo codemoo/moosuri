@@ -23,7 +23,7 @@
 
 ## 실제 채팅 저장
 
-새로 admission한 tool-enabled run은 별도 schema1 artifact profile을 고정한다.
+새로 admission한 tool-enabled shared 또는 개인 ChatGPT run은 별도 schema1 artifact profile을 고정한다. 개인 연결도 별도의 쓰기 승인 모달이나 probe 없이 기존 정확한 tools proof와 현재 명시적 요청을 사용한다.
 과거 RunToolProfile과 이미 존재한 run에 capability를 추가하지 않는다. 현재 요청의
 문서/보고서/목표/요청 기록 작성·저장·수정 cue 또는 사용자 선택 target이 있으면,
 **현재 user message만** 별도 모델 단계로 분류한다. 원문·이전 대화·skill body는 그
@@ -83,3 +83,5 @@ SQLite migration16은 자동 기억14, 삭제 의도15 다음에 적용한다. �
 
 실제 통과 범위와 남은 검증은 [검증 기록](reviews/2026-11-13-personal-artifacts.md)에 있다.
 합성 응답 검사는 실모델의 의미 정확도나 미션 성공률을 대신하지 않는다.
+
+개인 ChatGPT의 artifact classifier도 현재 user message만 받아 plan namespace와 정확한 model/effort로 실행한다. 각 분류 전 기존 RunLease와 token refresh CAS로 연결을 재확인한다. 이미 planned read-only인 profile은 쓰기 grant로 승격하지 않는다. 실제 영수증을 commit한 뒤 모델을 다시 호출하지 않으며, 개인 연결 해제·원문 철회·revision 충돌은 기존 Store 경계로 늦은 저장을 막는다. Calendar 변경·background 미션·첨부는 이 기능으로 활성화되지 않는다.

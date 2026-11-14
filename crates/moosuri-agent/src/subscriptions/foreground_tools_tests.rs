@@ -16,6 +16,14 @@ pub(super) async fn tool_response(
     headers: &axum::http::HeaderMap,
     body: &Value,
 ) -> axum::response::Response {
+    if s.tool_mode.load(Ordering::SeqCst) >= 10 {
+        return writes_tests::response(s, headers, body).await;
+    }
+    // P4 can route explicit non-artifact cues through isolated memory planning.
+    if body["tools"][0]["tools"][0]["name"] == "memory_command_decision" {
+        s.models.fetch_add(1, Ordering::SeqCst);
+        return ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],call_wire("memory_command_decision",json!({"decision":"no_command","clarification":null,"action":null,"intent_quote":null,"fact_quote":null,"subject":null,"target_quote":null}),"moosuri")).into_response();
+    }
     s.models.fetch_add(1, Ordering::SeqCst);
     s.requests.lock().unwrap().push(body.clone());
     s.authorizations
@@ -372,3 +380,6 @@ async fn personal_foreground_mail_creates_unapproved_local_draft_without_send() 
     assert!(store.next_mail_dispatch().await.unwrap().is_none());
     assert_eq!(f.state.requests.lock().unwrap().len(), 2);
 }
+
+#[path = "writes_tests.rs"]
+mod writes_tests;

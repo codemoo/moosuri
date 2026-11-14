@@ -47,7 +47,9 @@ capability probes. Personal ChatGPT supports same-computer official sign-in, sea
 text-probed personal model selection and saved streamed chat, plus protected native
 transfer to a personal HTTPS Linux server. Separately verified personal foreground tools
 support saved reads, exact calculation and the existing connected read/local-draft flows.
-Personal memory/artifact/Calendar mutations, media and background work remain pending.
+Explicit current-user memory changes and source-grounded record creation/anchored edits
+use typed local operations and stored confirmations. Personal Calendar mutations,
+media and background work remain pending.
 See [foreground-tool acceptance](docs/reviews/2026-11-14-personal-chatgpt-tools.md), including the inherited combined-tool limit. Synthetic protocol
 and lifecycle checks do not establish live account eligibility. Real device/provider acceptance remains bounded by
 [current status](docs/status.md); a model name or connection label does not prove support.

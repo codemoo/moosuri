@@ -218,6 +218,14 @@ On the browser computer run `moosuri subscriptions chatgpt-vm --server https://y
 
 The remote fixed command is `moosuri subscriptions chatgpt-receive --stdin`. It reads one bounded frame from the authenticated SSH channel and calls the running server's owner API. It does not open the installation DB, need an operator account or own a sealing key. After confirmed transfer, return to personal model settings for catalog/text proof and selection. Choose **도구 연결 확인** for that saved model/effort to verify foreground tools independently. A successful text check does not enable tools; an already admitted text run keeps its frozen capability. Exact owner/binding revision/model/effort proof is stored in schema36 and removed by sealed-restore quarantine. See the [actual member/helper/API composition](reviews/2026-11-14-personal-chatgpt-tools.md). Real owner OAuth/SSH/live plan availability remains separate acceptance from synthetic tests. GitHub Actions/automatic CI stays disabled.
 
+Tool-verified personal ChatGPT also uses the existing explicit memory and record
+planners: remember/correct/forget one current fact, or create/edit a local record.
+Each planner resolves current personal access before its model request. Confirmations
+come from actual Store receipts; a prepared memory retry can finish without another
+model call. Record-writing stages use saved evidence only and omit live external read
+definitions. See [local-write acceptance](reviews/2026-11-14-personal-chatgpt-writes.md).
+Personal Calendar mutations, background delegation and media remain separate.
+
 ### Optional public community catalog
 
 The serve flags `--community-catalog-repository`, `--community-catalog-ref` and `--community-catalog-directory` select one already published static GitHub artifact directory. All three are required; no source is enabled by default. See [community catalog runtime](community-skills.md) for publication prerequisites and the example. Cards access opportunistically checks the public index daily with ETag; manual refresh is rate bounded. Only chosen artifacts are downloaded, and the existing exact-commit GitHub adapter independently verifies original package bytes before staging. Public cache schema35 preserves schema34 and user lifecycle state. This unit does not publish artifacts, run an unattended scheduler or automatically activate work.

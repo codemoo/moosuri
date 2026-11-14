@@ -178,7 +178,7 @@ F59의 개인 ChatGPT text 연결에 보호된 native Linux 전달을 추가했�
 세션을 보존하며 staged revision과 서명 검증 후 원자적으로 교체하고, 응답 유실은 원래
 영수증으로 확인한다. 전송용 로그인은 발급 시10분/purpose 제한이며 일반 계정·볼트·대화
 권한이 없다. Native/Linux·독립 검토·실제 OpenSSH/Rust/합성 제공업체 네 장애 시나리오와
-저장 대화를 검증했다. [근거](reviews/2026-11-14-chatgpt-vm-handoff.md). 이후 개인 foreground 도구는 아래 단위로 수락했으며, 개인 변경 작업/media/background,
+저장 대화를 검증했다. [근거](reviews/2026-11-14-chatgpt-vm-handoff.md). 이후 개인 foreground 도구는 아래 단위로 수락했으며, 개인 Calendar 변경/media/background,
 Claude 실행, 실계정/운영 trust와 릴리스 설치까지 완료했다는 뜻은 아니다.
 
 F67/F68의 공개 GitHub 스킬에 설정한 정적 목록의 발견·ETag/offline 캐시·선택 패키지의
@@ -191,5 +191,10 @@ F24/F59의 개인 ChatGPT foreground 도구는 schema36의 소유자/연결 revi
 확인을 통과해야 한다. 이전 text run을 승격하지 않고, 매 모델 round의 현재 연결과 token
 readiness를 확인하며 기존 저장 읽기·계산·연결 읽기/로컬 초안 경계를 재사용한다. 일반 member의
 native SSH 전달→실제 API text/tool 확인→저장 자료/계산→서버 재시작 후 답변·근거 보존을
-검증했다. [근거](reviews/2026-11-14-personal-chatgpt-tools.md). 개인 변경 작업/media/background,
+검증했다. [근거](reviews/2026-11-14-personal-chatgpt-tools.md). 개인 Calendar 변경/media/background,
 실계정 및 기존 복합 도구16개 상한의 별도 수정까지 완료했다는 뜻은 아니다.
+
+F19/F15의 기존 현재 사용자 typed 기억/자료 변경을 개인 ChatGPT foreground에도 연결했다.
+정확한 text/tool proof·원래 의도·현재 대상/근거·실제 영수증 경계를 재사용하고, 분류와 대상
+선택마다 access readiness를 확인한다. 개인과 공유 기록 쓰기에서 외부 읽기 정의를 제외하며
+기존 출처 검사는 유지한다. [검증](reviews/2026-11-14-personal-chatgpt-writes.md).

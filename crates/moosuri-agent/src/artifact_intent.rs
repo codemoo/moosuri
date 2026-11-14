@@ -99,6 +99,35 @@ pub(super) async fn plan(
         continuation: None,
         results: &[],
     };
+    let ready = match session.ready_client().await {
+        Ok(client) => client,
+        Err(error) => {
+            let (state, reason) = store_failure(&error);
+            finish(
+                session.store,
+                session.lease,
+                None,
+                state,
+                Some(reason),
+                session.signals,
+            )
+            .await;
+            return None;
+        }
+    };
+    let client = ready.as_ref().unwrap_or(session.client);
+    if preflight_tools(client, session.protocol, &tools, session.capabilities).is_err() {
+        finish(
+            session.store,
+            session.lease,
+            None,
+            RunState::Incomplete,
+            Some(RunFailure::ContextLimit),
+            session.signals,
+        )
+        .await;
+        return None;
+    }
     let step = match session
         .store
         .begin_agent_step(session.lease, context.checkpoint_seq)
@@ -126,7 +155,7 @@ pub(super) async fn plan(
         expected_model: &request.model,
     };
     let observed = match stream_round(
-        session.client,
+        client,
         &request,
         Some(&tools),
         &checkpoint,

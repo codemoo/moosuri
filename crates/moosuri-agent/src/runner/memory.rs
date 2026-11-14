@@ -15,6 +15,32 @@ pub(super) struct PlanningSession<'a> {
     pub signals: &'a Signals,
     pub protocol: Protocol,
     pub capabilities: &'a TextCapabilities,
+    pub subscription: Option<(
+        &'a crate::subscriptions::SubscriptionService,
+        &'a moosuri_store::SubscriptionRef,
+    )>,
+}
+impl PlanningSession<'_> {
+    /// Refresh only before durable planner admission; never replay inference.
+    pub(super) async fn ready_client(&self) -> Result<Option<ModelClient>, StoreError> {
+        let client = match self.subscription {
+            Some((service, reference)) => Some(
+                service
+                    .client(
+                        moosuri_store::SubscriptionAuthority::Run(self.lease.clone()),
+                        reference.clone(),
+                    )
+                    .await?,
+            ),
+            None => None,
+        };
+        // Do not drop a dispatched rotating refresh on shutdown. Complete its
+        // durable outcome above, then stop before admitting another inference.
+        if self.signals.stopping().is_cancelled() {
+            return Err(StoreError::Unavailable);
+        }
+        Ok(client)
+    }
 }
 
 async fn failed(session: &PlanningSession<'_>, step: Option<&StepLease>, error: StoreError) {
@@ -254,16 +280,15 @@ async fn planning_round(
         continuation: None,
         results: &[],
     };
-    if encode_tool_request(
-        session.protocol,
-        &tools,
-        session.capabilities,
-        &ToolCapabilities {
-            function_tools: true,
-        },
-    )
-    .is_err()
-    {
+    let ready = match session.ready_client().await {
+        Ok(client) => client,
+        Err(error) => {
+            failed(session, None, error).await;
+            return None;
+        }
+    };
+    let client = ready.as_ref().unwrap_or(session.client);
+    if preflight_tools(client, session.protocol, &tools, session.capabilities).is_err() {
         finish(
             session.store,
             session.lease,
@@ -294,7 +319,7 @@ async fn planning_round(
         expected_model: &request.model,
     };
     let observed = match stream_round(
-        session.client,
+        client,
         request,
         Some(&tools),
         &checkpoint,

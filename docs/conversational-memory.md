@@ -1,6 +1,6 @@
 # Remember, correct and forget in conversation
 
-With a tool-verified model selected, ask to remember one concrete fact, correct one
+With an exact tool-verified shared or personal ChatGPT model selected, ask to remember one concrete fact, correct one
 existing memory, or forget one memory. A clear request is applied without an extra
 approval dialog. Examples:
 
@@ -111,3 +111,5 @@ separate work. Assistant memories are not the user-key encrypted vault.
 
 See [private knowledge](knowledge.md), [knowledge agent](knowledge-agent.md),
 [current status](status.md) and [acceptance evidence](reviews/2026-11-12-conversational-memory.md).
+
+Personal ChatGPT uses the same typed intent, target-snapshot, withdrawal and receipt paths. Each initial classifier or candidate-selector request resolves current personal access before durable step admission and uses the plan namespace/dialect. An accepted prepared local command still resumes before model client construction; no fresh provider call is needed just to commit its real receipt. Personal tools proof is protocol evidence, not an accuracy score for intent or semantic target selection. Calendar changes, autonomous missions and media remain separate capabilities.

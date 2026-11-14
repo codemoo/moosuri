@@ -730,3 +730,11 @@ describe("personal foreground tool verification", () => {
     expect(within(group).queryByText(/도구 사용 가능/)).not.toBeInTheDocument();
   });
 });
+
+
+it("describes personal typed local writes while retaining staged Calendar/background boundaries", async () => {
+  server(call => call.path === "/settings/chatgpt" ? response([]) : undefined,member,{providers:[],default_selection:null},{selection:null,effective:null,choices:[]});
+  open("/settings/model");
+  expect(await screen.findByText(/명확한 현재 요청의 기억 저장\/정정\/망각/)).toHaveTextContent("첨부·백그라운드 업무·Calendar 변경은 아직 지원하지 않습니다.");
+  expect(screen.getByText(/명확한 현재 요청의 기억 저장\/정정\/망각/)).toHaveTextContent("메일 발송은 최종 내용을 보고 매번 허락해야 합니다.");
+});

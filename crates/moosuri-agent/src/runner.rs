@@ -493,6 +493,28 @@ fn store_failure(error: &StoreError) -> (RunState, RunFailure) {
     };
     (local_failure(reason), reason)
 }
+fn preflight_tools(
+    client: &ModelClient,
+    protocol: Protocol,
+    request: &ToolRequest<'_>,
+    capabilities: &TextCapabilities,
+) -> Result<serde_json::Value, ProtocolError> {
+    let tools = ToolCapabilities {
+        function_tools: true,
+    };
+    if client.responses_dialect()
+        == moosuri_connectors::model::chatgpt::ResponsesDialect::ChatGptPlan
+    {
+        moosuri_connectors::model::protocol::tools::encode_chatgpt_plan_tool_request(
+            request,
+            capabilities,
+            &tools,
+        )
+    } else {
+        encode_tool_request(protocol, request, capabilities, &tools)
+    }
+}
+
 struct Observation {
     round: Option<ToolRound>,
     pending: Pending,
@@ -788,7 +810,7 @@ pub(crate) async fn execute(
             return;
         }
     };
-    if model.function_tools && !personal {
+    if model.function_tools {
         // The final user message is the original current turn. No prior messages
         // or source results are included in the separate intent request.
         let Some(current_text) = request
@@ -816,11 +838,18 @@ pub(crate) async fn execute(
             signals: &signals,
             protocol,
             capabilities: &capabilities,
+            subscription: binding
+                .subscription
+                .as_ref()
+                .map(|reference| (&subscriptions, reference)),
         };
-        let Some(next) = mission_chat::run(&planning, context, current_text, &mail).await else {
-            return;
-        };
-        context = next;
+        if !personal {
+            let Some(next) = mission_chat::run(&planning, context, current_text, &mail).await
+            else {
+                return;
+            };
+            context = next;
+        }
         let Some((next, next_profile)) =
             artifact_intent::plan(&planning, context, artifact_profile, current_text).await
         else {
@@ -836,29 +865,30 @@ pub(crate) async fn execute(
             context = next;
         }
     }
-    if personal && model.function_tools && artifact_profile.is_some() {
-        artifact_profile = match store.initialize_artifact_readonly(&lease).await {
-            Ok(profile) => Some(profile),
-            Err(error) => {
-                let (state, reason) = store_failure(&error);
-                finish(&store, &lease, None, state, Some(reason), &signals).await;
-                return;
-            }
-        };
-    }
     request.messages[0]
         .text
         .push_str(&crate::artifact_tools::system(artifact_profile.as_ref()));
-    if !media_context {
+    if !media_context && !artifact_profile.as_ref().is_some_and(|p| p.write) {
         request.messages[0]
             .text
             .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
     }
     if personal && model.function_tools {
-        request.messages[0].text.push_str(" In this personal foreground stage, saved memory and artifact reads, admitted tools and local mail drafts are available. Memory/artifact mutations, Calendar changes and background delegation are unavailable; do not claim to perform them. Earlier descriptions of separate memory-command or Calendar mutation flows do not apply to this stage.");
+        request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. Calendar changes, background delegation and media attachments remain unavailable; do not claim to perform them. Earlier descriptions of a Calendar mutation flow do not apply to this stage.");
     }
-    let mut definitions = knowledge_tools::definitions(tool_profile.as_ref());
-    if !media_context {
+    // A write grant supports saved-evidence provenance only. Keep this common
+    // across personal/shared providers; undeclared calls fail in the decoder.
+    let artifact_write = artifact_profile.as_ref().is_some_and(|p| p.write);
+    let mut answer_profile = tool_profile.clone();
+    if artifact_write {
+        if let Some(profile) = &mut answer_profile {
+            profile.mail_connections.clear();
+            profile.web = None;
+        }
+        request.messages[0].text.push_str(" This artifact-write stage exposes saved source/memory/skill/calculation/artifact tools only. Live mail/web/browser/Calendar reads are unavailable in this stage; use existing saved evidence. Prior external provenance can still prevent a save.");
+    }
+    let mut definitions = knowledge_tools::definitions(answer_profile.as_ref());
+    if !media_context && !artifact_write {
         definitions.extend(crate::calendar_tools::definitions(
             calendar_profile.as_ref(),
         ));
@@ -866,9 +896,6 @@ pub(crate) async fn execute(
     definitions.extend(crate::artifact_tools::definitions(
         artifact_profile.as_ref(),
     ));
-    let tool_capability = ToolCapabilities {
-        function_tools: true,
-    };
     let mut continuation: Option<Continuation> = None;
     let mut results = Vec::<ToolResult>::new();
     let mut total_bytes = 0;
@@ -879,14 +906,8 @@ pub(crate) async fn execute(
             continuation: continuation.as_ref(),
             results: &results,
         };
-        let valid = if model.function_tools && personal {
-            moosuri_connectors::model::protocol::tools::encode_chatgpt_plan_tool_request(
-                &tool_request,
-                &capabilities,
-                &tool_capability,
-            )
-        } else if model.function_tools {
-            encode_tool_request(protocol, &tool_request, &capabilities, &tool_capability)
+        let valid = if model.function_tools {
+            preflight_tools(&client, protocol, &tool_request, &capabilities)
         } else if personal {
             moosuri_connectors::model::chatgpt::encode_text_request(&request, &capabilities)
         } else {

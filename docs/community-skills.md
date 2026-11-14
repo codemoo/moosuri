@@ -60,7 +60,7 @@ disable/remove는 새 사용을 막고 종속 예약을 needs_skill로 멈춘다
 
 설치 관리용 예정 CLI는 `moosuri skills install <github-url>`, `list`, `update [id]`, `rollback <id>`, `disable <id>`, `remove <id>`다. 로컬 파일 작성·검사는 아래의 별도 native 명령으로 지원한다. 일반 사용자는 UI 카드만으로 같은 기능을 수행한다. CLI는 server 인증한 user scope를 쓰고 arbitrary `--user`로 타인 설치를 바꾸지 않는다. 아직 실행 가능한 명령으로 문서화하지 않는다.
 
-현재 개인 학습·candidate/usable·새 입력 재사용의 구현 범위는 [개인 학습](learned-skills.md)을 따른다. 아래의 공개 재구성/export는 후속 계약이다.
+현재 개인 학습·candidate/usable·새 입력 재사용의 구현 범위는 [개인 학습](learned-skills.md)을 따른다. 알려진 계산/저장 자료 조회 구조의 공개 재구성/export는 [개인 학습](learned-skills.md#절차-공유하기)에 구현했으며, 아래의 일반 복합 절차 계약은 후속이다.
 
 ## 개인 학습에서 공유용 스킬 만들기
 
@@ -156,3 +156,9 @@ SQLite35에는 공개 index bytes/digest/ETag/시간/짧은 lease만 저장한�
 새 버전을 미리봐도 기존 설치본의 시작 가능 상태를 유지하며, 첫 진입과 일반 새로고침에서도
 목록 연결 상태를 갱신한다. 독립 검토의 두 결함을 실제 실패 검사로 재현·수정하고 Linux와
 실제 Chrome에서 검증했다. [수락 범위와 제한](reviews/2026-11-14-community-catalog-runtime.md).
+
+
+알려진 개인 절차의 새 합성 공유 패키지는 제안 카드에서 미리보기/다운로드한다.
+정확 계산·저장 자료 조회 구조만 재구성하며 기존 공개 GitHub 설치/check 경로와 같은 네 파일
+형식을 쓴다. 앞의 일반 private-learning export 미지원 표현은 임의 복합 절차를 뜻하며,
+이 제한된 공유 경로는 현재 지원한다. [공유 검증](reviews/2026-11-14-private-skill-sharing.md).

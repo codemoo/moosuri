@@ -1,4 +1,5 @@
 //! Private learned exact-operation routes. Receipt validation is independent of prose success claims.
+mod sharing;
 use super::*;
 use crate::agent_execution::{KnowledgeToolInput as Input, KnowledgeToolResult as Output};
 use moosuri_core::{

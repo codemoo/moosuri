@@ -12,7 +12,22 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/catalog/status", get(catalog_status))
         .route("/catalog/refresh", post(catalog_refresh))
         .route("/catalog/{id}/preview", post(catalog_preview))
+        .route("/{id}/share-preview", post(share_preview))
         .route("/{id}", post(mutate))
+}
+async fn share_preview(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::SkillShareInput>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    Ok(Json(
+        s.store
+            .preview_learned_skill_share(&user, id, input)
+            .await?,
+    )
+    .into_response())
 }
 async fn list(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     let user = current(&s, &headers).await?;

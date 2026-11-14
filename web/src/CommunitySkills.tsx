@@ -4,6 +4,7 @@ import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 import "./community-skills.css";
 import { GitHubSkillImport } from "./GitHubSkillImport";
+import { SkillShare } from "./SkillShare";
 
 type Props = {
   accountId: string;
@@ -24,6 +25,7 @@ function Cards({ accountId, onExpired, back, connect, start }: Props) {
   const [showHidden, setShowHidden] = useState(false);
   const [importSource,setImportSource]=useState<GitHubSkillLocation | undefined>(undefined);
   const [importOpen,setImportOpen]=useState(false);
+  const [shareId, setShareId] = useState<string | null>(null);
   const catalogGeneration = useRef(0);
   const listController = useRef<AbortController | null>(null);
   // The parent owns every full-catalog mutation, including importer activation.
@@ -159,6 +161,9 @@ function Cards({ accountId, onExpired, back, connect, start }: Props) {
               {card.hidden ? "다시 표시" : "제안 숨기기"}
             </button>
           </div>
+          {card.id.startsWith("private:") && ["ready", "candidate", "disabled"].includes(card.readiness) &&
+            <button disabled={busy} onClick={() => setShareId(shareId === card.id ? null : card.id)}>절차 공유하기</button>}
+          {shareId === card.id && <SkillShare key={`${card.id}:${card.revision}`} accountId={accountId} card={card} close={() => setShareId(null)} onExpired={onExpired} />}
           <details>
             <summary>출처 · 버전 · 필요한 기능</summary>
             {card.id.startsWith("private:") ? <p>나의 실제 작업에서 배운 개인 절차입니다. 제한된 연산 결과 검증이며 전체 업무 성공을 보증하지 않습니다. 공개 원본이나 공유된 학습 이력이 없습니다.</p> : <p>제작자: {card.github ? card.github.repository : "moosuri contributors"} · {card.catalog ? "설정된 공개 catalog" : card.github ? "사용자가 선택한 외부 원본" : "curated 목록"} · {card.catalog && !card.catalog.verified ? "아직 패키지 내용 확인 전" : "호환 형식 확인됨"} · 실제 사용 성공을 보증하지 않습니다.</p>}

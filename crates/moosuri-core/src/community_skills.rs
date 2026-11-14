@@ -38,6 +38,22 @@ pub struct CommunitySkillMutation {
     pub expected_digest: Option<String>,
 }
 
+/// A newly reconstructed public instruction package, never a private trace export.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSharePreview {
+    pub slug: String,
+    pub files: std::collections::BTreeMap<String, String>,
+    pub archive_base64: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct SkillShareInput {
+    #[ts(type = "number")]
+    pub expected_revision: i64,
+}
+
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct GitHubSkillLocation {

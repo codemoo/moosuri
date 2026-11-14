@@ -24,6 +24,7 @@ uuid.workspace = true
 argon2 = "0.5"
 rand = "0.8"
 sha2 = "0.10"
+base64 = "0.23"
 zeroize = "1.8"
 fs2 = "0.4"
 libc = "0.2"

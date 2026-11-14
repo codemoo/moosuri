@@ -12,3 +12,8 @@
 Curated-slice verification: package bounds/identity/authority rejection; two-user lifecycle, interrupted staging, update and rollback; run snapshot preservation, schema non-expansion, disable/new-admission and remove/retry fencing; HTTP authentication/current-account/no-task admission; React install/readiness/hide/late-account-response behavior. Broader COMM export/archive/release cases remain open with2.4–2.6.
 
 Integrated curated closure: draft preservation/zero-send and direct SPA entry regressions added; independent re-review found no remaining concrete defects. macOS/Linux workspace344 passed(1 live opt-in ignored), React139 passed with type/build checks. Broader COMM export/Git/release/scheduler work remains explicitly unchecked.
+
+
+Known private exact-calculation/source-lookup reconstruction and synthetic export is
+implemented in `share-private-operation-templates`. Aggregate2.4 remains open for
+compound/private procedures; this supported subset must not be described as absent.

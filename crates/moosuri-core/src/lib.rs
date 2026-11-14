@@ -190,6 +190,8 @@ pub fn typescript_contract() -> String {
         CommunityCatalogOffer::decl(),
         CommunityCatalogStatus::decl(),
         CommunitySkillMutation::decl(),
+        SkillSharePreview::decl(),
+        SkillShareInput::decl(),
         GoogleSetupStatus::decl(),
         GoogleSetupValidation::decl(),
         GoogleConnectionCheck::decl(),

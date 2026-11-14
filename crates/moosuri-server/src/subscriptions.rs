@@ -185,6 +185,7 @@ pub(super) async fn probe(
     };
     let cancel = CancellationToken::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    s.store.reserve_subscription_probe(&u, &b).await?;
     let operation = client.stream_text(&request, &tx, &cancel);
     tokio::pin!(operation);
     let mut tick = tokio::time::interval(Duration::from_millis(250));

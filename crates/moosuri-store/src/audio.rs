@@ -137,6 +137,40 @@ impl Store {
         })
         .await
     }
+    /// Actual audio probe dispatch commitment follows validated decoding/limits.
+    pub async fn audio_probe_dispatch(
+        &self,
+        user: &UserContext,
+        selection: AudioSelection,
+        expected: i64,
+        duration_ms: u32,
+    ) -> Result<()> {
+        let user = user.clone();
+        self.call(move |db| {
+            validate(&db.conn, &user, true, true)?;
+            if duration_ms == 0 || duration_ms > 15000 {
+                return Err(StoreError::InvalidInput);
+            }
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if authority(&tx)? != expected {
+                return Err(StoreError::Conflict);
+            }
+            bound(&tx, &db.provider_key, &selection)?;
+            crate::recovery_budget::reserve(
+                &tx,
+                &user.tenant.0,
+                &user.account.id,
+                &format!("stt-probe:{}", Uuid::new_v4()),
+                "stt_probe",
+                i64::from(duration_ms),
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
     /// A successful probe commits only against the authority present at admission.
     /// Disable has no provider prerequisite and always permanently advances authority.
     pub async fn audio_select_verified(
@@ -202,6 +236,7 @@ impl Store {
             }
             let nonce=Uuid::new_v4().to_string();
             let generation=authority(&tx)?;
+            crate::recovery_budget::reserve(&tx,&user.tenant.0,&user.account.id,&format!("stt:{nonce}"),"stt",i64::from(duration_ms))?;
             // Durable commitment is conservative: process loss after this point is unknown.
             tx.execute("INSERT INTO audio_jobs(id,tenant_id,account_id,session_digest,auth_epoch,input_digest,provider_id,provider_revision,model,nonce,state,created_at,expires_at,duration_ms,dispatched,authority_generation) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'processing',?11,?12,?13,1,?14)",params![id,user.tenant.0,user.account.id,user.digest.as_slice(),user.epoch,digest.as_slice(),selection.provider_id,selection.provider_revision,selection.model,nonce,time,time+120,duration_ms,generation])?;
             tx.commit()?;

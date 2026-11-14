@@ -101,11 +101,12 @@ historical evidence and external actions are not automatically resent.
 
 Historical accounting is explicitly `accounting_unknown` in immutable restore
 provenance. Snapshot receipts and reservations remain a lower bound; unexported
-charges are not zero. This development path is **data recovery only**: every shared
-or personal model binding/probe (including STT, vision and automatic memory) and
-current usage-total view stays unavailable even after new credentials and account
-enrollment. The guard conservatively includes local/free configurations. There is
-no new-allocation or accounting reconcile flow yet, and no CLI bypass. A later
+charges are not zero. New shared/personal model calls, probes, STT and automatic
+memory stay blocked after fresh credentials/account enrollment until an operator
+explicitly allocates [new forward requests](recovery-forward-budget.md) while
+stopped. The guard conservatively includes local/free configurations. That
+request-count/STT-duration allowance permits only new work; it is not financial
+or token quota reconciliation. Historical usage-total views remain unavailable. A later
 sealed restore cannot erase the historical accounting gap because its immutable
 provenance remains present. The original source installation is unaffected.
 

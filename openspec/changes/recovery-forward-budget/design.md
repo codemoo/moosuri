@@ -1,0 +1,7 @@
+# Design
+
+Schema49 adds immutable SQLite allocations and immutable dispatch commitments. Allocation uses normal original Store writer admission and requires an exact current restore ID and an idempotent request UUID. Any ancestral historical receipt keeps accounting unknown, including after subsequent sealed restores. The current installation+restore identity determines eligibility; imported allowances cannot authorize a later restore. Existing usage receipts remain the sole usage evidence.
+
+Dispatch commits an immutable unique nonce reservation within the same transaction as chat/agent/memory/STT dispatch state. Probes reserve each real transport round after payload preparation and exact binding/authority validation. Unknown, timeout, cancellation and lost acknowledgement remain consumed. Shared/personal binding and heartbeat gates check allocation identity only; quota checks happen at next dispatch so the last permitted call can complete. Catalog/auth registration/refresh consume no inference allowance.
+
+The pool is installation-wide, with a maximum1000 calls and3600000 validated STT milliseconds per allocation. STT consumes a request and its input duration. Existing per-run6model/12tools and transport/output validation bounds remain. There is no automatic refill, refund, historical reset or billing reconciliation. Public status and minimal settings copy distinguish unknown historical usage from known forward commitments. No secrets enter either table.

@@ -67,9 +67,19 @@ function currentChoices(provider: ProviderSummary) {
       choice.provider_revision === provider.revision,
   );
 }
+function RecoveryBudgetNotice({accountId}: {accountId:string}) {
+  const scope=useScope(accountId);
+  const [value,setValue]=useState<{accounting_state:string;inference_calls:number;committed_calls:number;stt_duration_ms:number;committed_stt_duration_ms:number}|null>(null);
+  useEffect(()=>{let active=true;void scope.request<typeof value>("/recovery-budget").then(v=>{if(active)setValue(v);}).catch(()=>{});return()=>{active=false;};},[scope]);
+  if(value?.accounting_state!=="accounting_unknown")return null;
+  const remaining=Math.max(0,value.inference_calls-value.committed_calls);
+  return <p role="status">복원 전 사용량은 알 수 없습니다. 새 추론 요청 허용량: {remaining}회, 음성 입력: {Math.max(0,value.stt_duration_ms-value.committed_stt_duration_ms)/1000}초. {remaining===0?"운영자가 중지된 서버에서 새 허용량을 배정해야 합니다. ":""}요청 수와 음성 입력 길이의 한도이며 토큰·금액 한도가 아닙니다. 결과를 확인하지 못한 요청도 차감됩니다.</p>;
+}
 function settingsError(error: unknown) {
   if (!(error instanceof ApiFailure))
     return "서버 응답을 확인하지 못했습니다. 연결 상태를 확인하고 새로고침해 주세요.";
+  if (error.code === "recovery_forward_allocation_required") return "과거 사용량이 불명확합니다. 운영자가 중지된 서버에서 새 요청 허용량을 배정해야 합니다.";
+  if (error.code === "recovery_forward_allowance_exhausted") return "복원 후 새 요청 허용량을 모두 사용했습니다. 운영자가 새 허용량을 배정해야 합니다.";
   if (error.status === 403) return "이 설정을 변경할 권한이 없습니다.";
   if (error.status === 409)
     return "연결 정보가 변경되었거나 모델을 사용할 수 없습니다. 새로고침 후 다시 확인해 주세요.";
@@ -189,6 +199,7 @@ export function PersonalModelSettings({ accountId, onExpired }: Props) {
     );
   return (
     <main className="admin-scroll model-settings">
+      <RecoveryBudgetNotice accountId={accountId}/>
       <div className="admin-intro">
         <p className="eyebrow">나만의 작업 방식</p>
         <h2>내 모델</h2>
@@ -495,6 +506,7 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
     );
   return (
     <main className="admin-scroll model-settings">
+      <RecoveryBudgetNotice accountId={accountId}/>
       <div className="admin-intro">
         <p className="eyebrow">함께 쓰는 연결, 각자의 대화</p>
         <h2>모델 연결</h2>

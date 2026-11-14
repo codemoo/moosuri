@@ -1502,3 +1502,205 @@ mod foreground_tools_tests;
 
 #[path = "calendar_tests.rs"]
 mod calendar_tests;
+
+#[tokio::test]
+async fn historical_forward_personal_proof_and_final_chat_use_new_allowance_without_clearing_unknown()
+ {
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let f = fixture().await;
+    let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let source = root.path().join("source");
+    let dest = root.path().join("restored");
+    let kit = root.path().join("kit");
+    let out = root.path().join("out");
+    for p in [&kit, &out] {
+        std::fs::create_dir(p).unwrap();
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let store = Store::open(&source).unwrap();
+    store
+        .bootstrap(
+            "Owner".into(),
+            "owner@example.test".into(),
+            PASSWORD.into(),
+            false,
+        )
+        .await
+        .unwrap();
+    let owner = store
+        .login("owner@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    let account = owner.account().id.clone();
+    drop(store);
+    let identity = kit.join("identity");
+    let recipient = moosuri_store::backup::keygen(&identity).unwrap();
+    moosuri_store::backup::setup(&source, &recipient, &identity).unwrap();
+    let export = out.join("source.age");
+    moosuri_store::backup::create(&source, &export).unwrap();
+    let journal = out.join("journal.age");
+    let head = kit.join("head.json");
+    let published =
+        moosuri_store::backup::publish_journal(&source, &export, &journal, &head).unwrap();
+    moosuri_store::backup::restore_historical(
+        &export,
+        &journal,
+        &head,
+        &published.trusted_head_sha256,
+        &identity,
+        &identity,
+        &dest,
+    )
+    .unwrap();
+    moosuri_store::recover_account(
+        &dest,
+        account,
+        moosuri_core::Role::Admin,
+        "Synthetic-new-personal-temporary".into(),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(&dest).unwrap();
+    let restricted = store
+        .login(
+            "owner@example.test".into(),
+            "Synthetic-new-personal-temporary".into(),
+        )
+        .await
+        .unwrap();
+    let owner = store
+        .change_password(&restricted.user, PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    let s = service(store.clone(), &f);
+    let launch = login(&s, &owner).await;
+    // Credential registration and catalog transport do not spend inference calls.
+    let catalog = store
+        .subscription_ref(
+            &owner,
+            launch.binding_id.clone(),
+            launch.revision,
+            "catalog".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    let client = s
+        .client(SubscriptionAuthority::User(owner.clone()), catalog)
+        .await
+        .unwrap();
+    client.list_models(&CancellationToken::new()).await.unwrap();
+    assert_eq!(f.state.models.load(Ordering::SeqCst), 0);
+    let b = store
+        .subscription_ref(
+            &owner,
+            launch.binding_id.clone(),
+            launch.revision,
+            "fixture-model".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.client(SubscriptionAuthority::User(owner.clone()), b.clone())
+            .await,
+        Err(StoreError::RecoveryAllocationRequired)
+    ));
+    let restore = store
+        .recovery_budget_status(&owner)
+        .await
+        .unwrap()
+        .restore_id
+        .unwrap();
+    drop(client);
+    drop(s);
+    drop(store);
+    moosuri_store::recovery_budget::allocate(
+        &dest,
+        &restore,
+        &uuid::Uuid::new_v4().to_string(),
+        2,
+        0,
+    )
+    .await
+    .unwrap();
+    let store = Store::open(&dest).unwrap();
+    let owner = store
+        .login("owner@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    let s = service(store.clone(), &f);
+    store.reserve_subscription_probe(&owner, &b).await.unwrap();
+    let choice = proof(&s, &owner, launch.binding_id, launch.revision).await;
+    store
+        .set_model_preference(
+            &owner,
+            Some(moosuri_core::ModelSelection {
+                source: choice.source,
+                provider_id: choice.provider_id,
+                provider_revision: choice.provider_revision,
+                model: choice.model,
+                effort: choice.effort,
+            }),
+        )
+        .await
+        .unwrap();
+    let thread = store
+        .create_thread(&owner, "New forward personal chat".into())
+        .await
+        .unwrap();
+    store
+        .submit_turn(
+            &owner,
+            thread.id.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "Hello".into(),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    crate::runner::execute(
+        store.clone(),
+        claim,
+        s.signals.clone(),
+        crate::mail::MailService::new(store.clone(), None, s.signals.clone()),
+        crate::web::Service::new(None),
+        s.clone(),
+    )
+    .await;
+    assert_eq!(
+        store
+            .conversation(&owner, thread.id, None)
+            .await
+            .unwrap()
+            .turns[0]
+            .run
+            .state,
+        RunState::Completed
+    );
+    assert_eq!(
+        store
+            .recovery_budget_status(&owner)
+            .await
+            .unwrap()
+            .committed_calls,
+        2
+    );
+    assert!(matches!(
+        store.reserve_subscription_probe(&owner, &b).await,
+        Err(StoreError::RecoveryAllowanceExhausted)
+    ));
+    // Identity-only validation permits final-call settlement at zero remaining.
+    assert!(
+        s.client(SubscriptionAuthority::User(owner.clone()), b)
+            .await
+            .is_ok()
+    );
+    assert!(store.usage_summary(&owner).await.is_err());
+    assert_eq!(f.state.models.load(Ordering::SeqCst), 2);
+}

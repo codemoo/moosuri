@@ -996,7 +996,9 @@ pub fn run(command: &Command) -> Result<()> {
             no_pending(prefix)?;
             if !matches!(
                 args.first().map(String::as_str),
-                Some("init" | "serve" | "doctor" | "backup" | "recover-account")
+                Some(
+                    "init" | "serve" | "doctor" | "backup" | "recover-account" | "recovery-budget"
+                )
             ) || args
                 .iter()
                 .any(|s| s == "--data-dir" || s.starts_with("--data-dir="))

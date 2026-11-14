@@ -44,6 +44,8 @@ pub enum RunFailure {
     Interrupted,
     KnowledgeInvalidated,
     BudgetExhausted,
+    RecoveryAllowanceExhausted,
+    RecoveryAllocationRequired,
 }
 impl RunFailure {
     fn code(self) -> &'static str {
@@ -63,6 +65,8 @@ impl RunFailure {
             Self::Interrupted => "interrupted",
             Self::KnowledgeInvalidated => "knowledge_invalidated",
             Self::BudgetExhausted => "budget_exhausted",
+            Self::RecoveryAllowanceExhausted => "recovery_forward_allowance_exhausted",
+            Self::RecoveryAllocationRequired => "recovery_forward_allocation_required",
         }
     }
 }
@@ -1264,12 +1268,16 @@ fn claim_run_inner(db: &mut Database) -> Result<Option<ClaimedRun>> {
         }
         let binding = match binding_for_run(&tx, &db.provider_key, &run) {
             Ok(binding) => binding,
-            Err(_) => {
+            Err(error) => {
                 transition(
                     &tx,
                     &run,
                     RunState::Failed,
-                    Some(RunFailure::ProviderUnavailable),
+                    Some(if error == StoreError::RecoveryAllocationRequired {
+                        RunFailure::RecoveryAllocationRequired
+                    } else {
+                        RunFailure::ProviderUnavailable
+                    }),
                 )?;
                 continue;
             }
@@ -1282,6 +1290,22 @@ fn claim_run_inner(db: &mut Database) -> Result<Option<ClaimedRun>> {
         OsRng
             .try_fill_bytes(&mut nonce)
             .map_err(|_| StoreError::Unavailable)?;
+        if let Err(error) = crate::recovery_budget::reserve(
+            &tx,
+            &run.tenant,
+            &run.account,
+            &format!("chat:{}", crate::backup::hex(&nonce)),
+            "chat",
+            0,
+        ) {
+            let reason = match error {
+                StoreError::RecoveryAllowanceExhausted => RunFailure::RecoveryAllowanceExhausted,
+                StoreError::RecoveryAllocationRequired => RunFailure::RecoveryAllocationRequired,
+                other => return Err(other),
+            };
+            transition(&tx, &run, RunState::Incomplete, Some(reason))?;
+            continue;
+        }
         tx.execute("INSERT INTO model_call_receipts(tenant_id,account_id,run_id,attempt,nonce,usage,dispatched_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",params![run.tenant,run.account,run.id,run.attempt,nonce.as_slice(),json(&RunUsage::default())?,now()?])?;
         crate::run_timings::dispatch(&tx, &run, 0)?;
         transition(&tx, &run, RunState::Running, None)?;

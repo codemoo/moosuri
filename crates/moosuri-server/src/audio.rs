@@ -155,6 +155,10 @@ pub(super) async fn probe(
         .await?;
     let cancel = CancellationToken::new();
     let secret = binding.credential.ok_or(StoreError::Unavailable)?;
+    state
+        .store
+        .audio_probe_dispatch(&user, selection.clone(), generation, ms)
+        .await?;
     let operation = state
         .config
         .audio

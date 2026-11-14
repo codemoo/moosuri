@@ -377,7 +377,7 @@ async fn historical_export_latest_deletes_rotation_and_source_continuity() {
         store
             .probe_binding(&u, provider.id, provider.revision, "synthetic".into(), None)
             .await,
-        Err(crate::StoreError::Unavailable)
+        Err(crate::StoreError::RecoveryAllocationRequired)
     ));
     assert!(matches!(
         store.usage_summary(&u).await,
@@ -401,7 +401,7 @@ async fn historical_export_latest_deletes_rotation_and_source_continuity() {
                 }
             )
             .await,
-        Err(crate::StoreError::Unavailable)
+        Err(crate::StoreError::NotFound)
     ));
     stopped(store).await;
     assert!(

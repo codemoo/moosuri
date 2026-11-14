@@ -269,7 +269,10 @@ fn credential(key: &[u8; 32], row: &Revision) -> Result<Option<Zeroizing<String>
         .transpose()
 }
 pub(super) fn require_binding(conn: &Connection, id: &str, revision: i64) -> Result<Revision> {
-    crate::cutover::restore::historical::require_accounting_known(conn)?;
+    crate::recovery_budget::require_dispatch_identity(conn)?;
+    require_binding_metadata(conn, id, revision)
+}
+fn require_binding_metadata(conn: &Connection, id: &str, revision: i64) -> Result<Revision> {
     let row = load_revision(conn, id)?;
     if row.revision != revision {
         return Err(StoreError::Conflict);
@@ -573,12 +576,12 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             validate(&db.conn, &user, true, true)?;
-            binding(
-                &db.provider_key,
-                require_binding(&db.conn, &id, revision)?,
-                model,
-                effort,
-            )
+            let row = if model == "catalog" {
+                require_binding_metadata(&db.conn, &id, revision)?
+            } else {
+                require_binding(&db.conn, &id, revision)?
+            };
+            binding(&db.provider_key, row, model, effort)
         })
         .await
     }

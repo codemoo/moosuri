@@ -2,6 +2,7 @@
 //! Authentication capabilities can only be created here and are revalidated on every use.
 pub mod audio;
 pub mod push;
+pub mod recovery_budget;
 mod run_timings;
 pub use run_timings::{TimingMark, timing_mark};
 
@@ -99,6 +100,10 @@ pub enum StoreError {
     Conflict,
     #[error("execution budget exhausted")]
     BudgetExhausted,
+    #[error("recovery_forward_allocation_required")]
+    RecoveryAllocationRequired,
+    #[error("recovery_forward_allowance_exhausted")]
+    RecoveryAllowanceExhausted,
     #[error("not found")]
     NotFound,
     #[error("store busy")]
@@ -217,7 +222,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 48;
+const CURRENT_SCHEMA_VERSION: i64 = 49;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -688,6 +693,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0048_source_start_recovery.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 49 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0049_recovery_forward_budget.sql"),
                 "COMMIT;"
             ))?;
         }

@@ -480,6 +480,7 @@ pub fn router_with_runtime(
         .merge(schedules::routes())
         .merge(missions::routes())
         .merge(calendar::routes())
+        .route("/api/v1/recovery-budget", get(recovery_budget_status))
         .route("/api/v1/usage", get(chat::usage))
         .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })
@@ -573,6 +574,12 @@ impl IntoResponse for HttpError {
                 (StatusCode::CONFLICT, "google_authorization_in_progress")
             }
             StoreError::BudgetExhausted => (StatusCode::CONFLICT, "budget_exhausted"),
+            StoreError::RecoveryAllocationRequired => {
+                (StatusCode::CONFLICT, "recovery_forward_allocation_required")
+            }
+            StoreError::RecoveryAllowanceExhausted => {
+                (StatusCode::CONFLICT, "recovery_forward_allowance_exhausted")
+            }
             StoreError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             StoreError::Busy => (StatusCode::SERVICE_UNAVAILABLE, "busy"),
             StoreError::Unavailable | StoreError::Corrupt => {
@@ -895,4 +902,9 @@ async fn delete_thread(
     state.store.delete_thread(&user, id).await?;
     state.runtime.wake();
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn recovery_budget_status(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    Ok(Json(state.store.recovery_budget_status(&user).await?).into_response())
 }

@@ -104,6 +104,8 @@ const labels: Record<RunView["state"], string> = {
 function runExplanation(run: RunView) {
   if (run.error === "knowledge_invalidated")
     return "참고한 자료가 변경되거나 삭제되어 관련 답변을 지웠습니다. 현재 자료로 다시 질문해 주세요.";
+  if (run.error === "recovery_forward_allowance_exhausted") return "복원 후 새 요청 허용량을 모두 사용했습니다. 운영자가 중지된 서버에서 새 허용량을 배정해야 합니다. 과거 사용량은 계속 알 수 없습니다.";
+  if (run.error === "recovery_forward_allocation_required") return "과거 사용량이 불명확하여 새 요청이 잠겨 있습니다. 운영자가 중지된 서버에서 새 허용량을 배정해야 합니다.";
   if (run.error === "budget_exhausted")
     return "이번 요청의 실행 한도에 도달했습니다. 범위를 줄여 새로 요청해 주세요.";
   if (run.state === "outcome_unknown")

@@ -420,7 +420,9 @@ fn local_failure(failure: RunFailure) -> RunState {
     match failure {
         RunFailure::OutputLimit
         | RunFailure::ContinuationUnsupported
-        | RunFailure::BudgetExhausted => RunState::Incomplete,
+        | RunFailure::BudgetExhausted
+        | RunFailure::RecoveryAllowanceExhausted
+        | RunFailure::RecoveryAllocationRequired => RunState::Incomplete,
         RunFailure::Interrupted | RunFailure::ConnectionFailed => RunState::OutcomeUnknown,
         _ => RunState::Failed,
     }
@@ -505,6 +507,12 @@ fn typed_input(
     }
 }
 fn store_failure(error: &StoreError) -> (RunState, RunFailure) {
+    if *error == StoreError::RecoveryAllowanceExhausted {
+        return (RunState::Incomplete, RunFailure::RecoveryAllowanceExhausted);
+    }
+    if *error == StoreError::RecoveryAllocationRequired {
+        return (RunState::Incomplete, RunFailure::RecoveryAllocationRequired);
+    }
     if *error == StoreError::BudgetExhausted {
         return (RunState::Incomplete, RunFailure::BudgetExhausted);
     }

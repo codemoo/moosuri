@@ -710,7 +710,7 @@ impl Store {
             for (tenant,id) in queued {
                 let run=chat::load_run(&tx,&tenant,&id)?;
                 if chat::execution_authority(&tx,&run).is_err(){chat::transition(&tx,&run,RunState::Cancelled,Some(RunFailure::AuthorityRevoked))?;continue}
-                let binding=match chat::binding_for_run(&tx,&db.provider_key,&run){Ok(v)=>v,Err(_)=>{chat::transition(&tx,&run,RunState::Failed,Some(RunFailure::ProviderUnavailable))?;continue}};
+                let binding=match chat::binding_for_run(&tx,&db.provider_key,&run){Ok(v)=>v,Err(e)=>{chat::transition(&tx,&run,RunState::Failed,Some(if e==StoreError::RecoveryAllocationRequired {RunFailure::RecoveryAllocationRequired} else {RunFailure::ProviderUnavailable}))?;continue}};
                 let local_final = crate::missions::local_final_recovery(&tx, &tenant, &id)?;
                 if !retry_fences(&tx,&tenant,&id,!local_final)? {chat::transition(&tx,&run,RunState::Incomplete,Some(RunFailure::BudgetExhausted))?;continue}
                 match guard_execution(&tx,&run) {Ok(())=>{},Err(StoreError::Conflict|StoreError::BudgetExhausted)=>continue,Err(e)=>return Err(e)}
@@ -774,6 +774,7 @@ impl Store {
             let dispatched: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='dispatched')",params![run.tenant,run.id],|r|r.get(0))?;
             if pending || dispatched {return Err(StoreError::Conflict)}
             let clock=millis()?;let step=remote+1;let n=nonce()?;
+            crate::recovery_budget::reserve(&tx,&run.tenant,&run.account,&format!("agent:{}",crate::backup::hex(&n)),"agent",0)?;
             tx.execute("UPDATE agent_execution SET remote_calls=?3,checkpoint_seq=checkpoint_seq+1,started_ms=coalesce(started_ms,?4),deadline_ms=coalesce(deadline_ms,?4+120000),last_clock_ms=?4 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,step,clock])?;
             tx.execute("INSERT INTO agent_steps(tenant_id,run_id,step,attempt,nonce,state) VALUES(?1,?2,?3,?4,?5,'dispatched')",params![run.tenant,run.id,step,run.attempt,n.as_slice()])?;
             tx.execute("INSERT INTO model_call_receipts(tenant_id,account_id,run_id,attempt,step,nonce,usage,dispatched_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![run.tenant,run.account,run.id,run.attempt,step,n.as_slice(),encoded(&RunUsage::default())?,now()?])?;

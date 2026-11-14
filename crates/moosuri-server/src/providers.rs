@@ -234,6 +234,7 @@ pub(super) async fn probe(
     };
     let cancellation = CancellationToken::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    state.store.reserve_probe_call(&user, &binding).await?;
     let stream = model.stream_text(&request, &tx, &cancellation);
     tokio::pin!(stream);
     let mut tick = tokio::time::interval(Duration::from_millis(500));
@@ -511,6 +512,11 @@ async fn tool_probe_round(
     let capabilities = ToolCapabilities {
         function_tools: true,
     };
+    state
+        .store
+        .reserve_probe_call(user, binding)
+        .await
+        .map_err(ToolProbeError::Store)?;
     let operation = client.stream_tool_round(request, &capabilities, &tx, cancellation);
     tokio::pin!(operation);
     let mut tick = tokio::time::interval(Duration::from_millis(500));
@@ -648,6 +654,7 @@ pub(super) async fn vision_probe(
     let request=TextRequest{model:binding.model.clone(),effort:binding.effort.clone(),max_output_tokens:256,messages:vec![TextMessage{role:TextRole::User,text:"Read the 4 by 4 colored tile image row by row, left to right. Return exactly 16 uppercase letters, one per tile: R=red, G=green, B=blue, Y=yellow. No spaces, punctuation or explanation.".into(),phase:None}]};
     let cancellation = CancellationToken::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    state.store.reserve_probe_call(&user, &binding).await?;
     let stream = client.stream_text(&request, &tx, &cancellation);
     tokio::pin!(stream);
     let mut text = String::new();

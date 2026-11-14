@@ -287,6 +287,9 @@ pub(crate) fn finish_deletions(conn: &mut Connection) -> Result<()> {
             "vault_lifecycle_outbox",
             "model_call_receipts",
             "automatic_memory_budget",
+            // Immutable forward admission lower bounds contain opaque IDs, kind,
+            // counts/duration/time only; no content, credential or provider data.
+            "recovery_forward_dispatches",
         ]
         .contains(&table.as_str())
         {

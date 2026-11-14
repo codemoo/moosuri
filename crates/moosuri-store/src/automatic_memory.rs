@@ -409,6 +409,7 @@ impl Store {
         if calls>=g.calls||bytes as usize+input_bytes>g.bytes as usize||output+1024>g.output {
             tx.execute("UPDATE automatic_memory_jobs SET state='queued',reason='daily_budget',nonce=NULL,deadline=NULL,not_before=?3 WHERE tenant_id=?1 AND id=?2",params![lease.tenant,lease.job,(day+1)*86400])?;tx.commit()?;return Ok(false)
         }
+        crate::recovery_budget::reserve(&tx,&lease.tenant,&g.account,&format!("memory:{}",crate::backup::hex(&lease.nonce)),"memory",0)?;
         tx.execute("INSERT INTO automatic_memory_budget VALUES(?1,?2,?3,1,?4,1024) ON CONFLICT(tenant_id,account_id,day) DO UPDATE SET calls=calls+1,input_bytes=input_bytes+excluded.input_bytes,output_tokens=output_tokens+1024",params![lease.tenant,g.account,day,input_bytes as i64])?;
         tx.execute("UPDATE automatic_memory_jobs SET state='dispatched',reason=NULL,input_bytes=?3,dispatch_nonce=nonce WHERE tenant_id=?1 AND id=?2",params![lease.tenant,lease.job,input_bytes as i64])?;
         tx.commit()?;Ok(true)

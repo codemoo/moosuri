@@ -42,6 +42,11 @@ enum RecoveryRole {
 // One startup value, never a collection or hot-path allocation. Keep clap's flat CLI.
 #[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Allocate new forward requests after historical recovery; old usage stays unknown.
+    RecoveryBudget {
+        #[command(subcommand)]
+        command: RecoveryBudgetCommand,
+    },
     /// Opt-in local user-request evidence to a dedicated custom source connection.
     WorkSessions {
         #[command(subcommand)]
@@ -148,6 +153,20 @@ enum Command {
     ExportTypes,
 }
 
+#[derive(Subcommand)]
+enum RecoveryBudgetCommand {
+    Status,
+    Allocate {
+        #[arg(long)]
+        restore_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        calls: u32,
+        #[arg(long, default_value_t = 0)]
+        audio_seconds: u32,
+    },
+}
 #[derive(Subcommand)]
 enum BackupCommand {
     /// Publish encrypted complete journals for one retained export, without sealing the stopped source.
@@ -267,6 +286,37 @@ async fn run(cli: Cli) -> Result<(), String> {
         return Err("data_directory_must_be_absolute".into());
     }
     match cli.command {
+        Command::RecoveryBudget { command } => {
+            let status = match command {
+                RecoveryBudgetCommand::Status => {
+                    moosuri_store::recovery_budget::status(&data).await
+                }
+                RecoveryBudgetCommand::Allocate {
+                    restore_id,
+                    request_id,
+                    calls,
+                    audio_seconds,
+                } => {
+                    moosuri_store::recovery_budget::allocate(
+                        &data,
+                        &restore_id,
+                        &request_id,
+                        i64::from(calls),
+                        i64::from(audio_seconds) * 1000,
+                    )
+                    .await
+                }
+            }
+            .map_err(|e| e.to_string())?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&status)
+                    .map_err(|_| "recovery_budget_status_failed")?
+            );
+            println!(
+                "Historical usage remains unknown. This allowance limits new inference request count and validated STT input duration; it is not a token or financial ceiling. Unknown outcomes consume allowance without refund."
+            );
+        }
         Command::Installation { .. } => {
             unreachable!("installation runs without ordinary data admission")
         }

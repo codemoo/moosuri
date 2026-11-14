@@ -196,6 +196,7 @@ pub(crate) fn restart(conn: &Connection) -> Result<()> {
 /// during ordinary startup. Preserves committed inbox/receipts; reactivation is owner action.
 #[allow(dead_code)]
 pub(crate) fn quarantine_for_restore(conn: &Connection) -> Result<()> {
+    conn.execute("UPDATE schedule_chat_drafts SET pending=0", [])?;
     conn.execute("UPDATE reminder_occurrences SET state='skipped',reason='restore_quarantine',nonce=NULL,deadline=NULL WHERE state IN('queued','claimed')",[])?;
     conn.execute("UPDATE reminder_schedules SET state='paused',reason='restore_quarantine',revision=revision+1 WHERE state IN('active','paused')",[])?;
     Ok(())

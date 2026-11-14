@@ -2,6 +2,7 @@
 use super::*;
 use crate::chat::{self as conversation, Run};
 use moosuri_core::{MessagePhase, RunState};
+mod drafts;
 #[cfg(test)]
 mod integration_tests;
 pub(crate) mod parser;
@@ -72,11 +73,12 @@ pub(crate) fn finish(
     user: &UserContext,
     run: &Run,
     context: Option<&ScheduleChatContext>,
+    independent_target: bool,
 ) -> Result<bool> {
-    let timezone = context.map(|c| c.timezone.as_str());
     let selected = context.and_then(|c| c.target.as_ref());
     let now = clock()?;
-    let decision = parser::parse(&run.text, timezone, now, selected.is_some());
+    let (decision, timezone) = drafts::decide(conn, run, context, now, independent_target)?;
+    let timezone = timezone.as_deref();
     let (message, receipt) = match decision {
         parser::Decision::None => return Ok(false),
         parser::Decision::Clarify(text) => (text.to_owned(), None),

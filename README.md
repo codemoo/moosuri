@@ -6,7 +6,7 @@ A self-hosted assistant for individuals, families and friends.
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat with bounded tab-refresh draft recovery and older-conversation recall,
 private knowledge and memories, editable records, bounded
-read-only missions from chat or forms, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with provider drafts and approved fixed scheduled sends, bounded timed/all-day Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders,
+read-only missions from chat or forms, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with provider drafts and approved fixed scheduled sends, bounded timed/all-day Calendar actions and follow-up clarification from chat or forms, browser workspaces, local reminders with bounded missing-time/content replies,
 opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
 The experimental [native credential companion](docs/native-credential-github.md)

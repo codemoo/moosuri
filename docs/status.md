@@ -30,6 +30,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 알림 후속 대화 | 빠진 시간·내용·제한된 오전/오후·날짜를 다음 답변으로 보완; 제공한 값·시간대·같은 요청 재시도를 유지 | [사용법](reminder-followups.md)·[검증](reviews/2026-11-15-reminder-followups.md) |
 | 격리 비교 실행기 | 두 공통 세계의 소스 사본·실행 adapter·독립 판정 구현; 실제 비교는 Mac의 기존 공유 메모리 슬롯 부족으로2건 미실행 | [사용법](agent-evaluation.md#두-공통-세계의-로컬-실행-adapter)·[기록](reviews/2026-11-15-paired-baseline.md) |
 | 웹 의존성 고지 | 두 React 앱의 lock/설치본을 오프라인 대조,217개 고지와66개 미완료 위치를 보고; 법적 검토·완전한 배포 고지와 구별 | [사용법](web-license-evidence.md)·[검증](reviews/2026-11-15-web-license-evidence.md) |
 | 채팅 우선 로딩 | 최초 JavaScript610,903→383,331byte(37.25% 감소), 보조 화면 오류에도 초안 보존; 모델 지연/전체 PWA 크기 측정과 구별 | [검증](reviews/2026-11-15-deferred-workspace.md) |
@@ -51,7 +52,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | P2 대화 | 계정·설정·스트림·취소/재시도·개인 ChatGPT·선택 Claude 공식 CLI text 실행 | 지원 구독의 전체 실행 범위·실계정 검증 |
 | P3 자료·기억 | 출처·기억 정정/망각·제한 추출·문서·이전/다른 소유 대화의 근거 검색 | 장기/시간 사실·추출 품질의 독립 검증 |
 | P4 도구·학습 | typed 도구·bounded 실행·Git 스킬·제안·연결 Gmail/Calendar 읽기 미션·예약 스킬 의존성/정리·제한된 개인 학습/두 입력 proof/재사용 | 일반 외부 복합 절차·범용 학습 export·실모델 효용/품질 검증 |
-| P5 예약·소식 | due loop·반복 회차·알림·quiet hours·예약별 소식 제어·followup 날짜 알림·Push | 전체 알림/제안 정책·실기기 수신·고정 메일 외 예약 외부 작업 |
+| P5 예약·소식 | due loop·반복 회차·알림·빠진 값의 다음 답변 보완·quiet hours·예약별 소식 제어·followup 날짜 알림·Push | 전체 알림/제안 정책·실기기 수신·고정 메일 외 예약 외부 작업 |
 | P6 외부 연결 | Gmail/Calendar·공식/커스텀 수집·선택한 Codex 요청·정규화 통화 전사 수집·공개 웹·일본우편 최근 상태·브라우저·승인된 gws 초대 | 통화 vendor 포맷/실제 전사·다른 작업 feed·다른 배송사/전체 이력·실계정 |
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·운영 중 snapshot/시점·명시적 최신 journal 복구·주기적 SSH journal receiver·구 v1 파일 이전·실험적 native GitHub/Google INBOX 개수 조회·원래 채팅 대기/완료 | 일반 credential/Google 본문·쓰기 도구·실제 옛 파일 수락·실제 off-host/무손실 최신 복구 |

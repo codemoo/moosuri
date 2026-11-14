@@ -160,6 +160,38 @@ async fn attached_and_inherited_images_cannot_create_or_revoke_reminders() {
         Err(StoreError::Conflict)
     ));
 
+    let partial = store
+        .submit_turn_with_schedule_context(
+            &user,
+            thread.id.clone(),
+            Uuid::new_v4().to_string(),
+            "remind me to stretch".into(),
+            None,
+            context.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(partial.run.schedule_receipts.is_none());
+    let followed = store
+        .submit_turn_with_schedule_context(
+            &user,
+            thread.id.clone(),
+            Uuid::new_v4().to_string(),
+            "in 10 minutes".into(),
+            None,
+            context.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(followed.run.schedule_receipts.is_none());
+    if matches!(followed.run.state, RunState::Queued | RunState::Running) {
+        store
+            .cancel_run(&user, followed.run.id, followed.run.attempt)
+            .await
+            .unwrap();
+    }
+    let private_thread = thread.id.clone();
+    store.call(move|db|{let count:i64=db.conn.query_row("SELECT count(*) FROM schedule_chat_drafts d JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.run_id WHERE r.thread_id=?1",[private_thread],|r|r.get(0))?;assert_eq!(count,0);Ok(())}).await.unwrap();
     let inherited = store
         .submit_turn_with_schedule_context(
             &user,

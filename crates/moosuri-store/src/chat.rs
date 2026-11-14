@@ -1071,7 +1071,13 @@ fn submit_turn_context_in(
             ],
         )?;
     }
-    crate::schedules::chat::finish(tx, &user, &run, context.as_ref())?;
+    crate::schedules::chat::finish(
+        tx,
+        &user,
+        &run,
+        context.as_ref(),
+        target.is_some() || mission.is_some(),
+    )?;
     let current = load_run(tx, &run.tenant, &run.id)?;
     if current.state == RunState::Queued
         && target.is_none()

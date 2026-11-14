@@ -392,7 +392,7 @@ fn iso_date_tail(value: &str) -> Option<&str> {
     }
     Some(value.get(10..)?.trim_start())
 }
-fn future_prefix(value: &str) -> bool {
+pub(super) fn future_prefix(value: &str) -> bool {
     iso_date_tail(value).is_some_and(korean_time)
         || [
             "내일", "모레", "오늘", "매일", "매주", "오전", "오후", "every ", "매 ",
@@ -431,7 +431,7 @@ fn korean_time(mut value: &str) -> bool {
                 .any(|s| tail.trim_start().starts_with(s))
         })
 }
-fn mission_body(value: &str) -> bool {
+pub(super) fn mission_body(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     [
         "조사해",
@@ -449,7 +449,7 @@ fn mission_body(value: &str) -> bool {
     .any(|s| lower.contains(s))
 }
 
-fn message(v: &str) -> Option<String> {
+pub(super) fn message(v: &str) -> Option<String> {
     let v = v.trim();
     if v.is_empty() || v.len() > 2000 || v.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
     {

@@ -151,8 +151,10 @@ use server UTC; intervals repeat no faster than60seconds. Today/tomorrow, Korean
 모레, ISO dates, explicit AM/PM or 24-hour HH:MM use the browser IANA timezone.
 A bare9 or Korean9시 without AM/PM clarifies; local one-off gaps clarify and folds
 choose the first UTC offset. Recurring gaps/folds follow the occurrence policy
-above. Unsupported grammar asks for a complete time and message again; there is
-no stateful natural-language clarification continuation or semantic classifier.
+above. [Missing-field replies](reminder-followups.md) retain an explicit creation
+draft for a bounded next answer: missing time/content, numeric AM/PM or civil day.
+For example, `물 마시라고 알려줘` can be completed by `내일 오전 9시`.
+Unsupported forms still require a complete new request; no semantic classifier is added.
 Outer translation, summary, quote and ordinary information requests do not supply
 reminder authority. An explicit `remind me ... to <message>` shell saves its entire
 message literally, including summarize/translate/quote words, negation and question

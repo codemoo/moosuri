@@ -226,7 +226,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 50;
+const CURRENT_SCHEMA_VERSION: i64 = 51;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -711,6 +711,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0050_personal_claude_code.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 51 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0051_reminder_chat_drafts.sql"),
                 "COMMIT;"
             ))?;
         }

@@ -23,6 +23,13 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 독립 볼트 | 별도 Rust 암호문 서비스/DB/origin/session·WASM Worker·React, 항목/TOTP/로컬 CSV·키 교체, 독립 암호화 파일 export/import·봉인된 현재 service checkpoint 복구 | ongoing/off-host 최신 journal·과거 service 복구·구 v1 이전·account deletion/outbox·CredentialBroker·서명 client·배포/실기기는 남음. served JS의 악성 서버 한계는 유지. [볼트](vault-service-client.md)·[archive](vault-archive.md)·[archive 검증](reviews/2026-11-13-vault-archive.md)·[service 복구 검증](reviews/2026-11-13-vault-service-recovery.md) |
 | 복구 | fsynced auth/삭제 journal, stopped age export·recipient key epoch, 봉인된 현재 checkpoint의 새 root 복원·격리, SQLite 이미지/파일/문서 보존 | ongoing/off-host 최신 journal·과거 export replay·unattended backup·실운영 이전은 미구현. 원본을 영구 봉인하는 cutover와 일반 재해복구를 구분한다. [backup](backup.md)·[restore](restore.md)·[검증](reviews/2026-11-13-sealed-restore.md) |
 
+## 최근 수락한 단위 · 저장된 기억 작업 재시도
+
+재시도 중 이미 확정한 기억 작업이 다른 분류 단계에 막혀 실패하던 실행 순서를 수정했다.
+같은 저장된 작업을 현재 권한으로 이어서 완료하며 모델에 새 계획을 요청하지 않는다.
+기존 실패 테스트를 바꾸지 않고 Linux 에이전트·저장소 검사와 독립 재검토를 통과했다.
+[검증 기록](reviews/2026-11-14-sealed-memory-retry.md).
+
 ## 최근 수락한 단위 · 공개 스킬 catalog 생성
 
 정확한 공개 GitHub commit과 package 경로에서 검증한 스킬 파일을 가져와 재현 가능한

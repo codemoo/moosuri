@@ -70,7 +70,10 @@ editor. References such as “remember that” without the literal fact need cla
 
 A command has one stable slot per run, independent of provider call IDs or retry
 attempts. Current session/provider/run authority and target revision are checked
-inside the Store actor. An accepted intent resumes without another intent-classification call. Pending
+inside the Store actor. An accepted intent resumes before model client construction
+or unrelated classification, without another intent-classification call. Explicit
+retry clears provider checkpoints but preserves the sealed local intent. See the
+[execution-order repair](reviews/2026-11-14-sealed-memory-retry.md). Pending
 candidate selection may dispatch again after an explicit retry under the existing
 run-wide budget, using the same sealed intent and candidate namespace; an accepted
 selection resumes its command slot without another model call. Purging a private

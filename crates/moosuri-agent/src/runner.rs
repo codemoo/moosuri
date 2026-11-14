@@ -661,6 +661,12 @@ pub(crate) async fn execute(
         Ok(None) => {}
         Err(_) => return,
     }
+    // Explicit retry clears provider checkpoints, but preserves a separately
+    // sealed local intent. Resume that identity before unrelated classifiers
+    // or model client construction, with the existing Store authority checks.
+    if memory::resume_prepared(&store, &lease, &signals).await {
+        return;
+    }
     // Explicit retry starts a new attempt. Unknown remote work is never resumed
     // merely because a private checkpoint exists in a previous attempt.
     if context.checkpoint.is_some() || !context.calls.is_empty() {

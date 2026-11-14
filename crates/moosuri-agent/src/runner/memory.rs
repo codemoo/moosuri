@@ -31,36 +31,60 @@ async fn failed(session: &PlanningSession<'_>, step: Option<&StepLease>, error: 
 }
 
 async fn apply(session: &PlanningSession<'_>, prepared: PreparedMemoryCommand) {
+    apply_local(session.store, session.lease, session.signals, prepared).await;
+}
+
+async fn apply_local(
+    store: &Store,
+    lease: &RunLease,
+    signals: &Signals,
+    prepared: PreparedMemoryCommand,
+) {
     // Reserve the same gate as HTTP mutations. No provider or socket work occurs
     // while holding it; Store rechecks authority/CAS at the local commit boundary.
     let gate = tokio::select! {
         biased;
-        _ = session.signals.stopping().cancelled() => {
-            finish(session.store,session.lease,None,RunState::OutcomeUnknown,
-                Some(RunFailure::Interrupted),session.signals).await;
+        _ = signals.stopping().cancelled() => {
+            finish(store,lease,None,RunState::OutcomeUnknown,
+                Some(RunFailure::Interrupted),signals).await;
             return;
         }
-        gate = session.signals.delivery.write() => gate,
+        gate = signals.delivery.write() => gate,
     };
-    if session.signals.stopping().is_cancelled() {
+    if signals.stopping().is_cancelled() {
         drop(gate);
         finish(
-            session.store,
-            session.lease,
+            store,
+            lease,
             None,
             RunState::OutcomeUnknown,
             Some(RunFailure::Interrupted),
-            session.signals,
+            signals,
         )
         .await;
         return;
     }
-    let result = retry_local(|| session.store.execute_memory_command(&prepared)).await;
+    let result = retry_local(|| store.execute_memory_command(&prepared)).await;
     drop(gate);
-    session.signals.changed();
+    signals.changed();
     if let Err(error) = result {
-        failed(session, None, error).await;
+        let (state, reason) = store_failure(&error);
+        finish(store, lease, None, state, Some(reason), signals).await;
     }
+}
+
+/// Resume only a typed, sealed local intent. A provider capsule alone supplies
+/// no mutation authority and never authorizes another provider request.
+pub(super) async fn resume_prepared(store: &Store, lease: &RunLease, signals: &Signals) -> bool {
+    match retry_local(|| store.resume_memory_command(lease)).await {
+        Ok(Some(prepared)) => apply_local(store, lease, signals, prepared).await,
+        Ok(None) => return false,
+        Err(error) => {
+            let (state, reason) = store_failure(&error);
+            finish(store, lease, None, state, Some(reason), signals).await;
+        }
+    }
+    true
 }
 
 pub(super) async fn run(
@@ -68,19 +92,9 @@ pub(super) async fn run(
     context: AgentContext,
     current_text: &str,
 ) -> Option<AgentContext> {
-    // A prior accepted local intent has a stable identity across attempts. Reuse
-    // it under the new lease; never ask the model to invent a replacement plan.
-    match retry_local(|| session.store.resume_memory_command(session.lease)).await {
-        Ok(Some(prepared)) => {
-            apply(session, prepared).await;
-            return None;
-        }
-        Ok(None) => (),
-        Err(error) => {
-            failed(session, None, error).await;
-            return None;
-        }
-    }
+    // The runner has already resumed any accepted local command before it
+    // constructed this planning session. Pending target selection still uses
+    // its separate sealed snapshot and existing dispatch authority below.
     match retry_local(|| session.store.resume_memory_targets(session.lease)).await {
         Ok(Some(candidates)) => {
             select_target(session, context, current_text, candidates).await;

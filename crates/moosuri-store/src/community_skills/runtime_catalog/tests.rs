@@ -467,7 +467,7 @@ async fn schema34_to35_preserves_helper_purpose_and_target_host_while_adding_emp
     let token = helper.token;
     s.call(|db| {
         db.conn
-            .execute_batch("DROP TABLE community_catalog_cache;PRAGMA user_version=34;")?;
+            .execute_batch("ALTER TABLE chatgpt_model_probes DROP COLUMN function_tools;DROP TABLE community_catalog_cache;PRAGMA user_version=34;")?;
         Ok(())
     })
     .await
@@ -488,7 +488,7 @@ async fn schema34_to35_preserves_helper_purpose_and_target_host_while_adding_emp
         assert_eq!(
             db.conn
                 .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
-            35
+            crate::CURRENT_SCHEMA_VERSION
         );
         assert_eq!(
             db.conn.query_row(

@@ -927,7 +927,7 @@ async fn personal_chatgpt_restore_quarantines_every_credential_and_generates_a_n
     conn.execute("INSERT INTO chatgpt_binding_revisions VALUES(?1,?2,'synthetic-binding',1,'Synthetic plan','issued-synthetic-client',zeroblob(64))",params![tenant,f.account]).unwrap();
     conn.execute("INSERT INTO chatgpt_sessions(tenant_id,account_id,binding_id,revision,generation,cipher,expires_at,plan_enabled,refresh_state,refresh_nonce) VALUES(?1,?2,'synthetic-binding',1,4,zeroblob(64),9999999999,1,'dispatched','synthetic-nonce')",params![tenant,f.account]).unwrap();
     conn.execute(
-        "INSERT INTO chatgpt_model_probes VALUES(?1,?2,'synthetic-binding',1,'fixture-model','',1)",
+        "INSERT INTO chatgpt_model_probes(tenant_id,account_id,binding_id,revision,model,effort,verified_at,function_tools) VALUES(?1,?2,'synthetic-binding',1,'fixture-model','',1,1)",
         params![tenant, f.account],
     )
     .unwrap();

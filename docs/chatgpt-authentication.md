@@ -53,7 +53,7 @@ local usable tokens and reports remote confirmation separately. Sealed-current
 restore removes tokens/proofs/selections and old identity/client authority, then
 creates a new host/runtime; reconnect explicitly in the restored installation.
 
-P1 keeps personal tools, attachments and background work unavailable. This includes
+The foreground-tools increment adds a separate exact owner/binding revision/model/effort tool proof. It preserves the existing bounded Store tool slots, plan-private checkpoints, cancellation and current connection guards, resolving personal token readiness again before each model round. Existing source/skill/artifact/Calendar reads, calculation, Gmail reads/local drafts and configured web/browser tools are available only after that proof. Mail has no model approve/send tool: the owner still reviews the full frozen final preview and explicitly approves each send. Conversational memory/artifact/Calendar mutations remain a separate increment. Personal attachments and background work remain unavailable. Attachment exclusion includes
 ready raw document/image history from earlier conversation turns, including queued
 ancestors. Admission rejects it without changing the personal selection or routing
 to a shared provider. Durable claim/retry/output guards repeat the fence before
@@ -62,7 +62,7 @@ conversation attachment inheritance remains supported. Protocol
 namespace support alone is not a personal tool capability proof. Protected VM
 handoff and independent fresh import verification are implemented below; no plaintext
 token paste/upload or remote HTTPS OAuth callback is provided. Account/workspace
-eligibility, actual OAuth/catalog/text acceptance, personal tools and hosted approval
+eligibility, actual-account OAuth/catalog/text/tool acceptance and hosted approval
 where applicable remain unexecuted. The bounded authentication/storage/restore repairs
 and current-root integration passed independent review; see the [P2 evidence](reviews/2026-11-14-chatgpt-vm-handoff.md).
 
@@ -83,4 +83,4 @@ Schema34 reserves a staged revision while the active target session stays usable
 
 The native helper rejects grant/unsupported ACLs on pinned ancestor/state/file descriptors before private reads/writes (deny-only macOS ACLs are supported), creates directories with mode0700 from the start, and checks files for owner/mode/single link. The source's owner-private encrypted journal is stored under `~/.local/state/moosuri/chatgpt-vm`. A durable pending marker precedes any transfer, and this helper has no refresh/inference/revoke path. Rerun the same command to reconcile lost acknowledgement. The helper independently fetches and verifies the target receipt before removing the encrypted renewable envelope and its transfer key; SSH stdout alone is insufficient. `--restart` explicitly cancels an unfinished attempt and starts fresh OAuth using retained staged issued metadata. Expired ID evidence is never refreshed locally to rescue a transfer. Removal is logical and does not promise SSD/snapshot erasure. Keep helper state outside VM backups and public artifacts.
 
-Only personal text-model use is supported. Verify the target catalog and exact text model, save the personal selection, then send a normal streamed conversation. Tools, attachment history, media and background use keep their existing exclusion fences. This flow does not authorize managed hosting or extract Codex/browser credentials.
+Verify the target catalog and exact text model, then separately verify tools for the exact saved model/effort if needed. Save the personal selection and send a streamed foreground conversation. Tool proof is never created by transfer. Attachment history, media and background use keep their existing exclusion fences; typed conversational mutations remain staged separately. This flow does not authorize managed hosting or extract Codex/browser credentials.

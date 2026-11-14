@@ -397,7 +397,7 @@ pub(super) async fn tool_probe(
     .into_response())
 }
 
-enum ToolProbeError {
+pub(super) enum ToolProbeError {
     Store(StoreError),
     Transport(TransportError),
     Incomplete,
@@ -464,6 +464,34 @@ impl ProbeObservation {
     }
 }
 
+async fn validate_tool_probe_binding(
+    state: &AppState,
+    user: &UserContext,
+    binding: &ProviderBinding,
+) -> Result<(), ToolProbeError> {
+    if let Some(b) = &binding.subscription {
+        state
+            .store
+            .subscription_ref(
+                user,
+                b.id.clone(),
+                b.revision,
+                b.model.clone(),
+                b.effort.clone(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(ToolProbeError::Store)
+    } else {
+        // Retain shared provider's admin requirement; personal ownership never authorizes it.
+        state
+            .store
+            .validate_provider_binding(user, binding.id.clone(), binding.revision)
+            .await
+            .map_err(ToolProbeError::Store)
+    }
+}
+
 async fn tool_probe_round(
     state: &AppState,
     user: &UserContext,
@@ -491,12 +519,12 @@ async fn tool_probe_round(
     loop {
         tokio::select! {
             biased;
-            _=tick.tick()=>{state.store.validate_provider_binding(user,binding.id.clone(),binding.revision).await.map_err(ToolProbeError::Store)?;},
+            _=tick.tick()=>{validate_tool_probe_binding(state,user,binding).await?;},
             event=rx.recv()=>if let Some(event)=event{observed.observe(event)?;},
             result=&mut operation=>{
                 let round=result.map_err(ToolProbeError::Transport)?;
                 while let Ok(event)=rx.try_recv(){observed.observe(event)?;}
-                state.store.validate_provider_binding(user,binding.id.clone(),binding.revision).await.map_err(ToolProbeError::Store)?;
+                validate_tool_probe_binding(state,user,binding).await?;
                 if observed.reported_model.as_deref()!=Some(binding.model.as_str()) || observed.refusal{return Err(ToolProbeError::Incomplete);}
                 return Ok((round,observed));
             }
@@ -504,7 +532,7 @@ async fn tool_probe_round(
     }
 }
 
-async fn verify_tool_probe(
+pub(super) async fn verify_tool_probe(
     state: &AppState,
     user: &UserContext,
     binding: &ProviderBinding,
@@ -661,4 +689,189 @@ pub(super) async fn vision_probe(
         .record_vision_probe(&user, id, input.revision, input.model, input.effort)
         .await?;
     Ok(Json(serde_json::json!({"vision":true})).into_response())
+}
+
+#[cfg(all(test, feature = "test-fixtures"))]
+mod plan_tool_probe_tests {
+    use super::*;
+    use axum::{Json, Router, response::IntoResponse, routing::post};
+    use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    fn final_wire(text: &str) -> String {
+        let item = json!({"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":text,"annotations":[]}]});
+        [json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"m","role":"assistant","content":[]}}),json!({"type":"response.content_part.added","item_id":"m","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}),json!({"type":"response.output_text.delta","item_id":"m","output_index":0,"content_index":0,"delta":text}),json!({"type":"response.output_text.done","item_id":"m","output_index":0,"content_index":0,"text":text}),json!({"type":"response.content_part.done","item_id":"m","output_index":0,"content_index":0,"part":{"type":"output_text","text":text,"annotations":[]}}),json!({"type":"response.output_item.done","output_index":0,"item":item}),json!({"type":"response.completed","response":{"id":"r","model":"fixture-model","status":"completed","output":[item],"usage":{"input_tokens":8,"output_tokens":2}}})].iter().map(|e|format!("data: {e}\n\n")).collect()
+    }
+    fn call_wire(name: &str, args: Value, namespace: &str) -> String {
+        let args = args.to_string();
+        let item = json!({"type":"function_call","id":"fc","call_id":"call-probe","namespace":namespace,"name":name,"arguments":args,"status":"completed"});
+        [json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc","call_id":"call-probe","namespace":namespace,"name":name,"arguments":"","status":"in_progress"}}),json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc","delta":args}),json!({"type":"response.function_call_arguments.done","output_index":0,"item_id":"fc","arguments":args}),json!({"type":"response.output_item.done","output_index":0,"item":item}),json!({"type":"response.completed","response":{"id":"r","model":"fixture-model","status":"completed","output":[item],"usage":{"input_tokens":8,"output_tokens":2}}})].iter().map(|e|format!("data: {e}\n\n")).collect()
+    }
+
+    #[tokio::test]
+    async fn plan_verifier_requires_namespaced_result_and_exact_final_answer() {
+        // Protocol proof is tested against the real plan client here. Personal
+        // owner admission/commit is separately covered by Store and HTTP tests;
+        // this fixture uses a shared admin binding and never imports fake identity.
+        let d = tempfile::tempdir().unwrap();
+        let store = Store::open(d.path()).unwrap();
+        let password = "Synthetic-server-proof-42";
+        store
+            .bootstrap(
+                "Admin".into(),
+                "admin@example.test".into(),
+                password.into(),
+                false,
+            )
+            .await
+            .unwrap();
+        let u = store
+            .login("admin@example.test".into(), password.into())
+            .await
+            .unwrap()
+            .user;
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", l.local_addr().unwrap());
+        let mode = Arc::new(AtomicUsize::new(0));
+        let count = Arc::new(AtomicUsize::new(0));
+        let route = {
+            let mode = mode.clone();
+            let count = count.clone();
+            post(move |Json(body): Json<Value>| {
+                let mode = mode.clone();
+                let count = count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(body["tools"][0]["name"], "moosuri");
+                    let last = body["input"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|v| v["type"] == "function_call_output");
+                    let mode = mode.load(Ordering::SeqCst);
+                    let mut wire = if let Some(result) = last {
+                        assert_eq!(result["output"], "proof-plan-challenge");
+                        final_wire(if mode == 3 {
+                            "proof-plan-challenge "
+                        } else {
+                            "proof-plan-challenge"
+                        })
+                    } else {
+                        assert!(!body.to_string().contains("proof-plan-challenge"));
+                        call_wire(
+                            TOOL_PROBE_NAME,
+                            json!({}),
+                            if mode == 2 { "foreign" } else { "moosuri" },
+                        )
+                    };
+                    if mode == 1 && last.is_some() {
+                        wire = wire
+                            .lines()
+                            .filter_map(|line| line.strip_prefix("data: "))
+                            .map(|s| {
+                                let mut v: Value = serde_json::from_str(s).unwrap();
+                                if v["item"]["type"] == "message" {
+                                    v["item"]["phase"] = json!("commentary");
+                                }
+                                if let Some(output) = v
+                                    .pointer_mut("/response/output")
+                                    .and_then(Value::as_array_mut)
+                                {
+                                    for item in output {
+                                        item["phase"] = json!("commentary");
+                                    }
+                                }
+                                format!("data: {v}\n\n")
+                            })
+                            .collect();
+                    }
+                    if mode == 4 {
+                        wire.push_str(
+                            "data: {\"type\":\"error\",\"error\":{\"code\":\"unknown\"}}\n\n",
+                        );
+                    }
+                    (
+                        [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                        wire,
+                    )
+                        .into_response()
+                }
+            })
+        };
+        let task = tokio::spawn(async move {
+            axum::serve(l, Router::new().route("/v1/responses", route))
+                .await
+                .unwrap()
+        });
+        let row = store
+            .create_provider(
+                &u,
+                ProviderChange {
+                    name: "Synthetic probe guard".into(),
+                    enabled: true,
+                    config: ProviderConfig {
+                        kind: moosuri_core::ProviderKind::Compatible,
+                        base_url: Some(format!("{origin}/v1")),
+                        allowed_ips: vec!["127.0.0.1".into()],
+                        router_providers: vec![],
+                        zero_data_retention: false,
+                    },
+                    credential: CredentialChange::Clear,
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .record_model_probe(
+                &u,
+                row.id.clone(),
+                row.revision,
+                "fixture-model".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        let (binding, _) = store
+            .tool_probe_binding(&u, row.id, row.revision, "fixture-model".into(), None)
+            .await
+            .unwrap();
+        let config = ServerConfig::new("https://assistant.example.test", false).unwrap();
+        let runtime = config.start_runtime(store.clone());
+        let state = AppState {
+            store,
+            config,
+            logins: Arc::new(Mutex::new(HashMap::new())),
+            probes: Arc::new(tokio::sync::Semaphore::new(2)),
+            delivery: runtime.delivery_gate(),
+            streams: Arc::new(Mutex::new(HashMap::new())),
+            mail: runtime.mail_service(),
+            browser: runtime.browser_service(),
+            runtime: runtime.clone(),
+        };
+        let client = ModelClient::synthetic_chatgpt_plan(
+            &origin,
+            Secret::new("synthetic-plan-token".into()).unwrap(),
+            TextCapabilities::default(),
+        )
+        .unwrap();
+        for n in 0..5 {
+            mode.store(n, Ordering::SeqCst);
+            count.store(0, Ordering::SeqCst);
+            let r = verify_tool_probe(
+                &state,
+                &u,
+                &binding,
+                &client,
+                "proof-plan-challenge",
+                &CancellationToken::new(),
+            )
+            .await;
+            assert_eq!(r.is_ok(), n == 0, "mode {n}");
+            assert_eq!(
+                count.load(Ordering::SeqCst),
+                if n == 2 || n == 4 { 1 } else { 2 }
+            );
+        }
+        runtime.shutdown().await;
+        task.abort();
+    }
 }

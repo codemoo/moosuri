@@ -16,15 +16,16 @@ excludes tools/media; tool-looking prose never executes a tool.
 | Protocol | Request/stream behavior |
 | --- | --- |
 | OpenAI Responses | `stream:true`, `store:false`, input array, reasoning effort; item IDs and assistant phase remain available; completed/incomplete/failed are distinct |
-| ChatGPT plan protocol | Explicit fixed-origin constructor; separate catalog, developer input, omitted unsupported output cap and fixed namespace tools; OAuth/selection still pending |
+| ChatGPT plan protocol | Explicit fixed-origin constructor; separate catalog, developer input, omitted unsupported output cap and fixed namespace tools; owner OAuth, exact text/tool proof and foreground selection are connected |
 | Anthropic Messages | separate system text, `max_tokens`, model-verified `output_config.effort`; indexed block lifetimes and cumulative usage; `message_stop` required |
 | OpenRouter Chat | model-verified `reasoning.effort`, approved provider list, fallback disabled and required parameters; repeated finish reason in final accounting is accepted; `[DONE]` required |
 | Compatible/local Chat | conservative Chat Completions text SSE, one choice, explicitly registered endpoint; unverified effort unsupported; unknown usage remains unknown |
 
 There is no native Ollama NDJSON decoder or claim that every compatible server
 implements all parameters. Connection probes must verify the selected model/server.
-ChatGPT plan authentication and Claude official CLI execution remain separate pending
-integrations in [providers](providers.md). The plan protocol alone enables neither.
+Personal ChatGPT authentication and bounded foreground tools use the owner-scoped
+[provider flow](providers.md). Claude official CLI execution remains pending.
+Protocol support alone does not establish account eligibility or enable a capability.
 
 Events distinguish text, explicit refusal, message metadata, optional usage and
 terminal outcome. Reasoning is not exposed as answer text. Output budgets, frame
@@ -76,6 +77,9 @@ boundary in [architecture](architecture.md).
 The [ChatGPT protocol acceptance](reviews/2026-11-14-chatgpt-plan-protocol.md) records
 its independent identity repair, native/real-loopback tests and integrated Linux gate.
 No OAuth grant or actual subscription/model access was used for those checks.
+The later [personal foreground-tool acceptance](reviews/2026-11-14-personal-chatgpt-tools.md)
+connects signed synthetic OAuth, member-owned proof, native Linux transfer and saved
+tool execution; real-account acceptance remains separate.
 
 Run `cargo test --locked -p moosuri-connectors` for synthetic state-machine cases
 and real loopback HTTP boundaries. The fixtures exercise UTF-8 fragmentation,
@@ -87,7 +91,7 @@ are recorded in [status](status.md).
 ## Primary references checked for this unit
 
 - [OpenAI Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses) and [event reference](https://developers.openai.com/api/reference/resources/responses/streaming-events).
-- [Sign in with ChatGPT inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference): a separate future authentication path with its own field/capability limits.
+- [Sign in with ChatGPT inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference): the separate personal authentication path has its own field/capability limits.
 - [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [stop reasons](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons) and [effort](https://platform.claude.com/docs/en/build-with-claude/effort).
 - [OpenRouter streaming](https://openrouter.ai/docs/api_reference/streaming), [reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) and [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection).
 - [Ollama compatibility](https://docs.ollama.com/api/openai-compatibility), [LM Studio Chat](https://lmstudio.ai/docs/developer/openai-compat/chat-completions) and [vLLM compatibility](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/).

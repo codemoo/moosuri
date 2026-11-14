@@ -220,6 +220,60 @@ pub(super) async fn probe(
     Ok(Json(s.store.record_subscription_probe(&u, b).await?).into_response())
 }
 
+pub(super) async fn tool_probe(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(i): Json<Input>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    let (binding, challenge) = s
+        .store
+        .subscription_tool_probe_binding(
+            &u,
+            id,
+            i.revision,
+            i.model.ok_or(StoreError::InvalidInput)?,
+            i.effort,
+        )
+        .await?;
+    let reference = binding.subscription.clone().ok_or(StoreError::Corrupt)?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    let client = s
+        .runtime
+        .subscription_service()
+        .client(SubscriptionAuthority::User(u.clone()), reference.clone())
+        .await?;
+    let cancellation = CancellationToken::new();
+    let proof = providers::verify_tool_probe(&s, &u, &binding, &client, &challenge, &cancellation);
+    let result = tokio::time::timeout(Duration::from_secs(120), proof).await;
+    cancellation.cancel();
+    match result {
+        Ok(Ok(())) => (),
+        Ok(Err(providers::ToolProbeError::Store(e))) => return Err(e.into()),
+        Ok(Err(providers::ToolProbeError::Transport(e))) => {
+            return Ok(providers::transport_failure(e));
+        }
+        Ok(Err(providers::ToolProbeError::Incomplete)) => {
+            return Ok(failure(
+                StatusCode::BAD_GATEWAY,
+                "model_tool_probe_incomplete",
+            ));
+        }
+        Err(_) => return Ok(failure(StatusCode::GATEWAY_TIMEOUT, "model_timeout")),
+    }
+    Ok(Json(
+        s.store
+            .record_subscription_tool_probe(&u, reference)
+            .await?,
+    )
+    .into_response())
+}
+
 // Native HTTPS capability responses are never part of public/browser DTOs.
 #[derive(serde::Serialize)]
 struct PrivateHandoffPreparation {

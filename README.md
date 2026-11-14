@@ -45,7 +45,10 @@ from public code/packages; independent producers can use the custom protocol.
 The model adapters support configured API/compatible/local endpoints with actual
 capability probes. Personal ChatGPT supports same-computer official sign-in, sealed owner-scoped sessions,
 text-probed personal model selection and saved streamed chat, plus protected native
-transfer to a personal HTTPS Linux server. Personal tools/media/background work remain pending. Synthetic protocol
+transfer to a personal HTTPS Linux server. Separately verified personal foreground tools
+support saved reads, exact calculation and the existing connected read/local-draft flows.
+Personal memory/artifact/Calendar mutations, media and background work remain pending.
+See [foreground-tool acceptance](docs/reviews/2026-11-14-personal-chatgpt-tools.md), including the inherited combined-tool limit. Synthetic protocol
 and lifecycle checks do not establish live account eligibility. Real device/provider acceptance remains bounded by
 [current status](docs/status.md); a model name or connection label does not prove support.
 

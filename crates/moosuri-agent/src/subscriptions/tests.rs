@@ -29,6 +29,12 @@ struct Provider {
     token_status: AtomicUsize,
     nonce: Mutex<String>,
     shared_documents: AtomicUsize,
+    tool_mode: AtomicUsize,
+    requests: Mutex<Vec<Value>>,
+    authorizations: Mutex<Vec<String>>,
+    hold_tool: AtomicUsize,
+    tool_entered: Notify,
+    tool_release: Notify,
 }
 struct Fixture {
     origin: String,
@@ -78,6 +84,12 @@ async fn fixture() -> Fixture {
         token_status: AtomicUsize::new(200),
         nonce: Mutex::new(String::new()),
         shared_documents: AtomicUsize::new(0),
+        tool_mode: AtomicUsize::new(0),
+        requests: Mutex::new(vec![]),
+        authorizations: Mutex::new(vec![]),
+        hold_tool: AtomicUsize::new(0),
+        tool_entered: Notify::new(),
+        tool_release: Notify::new(),
     });
     let app=Router::new()
  .route("/.well-known/openid-configuration",get(||async{Json(json!({"issuer":"https://auth.openai.com","authorization_endpoint":"https://auth.openai.com/api/accounts/authorize","token_endpoint":"https://auth.openai.com/api/accounts/oauth/token","revocation_endpoint":"https://auth.openai.com/api/accounts/oauth/revoke","jwks_uri":"https://auth.openai.com/.well-known/jwks.json","id_token_signing_alg_values_supported":["RS256"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["none"]}))}))
@@ -91,7 +103,10 @@ async fn fixture() -> Fixture {
   let done=json!({"id":"shared","model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2}});
   ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],format!("data: {text}\n\ndata: {done}\n\ndata: [DONE]\n\n")).into_response()
  }))
- .route("/v1/responses",post(|State(s):State<Arc<Provider>>,Json(body):Json<Value>|async move{
+ .route("/v1/responses",post(|State(s):State<Arc<Provider>>,headers:axum::http::HeaderMap,Json(body):Json<Value>|async move{
+  if body.get("tools").is_some() && s.tool_mode.load(Ordering::SeqCst)>0 {
+    return foreground_tools_tests::tool_response(&s,&headers,&body).await;
+  }
   s.models.fetch_add(1,Ordering::SeqCst);assert!(!body.to_string().contains("SYNTHETIC_PRIVATE_DOCUMENT_PSR2"));assert_eq!(body["model"],"fixture-model");assert_eq!(body["store"],false);assert_eq!(body["stream"],true);assert!(body.get("max_output_tokens").is_none());assert!(body.get("tools").is_none());for item in body["input"].as_array().unwrap(){assert_ne!(item["role"],"system")}
   let item=json!({"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK","annotations":[]}]});let events=[json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"m","role":"assistant","content":[]}}),json!({"type":"response.content_part.added","item_id":"m","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}),json!({"type":"response.output_text.delta","item_id":"m","output_index":0,"content_index":0,"delta":"OK"}),json!({"type":"response.output_text.done","item_id":"m","output_index":0,"content_index":0,"text":"OK"}),json!({"type":"response.content_part.done","item_id":"m","output_index":0,"content_index":0,"part":{"type":"output_text","text":"OK","annotations":[]}}),json!({"type":"response.output_item.done","output_index":0,"item":item}),json!({"type":"response.completed","response":{"id":"r","model":"fixture-model","status":"completed","output":[item],"usage":{"input_tokens":8,"output_tokens":2}}})];let text=events.iter().map(|e|format!("data: {e}\n\n")).collect::<String>();([(axum::http::header::CONTENT_TYPE,"text/event-stream")],text).into_response()
  })).with_state(state.clone());
@@ -1469,3 +1484,6 @@ async fn vm_import_waiting_for_real_jwks_cannot_outlive_authority_or_binding() {
         assert_eq!(f.state.models.load(Ordering::SeqCst), 0);
     }
 }
+
+#[path = "foreground_tools_tests.rs"]
+mod foreground_tools_tests;

@@ -202,7 +202,7 @@ export function PersonalModelSettings({ accountId, onExpired }: Props) {
           {notice}
         </p>
       )}
-      <PersonalChatGpt accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} />
+      <PersonalChatGpt accountId={accountId} onExpired={onExpired} choices={settings?.choices ?? []} onVerified={()=>setRetry(v=>v+1)} />
       <section className="admin-card">
         <div className="section-heading">
           <div>
@@ -1047,7 +1047,7 @@ type PersonalBinding = {
   remote_revoke: string;
   handoff_phase?: string | null;
 };
-function PersonalChatGpt({accountId, onExpired, onVerified}: Props & {onVerified: () => void}) {
+function PersonalChatGpt({accountId, onExpired, onVerified, choices}: Props & {onVerified: () => void; choices: ModelChoice[]}) {
   const scope = useScope(accountId);
   const [items, setItems] = useState<PersonalBinding[]>([]);
   const [guide, setGuide] = useState(false);
@@ -1069,6 +1069,17 @@ function PersonalChatGpt({accountId, onExpired, onVerified}: Props & {onVerified
     }).catch((error: unknown) => { if (active) fail(error); });
     return () => { active = false; };
   }, [scope]);
+  async function toolProbe(binding: PersonalBinding, choice: ModelChoice) {
+    if (busy) return;
+    setBusy(true); setNotice("");
+    try {
+      const result = await scope.request<ModelChoice>(`/settings/chatgpt/${encodeURIComponent(binding.id)}/tool-probe`,"POST",{revision: binding.revision, model: choice.model, effort: choice.effort});
+      if (!result.function_tools || selectionKey(choiceSelection(result)) !== selectionKey(choiceSelection(choice))) throw new Error("incomplete proof");
+      onVerified();
+      setNotice("도구 호출과 결과 연결을 확인했습니다. 새 대화 턴에서 확인한 도구를 사용할 수 있습니다.");
+    } catch (error) { fail(error); }
+    finally { setBusy(false); }
+  }
   async function act(binding: PersonalBinding, operation: "models" | "probe" | "disconnect") {
     if (busy) return;
     setBusy(true);
@@ -1120,7 +1131,7 @@ function PersonalChatGpt({accountId, onExpired, onVerified}: Props & {onVerified
         <button onClick={() => setGuide(false)}>안내 닫기</button>
       </div>}
       <button disabled={busy} onClick={() => {void scope.request<PersonalBinding[]>("/settings/chatgpt").then(setItems).catch(fail);}}>연결 새로고침</button>
-      <p>개인 연결은 공유 기본값으로 등록되지 않습니다. 현재 텍스트 대화를 지원하며 도구·첨부·백그라운드 업무는 지원하지 않습니다. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">ChatGPT 사용량</a></p>
+      <p>개인 연결은 공유 기본값으로 등록되지 않습니다. 텍스트 확인 뒤 정확한 모델과 강도의 도구 연결을 따로 확인할 수 있습니다. 도구 확인 시 개인 자료·메일·Calendar 읽기와 로컬 메일 초안, 설정된 웹·브라우저를 사용할 수 있습니다. 메일 발송은 최종 내용을 보고 매번 허락해야 합니다. 첨부·백그라운드 업무·대화의 기억/문서/Calendar 변경은 아직 지원하지 않습니다. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">ChatGPT 사용량</a></p>
       {notice && <p role="status">{notice}</p>}
       {items.map((binding) => (
         <div key={binding.id} role="group" aria-label={binding.label}>
@@ -1135,6 +1146,10 @@ function PersonalChatGpt({accountId, onExpired, onVerified}: Props & {onVerified
             <button disabled={busy || !(model[binding.id] ?? "").trim()} onClick={() => void act(binding, "probe")}>텍스트 연결 확인</button>
             <datalist id={`personal-models-${binding.id}`}>{catalogs[binding.id]?.models.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</datalist>
             {catalogs[binding.id]?.truncated && <p>일부 모델만 표시합니다. 정확한 모델 ID를 입력할 수 있습니다.</p>}
+            {choices.filter(choice => choice.source === "personal_chat_gpt" && choice.provider_id === binding.id && choice.provider_revision === binding.revision).map(choice => <div key={selectionKey(choiceSelection(choice))}>
+              <span>{choice.model} · {choice.effort ?? "기본 강도"} · {choice.function_tools ? "도구 사용 가능" : "텍스트 확인됨"}</span>
+              {!choice.function_tools && <button disabled={busy} onClick={() => void toolProbe(binding,choice)}>도구 연결 확인 · {choice.model} · {choice.effort ?? "기본 강도"}</button>}
+            </div>)}
           </>}
           <button disabled={busy || binding.status === "disconnected"} onClick={() => void act(binding, "disconnect")}>ChatGPT 연결 해제</button>
         </div>

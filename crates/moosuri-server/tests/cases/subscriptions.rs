@@ -32,7 +32,7 @@ async fn personal_chatgpt_settings_require_owner_and_shared_default_rejects_pers
         .await,
         json!([])
     );
-    for operation in ["models", "probe"] {
+    for operation in ["models", "probe", "tool-probe"] {
         let r = send(
             &app,
             "POST",
@@ -201,6 +201,11 @@ async fn password_issued_helper_sessions_allow_only_handoff_session_status_and_l
             "/api/v1/source-connections/guessed/token",
             json!({"ttl_seconds":3600}),
         ),
+        (
+            "POST",
+            "/api/v1/settings/chatgpt/guessed/tool-probe",
+            json!({"revision":1,"model":"fixture-model","effort":null}),
+        ),
         ("GET", "/api/v1/threads", Value::Null),
         (
             "POST",
@@ -253,6 +258,11 @@ async fn password_issued_helper_sessions_allow_only_handoff_session_status_and_l
         ("GET", "/api/v1/admin/users", Value::Null),
         ("GET", "/api/v1/vault", Value::Null),
         ("GET", "/api/v1/source-connections", Value::Null),
+        (
+            "POST",
+            "/api/v1/settings/chatgpt/guessed/tool-probe",
+            json!({"revision":1,"model":"fixture-model","effort":null}),
+        ),
         ("GET", "/api/v1/threads", Value::Null),
     ] {
         assert_eq!(

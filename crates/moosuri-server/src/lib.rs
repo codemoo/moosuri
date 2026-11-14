@@ -355,6 +355,10 @@ pub fn router_with_runtime(
             "/api/v1/settings/chatgpt/{id}/probe",
             post(subscriptions::probe),
         )
+        .route(
+            "/api/v1/settings/chatgpt/{id}/tool-probe",
+            post(subscriptions::tool_probe),
+        )
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
         .route("/health/ready", get(ready))
         .route("/api/v1/system", get(system))

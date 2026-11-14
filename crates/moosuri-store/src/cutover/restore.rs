@@ -431,6 +431,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0035_community_catalog_cache.sql"
         ))?;
     }
+    if captured < 36 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0036_personal_chatgpt_tools.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);

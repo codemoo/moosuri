@@ -118,7 +118,7 @@ pub(super) fn initialize(c: &Connection) -> Result<()> {
     Ok(())
 }
 pub(super) fn choices(c: &Connection, u: &UserContext) -> Result<Vec<ModelChoice>> {
-    let mut q=c.prepare("SELECT b.id,b.current_revision,r.label,p.model,p.effort,p.verified_at FROM chatgpt_bindings b JOIN chatgpt_binding_revisions r ON r.tenant_id=b.tenant_id AND r.account_id=b.account_id AND r.binding_id=b.id AND r.revision=b.current_revision JOIN chatgpt_model_probes p ON p.tenant_id=b.tenant_id AND p.account_id=b.account_id AND p.binding_id=b.id AND p.revision=b.current_revision JOIN chatgpt_sessions s ON s.tenant_id=b.tenant_id AND s.account_id=b.account_id AND s.binding_id=b.id AND s.revision=b.current_revision WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.status='active' AND s.cipher IS NOT NULL AND s.plan_enabled=1 AND s.refresh_state!='rotation_unknown' ORDER BY r.label,p.model,p.effort")?;
+    let mut q=c.prepare("SELECT b.id,b.current_revision,r.label,p.model,p.effort,p.verified_at,p.function_tools FROM chatgpt_bindings b JOIN chatgpt_binding_revisions r ON r.tenant_id=b.tenant_id AND r.account_id=b.account_id AND r.binding_id=b.id AND r.revision=b.current_revision JOIN chatgpt_model_probes p ON p.tenant_id=b.tenant_id AND p.account_id=b.account_id AND p.binding_id=b.id AND p.revision=b.current_revision JOIN chatgpt_sessions s ON s.tenant_id=b.tenant_id AND s.account_id=b.account_id AND s.binding_id=b.id AND s.revision=b.current_revision WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.status='active' AND s.cipher IS NOT NULL AND s.plan_enabled=1 AND s.refresh_state!='rotation_unknown' ORDER BY r.label,p.model,p.effort")?;
     let rows = q
         .query_map(params![u.tenant.0, u.account.id], |r| {
             let e: String = r.get(4)?;
@@ -131,7 +131,7 @@ pub(super) fn choices(c: &Connection, u: &UserContext) -> Result<Vec<ModelChoice
                 model: r.get(3)?,
                 effort: (!e.is_empty()).then_some(e),
                 verified_at: r.get(5)?,
-                function_tools: false,
+                function_tools: r.get(6)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -170,10 +170,10 @@ pub(super) fn binding(
         model: choice.model.clone(),
         effort: choice.effort.clone(),
     };
-    if owned(c, &b)? != "active" || choice.function_tools {
+    if owned(c, &b)? != "active" {
         return Err(StoreError::Conflict);
     }
-    let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM chatgpt_model_probes p JOIN chatgpt_sessions s ON s.tenant_id=p.tenant_id AND s.account_id=p.account_id AND s.binding_id=p.binding_id AND s.revision=p.revision WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.binding_id=?3 AND p.revision=?4 AND p.model=?5 AND p.effort=?6 AND s.cipher IS NOT NULL AND s.plan_enabled=1 AND s.refresh_state!='rotation_unknown')",params![tenant,account,b.id,b.revision,b.model,b.effort.as_deref().unwrap_or("")],|r|r.get(0))?;
+    let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM chatgpt_model_probes p JOIN chatgpt_sessions s ON s.tenant_id=p.tenant_id AND s.account_id=p.account_id AND s.binding_id=p.binding_id AND s.revision=p.revision WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.binding_id=?3 AND p.revision=?4 AND p.model=?5 AND p.effort=?6 AND s.cipher IS NOT NULL AND s.plan_enabled=1 AND s.refresh_state!='rotation_unknown' AND (?7=0 OR p.function_tools=1))",params![tenant,account,b.id,b.revision,b.model,b.effort.as_deref().unwrap_or(""),choice.function_tools],|r|r.get(0))?;
     if !valid {
         return Err(StoreError::Conflict);
     }
@@ -500,11 +500,90 @@ impl Store {
             authorize(&db.conn,&db.provider_key,&SubscriptionAuthority::User(u.clone()),&b)?;
             if owned(&db.conn,&b)?!="active"{
                 return Err(StoreError::Conflict)}
-            db.conn.execute("INSERT INTO chatgpt_model_probes VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO UPDATE SET verified_at=excluded.verified_at",params![b.tenant,b.account,b.id,b.revision,b.model,b.effort.as_deref().unwrap_or(""),now()?])?;
+            db.conn.execute("INSERT INTO chatgpt_model_probes(tenant_id,account_id,binding_id,revision,model,effort,verified_at) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO UPDATE SET verified_at=excluded.verified_at",params![b.tenant,b.account,b.id,b.revision,b.model,b.effort.as_deref().unwrap_or(""),now()?])?;
             verified(&db.conn,&u,&ModelSelection{
                 source:ModelSource::PersonalChatGpt,provider_id:b.id,provider_revision:b.revision,model:b.model,effort:b.effort}
             )}
         ).await
+    }
+    /// Synthetic-only expiry control for an owner-authenticated loopback test.
+    #[cfg(feature = "test-fixtures")]
+    #[doc(hidden)]
+    pub async fn expire_subscription_fixture(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+    ) -> Result<()> {
+        let u = u.clone();
+        self.call(move|db| {
+            let u=validate(&db.conn,&u,true,false)?;
+            let b=SubscriptionRef{tenant:u.tenant.0,account:u.account.id,id,revision,model:"fixture-model".into(),effort:None};
+            if owned(&db.conn,&b)?!="active" {return Err(StoreError::Conflict)}
+            db.conn.execute("UPDATE chatgpt_sessions SET expires_at=0 WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4",params![b.tenant,b.account,b.id,b.revision])?;
+            Ok(())
+        }).await
+    }
+    /// Owner-only synthetic tool proof admission. Catalog presence is insufficient.
+    pub async fn subscription_tool_probe_binding(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+        model: String,
+        effort: Option<String>,
+    ) -> Result<(providers::ProviderBinding, String)> {
+        let u = u.clone();
+        self.call(move |db| {
+            let u = validate(&db.conn, &u, true, false)?;
+            let reference = SubscriptionRef {
+                tenant: u.tenant.0.clone(),
+                account: u.account.id.clone(),
+                id: id.clone(),
+                revision,
+                model: model.clone(),
+                effort: effort.clone(),
+            };
+            // Match ordinary subscription routes: an unowned/unknown binding is
+            // unavailable before examining capability metadata or credentials.
+            if owned(&db.conn, &reference)? != "active" {
+                return Err(StoreError::Conflict);
+            }
+            let choice = verified(
+                &db.conn,
+                &u,
+                &ModelSelection {
+                    source: ModelSource::PersonalChatGpt,
+                    provider_id: id,
+                    provider_revision: revision,
+                    model,
+                    effort,
+                },
+            )?;
+            let b = binding(&db.conn, &u.tenant.0, &u.account.id, &choice)?;
+            let nonce = random_token()?;
+            Ok((b, format!("proof-{}", &nonce[..16])))
+        })
+        .await
+    }
+    /// Called only after the trusted server has verified both complete tool rounds.
+    pub async fn record_subscription_tool_probe(
+        &self,
+        u: &UserContext,
+        b: SubscriptionRef,
+    ) -> Result<ModelChoice> {
+        let u = u.clone();
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            authorize(&tx, &db.provider_key, &SubscriptionAuthority::User(u.clone()), &b)?;
+            let selection = ModelSelection { source: ModelSource::PersonalChatGpt, provider_id: b.id.clone(), provider_revision: b.revision, model: b.model.clone(), effort: b.effort.clone() };
+            verified(&tx, &u, &selection)?;
+            let changed = tx.execute("UPDATE chatgpt_model_probes SET function_tools=1 WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND model=?5 AND effort=?6", params![b.tenant,b.account,b.id,b.revision,b.model,b.effort.as_deref().unwrap_or("")])?;
+            if changed != 1 { return Err(StoreError::Conflict); }
+            let result = verified(&tx, &u, &selection)?;
+            tx.commit()?;
+            Ok(result)
+        }).await
     }
     pub async fn begin_subscription_disconnect(
         &self,
@@ -574,3 +653,7 @@ fn refresh_failure(c: &Connection, l: &SubscriptionRefresh, state: &str) -> Resu
 #[cfg(test)]
 #[path = "subscriptions/handoff_tests.rs"]
 mod handoff_tests;
+
+#[cfg(test)]
+#[path = "subscriptions/tools_tests.rs"]
+mod tools_tests;

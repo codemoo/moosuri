@@ -780,7 +780,7 @@ pub(crate) async fn execute(
             .and_then(|client| client.with_images(images))
         })
     };
-    let client = match built_client {
+    let mut client = match built_client {
         Ok(client) => client,
         Err(error) => {
             let (state, error) = transport_failure(error);
@@ -788,7 +788,7 @@ pub(crate) async fn execute(
             return;
         }
     };
-    if model.function_tools {
+    if model.function_tools && !personal {
         // The final user message is the original current turn. No prior messages
         // or source results are included in the separate intent request.
         let Some(current_text) = request
@@ -836,15 +836,26 @@ pub(crate) async fn execute(
             context = next;
         }
     }
-    if !personal {
-        request.messages[0]
-            .text
-            .push_str(&crate::artifact_tools::system(artifact_profile.as_ref()));
+    if personal && model.function_tools && artifact_profile.is_some() {
+        artifact_profile = match store.initialize_artifact_readonly(&lease).await {
+            Ok(profile) => Some(profile),
+            Err(error) => {
+                let (state, reason) = store_failure(&error);
+                finish(&store, &lease, None, state, Some(reason), &signals).await;
+                return;
+            }
+        };
     }
-    if !media_context && !personal {
+    request.messages[0]
+        .text
+        .push_str(&crate::artifact_tools::system(artifact_profile.as_ref()));
+    if !media_context {
         request.messages[0]
             .text
             .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
+    }
+    if personal && model.function_tools {
+        request.messages[0].text.push_str(" In this personal foreground stage, saved memory and artifact reads, admitted tools and local mail drafts are available. Memory/artifact mutations, Calendar changes and background delegation are unavailable; do not claim to perform them. Earlier descriptions of separate memory-command or Calendar mutation flows do not apply to this stage.");
     }
     let mut definitions = knowledge_tools::definitions(tool_profile.as_ref());
     if !media_context {
@@ -868,7 +879,13 @@ pub(crate) async fn execute(
             continuation: continuation.as_ref(),
             results: &results,
         };
-        let valid = if model.function_tools {
+        let valid = if model.function_tools && personal {
+            moosuri_connectors::model::protocol::tools::encode_chatgpt_plan_tool_request(
+                &tool_request,
+                &capabilities,
+                &tool_capability,
+            )
+        } else if model.function_tools {
             encode_tool_request(protocol, &tool_request, &capabilities, &tool_capability)
         } else if personal {
             moosuri_connectors::model::chatgpt::encode_text_request(&request, &capabilities)
@@ -886,6 +903,31 @@ pub(crate) async fn execute(
             )
             .await;
             return;
+        }
+        // Each personal continuation resolves current token readiness through the same
+        // durable RunLease/refresh CAS. This never retries an inference dispatch.
+        if let Some(reference) = binding.subscription.clone() {
+            client = match subscriptions
+                .client(
+                    moosuri_store::SubscriptionAuthority::Run(lease.clone()),
+                    reference,
+                )
+                .await
+            {
+                Ok(client) => client,
+                Err(_) => {
+                    finish(
+                        &store,
+                        &lease,
+                        None,
+                        RunState::Failed,
+                        Some(RunFailure::ProviderUnavailable),
+                        &signals,
+                    )
+                    .await;
+                    return;
+                }
+            };
         }
         // Dispatch admission is the actor transaction's linearization point. A
         // failed/unknown acknowledgement never authorizes a provider request.
@@ -1024,12 +1066,21 @@ pub(crate) async fn execute(
             .await;
             return;
         };
-        continuation = match Continuation::from_private_checkpoint(
-            &saved.bytes,
-            protocol,
-            &request.model,
-            request.effort.as_deref(),
-        ) {
+        let restored = if personal {
+            Continuation::from_chatgpt_plan_checkpoint(
+                &saved.bytes,
+                &request.model,
+                request.effort.as_deref(),
+            )
+        } else {
+            Continuation::from_private_checkpoint(
+                &saved.bytes,
+                protocol,
+                &request.model,
+                request.effort.as_deref(),
+            )
+        };
+        continuation = match restored {
             Ok(value) => Some(value),
             Err(_) => {
                 finish(

@@ -700,3 +700,33 @@ it("guides local-helper server sign-in without requesting private launch materia
   const content=screen.getByRole("region",{name:"ChatGPT 로그인 안내"}).textContent ?? "";
   for (const secret of ["transfer_key","authorization_url","refresh_token","access_token","session="]) expect(content).not.toContain(secret);
 });
+
+
+describe("personal foreground tool verification", () => {
+  it("verifies only a saved exact personal tuple and reports capability on refreshed settings", async () => {
+    const user=userEvent.setup();
+    const choice: ModelChoice={...high,source:"personal_chat_gpt",provider_id:"personal-tools",provider_name:"개인 도구 연결",function_tools:false};
+    const settings: ModelSettings={selection:null,effective:null,choices:[choice]};
+    const fixture=server(call=>{
+      if(call.path==="/settings/chatgpt")return response([{id:"personal-tools",revision:1,label:"개인 도구 연결",status:"active",remote_revoke:"not_requested"}]);
+      if(call.path==="/settings/chatgpt/personal-tools/tool-probe") {settings.choices=[{...choice,function_tools:true}];return response(settings.choices[0]);}
+      return undefined;
+    },member,{providers:[],default_selection:null},settings);
+    open("/settings/model");
+    const group=await screen.findByRole("group",{name:"개인 도구 연결"});
+    await user.click(await within(group).findByRole("button",{name:`도구 연결 확인 · ${choice.model} · ${choice.effort}`}));
+    await within(group).findByText(`${choice.model} · ${choice.effort} · 도구 사용 가능`);
+    expect(fixture.calls.find(c=>c.path.endsWith("personal-tools/tool-probe"))?.body).toEqual({revision:1,model:choice.model,effort:choice.effort});
+    expect(fixture.calls.some(c=>c.path.includes("/admin/providers/"))).toBe(false);
+  });
+  it("failed tool verification leaves exact text capability available without success", async () => {
+    const user=userEvent.setup();
+    const choice:ModelChoice={...high,source:"personal_chat_gpt",provider_id:"personal-tools",provider_name:"개인 도구 연결",effort:null,function_tools:false};
+    server(call=>call.path==="/settings/chatgpt"?response([{id:"personal-tools",revision:1,label:"개인 도구 연결",status:"active",remote_revoke:"not_requested"}]):call.path.endsWith("personal-tools/tool-probe")?response({code:"model_tool_probe_incomplete"},502):undefined,member,{providers:[],default_selection:null},{selection:null,effective:null,choices:[choice]});
+    open("/settings/model");const group=await screen.findByRole("group",{name:"개인 도구 연결"});
+    await user.click(await within(group).findByRole("button",{name:`도구 연결 확인 · ${choice.model} · 기본 강도`}));
+    await screen.findByText(/개인 ChatGPT 요청을 완료하지 못했습니다/);
+    expect(within(group).getByText(`${choice.model} · 기본 강도 · 텍스트 확인됨`)).toBeInTheDocument();
+    expect(within(group).queryByText(/도구 사용 가능/)).not.toBeInTheDocument();
+  });
+});

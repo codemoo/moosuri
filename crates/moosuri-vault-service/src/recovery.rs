@@ -17,14 +17,17 @@ use std::{
 
 const FORMAT: &str = "moosuri-vault-sealed-current";
 const WIRE: &[u8; 8] = b"MVSC0001";
+const SNAPSHOT_FORMAT: &str = "moosuri-vault-live-snapshot";
+const SNAPSHOT_WIRE: &[u8; 8] = b"MVLS0001";
 const DB_LIMIT: u64 = 512 * 1024 * 1024;
 const ARCHIVE_LIMIT: u64 = DB_LIMIT + JOURNAL_LIMIT + 1024 * 1024;
 const JSON_LIMIT: u64 = 16 * 1024;
 const STAGE_PREFIX: &str = ".vault-recovery-stage-";
+pub mod online;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Seal {
+struct CheckpointBinding {
     format: String,
     version: u32,
     checkpoint: uuid::Uuid,
@@ -35,7 +38,7 @@ struct Seal {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
-    seal: Seal,
+    seal: CheckpointBinding,
     database_size: u64,
     database_sha256: String,
     journal_size: u64,
@@ -46,9 +49,44 @@ struct Manifest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedHead {
-    seal: Seal,
+    seal: CheckpointBinding,
     ciphertext_size: u64,
     ciphertext_sha256: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SnapshotManifest {
+    snapshot: CheckpointBinding,
+    database_size: u64,
+    database_sha256: String,
+    journal_size: u64,
+    journal_sha256: String,
+}
+/// A distinct non-sealing receipt. No source retirement or independent latestness is asserted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotTrustedHead {
+    snapshot: CheckpointBinding,
+    ciphertext_size: u64,
+    ciphertext_sha256: String,
+}
+impl From<TrustedHead> for SnapshotTrustedHead {
+    fn from(h: TrustedHead) -> Self {
+        Self {
+            snapshot: h.seal,
+            ciphertext_size: h.ciphertext_size,
+            ciphertext_sha256: h.ciphertext_sha256,
+        }
+    }
+}
+impl From<SnapshotTrustedHead> for TrustedHead {
+    fn from(h: SnapshotTrustedHead) -> Self {
+        Self {
+            seal: h.snapshot,
+            ciphertext_size: h.ciphertext_size,
+            ciphertext_sha256: h.ciphertext_sha256,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +94,14 @@ struct Provenance {
     format: String,
     version: u32,
     trusted: TrustedHead,
+    destination: uuid::Uuid,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SnapshotProvenance {
+    format: String,
+    version: u32,
+    trusted: SnapshotTrustedHead,
     destination: uuid::Uuid,
 }
 
@@ -350,7 +396,7 @@ pub fn checkpoint(
         }
     }
     let db = Database::open_recovery(root)?;
-    let seal = Seal {
+    let seal = CheckpointBinding {
         format: FORMAT.into(),
         version: 1,
         checkpoint: uuid::Uuid::new_v4(),
@@ -360,7 +406,7 @@ pub fn checkpoint(
     };
     let seal_path = root.join("vault.sealed");
     let seal = if seal_path.symlink_metadata().is_ok() {
-        let old: Seal = read_json(&seal_path)?;
+        let old: CheckpointBinding = read_json(&seal_path)?;
         if old.format != FORMAT
             || old.version != 1
             || old.source != seal.source
@@ -388,29 +434,64 @@ pub fn checkpoint(
     backup.run_to_completion(128, std::time::Duration::from_millis(1), None)?;
     drop(backup);
     drop(target);
-    let (database_size, database_sha256) = digest_file(&snapshot, DB_LIMIT)?;
     let journal_path = root.join("vault.journal");
-    let (journal_size, journal_sha256) = digest_file(&journal_path, JOURNAL_LIMIT)?;
-    let manifest = encode(&Manifest {
+    publish_checkpoint(
+        &stage,
+        &journal_path,
+        seal,
+        &recipient,
+        output,
+        trusted_head,
+        WIRE,
+    )
+}
+fn publish_checkpoint(
+    stage: &Stage,
+    journal_path: &Path,
+    seal: CheckpointBinding,
+    recipient: &age::x25519::Recipient,
+    output: &Path,
+    trusted_head: &Path,
+    wire: &[u8; 8],
+) -> Result<TrustedHead> {
+    let parent = output.parent().ok_or(Error::Invalid)?;
+    let snapshot = stage.0.join("vault.sqlite");
+    let (database_size, database_sha256) = digest_file(&snapshot, DB_LIMIT)?;
+    let (journal_size, journal_sha256) = digest_file(journal_path, JOURNAL_LIMIT)?;
+    let manifest = Manifest {
         seal: seal.clone(),
         database_size,
         database_sha256,
         journal_size,
         journal_sha256,
-    })?;
+    };
+    let manifest = if wire == SNAPSHOT_WIRE {
+        encode(&SnapshotManifest {
+            snapshot: manifest.seal,
+            database_size: manifest.database_size,
+            database_sha256: manifest.database_sha256,
+            journal_size: manifest.journal_size,
+            journal_sha256: manifest.journal_sha256,
+        })?
+    } else {
+        encode(&manifest)?
+    };
     if manifest.len() as u64 > JSON_LIMIT {
         return Err(Error::Limit);
     }
     let partial = stage.0.join("checkpoint.age");
     let f = new_private(&partial)?;
     let encryptor =
-        age::Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient))
+        age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))
             .map_err(|_| Error::Invalid)?;
     let mut writer = encryptor.wrap_output(f).map_err(|_| Error::Unavailable)?;
-    writer.write_all(WIRE)?;
+    writer.write_all(wire)?;
     writer.write_all(&(manifest.len() as u32).to_be_bytes())?;
     writer.write_all(&manifest)?;
-    for (path, len) in [(&snapshot, database_size), (&journal_path, journal_size)] {
+    for (path, len) in [
+        (snapshot.as_path(), database_size),
+        (journal_path, journal_size),
+    ] {
         writer.write_all(&len.to_be_bytes())?;
         let mut input = open_private(path, len)?;
         if std::io::copy(&mut input, &mut writer)? != len {
@@ -430,7 +511,12 @@ pub fn checkpoint(
     fs::hard_link(&partial, output)?;
     fs::remove_file(&partial)?;
     sync_dir(parent)?;
-    write_new(trusted_head, &encode(&head)?)?;
+    let receipt = if wire == SNAPSHOT_WIRE {
+        encode(&SnapshotTrustedHead::from(head.clone()))?
+    } else {
+        encode(&head)?
+    };
+    write_new(trusted_head, &receipt)?;
     Ok(head)
 }
 fn identity(path: &Path) -> Result<age::x25519::Identity> {
@@ -537,6 +623,40 @@ pub fn restore(
     trusted_head: &Path,
     identity_file: &Path,
 ) -> Result<()> {
+    restore_inner(
+        destination,
+        checkpoint,
+        trusted_head,
+        identity_file,
+        FORMAT,
+        WIRE,
+    )
+}
+/// Explicit point-in-time restore. It does not certify current/latest history
+/// or protect deletions committed after the selected snapshot's pinned head.
+pub fn restore_snapshot(
+    destination: &Path,
+    checkpoint: &Path,
+    trusted_head: &Path,
+    identity_file: &Path,
+) -> Result<()> {
+    restore_inner(
+        destination,
+        checkpoint,
+        trusted_head,
+        identity_file,
+        SNAPSHOT_FORMAT,
+        SNAPSHOT_WIRE,
+    )
+}
+fn restore_inner(
+    destination: &Path,
+    checkpoint: &Path,
+    trusted_head: &Path,
+    identity_file: &Path,
+    format: &str,
+    wire: &[u8; 8],
+) -> Result<()> {
     if reserved_stage_name(destination) {
         return Err(Error::Invalid);
     }
@@ -548,8 +668,12 @@ pub fn restore(
             return Err(Error::Invalid);
         }
     }
-    let head: TrustedHead = read_json(trusted_head)?;
-    if head.seal.format != FORMAT
+    let head: TrustedHead = if format == SNAPSHOT_FORMAT {
+        TrustedHead::from(read_json::<SnapshotTrustedHead>(trusted_head)?)
+    } else {
+        read_json(trusted_head)?
+    };
+    if head.seal.format != format
         || head.seal.version != 1
         || head.seal.checkpoint.is_nil()
         || head.seal.source.is_nil()
@@ -572,7 +696,7 @@ pub fn restore(
         .map_err(|_| Error::Unauthorized)?;
     let mut magic = [0; 8];
     reader.read_exact(&mut magic)?;
-    if &magic != WIRE {
+    if &magic != wire {
         return Err(Error::Invalid);
     }
     let mut size = [0; 4];
@@ -583,7 +707,18 @@ pub fn restore(
     }
     let mut manifest = vec![0; size];
     reader.read_exact(&mut manifest)?;
-    let manifest: Manifest = serde_json::from_slice(&manifest).map_err(|_| Error::Invalid)?;
+    let manifest: Manifest = if format == SNAPSHOT_FORMAT {
+        let m: SnapshotManifest = serde_json::from_slice(&manifest).map_err(|_| Error::Invalid)?;
+        Manifest {
+            seal: m.snapshot,
+            database_size: m.database_size,
+            database_sha256: m.database_sha256,
+            journal_size: m.journal_size,
+            journal_sha256: m.journal_sha256,
+        }
+    } else {
+        serde_json::from_slice(&manifest).map_err(|_| Error::Invalid)?
+    };
     if manifest.seal != head.seal {
         return Err(Error::Unavailable);
     }
@@ -618,8 +753,18 @@ pub fn restore(
     verify_semantics(&db, &journal, parent)?;
     if destination.symlink_metadata().is_ok() {
         private_dir(destination)?;
-        let provenance: Provenance = read_json(&destination.join("vault.restored"))?;
-        if provenance.format != FORMAT
+        let provenance: Provenance = if format == SNAPSHOT_FORMAT {
+            let p: SnapshotProvenance = read_json(&destination.join("vault.restored"))?;
+            Provenance {
+                format: p.format,
+                version: p.version,
+                trusted: p.trusted.into(),
+                destination: p.destination,
+            }
+        } else {
+            read_json(&destination.join("vault.restored"))?
+        };
+        if provenance.format != format
             || provenance.version != 1
             || provenance.trusted != head
             || provenance.destination.is_nil()
@@ -652,15 +797,23 @@ pub fn restore(
     let db = Database::open_recovery(&stage.0)?;
     verify_semantics(&db, &journal, parent)?;
     drop(db);
-    write_new(
-        &stage.0.join("vault.restored"),
-        &encode(&Provenance {
-            format: FORMAT.into(),
-            version: 1,
-            trusted: head,
-            destination: new_id,
-        })?,
-    )?;
+    let provenance = Provenance {
+        format: format.into(),
+        version: 1,
+        trusted: head,
+        destination: new_id,
+    };
+    let encoded = if format == SNAPSHOT_FORMAT {
+        encode(&SnapshotProvenance {
+            format: provenance.format,
+            version: provenance.version,
+            trusted: provenance.trusted.into(),
+            destination: provenance.destination,
+        })?
+    } else {
+        encode(&provenance)?
+    };
+    write_new(&stage.0.join("vault.restored"), &encoded)?;
     for entry in fs::read_dir(&stage.0)? {
         open_private(&entry?.path(), ARCHIVE_LIMIT)?.sync_all()?;
     }

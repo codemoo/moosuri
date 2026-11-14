@@ -98,6 +98,109 @@ fn put(db: &mut Database, o: &Owner, item: EncryptedItem) -> Operation {
     }
 }
 #[test]
+fn ongoing_snapshot_is_immutable_source_stays_live_and_restore_quarantines_authority() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let old_dir = tmp.path().join("old-exports");
+    let new_dir = tmp.path().join("new-exports");
+    for path in [&old_dir, &new_dir] {
+        fs::create_dir(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let old = kit(&old_dir);
+    let latest = kit(&new_dir);
+    let source = tmp.path().join("source");
+    let mut db = Database::open(&source).unwrap();
+    let o = owner();
+    let mut active = setup(&mut db, &o);
+    let item = active
+        .seal_item(Uuid::new_v4(), 1, &fields(), &mut OsEntropy)
+        .unwrap();
+    let op = put(&mut db, &o, item.clone());
+    let receipt = db.prepare(&o, op.clone()).unwrap();
+    db.commit(&o, op.id(), &receipt.payload_sha256).unwrap();
+    let pending_item = active
+        .seal_item(Uuid::new_v4(), 1, &fields(), &mut OsEntropy)
+        .unwrap();
+    let pending = put(&mut db, &o, pending_item);
+    let r = db.prepare(&o, pending.clone()).unwrap();
+    let captured = db.capture_snapshot(&old_dir).unwrap();
+    // Source appends after capture; independent journal reads must not move its
+    // append offset. The old snapshot remains point-in-time, never called latest.
+    db.cancel(&o, pending.id(), pending.clone()).unwrap();
+    let delete = Operation::Delete {
+        id: Uuid::new_v4(),
+        expected_header: db.state(&o).unwrap().header_sha256,
+        item: item.id,
+        expected_revision: 1,
+    };
+    let d = db.prepare(&o, delete.clone()).unwrap();
+    db.commit(&o, delete.id(), &d.payload_sha256).unwrap();
+    assert!(db.state(&o).unwrap().items.is_empty());
+    db.lifecycle(Uuid::new_v4(), &o, "delete").unwrap();
+    captured
+        .encrypt(&old.recipient, &old.archive, &old.head)
+        .unwrap();
+    db.capture_snapshot(&new_dir)
+        .unwrap()
+        .encrypt(&latest.recipient, &latest.archive, &latest.head)
+        .unwrap();
+    assert!(!source.join("vault.sealed").exists());
+    let other = owner();
+    db.create_session("source-continues", &other).unwrap();
+    assert!(
+        recovery::restore(
+            &tmp.path().join("wrong-mode"),
+            &old.archive,
+            &old.head,
+            &old.identity
+        )
+        .is_err()
+    );
+    let restored = tmp.path().join("old-restored");
+    recovery::restore_snapshot(&restored, &old.archive, &old.head, &old.identity).unwrap();
+    let mut restored_db = Database::open(&restored).unwrap();
+    assert!(
+        restored_db
+            .session(&format!("synthetic-cookie-{}", o.account))
+            .is_err()
+    );
+    assert_eq!(
+        restored_db.state(&o).unwrap().items.len(),
+        1,
+        "point-in-time restore cannot claim post-snapshot deletion coverage"
+    );
+    assert!(restored_db.state(&o).unwrap().pending.is_empty());
+    assert_eq!(
+        restored_db
+            .commit(&o, pending.id(), &r.payload_sha256)
+            .unwrap()
+            .state,
+        "aborted"
+    );
+    restored_db.create_session("fresh-restored", &o).unwrap();
+    drop(restored_db);
+    recovery::restore_snapshot(&restored, &old.archive, &old.head, &old.identity).unwrap();
+    assert!(
+        Database::open(&restored)
+            .unwrap()
+            .session("fresh-restored")
+            .is_ok()
+    );
+    let after = tmp.path().join("deletion-restored");
+    recovery::restore_snapshot(&after, &latest.archive, &latest.head, &latest.identity).unwrap();
+    let mut after_db = Database::open(&after).unwrap();
+    assert!(after_db.state(&o).is_err());
+    assert!(after_db.create_session("no-resurrection", &o).is_err());
+    drop(db);
+    assert!(
+        Database::open(&source)
+            .unwrap()
+            .session("source-continues")
+            .is_ok()
+    );
+}
+#[test]
 fn exact_restore_quarantines_pending_sessions_preserves_receipts_tombstones_and_reservations() {
     let tmp = tempfile::tempdir().unwrap();
     let k = kit(tmp.path());

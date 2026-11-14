@@ -1,13 +1,14 @@
 use clap::{Parser, Subcommand};
 use moosuri_vault_service::{
     database::Database,
-    http::{Adapter, Config, router},
+    http::{Adapter, Config, router_shared},
 };
 use std::{
     io::Read,
     net::SocketAddr,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::PathBuf,
+    sync::{Arc, Mutex},
 };
 #[derive(Parser)]
 #[command(about = "Separate-origin client-encrypted vault; never accepts unlock secrets")]
@@ -26,6 +27,14 @@ struct Args {
     adapter_key_file: Option<PathBuf>,
     #[arg(long)]
     dev: bool,
+    /// Existing private output directory for opt-in non-sealing encrypted snapshots.
+    #[arg(long, requires = "backup_recipient")]
+    backup_directory: Option<PathBuf>,
+    #[arg(long, requires = "backup_directory")]
+    backup_recipient: Option<String>,
+    /// Delay after each completed snapshot (300..604800 seconds; default3600).
+    #[arg(long, requires = "backup_directory")]
+    backup_interval_seconds: Option<u64>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -50,6 +59,15 @@ enum Recovery {
         seal_source: bool,
     },
     Restore {
+        #[arg(long)]
+        checkpoint: PathBuf,
+        #[arg(long)]
+        trusted_head: PathBuf,
+        #[arg(long)]
+        identity_file: PathBuf,
+    },
+    /// Restore an explicitly selected point-in-time live snapshot, not independently latest history.
+    RestoreSnapshot {
         #[arg(long)]
         checkpoint: PathBuf,
         #[arg(long)]
@@ -124,6 +142,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     &identity_file,
                 )?;
             }
+            Recovery::RestoreSnapshot {
+                checkpoint,
+                trusted_head,
+                identity_file,
+            } => {
+                moosuri_vault_service::recovery::restore_snapshot(
+                    &args.data_dir,
+                    &checkpoint,
+                    &trusted_head,
+                    &identity_file,
+                )?;
+            }
         }
         return Ok(());
     }
@@ -138,20 +168,94 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let config = Config::new(&origin, &assistant_origin, args.dev)?;
     let adapter = Adapter::new(&args.adapter_url, private_key(&adapter_key_file)?)?;
-    let db = Database::open(&args.data_dir)?;
-    let app = router(db, adapter, config);
+    let db = Arc::new(Mutex::new(Database::open(&args.data_dir)?));
+    let app = router_shared(db.clone(), adapter, config);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    axum::serve(listener, app)
+    let worker = match (args.backup_directory, args.backup_recipient) {
+        (Some(directory), Some(recipient)) => {
+            Some(moosuri_vault_service::recovery::online::Worker::start(
+                db,
+                &directory,
+                &recipient,
+                args.backup_interval_seconds.unwrap_or(3600),
+            )?)
+        }
+        (None, None) => None,
+        _ => return Err("vault_backup_configuration_incomplete".into()),
+    };
+    let result = axum::serve(listener, app)
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            shutdown_signal().await;
         })
-        .await?;
+        .await;
+    if let Some(worker) = worker {
+        worker.shutdown().await;
+    }
+    result?;
     Ok(())
+}
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        if let Ok(mut terminate) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            tokio::select! {_=tokio::signal::ctrl_c()=>(),_=terminate.recv()=>()}
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ongoing_snapshot_service_flags_require_recipient_and_restore_is_explicit() {
+        assert!(
+            Args::try_parse_from([
+                "vault-service",
+                "--data-dir",
+                "/private/example",
+                "--backup-directory",
+                "/private/exports"
+            ])
+            .is_err()
+        );
+        let args = Args::try_parse_from([
+            "vault-service",
+            "--data-dir",
+            "/private/example",
+            "--backup-directory",
+            "/private/exports",
+            "--backup-recipient",
+            "age1SYNTHETIC",
+            "--backup-interval-seconds",
+            "300",
+        ])
+        .unwrap();
+        assert_eq!(args.backup_interval_seconds, Some(300));
+        let args = Args::try_parse_from([
+            "vault-service",
+            "--data-dir",
+            "/private/new",
+            "recovery",
+            "restore-snapshot",
+            "--checkpoint",
+            "/private/snapshot.age",
+            "--trusted-head",
+            "/private/snapshot.head.json",
+            "--identity-file",
+            "/private/identity",
+        ])
+        .unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::Recovery {
+                command: Recovery::RestoreSnapshot { .. }
+            })
+        ));
+    }
     #[test]
     fn existing_service_flags_and_offline_recovery_parse() {
         let service = Args::try_parse_from([

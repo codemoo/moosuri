@@ -372,7 +372,7 @@ impl Database {
         self.adopt_head(next);
         Ok(())
     }
-    fn ready(&self) -> Result<()> {
+    pub(crate) fn ready(&self) -> Result<()> {
         if self.poisoned {
             Err(Error::Unavailable)
         } else {

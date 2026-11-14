@@ -150,8 +150,16 @@ impl IntoResponse for Error {
     }
 }
 pub fn router(db: database::Database, adapter: Adapter, config: Config) -> Router {
+    router_shared(Arc::new(Mutex::new(db)), adapter, config)
+}
+/// Share the same writer mutex with the opt-in local snapshot worker. No export route.
+pub fn router_shared(
+    db: Arc<Mutex<database::Database>>,
+    adapter: Adapter,
+    config: Config,
+) -> Router {
     let state = Service {
-        db: Arc::new(Mutex::new(db)),
+        db,
         adapter,
         config,
         jobs: Arc::new(tokio::sync::Semaphore::new(2)),

@@ -267,3 +267,8 @@ F40의 정규화 통화 전사 feed를 구현했다. 선택한 settled 파일·�
 최대 20분 canonical WAV를 분할 전사하는 선택 경로가 있다. 원본 음성은 로컬에 남으며,
 vendor 포맷·원본 음성 라이브러리 이전·실제 provider/device·F40 전체 수락은 별도다.
 [지원 경계](call-feed.md).
+
+F50/P8에 독립 볼트의 운영 중 암호화 snapshot과 명시적 시점 복구를 추가했다. 캡처는
+HTTP와 동일한 writer를 사용하며 암호화는 잠금을 놓은 뒤 실행한다. 기존 봉인 checkpoint와
+형식을 구분하고 복원 세션/대기 실행을 격리한다. 보관 시점 뒤 삭제에 대한 최신 journal
+반영·off-host·실운영/실기기 수락은 별도다. [볼트 snapshot](vault-ongoing-backups.md).

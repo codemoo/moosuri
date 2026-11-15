@@ -135,8 +135,15 @@ fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_c
     for text in [
         "매일 아침9시에 공개 뉴스 찾아서 요약해 줘",
         "매일 아침9시에 공개 뉴스 요약 부탁해",
+        "1분 뒤에 저장한 자료를 읽고 남은 준비를 정리해서 알려 줘.",
+        "두 시간 후에 저장한 자료를 읽어서 요약해 줘",
+        "In 1 minute read my saved notes and summarize them",
         "시간 걸려도 맡아서 공개 기사 조사 부탁해",
         "아침마다 아홉 시가 되면 공개 경제 소식 정리해 줘",
+        "아침에 공개 뉴스를 요약해 줘",
+        "아침9시에 공개 뉴스를 요약해 줘",
+        "아침 아홉 시에 공개 뉴스를 요약해 줘",
+        "내일 아침에 공개 뉴스를 요약해 줘",
         "On Mondays at nine in the morning give me a public paper digest",
         "시간 걸려도 창 닫아도 계속 맡아서 해 줘",
         "내 아침 뉴스 업무 쉬게 해 줘",
@@ -160,6 +167,164 @@ fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_c
         false
     ));
     assert!(!crate::mission_intent::candidate("안녕 잘 지냈어?", false));
+    for text in [
+        "아침 운동에 대한 기억만 지워 줘.",
+        "아침 운동은 산책이야. 기억해 줘.",
+    ] {
+        assert!(!crate::mission_intent::candidate(text, false), "{text}");
+    }
+}
+
+// A scripted decision exercises routing/storage only, not real-model language quality.
+#[tokio::test]
+async fn delayed_saved_read_schedules_future_work_without_early_reads_or_literal_reminder_models() {
+    let _g = TEST_LOCK.lock().await;
+    const TASK: &str = "저장한 ‘자작 회의 준비’ 자료를 읽고, 끝난 검토와 남은 준비를 정리해서";
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let counted = count.clone();
+    let app = Router::new().route("/v1/chat/completions", post(move |axum::Json(body): axum::Json<Value>| {
+        let count = counted.clone();
+        async move {
+            let n = count.fetch_add(1, Ordering::SeqCst);
+            let intent = body["tools"].as_array().is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == "mission_chat_decision"));
+            let (delta, reason) = if intent {
+                assert_eq!(body["messages"].as_array().unwrap().len(), 2);
+                let text = body["messages"][1]["content"].as_str().unwrap();
+                let noncommand = text.contains("하지 마") || text.starts_with('“');
+                let mut decision = semantic(text, if noncommand { "no_command" } else { "command" });
+                if !noncommand {
+                    decision.task_quote = Some(TASK.into());
+                    decision.time_quote = Some("1분 뒤".into());
+                    decision.time = Some(MissionChatTime::Relative { seconds: 60 });
+                }
+                // Deliberately propose a reduced read for the email request too;
+                // Store must retain/reject the owner's external-delivery effect.
+                (json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("delay-{n}"),"mission_chat_decision",serde_json::to_value(decision).unwrap())]}), "tool_calls")
+            } else {
+                (json!({"role":"assistant","content":"Synthetic ordinary answer"}), "stop")
+            };
+            let content = frame(json!({"id":format!("delay-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5}})) + "data: [DONE]\n\n";
+            Response::builder().header("content-type", "text/event-stream").body(Body::from(content)).unwrap()
+        }
+    }));
+    let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_dir, s, u, thread) = knowledge::tool_configured(&base).await;
+    let admitted = s
+        .submit_turn_with_schedule_context(
+            &u,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            format!("1분 뒤에 {TASK} 알려 줘."),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admitted.run.state, RunState::Queued);
+    assert!(admitted.run.schedule_receipts.is_none());
+    let runtime = Runtime::start(s.clone());
+    let saved = wait(&s, &u, &thread).await;
+    assert_eq!(
+        saved.run.state,
+        RunState::Completed,
+        "{:?}",
+        saved.run.error
+    );
+    assert_eq!(saved.run.mission_receipt.unwrap().state, "active");
+    assert!(saved.run.schedule_receipts.is_none());
+    let scheduled = s.recurring_missions(&u).await.unwrap();
+    assert_eq!(scheduled.len(), 1);
+    assert_eq!(scheduled[0].template.task, TASK);
+    let moosuri_core::ScheduleRule::Once { at } = scheduled[0].schedule.rule else {
+        panic!("one future occurrence required")
+    };
+    assert!(at >= admitted.run.created_at + 60);
+    assert!(at <= saved.run.created_at + 61);
+    assert!(scheduled[0].recent.is_empty());
+    assert_eq!(s.poll_recurring_missions_at(at - 1).await.unwrap(), 0);
+    assert!(
+        s.missions(&u).await.unwrap().is_empty(),
+        "no early read execution"
+    );
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "only the isolated decision, no read/answer call"
+    );
+
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        "1분 뒤 약 먹으라고 알려줘".into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let literal = wait(&s, &u, &thread).await;
+    assert!(literal.run.mission_receipt.is_none());
+    assert_eq!(literal.run.schedule_receipts.unwrap().len(), 1);
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "literal reminders stay deterministic"
+    );
+
+    for text in [
+        "1분 뒤에 자료를 읽고 요약하는 일은 하지 마.",
+        "“1분 뒤에 자료를 읽고 요약해서 알려줘”를 번역해 줘.",
+    ] {
+        s.submit_turn(
+            &u,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            text.into(),
+        )
+        .await
+        .unwrap();
+        let ordinary = wait(&s, &u, &thread).await;
+        assert_eq!(ordinary.run.state, RunState::Completed);
+        assert!(ordinary.run.mission_receipt.is_none(), "{text}");
+        assert!(ordinary.run.schedule_receipts.is_none(), "{text}");
+    }
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        format!("1분 뒤에 {TASK} 예시@example.test로 이메일 보내 줘."),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let unsupported = wait(&s, &u, &thread).await;
+    assert_eq!(unsupported.run.state, RunState::Completed);
+    assert_eq!(
+        unsupported.run.mission_receipt.unwrap().state,
+        "unsupported"
+    );
+    assert!(unsupported.run.schedule_receipts.is_none());
+    assert_eq!(
+        s.recurring_missions(&u).await.unwrap().len(),
+        1,
+        "no reduced email task saved"
+    );
+    assert!(s.missions(&u).await.unwrap().is_empty());
+    assert_eq!(count.load(Ordering::SeqCst), 6);
+    runtime.shutdown().await;
+    upstream.abort();
 }
 
 #[tokio::test]

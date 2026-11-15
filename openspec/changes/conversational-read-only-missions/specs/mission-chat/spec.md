@@ -18,11 +18,24 @@ The system SHALL support current Korean/English paraphrases for one read-only de
 - **WHEN** source/forwarded/quoted examples are being explained
 - **THEN** the semantic interpreter SHALL not treat their nested commands as independent owner authority.
 
+#### Scenario: Delayed saved reading is future work rather than a fixed reminder
+
+- **WHEN** the owner directly requests reading saved material and summarizing or organizing it after an elapsed delay
+- **THEN** the reminder parser SHALL defer to isolated current-owner mission interpretation rather than save the executable instruction as fixed notification text
+- **AND** a supported acknowledged scheduled decision SHALL retain the future occurrence without reading sources before that occurrence
+- **AND** explicit literal reminder shells SHALL retain deterministic no-model precedence, while negated/quoted instructions SHALL grant no independent execution authority and required email delivery SHALL remain unsupported without saving a reduced task
+
 #### Scenario: Polite ordinary requests avoid unnecessary model routing
 
 - **WHEN** a current ordinary question includes Korean politeness such as `부탁해` without a scheduling, delegation, task-control or Calendar command cue
 - **THEN** the system SHALL continue foreground answering without an additional mission interpretation call or saved task
 - **AND** explicit timed/delegated requests containing the same politeness SHALL retain their existing isolated interpretation and authority checks
+
+#### Scenario: A morning memory topic does not imply scheduling
+
+- **WHEN** a direct memory request names a morning topic without an explicit scheduling, Calendar, task-control or delegation cue
+- **THEN** the system SHALL reach its existing isolated memory interpretation without an extra mission/Calendar classification call
+- **AND** explicit morning temporal particles, recurrence and civil clocks SHALL retain their existing mission interpretation; memory authority and mixed-request rules SHALL remain unchanged
 
 ### Requirement: Atomic acknowledged command plans and real authority
 

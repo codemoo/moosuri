@@ -92,6 +92,12 @@ provider 수락·지연 profile은 별도 미완료 범위다.
 [현재 상태](status.md)와 [active change](../openspec/changes/build-agent-evaluation-harness/tasks.md)가
 전체 수락 범위의 정본이다.
 
+[2026-11-15 실모델 개발 평가](reviews/2026-11-15-live-agent-quality.md)는
+GPT-6.1 Terra/high의36개 실모델 분류·5개 무호출 분기와 실제 앱11개 연속 시나리오,
+스킬 재사용·위임/예약 확장을 별도로 기록한다. 임시 공식 이력 재입력 연결을 사용했으며
+원래 실패와 채점기 오판, 의미 검토, 후속 수정 결과를 구분한다. 이 작은 개발 평가를
+위32세계×3반복 pilot·독립 holdout·운영 provider 수락으로 대체하지 않는다.
+
 ## 기존 비서의 소스 기준 고정
 
 ### 두 공통 세계의 로컬 실행 adapter

@@ -149,6 +149,9 @@ async fn memory_response(
                     Some("홍차 취향"),
                 ),
                 FORGET => command("forget", "잊어 줘", None, None, Some("녹차 취향")),
+                "아침 운동에 대한 기억만 지워 줘." => {
+                    command("forget", "지워 줘", None, None, Some("아침 운동"))
+                }
                 "홍차 기억을 지워 줘." => {
                     command("forget", "지워 줘", None, None, Some("홍차"))
                 }
@@ -372,6 +375,59 @@ async fn explicit_commands_recall_correct_self_context_forget_and_reopen_without
             .is_some()
     );
     assert_eq!(model.state.calls.load(Ordering::SeqCst), 7);
+}
+
+#[tokio::test]
+async fn morning_topic_forget_uses_only_memory_planning_and_preserves_unrelated_fact() {
+    let _guard = TEST_LOCK.lock().await;
+    let model = memory_model(Mode::Commands).await;
+    let (_dir, store, user, thread) = enabled(&model.base).await;
+    let mut ids = vec![];
+    for text in ["아침 운동은 합성 산책이다", "저녁 운동은 합성 스트레칭이다"]
+    {
+        let memory = store
+            .create_memory(
+                &user,
+                uuid::Uuid::new_v4().to_string(),
+                MemoryDraft {
+                    text: text.into(),
+                    subject: "합성 운동".into(),
+                    speaker: None,
+                    valid_from: None,
+                    valid_until: None,
+                    evidence: vec![],
+                },
+            )
+            .await
+            .unwrap();
+        ids.push(memory.id);
+    }
+    let runtime = Runtime::start(store.clone());
+    let run = ask_memory(&store, &user, &thread, "아침 운동에 대한 기억만 지워 줘.").await;
+    runtime.wake();
+    let result = completed(&store, &user, &thread, &run.run.id).await;
+    assert_eq!(result.run.state, RunState::Completed);
+    assert!(result.run.mission_receipt.is_none());
+    assert!(result.run.calendar_receipt.is_none());
+    let remaining = store.memories(&user, None).await.unwrap().items;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, ids[1]);
+    assert!(
+        store
+            .memory_command_receipt(&user, run.run.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(model.state.calls.load(Ordering::SeqCst), 1);
+    let requests = model.state.requests.lock().await;
+    assert_eq!(requests[0]["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        requests[0]["tools"][0]["function"]["name"],
+        "memory_command_decision"
+    );
+    drop(requests);
+    runtime.shutdown().await;
 }
 
 #[tokio::test]

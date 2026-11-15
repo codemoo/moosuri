@@ -456,6 +456,16 @@ pub(super) fn mission_body(value: &str) -> bool {
     [
         "조사해",
         "검색해",
+        // These are executable reads/transformations, not fixed notification text.
+        // Explicit reminder shells and Korean ...라고 bodies keep precedence above.
+        "읽어",
+        "읽고",
+        "요약해",
+        "요약하",
+        "정리해",
+        "정리하",
+        "분석해",
+        "분석하",
         "보고해",
         "보내줘",
         "보내 줘",

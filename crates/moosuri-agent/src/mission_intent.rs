@@ -72,12 +72,48 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
     ]
     .iter()
     .any(|v| compact.contains(v));
+    // Elapsed one-off requests need the same isolated interpretation as civil
+    // clocks and recurring requests. This only routes cost; it grants no action.
+    let elapsed = ["분뒤", "분후", "시간뒤", "시간후", "초뒤", "초후"]
+        .iter()
+        .any(|v| compact.contains(v))
+        || words.windows(3).any(|parts| {
+            parts[0] == "in"
+                && !parts[1].is_empty()
+                && [
+                    "second", "seconds", "minute", "minutes", "hour", "hours", "day", "days",
+                ]
+                .contains(&parts[2])
+        });
+    // A morning topic/fact (e.g. a memory about exercise) is not a time cue.
+    // Keep explicit temporal particles, recurrence and adjacent civil clocks.
+    let morning = low.match_indices("아침").any(|(at, _)| {
+        let tail = low[at + "아침".len()..]
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+        let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+        tail.starts_with("마다")
+            || tail.starts_with('에')
+            || digits > 0 && tail[digits..].starts_with(['시', ':'])
+            || [
+                "한", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉", "열", "열한",
+                "열두",
+            ]
+            .iter()
+            .any(|number| {
+                tail.strip_prefix(*number)
+                    .is_some_and(|rest| rest.starts_with('시'))
+            })
+    });
     // Politeness alone is not delegation: ordinary answers need no intent round.
     crate::calendar_intent::candidate(text)
         || civil
         || weekday_clock
         || reactivation
         || interval
+        || elapsed
+        || morning
         || compact.contains("onhold")
         || [
             "매일",
@@ -86,7 +122,6 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
             "보류",
             "매주",
             "매월",
-            "아침",
             "내일",
             "모레",
             "글피",

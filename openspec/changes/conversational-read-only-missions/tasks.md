@@ -10,6 +10,9 @@
 - [x] Repair CM01–CM05: pinned original capability, complete civil components/source zone, selected/name agreement, guard-only preflight, and generalized counter/on-hold cue routing.
 - [x] Preserve original five review probes as regressions and add epoch/fresh-request, valid civil/timezone, cross-kind/CAS, and failed-confirmation/guard-purge counterparts.
 
+- [x] Treat morning topics separately from explicit morning time cues so single-memory requests keep their existing isolated planner without unrelated mission/Calendar classification.
+- [x] Route delayed saved read/summary requests through the existing isolated planner and retain future scheduling; synthetic runtime coverage preserves literal reminder/no-command/external-delivery boundaries.
+
 ## Accepted boundaries and explicit follow-up; do not archive
 
 - [x] Independent authority/storage/restore review and root integrated native/Linux/browser acceptance; see docs/reviews/2026-11-13-conversational-missions.md.

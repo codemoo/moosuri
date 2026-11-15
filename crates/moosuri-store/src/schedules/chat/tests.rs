@@ -935,6 +935,9 @@ async fn scheduled_missions_defer_to_isolated_planner_and_literal_meta_words_sti
         "내일 오전 9시에 뉴스 조사해서 알려줘",
         "매일 오전 9시에 뉴스 조사해서 알려줘",
         "10분 뒤에 뉴스 조사해서 알려줘",
+        "1분 뒤에 저장한 ‘자작 회의 준비’ 자료를 읽고, 끝난 검토와 남은 준비를 정리해서 알려 줘.",
+        "두 시간 후에 저장한 자료를 읽어서 요약해 줘",
+        "30초 뒤에 보고서를 분석해서 알려줘",
         "내일 오전 9시에 메일 확인해서 알려줘",
         "매일 메일 보내줘",
     ] {
@@ -957,6 +960,11 @@ async fn scheduled_missions_defer_to_isolated_planner_and_literal_meta_words_sti
             "quote the example; never send mail.",
         ),
         ("10분 뒤에 요약하라고 알려줘", "요약하라고"),
+        ("1분 뒤 약 먹으라고 알려줘", "약 먹으라고"),
+        (
+            "1분 뒤에 자료를 읽고 요약하라고 알려줘",
+            "자료를 읽고 요약하라고",
+        ),
         ("내일 오전 9시에 뉴스 조사하라고 알려줘", "뉴스 조사하라고"),
         (
             "내일 오전 9시에 뉴스 조사해서 알림 설정해줘",

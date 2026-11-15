@@ -63,3 +63,14 @@ This rules out missing ephemeral history as a sufficient explanation or repair.
 The eleven semantic application cases remain `not_run`; unchanged live probes
 will not be repeated. A runtime/provider fix or a separately validated integration
 is still required before a current model-quality claim.
+
+## Subsequent separately validated integration
+
+The [2026-11-15 development evaluation](2026-11-15-live-agent-quality.md)
+executed these eleven scenarios through a distinct official paired-history replay
+and standalone `toolOutput` path. It repeats the last actual result once and is
+not equivalent to native in-turn continuation or the production subscription adapter.
+The original direct-path setup failures and `not_run` record above are preserved;
+they are not retroactively relabeled as successful runs. No capability override
+or synthetic final answer was used. The new report includes actual task failures,
+independent semantic adjudication and targeted repairs separately.

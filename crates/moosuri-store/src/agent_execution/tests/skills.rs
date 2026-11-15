@@ -51,7 +51,12 @@ async fn profile_and_skill_receipts_survive_retry_without_upgrading_legacy_runs(
         .unwrap();
     let claim = claimed(&store, &user, &thread.id).await;
     let profile = claim.tool_profile.clone().unwrap();
-    let pin = profile.skills[0].clone();
+    let pin = profile
+        .skills
+        .iter()
+        .find(|p| p.id == "source-briefing")
+        .unwrap()
+        .clone();
     let mut wrong = pin.clone();
     wrong.digest = "0".repeat(64);
     let mut missing = pin.clone();
@@ -1270,7 +1275,7 @@ async fn learned_schema37_upgrade_preserves_ordinary_thread_deletion() {
         .create_thread(&user, "Existing schema37 thread".into())
         .await
         .unwrap();
-    store.call(|db|{db.conn.execute_batch("DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts; DROP TABLE learned_skill_observations; DROP TABLE learned_skill_uses; DROP TABLE learned_skill_proofs; DROP TABLE learned_skills; PRAGMA user_version=37;")?;Ok(())}).await.unwrap();
+    store.call(|db|{db.conn.execute_batch("ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts; DROP TABLE learned_skill_observations; DROP TABLE learned_skill_uses; DROP TABLE learned_skill_proofs; DROP TABLE learned_skills; PRAGMA user_version=37;")?;Ok(())}).await.unwrap();
     drop(store);
     let store = Store::open(dir.path()).unwrap();
     store.delete_thread(&user, thread.id).await.unwrap();
@@ -1316,9 +1321,9 @@ async fn learned_foreground_admission_keeps_mission_and_recurring_profiles_withi
     store.create_mission(&user, template()).await.unwrap();
     let mission = store.claim_agent_run().await.unwrap().unwrap();
     let supported = |profile: &RunToolProfile| {
-        assert!(!profile.skills.iter().any(|p| p.id.starts_with("private:")));
+        assert!(profile.skills.iter().any(|p| p.id.starts_with("private:")));
         assert!(
-            !profile
+            profile
                 .community_metadata
                 .iter()
                 .any(|m| m.pin.id.starts_with("private:"))
@@ -1833,3 +1838,5 @@ async fn korean_aliases_reads_decline_learning_while_legacy_literal_proofs_stay_
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].readiness, "ready");
 }
+
+mod missions;

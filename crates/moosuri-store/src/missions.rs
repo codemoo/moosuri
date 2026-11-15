@@ -76,6 +76,10 @@ pub(crate) fn authority(c: &Connection, r: &Run) -> Result<()> {
     // Pinned instruction skill withdrawals fence even proposals that did not read the pin yet.
     if let Some(p) = &r.tool_profile {
         for pin in &p.skills {
+            // Private discovery is not a dependency until read or execution.
+            if pin.id.starts_with("private:") {
+                continue;
+            }
             if matches!(
                 crate::agent_execution::skills::read(c, r, pin),
                 KnowledgeToolResult::Error(_)
@@ -94,6 +98,8 @@ pub(crate) fn tool_allowed(v: &KnowledgeToolInput) -> bool {
             | KnowledgeToolInput::ReadMemory { .. }
             | KnowledgeToolInput::SkillRead { .. }
             | KnowledgeToolInput::DecimalCalculate { .. }
+            | KnowledgeToolInput::DecimalWorkflow { .. }
+            | KnowledgeToolInput::LearnedSkill { .. }
             | KnowledgeToolInput::External {
                 request: moosuri_core::ExternalToolRequest::Mail(
                     moosuri_core::MailToolRequest::Search { .. }
@@ -251,6 +257,21 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
                 let receipt: KnowledgeToolResult = parse(&raw)?;
                 let (label, detail) = match receipt {
                     KnowledgeToolResult::Decimal { exact } => ("정확한 계산".into(), exact),
+                    KnowledgeToolResult::DecimalWorkflow { exact, .. } => {
+                        ("계산 절차의 확인 결과".into(), exact)
+                    }
+                    KnowledgeToolResult::EvidenceCalculation {
+                        exact, evidence, ..
+                    } => (
+                        "현재 자료로 계산한 결과".into(),
+                        format!(
+                            "{} · revision {}\n{} → {}",
+                            evidence.source_title,
+                            evidence.source_revision,
+                            evidence.literal,
+                            exact
+                        ),
+                    ),
                     KnowledgeToolResult::Source(s) => (
                         format!("{} · revision {}", s.source.title, s.source.revision),
                         format!("{}\n{}", s.source.id, s.text),
@@ -312,9 +333,7 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
                         };
                         ("공개 웹 관측".into(), detail)
                     }
-                    KnowledgeToolResult::EvidenceCalculation { .. }
-                    | KnowledgeToolResult::DecimalWorkflow { .. }
-                    | KnowledgeToolResult::ConversationSearch(_)
+                    KnowledgeToolResult::ConversationSearch(_)
                     | KnowledgeToolResult::ConversationTurn(_)
                     | KnowledgeToolResult::Error(_) => continue,
                 };
@@ -652,7 +671,7 @@ if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} 
  }
  let mut passed=0;
  for (i,check) in input.checks.iter().enumerate(){let valid=match check {
- MissionCheck::DecimalEquals{expected}=>candidate.text.contains(expected)&&evidence.iter().any(|v|matches!(v,KnowledgeToolResult::Decimal{exact} if exact==expected)),
+ MissionCheck::DecimalEquals{expected}=>candidate.text.contains(expected)&&evidence.iter().any(|v|matches!(v,KnowledgeToolResult::Decimal{exact} | KnowledgeToolResult::DecimalWorkflow{exact,..} | KnowledgeToolResult::EvidenceCalculation{exact,..} if exact==expected)),
  MissionCheck::SourceQuote{id,revision,quote}=>candidate.text.contains(quote)&&evidence.iter().any(|v|matches!(v,KnowledgeToolResult::Source(s) if s.source.id==*id && s.source.revision==*revision && s.text.contains(quote))),
  MissionCheck::OutputContains{text}=>candidate.text.contains(text)&&!evidence.is_empty(),
  MissionCheck::UserReview{..}=>false,
@@ -759,13 +778,23 @@ pub(crate) fn create_pinned_in(
 }
 
 pub(crate) fn read_profile(
+    conn: &Connection,
+    tenant: &str,
+    account: &str,
     mut profile: moosuri_core::RunToolProfile,
-) -> moosuri_core::RunToolProfile {
-    profile.evidence_calculation = false;
-    profile.skills.retain(|pin| !pin.id.starts_with("private:"));
+) -> Result<moosuri_core::RunToolProfile> {
+    let mut admitted = Vec::new();
+    for pin in &profile.skills {
+        if !pin.id.starts_with("private:")
+            || crate::learned_skills::mission_eligible(conn, tenant, account, pin)?
+        {
+            admitted.push(pin.clone());
+        }
+    }
+    profile.skills = admitted;
     profile
         .community_metadata
-        .retain(|metadata| !metadata.pin.id.starts_with("private:"));
+        .retain(|metadata| profile.skills.contains(&metadata.pin));
     profile.credential_github = false;
     profile.credential_google = false;
     profile.credential_google_preview = false;
@@ -775,8 +804,25 @@ pub(crate) fn read_profile(
     if let Some(w) = &mut profile.web {
         w.browser_pin = None;
     }
-    profile.version = if profile.web.is_some() { 3 } else { 1 };
-    profile
+    profile.version = if profile.web.is_some() { 3 } else { 2 };
+    Ok(profile)
+}
+/// Current accepted owner task only; JSON metadata and prior criteria are not inputs.
+pub(crate) fn learned_task_text(conn: &Connection, run: &Run) -> Result<String> {
+    let owned: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM missions WHERE tenant_id=?1 AND account_id=?2 AND run_id=?3)",
+        params![run.tenant, run.account, run.id],
+        |row| row.get(0),
+    )?;
+    if !owned {
+        return Err(StoreError::NotFound);
+    }
+    let current = acceptance::current(conn, &run.tenant, &run.id)?;
+    Ok(if current.constraints.is_empty() {
+        current.task
+    } else {
+        format!("{}\n{}", current.task, current.constraints)
+    })
 }
 pub(crate) fn create_owner_in(
     tx: &Connection,
@@ -818,7 +864,12 @@ pub(crate) fn create_owner_in(
         return Err(StoreError::Busy);
     }
     require_model(tx, key, &u.tenant.0, &u.account.id, &choice)?;
-    let profile = connected::admit_profile(tx, u, &input, read_profile(profile))?;
+    let profile = connected::admit_profile(
+        tx,
+        u,
+        &input,
+        read_profile(tx, &u.tenant.0, &u.account.id, profile)?,
+    )?;
     let mut model = serde_json::to_value(choice).map_err(|_| StoreError::InvalidInput)?;
     model["agent_profile"] = serde_json::to_value(profile).map_err(|_| StoreError::InvalidInput)?;
     let expiry = clock()?

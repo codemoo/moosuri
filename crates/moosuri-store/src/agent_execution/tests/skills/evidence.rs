@@ -503,3 +503,222 @@ async fn korean_aliases_evidence_binding_declines_even_when_literal_fallback_fou
     assert!(s.learned_skills(&u).await.unwrap().is_empty());
     stop(&s, &r).await;
 }
+
+#[tokio::test]
+async fn mission_evidence_recipe_uses_accepted_task_and_fresh_source_then_withdraws() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    for (q, price, count) in [
+        ("MissionProofAlpha", "2.35", "4"),
+        ("MissionProofBravo", "1.25", "2"),
+    ] {
+        source(&s, &u, &format!("{q} cost: {price}")).await;
+        let text = format!("Find {q}; prefix cost:; quantity {count}");
+        let r = start(&s, &u, &text).await;
+        let calculation = prepare(&s, &r, &text, q, "cost:", count).await;
+        let (_, output) = execute(
+            &s,
+            &r,
+            "bound",
+            KnowledgeToolInput::EvidenceCalculate { calculation },
+        )
+        .await;
+        let KnowledgeToolResult::EvidenceCalculation {
+            exact, evidence, ..
+        } = output
+        else {
+            panic!("training receipt")
+        };
+        let context = s.agent_context(&r.lease).await.unwrap();
+        let final_step = s
+            .begin_agent_step(&r.lease, context.checkpoint_seq)
+            .await
+            .unwrap();
+        s.append_agent_output(
+            &final_step,
+            vec![OutputPatch::Append {
+                item: format!("step-{}-answer", final_step.step()),
+                text: format!(
+                    "{} cost: {}; exact {exact}",
+                    evidence.source_title, evidence.literal
+                ),
+                phase: Some(MessagePhase::FinalAnswer),
+                refusal: false,
+            }],
+        )
+        .await
+        .unwrap();
+        s.commit_agent_step(
+            &final_step,
+            capsule("terminal adopted source calculation"),
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.finish_agent_run(&final_step, RunState::Completed, None)
+            .await
+            .unwrap();
+    }
+    let card = s.learned_skills(&u).await.unwrap().remove(0);
+    assert_eq!(card.readiness, "ready");
+    let pin = SkillPin {
+        id: card.id,
+        revision: card.version,
+        digest: card.digest,
+    };
+    let (_, source_id) = source(&s, &u, "MissionFreshLookup cost: 2.50").await;
+    let m = s
+        .create_mission(
+            &u,
+            super::missions::template("Find SupersededLookup; prefix retired:; quantity 8", "64"),
+        )
+        .await
+        .unwrap();
+    let paused = s
+        .control_mission(
+            &u,
+            m.id.clone(),
+            MissionControl {
+                request_id: Uuid::new_v4().to_string(),
+                expected_revision: m.revision,
+                action: MissionAction::Pause,
+            },
+        )
+        .await
+        .unwrap();
+    s.revise_mission_acceptance(
+        &u,
+        m.id.clone(),
+        moosuri_core::MissionAcceptanceUpdate {
+            request_id: Uuid::new_v4().to_string(),
+            expected_revision: paused.revision,
+            task: "Find MissionFreshLookup; prefix cost:; quantity 3".into(),
+            constraints: String::new(),
+            checks: vec![MissionCheck::DecimalEquals {
+                expected: "7.5".into(),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    let r = s.claim_agent_run().await.unwrap().unwrap();
+    let (_, superseded) = super::missions::reuse(
+        &s,
+        &r,
+        pin.clone(),
+        LearnedSkillArguments::Evidence {
+            parameters: moosuri_core::EvidenceParameters {
+                query: "SupersededLookup".into(),
+                prefix: "retired:".into(),
+                scalars: vec!["8".into()],
+            },
+        },
+    )
+    .await;
+    assert!(matches!(
+        superseded,
+        KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+    ));
+    // A verification answer in serialized metadata is not a current-task scalar.
+    let (_, bad) = super::missions::reuse(
+        &s,
+        &r,
+        pin.clone(),
+        LearnedSkillArguments::Evidence {
+            parameters: moosuri_core::EvidenceParameters {
+                query: "MissionFreshLookup".into(),
+                prefix: "cost:".into(),
+                scalars: vec!["7.5".into()],
+            },
+        },
+    )
+    .await;
+    assert!(matches!(
+        bad,
+        KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+    ));
+    let (step, output) = super::missions::reuse(
+        &s,
+        &r,
+        pin.clone(),
+        LearnedSkillArguments::Evidence {
+            parameters: moosuri_core::EvidenceParameters {
+                query: "MissionFreshLookup".into(),
+                prefix: "cost:".into(),
+                scalars: vec!["3".into()],
+            },
+        },
+    )
+    .await;
+    assert!(
+        matches!(output, KnowledgeToolResult::EvidenceCalculation { exact, evidence, .. } if exact=="7.5" && evidence.source_id==source_id && evidence.literal=="2.50")
+    );
+    super::missions::verify(&s, &r, &step, "Calculated from current cost: 7.5").await;
+    let completed = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.id == m.id)
+        .unwrap();
+    assert_eq!(completed.state, "achieved");
+    assert!(
+        completed
+            .receipts
+            .iter()
+            .any(|v| v.detail.contains("2.50 → 7.5"))
+    );
+    // Completed delegated runs are consumers, never extra independent training proofs.
+    let tenant = u.tenant.0.clone();
+    s.call(move |db| {
+        assert_eq!(
+            db.conn.query_row(
+                "SELECT count(*) FROM learned_skill_proofs WHERE tenant_id=?1",
+                [tenant],
+                |row| row.get::<_, i64>(0)
+            )?,
+            2
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+    s.delete_source(&u, source_id, 1).await.unwrap();
+    let withdrawn = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.id == m.id)
+        .unwrap();
+    assert_eq!(withdrawn.state, "quarantined");
+    assert!(withdrawn.result.is_none() && withdrawn.receipts.is_empty());
+    let outsider = member(&s, &u, "mission-outsider@example.test").await.user;
+    s.create_mission(
+        &outsider,
+        super::missions::template("Find MissionFreshLookup; prefix cost:; quantity 3", "7.5"),
+    )
+    .await
+    .unwrap();
+    let other = s.claim_agent_run().await.unwrap().unwrap();
+    assert!(!other.tool_profile.as_ref().unwrap().skills.contains(&pin));
+    let (_, refused) = super::missions::reuse(
+        &s,
+        &other,
+        pin,
+        LearnedSkillArguments::Evidence {
+            parameters: moosuri_core::EvidenceParameters {
+                query: "MissionFreshLookup".into(),
+                prefix: "cost:".into(),
+                scalars: vec!["3".into()],
+            },
+        },
+    )
+    .await;
+    assert!(matches!(
+        refused,
+        KnowledgeToolResult::Error(ToolReadError::Unavailable)
+    ));
+}

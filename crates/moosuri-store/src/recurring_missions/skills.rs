@@ -138,6 +138,16 @@ pub(super) fn read(
     }
     Ok(result)
 }
+pub(super) fn record_run(c: &Connection, run: &crate::chat::Run, pin: &SkillPin) -> Result<()> {
+    let parent: Option<String> = c.query_row(
+        "SELECT o.schedule_id FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id WHERE m.tenant_id=?1 AND m.run_id=?2 AND m.account_id=?3",
+        params![run.tenant, run.id, run.account], |row| row.get(0),
+    ).optional()?;
+    if let Some(parent) = parent {
+        record(c, &run.tenant, &parent, pin)?;
+    }
+    Ok(())
+}
 fn record(c: &Connection, t: &str, id: &str, pin: &SkillPin) -> Result<()> {
     let mut model = ensure(c, t, id)?;
     let mut used = pins(&model)?;

@@ -87,7 +87,7 @@ minimum failed-tool unit. Same-slot replay returns the committed result without
 new reads, child receipts or tool charge. Existing6model/12tool/120second bounds
 remain. Missing/ambiguous current evidence or unsupported current parameters do
 not count toward three-attributable-failures quarantine; arithmetic overflow does.
-Private learned execution and this new primitive are excluded from missions.
+The direct primitive stays foreground-only. A proven pinned local recipe can be reused in an explicitly created one-off or recurring mission. Its literal parameters bind to the current accepted task/constraints, never serialized request IDs, verification answers or original/replaced history. Each execution re-reads current evidence and retains the existing child-call budget and withdrawal rules.
 
 ## Generation and sharing
 

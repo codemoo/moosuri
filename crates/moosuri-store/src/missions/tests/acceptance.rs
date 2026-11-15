@@ -258,7 +258,7 @@ async fn mission_acceptance_schema51_and_current_owner_scope_guards() {
     let (d, s, u) = setup().await;
     s.call(|db| {
         db.conn
-            .execute_batch("DROP TABLE mission_acceptances;PRAGMA user_version=51;")?;
+            .execute_batch("ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE mission_acceptances;PRAGMA user_version=51;")?;
         Ok(())
     })
     .await
@@ -358,7 +358,7 @@ async fn mission_acceptance_schema51_and_current_owner_scope_guards() {
         assert_eq!(
             db.conn
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-            52
+            crate::CURRENT_SCHEMA_VERSION
         );
         assert!(!db.conn.prepare("PRAGMA foreign_key_check")?.exists([])?);
         Ok(())

@@ -621,6 +621,9 @@ pub(crate) fn eligible_pin(c: &Connection, tenant: &str, pin: &SkillPin) -> Resu
 }
 
 pub(crate) fn pin_label(c: &Connection, pin: &SkillPin) -> Result<String> {
+    if pin.id.starts_with("private:") {
+        return Ok("학습한 개인 절차".into());
+    }
     if pin.id.starts_with("community:") {
         let entry = stored(c, &pin.digest)?;
         let name = if entry.external.is_some() {

@@ -29,6 +29,7 @@ Every mail send needs the user's explicit approval of its final preview, includi
 have conservative read-only Sent checks and are never automatically resent.
 
 Private learned skills can reuse verified two-to-four-step exact calculations and Japan Post latest-summary lookups with fresh inputs. A [source-bound calculation](docs/evidence-calculation.md) also composes one unambiguous saved-source read with exact arithmetic, then re-reads the current source on reuse. These routes can export a structural recipe with new synthetic examples.
+Proven local recipes also work in explicitly created one-off and recurring missions, with fresh inputs, current sources and their original execution budget.
 Suggestions can discover an explicitly configured public GitHub skill catalog,
 verify selected original packages and keep each user's installations separate.
 Disabling a used recipe pauses its dependent recurring tasks until the original

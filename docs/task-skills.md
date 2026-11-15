@@ -41,7 +41,7 @@
 | 배송 현재 상태·주문/취소 | 일본우편 고정 공식 endpoint의 최근 요약·실제 원문/시각·같은 대화 운송장 영수증 재사용 | 전체 이력·타 배송사·알림 구독·주문/취소는 미지원 |
 | 주기적 감시·변경 알림 | 고정 알림·회차·pause/edit/restart·inbox·opt-in Push 구현; schema28 직접 반복 읽기 업무·좁은 정확 일치 알림 생략 구현 | 대화 복합 업무 capture·일반 의미상 변경 비교·topic mute·실기기; [현재 상태](status.md)가 수락 정본 |
 | 전화·결제·정부 서류 제출 | 해당 실행 도구 없음 | 공급자/사이트별 실행·인증 인계·결과 조회 |
-| 커뮤니티 설치·업데이트·개인 학습 | 내장 절차와 개인 curated/public GitHub pin·update/rollback/disable/remove·로컬 작성/check, [제한된 정확 계산/저장 원문 찾기 학습](learned-skills.md) | 일반 복합 업무의 typed 학습·의미상 성공 평가·합성 export·예약 lifecycle 등 [남은 계약](community-skills.md) |
+| 커뮤니티 설치·업데이트·개인 학습 | 내장 절차와 개인 curated/public GitHub pin·update/rollback/disable/remove·로컬 작성/check, [제한된 정확 계산/저장 원문 찾기 학습](learned-skills.md) | 일반 외부 복합 업무의 typed 학습·의미상 성공 평가·범용 export 등 [남은 계약](community-skills.md) |
 
 없는 기능은 연결 필요와 현재 지원 안 함을 구별한다. 실행 불가능한 작업을 수락해 놓고
 뒤에서 조용히 사라지게 하지 않는다. 대신 가능한 자료 정리나 초안이 실제로 도움이 될

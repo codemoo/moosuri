@@ -244,6 +244,19 @@ fn exact_result(c: &Connection, t: &str, id: &str) -> Result<Option<String>> {
             KnowledgeToolResult::Decimal { exact } => {
                 serde_json::json!({"kind":"decimal","exact":exact})
             }
+            KnowledgeToolResult::DecimalWorkflow { exact, results } => {
+                serde_json::json!({"kind":"decimal_workflow","exact":exact,"results":results})
+            }
+            KnowledgeToolResult::EvidenceCalculation {
+                exact,
+                results,
+                evidence,
+            } => {
+                serde_json::json!({"kind":"evidence_calculation","exact":exact,"results":results,
+                    "source_id":evidence.source_id,"source_revision":evidence.source_revision,
+                    "source_title":evidence.source_title,"start_byte":evidence.start_byte,
+                    "end_byte":evidence.end_byte,"literal":evidence.literal})
+            }
             KnowledgeToolResult::Source(s) => {
                 serde_json::json!({"kind":"source","id":s.source.id,"revision":s.source.revision,"text":s.text})
             }
@@ -329,7 +342,7 @@ pub(crate) fn create_owner_in(
         tx,
         u,
         &input.template,
-        crate::missions::read_profile(profile),
+        crate::missions::read_profile(tx, &u.tenant.0, &u.account.id, profile)?,
     )?;
     let mut model = serde_json::to_value(choice).map_err(|_| StoreError::InvalidInput)?;
     model["agent_profile"] = serde_json::to_value(profile).map_err(|_| StoreError::InvalidInput)?;
@@ -418,6 +431,13 @@ pub(crate) fn is_child(c: &Connection, tenant: &str, run: &str) -> Result<bool> 
 }
 pub(crate) fn reconcile_skills(c: &Connection, tenant: Option<&str>) -> Result<()> {
     skills::reconcile(c, tenant, now()?)
+}
+pub(crate) fn use_learned_skill(
+    c: &Connection,
+    run: &crate::chat::Run,
+    pin: &SkillPin,
+) -> Result<()> {
+    skills::record_run(c, run, pin)
 }
 pub(crate) fn read_skill(
     c: &Connection,

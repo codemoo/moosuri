@@ -16,7 +16,17 @@ pub(super) fn eligible(c: &Connection, tenant: &str, pin: &SkillPin) -> Result<b
         return Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM community_installs WHERE tenant_id=?1 AND package_id=?2 AND managed=1 AND enabled=1 AND (active_digest=?3 OR previous_digest=?3))",params![tenant,entry.id(),pin.digest],|r|r.get(0))?);
     }
     if pin.id.starts_with("private:") {
-        return Ok(false);
+        let account: Option<String> = c
+            .query_row(
+                "SELECT id FROM accounts WHERE tenant_id=?1",
+                [tenant],
+                |row| row.get(0),
+            )
+            .optional()?;
+        return match account {
+            Some(account) => crate::learned_skills::mission_eligible(c, tenant, &account, pin),
+            None => Ok(false),
+        };
     }
     if !crate::agent_execution::skills::profile()
         .skills

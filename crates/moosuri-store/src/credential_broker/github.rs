@@ -135,9 +135,33 @@ impl Store {
     pub async fn github_metadata_jobs(&self, user: &UserContext) -> Result<Vec<GitHubJob>> {
         let user = user.clone();
         self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;
-            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox') IS NULL AND json_extract(repository,'$.google_body') IS NULL AND json_extract(repository,'$.google_model_read') IS NULL ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox') IS NULL AND json_extract(repository,'$.google_body') IS NULL AND json_extract(repository,'$.google_model_read') IS NULL AND json_extract(repository,'$.gitea_site') IS NULL ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             ids.iter().map(|i|job(&db.conn,&u.tenant.0,i)).collect()
         }).await
+    }
+    pub async fn request_gitea_issues(
+        &self,
+        user: &UserContext,
+        id: String,
+        resource: GiteaRepository,
+    ) -> Result<ScopedJob> {
+        if !Uuid::parse_str(&id).is_ok_and(|u| !u.is_nil()) || !resource.valid() {
+            return Err(StoreError::InvalidInput);
+        }
+        let user = user.clone();
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let scope=encode(&Resource::Gitea(resource))?;
+        let old:Option<String>=db.conn.query_row("SELECT repository FROM credential_broker_jobs WHERE tenant_id=?1 AND request_id=?2",params![u.tenant.0,id],|r|r.get(0)).optional()?;
+        if let Some(old)=old{if old!=scope{return Err(StoreError::Conflict)}}else{let n:i64=db.conn.query_row("SELECT count(*) FROM credential_broker_jobs WHERE tenant_id=?1",[&u.tenant.0],|r|r.get(0))?;if n>=1024{return Err(StoreError::Busy)}
+        db.conn.execute("INSERT INTO credential_broker_jobs(tenant_id,account_id,request_id,run_id,call_id,invocation_nonce,repository,auth_epoch,expires_at,request) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL)",params![u.tenant.0,u.account.id,id,Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),scope,u.epoch,now()?+3600])?;}
+        scoped_job(&db.conn,&u.tenant.0,&id)}).await
+    }
+    pub async fn gitea_issues_jobs(&self, user: &UserContext) -> Result<Vec<ScopedJob>> {
+        let user = user.clone();
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND account_id=?2 AND json_extract(repository,'$.gitea_site') IS NOT NULL ORDER BY rowid DESC LIMIT 30")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;ids.iter().map(|id|scoped_job(&db.conn,&u.tenant.0,id)).collect()}).await
+    }
+    pub async fn gitea_connections(&self, user: &UserContext) -> Result<Vec<GiteaRepository>> {
+        let user = user.clone();
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let rows=db.conn.prepare("SELECT r.repository FROM credential_broker_repositories r JOIN credential_broker_devices d ON d.id=r.device_id JOIN credential_broker_bindings b USING(device_id,binding_id) WHERE d.tenant_id=?1 AND d.account_id=?2 AND d.status='active' AND b.active=1 AND json_extract(b.binding,'$.expires_at')>unixepoch() AND json_extract(r.repository,'$.gitea_site') IS NOT NULL")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;rows.into_iter().map(|r|match decode::<Resource>(&r)?{Resource::Gitea(g)=>Ok(g),_=>Err(StoreError::Corrupt)}).collect()}).await
     }
     pub async fn request_google_inbox(&self, user: &UserContext, id: String) -> Result<ScopedJob> {
         if Uuid::parse_str(&id).is_err() {

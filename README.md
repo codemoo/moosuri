@@ -95,7 +95,7 @@ explicit primary-calendar timed/all-day solo-event creation, date edits and dele
 through the existing typed service. Explicit one-off and recurring read-only missions
 can use the owner's separately verified personal model after logout, including
 delegated Gmail/primary Calendar reads. Media, automatic memory extraction and
-broad mission writes/browser/vault execution remain pending. Supported [composed actions](docs/compound-actions.md) now prepare local/provider drafts and requested primary solo-event creation/date moves. Explicit [selected browser pages](docs/selected-browser-missions.md) can feed the original task. The separate [local browser foundation](docs/native-local-browser.md) exposes lifecycle/page count only; site login/read adapters and vault autofill remain unavailable.
+broad mission writes/browser/vault execution remain pending. Supported [composed actions](docs/compound-actions.md) now prepare local/provider drafts and requested primary solo-event creation/date moves. Explicit [selected browser pages](docs/selected-browser-missions.md) can feed the original task. The separate [local browser foundation](docs/native-local-browser.md) now also supports a pinned [Gitea1.24.6 login/read adapter](docs/native-credential-gitea.md): vault password/TOTP login, one exact repository open-issue count and same-session reuse. Other sites, arbitrary forms and general browser missions remain unavailable.
 An optional [official Claude Code text connection](docs/claude-execution.md) provides
 owner settings, an exact-model probe and saved chat through a separate pinned
 rootless Linux execution profile. Actual official login and production-profile

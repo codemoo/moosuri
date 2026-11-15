@@ -70,7 +70,7 @@ async fn local_human_confirmation_observes_without_echo_or_polling_renewal() {
     let first = engine.browser_observe(true, 1001).await.unwrap();
     assert_eq!(first.phase, Phase::Ready);
     assert_eq!(first.page_count, Some(1));
-    assert!(!first.site_adapter_available);
+    assert!(first.site_adapter_available);
     let next = engine.browser_observe(false, 1100).await.unwrap();
     assert_eq!(next.idle_until, first.idle_until);
     assert_eq!(next.expires_at, first.expires_at);
@@ -167,7 +167,7 @@ async fn actual_local_chromium_pipe_blank_window_and_cleanup() {
     assert_eq!(started.phase, Phase::AwaitingHuman);
     let observed = engine.browser_observe(true, 1001).await.unwrap();
     assert_eq!(observed.page_count, Some(1));
-    assert!(!observed.site_adapter_available);
+    assert!(observed.site_adapter_available);
     let profile = engine
         .state
         .local_browser
@@ -176,4 +176,211 @@ async fn actual_local_chromium_pipe_blank_window_and_cleanup() {
         .profile(&engine.local_root);
     engine.browser_close(1002).await.unwrap();
     assert!(!profile.exists());
+}
+
+#[tokio::test]
+async fn navigation_context_loss_retries_only_read_observation_after_one_submission() {
+    let (_tmp, _root, mut engine) = engine();
+    let mut peer = attach_fixture(&mut engine, 1000);
+    let provider = tokio::spawn(async move {
+        for n in 0..4 {
+            let mut bytes = Vec::new();
+            loop {
+                let b = peer.read_u8().await.unwrap();
+                if b == 0 {
+                    break;
+                }
+                bytes.push(b);
+            }
+            let call: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(call["method"], "Runtime.evaluate");
+            let script = call["params"]["expression"].as_str().unwrap();
+            assert_eq!(
+                script.contains("requestSubmit"),
+                n == 0,
+                "submission is never retried"
+            );
+            let id = call["id"].as_u64().unwrap();
+            let reply = if n == 1 {
+                json!({"id":id,"error":{"code":-32000,"message":"synthetic context transition"}})
+            } else {
+                json!({"id":id,"result":{"result":{"type":if n==0{"boolean"}else{"number"},"value":if n==0{json!(true)}else{json!((n==3)as u8)}}}})
+            };
+            peer.write_all(format!("{reply}\0").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let browser = engine.local_browser.as_mut().unwrap();
+    browser
+        .site_eval(
+            "synthetic-session",
+            "https://gitea.example.test",
+            "(()=>{document.querySelector('form').requestSubmit();return true;})()".into(),
+        )
+        .await
+        .unwrap();
+    browser
+        .site_wait(
+            "synthetic-session",
+            "https://gitea.example.test",
+            "location.pathname==='/' && document.readyState==='complete'",
+        )
+        .await
+        .unwrap();
+    provider.await.unwrap();
+}
+
+#[tokio::test]
+async fn explicit_close_requests_browser_exit_before_owned_group_force_kill() {
+    use std::process::Stdio;
+    let (tmp, _root, mut engine) = engine();
+    let mut peer = attach_fixture(&mut engine, 1000);
+    let marker = tmp.path().join("graceful-exit-confirmed");
+    let mut command = Command::new("/bin/sh");
+    command
+        .args([
+            "-c",
+            "read marker; : > \"$1\"",
+            "synthetic-browser",
+            marker.to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    let pid = child.id().unwrap();
+    let mut input = child.stdin.take().unwrap();
+    engine.state.local_browser.as_mut().unwrap().process_group = Some(pid);
+    *engine
+        .local_browser
+        .as_mut()
+        .unwrap()
+        .process
+        .lock()
+        .unwrap() = Some(child);
+    let provider = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        loop {
+            let b = peer.read_u8().await.unwrap();
+            if b == 0 {
+                break;
+            }
+            bytes.push(b)
+        }
+        let call: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(call, json!({"id":1,"method":"Browser.close","params":{}}));
+        input.write_all(b"close\n").await.unwrap();
+    });
+    engine.browser_close(1001).await.unwrap();
+    provider.await.unwrap();
+    assert!(
+        marker.exists(),
+        "graceful exit must run before a group kill"
+    );
+    assert!(
+        !alive(pid),
+        "cleanup still requires the owned group to be gone"
+    );
+    assert_eq!(
+        engine.state.local_browser.as_ref().unwrap().phase,
+        Phase::Closed
+    );
+}
+
+#[tokio::test]
+async fn cancelling_explicit_close_kills_the_owned_browser_descendant_group() {
+    use std::process::Stdio;
+    let (_tmp, _root, mut engine) = engine();
+    let mut peer = attach_fixture(&mut engine, 1000);
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", "sleep 60 & printf '%s\\n' \"$!\"; wait"])
+        .stdout(Stdio::piped());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    let group = child.id().unwrap();
+    let mut output = child.stdout.take().unwrap();
+    let mut bytes = Vec::new();
+    loop {
+        let b = output.read_u8().await.unwrap();
+        if b == b'\n' {
+            break;
+        }
+        bytes.push(b)
+    }
+    let descendant = std::str::from_utf8(&bytes).unwrap().parse::<u32>().unwrap();
+    assert!(descendant > 1 && descendant != group);
+    assert_eq!(unsafe { libc::getpgid(descendant as i32) }, group as i32);
+    *engine
+        .local_browser
+        .as_mut()
+        .unwrap()
+        .process
+        .lock()
+        .unwrap() = Some(child);
+    engine.state.local_browser.as_mut().unwrap().process_group = Some(group);
+    let mut closing = Box::pin(engine.browser_close(1001));
+    // Observe the close request, then allow the future to enter child.wait().
+    tokio::select! {r=&mut closing=>panic!("unexpected shutdown {r:?}"),r=async{let mut bytes=Vec::new();loop{let b=peer.read_u8().await.unwrap();if b==0{break}bytes.push(b)}assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap()["method"],"Browser.close");}=>r}
+    tokio::select! {r=&mut closing=>panic!("unexpected shutdown {r:?}"),_=tokio::time::sleep(Duration::from_millis(50))=>{}}
+    drop(closing); // Same cancellation boundary as local input/lock interrupting poll.
+    // An orphan zombie is already dead but can remain until container init reaps
+    // it. This test checks execution stopped; product cleanup still requires the
+    // entire group to disappear before deleting its private profile.
+    for _ in 0..50 {
+        let gone = unsafe { libc::kill(descendant as i32, 0) } != 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        #[cfg(target_os = "linux")]
+        let dead = std::fs::read_to_string(format!("/proc/{descendant}/stat"))
+            .ok()
+            .is_some_and(|s| {
+                s.rsplit_once(") ")
+                    .is_some_and(|(_, rest)| rest.starts_with("Z "))
+            });
+        #[cfg(not(target_os = "linux"))]
+        let dead = false;
+        if gone || dead {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("owned browser descendant survived cancellation");
+}
+
+#[tokio::test]
+async fn cleanup_wait_observes_group_exit_without_signalling_live_members() {
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "sleep 0.15; exit 0"]);
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    let group = child.id().unwrap();
+    assert!(alive(group));
+    let reaper = tokio::spawn(async move { child.wait().await.unwrap() });
+    wait_group_absent(group).await.unwrap();
+    assert!(
+        reaper.await.unwrap().success(),
+        "the read-only wait must not kill a remaining process"
+    );
+    assert!(!alive(group));
 }

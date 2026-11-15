@@ -13,6 +13,7 @@ pub(super) fn routes() -> Router<AppState> {
             post(enabled::google_body),
         )
         .route("/api/v1/credential-broker/github", post(enabled::github))
+        .route("/api/v1/credential-broker/gitea", post(enabled::gitea))
         .route(
             "/api/v1/credential-broker/google-preview",
             post(enabled::google_preview),
@@ -43,7 +44,7 @@ mod enabled {
     use moosuri_vault_protocol::broker::*;
     pub(super) async fn status(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
         let u = current(&s, &headers).await?;
-        Ok(Json(serde_json::json!({"devices":s.store.broker_devices(&u).await?,"jobs":s.store.github_metadata_jobs(&u).await?,"google_jobs":s.store.google_inbox_jobs(&u).await?,"google_preview_jobs":s.store.google_preview_jobs(&u).await?,"google_body_jobs":s.store.google_body_jobs(&u).await?})).into_response())
+        Ok(Json(serde_json::json!({"gitea_connections":s.store.gitea_connections(&u).await?,"gitea_jobs":s.store.gitea_issues_jobs(&u).await?,"devices":s.store.broker_devices(&u).await?,"jobs":s.store.github_metadata_jobs(&u).await?,"google_jobs":s.store.google_inbox_jobs(&u).await?,"google_preview_jobs":s.store.google_preview_jobs(&u).await?,"google_body_jobs":s.store.google_body_jobs(&u).await?})).into_response())
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -67,6 +68,25 @@ mod enabled {
                 input.selection,
             )
             .await?,
+        )
+        .into_response())
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct GiteaInput {
+        request_id: String,
+        resource: GiteaRepository,
+    }
+    pub(super) async fn gitea(
+        State(s): State<AppState>,
+        headers: HeaderMap,
+        Json(input): Json<GiteaInput>,
+    ) -> HttpResult {
+        let u = current(&s, &headers).await?;
+        Ok(Json(
+            s.store
+                .request_gitea_issues(&u, input.request_id, input.resource)
+                .await?,
         )
         .into_response())
     }

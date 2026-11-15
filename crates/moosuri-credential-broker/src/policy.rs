@@ -26,6 +26,8 @@ pub struct LocalGrant {
     #[serde(default)]
     repository: Option<GitHubRepository>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    gitea: Option<GiteaRepository>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     google: Option<crate::google::GoogleIdentity>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     google_suspended: bool,
@@ -83,6 +85,7 @@ impl LocalGrant {
             resource,
             revoked: false,
             repository: None,
+            gitea: None,
             google: None,
             google_suspended: false,
             google_preview: false,
@@ -114,6 +117,44 @@ impl LocalGrant {
         }));
         g.binding.grant_hash = hash(&data);
         Ok(g)
+    }
+    pub fn select_gitea(
+        device: Device,
+        item: Uuid,
+        vault: Uuid,
+        origin: String,
+        resource: GiteaRepository,
+        item_epoch: u64,
+        key_epoch: u64,
+        expires: i64,
+    ) -> Result<Self> {
+        if !crate::gitea::valid_origin(&origin) || !resource.valid() || vault.is_nil() {
+            return Err(Error::Policy);
+        }
+        let mut g =
+            Self::select_fixed_probe(device, item, Uuid::new_v4(), item_epoch, key_epoch, expires)?;
+        g.service = "gitea-browser-issues".into();
+        g.origin = origin;
+        g.repository = Some(resource.repository.clone());
+        g.gitea = Some(resource);
+        g.vault = Some(vault);
+        let mut bytes = Vec::from(b"moosuri/local-gitea-grant/v1".as_slice());
+        bytes.extend_from_slice(g.item.as_bytes());
+        bytes.extend_from_slice(vault.as_bytes());
+        bytes.extend_from_slice(g.origin.as_bytes());
+        bytes.extend_from_slice(&g.gitea.as_ref().unwrap().bytes());
+        bytes.extend_from_slice(&g.binding.item_epoch.to_be_bytes());
+        bytes.extend_from_slice(&g.binding.key_epoch.to_be_bytes());
+        bytes.extend_from_slice(&expires.to_be_bytes());
+        bytes.extend_from_slice(g.device.id.as_bytes());
+        g.binding.grant_hash = hash(&bytes);
+        Ok(g)
+    }
+    pub fn gitea(&self) -> Option<&GiteaRepository> {
+        self.gitea.as_ref()
+    }
+    pub(crate) fn site_origin(&self) -> &str {
+        &self.origin
     }
     pub fn select_github(
         device: Device,
@@ -282,6 +323,11 @@ impl LocalGrant {
         let mut binding = self.binding.clone();
         binding.grant_hash = [0; 32];
         let mut bytes = Vec::from(self.google_policy());
+        if let Some(r) = &self.gitea {
+            bytes.extend_from_slice(b"moosuri/live-gitea/v1");
+            bytes.extend_from_slice(&r.bytes());
+            bytes.extend_from_slice(self.origin.as_bytes());
+        }
         bytes.extend(
             serde_json::to_vec(&(
                 &self.device,
@@ -439,6 +485,9 @@ impl LocalGrant {
         self.item
     }
     pub fn digest(&self) -> [u8; 32] {
+        if let Some(r) = &self.gitea {
+            return hash(&r.bytes());
+        }
         if self.google.is_some() {
             return if self.google_model_read {
                 crate::google::model_mail::resource_digest()
@@ -483,6 +532,16 @@ impl LocalGrant {
         }
         // Digest is derived locally from a typed fixed resource, not a URL supplied by server.
         let scope = match request.operation {
+            Operation::GiteaRepositoryRead { site } => {
+                self.service == "gitea-browser-issues"
+                    && crate::gitea::valid_origin(&self.origin)
+                    && self.gitea.as_ref().is_some_and(|r| {
+                        r.valid()
+                            && r.gitea_site == site
+                            && Some(&r.repository) == request.repository.as_ref()
+                    })
+                    && self.google.is_none()
+            }
             Operation::GoogleMailModelRead { selection } => {
                 self.google_model_read
                     && !selection.is_nil()

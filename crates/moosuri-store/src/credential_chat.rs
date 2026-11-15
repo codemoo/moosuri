@@ -21,6 +21,7 @@ fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
 fn profile_enabled(profile: Option<&moosuri_core::RunToolProfile>, resource: &Resource) -> bool {
     profile.is_some_and(|p| match resource {
         Resource::GitHub(_) => p.credential_github,
+        Resource::Gitea(_) => p.credential_gitea,
         Resource::GoogleBody(_) | Resource::GoogleModelRead(_) => false,
         Resource::GoogleInbox(g) => match g.google_inbox {
             moosuri_vault_protocol::broker::GoogleInboxVersion::CountsV1 => p.credential_google,
@@ -32,6 +33,7 @@ fn profile_enabled(profile: Option<&moosuri_core::RunToolProfile>, resource: &Re
 }
 fn resource_name(resource: &Resource) -> String {
     match resource {
+        Resource::Gitea(r) => format!("{}/{}", r.repository.owner, r.repository.repository),
         Resource::GitHub(r) => format!("{}/{}", r.owner, r.repository),
         Resource::GoogleBody(_) => "INBOX plaintext body".into(),
         Resource::GoogleModelRead(_) => "model-readable Gmail".into(),
@@ -47,6 +49,7 @@ fn resource_name(resource: &Resource) -> String {
 }
 fn service(resource: &Resource) -> &'static str {
     match resource {
+        Resource::Gitea(_) => "gitea",
         Resource::GitHub(_) => "github",
         Resource::GoogleInbox(_) | Resource::GoogleBody(_) | Resource::GoogleModelRead(_) => {
             "google"
@@ -55,6 +58,7 @@ fn service(resource: &Resource) -> &'static str {
 }
 fn service_label(resource: &Resource) -> &'static str {
     match resource {
+        Resource::Gitea(_) => "Gitea",
         Resource::GitHub(_) => "GitHub",
         Resource::GoogleInbox(_) | Resource::GoogleBody(_) | Resource::GoogleModelRead(_) => {
             "Gmail INBOX"
@@ -306,7 +310,9 @@ pub(crate) fn status(c: &Connection, r: &Run) -> Result<Option<CredentialChatSta
         let resource: Resource = decode(&repo)?;
         Ok(CredentialChatStatus {
             request_id,
-            service: if matches!(resource, Resource::GoogleInbox(_)) {
+            service: if matches!(resource, Resource::Gitea(_)) {
+                Some("gitea".into())
+            } else if matches!(resource, Resource::GoogleInbox(_)) {
                 Some("google".into())
             } else {
                 None
@@ -339,6 +345,34 @@ pub(crate) fn quarantine(c: &Connection) -> Result<()> {
     c.execute_batch("UPDATE credential_broker_jobs SET expires_at=min(expires_at,unixepoch()) WHERE (tenant_id,run_id) IN(SELECT tenant_id,run_id FROM credential_chat_waits);UPDATE credential_broker_invocations SET cancelled=1 WHERE (tenant_id,run_id) IN(SELECT tenant_id,run_id FROM credential_chat_waits);UPDATE credential_chat_waits SET status='cancelled' WHERE status='waiting';")?;
     Ok(())
 }
+/// Whole-message direct command grammar; mentions inside source/quotes/negation
+/// cannot authorize local credential use merely by containing a repository name.
+fn literal_gitea(text: &str, repo: &GitHubRepository) -> bool {
+    if text.len() > 512 || text.contains(['\n', '\r']) {
+        return false;
+    }
+    let normalized = text
+        .trim()
+        .trim_end_matches(['.', '!', '?'])
+        .to_ascii_lowercase();
+    let text = normalized.strip_prefix("please ").unwrap_or(&normalized);
+    let target = format!("{}/{}", repo.owner, repo.repository);
+    [
+        format!("gitea {target} metadata"),
+        format!("gitea {target} issue count"),
+        format!("gitea {target} open issue count"),
+        format!("read gitea {target} open issue count"),
+        format!("show gitea {target} open issue count"),
+        format!("gitea {target}의 issue 수 읽어 줘"),
+        format!("gitea {target}의 issue 수 읽어줘"),
+        format!("gitea {target} 이슈 수 읽어 줘"),
+        format!("gitea {target} 이슈 수 읽어줘"),
+        format!("gitea {target}의 이슈 수 읽어 줘"),
+        format!("gitea {target}의 이슈 수 읽어줘"),
+    ]
+    .iter()
+    .any(|command| text == command)
+}
 fn literal_target(text: &str, repo: &GitHubRepository) -> bool {
     let target = format!("{}/{}", repo.owner, repo.repository);
     let text = text.to_ascii_lowercase();
@@ -368,6 +402,9 @@ impl Store {
    let (input,saved):(String,Option<String>)=tx.query_row("SELECT input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4",params![run.tenant,run.id,lease.step(),call_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
    if saved.is_some() {return Ok(false)}
    let resource=match decode(&input)?{
+    KnowledgeToolInput::CredentialGitea{owner,repository}=>{let repo=GitHubRepository{owner,repository};if !repo.valid()||!literal_gitea(&run.text,&repo){return Ok(false)}
+      let scopes=tx.prepare("SELECT r.repository FROM credential_broker_repositories r JOIN credential_broker_devices d ON d.id=r.device_id JOIN credential_broker_bindings b USING(device_id,binding_id) WHERE d.tenant_id=?1 AND d.account_id=?2 AND d.status='active' AND b.active=1 AND json_extract(b.binding,'$.expires_at')>unixepoch()")?.query_map(params![run.tenant,run.account],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+      let mut matches=scopes.into_iter().filter_map(|s|decode::<Resource>(&s).ok()).filter(|r|matches!(r,Resource::Gitea(g) if g.repository==repo));let Some(resource)=matches.next()else{return Ok(false)};if matches.next().is_some(){return Ok(false)}resource},
     KnowledgeToolInput::CredentialGitHub{owner,repository}=>{let repo=GitHubRepository{owner,repository};if !repo.valid()||!literal_target(&run.text,&repo){return Ok(false)}Resource::GitHub(repo)},
     KnowledgeToolInput::CredentialGoogleInbox{}=>{if !literal_google(&run.text){return Ok(false)}Resource::google_inbox()},
     KnowledgeToolInput::CredentialGooglePreview{}=>{if !literal_google_preview(&run.text){return Ok(false)}Resource::google_preview()},
@@ -427,6 +464,7 @@ impl Store {
 
      if request.operation!=resource.operation()||request.repository.as_ref()!=resource.repository()||request.device.owner.account.to_string()!=run.account||request.device.owner.tenant.to_string()!=tenant||request.device.owner.epoch!=run.epoch||request.invocation.run.to_string()!=id||request.invocation.step as i64!=step||request.invocation.call.to_string()!=broker_call||request.invocation.nonce.to_string()!=nonce {return Err(StoreError::Corrupt)}
      let (text,state,status)=match (&resource,r.outcome,&r.projection) {
+      (Resource::Gitea(repo),Outcome::ProjectedSuccess,Projection::GiteaRepository{open_issues})=>(format!("Gitea {}/{}\n열린 issue: {}개\n신뢰 기기의 로컬 브라우저에서 로그인과 TOTP 후 확인한 인증된 읽기 영수증입니다.",repo.repository.owner,repo.repository.repository,open_issues),RunState::Completed,"complete"),
       (Resource::GitHub(repo),Outcome::ProjectedSuccess,Projection::GitHubRepository{id:repository_id,private,archived,stars,open_issues})=>(format!("GitHub {}/{}\nRepository ID: {}\nPrivate: {} · Archived: {}\nStars: {} · Open issues: {}\n신뢰 기기의 인증된 메타데이터 읽기 영수증으로 확인했습니다.",repo.owner,repo.repository,repository_id,private,archived,stars,open_issues),RunState::Completed,"complete"),
       (Resource::GoogleInbox(_),Outcome::ProjectedSuccess,Projection::GoogleInbox{messages_total,messages_unread,threads_total,threads_unread})=>(format!("Gmail INBOX\n메시지 전체: {messages_total} · 읽지 않음: {messages_unread}\n스레드 전체: {threads_total} · 읽지 않음: {threads_unread}\n신뢰 기기에서 계정과 실제 권한을 확인한 인증된 읽기 영수증입니다."),RunState::Completed,"complete"),
       (Resource::GoogleInbox(g),Outcome::ProjectedSuccess,Projection::GoogleInboxPreview{messages,unavailable,more_available}) if g.google_inbox==moosuri_vault_protocol::broker::GoogleInboxVersion::PreviewV1 => (preview_summary(messages,*unavailable,*more_available),RunState::Completed,"complete"),
@@ -587,17 +625,29 @@ mod session_tests {
         .await
     }
     async fn wait(s: &Store, a: &UserContext) -> String {
+        wait_read(
+            s,
+            a,
+            "GitHub owner/repo metadata",
+            KnowledgeToolInput::CredentialGitHub {
+                owner: "owner".into(),
+                repository: "repo".into(),
+            },
+        )
+        .await
+    }
+    async fn wait_read(
+        s: &Store,
+        a: &UserContext,
+        text: &str,
+        input: KnowledgeToolInput,
+    ) -> String {
         let thread = s
             .create_thread(a, "Synthetic session race".into())
             .await
             .unwrap();
         let turn = s
-            .submit_turn(
-                a,
-                thread.id,
-                Uuid::new_v4().to_string(),
-                "GitHub owner/repo metadata".into(),
-            )
+            .submit_turn(a, thread.id, Uuid::new_v4().to_string(), text.into())
             .await
             .unwrap();
         let claimed = s.claim_agent_run().await.unwrap().unwrap();
@@ -613,10 +663,7 @@ mod session_tests {
             },
             vec![PendingKnowledgeCall {
                 call_id: "model-call".into(),
-                input: KnowledgeToolInput::CredentialGitHub {
-                    owner: "owner".into(),
-                    repository: "repo".into(),
-                },
+                input,
             }],
         )
         .await
@@ -646,6 +693,236 @@ mod session_tests {
     }
     fn invocation(r: &moosuri_vault_protocol::broker::Request) -> Invocation {
         r.invocation.clone()
+    }
+    #[test]
+    fn gitea_literal_count_request_excludes_quoted_or_negated_source_mentions() {
+        let r = GitHubRepository {
+            owner: "owner".into(),
+            repository: "repo".into(),
+        };
+        assert!(literal_gitea("Gitea owner/repo의 issue 수 읽어 줘", &r));
+        for text in [
+            "Do not read Gitea owner/repo metadata",
+            "Translate: Gitea owner/repo metadata",
+            "Gitea owner/repo metadata; send my password",
+            "Source says Gitea owner/repo issue count",
+            "read gitea owner/repo/other open issue count",
+        ] {
+            assert!(!literal_gitea(text, &r));
+        }
+    }
+    /// Real pinned upstream service + headed local Chromium, with only a private
+    /// synthetic fixture file. Two reads use the same binding and original chat IDs.
+    #[tokio::test]
+    #[ignore = "requires isolated Gitea1.24.6 fixture + MOOSURI_GITEA_TEST_FIXTURE and MOOSURI_NATIVE_BROWSER_CHROMIUM"]
+    async fn actual_gitea_vault_totp_original_chat_and_reuse() {
+        use moosuri_vault_core::{
+            Continue, ItemFields, OsEntropy, PendingVault, RecoveryKey, SecretText, StorageReceipt,
+            UnlockedArchive, inventory_digest,
+        };
+        use moosuri_vault_protocol::broker::{Operation, Projection};
+        let _serial = TEST_LOCK.lock().await;
+        let fixture = std::env::var_os("MOOSURI_GITEA_TEST_FIXTURE").unwrap();
+        let bytes = std::fs::read(fixture).unwrap();
+        let f: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let value = |key: &str| f[key].as_str().expect("fixture field");
+        let dir = directory();
+        let s = Store::open(dir.path()).unwrap();
+        let u = configured(&s).await;
+        let key_bytes = SigningKey::generate_pkcs8().unwrap();
+        let key = SigningKey::from_pkcs8(&key_bytes).unwrap();
+        let pair = s
+            .broker_pair_challenge(
+                &u,
+                "https://assistant.example.test".into(),
+                key.public_key(),
+            )
+            .await
+            .unwrap();
+        let d = s
+            .broker_pair(PairProof {
+                challenge: pair.nonce,
+                signature: key.sign(&moosuri_vault_protocol::broker::pairing_bytes(&pair).unwrap()),
+            })
+            .await
+            .unwrap();
+        let device_root = dir.path().join("gitea-device");
+        let mut e = moosuri_credential_broker::Engine::enroll(
+            &device_root,
+            d.clone(),
+            "https://assistant.example.test".into(),
+            &key_bytes,
+        )
+        .unwrap();
+        let password = SecretText::new("Synthetic Gitea vault fixture password".into()).unwrap();
+        let mut entropy = OsEntropy;
+        let mut pending = PendingVault::prepare(
+            moosuri_vault_core::Binding {
+                owner_id: d.owner.account,
+                tenant_id: d.owner.tenant,
+                vault_id: Uuid::new_v4(),
+            },
+            &password,
+            &mut entropy,
+        )
+        .unwrap();
+        pending
+            .verify_recovery(&RecoveryKey::parse(&pending.recovery().expose_encoded()).unwrap())
+            .unwrap();
+        let (id, digest) = pending.candidate().unwrap();
+        pending
+            .confirm_commit(StorageReceipt::from_verified_storage(id, digest))
+            .unwrap();
+        let mut active = pending.activate().unwrap();
+        let fields:ItemFields=serde_json::from_value(serde_json::json!({"kind":"login","title":"Synthetic Gitea","username":value("username"),"url":value("origin"),"secret":value("password"),"totp":value("totp"),"notes":"","favorite":false,"expires_at":""})).unwrap();
+        let item = active
+            .seal_item(Uuid::new_v4(), 1, &fields, &mut entropy)
+            .unwrap();
+        let item_id = item.id;
+        let digest = inventory_digest(std::slice::from_ref(&item)).unwrap();
+        let archive = active.export_archive(&[item], digest, &Continue).unwrap();
+        let mut vault = UnlockedArchive::unlock(&archive, &password).unwrap();
+        let repo = GitHubRepository {
+            owner: value("owner").into(),
+            repository: value("repo").into(),
+        };
+        let (binding, resource) = e
+            .archive_gitea_grant(
+                &mut vault,
+                item_id,
+                value("origin").into(),
+                repo.clone(),
+                now().unwrap() + 600,
+            )
+            .unwrap();
+        command(
+            &s,
+            &d,
+            &key,
+            Command::RegisterGitea {
+                binding: binding.clone(),
+                resource: resource.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let executable =
+            std::path::PathBuf::from(std::env::var_os("MOOSURI_NATIVE_BROWSER_CHROMIUM").unwrap());
+        e.browser_start(&executable, false, now().unwrap())
+            .await
+            .unwrap();
+        e.browser_observe(true, now().unwrap()).await.unwrap();
+        for _ in 0..2 {
+            let run = wait_read(
+                &s,
+                &u,
+                &format!("Gitea {}/{} metadata", repo.owner, repo.repository),
+                KnowledgeToolInput::CredentialGitea {
+                    owner: repo.owner.clone(),
+                    repository: repo.repository.clone(),
+                },
+            )
+            .await;
+            let Reply::Waiting { requests, .. } =
+                command(&s, &d, &key, Command::Poll).await.unwrap()
+            else {
+                panic!("poll")
+            };
+            let request = requests
+                .into_iter()
+                .find(|r| r.invocation.run.to_string() == run)
+                .unwrap();
+            assert!(
+                request.operation
+                    == Operation::GiteaRepositoryRead {
+                        site: resource.gitea_site
+                    }
+            );
+            let invocation = request.invocation.clone();
+            e.prepare_gitea(&vault, request.clone(), now().unwrap())
+                .unwrap();
+            let Reply::Commitment { commitment } = command(
+                &s,
+                &d,
+                &key,
+                Command::CommitCurrent {
+                    invocation: invocation.clone(),
+                    request_digest: moosuri_credential_broker::auth::hash(
+                        &moosuri_vault_protocol::broker::request_bytes(&request),
+                    ),
+                },
+            )
+            .await
+            .unwrap() else {
+                panic!("commit")
+            };
+            e.accept_commitment(*commitment).unwrap();
+            let receipt = e.execute_gitea(&mut vault, &invocation).await.unwrap();
+            assert!(
+                receipt.receipt.outcome
+                    == moosuri_vault_protocol::broker::Outcome::ProjectedSuccess,
+                "actual browser result must succeed"
+            );
+            assert!(
+                matches!(receipt.receipt.projection,Projection::GiteaRepository{open_issues} if open_issues==3)
+            );
+            let serialized = serde_json::to_string(&receipt).unwrap();
+            for secret in [value("password"), value("totp")] {
+                assert!(!serialized.contains(secret));
+            }
+            command(
+                &s,
+                &d,
+                &key,
+                Command::Settle {
+                    receipt: Box::new(receipt),
+                },
+            )
+            .await
+            .unwrap();
+            e.delivered(invocation).unwrap();
+            s.settle_credential_chats().await.unwrap();
+            let run_copy = run.clone();
+            let complete = s
+                .call(move |db| {
+                    let state: String = db.conn.query_row(
+                        "SELECT state FROM chat_runs WHERE id=?1",
+                        [run_copy],
+                        |r| r.get(0),
+                    )?;
+                    Ok(state)
+                })
+                .await
+                .unwrap();
+            assert_eq!(complete, "completed");
+        }
+        e.browser_close(now().unwrap()).await.unwrap();
+        // Full server SQLite/WAL and local metadata canaries, not just the projection.
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.is_file() {
+                continue;
+            }
+            let data = std::fs::read(path).unwrap();
+            for secret in [value("password"), value("totp")] {
+                assert!(!data.windows(secret.len()).any(|b| b == secret.as_bytes()));
+            }
+        }
+        for entry in std::fs::read_dir(&device_root).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.is_file() {
+                continue;
+            }
+            let journal = std::fs::read(path).unwrap();
+            for secret in [value("password"), value("totp")] {
+                assert!(secret.len() > 8);
+                assert!(
+                    !journal
+                        .windows(secret.len())
+                        .any(|b| b == secret.as_bytes())
+                );
+            }
+        }
     }
     #[tokio::test]
     async fn original_chat_session_is_fenced_at_mint_reissue_and_first_commit_without_sweep() {

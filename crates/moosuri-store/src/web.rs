@@ -11,6 +11,7 @@ pub(crate) fn admitted_profile(
     profile.conversation_recall = true;
     crate::native_task_mail::admit_profile(conn, user, &mut profile, false)?;
     profile.credential_github = cfg!(feature = "credential-broker-chat");
+    profile.credential_gitea = cfg!(feature = "credential-broker-chat");
     profile.credential_google = cfg!(feature = "credential-broker-chat");
     profile.credential_google_preview = cfg!(feature = "credential-broker-chat");
     profile.mail_connections = crate::mail::pins(conn, user)?;

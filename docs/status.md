@@ -43,8 +43,7 @@ B의 연결 Gmail 계정 선택·같은 업무 이어하기도 구현했다. 원
 C의 별도 native Gmail 검색/본문/thread/PDF·텍스트 읽기와 같은 대화·위임 업무 재개,
 D의 요청한 로컬/Gmail 초안·기본 개인 일정 작업, E의 근거 계산→보고서/초안 구조 학습을
 통합했다. F는 선택한 서버 페이지를 원래 업무로 가져오기와 기기 내 별도 브라우저의
-세션/기록/제한 관측까지 구현했다. **실제 사이트의 로그인·읽기 adapter와 볼트 자동 입력은
-아직 미구현**이다. 대상 사이트·읽을 업무·전용 테스트 계정/정책을 고정한 뒤 진행한다.
+세션/기록/제한 관측과 **Gitea1.24.6의 볼트 password/TOTP 로그인·정확한 저장소 issue 개수 읽기·세션 재사용**을 구현했다. 실제 격리된 합성 계정으로 원래 채팅 완료까지 검증했다. [범위와 사용법](native-credential-gitea.md)·[검증](reviews/2026-11-15-native-gitea-login.md). 다른 사이트·일반 폼/브라우저 미션은 후속이다.
 [통합 검증과 남은 경계](reviews/2026-11-15-compound-capabilities.md).
 새 합성 보고서의 실모델 검사에서 완료된 검색을 반복하던 경로를 고쳐, 같은 사례를
 새 DB에서 원문 읽기→정확 계산→문서 저장까지 재검증했다. 모델/effort는
@@ -62,7 +61,7 @@ D의 요청한 로컬/Gmail 초안·기본 개인 일정 작업, E의 근거 계
 | 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량·실제 실행 단계 시간/누락 집계, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 오래된/다른 소유 대화의 제한 검색·읽기, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경·명시적 일회/반복 읽기 미션 | 개인 Claude 공식 CLI의 설정·text probe·선택·저장 대화도 구현했다. Claude 실제 rootless Linux/공식 로그인과 media/background·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·기록 시각별 검색·선택적 고정 한국어 별칭, 직접 기억·정정·망각·대화의 제한된 절대 날짜 적용, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기·지원 외부 읽기의 보고서 저장 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회·일본우편 최근 요약의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 2–4단계 정확 계산과 유일한 저장 자료의 숫자를 읽는 근거 계산의 구조 학습·새 입력 재사용·합성 export도 구현했다. 공개 URL2~4개의 실제 수집·두 사례 학습·새 대상/명시한 미션 재사용·합성 export도 구현. 근거 계산→비공개 보고서/로컬 초안의 두 실제 채택 결과 학습·새 입력 재실행·합성 공유를 추가했다. 일반 외부 workflow 학습·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
-| 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·PDF/텍스트 첨부 페이지 읽기·로컬/Google 초안 CRUD·승인된 즉시/고정 예약 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. 원래 수명 안의 명시적 profile 복구와 Linux 실제 재시작/강제 종료 후 복구를 확인했다. 선택한 페이지를 원래 업무의 새 근거로 연결한다. 기기 내 별도 브라우저는 고정 수명·빈 창 복구·page count만 지원한다. 사이트 로그인 adapter·자동 폼/장기 로그인 유지·실제 Gmail 계정 검증은 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
+| 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·PDF/텍스트 첨부 페이지 읽기·로컬/Google 초안 CRUD·승인된 즉시/고정 예약 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. 원래 수명 안의 명시적 profile 복구와 Linux 실제 재시작/강제 종료 후 복구를 확인했다. 선택한 페이지를 원래 업무의 새 근거로 연결한다. 기기 내 별도 브라우저는 고정 수명·빈 창 복구와 Gitea1.24.6의 로컬 볼트/TOTP 로그인·정확한 저장소 issue 수 읽기를 지원한다. 다른 사이트·자동 폼/장기 로그인 보장·실제 Gmail 계정 검증은 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
 | 공식·custom 자료 연결 | 개인 Gmail/Slack 수집·custom ingest, 선택한 Codex 사용자 요청·정규화 통화 전사의 일회 수집, scope/cursor/receipt/provenance·상태 화면·철회, 일본우편 최근 상태와 확인한 공식 표의 표시 이력 조회 | 합성 Linux 검증은 실제 OAuth/계정 scope/rate 검증을 대신하지 않는다. 카톡 코드는 공개 패키지에서 제외. schema48에서 시작 ACK 유실 복구를 추가했다. 통화 원본 기기/포맷·실제 전사 품질·다른 작업 세션 형식·다른 배송사·현재 실제 배송물의 이력 조회 수락은 남음. [연결](data-connections.md)·[검증](reviews/2026-11-13-source-connections.md) |
 | 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control·일상 날짜/요일/한글 시각·명확한 주 범위 보존, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours·예약별 소식 끄기/다시 받기, 저장한 followup 마감/재확인/미룬 날짜 알림, opt-in 기기 Push | 날짜 없는 요청·약속의 저장 근거 제안·개별 숨김·고정 주제 전체 끄기를 구현했다. 일반 의미 기반 제안 발굴·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[소식 제어](reviews/2026-11-14-notification-topics.md) |
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP·명시한 개인 Gmail/기본 Calendar 읽기 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 빠진 값을 다음 답변으로 보완하고 직전 업무 영수증으로 제어한다. 일상 요일/주·한글 시각을 원래 시간대로 검증한다. 정지한 일회성 업무는 기존 한도 안에서 조건을 고쳐 다시 계획할 수 있다. 요청한 로컬/provider 초안·기본 solo-event 생성/날짜 이동과 원래 카드의 실제 작업 상태를 연결했다. 준비된 효과의 조건 변경은 충돌로 알리고 원래 결과를 보존한다. 넓은 자연어/범용 쓰기·browser/vault 자동 실행·Claude background는 미완료. 개인 ChatGPT의 명시적 읽기 미션은 지원한다. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
@@ -127,7 +126,7 @@ D의 요청한 로컬/Gmail 초안·기본 개인 일정 작업, E의 근거 계
 | P5 예약·소식 | due loop·반복 회차·알림·빠진 값의 다음 답변 보완·quiet hours·예약별 소식 제어·followup 날짜 알림·Push | 전체 알림/제안 정책·실기기 수신·고정 메일 외 예약 외부 작업 |
 | P6 외부 연결 | Gmail 본문/제한 첨부·Calendar·공식/커스텀 수집·선택한 Codex 요청·정규화 통화 전사 수집·공개 웹·일본우편 최근 상태·원래 수명 안의 브라우저 복구·승인된 gws 초대 | 통화 vendor 포맷/실제 전사·다른 작업 feed·다른 배송사/전체 이력·실계정 |
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
-| P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·운영 중 snapshot/시점·명시적 최신 journal 복구·주기적 SSH journal receiver·구 v1 파일 이전·실험적 native GitHub/Google INBOX 개수·미리보기/선택 본문·별도 모델 읽기 grant의 검색/thread/첨부·원래 실행 대기/재개·승인된 Gmail 발송·기기 브라우저 세션 | 일반 credential·사이트별 로그인/읽기·임의 쓰기 도구·실제 옛 파일 수락·실제 off-host/무손실 최신 복구 |
+| P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·운영 중 snapshot/시점·명시적 최신 journal 복구·주기적 SSH journal receiver·구 v1 파일 이전·실험적 native GitHub/Google INBOX 개수·미리보기/선택 본문·별도 모델 읽기 grant의 검색/thread/첨부·원래 실행 대기/재개·승인된 Gmail 발송·기기 브라우저 세션 | 일반 credential·Gitea 외 사이트 로그인/읽기·임의 쓰기 도구·실제 옛 파일 수락·실제 off-host/무손실 최신 복구 |
 | P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 operator export·운영 대조·drain/cutover/rollback 실증 |
 | P10 출시 | 개발 프리뷰·공개 문서·key-pinned HTTPS 다운로드·로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory·서명된 binary/source/compiler/inventory 연결·ARM64 교차 빌드/직접 에뮬레이션 | 공식 서명 배포·물리 ARM/설치 경로·독립 빌드 증명/license·품질/기기/출시 gate |
 
@@ -173,7 +172,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
 4. **P7 첨부·모바일**: 파일/음성 공유의 실제 OS 전달, 실제 음성 인식·OS 공유 메뉴·Push·키보드/스크롤·
    접근성을 지원 기기에서 검증한다.
 5. **P8 볼트와 credential 사용**: 실제 native GitHub adapter·archive unlock·scope 재사용과
-   명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체와 native Google INBOX 개수·별도 미리보기·선택한 일반 텍스트 본문 조회도 구현했다. 별도 연결의 최종 승인된 즉시/고정 예약 Gmail 발송·같은 기기에서의 불명 결과 확인을 구현했다. 별도 모델 읽기 grant의 Gmail 검색/thread/PDF·텍스트 읽기를 같은 대화·위임 업무에 연결했다. 일반 credential·사이트별 로그인/읽기·임의 쓰기 도구는 남는다.
+   명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체와 native Google INBOX 개수·별도 미리보기·선택한 일반 텍스트 본문 조회도 구현했다. 별도 연결의 최종 승인된 즉시/고정 예약 Gmail 발송·같은 기기에서의 불명 결과 확인을 구현했다. 별도 모델 읽기 grant의 Gmail 검색/thread/PDF·텍스트 읽기를 같은 대화·위임 업무에 연결했다. 일반 credential·Gitea 외 사이트 로그인/읽기·임의 쓰기 도구는 남는다.
    운영 중 암호화 snapshot/시점 복구도 구현했다. 명시적으로 고정한 이후 journal을 합치는 복구도 구현했다. 구 v1 암호화 파일의 로컬 이전을 구현했다. 주기적 SSH journal publisher/receiver도 구현했다. 실제 off-host 배치·무손실 최신 기록·실제 옛 파일 수락·서명 배포는 남는다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: 정규화 private importer/대조와 schema23 relation adapter를 구현했다. 실제 operator export·제한 cutover·rollback,
    수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결과 별도 볼트/companion 패키지 전달을 공식 artifact·물리 ARM/설치 경로·독립 빌드 증명/완전한 license 검토로 확장하고(Rust·웹 고지 수집기와 별도 출처 보충은 구현),

@@ -505,6 +505,9 @@ fn typed_input(
         Invocation::CollectPages(urls) => KnowledgeToolInput::CollectPages { urls },
         Invocation::CredentialGoogleInbox => KnowledgeToolInput::CredentialGoogleInbox {},
         Invocation::CredentialGooglePreview => KnowledgeToolInput::CredentialGooglePreview {},
+        Invocation::CredentialGitea { owner, repository } => {
+            KnowledgeToolInput::CredentialGitea { owner, repository }
+        }
         Invocation::CredentialGitHub { owner, repository } => {
             KnowledgeToolInput::CredentialGitHub { owner, repository }
         }
@@ -1024,6 +1027,7 @@ pub(crate) async fn execute_with_calendar(
         }
         if let Some(profile) = &mut answer_profile {
             profile.credential_github = false;
+            profile.credential_gitea = false;
             profile.credential_google = false;
             profile.credential_google_preview = false;
             profile.conversation_recall = false;
@@ -1407,7 +1411,8 @@ pub(crate) async fn execute_with_calendar(
             }
             if matches!(
                 call.input,
-                KnowledgeToolInput::CredentialGitHub { .. }
+                KnowledgeToolInput::CredentialGitea { .. }
+                    | KnowledgeToolInput::CredentialGitHub { .. }
                     | KnowledgeToolInput::CredentialGoogleInbox {}
                     | KnowledgeToolInput::CredentialGooglePreview {}
             ) {

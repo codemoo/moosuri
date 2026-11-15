@@ -559,6 +559,7 @@ mod tests {
             native_mail_model_background: false,
             evidence_calculation: false,
             credential_github: false,
+            credential_gitea: false,
             credential_google: false,
             credential_google_preview: false,
             conversation_recall: false,

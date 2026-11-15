@@ -46,8 +46,8 @@
 
 - [x] Connect selected-page observation and existing manual handoff to the original work with honest server-browser trust labeling.
 - [x] Implement trusted local browser/broker observation and session/journal boundaries before native-vault password/TOTP automation.
-- [ ] At adapter kickoff, pin one actual site/read outcome, official API alternative, test account/policy and completion evidence; implement only its supported login/read adapter and independently review secret/session/recovery behavior.
+- [x] At adapter kickoff, pin one actual site/read outcome, official API alternative, test account/policy and completion evidence; implement only its supported login/read adapter and independently review secret/session/recovery behavior.
 - [x] Keep arbitrary form/payment/purchase/phone/government actions unavailable; require a separate typed effect/reconciliation contract for later submissions.
 
-A–E and F selected-page/local-session groundwork are implemented and integrated; F's actual site login/read adapter remains open. [Integrated evidence](../../../docs/reviews/2026-11-15-compound-capabilities.md). B evidence: [connection wait validation](../../../docs/reviews/2026-11-15-connection-waits.md). A evidence: [compound report validation](../../../docs/reviews/2026-11-15-compound-reports.md). The [plan](../../../docs/additional-capabilities-plan.md)
+A–E and F selected-page/local-session groundwork are implemented and integrated; F's pinned Gitea1.24.6 password/TOTP login, exact repository count and reuse adapter is implemented; other sites and general browser missions remain open. [Gitea acceptance](../../../docs/reviews/2026-11-15-native-gitea-login.md). [Integrated evidence](../../../docs/reviews/2026-11-15-compound-capabilities.md). B evidence: [connection wait validation](../../../docs/reviews/2026-11-15-connection-waits.md). A evidence: [compound report validation](../../../docs/reviews/2026-11-15-compound-reports.md). The [plan](../../../docs/additional-capabilities-plan.md)
 does not complete official release, real-provider/device acceptance, broad holdout or production cutover.

@@ -105,7 +105,7 @@ impl Record {
             idle_until: self.idle_until,
             handoff_until: self.handoff_until,
             page_count: pages,
-            site_adapter_available: false,
+            site_adapter_available: true,
         }
     }
 
@@ -134,6 +134,19 @@ fn stop(process: &Arc<Mutex<Option<Child>>>) {
     }
 }
 
+/// Owns an unreaped child across cancellation points during explicit shutdown.
+/// `Child` alone kills only its parent on drop; descendants require our group.
+/// Tokio clears `id()` only after successful reap, so a reaped PID is never used.
+struct ShutdownChild(Child);
+impl Drop for ShutdownChild {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0.id() {
+            unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+            let _ = self.0.start_kill();
+        }
+    }
+}
+
 impl Drop for Browser {
     fn drop(&mut self) {
         self.watchdog.abort();
@@ -151,8 +164,21 @@ fn alive(group: u32) -> bool {
         || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
+/// Read-only quiescence check after our owned parent has exited. Renderer
+/// children may still be exiting/reaped by init. Never signal a reaped PID.
+async fn wait_group_absent(group: u32) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while alive(group) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .map_err(|_| Error::Unknown)
+}
+
 fn cleanup(record: &Record, root: &Path) -> Result<()> {
     if record.process_group.is_some_and(alive) || record.phase == Phase::Starting {
+        synthetic_site_stage(SiteStage::CleanupGroupAlive);
         return Err(Error::Unknown);
     }
     let profile = record.profile(root);
@@ -353,19 +379,46 @@ impl Browser {
 
     async fn close(mut self) -> Result<()> {
         self.watchdog.abort();
-        stop(&self.process);
+        // Give Chromium's browser process the first opportunity to shut down
+        // and reap its renderer/network children. Killing the entire group first
+        // can orphan zombies under a non-reaping container PID1, so kill(0)
+        // correctly continues to report a group even after our child is reaped.
+        self.next = self.next.checked_add(1).ok_or(Error::PrivateState)?;
+        let close = format!(
+            "{}\0",
+            json!({"id":self.next,"method":"Browser.close","params":{}})
+        );
+        let _ = tokio::time::timeout(
+            Duration::from_secs(1),
+            self.pipe.write_all(close.as_bytes()),
+        )
+        .await;
         let child = self.process.lock().map_err(|_| Error::PrivateState)?.take();
-        if let Some(mut child) = child {
-            tokio::time::timeout(Duration::from_secs(3), child.wait())
-                .await
-                .map_err(|_| Error::Unknown)?
-                .map_err(|_| Error::Unknown)?;
+        if let Some(child) = child {
+            // Keep the whole owned group under RAII while awaiting reaping.
+            // Cancellation drops this guard before Browser's empty slot.
+            let mut child = ShutdownChild(child);
+            let graceful = tokio::time::timeout(Duration::from_secs(3), child.0.wait()).await;
+            match graceful {
+                Ok(result) => {
+                    result.map_err(|_| Error::Unknown)?;
+                    synthetic_site_stage(SiteStage::CloseGracefulReaped);
+                }
+                Err(_) => {
+                    // Still own this unreaped child, never a retained journal PID.
+                    if let Some(pid) = child.0.id() {
+                        unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+                    }
+                    let _ = child.0.start_kill();
+                    tokio::time::timeout(Duration::from_secs(3), child.0.wait())
+                        .await
+                        .map_err(|_| Error::Unknown)?
+                        .map_err(|_| Error::Unknown)?;
+                    synthetic_site_stage(SiteStage::CloseForcedReaped);
+                }
+            }
         }
-        self.pipe
-            .shutdown()
-            .await
-            .map_err(|_| Error::Unavailable)
-            .ok();
+        self.pipe.shutdown().await.ok();
         Ok(())
     }
 }
@@ -529,6 +582,16 @@ impl Engine {
     async fn browser_close_at(&mut self, now: i64, expired: bool) -> Result<()> {
         if let Some(browser) = self.local_browser.take() {
             browser.close().await?;
+            // Parent reaping and complete group disappearance are distinct.
+            // Give init a bounded opportunity to reap already exiting children.
+            if let Some(group) = self
+                .state
+                .local_browser
+                .as_ref()
+                .and_then(|r| r.process_group)
+            {
+                wait_group_absent(group).await?;
+            }
         }
         let record = self.state.local_browser.as_mut().ok_or(Error::Policy)?;
         cleanup(record, &self.local_root)?;
@@ -545,3 +608,315 @@ impl Engine {
 
 #[cfg(test)]
 mod tests;
+
+// Compile-time test fixture capability plus two explicit synthetic-test opt-ins.
+// Every emitted value is a fixed enum variant. Never format browser input/output.
+#[derive(Clone, Copy, Debug)]
+enum SiteStage {
+    Targets,
+    Attach,
+    Interception,
+    PageEnabled,
+    LoginNavigation,
+    LoginPage,
+    VersionChecked,
+    SessionChecked,
+    PasswordSubmitted,
+    TotpChallenge,
+    TotpSubmitted,
+    Authenticated,
+    RenderedVersionChecked,
+    RepositoryNavigation,
+    RepositoryPage,
+    AccountChecked,
+    CountProjected,
+    InterceptionDisabled,
+    Detached,
+    OriginDenied,
+    CdpRejected,
+    JavascriptRejected,
+    CloseGracefulReaped,
+    CloseForcedReaped,
+    CleanupGroupAlive,
+}
+fn synthetic_site_stage(stage: SiteStage) {
+    #[cfg(any(test, feature = "test-fixtures"))]
+    if std::env::var_os("MOOSURI_GITEA_SYNTHETIC_STAGE_TRACE").is_some_and(|v| v == "1")
+        && std::env::var_os("MOOSURI_GITEA_TEST_FIXTURE").is_some()
+    {
+        eprintln!("moosuri synthetic Gitea stage: {stage:?}");
+    }
+    #[cfg(not(any(test, feature = "test-fixtures")))]
+    let _ = stage;
+}
+
+impl Browser {
+    /// Internal only: the model/server never supplies CDP methods or script text.
+    async fn site_call(
+        &mut self,
+        method: &str,
+        params: Value,
+        session: Option<&str>,
+        origin: &str,
+    ) -> Result<Value> {
+        self.next = self.next.checked_add(1).ok_or(Error::Policy)?;
+        let id = self.next;
+        let mut request = json!({"id":id,"method":method,"params":params});
+        if let Some(s) = session {
+            request["sessionId"] = json!(s)
+        }
+        let encoded = zeroize::Zeroizing::new(format!("{}\0", request));
+        tokio::time::timeout(Duration::from_secs(15),async {
+            self.pipe.write_all(encoded.as_bytes()).await.map_err(|_|Error::Unknown)?;
+            let mut consumed=0usize;
+            loop {
+                let mut bytes=zeroize::Zeroizing::new(Vec::new());loop{let b=self.pipe.read_u8().await.map_err(|_|Error::Unknown)?;consumed+=1;if consumed>1024*1024{return Err(Error::ProviderContent)}if b==0{break}bytes.push(b)}
+                let v:Value=serde_json::from_slice(&bytes).map_err(|_|Error::ProviderContent)?;
+                if v["method"]=="Fetch.requestPaused" {
+                    let target=v.pointer("/params/request/url").and_then(Value::as_str).and_then(|s|url::Url::parse(s).ok());
+                    let allowed=target.is_some_and(|u|u.origin().ascii_serialization()==origin && u.username().is_empty() && u.password().is_none());
+                    self.next=self.next.checked_add(1).ok_or(Error::Policy)?;
+                    let mut reply=json!({"id":self.next,"method":if allowed{"Fetch.continueRequest"}else{"Fetch.failRequest"},"params":{"requestId":v["params"]["requestId"]},"sessionId":v["sessionId"]});
+                    if !allowed {reply["params"]["errorReason"]=json!("BlockedByClient");}
+                    let data=zeroize::Zeroizing::new(format!("{}\0",reply));self.pipe.write_all(data.as_bytes()).await.map_err(|_|Error::Unknown)?;
+                    if !allowed{synthetic_site_stage(SiteStage::OriginDenied);return Err(Error::Policy)}continue;
+                }
+                if v["id"].as_u64()!=Some(id){continue}
+                if v.get("error").is_some(){
+                    synthetic_site_stage(SiteStage::CdpRejected);
+                    // Chromium reports a destroyed/missing execution context
+                    // with -32000 during a document navigation. Only the explicit
+                    // read-only wait may retry this; no action is replayed.
+                    return Err(if method=="Runtime.evaluate" && v.pointer("/error/code").and_then(Value::as_i64)==Some(-32000){Error::Unavailable}else{Error::Unknown})
+                }
+                return v.get("result").cloned().ok_or(Error::Unknown)
+            }
+        }).await.map_err(|_|Error::Unknown)?
+    }
+    async fn site_eval(&mut self, session: &str, origin: &str, script: String) -> Result<Value> {
+        let value = self
+            .site_call(
+                "Runtime.evaluate",
+                json!({"expression":script,"awaitPromise":true,"returnByValue":true}),
+                Some(session),
+                origin,
+            )
+            .await?;
+        if value.get("exceptionDetails").is_some() {
+            synthetic_site_stage(SiteStage::JavascriptRejected);
+            return Err(Error::Policy);
+        }
+        value
+            .pointer("/result/value")
+            .cloned()
+            .ok_or(Error::ProviderContent)
+    }
+    /// Poll on the native side so an asynchronous JavaScript promise does not
+    /// span a document swap. This accepts only a bounded numeric observation.
+    /// The caller supplies an adapter-owned read expression, never an action.
+    async fn site_wait(&mut self, session: &str, origin: &str, condition: &str) -> Result<()> {
+        let origin_json = serde_json::to_string(origin).map_err(|_| Error::Policy)?;
+        let expression = format!(
+            "(()=>{{if(location.origin!=={origin_json} && location.href!=='about:blank')return -1;return ({condition})?1:0;}})()"
+        );
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                match self.site_eval(session, origin, expression.clone()).await {
+                    Ok(value) => match value.as_i64() {
+                        Some(1) => return Ok(()),
+                        Some(0) => {}
+                        Some(-1) => return Err(Error::Policy),
+                        _ => return Err(Error::ProviderContent),
+                    },
+                    Err(Error::Unavailable) => {} // Read-only context observation only.
+                    Err(error) => return Err(error),
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .map_err(|_| Error::Unknown)?
+    }
+    async fn gitea_read(
+        &mut self,
+        origin: &str,
+        repo: &moosuri_vault_protocol::broker::GitHubRepository,
+        fields: &moosuri_vault_core::ItemFields,
+    ) -> Result<u64> {
+        let targets = self
+            .site_call("Target.getTargets", json!({}), None, origin)
+            .await?;
+        synthetic_site_stage(SiteStage::Targets);
+        let pages = targets["targetInfos"]
+            .as_array()
+            .ok_or(Error::Policy)?
+            .iter()
+            .filter(|v| v["type"] == "page")
+            .collect::<Vec<_>>();
+        if pages.len() != 1 {
+            return Err(Error::Policy);
+        }
+        let attached = self
+            .site_call(
+                "Target.attachToTarget",
+                json!({"targetId":pages[0]["targetId"],"flatten":true}),
+                None,
+                origin,
+            )
+            .await?;
+        synthetic_site_stage(SiteStage::Attach);
+        let session = attached["sessionId"]
+            .as_str()
+            .ok_or(Error::Policy)?
+            .to_owned();
+        self.site_call(
+            "Fetch.enable",
+            json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
+            Some(&session),
+            origin,
+        )
+        .await?;
+        synthetic_site_stage(SiteStage::Interception);
+        self.site_call("Page.enable", json!({}), Some(&session), origin)
+            .await?;
+        synthetic_site_stage(SiteStage::PageEnabled);
+        let origin_json = serde_json::to_string(origin).map_err(|_| Error::Policy)?;
+        let user_json = zeroize::Zeroizing::new(
+            serde_json::to_string(fields.username.expose()).map_err(|_| Error::Policy)?,
+        );
+        let user = user_json.as_str();
+        self.site_call(
+            "Page.navigate",
+            json!({"url":format!("{origin}/user/login")}),
+            Some(&session),
+            origin,
+        )
+        .await?;
+        synthetic_site_stage(SiteStage::LoginNavigation);
+        self.site_wait(&session,origin,"document.readyState==='complete' && ((location.pathname==='/user/login' && document.querySelector('#user_name')) || (!location.pathname.startsWith('/user/') && document.querySelector('.user-menu')))").await?;
+        synthetic_site_stage(SiteStage::LoginPage);
+        // Gitea's strict REQUIRE_SIGNIN_VIEW gates even /api/v1/version.
+        // Its public head_script supplies AssetVersion; server.go derives it
+        // directly from AppVer (only '+' becomes '~'). Pin it before any input.
+        self.site_eval(
+            &session,
+            origin,
+            "(()=>{if(window.config?.assetVersionEncoded!=='1.24.6')throw 0;return true;})()"
+                .into(),
+        )
+        .await?;
+        synthetic_site_stage(SiteStage::VersionChecked);
+        let logged_in=self.site_eval(&session,origin,format!("location.origin==={origin_json} && !location.pathname.startsWith('/user/') && !!document.querySelector('.user-menu')")).await?.as_bool().ok_or(Error::Policy)?;
+        synthetic_site_stage(SiteStage::SessionChecked);
+        if !logged_in {
+            let password =
+                serde_json::to_string(fields.secret.expose()).map_err(|_| Error::Policy)?;
+            // Fixed form, action, fields, top frame and challenge. Unknown MFA/CAPTCHA stops.
+            let script = zeroize::Zeroizing::new(format!(
+                "(()=>{{if(location.origin!=={origin_json}||location.pathname!='/user/login'||window.top!==window||document.querySelector('iframe,.g-recaptcha,.h-captcha,input[name=captcha]'))throw 0;let u=document.querySelectorAll('input#user_name[name=user_name]'),p=document.querySelectorAll('input#password[name=password][type=password]');if(u.length!==1||p.length!==1||u[0].form!==p[0].form)throw 0;let f=u[0].form;if(f.method!=='post'||f.action!=={origin_json}+'/user/login')throw 0;u[0].value={user};p[0].value={password};f.requestSubmit();return true;}})()"
+            ));
+            self.site_eval(&session, origin, script.to_string()).await?;
+            synthetic_site_stage(SiteStage::PasswordSubmitted);
+            self.site_wait(&session,origin,"location.pathname==='/user/two_factor' && document.readyState==='complete' && document.querySelector('#passcode')").await?;
+            synthetic_site_stage(SiteStage::TotpChallenge);
+            let totp = crate::gitea::totp(fields)?;
+            let code = totp
+                .code_at(crate::current_time()? as u64)
+                .map_err(|_| Error::Policy)?;
+            let passcode = serde_json::to_string(code.expose()).map_err(|_| Error::Policy)?;
+            let script = zeroize::Zeroizing::new(format!(
+                "(()=>{{if(location.origin!=={origin_json}||location.pathname!='/user/two_factor'||window.top!==window||document.querySelector('iframe'))throw 0;let p=document.querySelectorAll('input#passcode[name=passcode]');if(p.length!==1)throw 0;let f=p[0].form;if(f.method!=='post'||f.action!=={origin_json}+'/user/two_factor')throw 0;p[0].value={passcode};f.requestSubmit();return true;}})()"
+            ));
+            self.site_eval(&session, origin, script.to_string()).await?;
+            synthetic_site_stage(SiteStage::TotpSubmitted);
+            self.site_wait(
+                &session,
+                origin,
+                "!location.pathname.startsWith('/user/') && document.readyState==='complete'",
+            )
+            .await?;
+        }
+        synthetic_site_stage(SiteStage::Authenticated);
+        // Gitea's API auth group deliberately omits web Session auth. A strict
+        // instance rejects browser cookies at /api/v1/version even after login.
+        // Remain on the authenticated rendered-page surface for this adapter.
+        let path = format!("/{}/{}", repo.owner, repo.repository);
+        let path_json = serde_json::to_string(&path).map_err(|_| Error::Policy)?;
+        self.site_call(
+            "Page.navigate",
+            json!({"url":format!("{origin}{path}")}),
+            Some(&session),
+            origin,
+        )
+        .await?;
+        synthetic_site_stage(SiteStage::RepositoryNavigation);
+        self.site_wait(&session,origin,&format!("location.pathname==={path_json} && document.readyState==='complete' && document.querySelector('.repository')")).await?;
+        synthetic_site_stage(SiteStage::RepositoryPage);
+        self.site_eval(
+            &session,
+            origin,
+            "(()=>{if(window.config?.assetVersionEncoded!=='1.24.6')throw 0;return true;})()"
+                .into(),
+        )
+        .await?;
+        synthetic_site_stage(SiteStage::RenderedVersionChecked);
+        self.site_eval(&session,origin,format!("(()=>{{let u=document.querySelector('.user-menu strong');if(!u||u.textContent.trim()!=={user})throw 0;return true;}})()")).await?;
+        synthetic_site_stage(SiteStage::AccountChecked);
+        // Only a decimal count may cross this projection. No text/URLs/HTML returned.
+        let value=self.site_eval(&session,origin,format!("(()=>{{if(location.origin!=={origin_json}||location.pathname!=={path_json}||document.querySelector('iframe'))throw 0;let a=[...document.querySelectorAll('a.item')].filter(a=>a.getAttribute('href')==={path_json}+'/issues');if(a.length!==1)throw 0;let label=a[0].querySelector('span.label');if(!label)return 0;let n=label.textContent.trim();if(!/^[0-9]+$/.test(n))throw 0;let value=Number(n);if(!Number.isSafeInteger(value)||value>1000000000)throw 0;return value;}})()")).await?;
+        let count = value
+            .as_u64()
+            .filter(|v| *v <= 1_000_000_000)
+            .ok_or(Error::ProviderContent)?;
+        synthetic_site_stage(SiteStage::CountProjected);
+        self.site_call("Fetch.disable", json!({}), Some(&session), origin)
+            .await?;
+        synthetic_site_stage(SiteStage::InterceptionDisabled);
+        self.site_call(
+            "Target.detachFromTarget",
+            json!({"sessionId":session}),
+            None,
+            origin,
+        )
+        .await?;
+        synthetic_site_stage(SiteStage::Detached);
+        Ok(count)
+    }
+}
+impl Engine {
+    pub(crate) fn browser_adapter_ready(&self, now: i64) -> Result<()> {
+        let r = self
+            .state
+            .local_browser
+            .as_ref()
+            .ok_or(Error::Unavailable)?;
+        r.check(now)?;
+        if r.phase != Phase::Ready
+            || self
+                .local_browser
+                .as_ref()
+                .is_none_or(|b| b.deadline.lock().map_or(true, |d| Instant::now() >= *d))
+        {
+            return Err(Error::Unavailable);
+        }
+        Ok(())
+    }
+    pub(crate) async fn browser_gitea(
+        &mut self,
+        origin: &str,
+        repo: &moosuri_vault_protocol::broker::GitHubRepository,
+        fields: &moosuri_vault_core::ItemFields,
+    ) -> Result<u64> {
+        self.browser_adapter_ready(crate::current_time()?)?;
+        let result = self
+            .local_browser
+            .as_mut()
+            .ok_or(Error::Unavailable)?
+            .gitea_read(origin, repo, fields)
+            .await;
+        if result.is_err() {
+            let _ = self.browser_close_at(crate::current_time()?, false).await;
+        }
+        result
+    }
+}

@@ -67,6 +67,10 @@ pub enum KnowledgeToolInput {
     },
     CredentialGoogleInbox {},
     CredentialGooglePreview {},
+    CredentialGitea {
+        owner: String,
+        repository: String,
+    },
     CredentialGitHub {
         owner: String,
         repository: String,
@@ -573,6 +577,7 @@ pub(crate) fn read_tool(
                 .map(KnowledgeToolResult::ConversationTurn)
         }
         KnowledgeToolInput::NativeMail { .. }
+        | KnowledgeToolInput::CredentialGitea { .. }
         | KnowledgeToolInput::CredentialGitHub { .. }
         | KnowledgeToolInput::CredentialGoogleInbox {}
         | KnowledgeToolInput::CredentialGooglePreview {} => {

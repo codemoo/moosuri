@@ -1,9 +1,7 @@
 # Trusted local browser groundwork
 
 The native companion can open a separate headed Chromium window on the owner's
-device. This is an experimental local session foundation, not a supported website
-login/read adapter. It never imports the person's existing browser profile and has
-no password/TOTP autofill, model browser tools or server browser transport.
+device. This is an experimental local session foundation with one separately scoped Gitea login/read adapter. It never imports the person's existing browser profile. The separate [Gitea 1.24.6 adapter](native-credential-gitea.md) adds a pinned local password/TOTP login and numeric issue count through the signed native job transport; generic model browser tools remain unavailable.
 
 Run the already enrolled companion with an explicit trusted absolute Chromium
 executable, in addition to its existing `--state-dir` and `--origin` arguments:
@@ -15,7 +13,7 @@ executable, in addition to its existing `--state-dir` and `--origin` arguments:
 Use `browser-start`, inspect the new blank window, and run `browser-confirm` locally
 within five minutes. `browser-observe` returns only the original session identity,
 generation, fixed lifecycle times and a bounded page count. `browser-status` reads
-only the retained local status. `site_adapter_available` stays false. Neither command
+only the retained local status. `site_adapter_available` reports the installed narrow Gitea adapter; it does not prove a selected grant or usable browser. Neither command
 proves authentication or completion of an assistant task. Unsupported page counts
 or malformed/stalled browser responses close the session instead of returning raw
 errors, URLs or page text.

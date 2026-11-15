@@ -110,7 +110,8 @@ impl Engine {
             return Err(Error::Policy);
         }
         if let Some(g) = self.grants().iter().find(|g| {
-            g.repository() == Some(&repo)
+            g.gitea().is_none()
+                && g.repository() == Some(&repo)
                 && g.binding.expires_at
                     > std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)

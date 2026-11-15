@@ -1,6 +1,6 @@
 # 볼트 credential 연결과 자동 사용
 
-사용자가 일을 맡기면 필요한 서비스의 기존 credential binding을 자동 사용한다. 처음 연결할 때, 항목이 여러 개여서 특정할 수 없을 때, 실제 인증이 만료됐을 때만 필요한 입력을 받는다. 매 실행/도구 단계마다 승인을 반복하지 않는다. 이 문서는 전체 연결 계약이다. 현재 [native GitHub adapter](native-credential-github.md)는 독립 live vault 또는 명시적 암호화 archive 사본의 API-key로 정확한 저장소 metadata만 읽는 실험용 경로다. 기존 [foundation](credential-broker-foundation.md)의 pairing/journal 계약을 사용하며, 별도 [Google INBOX adapter](native-credential-google.md)는 실제 scope·subject·메일 계정을 기기에서 확인한 뒤 받은편지함 개수만 읽는다. 일반 credential/browser 연결·서명 배포는 아직 제공하지 않는다.
+사용자가 일을 맡기면 필요한 서비스의 기존 credential binding을 자동 사용한다. 처음 연결할 때, 항목이 여러 개여서 특정할 수 없을 때, 실제 인증이 만료됐을 때만 필요한 입력을 받는다. 매 실행/도구 단계마다 승인을 반복하지 않는다. 이 문서는 전체 연결 계약이다. 현재 [native GitHub adapter](native-credential-github.md)는 독립 live vault 또는 명시적 암호화 archive 사본의 API-key로 정확한 저장소 metadata만 읽는 실험용 경로다. 기존 [foundation](credential-broker-foundation.md)의 pairing/journal 계약을 사용하며, 별도 [Google INBOX adapter](native-credential-google.md)는 실제 scope·subject·메일 계정을 기기에서 확인한 뒤 받은편지함 개수만 읽는다. 별도 [Gitea 1.24.6 adapter](native-credential-gitea.md)는 선택한 기기 볼트 로그인/TOTP로 정확한 저장소의 열린 issue 수를 읽고 원래 대화에 돌려준다. 일반 credential/browser 연결·서명 배포는 아직 제공하지 않는다.
 
 ## 세 경계
 

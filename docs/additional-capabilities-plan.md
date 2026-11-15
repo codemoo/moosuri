@@ -1,6 +1,6 @@
 # 비서 업무의 추가 구현 계획
 
-2026-11-15, 기준 소스 `07a6b80`. **승인된 구현 계획이다. A–E와 F의 선택 페이지·기기 세션 기반을 구현·검증했다. F의 실제 사이트 로그인/읽기 adapter는 남아 있으며 세부 정본은 [현재 상태](status.md)다.**
+2026-11-15, 기준 소스 `07a6b80`. **승인된 구현 계획이다. A–E와 F의 선택 페이지·기기 세션·Gitea1.24.6 로그인/읽기 adapter를 구현·검증했다. 다른 사이트와 일반 브라우저 업무는 남아 있으며 세부 정본은 [현재 상태](status.md)다.**
 [현재 상태](status.md), [전체 P0–P10 계획](plan.md), [기능 계약](features.md)을 유지하면서
 P4/P5/P6/P8의 복합 업무·학습·credential 연결을 실제 구현 단위로 좁힌다.
 출시 패키지·실계정/실기기 수락·운영 이전은 별도 남은 작업이다.
@@ -208,7 +208,7 @@ community export는 허용 구조와 새 합성 예제로 패키지를 재구성
 관리자가 볼 수 없다고 주장하지 않는다. local browser 지원·journal·세션 수명·제한된
 관측 projection을 먼저 구현하고, 한 사이트/정확한 읽기 업무의 adapter로 수락한다.
 첫 실제 사이트는 해당 adapter 착수 시 공개 로그인 방식·공식 API 대안·정책·테스트 계정과
-완료 근거를 조사해 고정한다. 아직 특정 사이트의 자동 로그인을 지원한다고 약속하지 않는다.
+완료 근거를 조사해 고정한다. 첫 수락 adapter는 [Gitea1.24.6](native-credential-gitea.md)이며 로컬 볼트 password/TOTP로 정확한 저장소 issue 수만 읽는다. [실제 서비스 검증](reviews/2026-11-15-native-gitea-login.md).
 
 지원 adapter만 고정 origin/field/challenge에 입력하며 비밀번호/TOTP seed·code·cookie·
 CDP·임의 JS·form value를 모델/서버 DB/공유 스킬로 반환하지 않는다. DOM·URL·오류·

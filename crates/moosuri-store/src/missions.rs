@@ -938,6 +938,7 @@ pub(crate) fn read_profile(
     profile.native_mail_model_read = false;
     profile.native_mail_model_background = false;
     profile.credential_github = false;
+    profile.credential_gitea = false;
     profile.credential_google = false;
     profile.credential_google_preview = false;
     profile.conversation_recall = false;

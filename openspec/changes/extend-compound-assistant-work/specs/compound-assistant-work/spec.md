@@ -93,6 +93,13 @@ Native-vault password/TOTP operations SHALL execute only through a supported ada
 - **THEN** the task SHALL wait at the supported local handoff without exposing credentials or extending session life
 - **AND** only a new valid observation SHALL resume supported work
 
+#### Scenario: Pinned local Gitea login and issue count
+- **WHEN** a current direct chat requests one exact repository already selected for Gitea1.24.6 on a trusted native device
+- **THEN** the same original credential read job SHALL wait for an unlocked vault and confirmed unexpired local browser
+- **AND** the local adapter SHALL check the selected item, exact origin/version/forms and TOTP challenge before using only that account's username/password/current code
+- **AND** only the selected repository's bounded numeric open issue count and signed provenance SHALL reach the original chat; secrets/cookies/DOM/CDP/raw errors SHALL stay local
+- **AND** a second matching request SHALL reuse the scoped binding without per-request approval while restart/revoke/unknown SHALL retain the existing no-replay and lifetime rules
+
 #### Scenario: Unsupported or uncertain browser effect
 - **WHEN** an arbitrary submission is unsupported or an entered action has an unknown outcome
 - **THEN** the system SHALL retain a truthful unsupported/unknown result and no automatic replay

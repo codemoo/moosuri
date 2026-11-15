@@ -370,6 +370,9 @@ impl Transport {
                 | Operation::GoogleMailLookup { .. } => {
                     engine.execute_live_google(vault, &invocation, google).await
                 }
+                Operation::GiteaRepositoryRead { .. } => {
+                    engine.execute_live_gitea(vault, &invocation).await
+                }
                 Operation::GitHubRepositoryRead => {
                     engine
                         .execute_live_github(vault, &invocation, adapter)
@@ -464,6 +467,11 @@ impl Transport {
             return Ok(completed);
         }
         for request in requests {
+            if matches!(request.operation, Operation::GiteaRepositoryRead { .. })
+                && engine.browser_adapter_ready(current_time()?).is_err()
+            {
+                continue;
+            }
             let invocation = request.invocation.clone();
             let request_digest = auth::hash(&request_bytes(&request));
             engine.prepare_live_github(vault, request).await?;
@@ -514,6 +522,11 @@ impl Transport {
         }
         let mut completed = 0;
         for request in requests {
+            if matches!(request.operation, Operation::GiteaRepositoryRead { .. })
+                && engine.browser_adapter_ready(current_time()?).is_err()
+            {
+                continue;
+            }
             let invocation = request.invocation.clone();
             let operation = request.operation;
             match operation {
@@ -524,6 +537,9 @@ impl Transport {
                 | Operation::GoogleMailSend { .. }
                 | Operation::GoogleMailLookup { .. } => {
                     engine.prepare_google(archive, request, current_time()?)?
+                }
+                Operation::GiteaRepositoryRead { .. } => {
+                    engine.prepare_gitea(archive, request, current_time()?)?
                 }
                 Operation::GitHubRepositoryRead => {
                     engine.prepare_github(archive, request, current_time()?)?
@@ -561,6 +577,9 @@ impl Transport {
                 | Operation::GoogleMailSend { .. }
                 | Operation::GoogleMailLookup { .. } => {
                     engine.execute_google(archive, &invocation, google).await?
+                }
+                Operation::GiteaRepositoryRead { .. } => {
+                    engine.execute_gitea(archive, &invocation).await?
                 }
                 Operation::GitHubRepositoryRead => {
                     engine.execute_github(archive, &invocation, adapter).await?

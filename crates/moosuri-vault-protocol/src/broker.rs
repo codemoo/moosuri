@@ -44,6 +44,7 @@ pub struct AuthChallenge {
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
     FixedProbe,
+    GiteaRepositoryRead { site: Uuid },
     GitHubRepositoryRead,
     GoogleInboxRead,
     GoogleInboxPreview,
@@ -89,9 +90,28 @@ impl GitHubRepository {
 #[serde(untagged)]
 pub enum Resource {
     GitHub(GitHubRepository),
+    Gitea(GiteaRepository),
     GoogleInbox(GoogleInboxResource),
     GoogleBody(GoogleBodyResource),
     GoogleModelRead(GoogleModelReadResource),
+}
+/// Opaque device-local site selection; the origin and account stay on the device.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GiteaRepository {
+    pub gitea_site: Uuid,
+    pub repository: GitHubRepository,
+}
+impl GiteaRepository {
+    pub fn valid(&self) -> bool {
+        !self.gitea_site.is_nil() && self.repository.valid()
+    }
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut b = Bytes::new(b"gitea-browser-issues/v1");
+        b.id(self.gitea_site);
+        b.blob(&self.repository.bytes());
+        b.0
+    }
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -145,6 +165,7 @@ impl Resource {
     pub fn valid(&self) -> bool {
         match self {
             Self::GitHub(r) => r.valid(),
+            Self::Gitea(r) => r.valid(),
             Self::GoogleInbox(_) => true,
             Self::GoogleBody(r) => !r.google_body.is_nil(),
             Self::GoogleModelRead(r) => !r.google_model_read.is_nil(),
@@ -153,6 +174,7 @@ impl Resource {
     pub fn operation(&self) -> Operation {
         match self {
             Self::GitHub(_) => Operation::GitHubRepositoryRead,
+            Self::Gitea(r) => Operation::GiteaRepositoryRead { site: r.gitea_site },
             Self::GoogleModelRead(r) => Operation::GoogleMailModelRead {
                 selection: r.google_model_read,
             },
@@ -168,12 +190,14 @@ impl Resource {
     pub fn repository(&self) -> Option<&GitHubRepository> {
         match self {
             Self::GitHub(r) => Some(r),
+            Self::Gitea(r) => Some(&r.repository),
             Self::GoogleInbox(_) | Self::GoogleBody(_) | Self::GoogleModelRead(_) => None,
         }
     }
     pub fn bytes(&self) -> Vec<u8> {
         match self {
             Self::GitHub(r) => r.bytes(),
+            Self::Gitea(r) => r.bytes(),
             Self::GoogleModelRead(_) => b"moosuri/google-mail-model-read/v1".to_vec(),
             Self::GoogleBody(_) => b"moosuri/google-inbox-body/v1".to_vec(),
             Self::GoogleInbox(r) => match r.google_inbox {
@@ -256,6 +280,9 @@ impl GoogleMessagePreview {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Projection {
+    GiteaRepository {
+        open_issues: u64,
+    },
     GoogleMailModelRead {
         result: Box<MailModelResult>,
     },
@@ -299,6 +326,10 @@ impl Projection {
     pub fn bytes(&self) -> Vec<u8> {
         let mut b = Bytes::new(b"projection");
         match self {
+            Self::GiteaRepository { open_issues } => {
+                b.0.push(10);
+                b.u(*open_issues);
+            }
             Self::GoogleMailModelRead { result } => {
                 b.0.push(9);
                 b.blob(&result.bytes());
@@ -409,6 +440,10 @@ pub struct SignedReceipt {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    RegisterGitea {
+        binding: Binding,
+        resource: GiteaRepository,
+    },
     RegisterGoogleModelRead {
         binding: Binding,
         background: bool,
@@ -571,6 +606,15 @@ impl Bytes {
         self.invocation(&r.invocation);
         self.binding(&r.binding);
         match r.operation {
+            Operation::GiteaRepositoryRead { site } => {
+                self.0.push(9);
+                self.id(site);
+                if let Some(repo) = &r.repository {
+                    self.blob(&repo.bytes());
+                } else {
+                    self.blob(&[]);
+                }
+            }
             Operation::GoogleMailModelRead { selection } => {
                 self.0.push(8);
                 self.id(selection);
@@ -645,6 +689,7 @@ impl Bytes {
             Outcome::ProjectedSuccess => 3,
         });
         self.0.push(match r.projection {
+            Projection::GiteaRepository { .. } => 10,
             Projection::GoogleMailModelRead { .. } => 9,
             Projection::GoogleMailSent { .. } => 7,
             Projection::GoogleMailObserved { .. } => 8,
@@ -745,6 +790,9 @@ impl Bytes {
             self.0.push(*unavailable);
             self.0.push(*more_available as u8);
         }
+        if let Projection::GiteaRepository { open_issues } = &r.projection {
+            self.u(*open_issues);
+        }
         if let Projection::GoogleMailModelRead { result } = &r.projection {
             self.blob(&result.bytes());
         }
@@ -784,6 +832,11 @@ pub fn command_bytes(
     }
     let mut body = Bytes::new(b"command-body");
     match command {
+        Command::RegisterGitea { binding, resource } => {
+            body.0.push(24);
+            body.binding(binding);
+            body.blob(&resource.bytes());
+        }
         Command::RegisterGoogleModelRead {
             binding,
             background,

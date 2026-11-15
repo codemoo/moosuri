@@ -1,5 +1,6 @@
 //! Trusted native credential enforcement with fixed GitHub and Google read adapters.
 pub mod auth;
+pub mod gitea;
 pub mod github;
 pub mod google;
 mod journal;
@@ -325,6 +326,16 @@ impl Engine {
                         Operation::GoogleMailSend { .. } | Operation::GoogleMailLookup { .. }
                     )
                     || !matches!(entry.phase, Phase::Prepared)
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::RegisterGitea { binding, resource } => {
+                if !self
+                    .state
+                    .grants
+                    .iter()
+                    .any(|g| g.binding == *binding && g.gitea() == Some(resource))
                 {
                     return Err(Error::Policy);
                 }

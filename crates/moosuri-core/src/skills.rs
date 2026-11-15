@@ -27,6 +27,8 @@ pub struct RunToolProfile {
     #[serde(default, skip_serializing_if = "is_false")]
     pub credential_github: bool,
     #[serde(default, skip_serializing_if = "is_false")]
+    pub credential_gitea: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub credential_google: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub credential_google_preview: bool,

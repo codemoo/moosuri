@@ -300,6 +300,7 @@ pub(super) enum Invocation {
     CollectPages(Vec<String>),
     CredentialGoogleInbox,
     CredentialGooglePreview,
+    CredentialGitea { owner: String, repository: String },
     CredentialGitHub { owner: String, repository: String },
     InvalidArguments,
 }
@@ -403,6 +404,9 @@ pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
     }
     if name == "google_inbox_counts" {
         return crate::credential_chat::parse_google(arguments);
+    }
+    if name == "gitea_repository_issues" {
+        return crate::credential_chat::parse_gitea(arguments);
     }
     if name == "github_repository_metadata" {
         return crate::credential_chat::parse(arguments);
@@ -587,6 +591,7 @@ mod tests {
             native_mail_model_background: false,
             evidence_calculation: false,
             credential_github: false,
+            credential_gitea: false,
             credential_google: false,
             credential_google_preview: false,
             conversation_recall: false,

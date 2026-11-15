@@ -341,7 +341,7 @@ impl LiveVault {
         let mut items = vec![];
         for encrypted in state.items {
             let item = active.open_item(&encrypted).map_err(|_| Error::Reconnect)?;
-            if item.kind == ItemKind::ApiKey {
+            if matches!(item.kind, ItemKind::ApiKey | ItemKind::Login) {
                 items.push((encrypted.id, item.title.expose().to_owned()));
             }
         }
@@ -456,7 +456,8 @@ impl Engine {
         let (id, item_epoch, key_epoch, pin) = vault.selection(item, false).await?;
         vault.state().await?;
         if let Some(at) = self.state.grants.iter().position(|g| {
-            g.repository() == Some(&repository)
+            g.gitea().is_none()
+                && g.repository() == Some(&repository)
                 && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
         }) {
             let grant = &mut self.state.grants[at];
@@ -687,6 +688,7 @@ impl Engine {
         if !matches!(
             request.operation,
             Operation::GitHubRepositoryRead
+                | Operation::GiteaRepositoryRead { .. }
                 | Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
@@ -760,5 +762,117 @@ impl Engine {
             vault.retire();
         }
         Ok(receipt)
+    }
+}
+impl Engine {
+    pub async fn live_gitea_grant(
+        &mut self,
+        vault: &mut LiveVault,
+        item: Uuid,
+        origin: String,
+        repository: GitHubRepository,
+        expires: i64,
+    ) -> Result<(Binding, GiteaRepository)> {
+        if vault.owner != self.device().owner
+            || !crate::gitea::valid_origin(&origin)
+            || !repository.valid()
+        {
+            return Err(Error::Policy);
+        }
+        let state = vault.state().await?;
+        let encrypted = state
+            .items
+            .iter()
+            .find(|i| i.id == item)
+            .ok_or(Error::Reconnect)?;
+        let f = vault
+            .active
+            .as_mut()
+            .ok_or(Error::Locked)?
+            .open_item(encrypted)
+            .map_err(|_| Error::Reconnect)?;
+        crate::gitea::fields(&f, &origin)?;
+        let pin = policy::LivePin {
+            origin: vault.origin.clone(),
+            head: head_of(&state)?,
+            item_sha256: digest(&encrypted.to_json().map_err(|_| Error::Reconnect)?),
+        };
+        let id = state.binding.ok_or(Error::Reconnect)?.vault_id;
+        let key = state.header.ok_or(Error::Reconnect)?.generation;
+        vault.state().await?;
+        // A rotated item requires explicit retirement/new selection; never widen old scope.
+        if let Some(g) = self.grants().iter().find(|g| {
+            g.gitea().is_some_and(|r| r.repository == repository)
+                && g.site_origin() == origin
+                && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
+        }) {
+            if g.item() != item
+                || g.vault() != Some(id)
+                || g.live() != Some(&pin)
+                || g.binding.item_epoch != encrypted.revision
+                || g.binding.key_epoch != key
+            {
+                return Err(Error::Reconnect);
+            }
+            return Ok((g.binding.clone(), g.gitea().unwrap().clone()));
+        }
+        let r = GiteaRepository {
+            gitea_site: Uuid::new_v4(),
+            repository,
+        };
+        let g = policy::LocalGrant::select_gitea(
+            self.device().clone(),
+            item,
+            id,
+            origin,
+            r.clone(),
+            encrypted.revision,
+            key,
+            expires,
+        )?
+        .select_live(pin)?;
+        Ok((self.select(g)?, r))
+    }
+    pub(crate) async fn execute_live_gitea(
+        &mut self,
+        vault: &mut LiveVault,
+        invocation: &Invocation,
+    ) -> Result<SignedReceipt> {
+        let request = self
+            .state
+            .entries
+            .iter()
+            .find(|e| e.request.invocation == *invocation)
+            .ok_or(Error::Policy)?
+            .request
+            .clone();
+        let g = self
+            .grants()
+            .iter()
+            .find(|g| g.binding == request.binding && g.gitea().is_some())
+            .ok_or(Error::Policy)?
+            .clone();
+        let state = vault.check(&g).await?;
+        let e = state
+            .items
+            .iter()
+            .find(|i| i.id == g.item())
+            .ok_or(Error::Reconnect)?;
+        let fields = vault
+            .active
+            .as_mut()
+            .ok_or(Error::Locked)?
+            .open_item(e)
+            .map_err(|_| Error::Reconnect)?;
+        crate::gitea::fields(&fields, g.site_origin())?;
+        vault.check(&g).await?;
+        self.execute_gitea_fields(
+            invocation,
+            &g,
+            &fields,
+            g.binding.item_epoch,
+            g.binding.key_epoch,
+        )
+        .await
     }
 }

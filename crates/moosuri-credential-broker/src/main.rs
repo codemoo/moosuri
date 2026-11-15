@@ -150,7 +150,7 @@ async fn run() -> Result<(), Error> {
     }
     let mut vault: Option<Vault> = None;
     println!(
-        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | select-google ITEM_UUID GOOGLE_SUB EMAIL | select-google-preview ITEM_UUID GOOGLE_SUB EMAIL | select-google-body ITEM_UUID GOOGLE_SUB EMAIL | select-google-send ITEM_UUID GOOGLE_SUB EMAIL | select-google-model-read ITEM_UUID GOOGLE_SUB EMAIL | select-google-model-background ITEM_UUID GOOGLE_SUB EMAIL | browser-start | browser-resume | browser-confirm | browser-observe | browser-status | browser-close | poll | lock | quit"
+        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | select-google ITEM_UUID GOOGLE_SUB EMAIL | select-google-preview ITEM_UUID GOOGLE_SUB EMAIL | select-google-body ITEM_UUID GOOGLE_SUB EMAIL | select-google-send ITEM_UUID GOOGLE_SUB EMAIL | select-google-model-read ITEM_UUID GOOGLE_SUB EMAIL | select-google-model-background ITEM_UUID GOOGLE_SUB EMAIL | select-gitea ITEM_UUID ORIGIN OWNER REPO | browser-start | browser-resume | browser-confirm | browser-observe | browser-status | browser-close | poll | lock | quit"
     );
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
     loop {
@@ -227,9 +227,18 @@ async fn run() -> Result<(), Error> {
                 }
                 "items" => {
                     match vault.as_mut().ok_or(Error::Locked)? {
-                        Vault::Archive(v)=>{let ids=v.items().iter().map(|i|i.id).collect::<Vec<_>>();for id in ids{let item=v.open(id).map_err(|_|Error::Policy)?;if item.kind==moosuri_vault_core::ItemKind::ApiKey{println!("{} {}",id,item.title.expose());}}}
+                        Vault::Archive(v)=>{let ids=v.items().iter().map(|i|i.id).collect::<Vec<_>>();for id in ids{let item=v.open(id).map_err(|_|Error::Policy)?;if matches!(item.kind,moosuri_vault_core::ItemKind::ApiKey|moosuri_vault_core::ItemKind::Login){println!("{} {}",id,item.title.expose());}}}
                         Vault::Live(v)=>{for(id,title)in v.items().await?{println!("{id} {title}");}}
                     }
+                }
+                "select-gitea" => {
+                    let item=parts.next().ok_or(Error::Policy)?.parse().map_err(|_|Error::Policy)?;
+                    let origin=parts.next().ok_or(Error::Policy)?.to_owned();
+                    let repository=GitHubRepository{owner:parts.next().ok_or(Error::Policy)?.into(),repository:parts.next().ok_or(Error::Policy)?.into()};
+                    if parts.next().is_some(){return Err(Error::Policy)}
+                    let (binding,resource)=match vault.as_mut().ok_or(Error::Locked)?{Vault::Archive(v)=>engine.archive_gitea_grant(v,item,origin,repository,now()+30*86400)?,Vault::Live(v)=>engine.live_gitea_grant(v,item,origin,repository,now()+30*86400).await?};
+                    transport.command(&engine,Command::RegisterGitea{binding,resource}).await?;
+                    println!("Exact Gitea repository connected. Its password and TOTP stay on this device; compatible read requests reuse this selection.");
                 }
                 "select" => {
                     let id = parts

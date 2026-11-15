@@ -98,6 +98,11 @@ fn projection_allowed(outcome: Outcome, p: &Projection, operation: Operation) ->
         (Outcome::ProjectedSuccess, Projection::FixedProbeOk, Operation::FixedProbe) => true,
         (
             Outcome::ProjectedSuccess,
+            Projection::GiteaRepository { open_issues },
+            Operation::GiteaRepositoryRead { site },
+        ) => !site.is_nil() && *open_issues <= 1_000_000_000,
+        (
+            Outcome::ProjectedSuccess,
             Projection::GitHubRepository { id, .. },
             Operation::GitHubRepositoryRead,
         ) => *id > 0,
@@ -480,6 +485,9 @@ impl Store {
         github::refresh_resource(&tx,&c.device,&expected,&binding,&Resource::google_preview())?;
     }Reply::Registered
    },
+   Command::RegisterGitea {binding,resource}=>{
+    active(&tx,&p,&session)?;if !resource.valid(){return Err(StoreError::Forbidden)}register_google(&tx,&device,&status,&binding,&Resource::Gitea(resource))?;Reply::Registered
+   }
    Command::RegisterRepository {binding,repository}=>{
     active(&tx,&p,&session)?;
     if status!="active" || !repository.valid() || binding.id.is_nil() || binding.epoch==0 || binding.grant_version==0 || binding.key_epoch==0 || binding.item_epoch==0 || binding.expires_at<=now()? || binding.grant_hash==[0;32] {return Err(StoreError::Forbidden)}

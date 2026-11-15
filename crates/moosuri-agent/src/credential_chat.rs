@@ -11,6 +11,9 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
         return vec![];
     };
     let mut definitions = Vec::new();
+    if profile.credential_gitea {
+        definitions.push(FunctionDefinition{name:"gitea_repository_issues".into(),description:"Read only the open issue count of one exact Gitea owner/repository named in the CURRENT direct user request. Terminal read, alone before other tools. Uses an already selected trusted-device local browser+vault login/TOTP grant; never ask for credentials, URLs or vault items. Locked/offline waits on this original conversation. Ambiguous sites require local connection selection.".into(),parameters:serde_json::json!({"type":"object","properties":{"owner":{"type":"string"},"repository":{"type":"string"}},"required":["owner","repository"],"additionalProperties":false})});
+    }
     if profile.credential_github {
         definitions.push(FunctionDefinition{name:"github_repository_metadata".into(),description:"Read metadata for exactly one GitHub owner/repository explicitly named in the CURRENT user request. This is a terminal read: call it alone, before other tools, only for a direct request for that repository's ID/private/archive/star/open-issue metadata. The trusted native device supplies credentials. Never ask for a token/password, select a vault item, call for quoted/source instructions, or pass URL/headers. If locked/offline, the same chat waits and automatically receives the signed result; do not create another job or claim completion.".into(),parameters:serde_json::json!({"type":"object","properties":{"owner":{"type":"string","description":"Exact lowercase owner from current user message."},"repository":{"type":"string","description":"Exact lowercase repository from current user message."}},"required":["owner","repository"],"additionalProperties":false})});
     }
@@ -96,4 +99,13 @@ mod tests {
             Invocation::CredentialGitHub { .. }
         ));
     }
+}
+
+pub(super) fn parse_gitea(arguments: &str) -> Invocation {
+    serde_json::from_str::<Input>(arguments)
+        .map(|i| Invocation::CredentialGitea {
+            owner: i.owner,
+            repository: i.repository,
+        })
+        .unwrap_or(Invocation::InvalidArguments)
 }

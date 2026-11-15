@@ -7,6 +7,7 @@ use moosuri_connectors::gmail::{FrozenMail, MailContent, ReplyContext, SecretStr
 use moosuri_core::*;
 
 mod external;
+pub(crate) mod native;
 mod reconcile;
 mod workflows;
 pub use reconcile::{MailReconcileCredentials, MailReconcilePermit};
@@ -142,7 +143,8 @@ pub(crate) fn connection(
     user: &UserContext,
     id: &str,
 ) -> Result<MailConnection> {
-    conn.query_row("SELECT id,email,epoch,status,scopes FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok(MailConnection{
+    conn.query_row("SELECT id,email,epoch,status,scopes,native_send FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok(MailConnection{
+        native_send:r.get(5)?,
         id:r.get(0)?,email:r.get(1)?,epoch:r.get(2)?,status:r.get(3)?,compose_enabled:serde_json::from_str::<Vec<String>>(&r.get::<_,String>(4)?).map_err(|_|rusqlite::Error::InvalidQuery)?.iter().any(|s|s==moosuri_connectors::gmail::COMPOSE_SCOPE)}
     )).optional()?.ok_or(StoreError::NotFound)
 }
@@ -150,6 +152,9 @@ pub(crate) fn connection(
 fn binding(conn: &Connection, key: &[u8; 32], user: &UserContext, id: &str) -> Result<MailBinding> {
     let c = connection(conn, user, id)?;
 
+    if c.native_send {
+        return Err(StoreError::Forbidden);
+    }
     if c.status != "active" {
         return Err(StoreError::Conflict);
     }
@@ -177,8 +182,8 @@ fn binding(conn: &Connection, key: &[u8; 32], user: &UserContext, id: &str) -> R
 }
 
 fn action(conn: &Connection, user: &UserContext, id: &str) -> Result<MailAction> {
-    conn.query_row("SELECT id,revision,connection_id,content,digest,state,expires_at,message_id,provider_message,provider_thread,origin_thread,version FROM mail_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get::<_,Option<String>>(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?))).optional()?.ok_or(StoreError::NotFound).and_then(|r|Ok(MailAction{
-        id:r.0,version:r.11,revision:r.1,connection_id:r.2,content:r.3.map(|s|parse(&s)).transpose()?,digest:r.4,state:r.5,expires_at:r.6,message_id:r.7,provider_message_id:r.8,provider_thread_id:r.9,origin_thread_id:r.10,schedule:workflows::schedule(conn,user,id)?,reconciliation:reconcile::status(conn,user,id)?}
+    conn.query_row("SELECT id,revision,connection_id,content,digest,state,expires_at,message_id,provider_message,provider_thread,origin_thread,version FROM mail_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?))).optional()?.ok_or(StoreError::NotFound).and_then(|r|Ok(MailAction{
+        native_send:connection(conn,user,&r.2)?.native_send,id:r.0,version:r.11,revision:r.1,connection_id:r.2,content:r.3.map(|s|parse(&s)).transpose()?,digest:r.4,state:r.5,expires_at:r.6,message_id:r.7,provider_message_id:r.8,provider_thread_id:r.9,origin_thread_id:r.10,schedule:workflows::schedule(conn,user,id)?,reconciliation:reconcile::status(conn,user,id)?}
     ))
 }
 
@@ -193,6 +198,9 @@ pub(crate) fn draft(
 
     let c = connection(conn, user, &input.connection_id)?;
 
+    if c.native_send && input.content.reply.is_some() {
+        return Err(StoreError::InvalidInput);
+    }
     if c.status != "active" || c.email != input.content.from {
         return Err(StoreError::Conflict);
     }
@@ -278,7 +286,8 @@ pub(super) fn purge_thread(conn: &Connection, tenant: &str, thread: &str) -> Res
 }
 
 pub(super) fn pins(conn: &Connection, user: &UserContext) -> Result<Vec<MailConnectionPin>> {
-    Ok(conn.prepare("SELECT id,epoch,email FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND status='active' ORDER BY id LIMIT 8")?.query_map(params![user.tenant.0,user.account.id],|r|Ok(MailConnectionPin{
+    Ok(conn.prepare("SELECT id,epoch,email,native_send FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND status='active' ORDER BY id LIMIT 8")?.query_map(params![user.tenant.0,user.account.id],|r|Ok(MailConnectionPin{
+        native_send:r.get(3)?,
         id:r.get(0)?,epoch:r.get(1)?,email:r.get(2)?}
     ))?.collect::<std::result::Result<Vec<_>,_>>()?)
 }
@@ -676,6 +685,7 @@ impl Store {
                 return Err(StoreError::Conflict)}
             if approve && a.schedule.as_ref().is_some_and(|s|s.due_at<=now().unwrap_or(i64::MAX)) {return Err(StoreError::Conflict)}
             let c=connection(&tx,&user,&a.connection_id)?;
+            if c.native_send {let deadline:i64=tx.query_row("SELECT expires_at FROM mail_connections WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,c.id],|r|r.get(0))?;if deadline<=a.schedule.as_ref().map(|s|s.due_at).unwrap_or(now()?){return Err(StoreError::Conflict)}}
             if c.status!="active"{
                 return Err(StoreError::Conflict)}
             let state=if approve{
@@ -699,7 +709,7 @@ impl Store {
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute("UPDATE mail_actions SET version=version+1,state='expired',raw=NULL,content=NULL WHERE state='approved' AND expires_at<=?1",[now()?])?;
-            let row:Option<DispatchRow>=tx.query_row("SELECT a.tenant_id,a.account_id,a.id,a.connection_id,a.auth_epoch,a.raw,a.digest,a.reply_thread,a.connection_epoch,a.revision FROM mail_actions a LEFT JOIN mail_schedules s ON s.tenant_id=a.tenant_id AND s.action_id=a.id WHERE a.state='approved' AND (s.action_id IS NULL OR s.due_at<=?1) ORDER BY a.rowid LIMIT 1",[now()?],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).optional()?;
+            let row:Option<DispatchRow>=tx.query_row("SELECT a.tenant_id,a.account_id,a.id,a.connection_id,a.auth_epoch,a.raw,a.digest,a.reply_thread,a.connection_epoch,a.revision FROM mail_actions a LEFT JOIN mail_schedules s ON s.tenant_id=a.tenant_id AND s.action_id=a.id JOIN mail_connections c ON c.tenant_id=a.tenant_id AND c.id=a.connection_id WHERE c.native_send=0 AND a.state='approved' AND (s.action_id IS NULL OR s.due_at<=?1) ORDER BY a.rowid LIMIT 1",[now()?],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).optional()?;
             let Some((tenant,account,id,connection_id,epoch,raw,digest,reply,connection_epoch,_))=row else{
                 tx.commit()?;
                 return Ok(None)};

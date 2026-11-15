@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MailConnection {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub native_send: bool,
     pub compose_enabled: bool,
     pub id: String,
     pub email: String,
@@ -45,6 +48,9 @@ pub struct MailDraftInput {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MailAction {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub native_send: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub schedule: Option<MailSchedule>,
@@ -88,6 +94,8 @@ pub struct MailApproval {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MailConnectionPin {
+    #[serde(default)]
+    pub native_send: bool,
     pub id: String,
     pub epoch: i64,
     pub email: String,

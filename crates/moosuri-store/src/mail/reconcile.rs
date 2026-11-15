@@ -4,15 +4,15 @@ use moosuri_connectors::gmail::{READ_SCOPE, SentObservation, reconciliation_fing
 
 #[derive(Clone)]
 pub struct MailReconcilePermit {
-    tenant: String,
-    account: String,
-    action: String,
-    nonce: Vec<u8>,
-    connection_id: String,
-    message_id: String,
-    fingerprint: Option<String>,
-    reply_thread: Option<String>,
-    app: Option<GoogleAppPin>,
+    pub(super) tenant: String,
+    pub(super) account: String,
+    pub(super) action: String,
+    pub(super) nonce: Vec<u8>,
+    pub(super) connection_id: String,
+    pub(super) message_id: String,
+    pub(super) fingerprint: Option<String>,
+    pub(super) reply_thread: Option<String>,
+    pub(super) app: Option<GoogleAppPin>,
 }
 impl MailReconcilePermit {
     pub fn connection_id(&self) -> &str {
@@ -77,7 +77,7 @@ pub(super) fn status(
     Ok(conn.query_row("SELECT CASE WHEN a.state='sent' AND r.provider_message IS NOT NULL AND (r.provider_message!=a.provider_message OR r.provider_thread!=a.provider_thread) THEN 'receipt_conflict' ELSE r.status END,r.last_checked_at,r.candidate_count,r.automatic_attempts,r.manual_after,r.last_result FROM mail_reconciliations r JOIN mail_actions a ON a.tenant_id=r.tenant_id AND a.id=r.action_id WHERE r.tenant_id=?1 AND r.action_id=?2 AND a.account_id=?3",params![user.tenant.0,id,user.account.id],|r|Ok(MailReconciliation{status:r.get(0)?,last_checked_at:r.get(1)?,candidate_count:r.get(2)?,automatic_attempts:r.get(3)?,manual_after:r.get(4)?,last_result:r.get(5)?})).optional()?)
 }
 // All authority pins are reloaded; a permit is only an unforgeable lease carrier.
-fn guard(conn: &Connection, p: &MailReconcilePermit) -> Result<()> {
+pub(super) fn guard(conn: &Connection, p: &MailReconcilePermit) -> Result<()> {
     let current=conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_send_evidence e JOIN mail_actions a ON a.tenant_id=e.tenant_id AND a.id=e.action_id JOIN accounts u ON u.tenant_id=e.tenant_id AND u.id=e.account_id JOIN mail_connections c ON c.tenant_id=e.tenant_id AND c.account_id=e.account_id AND c.id=e.connection_id JOIN mail_reconciliations r ON r.tenant_id=e.tenant_id AND r.action_id=e.action_id WHERE e.tenant_id=?1 AND e.action_id=?2 AND e.account_id=?3 AND e.connection_id=?4 AND e.withdrawn=0 AND e.dispatch_nonce=a.dispatch_nonce AND e.revision=a.revision AND e.digest=a.digest AND e.auth_epoch=u.auth_epoch AND a.state='outcome_unknown' AND u.status='active' AND u.recovery_required=0 AND u.must_change_password=0 AND (u.temporary_expires_at IS NULL OR u.temporary_expires_at>?6) AND c.status='active' AND c.epoch=e.connection_epoch AND r.quarantined=0 AND r.lease_nonce=?5 AND r.lease_until>?6)",params![p.tenant,p.action,p.account,p.connection_id,p.nonce,now()?],|r|r.get::<_,bool>(0))?;
     if !current {
         return Err(StoreError::Conflict);
@@ -98,7 +98,7 @@ fn guard(conn: &Connection, p: &MailReconcilePermit) -> Result<()> {
     }
     Ok(())
 }
-fn claim(
+pub(super) fn claim(
     conn: &Connection,
     tenant: String,
     id: String,
@@ -183,7 +183,7 @@ impl Store {
     pub async fn next_mail_reconciliation(&self) -> Result<Option<MailReconcilePermit>> {
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let ids=tx.prepare("SELECT r.tenant_id,r.action_id FROM mail_reconciliations r JOIN mail_actions a ON a.tenant_id=r.tenant_id AND a.id=r.action_id WHERE r.quarantined=0 AND r.next_due<=?1 AND r.automatic_attempts<4 AND (r.lease_until IS NULL OR r.lease_until<=?1) AND a.state='outcome_unknown' ORDER BY r.next_due LIMIT 16")?.query_map([now()?],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+            let ids=tx.prepare("SELECT r.tenant_id,r.action_id FROM mail_reconciliations r JOIN mail_actions a ON a.tenant_id=r.tenant_id AND a.id=r.action_id WHERE r.quarantined=0 AND r.next_due<=?1 AND r.automatic_attempts<4 AND (r.lease_until IS NULL OR r.lease_until<=?1) AND a.state='outcome_unknown' AND NOT EXISTS(SELECT 1 FROM mail_connections c WHERE c.tenant_id=a.tenant_id AND c.id=a.connection_id AND c.native_send=1) ORDER BY r.next_due LIMIT 16")?.query_map([now()?],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
             for (tenant,id) in ids {
                 // Savepoint rolls back a rejected lease while allowing other owners.
                 tx.execute_batch("SAVEPOINT mail_lookup")?;
@@ -257,21 +257,62 @@ impl Store {
         observation: Option<SentObservation>,
     ) -> Result<()> {
         let p = p.clone();
-        self.call(move|db|{
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            guard(&tx,&p)?;
-            let (status,count,message,thread)=match observation {
-                Some(SentObservation::Matching{message_id,thread_id})=>("matching_sent_observed",1,Some(message_id),Some(thread_id)),
-                Some(SentObservation::Unresolved{status,candidates})=>(status,candidates,None,None),
-                None=>("lookup_unavailable",0,None,None),
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            guard(&tx, &p)?;
+            let (status, count, message, thread) = match observation {
+                Some(SentObservation::Matching {
+                    message_id,
+                    thread_id,
+                }) => (
+                    "matching_sent_observed",
+                    1,
+                    Some(message_id),
+                    Some(thread_id),
+                ),
+                Some(SentObservation::Unresolved { status, candidates }) => {
+                    (status, candidates, None, None)
+                }
+                None => ("lookup_unavailable", 0, None, None),
             };
-            // Keep the first exact-match observation and at most one conflicting
-            // provider identity. Later absence cannot erase observed evidence.
-            tx.execute("UPDATE mail_reconciliations SET status='lookup_conflict',conflict_message=COALESCE(conflict_message,?4),conflict_thread=COALESCE(conflict_thread,?5) WHERE tenant_id=?1 AND action_id=?2 AND lease_nonce=?3 AND provider_message IS NOT NULL AND ?4 IS NOT NULL AND (provider_message!=?4 OR provider_thread!=?5)",params![p.tenant,p.action,p.nonce,message,thread])?;
-            // Observed matches are sticky; subsequent indexing absence cannot erase one.
-            tx.execute("UPDATE mail_reconciliations SET status=CASE WHEN provider_message IS NULL THEN ?4 ELSE status END,last_checked_at=?5,last_result=?4,candidate_count=?6,provider_message=COALESCE(provider_message,?7),provider_thread=COALESCE(provider_thread,?8),lease_nonce=NULL,lease_until=NULL WHERE tenant_id=?1 AND action_id=?2 AND lease_nonce=?3",params![p.tenant,p.action,p.nonce,status,now()?,count,message,thread])?;
-            tx.execute("UPDATE mail_actions SET version=version+1 WHERE tenant_id=?1 AND id=?2",params![p.tenant,p.action])?;
-            tx.commit()?;Ok(())
-        }).await
+            finish_observation(
+                &tx,
+                &p.tenant,
+                &p.action,
+                &p.nonce,
+                status,
+                count,
+                message.as_deref(),
+                thread.as_deref(),
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn finish_observation(
+    conn: &Connection,
+    tenant: &str,
+    action: &str,
+    nonce: &[u8],
+    status: &str,
+    count: u32,
+    message: Option<&str>,
+    thread: Option<&str>,
+) -> Result<()> {
+    // Keep the first exact-match observation and at most one conflicting
+    // provider identity. Later absence cannot erase observed evidence.
+    conn.execute("UPDATE mail_reconciliations SET status='lookup_conflict',conflict_message=COALESCE(conflict_message,?4),conflict_thread=COALESCE(conflict_thread,?5) WHERE tenant_id=?1 AND action_id=?2 AND lease_nonce=?3 AND provider_message IS NOT NULL AND ?4 IS NOT NULL AND (provider_message!=?4 OR provider_thread!=?5)",params![tenant,action,nonce,message,thread])?;
+    // Observed matches are sticky; subsequent indexing absence cannot erase one.
+    conn.execute("UPDATE mail_reconciliations SET status=CASE WHEN provider_message IS NULL THEN ?4 ELSE status END,last_checked_at=?5,last_result=?4,candidate_count=?6,provider_message=COALESCE(provider_message,?7),provider_thread=COALESCE(provider_thread,?8),lease_nonce=NULL,lease_until=NULL WHERE tenant_id=?1 AND action_id=?2 AND lease_nonce=?3",params![tenant,action,nonce,status,now()?,count,message,thread])?;
+    conn.execute(
+        "UPDATE mail_actions SET version=version+1 WHERE tenant_id=?1 AND id=?2",
+        params![tenant, action],
+    )?;
+    Ok(())
 }

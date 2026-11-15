@@ -148,9 +148,10 @@ stretch`, `remind me every Monday and Wednesday at 09:00 to stretch`,
 `10분 뒤에 물 마시라고 알려줘`, `내일 오전 9시에 자료 확인하라고 알려줘`,
 and `매주 월요일,수요일 오전 9시에 스트레칭 알려줘`. Elapsed seconds/minutes/hours/days
 use server UTC; intervals repeat no faster than60seconds. Today/tomorrow, Korean
-모레, ISO dates, explicit AM/PM or 24-hour HH:MM use the browser IANA timezone.
-A bare9 or Korean9시 without AM/PM clarifies; local one-off gaps clarify and folds
-choose the first UTC offset. Recurring gaps/folds follow the occurrence policy
+모레/글피, bounded weekday/week forms, ISO dates, explicit AM/PM or 24-hour HH:MM
+use the original browser IANA timezone. [Common civil-time forms](conversational-civil-time.md)
+also include Korean native hour/minute words. A bare9 or Korean9시 without AM/PM
+clarifies; local one-off gaps and folds both clarify. Recurring gaps/folds follow the occurrence policy
 above. [Missing-field replies](reminder-followups.md) retain an explicit creation
 draft for a bounded next answer: missing time/content, numeric AM/PM or civil day.
 For example, `물 마시라고 알려줘` can be completed by `내일 오전 9시`.

@@ -215,6 +215,44 @@ impl GmailClient {
         }
     }
 }
+/// Shared full-message restriction for native sending; never a lossy preview.
+pub fn validate_native_send(
+    raw: &[u8],
+    message_id: &str,
+    from: &str,
+) -> Result<ParsedMail, GmailError> {
+    reconciliation_fingerprint(raw, message_id)?;
+    let head = std::str::from_utf8(raw)
+        .map_err(|_| GmailError::InvalidResponse)?
+        .split("\r\n\r\n")
+        .next()
+        .ok_or(GmailError::InvalidResponse)?;
+    if head.lines().any(|line| {
+        line.split_once(':').is_some_and(|(name, _)| {
+            name.eq_ignore_ascii_case("in-reply-to") || name.eq_ignore_ascii_case("references")
+        })
+    }) {
+        return Err(GmailError::InvalidInput);
+    }
+    let mail = parse_mail(raw)?;
+    if mail.from != [from]
+        || mail.message_id.as_deref() != Some(message_id)
+        || mail.text_truncated
+        || !mail.attachment_names.is_empty()
+    {
+        return Err(GmailError::InvalidInput);
+    }
+    mime::validate_address(from)?;
+    let count = mail.to.len() + mail.cc.len() + mail.bcc.len();
+    if !(1..=50).contains(&count) {
+        return Err(GmailError::InvalidInput);
+    }
+    for address in mail.to.iter().chain(&mail.cc).chain(&mail.bcc) {
+        mime::validate_address(address)?;
+    }
+    Ok(mail)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,6 +2,7 @@
 use crate::*;
 use serde::{Serialize, de::DeserializeOwned};
 use std::time::Duration;
+#[derive(Clone)]
 pub struct Transport {
     client: reqwest::Client,
     origin: String,
@@ -74,9 +75,9 @@ impl Transport {
                 Error::Unavailable
             });
         }
-        let mut bytes = Vec::new();
+        let mut bytes = zeroize::Zeroizing::new(Vec::new());
         while let Some(chunk) = r.chunk().await.map_err(|_| Error::Unavailable)? {
-            if bytes.len() + chunk.len() > 262144 {
+            if bytes.len() + chunk.len() > 1024 * 1024 {
                 return Err(Error::Authentication);
             }
             bytes.extend(chunk);
@@ -145,6 +146,64 @@ impl Transport {
         }
         Ok(())
     }
+    async fn waiting(&self, engine: &Engine) -> Result<(Vec<Request>, bool)> {
+        let native = engine.grants().iter().any(|g| g.google_send());
+        let mut requests = Vec::new();
+        let mut revoke = false;
+        if native {
+            let Reply::Waiting {
+                requests: mail,
+                revocation_pending,
+            } = self.command(engine, Command::PollMail).await?
+            else {
+                return Err(Error::Authentication);
+            };
+            requests.extend(mail);
+            revoke |= revocation_pending;
+        }
+        match self.command(engine, Command::Poll).await {
+            Ok(Reply::Waiting {
+                requests: read,
+                revocation_pending,
+            }) => {
+                requests.extend(read);
+                revoke |= revocation_pending;
+            }
+            Err(Error::Authentication) if native => {}
+            Err(e) => return Err(e),
+            _ => return Err(Error::Authentication),
+        }
+        Ok((requests, revoke))
+    }
+    async fn mail_payload(&self, engine: &mut Engine, invocation: &Invocation) -> Result<()> {
+        let request = engine
+            .state
+            .entries
+            .iter()
+            .find(|e| &e.request.invocation == invocation)
+            .ok_or(Error::Policy)?
+            .request
+            .clone();
+        if !matches!(
+            request.operation,
+            Operation::GoogleMailSend { .. } | Operation::GoogleMailLookup { .. }
+        ) {
+            return Ok(());
+        }
+        let Reply::MailPayload { payload } = self
+            .command(
+                engine,
+                Command::MailPayload {
+                    invocation: invocation.clone(),
+                    request_digest: auth::hash(&request_bytes(&request)),
+                },
+            )
+            .await?
+        else {
+            return Err(Error::Authentication);
+        };
+        engine.attach_mail_payload(invocation, *payload)
+    }
     pub async fn register_live(
         &self,
         engine: &mut Engine,
@@ -186,7 +245,20 @@ impl Transport {
             .ok_or(Error::Policy)?;
         let preview = grant.google_preview();
         let refresh = grant.pending_refresh().cloned();
-        let command = if grant.google_body() {
+        let command = if grant.google_send() {
+            let email = grant.google().ok_or(Error::Policy)?.email.clone();
+            match &refresh {
+                Some(expected) => Command::RefreshGoogleSend {
+                    expected: expected.clone(),
+                    binding: binding.clone(),
+                    email,
+                },
+                None => Command::RegisterGoogleSend {
+                    binding: binding.clone(),
+                    email,
+                },
+            }
+        } else if grant.google_body() {
             match &refresh {
                 Some(expected) => Command::RefreshGoogleBody {
                     expected: expected.clone(),
@@ -253,7 +325,9 @@ impl Transport {
             Phase::Committed(_) => match operation {
                 Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
-                | Operation::GoogleInboxBody { .. } => {
+                | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailSend { .. }
+                | Operation::GoogleMailLookup { .. } => {
                     engine.execute_live_google(vault, &invocation, google).await
                 }
                 Operation::GitHubRepositoryRead => {
@@ -339,15 +413,10 @@ impl Transport {
         if !vault.is_unlocked() {
             return Err(Error::Reconnect);
         }
+        engine.mail_transport = Some(self.clone());
         vault.validate().await?;
         self.sync_retained(engine).await?;
-        let Reply::Waiting {
-            requests,
-            revocation_pending,
-        } = self.command(engine, Command::Poll).await?
-        else {
-            return Err(Error::Authentication);
-        };
+        let (requests, revocation_pending) = self.waiting(engine).await?;
         if revocation_pending {
             engine.revoke()?;
             vault.retire();
@@ -358,6 +427,7 @@ impl Transport {
             let invocation = request.invocation.clone();
             let request_digest = auth::hash(&request_bytes(&request));
             engine.prepare_live_github(vault, request).await?;
+            self.mail_payload(engine, &invocation).await?;
             let Reply::Commitment { commitment } = self
                 .command(
                     engine,
@@ -393,14 +463,9 @@ impl Transport {
         adapter: &github::GitHubAdapter,
         google: &google::GoogleAdapter,
     ) -> Result<usize> {
+        engine.mail_transport = Some(self.clone());
         self.sync_retained(engine).await?;
-        let Reply::Waiting {
-            requests,
-            revocation_pending,
-        } = self.command(engine, Command::Poll).await?
-        else {
-            return Err(Error::Authentication);
-        };
+        let (requests, revocation_pending) = self.waiting(engine).await?;
         if revocation_pending {
             engine.revoke()?;
             self.command(engine, Command::AckRevoke).await?;
@@ -413,7 +478,9 @@ impl Transport {
             match operation {
                 Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
-                | Operation::GoogleInboxBody { .. } => {
+                | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailSend { .. }
+                | Operation::GoogleMailLookup { .. } => {
                     engine.prepare_google(archive, request, current_time()?)?
                 }
                 Operation::GitHubRepositoryRead => {
@@ -421,11 +488,21 @@ impl Transport {
                 }
                 _ => return Err(Error::Policy),
             }
+            self.mail_payload(engine, &invocation).await?;
+            let request = engine
+                .state
+                .entries
+                .iter()
+                .find(|e| e.request.invocation == invocation)
+                .ok_or(Error::Policy)?
+                .request
+                .clone();
             let Reply::Commitment { commitment } = self
                 .command(
                     engine,
-                    Command::Commit {
+                    Command::CommitCurrent {
                         invocation: invocation.clone(),
+                        request_digest: auth::hash(&request_bytes(&request)),
                     },
                 )
                 .await?
@@ -436,7 +513,9 @@ impl Transport {
             let receipt = match operation {
                 Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
-                | Operation::GoogleInboxBody { .. } => {
+                | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailSend { .. }
+                | Operation::GoogleMailLookup { .. } => {
                     engine.execute_google(archive, &invocation, google).await?
                 }
                 Operation::GitHubRepositoryRead => {

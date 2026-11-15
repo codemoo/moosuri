@@ -294,6 +294,12 @@ pub(super) fn poll(
     let candidates=conn.prepare("SELECT i.request FROM credential_broker_invocations i WHERE i.tenant_id=?1 AND i.cancelled=0 AND NOT EXISTS(SELECT 1 FROM credential_broker_commitments c WHERE c.tenant_id=i.tenant_id AND c.run_id=i.run_id) LIMIT 64")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().map(|s|decode::<Request>(&s)).collect::<Result<Vec<_>>>()?.into_iter().filter(|r|r.device==p.device && r.expires_at>now().unwrap_or(i64::MAX)).collect::<Vec<_>>();
     let mut requests = Vec::new();
     for r in candidates {
+        if matches!(
+            r.operation,
+            Operation::GoogleMailSend { .. } | Operation::GoogleMailLookup { .. }
+        ) {
+            continue;
+        }
         if crate::credential_chat::dispatch_current(
             conn,
             &u.tenant.0,

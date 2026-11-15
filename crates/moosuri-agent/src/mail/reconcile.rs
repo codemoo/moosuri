@@ -7,6 +7,13 @@ impl MailService {
         id: String,
         cancel: &CancellationToken,
     ) -> Result<moosuri_core::MailAction, StoreError> {
+        if self
+            .store
+            .queue_native_mail_reconciliation(user, id.clone())
+            .await?
+        {
+            return self.store.mail_action(user, id).await;
+        }
         let p = self
             .store
             .claim_mail_reconciliation(user, id.clone())

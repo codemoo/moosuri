@@ -511,6 +511,16 @@ impl Engine {
         self.live_google_grant_for(vault, item, identity, expires, 2)
             .await
     }
+    pub async fn live_google_send_grant(
+        &mut self,
+        vault: &mut LiveVault,
+        item: Uuid,
+        identity: crate::google::GoogleIdentity,
+        expires: i64,
+    ) -> Result<Binding> {
+        self.live_google_grant_for(vault, item, identity, expires, 3)
+            .await
+    }
     async fn live_google_grant_for(
         &mut self,
         vault: &mut LiveVault,
@@ -528,6 +538,7 @@ impl Engine {
             g.google().is_some()
                 && g.google_preview() == (mode == 1)
                 && g.google_body() == (mode == 2)
+                && g.google_send() == (mode == 3)
                 && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
         }) {
             let grant = &mut self.state.grants[at];
@@ -544,7 +555,9 @@ impl Engine {
             return Ok(binding);
         }
         self.select(
-            (if mode == 2 {
+            (if mode == 3 {
+                policy::LocalGrant::select_google_send
+            } else if mode == 2 {
                 policy::LocalGrant::select_google_body
             } else if mode == 1 {
                 policy::LocalGrant::select_google_preview
@@ -595,15 +608,29 @@ impl Engine {
             .map_err(|_| Error::Reconnect)?;
         crate::google::fields(&fields).map_err(|_| Error::Reconnect)?;
         vault.check(&grant).await?;
-        let receipt = self
-            .execute_google_secret(
+        let receipt = if matches!(
+            request.operation,
+            Operation::GoogleMailSend { .. } | Operation::GoogleMailLookup { .. }
+        ) {
+            self.execute_mail_secret(
+                invocation,
+                adapter,
+                fields.secret.expose(),
+                grant.binding.item_epoch,
+                grant.binding.key_epoch,
+                Some(vault),
+            )
+            .await?
+        } else {
+            self.execute_google_secret(
                 invocation,
                 adapter,
                 fields.secret.expose(),
                 grant.binding.item_epoch,
                 grant.binding.key_epoch,
             )
-            .await?;
+            .await?
+        };
         if receipt.receipt.outcome == Outcome::Rejected {
             vault.retire()
         }
@@ -629,6 +656,8 @@ impl Engine {
                 | Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailSend { .. }
+                | Operation::GoogleMailLookup { .. }
         ) || vault.owner != self.device().owner
         {
             return Err(Error::Policy);

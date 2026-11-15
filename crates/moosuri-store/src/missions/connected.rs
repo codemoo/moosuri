@@ -98,7 +98,8 @@ pub(crate) fn admit_profile(
         primary_ids: vec![],
     };
     if mail {
-        grant.mail=c.prepare("SELECT id,epoch,email,oauth_client_id FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND status='active' ORDER BY id LIMIT 9")?.query_map(params![u.tenant.0,u.account.id],|r|Ok(MissionMailPin{connection:moosuri_core::MailConnectionPin{id:r.get(0)?,epoch:r.get(1)?,email:r.get(2)?},client_id:r.get::<_,Option<String>>(3)?.unwrap_or_default()}))?.collect::<rusqlite::Result<_>>()?;
+        grant.mail=c.prepare("SELECT id,epoch,email,oauth_client_id FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND status='active' AND native_send=0 ORDER BY id LIMIT 9")?.query_map(params![u.tenant.0,u.account.id],|r|Ok(MissionMailPin{connection:moosuri_core::MailConnectionPin{native_send:false,
+        id:r.get(0)?,epoch:r.get(1)?,email:r.get(2)?},client_id:r.get::<_,Option<String>>(3)?.unwrap_or_default()}))?.collect::<rusqlite::Result<_>>()?;
         if grant.mail.is_empty()
             || grant.mail.len() > 8
             || grant.mail.iter().any(|p| p.client_id.is_empty())
@@ -147,7 +148,7 @@ fn pins_current(
         return Ok(false);
     }
     for pin in &p.mail {
-        let row:Option<(i64,String,String,String)>=c.query_row("SELECT epoch,email,coalesce(oauth_client_id,''),scopes FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND status='active'",params![t,a,pin.connection.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
+        let row:Option<(i64,String,String,String)>=c.query_row("SELECT epoch,email,coalesce(oauth_client_id,''),scopes FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND status='active' AND native_send=0",params![t,a,pin.connection.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
         let Some((e, email, client, scopes)) = row else {
             return Ok(false);
         };

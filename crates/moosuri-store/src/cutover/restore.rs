@@ -531,6 +531,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0055_learned_page_collections.sql"
         ))?;
     }
+    if captured < 56 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0056_native_mail_send.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);

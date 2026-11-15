@@ -144,7 +144,7 @@ impl Store {
 
             let valid=crate::artifacts::external::allowed(&tx,&run,&request)? && (!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
                 ExternalToolRequest::Mail(_) if crate::missions::is_mission(&tx,&run.tenant,&run.id)? => crate::missions::connected::allowed(&tx,&run,&request)?,
-                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email))),
+                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.status=="active" && c.epoch==pin.epoch && c.email==pin.email && c.native_send==pin.native_send && (!c.native_send||matches!(mail,MailToolRequest::Draft{..}))))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
                 ExternalToolRequest::Calendar(q)=>crate::calendar::agent::allowed(&tx,&run,q)?,
             };
@@ -201,7 +201,7 @@ impl Store {
             let user=if crate::missions::is_mission(&tx,&run.tenant,&run.id)? {None}else{Some(crate::chat::authority(&tx,&run)?)};
             let valid=crate::artifacts::external::allowed(&tx,&run,&request)? && (!crate::missions::is_mission(&tx,&run.tenant,&run.id)? || crate::missions::tool_allowed(&KnowledgeToolInput::External{request:request.clone()})) && match &request {
                 ExternalToolRequest::Mail(_) if crate::missions::is_mission(&tx,&run.tenant,&run.id)? => crate::missions::connected::allowed(&tx,&run,&request)?,
-                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.epoch==pin.epoch&&c.email==pin.email&&c.status=="active"))),
+                ExternalToolRequest::Mail(mail)=>run.tool_profile.as_ref().filter(|p|matches!(p.version,2..=5)).and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).is_some_and(|pin|user.as_ref().is_some_and(|u|connection(&tx,u,&pin.id).is_ok_and(|c|c.epoch==pin.epoch&&c.email==pin.email&&c.status=="active"&&c.native_send==pin.native_send&&(!c.native_send||matches!(mail,MailToolRequest::Draft{..}))))),
                 ExternalToolRequest::Web(request)=>crate::web::allowed(run.tool_profile.as_ref(),&db.web_profile,request),
                 ExternalToolRequest::Calendar(q)=>crate::calendar::agent::allowed(&tx,&run,q)?,
             };

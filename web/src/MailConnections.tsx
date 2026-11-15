@@ -289,11 +289,11 @@ export function MailConnections({
       ) : (
         <section className="admin-card">
           <h3>개인 연결</h3>
-          {!connections.configured && (
+          {!connections.configured && !connections.connections.some(c=>c.native_send) && (
             <div><p>{openGoogleSetup ? "설치의 Google 앱 설정을 먼저 준비하세요. 설정 후 각 회원이 자신의 계정으로 연결합니다." : "설치자에게 Google 연결 설정을 요청하세요. 준비가 끝나면 여기서 본인 Google 계정으로 로그인할 수 있습니다."} 다른 기능은 계속 사용할 수 있습니다.</p>{openGoogleSetup && <button onClick={openGoogleSetup}>Google 설치 설정 열기</button>}</div>
           )}
           <p>
-            이 연결 토큰은 서버에서 관리합니다. 연결 해제는 새 작업을 막지만
+            Google 로그인으로 만든 연결 토큰은 서버에서 관리합니다. 연결 해제는 새 작업을 막지만
             이미 요청된 메일을 회수하지 않습니다.
           </p>
           <button
@@ -307,7 +307,7 @@ export function MailConnections({
           <ul>
             {connections.connections.map((c) => (
               <li key={c.id}>
-                {c.email} · {c.status} · {c.compose_enabled ? "Gmail 초안 권한 있음" : "로컬 초안만"}
+                {c.email} · {c.status} · {c.native_send ? "신뢰 기기 발송 · 로컬 초안만" : c.compose_enabled ? "Gmail 초안 권한 있음" : "로컬 초안만"}
                 <button
                   disabled={busy || c.status === "disconnected"}
                   onClick={async () => {
@@ -345,12 +345,12 @@ export function MailConnections({
                 .filter((c) => c.status === "active")
                 .map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.email}
+                    {c.email}{c.native_send ? " · 신뢰 기기 발송" : ""}
                   </option>
                 ))}
             </select>
           </label>
-          <section className="admin-card">
+          {!connections?.connections.find(c=>c.id===connection)?.native_send && <section className="admin-card">
             <h3>실시간 메일 조회</h3>
             <form
               onSubmit={(e) => {
@@ -399,7 +399,7 @@ export function MailConnections({
                 {message.attachments && message.attachments.length > 0 && <MailAttachments key={`${connection}:${message.id}`} connection={connection} message={message.id} attachments={message.attachments} request={scope.request} fail={fail}/>}
               </article>
             )}
-          </section>
+          </section>}
           <section className="admin-card">
             <h3>
               {editing ? "초안 수정 · 다시 허락 필요" : "무수리 로컬 초안"}

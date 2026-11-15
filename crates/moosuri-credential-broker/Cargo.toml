@@ -7,9 +7,11 @@ publish.workspace = true
 license.workspace = true
 
 [features]
-test-fixtures=[]
+test-fixtures=["moosuri-connectors/test-fixtures"]
 
 [dependencies]
+moosuri-connectors = { path = "../moosuri-connectors" }
+base64 = "=0.23.1"
 moosuri-vault-core = { path = "../moosuri-vault-core" }
 reqwest = { version = "=0.13.5", default-features = false, features = ["json", "stream", "rustls"] }
 tokio = { workspace=true, features=["io-util","io-std"] }
@@ -27,4 +29,5 @@ zeroize = "1.8"
 url = "2.5"
 
 [dev-dependencies]
+moosuri-connectors = { path = "../moosuri-connectors", features=["test-fixtures"] }
 tempfile.workspace = true

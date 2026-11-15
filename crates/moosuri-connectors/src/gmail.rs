@@ -11,7 +11,9 @@ mod mime;
 pub use drafts::{Draft, DraftPage, DraftRef};
 pub use full::{AttachmentMetadata, AttachmentRead, attachment_digest};
 mod reconcile;
-pub use reconcile::{SentCandidate, SentObservation, SentSearch, reconciliation_fingerprint};
+pub use reconcile::{
+    SentCandidate, SentObservation, SentSearch, reconciliation_fingerprint, validate_native_send,
+};
 #[cfg(test)]
 mod tests;
 pub(crate) mod transport;

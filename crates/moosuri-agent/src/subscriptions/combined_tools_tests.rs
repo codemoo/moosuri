@@ -50,6 +50,7 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
         skills: vec![],
         community_metadata: vec![],
         mail_connections: vec![MailConnectionPin {
+            native_send: false,
             id: "synthetic-mail".into(),
             epoch: 1,
             email: "owner@example.test".into(),

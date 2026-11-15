@@ -216,6 +216,7 @@ mod tests {
             skills: vec![],
             community_metadata: vec![],
             mail_connections: vec![moosuri_core::MailConnectionPin {
+                native_send: false,
                 id: "synthetic-mail".into(),
                 epoch: 1,
                 email: "sender@example.test".into(),

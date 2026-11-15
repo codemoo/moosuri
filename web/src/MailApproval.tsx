@@ -31,6 +31,7 @@ export function MailApproval({
   return (
     <article className="mail-preview" aria-label="메일 발송 확인">
       <h3>{label[action.state] ?? action.state}</h3>
+      {action.native_send && <p>연결된 기기로 발송합니다. 발송할 때 기기가 잠금 해제된 상태로 연결되어 있어야 합니다.</p>}
       {action.schedule && <p>발송 예약: {formatMailTime(action.schedule)}</p>}
       {c && (
         <>

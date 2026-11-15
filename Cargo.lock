@@ -2142,8 +2142,8 @@ dependencies = [
  "futures-util",
  "moosuri-connectors",
  "moosuri-core",
- "moosuri-documents",
  "moosuri-credential-broker",
+ "moosuri-documents",
  "moosuri-store",
  "moosuri-vault-protocol",
  "ring",
@@ -2199,9 +2199,11 @@ dependencies = [
 name = "moosuri-credential-broker"
 version = "0.1.0-dev.1"
 dependencies = [
+ "base64 0.23.1",
  "clap",
  "fs2",
  "libc",
+ "moosuri-connectors",
  "moosuri-vault-core",
  "moosuri-vault-protocol",
  "reqwest",

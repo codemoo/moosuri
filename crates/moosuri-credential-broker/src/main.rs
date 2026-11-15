@@ -135,7 +135,7 @@ async fn run() -> Result<(), Error> {
     }
     let mut vault: Option<Vault> = None;
     println!(
-        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | select-google ITEM_UUID GOOGLE_SUB EMAIL | select-google-preview ITEM_UUID GOOGLE_SUB EMAIL | select-google-body ITEM_UUID GOOGLE_SUB EMAIL | poll | lock | quit"
+        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | select-google ITEM_UUID GOOGLE_SUB EMAIL | select-google-preview ITEM_UUID GOOGLE_SUB EMAIL | select-google-body ITEM_UUID GOOGLE_SUB EMAIL | select-google-send ITEM_UUID GOOGLE_SUB EMAIL | poll | lock | quit"
     );
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
     loop {
@@ -222,18 +222,18 @@ async fn run() -> Result<(), Error> {
                         "Exact repository connected; compatible requests reuse this selection."
                     );
                 }
-                operation @ ("select-google" | "select-google-preview" | "select-google-body")=>{
-                    let preview=operation=="select-google-preview"; let body=operation=="select-google-body";
+                operation @ ("select-google" | "select-google-preview" | "select-google-body" | "select-google-send")=>{
+                    let preview=operation=="select-google-preview"; let body=operation=="select-google-body"; let send=operation=="select-google-send";
                     let id=parts.next().ok_or(Error::Policy)?.parse().map_err(|_|Error::Policy)?;
                     let identity=moosuri_credential_broker::google::GoogleIdentity{subject:parts.next().ok_or(Error::Policy)?.into(),email:parts.next().ok_or(Error::Policy)?.into()};
                     if parts.next().is_some(){return Err(Error::Policy)}
                     transport.sync_retained(&mut engine).await?;
                     let binding=match vault.as_mut().ok_or(Error::Locked)?{
-                        Vault::Archive(v)=>if body { engine.archive_google_body_grant(v,id,identity,now()+30*86400)? } else if preview {engine.archive_google_preview_grant(v,id,identity,now()+30*86400)?} else {engine.archive_google_grant(v,id,identity,now()+30*86400)?},
-                        Vault::Live(v)=>{if body { engine.live_google_body_grant(v,id,identity,now()+30*86400).await? } else if preview {engine.live_google_preview_grant(v,id,identity,now()+30*86400).await?} else {engine.live_google_grant(v,id,identity,now()+30*86400).await?}}
+                        Vault::Archive(v)=>if send {engine.archive_google_send_grant(v,id,identity,now()+30*86400)?} else if body { engine.archive_google_body_grant(v,id,identity,now()+30*86400)? } else if preview {engine.archive_google_preview_grant(v,id,identity,now()+30*86400)?} else {engine.archive_google_grant(v,id,identity,now()+30*86400)?},
+                        Vault::Live(v)=>{if send {engine.live_google_send_grant(v,id,identity,now()+30*86400).await?} else if body { engine.live_google_body_grant(v,id,identity,now()+30*86400).await? } else if preview {engine.live_google_preview_grant(v,id,identity,now()+30*86400).await?} else {engine.live_google_grant(v,id,identity,now()+30*86400).await?}}
                     };
                     transport.register_google(&mut engine,&binding).await?;
-                    println!("Google account selected for {} only; compatible requests reuse this local grant. Provider identity and actual read-only scope are checked each time.",if body {"selected INBOX plaintext body"} else if preview {"bounded INBOX preview"} else {"INBOX counts"});
+                    println!("Google account selected for {} only; compatible requests reuse this local grant. Provider identity and exact actual selected scopes are checked each time.",if send {"final-approved plaintext mail send and original Sent reconciliation"} else if body {"selected INBOX plaintext body"} else if preview {"bounded INBOX preview"} else {"INBOX counts"});
                 }
                 "poll" => {
                     if vault.is_none() {

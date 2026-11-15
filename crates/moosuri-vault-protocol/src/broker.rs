@@ -46,6 +46,8 @@ pub enum Operation {
     GoogleInboxRead,
     GoogleInboxPreview,
     GoogleInboxBody { selection: Uuid },
+    GoogleMailSend { effect: Uuid, execution: [u8; 32] },
+    GoogleMailLookup { effect: Uuid, execution: [u8; 32] },
 }
 /// Exact, canonical repository selection. Never a URL or HTTP header.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +236,16 @@ impl GoogleMessagePreview {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Projection {
+    GoogleMailSent {
+        message_id: String,
+        thread_id: String,
+    },
+    GoogleMailObserved {
+        status: GoogleSentStatus,
+        candidates: u8,
+        message_id: Option<String>,
+        thread_id: Option<String>,
+    },
     GoogleInboxBody {
         text: String,
         truncated: bool,
@@ -264,6 +276,26 @@ impl Projection {
     pub fn bytes(&self) -> Vec<u8> {
         let mut b = Bytes::new(b"projection");
         match self {
+            Self::GoogleMailSent {
+                message_id,
+                thread_id,
+            } => {
+                b.0.push(7);
+                b.blob(message_id.as_bytes());
+                b.blob(thread_id.as_bytes());
+            }
+            Self::GoogleMailObserved {
+                status,
+                candidates,
+                message_id,
+                thread_id,
+            } => {
+                b.0.push(8);
+                b.0.push(status.code());
+                b.0.push(*candidates);
+                b.blob(message_id.as_deref().unwrap_or("").as_bytes());
+                b.blob(thread_id.as_deref().unwrap_or("").as_bytes());
+            }
             Self::GoogleInboxBody {
                 text,
                 truncated,
@@ -350,6 +382,24 @@ pub struct SignedReceipt {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    RegisterGoogleSend {
+        binding: Binding,
+        email: String,
+    },
+    RefreshGoogleSend {
+        expected: Binding,
+        binding: Binding,
+        email: String,
+    },
+    PollMail,
+    CheckMail {
+        invocation: Invocation,
+        request_digest: [u8; 32],
+    },
+    MailPayload {
+        invocation: Invocation,
+        request_digest: [u8; 32],
+    },
     RegisterGoogleBody {
         binding: Binding,
     },
@@ -414,6 +464,10 @@ pub struct SignedCommand {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    MailCurrent,
+    MailPayload {
+        payload: Box<GoogleMailPayload>,
+    },
     Registered,
     Waiting {
         requests: Vec<Request>,
@@ -474,6 +528,22 @@ impl Bytes {
         self.invocation(&r.invocation);
         self.binding(&r.binding);
         match r.operation {
+            Operation::GoogleMailSend { effect, execution }
+            | Operation::GoogleMailLookup { effect, execution } => {
+                self.0
+                    .push(if matches!(r.operation, Operation::GoogleMailSend { .. }) {
+                        6
+                    } else {
+                        7
+                    });
+                self.id(effect);
+                self.0.extend_from_slice(&execution);
+                self.0.push(r.repository.is_some() as u8);
+                if let Some(repo) = &r.repository {
+                    self.blob(repo.owner.as_bytes());
+                    self.blob(repo.repository.as_bytes());
+                }
+            }
             Operation::GoogleInboxBody { selection } => {
                 self.0.push(5);
                 self.id(selection);
@@ -523,6 +593,8 @@ impl Bytes {
             Outcome::ProjectedSuccess => 3,
         });
         self.0.push(match r.projection {
+            Projection::GoogleMailSent { .. } => 7,
+            Projection::GoogleMailObserved { .. } => 8,
             Projection::GoogleInboxBody { .. } => 5,
             Projection::GoogleInboxPreview { ref messages, .. } => {
                 if messages.iter().any(|m| m.selection.is_some()) {
@@ -565,6 +637,27 @@ impl Bytes {
             ] {
                 self.u(*value as u64);
             }
+        }
+        match &r.projection {
+            Projection::GoogleMailSent {
+                message_id,
+                thread_id,
+            } => {
+                self.blob(message_id.as_bytes());
+                self.blob(thread_id.as_bytes());
+            }
+            Projection::GoogleMailObserved {
+                status,
+                candidates,
+                message_id,
+                thread_id,
+            } => {
+                self.0.push(status.code());
+                self.0.push(*candidates);
+                self.blob(message_id.as_deref().unwrap_or("").as_bytes());
+                self.blob(thread_id.as_deref().unwrap_or("").as_bytes());
+            }
+            _ => {}
         }
         if let Projection::GoogleInboxBody {
             text,
@@ -635,6 +728,38 @@ pub fn command_bytes(
     }
     let mut body = Bytes::new(b"command-body");
     match command {
+        Command::RegisterGoogleSend { binding, email } => {
+            body.0.push(16);
+            body.binding(binding);
+            body.blob(email.as_bytes());
+        }
+        Command::RefreshGoogleSend {
+            expected,
+            binding,
+            email,
+        } => {
+            body.0.push(17);
+            body.binding(expected);
+            body.binding(binding);
+            body.blob(email.as_bytes());
+        }
+        Command::CheckMail {
+            invocation,
+            request_digest,
+        } => {
+            body.0.push(20);
+            body.invocation(invocation);
+            body.0.extend_from_slice(request_digest);
+        }
+        Command::PollMail => body.0.push(18),
+        Command::MailPayload {
+            invocation,
+            request_digest,
+        } => {
+            body.0.push(19);
+            body.invocation(invocation);
+            body.0.extend_from_slice(request_digest);
+        }
         Command::RegisterGoogleBody { binding } => {
             body.0.push(14);
             body.binding(binding);
@@ -728,4 +853,78 @@ pub fn command_bytes(
     b.blob(path.as_bytes());
     b.blob(&body.0);
     (b.0.len() <= MAX_SIGNED_BYTES).then_some(b.0)
+}
+
+/// An approved action's exact immutable execution envelope. `raw` is optional
+/// base64url private payload, excluded from the digest because mime_digest binds it.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoogleMailPayload {
+    pub owner: crate::Owner,
+    pub action: Uuid,
+    pub revision: u64,
+    pub connection: Uuid,
+    pub connection_epoch: u64,
+    pub auth_epoch: i64,
+    pub mime_digest: [u8; 32],
+    pub message_id: String,
+    pub not_before: i64,
+    pub timezone: Option<String>,
+    pub expires_at: i64,
+    pub fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+}
+impl GoogleMailPayload {
+    pub fn execution_bytes(&self) -> Vec<u8> {
+        let mut b = Bytes::new(b"approved-google-mail/v1");
+        b.id(self.owner.tenant);
+        b.id(self.owner.account);
+        b.id(self.owner.installation);
+        b.0.extend_from_slice(&self.owner.epoch.to_be_bytes());
+        b.id(self.action);
+        b.u(self.revision);
+        b.id(self.connection);
+        b.u(self.connection_epoch);
+        b.0.extend_from_slice(&self.auth_epoch.to_be_bytes());
+        b.0.extend_from_slice(&self.mime_digest);
+        b.blob(self.message_id.as_bytes());
+        b.0.extend_from_slice(&self.not_before.to_be_bytes());
+        b.blob(self.timezone.as_deref().unwrap_or("").as_bytes());
+        b.0.extend_from_slice(&self.expires_at.to_be_bytes());
+        b.blob(self.fingerprint.as_bytes());
+        b.0
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleSentStatus {
+    Matching,
+    NoCandidates,
+    MultipleCandidates,
+    IncompleteSearch,
+    CandidateMismatch,
+    UnsupportedCandidate,
+    LegacyEvidenceUnavailable,
+    LookupUnavailable,
+}
+impl GoogleSentStatus {
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Matching => 0,
+            Self::NoCandidates => 1,
+            Self::MultipleCandidates => 2,
+            Self::IncompleteSearch => 3,
+            Self::CandidateMismatch => 4,
+            Self::UnsupportedCandidate => 5,
+            Self::LegacyEvidenceUnavailable => 6,
+            Self::LookupUnavailable => 7,
+        }
+    }
+}
+pub fn valid_google_mail_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 256
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
 }

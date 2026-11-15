@@ -360,3 +360,16 @@ it("scheduled mail shows the exact instant and requires a fresh approval after t
   expect(requests.find(r=>r.path.endsWith("/approve"))?.body.revision).toBe(2);
   expect(await screen.findByRole("button",{name:"발송 취소"})).toBeInTheDocument();
 });
+
+it("uses the existing sole final-preview approval for a native send connection without server OAuth or read controls",async()=>{
+ const user=userEvent.setup(); const native={...action,native_send:true};
+ vi.stubGlobal('fetch',vi.fn(async(path:string,init:RequestInit={})=>{
+  if(path.endsWith('/connections'))return Response.json({configured:false,connections:[{id:'c1',email:'sender@example.test',epoch:1,status:'active',compose_enabled:false,native_send:true}]});
+  if(path.endsWith('/actions'))return Response.json({actions:[native]});
+  if(path.endsWith('/approve')){const body=JSON.parse(String(init.body));expect(body).toEqual({revision:native.revision,digest:native.digest});return Response.json({...native,state:'approved',version:2})}
+  throw Error('unexpected synthetic native mail route');
+ }));
+ render(<MailConnections accountId="u" onExpired={vi.fn()} back={vi.fn()} originThreadId={null}/>);
+ expect(await screen.findByText(/신뢰 기기 발송 · 로컬 초안만/)).toBeInTheDocument();expect(screen.queryByText('실시간 메일 조회')).toBeNull();expect(screen.getByRole('button',{name:'Google 계정 연결'})).toBeDisabled();
+ await user.click(screen.getByRole('button',{name:/검토할 메일/})); await user.click(screen.getByRole('button',{name:'허락하고 보내기'}));expect(await screen.findByText('허락됨 · 발송 대기')).toBeInTheDocument();
+});

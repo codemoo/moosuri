@@ -22,7 +22,11 @@ and account/scope verification stay on the device. Preview mail remains outside
 later model history, conversation recall and learned recipes. A separately granted
 [selected message body](docs/native-google-message-body.md) can be opened as
 literal plaintext from its current preview in settings or the original chat.
-Its routes remain default-off; general credential tools remain unfinished.
+A separately selected [native Gmail sender](docs/native-approved-gmail-send.md)
+uses the existing local draft and complete final-preview approval, including fixed
+send times. Its OAuth credential stays on the trusted device; uncertain sends are
+checked without resending. Broker routes remain default-off; general credential
+tools remain unfinished.
 Separate [signed native packages](docs/component-packages.md) can be prepared,
 verified and downloaded with an independent signing-key pin. Official artifacts
 and signing-key distribution remain unpublished.

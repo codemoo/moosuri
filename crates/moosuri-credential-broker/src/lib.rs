@@ -64,6 +64,8 @@ pub struct Engine {
     journal: journal::Journal,
     key: auth::SigningKey,
     poisoned: bool,
+    mail_transport: Option<transport::Transport>,
+    mail_payloads: Vec<(Invocation, GoogleMailPayload)>,
 }
 impl Engine {
     /// New pairing only. Existing/missing/damaged state must never call this as recovery.
@@ -88,6 +90,8 @@ impl Engine {
             journal,
             key,
             poisoned: false,
+            mail_payloads: vec![],
+            mail_transport: None,
         })
     }
     /// Caller pins enrollment identity independently from the retained local journal.
@@ -108,6 +112,8 @@ impl Engine {
             journal,
             key,
             poisoned: false,
+            mail_payloads: vec![],
+            mail_transport: None,
         };
         // Retained work can only reconcile. Restart is never adapter permission.
         for entry in &mut engine.state.entries {
@@ -229,6 +235,70 @@ impl Engine {
             return Err(Error::Authentication);
         }
         match &command {
+            Command::CheckMail {
+                invocation,
+                request_digest,
+            } => {
+                let entry = self
+                    .state
+                    .entries
+                    .iter()
+                    .find(|e| &e.request.invocation == invocation)
+                    .ok_or(Error::Policy)?;
+                if self.state.revoked
+                    || *request_digest != auth::hash(&request_bytes(&entry.request))
+                    || !matches!(
+                        entry.request.operation,
+                        Operation::GoogleMailSend { .. } | Operation::GoogleMailLookup { .. }
+                    )
+                    || !matches!(entry.phase, Phase::Committed(_) | Phase::Entered(_))
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::RegisterGoogleSend { binding, email }
+            | Command::RefreshGoogleSend { binding, email, .. } => {
+                let grant = self
+                    .grants()
+                    .iter()
+                    .find(|g| {
+                        &g.binding == binding
+                            && g.google_send()
+                            && g.google().is_some_and(|i| &i.email == email)
+                    })
+                    .ok_or(Error::Policy)?;
+                if self.state.revoked
+                    || matches!(&command,Command::RefreshGoogleSend{expected,..} if grant.pending_refresh()!=Some(expected))
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::PollMail => {
+                if self.state.revoked || !self.grants().iter().any(|g| g.google_send()) {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::MailPayload {
+                invocation,
+                request_digest,
+            } => {
+                let entry = self
+                    .state
+                    .entries
+                    .iter()
+                    .find(|e| &e.request.invocation == invocation)
+                    .ok_or(Error::Policy)?;
+                if self.state.revoked
+                    || *request_digest != auth::hash(&request_bytes(&entry.request))
+                    || !matches!(
+                        entry.request.operation,
+                        Operation::GoogleMailSend { .. } | Operation::GoogleMailLookup { .. }
+                    )
+                    || !matches!(entry.phase, Phase::Prepared)
+                {
+                    return Err(Error::Policy);
+                }
+            }
             Command::Register { binding } => {
                 if self.state.revoked || !self.state.grants.iter().any(|g| &g.binding == binding) {
                     return Err(Error::Policy);
@@ -262,6 +332,7 @@ impl Engine {
                         &g.binding == binding
                             && g.google().is_some()
                             && !g.google_body()
+                            && !g.google_send()
                             && g.google_preview()
                                 == matches!(command, Command::RegisterGooglePreview { .. })
                     })
@@ -276,6 +347,7 @@ impl Engine {
                         &g.binding == binding
                             && g.google().is_some()
                             && !g.google_body()
+                            && !g.google_send()
                             && g.google_preview()
                                 == matches!(command, Command::RefreshGooglePreview { .. })
                             && g.pending_refresh() == Some(expected)
@@ -388,6 +460,7 @@ impl Engine {
         })
     }
     pub fn delivered(&mut self, invocation: Invocation) -> Result<()> {
+        self.mail_payloads.retain(|(i, _)| i != &invocation);
         if !self.state.delivered.contains(&invocation) {
             self.state.delivered.push(invocation);
             self.save()?;
@@ -431,6 +504,8 @@ impl Engine {
             journal,
             key,
             poisoned: false,
+            mail_payloads: vec![],
+            mail_transport: None,
         };
         for entry in &mut e.state.entries {
             entry.phase = match &entry.phase {

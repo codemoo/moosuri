@@ -7,6 +7,10 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 pub(crate) const LOCAL_POLICY: &[u8] = b"moosuri/local-google-inbox/v1\0https://oauth2.googleapis.com/token\0https://openidconnect.googleapis.com/v1/userinfo\0https://gmail.googleapis.com/gmail/v1/users/me/profile\0https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX\0openid email https://www.googleapis.com/auth/gmail.readonly";
 pub(crate) const PREVIEW_POLICY: &[u8] = b"moosuri/local-google-inbox-preview/v1\0https://oauth2.googleapis.com/token\0https://openidconnect.googleapis.com/v1/userinfo\0https://gmail.googleapis.com/gmail/v1/users/me/profile\0https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=INBOX&maxResults=5&includeSpamTrash=false\0metadata:Subject,From,Date;snippet\0openid email https://www.googleapis.com/auth/gmail.readonly";
+pub(crate) const SEND_POLICY:&[u8]=b"moosuri/native-approved-google-send/v1\0openid email gmail.readonly gmail.send\0POST:messages/send;GET:original-Sent-equality-only";
+pub fn send_digest() -> [u8; 32] {
+    auth::hash(b"moosuri/google-approved-mail/v1")
+}
 pub(crate) const BODY_POLICY: &[u8] = b"moosuri/local-google-inbox-body/v1\0selected-preview-only;GET:messages/{local-id}?format=full;INBOX;utf8-text/plain;4096bytes;no-attachments";
 pub fn body_digest() -> [u8; 32] {
     auth::hash(&Resource::google_body(uuid::Uuid::nil()).bytes())
@@ -278,6 +282,7 @@ pub struct GoogleAdapter {
     profile: String,
     inbox: String,
     messages: String,
+    mail: moosuri_connectors::gmail::GmailClient,
 }
 impl GoogleAdapter {
     pub fn new() -> Result<Self> {
@@ -289,7 +294,24 @@ impl GoogleAdapter {
         )
     }
     fn at(token: &str, userinfo: &str, profile: &str, inbox: &str) -> Result<Self> {
+        let mail = moosuri_connectors::gmail::GmailClient::google();
+        #[cfg(any(test, feature = "test-fixtures"))]
+        let mail = if let Some(base) = token
+            .strip_suffix("/token")
+            .filter(|s| s.starts_with("http://"))
+        {
+            moosuri_connectors::gmail::GmailClient::synthetic_loopback(
+                base.strip_prefix("http://")
+                    .unwrap()
+                    .parse()
+                    .map_err(|_| Error::Policy)?,
+            )
+            .map_err(|_| Error::Policy)?
+        } else {
+            mail
+        };
         Ok(Self {
+            mail,
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -578,35 +600,26 @@ impl GoogleAdapter {
             unavailable: false,
         })
     }
-    async fn read(
+    async fn authorize(
         &self,
         identity: &GoogleIdentity,
         secret: &str,
-        preview: bool,
-    ) -> Result<Projection> {
-        self.read_for(identity, secret, preview, None, &mut Vec::new())
-            .await
-    }
-    async fn read_for(
-        &self,
-        identity: &GoogleIdentity,
-        secret: &str,
-        preview: bool,
-        selected_id: Option<&str>,
-        selections: &mut Vec<(uuid::Uuid, String)>,
-    ) -> Result<Projection> {
+        send: bool,
+    ) -> Result<(Credential, Token)> {
         if !identity.valid() {
             return Err(Error::Policy);
         }
         let credential = Credential::parse(secret)?;
-        let mut form = url::form_urlencoded::Serializer::new(String::new());
-        form.append_pair("grant_type", "refresh_token")
-            .append_pair("client_id", credential.client_id.expose())
-            .append_pair("refresh_token", credential.refresh_token.expose());
-        if let Some(client_secret) = &credential.client_secret {
-            form.append_pair("client_secret", client_secret.expose());
-        }
-        let form = Zeroizing::new(form.finish());
+        let form = Zeroizing::new({
+            let mut form = url::form_urlencoded::Serializer::new(String::new());
+            form.append_pair("grant_type", "refresh_token")
+                .append_pair("client_id", credential.client_id.expose())
+                .append_pair("refresh_token", credential.refresh_token.expose());
+            if let Some(client_secret) = &credential.client_secret {
+                form.append_pair("client_secret", client_secret.expose());
+            }
+            form.finish()
+        });
         let token: Token = Self::response(
             self.client
                 .post(&self.token)
@@ -627,7 +640,8 @@ impl GoogleAdapter {
                 .expose()
                 .bytes()
                 .all(|b| b.is_ascii_graphic())
-            || scopes.len() != 3
+            || scopes.len() != if send { 4 } else { 3 }
+            || (send && !scopes.contains("https://www.googleapis.com/auth/gmail.send"))
             || !scopes.contains("openid")
             || !scopes.contains("https://www.googleapis.com/auth/gmail.readonly")
             || !(scopes.contains("email")
@@ -661,6 +675,26 @@ impl GoogleAdapter {
         if profile.email.expose() != verified.email.expose() {
             return Err(Error::Policy);
         }
+        Ok((credential, token))
+    }
+    async fn read(
+        &self,
+        identity: &GoogleIdentity,
+        secret: &str,
+        preview: bool,
+    ) -> Result<Projection> {
+        self.read_for(identity, secret, preview, None, &mut Vec::new())
+            .await
+    }
+    async fn read_for(
+        &self,
+        identity: &GoogleIdentity,
+        secret: &str,
+        preview: bool,
+        selected_id: Option<&str>,
+        selections: &mut Vec<(uuid::Uuid, String)>,
+    ) -> Result<Projection> {
+        let (credential, token) = self.authorize(identity, secret, false).await?;
         if let Some(id) = selected_id {
             return self.body(id, &credential, &token, secret).await;
         }
@@ -723,6 +757,15 @@ impl Engine {
     ) -> Result<Binding> {
         self.archive_google_grant_for(archive, item, identity, expires, 2)
     }
+    pub fn archive_google_send_grant(
+        &mut self,
+        archive: &mut UnlockedArchive,
+        item: uuid::Uuid,
+        identity: GoogleIdentity,
+        expires: i64,
+    ) -> Result<Binding> {
+        self.archive_google_grant_for(archive, item, identity, expires, 3)
+    }
     fn archive_google_grant_for(
         &mut self,
         archive: &mut UnlockedArchive,
@@ -748,6 +791,7 @@ impl Engine {
             g.google().is_some()
                 && g.google_preview() == (mode == 1)
                 && g.google_body() == (mode == 2)
+                && g.google_send() == (mode == 3)
                 && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
         }) {
             // No retained invocation may cross a credential-version change.
@@ -772,7 +816,9 @@ impl Engine {
             self.save()?;
             return Ok(binding);
         }
-        self.select((if mode == 2 {
+        self.select((if mode == 3 {
+            policy::LocalGrant::select_google_send
+        } else if mode == 2 {
             policy::LocalGrant::select_google_body
         } else if mode == 1 {
             policy::LocalGrant::select_google_preview
@@ -799,6 +845,8 @@ impl Engine {
             Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailSend { .. }
+                | Operation::GoogleMailLookup { .. }
         ) || archive.header().binding.owner_id != self.device().owner.account
             || archive.header().binding.tenant_id != self.device().owner.tenant
         {
@@ -882,8 +930,18 @@ impl Engine {
             Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailSend { .. }
+                | Operation::GoogleMailLookup { .. }
         ) {
             return Err(Error::Policy);
+        }
+        if matches!(
+            request.operation,
+            Operation::GoogleMailSend { .. } | Operation::GoogleMailLookup { .. }
+        ) {
+            return self
+                .execute_mail_secret(invocation, adapter, secret, item_epoch, key_epoch, None)
+                .await;
         }
         let preview = request.operation == Operation::GoogleInboxPreview;
         let grant = self
@@ -1014,3 +1072,5 @@ impl Engine {
 
 #[cfg(test)]
 mod tests;
+
+mod send;

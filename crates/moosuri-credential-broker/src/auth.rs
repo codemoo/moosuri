@@ -58,7 +58,9 @@ pub fn projection_digest(projection: moosuri_vault_protocol::broker::Projection)
         p @ (moosuri_vault_protocol::broker::Projection::GitHubRepository { .. }
         | moosuri_vault_protocol::broker::Projection::GoogleInbox { .. }
         | moosuri_vault_protocol::broker::Projection::GoogleInboxPreview { .. }
-        | moosuri_vault_protocol::broker::Projection::GoogleInboxBody { .. }) => {
+        | moosuri_vault_protocol::broker::Projection::GoogleInboxBody { .. }
+        | moosuri_vault_protocol::broker::Projection::GoogleMailSent { .. }
+        | moosuri_vault_protocol::broker::Projection::GoogleMailObserved { .. }) => {
             return hash(&p.bytes());
         }
     };

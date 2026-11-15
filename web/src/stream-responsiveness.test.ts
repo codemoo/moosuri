@@ -143,3 +143,47 @@ describe("bounded read-only snapshot requests", () => {
     scope.close();
   });
 });
+
+
+describe("explicit foreground mutation deadlines", () => {
+  it.each(["connecting", "body"])("bounds an opted-in POST at %s without replaying it", async stage => {
+    vi.useFakeTimers();
+    let respond!: (response: Response) => void;
+    let signal!: AbortSignal;
+    const cancel = vi.fn();
+    const fetch = vi.fn((_url, init) => {
+      signal = init.signal;
+      return new Promise<Response>(resolve => { respond = resolve; });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const scope = new RequestScope("synthetic-account");
+    const observed = scope.request("/synthetic/messages", "POST", { request_id: "immutable" }, undefined, { timeoutMs: 30000 }).catch(error => error);
+    await vi.advanceTimersByTimeAsync(20000);
+    if (stage === "body") respond(new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('{"accepted":')); }, cancel,
+    })));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(await observed).toMatchObject({ status: 504, code: "request_timed_out" });
+    expect(signal.aborted).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
+    if (stage === "connecting") respond(new Response(new ReadableStream({ cancel })));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    scope.close();
+  });
+
+  it.each(["caller", "account"])("settles promptly on %s cancellation even when POST ignores abort", async owner => {
+    vi.useFakeTimers();
+    const fetch = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetch);
+    const scope = new RequestScope("synthetic-account");
+    const controller = new AbortController();
+    const observed = scope.request("/synthetic/messages", "POST", { request_id: "immutable" }, controller.signal, { timeoutMs: 30000 }).catch(error => error);
+    if (owner === "caller") controller.abort(); else scope.close();
+    expect(isAborted(await observed)).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    scope.close();
+  });
+});

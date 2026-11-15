@@ -323,6 +323,7 @@ pub(crate) fn apply(conn: &Connection, record: &Record) -> Result<()> {
             crate::missions::apply_delete(conn, &record.tenant, target)?;
         }
         Effect::DeleteThread { target } => {
+            crate::thread_creation::deleted(conn, &record.tenant, target)?;
             crate::native_task_mail::delete_thread(conn, &record.tenant, target)?;
             crate::browser::selected::withdraw_thread(conn, &record.tenant, target)?;
             // Remove only this thread's training proof before generic dependency

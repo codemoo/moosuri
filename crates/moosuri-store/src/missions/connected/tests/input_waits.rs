@@ -442,10 +442,10 @@ async fn mission_input_schema69_upgrade_and_restore_never_replays_an_answer() {
     let _guard = TEST_LOCK.lock().await;
     let (d, s, u) = crate::missions::tests::setup().await;
     connections(&s, &u, "owner").await;
-    s.call(|db|{db.conn.execute_batch("DROP TABLE mission_input_replies;DROP TABLE mission_input_waits;PRAGMA user_version=68;")?;Ok(())}).await.unwrap();
+    s.call(|db|{db.conn.execute_batch("DROP TABLE mission_input_replies;DROP TABLE mission_input_waits;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=68;")?;Ok(())}).await.unwrap();
     drop(s);
     let s = Store::open(d.path()).unwrap();
-    assert_eq!(crate::schema_version(), 70);
+    assert_eq!(crate::schema_version(), 71);
     let m = s
         .create_mission(
             &u,

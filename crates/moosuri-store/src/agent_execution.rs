@@ -270,12 +270,23 @@ pub(super) fn evidence(
 }
 type RetryBounds = (bool, i64, i64, Option<i64>, Option<i64>);
 type ExecutionFence = (bool, Option<i64>, Option<i64>, Option<i64>);
-pub(super) fn retry_allowed(conn: &Connection, tenant: &str, run: &str) -> Result<bool> {
-    retry_fences(conn, tenant, run, true)
+enum RetryCapacity {
+    Local,
+    Model,
+    ModelAndTool,
 }
-// Local recovery does not reserve another remote/tool dispatch. All other retry
-// fences still apply; ordinary chat and explicit retries keep their capacity gate.
-fn retry_fences(conn: &Connection, tenant: &str, run: &str, needs_capacity: bool) -> Result<bool> {
+pub(super) fn retry_allowed(conn: &Connection, tenant: &str, run: &str) -> Result<bool> {
+    retry_fences(conn, tenant, run, RetryCapacity::ModelAndTool)
+}
+// Local finalization does not dispatch. A native continuation can consume already
+// completed tool results with no tool budget left; the next dispatch/commit still
+// enforces its own bound. Explicit retries keep the model-and-tool capacity gate.
+fn retry_fences(
+    conn: &Connection,
+    tenant: &str,
+    run: &str,
+    capacity: RetryCapacity,
+) -> Result<bool> {
     if conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM community_run_revocations WHERE tenant_id=?1 AND run_id=?2)",
         params![tenant, run],
@@ -289,7 +300,11 @@ fn retry_fences(conn: &Connection, tenant: &str, run: &str, needs_capacity: bool
     };
     let clock = millis()?;
     Ok(!invalid
-        && (!needs_capacity || remote < 6 && tools < 12)
+        && match capacity {
+            RetryCapacity::Local => true,
+            RetryCapacity::Model => remote < 6 && tools <= 12,
+            RetryCapacity::ModelAndTool => remote < 6 && tools < 12,
+        }
         && deadline.is_none_or(|d| clock < d)
         && last.is_none_or(|v| clock >= v))
 }
@@ -796,7 +811,8 @@ impl Store {
                 if chat::execution_authority(&tx,&run).is_err(){chat::transition(&tx,&run,RunState::Cancelled,Some(RunFailure::AuthorityRevoked))?;continue}
                 let binding=match chat::binding_for_run(&tx,&db.provider_key,&run){Ok(v)=>v,Err(e)=>{chat::transition(&tx,&run,RunState::Failed,Some(if e==StoreError::RecoveryAllocationRequired {RunFailure::RecoveryAllocationRequired} else {RunFailure::ProviderUnavailable}))?;continue}};
                 let local_final = crate::missions::local_final_recovery(&tx, &tenant, &id)?;
-                if !retry_fences(&tx,&tenant,&id,!local_final)? {chat::transition(&tx,&run,RunState::Incomplete,Some(RunFailure::BudgetExhausted))?;continue}
+                let capacity = if local_final { RetryCapacity::Local } else if crate::native_task_mail::completed_continuation(&tx, &tenant, &id)? { RetryCapacity::Model } else { RetryCapacity::ModelAndTool };
+                if !retry_fences(&tx,&tenant,&id,capacity)? {chat::transition(&tx,&run,RunState::Incomplete,Some(RunFailure::BudgetExhausted))?;continue}
                 match guard_execution(&tx,&run) {Ok(())=>{},Err(StoreError::Conflict|StoreError::BudgetExhausted)=>continue,Err(e)=>return Err(e)}
                 crate::run_timings::claim(&tx,&run)?;
                 let started=std::time::Instant::now();

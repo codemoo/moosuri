@@ -105,10 +105,19 @@ struct Pending {
     usage: Option<RunUsage>,
     terminal: Option<FinishOutcome>,
     identity: bool,
-    has_text: bool,
     private_text: String,
 }
 impl Pending {
+    fn has_body(&self) -> bool {
+        self.items.values().any(|item| item.body_seen)
+    }
+    fn has_answer(&self) -> bool {
+        // Final item metadata can arrive after the body. A progress update is
+        // retained for display, but is not evidence that an answer completed.
+        self.items
+            .values()
+            .any(|item| item.body_seen && item.phase != Some(MessagePhase::Commentary))
+    }
     fn item(&mut self, key: String, refusal: bool) -> Result<&mut Item, RunFailure> {
         if !self.items.contains_key(&(key.clone(), refusal)) && self.items.len() >= MAX_ITEMS {
             return Err(RunFailure::OutputLimit);
@@ -355,7 +364,6 @@ async fn append_event(
         });
         pending.bytes += length;
         pending.total_bytes += length;
-        pending.has_text |= !refusal && !piece.trim().is_empty();
         remaining = &remaining[length..];
         if pending.bytes >= MAX_PATCH {
             flush(checkpoint, pending).await?;
@@ -1195,9 +1203,10 @@ pub(crate) async fn execute_with_calendar(
         // durable RunLease/refresh CAS. This never retries an inference dispatch.
         if let Some(reference) = binding.subscription.clone() {
             client = match subscriptions
-                .client(
+                .client_for_round(
                     moosuri_store::SubscriptionAuthority::Run(lease.clone()),
                     reference,
+                    &client,
                 )
                 .await
             {
@@ -1331,8 +1340,11 @@ pub(crate) async fn execute_with_calendar(
         }
         if outcome != FinishOutcome::ContinuationRequired || calls.is_empty() {
             let (state, error) = match outcome {
-                FinishOutcome::Completed if observed.pending.has_text && calls.is_empty() => {
+                FinishOutcome::Completed if observed.pending.has_answer() && calls.is_empty() => {
                     (RunState::Completed, None)
+                }
+                FinishOutcome::Completed if observed.pending.has_body() && calls.is_empty() => {
+                    (RunState::Incomplete, Some(RunFailure::ProtocolFailed))
                 }
                 FinishOutcome::Incomplete => (RunState::Incomplete, Some(RunFailure::OutputLimit)),
                 FinishOutcome::Refused => (RunState::Refused, None),
@@ -1783,7 +1795,7 @@ async fn execute_claude_text(
     )
     .await;
     match observed {
-        Ok(o) if o.pending.terminal == Some(FinishOutcome::Completed) && o.pending.has_text => {
+        Ok(o) if o.pending.terminal == Some(FinishOutcome::Completed) && o.pending.has_answer() => {
             if retry_local(|| {
                 store.commit_agent_step(
                     &step,

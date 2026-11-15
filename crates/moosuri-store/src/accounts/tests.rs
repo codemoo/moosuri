@@ -397,11 +397,19 @@ async fn permanent_deletion_purges_only_owned_content_and_reports_exact_vault_ac
     let a = admin(&store).await.user;
     let b = member(&store, &a, "delete-owner@example.test").await.user;
     store
-        .create_thread(&b, "Synthetic deleted private text".into())
+        .create_thread_with_request_id(
+            &b,
+            "Synthetic deleted private text".into(),
+            Some(Uuid::new_v4().to_string()),
+        )
         .await
         .unwrap();
     let retained = store
-        .create_thread(&a, "Synthetic retained private text".into())
+        .create_thread_with_request_id(
+            &a,
+            "Synthetic retained private text".into(),
+            Some(Uuid::new_v4().to_string()),
+        )
         .await
         .unwrap();
     let (b_seed, a_seed) = (b.clone(), a.clone());
@@ -460,7 +468,12 @@ async fn permanent_deletion_purges_only_owned_content_and_reports_exact_vault_ac
     let owner = b.clone();
     store
         .call(move |db| {
-            for table in ["threads", "media_objects", "mail_connections"] {
+            for table in [
+                "threads",
+                "thread_creation_receipts",
+                "media_objects",
+                "mail_connections",
+            ] {
                 assert_eq!(
                     db.conn.query_row(
                         &format!("SELECT count(*) FROM {table} WHERE tenant_id=?1"),
@@ -487,6 +500,14 @@ async fn permanent_deletion_purges_only_owned_content_and_reports_exact_vault_ac
                 1
             );
             assert!(!db.conn.prepare("PRAGMA foreign_key_check")?.exists([])?);
+            assert_eq!(
+                db.conn
+                    .query_row("SELECT count(*) FROM thread_creation_receipts", [], |r| r
+                        .get::<_, i64>(
+                        0
+                    ))?,
+                1
+            );
             Ok(())
         })
         .await

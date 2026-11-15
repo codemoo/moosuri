@@ -33,6 +33,125 @@ pub struct SubscriptionRefresh {
     authority: SubscriptionAuthority,
     generation: i64,
     nonce: String,
+    _cleanup: RefreshCleanup,
+}
+// The cleanup carrier is created inside the actor before delivering the acquired
+// lease. Dropping either an undelivered result or its later caller releases only
+// that acquired nonce; it never resets a dispatched rotating-token exchange.
+struct RefreshCleanup {
+    sender: mpsc::WeakSender<Command>,
+    runtime: tokio::runtime::Handle,
+    binding: SubscriptionRef,
+    generation: i64,
+    nonce: String,
+}
+impl Drop for RefreshCleanup {
+    fn drop(&mut self) {
+        let Some(sender) = self.sender.upgrade() else {
+            return;
+        };
+        let (b, generation, nonce) = (self.binding.clone(), self.generation, self.nonce.clone());
+        let command: Command = Box::new(move |db| {
+            let _ = abandon_refresh(&db.conn, &b, generation, &nonce);
+        });
+        if let Err(mpsc::error::TrySendError::Full(command)) = sender.try_send(command) {
+            let weak = self.sender.clone();
+            self.runtime.spawn(async move {
+                let mut pending = command;
+                loop {
+                    let Some(sender) = weak.upgrade() else {
+                        return;
+                    };
+                    match sender.try_send(pending) {
+                        Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => return,
+                        Err(mpsc::error::TrySendError::Full(command)) => pending = command,
+                    }
+                    // Never keep the actor channel alive across a suspension:
+                    // the last Store synchronously joins its writer on drop.
+                    drop(sender);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            });
+        }
+    }
+}
+fn abandon_refresh(
+    c: &Connection,
+    b: &SubscriptionRef,
+    generation: i64,
+    nonce: &str,
+) -> Result<()> {
+    c.execute("UPDATE chatgpt_sessions SET refresh_state='idle',refresh_nonce=NULL,refresh_until=NULL WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND generation=?5 AND refresh_nonce=?6 AND refresh_state='acquired'", params![b.tenant,b.account,b.id,b.revision,generation,nonce])?;
+    Ok(())
+}
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn full_refresh_cleanup_mailbox_does_not_keep_final_store_alive() {
+        for poll_fallback in [false, true] {
+            let (done, finished) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .unwrap()
+                    .block_on(async move {
+                        let (sender, mut receiver) = mpsc::channel::<Command>(1);
+                        let (release, released) = std::sync::mpsc::channel();
+                        let worker = std::thread::spawn(move || {
+                            released.recv().unwrap();
+                            while receiver.blocking_recv().is_some() {}
+                        });
+                        // A real Inner drop joins its writer. Keep the mailbox
+                        // full until the cleanup fallback is queued or pending.
+                        let store = Store {
+                            inner: Arc::new(Inner {
+                                sender: Some(sender),
+                                worker: Mutex::new(Some(worker)),
+                                dummy_hash: DUMMY_HASH.to_owned(),
+                            }),
+                        };
+                        assert!(
+                            store
+                                .inner
+                                .sender
+                                .as_ref()
+                                .unwrap()
+                                .try_send(Box::new(|_| {}))
+                                .is_ok()
+                        );
+                        let cleanup = RefreshCleanup {
+                            sender: store.inner.sender.as_ref().unwrap().downgrade(),
+                            runtime: tokio::runtime::Handle::current(),
+                            binding: SubscriptionRef {
+                                tenant: "synthetic-tenant".into(),
+                                account: "synthetic-owner".into(),
+                                id: "synthetic-binding".into(),
+                                revision: 1,
+                                model: "synthetic-model".into(),
+                                effort: None,
+                            },
+                            generation: 1,
+                            nonce: "synthetic-nonce".into(),
+                        };
+                        drop(cleanup);
+                        if poll_fallback {
+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        }
+                        release.send(()).unwrap();
+                        drop(store);
+                    });
+                done.send(()).unwrap();
+            });
+            // Outside the runtime: a blocked synchronous join cannot prevent
+            // the watchdog from detecting this regression.
+            finished
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap();
+        }
+    }
 }
 pub enum SubscriptionAccess {
     Ready(Zeroizing<String>),
@@ -403,6 +522,13 @@ impl Store {
         a: SubscriptionAuthority,
         b: SubscriptionRef,
     ) -> Result<SubscriptionAccess> {
+        let sender = self
+            .inner
+            .sender
+            .as_ref()
+            .ok_or(StoreError::Unavailable)?
+            .downgrade();
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_| StoreError::Unavailable)?;
         self.call(move|db|{
             let epoch=authorize(&db.conn,&db.provider_key,&a,&b)?;
             if owned(&db.conn,&b)?!="active"{
@@ -424,12 +550,37 @@ impl Store {
             let changed=db.conn.execute("UPDATE chatgpt_sessions SET refresh_state='acquired',refresh_nonce=?5,refresh_epoch=?6,refresh_until=?7 WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND generation=?4 AND refresh_state IN('idle','acquired')",params![b.tenant,b.account,b.id,g,n,epoch,now()?+45])?;
             if changed!=1{
                 return Ok(SubscriptionAccess::Wait)}
+            let cleanup = RefreshCleanup { sender, runtime, binding: b.clone(), generation: g, nonce: n.clone() };
             Ok(SubscriptionAccess::Refresh(Box::new(SubscriptionRefresh{
-                binding:b,authority:a,generation:g,nonce:n}
+                binding:b,authority:a,generation:g,nonce:n,_cleanup:cleanup}
             ), Box::new(current)))
         }
         ).await
     }
+    /// A discovery failure/drop has not dispatched a rotating token exchange.
+    /// Release only the exact acquired nonce; late cleanup cannot reset a newer
+    /// acquisition, a dispatched exchange, a replacement generation or revision.
+    pub async fn abandon_subscription_refresh(&self, l: &SubscriptionRefresh) -> Result<()> {
+        let (b, generation, nonce) = (l.binding.clone(), l.generation, l.nonce.clone());
+        self.call(move |db| abandon_refresh(&db.conn, &b, generation, &nonce))
+            .await
+    }
+
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub async fn hold_subscription_actor_fixture(
+        &self,
+        entered: tokio::sync::oneshot::Sender<()>,
+        released: std::sync::mpsc::Receiver<()>,
+    ) -> Result<()> {
+        self.call(move |_db| {
+            let _ = entered.send(());
+            released
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .map_err(|_| StoreError::Unavailable)
+        })
+        .await
+    }
+
     pub async fn dispatch_subscription_refresh(&self, l: &SubscriptionRefresh) -> Result<()> {
         let (b, a, g, n) = (
             l.binding.clone(),

@@ -5,6 +5,9 @@ use crate::agent_execution::{KnowledgeToolInput, KnowledgeToolResult};
 use moosuri_core::{MissionWaitView, ScopedConnectionDescriptor};
 use moosuri_vault_protocol::broker::*;
 pub(crate) const SLOT: &str = "native-mail-slot-v1";
+pub(crate) fn completed_continuation(c: &Connection, tenant: &str, run: &str) -> Result<bool> {
+    Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM native_task_mail_reads n JOIN agent_execution a ON a.tenant_id=n.tenant_id AND a.run_id=n.run_id WHERE n.tenant_id=?1 AND n.run_id=?2 AND n.step=a.remote_calls AND n.status='completed')",params![tenant,run],|r|r.get(0))?)
+}
 fn enc<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|_| StoreError::Corrupt)
 }
@@ -682,7 +685,11 @@ impl Store {
     }
     pub async fn native_mail_continuation(&self, lease: &crate::RunLease) -> Result<bool> {
         let l = lease.clone();
-        self.call(move|db|{let r=crate::chat::guard(&db.conn,&db.provider_key,&l)?;Ok(db.conn.query_row("SELECT EXISTS(SELECT 1 FROM native_task_mail_reads n JOIN agent_execution a ON a.tenant_id=n.tenant_id AND a.run_id=n.run_id WHERE n.tenant_id=?1 AND n.run_id=?2 AND n.step=a.remote_calls AND n.status='completed')",params![r.tenant,r.id],|r|r.get(0))?)}).await
+        self.call(move |db| {
+            let r = crate::chat::guard(&db.conn, &db.provider_key, &l)?;
+            completed_continuation(&db.conn, &r.tenant, &r.id)
+        })
+        .await
     }
     pub async fn select_native_mail_connection(
         &self,

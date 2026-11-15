@@ -775,6 +775,7 @@ function Workspace({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [creating, setCreating] = useState(false);
+  const creationInFlight = useRef<Promise<ThreadSummary> | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [deleting, setDeleting] = useState<ThreadSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -833,12 +834,12 @@ function Workspace({
           recoveryReady.current=true;
           if(recovered?.restored) {
             setChatMemory(recovered.memory);
-            setSelected(recovered.selected??(recovered.memory.drafts.new||recovered.memory.pending.new?null:result.threads[0]?.id??null));
+            setSelected(recovered.selected??(recovered.memory.drafts.new||recovered.memory.pending.new||recovered.memory.threadCreation?null:result.threads[0]?.id??null));
           }else setSelected(result.threads[0]?.id??null);
         }else {
           const allowed=new Set(["new",...threadIds.current]);
-          setChatMemory(current=>({drafts:Object.fromEntries(Object.entries(current.drafts).filter(([id])=>allowed.has(id))),pending:Object.fromEntries(Object.entries(current.pending).filter(([id])=>allowed.has(id)))}));
-          setSelected(current=>result.threads.some(t=>t.id===current)?current:result.threads[0]?.id??null);
+          setChatMemory(current=>({...current,drafts:Object.fromEntries(Object.entries(current.drafts).filter(([id])=>allowed.has(id))),pending:Object.fromEntries(Object.entries(current.pending).filter(([id])=>allowed.has(id)))}));
+          setSelected(current=>result.threads.some(t=>t.id===current)?current:current===null&&(chatMemoryRef.current.drafts.new||chatMemoryRef.current.pending.new||chatMemoryRef.current.threadCreation)?null:result.threads[0]?.id??null);
         }
         persist();
         setChatReady(true);
@@ -854,46 +855,78 @@ function Workspace({
     // The lifetime-scoped transport fences late account responses.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, retry]);
-  async function createThread() {
+  function moveNewMemory(current: ChatMemory, id: string): ChatMemory {
+    const pending = { ...current.pending };
+    const drafts = { ...current.drafts };
+    if (pending.new) pending[id] = pending.new;
+    if (drafts.new !== undefined && !drafts[id]) drafts[id] = drafts.new;
+    delete pending.new;
+    delete drafts.new;
+    return { ...current, pending, drafts };
+  }
+  function obtainThread(): Promise<ThreadSummary> {
+    if (creationInFlight.current) return creationInFlight.current;
+    const value = { ...(chatMemoryRef.current.threadCreation ?? {
+      request_id: crypto.randomUUID(), title: "New conversation",
+    }), status: "sending" as const };
+    setChatMemory(current => ({ ...current, threadCreation: value }));
     setCreating(true);
     setError("");
+    listController.current?.abort();
+    const operation = (async () => {
+      try {
+        const thread = await scope.request<ThreadSummary>("/threads", "POST", {
+          title: value.title, request_id: value.request_id,
+        }, undefined, { timeoutMs: 30000 });
+        const memory = chatMemoryRef.current;
+        if ((memory.drafts.new && memory.drafts[thread.id]) ||
+            (memory.pending.new && memory.pending[thread.id] && memory.pending.new.request_id !== memory.pending[thread.id].request_id))
+          throw new ApiFailure(409, "thread_creation_busy");
+        threadIds.current = [thread.id, ...threadIds.current.filter(id => id !== thread.id)];
+        setThreads(current => [thread, ...current.filter(item => item.id !== thread.id)]);
+        // Persist receipt completion and migration together. A reload must never
+        // strand the original message under an unknown new-thread slot.
+        setChatMemory(current => current.threadCreation?.request_id === value.request_id
+          ? { ...moveNewMemory(current, thread.id), threadCreation: undefined }
+          : current);
+        return thread;
+      } catch (error) {
+        const definite = error instanceof ApiFailure && error.status < 500 && error.code !== "thread_creation_busy";
+        setChatMemory(current => current.threadCreation?.request_id === value.request_id
+          ? { ...current, threadCreation: definite ? undefined : { ...value, status: "uncertain" } }
+          : current);
+        if (!isAborted(error) && !(error instanceof ApiFailure && error.code === "thread_creation_busy"))
+          setRetry(current => current + 1);
+        throw error;
+      } finally {
+        creationInFlight.current = null;
+        setCreating(false);
+      }
+    })();
+    creationInFlight.current = operation;
+    return operation;
+  }
+  async function createThread() {
+    const origin = selectedRef.current;
+    const originPath = pathRef.current;
     try {
-      const thread = await scope.request<ThreadSummary>("/threads", "POST", {
-        title: "New conversation",
-      });
-      threadIds.current=[thread.id,...threadIds.current.filter(id=>id!==thread.id)];
-      setThreads((current) => [thread, ...current]);
-      setSelected(thread.id);
-      setDrawer(false);
-      navigate("/app");
-    } catch (e) {
-      fail(e);
-    } finally {
-      setCreating(false);
+      const thread = await obtainThread();
+      if (selectedRef.current === origin && pathRef.current === originPath) {
+        setSelected(thread.id);
+        setDrawer(false);
+        navigate("/app");
+      }
+    } catch (error) {
+      if (error instanceof ApiFailure && error.code === "thread_creation_busy")
+        setError("새 대화에 다른 초안이나 접수 확인 중인 메시지가 있습니다. 그 대화를 먼저 마무리한 뒤 같은 생성 요청을 다시 확인해 주세요.");
+      else fail(error);
     }
   }
   async function createForChat(): Promise<string> {
-    setCreating(true);
-    listController.current?.abort();
-    try {
-      const thread = await scope.request<ThreadSummary>("/threads", "POST", {
-        title: "New conversation",
-      });
-      threadIds.current=[thread.id,...threadIds.current.filter(id=>id!==thread.id)];
-      setThreads((current) => [
-        thread,
-        ...current.filter((item) => item.id !== thread.id),
-      ]);
-      if (
-        selectedRef.current === null &&
-        (pathRef.current === "/app" || pathRef.current === "/")
-      )
-        setSelected(thread.id);
-      setRetry((value) => value + 1);
-      return thread.id;
-    } finally {
-      setCreating(false);
-    }
+    const thread = await obtainThread();
+    if (selectedRef.current === null && (pathRef.current === "/app" || pathRef.current === "/"))
+      setSelected(thread.id);
+    return thread.id;
   }
   function removeMemory(id: string) {
     setChatMemory((current) => {
@@ -901,7 +934,7 @@ function Workspace({
       const pending = { ...current.pending };
       delete drafts[id];
       delete pending[id];
-      return { drafts, pending };
+      return { ...current, drafts, pending };
     });
   }
   function threadMissing(id: string) {
@@ -952,8 +985,9 @@ function Workspace({
         disabled={creating || loading}
       >
         <span aria-hidden="true">＋</span>
-        {creating ? "Creating…" : "New conversation"}
+        {creating ? "Creating…" : chatMemory.threadCreation ? "Retry new conversation" : "New conversation"}
       </button>
+      {chatMemory.threadCreation?.status === "uncertain" && <p className="sidebar-hint" role="status">새 대화 생성 접수를 확인하지 못했습니다. 다시 확인할 때 같은 요청을 사용합니다.</p>}
       <div className="history-title">
         YOUR CONVERSATIONS <span>{threads.length}</span>
       </div>
@@ -1298,17 +1332,7 @@ function Workspace({
               setChatMemory((current) => {
                 if (current.pending.new?.request_id !== requestId)
                   return current;
-                const pending = {
-                  ...current.pending,
-                  [id]: current.pending.new,
-                };
-                delete pending.new;
-                const drafts = {
-                  ...current.drafts,
-                  [id]: current.drafts.new ?? "",
-                };
-                delete drafts.new;
-                return { pending, drafts };
+                return moveNewMemory(current, id);
               })
             }
             onSuspend={() =>

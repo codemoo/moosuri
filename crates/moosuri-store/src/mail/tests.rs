@@ -946,6 +946,8 @@ async fn schema29_and30_upgrade_keeps_unknown_legacy_without_self_derived_oracle
         if predecessor == 29 {
             conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;").unwrap();
         }
+        conn.execute_batch("DROP TABLE thread_creation_receipts;")
+            .unwrap();
         conn.pragma_update(None, "user_version", predecessor)
             .unwrap();
         drop(conn);

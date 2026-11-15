@@ -146,15 +146,26 @@ pub(super) async fn response(
         if write {
             assert!(defs.iter().all(|d| {
                 let n = d["name"].as_str().unwrap();
-                !n.starts_with("mail_")
-                    && !n.starts_with("web_")
-                    && !n.starts_with("browser_")
-                    && !n.starts_with("calendar_")
+                // Document grants now admit these bounded external reads.
+                // Draft/send, Calendar effects and browser tools stay absent.
+                !n.starts_with("browser_")
+                    && (!n.starts_with("mail_")
+                        || matches!(
+                            n,
+                            "mail_search"
+                                | "mail_read"
+                                | "mail_attachments"
+                                | "mail_attachment"
+                                | "mail_thread"
+                        ))
+                    && (!n.starts_with("web_") || matches!(n, "web_read" | "web_search"))
+                    && (!n.starts_with("calendar_")
+                        || matches!(n, "calendar_list_events" | "calendar_read_event"))
             }));
             if mode == 12 {
                 write_call(
-                    "web_read",
-                    json!({"url":"https://example.test/"}),
+                    "mail_prepare_draft",
+                    json!({"connection_id":"synthetic-ungranted","from":"sender@example.test","to":["receiver@example.test"],"cc":[],"bcc":[],"subject":"Undeclared draft","text":"Must not be saved."}),
                     "moosuri",
                 )
             } else if mode == 14 {

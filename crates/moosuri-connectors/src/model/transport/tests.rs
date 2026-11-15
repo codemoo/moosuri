@@ -1449,3 +1449,54 @@ async fn chatgpt_plan_http_identity_errors_never_publish_usage_or_finished() {
         assert_eq!(f.count.load(Ordering::SeqCst), 1);
     }
 }
+
+#[tokio::test]
+async fn personal_reauthorization_reuses_transport_with_current_bearer_only() {
+    let f = fixture(Reply::Stream(vec![plan_wire(&plan_text_frames())])).await;
+    let first = plan_client(&f);
+    assert!(run(&first, &request()).await.0.is_ok());
+    let same = first
+        .renewed_chatgpt_plan(
+            Secret::new("synthetic-plan-access".into()).unwrap(),
+            TextCapabilities::default(),
+        )
+        .unwrap();
+    assert!(run(&same, &request()).await.0.is_ok());
+    let mut rotated = same
+        .renewed_chatgpt_plan(
+            Secret::new("synthetic-rotated-key".into()).unwrap(),
+            TextCapabilities::default(),
+        )
+        .unwrap();
+    assert!(run(&rotated, &request()).await.0.is_ok());
+    assert!(run(&plan_client(&f), &request()).await.0.is_ok());
+    let captured = f.captures.lock().await;
+    assert_eq!(captured.len(), 4);
+    assert_eq!(captured[0].peer, captured[1].peer);
+    assert_eq!(captured[1].peer, captured[2].peer);
+    assert_ne!(captured[2].peer, captured[3].peer);
+    assert_eq!(
+        captured[1].headers["authorization"],
+        "Bearer synthetic-plan-access"
+    );
+    assert_eq!(
+        captured[2].headers["authorization"],
+        "Bearer synthetic-rotated-key"
+    );
+    drop(captured);
+    // Reauthorization must not allow a live socket to bypass fresh policy checks.
+    rotated.network = NetworkPolicy::PublicHttps;
+    assert!(matches!(
+        run(&rotated, &request()).await.0,
+        Err(TransportError::DestinationDenied)
+    ));
+    assert_eq!(f.count.load(Ordering::SeqCst), 4);
+    assert!(
+        local(&f)
+            .renewed_chatgpt_plan(
+                Secret::new("synthetic-key".into()).unwrap(),
+                TextCapabilities::default()
+            )
+            .is_err()
+    );
+}

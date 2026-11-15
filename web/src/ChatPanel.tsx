@@ -63,7 +63,13 @@ export type PendingSend = {
   mission_context?:MissionChatContext;
   status: "sending" | "accepted" | "uncertain";
 };
+export type PendingThreadCreation = {
+  request_id: string;
+  title: string;
+  status: "sending" | "uncertain";
+};
 export type ChatMemory = {
+  threadCreation?: PendingThreadCreation;
   drafts: Record<string, string>;
   pending: Record<string, PendingSend>;
 };
@@ -256,6 +262,9 @@ export function ChatPanel(props: Props) {
       if(turn)acknowledgeSchedule(thread,value,turn);
     }
     callbacks.current.onPending(thread,null,requestId);
+    // Canonical history/SSE proves admission even if its HTTP receipt hangs.
+    // Release that transport; the cleared request identity fences its abort.
+    if(value?.request_id===requestId) posts.current.get(thread)?.abort();
     finishReceipts(thread, requestId, true);
   }
   function settle(page: ChatPage) {
@@ -784,6 +793,7 @@ export function ChatPanel(props: Props) {
         "POST",
         { request_id: value.request_id, text: value.text,...(value.artifact_target?{artifact_target:value.artifact_target}:{}),...(value.attachments?.length?{attachments:value.attachments}:{}),...(value.schedule_context?{schedule_context:value.schedule_context}:{}),...(value.mission_context?{mission_context:value.mission_context}:{}) },
         controller.signal,
+        { timeoutMs: 30000 },
       );
       if (
         !validTurn(result) ||
@@ -890,12 +900,20 @@ export function ChatPanel(props: Props) {
         shareSlotMove.current?.("new", thread);
         callbacks.current.onCreated(thread, value.request_id);
       } catch (error) {
-        callbacks.current.onPending("new", null, value.request_id);
-        callbacks.current.onRestoreDraft("new", value.text);
-        if (!isAborted(error) && !boundary(error))
-          setError(
-            "새 대화 생성 결과를 확인하지 못했습니다. 메시지는 아직 전송하지 않았습니다. 대화 목록을 새로고침해 주세요.",
-          );
+        const busy = error instanceof ApiFailure && error.code === "thread_creation_busy";
+        const definite = error instanceof ApiFailure && error.status < 500 && !busy;
+        if (definite) {
+          callbacks.current.onPending("new", null, value.request_id);
+          callbacks.current.onRestoreDraft("new", value.text);
+        } else {
+          callbacks.current.onPending("new", { ...value, status: "uncertain" }, value.request_id);
+        }
+        if (!isAborted(error) && !boundary(error) && currentThread.current === null)
+          setError(busy
+            ? "새 대화에 다른 초안이나 접수 확인 중인 메시지가 있습니다. 그 대화를 먼저 마무리한 뒤 같은 요청을 다시 제출해 주세요."
+            : definite
+            ? "새 대화를 만들 수 없습니다. 메시지는 전송하지 않았으며 입력을 유지했습니다."
+            : "새 대화 생성 결과를 확인하지 못했습니다. 메시지는 아직 전송하지 않았습니다. 같은 요청 다시 제출로 원래 생성 요청을 확인해 주세요.");
         return;
       } finally {
         posts.current.delete("new");
@@ -924,6 +942,8 @@ export function ChatPanel(props: Props) {
         `/runs/${encodeURIComponent(run.id)}/${kind}`,
         "POST",
         { expected_attempt: run.attempt },
+        undefined,
+        { timeoutMs: 30000 },
       );
       if (
         !validTurn(result) ||

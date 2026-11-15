@@ -184,6 +184,163 @@ async fn counts(s: &Store, run: &str) -> (i64, i64, i64) {
     .await
     .unwrap()
 }
+
+#[tokio::test]
+async fn native_task_mail_twelfth_tool_preserves_final_answer_capacity_without_resetting_limits() {
+    let _lock = TEST_LOCK.lock().await;
+    for exhaust_models in [false, true] {
+        let (_dir, s, u) = crate::missions::tests::setup().await;
+        let (d, k, _) = grant(&s, &u, false).await;
+        let thread = s
+            .create_thread(&u, "Native budget boundary".into())
+            .await
+            .unwrap();
+        let turn = s
+            .submit_turn(
+                &u,
+                thread.id.clone(),
+                Uuid::new_v4().to_string(),
+                "Read native Gmail recent invoice after checking the totals".into(),
+            )
+            .await
+            .unwrap();
+        let claim = s.claim_agent_run().await.unwrap().unwrap();
+        for width in [6, 5] {
+            let c = s.agent_context(&claim.lease).await.unwrap();
+            let st = s
+                .begin_agent_step(&claim.lease, c.checkpoint_seq)
+                .await
+                .unwrap();
+            let calls: Vec<_> = (0..width)
+                .map(|i| crate::PendingKnowledgeCall {
+                    call_id: format!("sum-{}-{i}", st.step()),
+                    input: KnowledgeToolInput::DecimalCalculate {
+                        calculation: DecimalCalculation {
+                            operation: DecimalOperation::Sum,
+                            operands: vec!["0.1".into(), "0.2".into()],
+                        },
+                    },
+                })
+                .collect();
+            s.commit_agent_step(
+                &st,
+                crate::PrivateCheckpoint {
+                    bytes: br#"{"kind":"synthetic-budget-tools"}"#.to_vec(),
+                },
+                calls.clone(),
+            )
+            .await
+            .unwrap();
+            for call in calls {
+                assert!(
+                    matches!(s.execute_knowledge_tool(&st, call.call_id).await.unwrap(), KnowledgeToolResult::Decimal { exact } if exact == "0.3")
+                );
+            }
+        }
+        if exhaust_models {
+            for _ in 0..3 {
+                let c = s.agent_context(&claim.lease).await.unwrap();
+                let st = s
+                    .begin_agent_step(&claim.lease, c.checkpoint_seq)
+                    .await
+                    .unwrap();
+                s.commit_agent_step(
+                    &st,
+                    crate::PrivateCheckpoint {
+                        bytes: br#"{"kind":"synthetic-budget-no-calls"}"#.to_vec(),
+                    },
+                    vec![],
+                )
+                .await
+                .unwrap();
+            }
+        }
+        let st = step(&s, &claim.lease, search(), "twelfth-native-tool").await;
+        assert!(
+            s.wait_for_native_mail_tool(&st, "twelfth-native-tool".into())
+                .await
+                .unwrap()
+        );
+        let before = counts(&s, claim.lease.run_id()).await;
+        assert_eq!(
+            (before.0, before.1),
+            (if exhaust_models { 6 } else { 3 }, 12)
+        );
+        let requests = poll(&s, &d, &k).await;
+        assert_eq!(requests.len(), 1);
+        finish(&s, &d, &k, &requests[0], result()).await;
+        s.settle_native_task_mail().await.unwrap();
+        let resumed = s.claim_agent_run().await.unwrap();
+        if exhaust_models {
+            assert!(resumed.is_none());
+            let saved = s.conversation(&u, thread.id, None).await.unwrap();
+            assert_eq!(saved.turns[0].run.state, RunState::Incomplete);
+            assert_eq!(
+                saved.turns[0].run.error.as_deref(),
+                Some("budget_exhausted")
+            );
+            continue;
+        }
+        let resumed =
+            resumed.expect("a completed twelfth tool still permits the final model answer");
+        assert_eq!(resumed.lease.run_id(), turn.run.id);
+        assert_eq!(counts(&s, resumed.lease.run_id()).await, before);
+        let c = s.agent_context(&resumed.lease).await.unwrap();
+        assert!(c.calls.iter().all(|call| call.result.is_some()));
+        let final_step = s
+            .begin_agent_step(&resumed.lease, c.checkpoint_seq)
+            .await
+            .unwrap();
+        assert_eq!(final_step.step(), 4);
+        let extra = crate::PendingKnowledgeCall {
+            call_id: "must-not-be-thirteenth".into(),
+            input: KnowledgeToolInput::NativeMail { read: search() },
+        };
+        assert!(matches!(
+            s.commit_agent_step(
+                &final_step,
+                crate::PrivateCheckpoint {
+                    bytes: b"{}".to_vec()
+                },
+                vec![extra]
+            )
+            .await,
+            Err(StoreError::BudgetExhausted)
+        ));
+        s.commit_agent_step(
+            &final_step,
+            crate::PrivateCheckpoint {
+                bytes: b"{}".to_vec(),
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.append_agent_output(
+            &final_step,
+            vec![crate::OutputPatch::Append {
+                item: "final-answer".into(),
+                text: "The stored invoice total is 42.".into(),
+                phase: Some(MessagePhase::FinalAnswer),
+                refusal: false,
+            }],
+        )
+        .await
+        .unwrap();
+        s.finish_agent_run(&final_step, RunState::Completed, None)
+            .await
+            .unwrap();
+        let saved = s.conversation(&u, thread.id, None).await.unwrap();
+        assert_eq!(saved.turns[0].run.state, RunState::Completed);
+        assert_eq!(
+            saved.turns[0].assistant[0].text,
+            "The stored invoice total is 42."
+        );
+        let after = counts(&s, resumed.lease.run_id()).await;
+        assert_eq!((after.0, after.1, after.2), (4, 12, before.2));
+    }
+}
+
 #[tokio::test]
 async fn native_task_mail_background_signed_result_resumes_actual_mission_after_logout_without_reset()
  {

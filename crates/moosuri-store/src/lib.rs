@@ -49,6 +49,7 @@ mod learned_skills;
 pub mod media;
 mod memory_commands;
 pub mod private_files;
+mod thread_creation;
 pub use agent_execution::{
     AgentClaim, AgentContext, AgentStepStatus, AgentToolSlot, KnowledgeToolInput,
     KnowledgeToolResult, PendingKnowledgeCall, PrivateCheckpoint, SourceExcerpt, StepLease,
@@ -234,7 +235,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 70;
+const CURRENT_SCHEMA_VERSION: i64 = 71;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -870,6 +871,13 @@ impl Store {
                 "COMMIT;PRAGMA foreign_keys=ON;"
             ))?;
         }
+        if version < 71 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0071_thread_creation_receipts.sql"),
+                "COMMIT;"
+            ))?;
+        }
         invitations::restart(&conn)?;
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         audio::restart(&conn)?;
@@ -1142,13 +1150,15 @@ impl Store {
         .await
     }
     pub async fn create_thread(&self, user: &UserContext, title: String) -> Result<ThreadSummary> {
-        let title = name_valid(title, 500)?;
-        let user = user.clone();
-        self.call(move |db| {
-            let current=validate(&db.conn,&user,true,false)?; let time=now()?;
-            let thread=ThreadSummary { id: Uuid::new_v4().to_string(), title, created_at:time,updated_at:time };
-            db.conn.execute("INSERT INTO threads(tenant_id,id,account_id,title,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5)", params![current.tenant.0,thread.id,current.account.id,thread.title,time])?; Ok(thread)
-        }).await
+        thread_creation::create(self, user, title, None).await
+    }
+    pub async fn create_thread_with_request_id(
+        &self,
+        user: &UserContext,
+        title: String,
+        request_id: Option<String>,
+    ) -> Result<ThreadSummary> {
+        thread_creation::create(self, user, title, request_id).await
     }
     pub async fn list_threads(&self, user: &UserContext) -> Result<Vec<ThreadSummary>> {
         let user = user.clone();

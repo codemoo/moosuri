@@ -8,7 +8,7 @@ use super::protocol::{
 use reqwest::{Client, header};
 use std::{
     net::{IpAddr, SocketAddr},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::sync::mpsc;
@@ -36,6 +36,7 @@ impl Secret {
 
 /// Only an installation administrator may supply these policies. A user/model
 /// selects a previously registered connection ID, never a URL or IP allowlist.
+#[derive(Clone)]
 pub enum NetworkPolicy {
     PublicHttps,
     /// Exact addresses intentionally registered for a local/LAN/Tailscale server.
@@ -132,7 +133,7 @@ pub struct ModelClient {
     limits: TransportLimits,
     // Per configured client only: no global pool, credentials or owner state.
     // Reuse is permitted only after every current DNS answer is revalidated.
-    http: Mutex<Option<PinnedHttp>>,
+    http: Arc<Mutex<Option<PinnedHttp>>>,
 }
 
 struct PinnedHttp {
@@ -191,7 +192,7 @@ impl ModelClient {
             capabilities,
             router,
             limits: TransportLimits::default(),
-            http: Mutex::new(None),
+            http: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -232,6 +233,26 @@ impl ModelClient {
         client.network = NetworkPolicy::LocalExact(vec![IpAddr::from([127, 0, 0, 1])]);
         Ok(client)
     }
+    /// Replace a durably revalidated personal token without discarding this run's
+    /// transport. The shared pool contains no default credential headers; every
+    /// request still resolves and validates DNS and applies its own bearer token.
+    /// Callers must keep this explicit lineage within one authorized run.
+    pub fn renewed_chatgpt_plan(
+        &self,
+        access_token: Secret,
+        capabilities: TextCapabilities,
+    ) -> Result<Self, TransportError> {
+        if self.dialect != ResponsesDialect::ChatGptPlan {
+            return Err(TransportError::InvalidConfiguration);
+        }
+        let mut next = Self::chatgpt_plan(access_token, capabilities)?;
+        next.endpoint = self.endpoint.clone();
+        next.network = self.network.clone();
+        next.limits = self.limits;
+        next.http = self.http.clone();
+        Ok(next)
+    }
+
     pub fn responses_dialect(&self) -> ResponsesDialect {
         self.dialect
     }
@@ -294,7 +315,7 @@ impl ModelClient {
             capabilities,
             router: None,
             limits: TransportLimits::default(),
-            http: Mutex::new(None),
+            http: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -317,7 +338,7 @@ impl ModelClient {
     pub fn with_limits(mut self, limits: TransportLimits) -> Result<Self, TransportError> {
         limits.validate()?;
         self.limits = limits;
-        self.http = Mutex::new(None);
+        self.http = Arc::new(Mutex::new(None));
         Ok(self)
     }
 

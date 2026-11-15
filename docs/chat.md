@@ -164,3 +164,22 @@ progress or a delayed heartbeat resets it. Fresh sends keep their live stream an
 loaded history when SSE confirms the request within one second; missing receipts
 and explicit same-ID resubmission still reload the canonical page. See the
 [synthetic responsiveness checks](reviews/2026-11-15-responsive-chat-stream.md).
+
+Main-chat message admission, new-thread creation and run cancel/retry requests
+also opt into a 30-second deadline covering HTTP headers and complete JSON body.
+Expiration means the receipt is unknown: the client checks canonical history,
+preserves the same immutable message request ID/payload for explicit resubmission,
+and retains the next draft. A canonical SSE/history receipt releases a stalled
+message HTTP transport immediately. New-thread creation carries a separate immutable
+request UUID/title. Unknown creation refreshes inventory without automatic replay;
+explicit recovery reuses the same creation request, then the same message request
+if message retry was chosen. Button-only recovery does not send the message.
+The bounded authenticated tab-draft lease retains both identities beside the next
+draft across reload. Receipt completion migrates that state atomically, and a
+late receipt preserves another thread/draft selected while waiting. If the admitted
+target already has another draft or unresolved message, recovery retains both
+slots and original identities until that target is finished. Schema71
+keeps an owner-scoped creation receipt: matching original title/UUID resolves the
+same thread, changed title conflicts and deleted threads cannot be recreated by
+replay. Old clients that omit the key keep their existing behavior. Other
+mutation/probe/upload timing is unchanged. See the [foreground recovery checks](reviews/2026-11-15-chat-mutation-recovery.md).

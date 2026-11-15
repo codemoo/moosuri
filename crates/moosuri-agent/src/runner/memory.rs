@@ -26,9 +26,10 @@ impl PlanningSession<'_> {
         let client = match self.subscription {
             Some((service, reference)) => Some(
                 service
-                    .client(
+                    .client_for_round(
                         moosuri_store::SubscriptionAuthority::Run(self.lease.clone()),
                         reference.clone(),
+                        self.client,
                     )
                     .await?,
             ),

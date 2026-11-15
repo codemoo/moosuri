@@ -907,6 +907,7 @@ async fn threads(State(state): State<AppState>, headers: HeaderMap) -> HttpResul
 #[serde(deny_unknown_fields)]
 struct CreateThreadRequest {
     title: String,
+    request_id: Option<String>,
 }
 async fn create_thread(
     State(state): State<AppState>,
@@ -916,7 +917,12 @@ async fn create_thread(
     let user = current(&state, &headers).await?;
     Ok((
         StatusCode::CREATED,
-        Json(state.store.create_thread(&user, input.title).await?),
+        Json(
+            state
+                .store
+                .create_thread_with_request_id(&user, input.title, input.request_id)
+                .await?,
+        ),
     )
         .into_response())
 }

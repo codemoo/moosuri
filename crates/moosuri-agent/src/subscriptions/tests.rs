@@ -17,6 +17,12 @@ const PASSWORD: &str = "Synthetic-personal-password-42";
 const MODULUS: &str = "qz_j6Fsqd5usp23J5PcA5s5MYVXGUAO58aWgw8J4RRcEylrPcaR7xTet78qNrRlu5XBlgSGLRDMtoJKeuBz5yE6uALSivvwwyRkpdOHItrQbm84pB8IuPveGpUA_HG-6Tw_SHmJlAxKlRjIwm7EvbiRpvs7j6U07KxFK0R-BhPS-Q5-lUICqCaudBWNyJtOUUFGYoiBBUaWKeVnMNkVFTlpMJdfq4kC1WynkMi-CGm3rNybXHTh5-cybsSDb_Erwi5TDrhksFjU4SDGHbjoQt4mWQhlbdFFEjnTzCFvcK0aOv9fmcDys9GqgBVX6vG-1ITTS9BCNvVGoWGa5dAkLXQ";
 struct Provider {
     tokens: AtomicUsize,
+    discovery_status: AtomicUsize,
+    pause_discovery: AtomicUsize,
+    discovery_entered: Notify,
+    discovery_release: Notify,
+    model_peers: Mutex<Vec<std::net::SocketAddr>>,
+    answer_phase: AtomicUsize,
     refreshes: AtomicUsize,
     models: AtomicUsize,
     expires: AtomicUsize,
@@ -72,6 +78,12 @@ fn signed(nonce: &str) -> String {
 async fn fixture() -> Fixture {
     let state = Arc::new(Provider {
         tokens: AtomicUsize::new(0),
+        discovery_status: AtomicUsize::new(200),
+        pause_discovery: AtomicUsize::new(0),
+        discovery_entered: Notify::new(),
+        discovery_release: Notify::new(),
+        model_peers: Mutex::new(vec![]),
+        answer_phase: AtomicUsize::new(0),
         refreshes: AtomicUsize::new(0),
         models: AtomicUsize::new(0),
         expires: AtomicUsize::new(3600),
@@ -92,7 +104,8 @@ async fn fixture() -> Fixture {
         tool_release: Notify::new(),
     });
     let app=Router::new()
- .route("/.well-known/openid-configuration",get(||async{Json(json!({"issuer":"https://auth.openai.com","authorization_endpoint":"https://auth.openai.com/api/accounts/authorize","token_endpoint":"https://auth.openai.com/api/accounts/oauth/token","revocation_endpoint":"https://auth.openai.com/api/accounts/oauth/revoke","jwks_uri":"https://auth.openai.com/.well-known/jwks.json","id_token_signing_alg_values_supported":["RS256"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["none"]}))}))
+ .route("/.well-known/openid-configuration",get(|State(s):State<Arc<Provider>>|async move{if s.pause_discovery.load(Ordering::SeqCst)==1{s.discovery_entered.notify_one();s.discovery_release.notified().await;}
+ if s.discovery_status.load(Ordering::SeqCst)!=200{return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()}Json(json!({"issuer":"https://auth.openai.com","authorization_endpoint":"https://auth.openai.com/api/accounts/authorize","token_endpoint":"https://auth.openai.com/api/accounts/oauth/token","revocation_endpoint":"https://auth.openai.com/api/accounts/oauth/revoke","jwks_uri":"https://auth.openai.com/.well-known/jwks.json","id_token_signing_alg_values_supported":["RS256"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["none"]})).into_response()}))
  .route("/.well-known/jwks.json",get(|State(s):State<Arc<Provider>>|async move{if s.pause_jwks.load(Ordering::SeqCst)==1{s.jwks_entered.notify_one();s.jwks_release.notified().await;}let status=s.jwks_status.load(Ordering::SeqCst) as u16;if status!=200{return (axum::http::StatusCode::from_u16(status).unwrap(),Json(json!({"error":"temporary_fixture_failure"}))).into_response()}Json(json!({"keys":[{"kty":"RSA","kid":"fixture","alg":"RS256","use":"sig","key_ops":["verify"],"n":MODULUS,"e":"AQAB"}]})).into_response()}))
  .route("/api/accounts/oauth/token",post(|State(s):State<Arc<Provider>>,Form(f):Form<HashMap<String,String>>|async move{let n=s.tokens.fetch_add(1,Ordering::SeqCst);assert_eq!(f["client_id"],"issued-synthetic-client");assert_eq!(f["resource"],"https://api.openai.com/v1");if f["grant_type"]=="refresh_token"{s.refreshes.fetch_add(1,Ordering::SeqCst);tokio::time::sleep(Duration::from_millis(s.delay.load(Ordering::SeqCst) as u64)).await;let status=s.token_status.load(Ordering::SeqCst) as u16;if status!=200{return (axum::http::StatusCode::from_u16(status).unwrap(),Json(json!({"error":"temporary_fixture_failure"}))).into_response()}let mut body=json!({"access_token":format!("synthetic-access-{n}"),"refresh_token":format!("synthetic-refresh-{n}"),"token_type":"Bearer","expires_in":3600});if s.refresh_id.load(Ordering::SeqCst)==1{body["id_token"]=json!(signed(&s.nonce.lock().unwrap()));}Json(body).into_response()}else{if f["code"]=="synthetic-invalid-grant"{return (axum::http::StatusCode::BAD_REQUEST,Json(json!({"error":"invalid_grant"}))).into_response()}*s.nonce.lock().unwrap()=f["code"].clone();Json(json!({"access_token":"synthetic-access-0","refresh_token":"synthetic-refresh-0","token_type":"Bearer","expires_in":s.expires.load(Ordering::SeqCst),"scope":"openid profile email offline_access resource.invoke chatgpt.tokens.use.direct","id_token":signed(&f["code"])})).into_response()}}))
  .route("/api/accounts/oauth/revoke",post(||async{axum::http::StatusCode::SERVICE_UNAVAILABLE}))
@@ -103,7 +116,13 @@ async fn fixture() -> Fixture {
   let done=json!({"id":"shared","model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2}});
   ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],format!("data: {text}\n\ndata: {done}\n\ndata: [DONE]\n\n")).into_response()
  }))
- .route("/v1/responses",post(|State(s):State<Arc<Provider>>,headers:axum::http::HeaderMap,Json(body):Json<Value>|async move{
+ .route("/v1/responses",post(|State(s):State<Arc<Provider>>,axum::extract::ConnectInfo(peer):axum::extract::ConnectInfo<std::net::SocketAddr>,headers:axum::http::HeaderMap,Json(body):Json<Value>|async move{
+  s.model_peers.lock().unwrap().push(peer);
+  let phase_mode = s.answer_phase.load(Ordering::SeqCst);
+  if phase_mode > 0 {
+    s.models.fetch_add(1, Ordering::SeqCst);
+    return ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],answer_phase_tests::wire(phase_mode)).into_response();
+  }
   if s.tool_mode.load(Ordering::SeqCst)>=30 {
     return missions_tests::response(&s,&headers,&body).await;
   }
@@ -118,7 +137,14 @@ async fn fixture() -> Fixture {
  })).with_state(state.clone());
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", l.local_addr().unwrap());
-    let task = tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let task = tokio::spawn(async move {
+        axum::serve(
+            l,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
     Fixture {
         origin,
         state,
@@ -1710,3 +1736,225 @@ async fn historical_forward_personal_proof_and_final_chat_use_new_allowance_with
 
 #[path = "missions_tests.rs"]
 mod missions_tests;
+
+#[tokio::test]
+async fn discovery_failure_or_dropped_caller_releases_undispatched_refresh_admission() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    for dropped in [false, true] {
+        let f = fixture().await;
+        f.state.expires.store(1, Ordering::SeqCst);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store
+            .bootstrap(
+                "Owner".into(),
+                "owner@example.test".into(),
+                PASSWORD.into(),
+                false,
+            )
+            .await
+            .unwrap();
+        let u = store
+            .login("owner@example.test".into(), PASSWORD.into())
+            .await
+            .unwrap()
+            .user;
+        let s = service(store.clone(), &f);
+        let launch = login(&s, &u).await;
+        let binding = store
+            .subscription_ref(
+                &u,
+                launch.binding_id,
+                launch.revision,
+                "fixture-model".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        if dropped {
+            f.state.pause_discovery.store(1, Ordering::SeqCst);
+            let task = {
+                let s = s.clone();
+                let u = u.clone();
+                let binding = binding.clone();
+                tokio::spawn(async move { s.client(SubscriptionAuthority::User(u), binding).await })
+            };
+            tokio::time::timeout(Duration::from_secs(5), f.state.discovery_entered.notified())
+                .await
+                .unwrap();
+            task.abort();
+            assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+            f.state.pause_discovery.store(0, Ordering::SeqCst);
+            f.state.discovery_release.notify_one();
+        } else {
+            f.state.discovery_status.store(503, Ordering::SeqCst);
+            assert!(
+                s.client(SubscriptionAuthority::User(u.clone()), binding.clone())
+                    .await
+                    .is_err()
+            );
+            f.state.discovery_status.store(200, Ordering::SeqCst);
+        }
+        assert_eq!(f.state.refreshes.load(Ordering::SeqCst), 0);
+        assert_eq!(store.subscriptions(&u).await.unwrap()[0].status, "active");
+        // Old behavior held the acquired lease for 45s and made this retry Busy
+        // after 35s. Only discovery failed, so a prompt retry must be possible.
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                s.client(SubscriptionAuthority::User(u), binding)
+            )
+            .await
+            .unwrap()
+            .is_ok()
+        );
+        assert_eq!(f.state.refreshes.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn lost_refresh_acquisition_ack_releases_actor_lease_before_next_attempt() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    for drop_before_actor in [true, false] {
+        let f = fixture().await;
+        f.state.expires.store(1, Ordering::SeqCst);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store
+            .bootstrap(
+                "Owner".into(),
+                "owner@example.test".into(),
+                PASSWORD.into(),
+                false,
+            )
+            .await
+            .unwrap();
+        let u = store
+            .login("owner@example.test".into(), PASSWORD.into())
+            .await
+            .unwrap()
+            .user;
+        let service = service(store.clone(), &f);
+        let launch = login(&service, &u).await;
+        let binding = store
+            .subscription_ref(
+                &u,
+                launch.binding_id,
+                launch.revision,
+                "fixture-model".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        let (entered, at_actor) = tokio::sync::oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let holder = {
+            let store = store.clone();
+            tokio::spawn(async move {
+                store
+                    .hold_subscription_actor_fixture(entered, released)
+                    .await
+            })
+        };
+        at_actor.await.unwrap();
+        let mut cancelled =
+            Box::pin(service.client(SubscriptionAuthority::User(u.clone()), binding.clone()));
+        // Poll exactly far enough to enqueue acquisition behind the actor barrier.
+        tokio::select! { biased;
+            result = &mut cancelled => panic!("held actor unexpectedly returned: {}", result.is_ok()),
+            _ = std::future::ready(()) => (),
+        }
+        if drop_before_actor {
+            drop(cancelled);
+            release.send(()).unwrap();
+            holder.await.unwrap().unwrap();
+        } else {
+            release.send(()).unwrap();
+            holder.await.unwrap().unwrap();
+            // This later actor request proves acquisition was committed and its
+            // result was delivered to the unpolled oneshot before it is dropped.
+            store.subscriptions(&u).await.unwrap();
+            drop(cancelled);
+        }
+        assert_eq!(f.state.refreshes.load(Ordering::SeqCst), 0);
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                service.client(SubscriptionAuthority::User(u), binding)
+            )
+            .await
+            .unwrap()
+            .is_ok()
+        );
+        assert_eq!(f.state.refreshes.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn acquired_refresh_cleanup_cannot_release_new_nonce_or_dispatched_exchange() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let f = fixture().await;
+    f.state.expires.store(1, Ordering::SeqCst);
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    store
+        .bootstrap(
+            "Owner".into(),
+            "owner@example.test".into(),
+            PASSWORD.into(),
+            false,
+        )
+        .await
+        .unwrap();
+    let u = store
+        .login("owner@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    let s = service(store.clone(), &f);
+    let launch = login(&s, &u).await;
+    let b = store
+        .subscription_ref(
+            &u,
+            launch.binding_id,
+            launch.revision,
+            "fixture-model".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    let a = SubscriptionAuthority::User(u);
+    let SubscriptionAccess::Refresh(old, _) = store
+        .subscription_access(a.clone(), b.clone())
+        .await
+        .unwrap()
+    else {
+        panic!("expected acquired refresh")
+    };
+    store.abandon_subscription_refresh(&old).await.unwrap();
+    let SubscriptionAccess::Refresh(current, _) = store
+        .subscription_access(a.clone(), b.clone())
+        .await
+        .unwrap()
+    else {
+        panic!("expected new acquired nonce")
+    };
+    store.abandon_subscription_refresh(&old).await.unwrap();
+    assert!(matches!(
+        store
+            .subscription_access(a.clone(), b.clone())
+            .await
+            .unwrap(),
+        SubscriptionAccess::Wait
+    ));
+    store.dispatch_subscription_refresh(&current).await.unwrap();
+    store.abandon_subscription_refresh(&current).await.unwrap();
+    assert!(matches!(
+        store.subscription_access(a, b).await.unwrap(),
+        SubscriptionAccess::Wait
+    ));
+    assert_eq!(f.state.refreshes.load(Ordering::SeqCst), 0);
+}
+
+#[path = "answer_phase_tests.rs"]
+mod answer_phase_tests;

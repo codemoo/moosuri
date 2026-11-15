@@ -42,7 +42,22 @@ impl SubscriptionService {
         let fixture = self.fixture.as_ref();
         #[cfg(not(any(test, feature = "test-fixtures")))]
         let fixture: Option<&(String, String)> = None;
-        personal_client_inner(&self.store, authority, binding, fixture).await
+        personal_client_inner(&self.store, authority, binding, fixture, None).await
+    }
+
+    /// Retain only the current run's transport after resolving durable authority
+    /// and token readiness again. Never cache credentials in this service.
+    pub(crate) async fn client_for_round(
+        &self,
+        authority: SubscriptionAuthority,
+        binding: SubscriptionRef,
+        previous: &ModelClient,
+    ) -> Result<ModelClient, StoreError> {
+        #[cfg(any(test, feature = "test-fixtures"))]
+        let fixture = self.fixture.as_ref();
+        #[cfg(not(any(test, feature = "test-fixtures")))]
+        let fixture: Option<&(String, String)> = None;
+        personal_client_inner(&self.store, authority, binding, fixture, Some(previous)).await
     }
 
     pub(crate) fn new(store: Store, signals: Signals) -> Self {
@@ -221,13 +236,14 @@ pub async fn personal_client(
     authority: SubscriptionAuthority,
     binding: SubscriptionRef,
 ) -> Result<ModelClient, StoreError> {
-    personal_client_inner(store, authority, binding, None).await
+    personal_client_inner(store, authority, binding, None, None).await
 }
 async fn personal_client_inner(
     store: &Store,
     authority: SubscriptionAuthority,
     binding: SubscriptionRef,
     fixture: Option<&(String, String)>,
+    previous: Option<&ModelClient>,
 ) -> Result<ModelClient, StoreError> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(35);
     loop {
@@ -240,6 +256,11 @@ async fn personal_client_inner(
                 let caps = TextCapabilities {
                     efforts: binding.effort.iter().cloned().collect(),
                 };
+                if let Some(previous) = previous {
+                    return previous
+                        .renewed_chatgpt_plan(token, caps)
+                        .map_err(|_| StoreError::Unavailable);
+                }
                 #[cfg(any(test, feature = "test-fixtures"))]
                 if let Some((_, origin)) = fixture {
                     return ModelClient::synthetic_chatgpt_plan(origin, token, caps)
@@ -267,7 +288,10 @@ async fn personal_client_inner(
                 };
                 let client = match discovered {
                     Ok(v) => v,
-                    Err(_) => return Err(StoreError::Unavailable),
+                    Err(_) => {
+                        let _ = store.abandon_subscription_refresh(&lease).await;
+                        return Err(StoreError::Unavailable);
+                    }
                 };
                 store.dispatch_subscription_refresh(&lease).await?;
                 match client.refresh(&bundle).await {

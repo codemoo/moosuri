@@ -1,5 +1,5 @@
 import { createContext, useContext, useLayoutEffect, useMemo } from "react";
-import { RequestScope } from "./api";
+import { RequestScope, type RequestOptions } from "./api";
 import type { StreamFrame } from "./event-stream";
 
 export const ScopeRegistry = createContext<Set<RequestScope> | null>(null);
@@ -40,7 +40,8 @@ export function useScope(expectedAccountId?: string, lifetime?: string | null) {
         method?: string,
         body?: unknown,
         signal?: AbortSignal,
-      ) => ref.current!.request<T>(path, method, body, signal),
+        options?: RequestOptions,
+      ) => ref.current!.request<T>(path, method, body, signal, options),
       stream: (
         path: string,
         receive: (frame: StreamFrame) => void,

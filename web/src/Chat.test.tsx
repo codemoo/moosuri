@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -261,7 +262,7 @@ function fixture(
 }
 function open(path = "/app") {
   window.history.replaceState(null, "", path);
-  render(
+  return render(
     <StrictMode>
       <App />
     </StrictMode>,
@@ -282,6 +283,7 @@ const postCalls = (calls: Call[]) =>
     (call) => call.method === "POST" && call.path.endsWith("/messages"),
   );
 beforeEach(() => {
+  sessionStorage.clear();
   vi.stubGlobal("BroadcastChannel", undefined);
 });
 
@@ -1423,5 +1425,317 @@ it("a timed-out canonical snapshot leaves loading and permits explicit GET-only 
     });
     expect(screen.queryByText("Abandoned snapshot must stay hidden")).not.toBeInTheDocument();
     expect(postCalls(test.calls)).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
+});
+
+
+it("a hung send recovers as uncertain and explicit retry preserves its immutable request", async () => {
+  const user = userEvent.setup();
+  const held = deferred<Response>();
+  let sends = 0;
+  const test = fixture({ post: call => {
+    if (++sends === 1) return held.promise;
+    const accepted = turn({ request_id: String(call.body?.request_id) }, String(call.body?.text));
+    test.state.page = { thread_id: thread.id, cursor: 1, turns: [accepted], next_before: null };
+    return response(accepted, 201);
+  }});
+  open();
+  await ready(test.streams);
+  await user.type(screen.getByLabelText("메시지"), "Immutable timed-out question");
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "메시지 전송" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(postCalls(test.calls)).toHaveLength(1);
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Unsent next draft" } });
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(screen.getByRole("button", { name: "같은 요청 다시 제출" })).toBeEnabled();
+    expect(postCalls(test.calls)).toHaveLength(1);
+    expect(postCalls(test.calls)[0].init.signal?.aborted).toBe(true);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "같은 요청 다시 제출" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(postCalls(test.calls)).toHaveLength(2);
+    expect(postCalls(test.calls)[1].body).toEqual(postCalls(test.calls)[0].body);
+    expect(screen.getByLabelText("메시지")).toHaveValue("Unsent next draft");
+    const cancel = vi.fn();
+    await act(async () => {
+      held.resolve(new Response(new ReadableStream({ cancel })));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(screen.queryByText("전송 접수 확인 필요")).not.toBeInTheDocument();
+    expect(postCalls(test.calls)).toHaveLength(2);
+  } finally { vi.useRealTimers(); }
+});
+
+
+it("a canonical SSE receipt releases a hung send so the next completed-turn draft can send", async () => {
+  const user = userEvent.setup();
+  const test = fixture({ post: () => new Promise<Response>(() => {}) });
+  open();
+  await ready(test.streams);
+  await user.type(screen.getByLabelText("메시지"), "Admitted while HTTP stalled");
+  await user.click(screen.getByRole("button", { name: "메시지 전송" }));
+  const admitted = turn({ request_id: String(postCalls(test.calls)[0].body?.request_id), state: "completed", can_cancel: false }, "Admitted while HTTP stalled");
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      test.emit({ sequence: 1, change: { kind: "turn", turn: admitted } });
+      await vi.advanceTimersByTimeAsync(40);
+      fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Next question" } });
+    });
+    expect(postCalls(test.calls)[0].init.signal?.aborted).toBe(true);
+    expect(screen.getAllByText("Admitted while HTTP stalled")).toHaveLength(1);
+    expect(screen.queryByText("전송 접수 확인 필요")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "메시지 전송" })).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "메시지 전송" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(postCalls(test.calls)).toHaveLength(2);
+    expect(postCalls(test.calls)[1].body?.request_id).not.toBe(postCalls(test.calls)[0].body?.request_id);
+    expect(postCalls(test.calls)[1].body?.text).toBe("Next question");
+  } finally { vi.useRealTimers(); }
+});
+
+it.each(["cancel", "retry"] as const)("a hung %s reads canonical state and unlocks without replaying the action", async kind => {
+  const initial = turn({ state: kind === "cancel" ? "running" : "failed", can_cancel: kind === "cancel", can_retry: kind === "retry" });
+  const test = fixture({ turns: [initial], action: () => {
+    test.state.page = { ...test.state.page, cursor: 2, turns: [turn({ state: kind === "cancel" ? "cancelled" : "running", attempt: kind === "cancel" ? 1 : 2, version: 2, can_cancel: kind === "retry", can_retry: false })] };
+    return new Promise<Response>(() => {});
+  }});
+  open();
+  await ready(test.streams);
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: kind === "cancel" ? "응답 중지" : "같은 설정으로 다시 시도" }));
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    const actions = test.calls.filter(call => call.path === `/runs/run-a/${kind}`);
+    expect(actions).toHaveLength(1);
+    expect(actions[0].init.signal?.aborted).toBe(true);
+    expect(actions[0].body).toEqual({ expected_attempt: 1 });
+    expect(screen.queryByText("처리 중…")).not.toBeInTheDocument();
+    expect(screen.getByText(kind === "cancel" ? "중지됨" : "답변 중")).toBeInTheDocument();
+    expect(postCalls(test.calls)).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it.each(["composer", "button"])("a timed-out first creation and immutable message survive reload and explicitly retry both original identities via %s", async route => {
+  const user = userEvent.setup();
+  const held = deferred<Response>();
+  let creates = 0;
+  const test = fixture({ threads: [], extra: call => {
+    if (call.path === "/threads" && call.method === "POST") {
+      test.state.threads = [thread];
+      if (++creates === 1) return held.promise;
+      return response(thread, 201);
+    }
+  }});
+  test.state.session = { ...account, chat_draft_scope: "a".repeat(64) };
+  open();
+  await screen.findByText("Hello, Alice.");
+  await user.type(screen.getByLabelText("메시지"), "Still unsent during thread creation");
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "메시지 전송" }));
+      await vi.advanceTimersByTimeAsync(0);
+      fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Separate next draft" } });
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(screen.getByLabelText("메시지")).toHaveValue("Separate next draft");
+    expect(screen.getByText(/새 대화 생성 결과를 확인하지 못했습니다/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Synthetic conversation" })).toBeInTheDocument();
+    expect(creates).toBe(1);
+    expect(postCalls(test.calls)).toHaveLength(0);
+    const encoded = JSON.parse(sessionStorage.getItem("moosuri.chat-drafts.v1")!);
+    const originalMessage = encoded.slots.find((row: { id: string }) => row.id === "new").pending;
+    expect(originalMessage.text).toBe("Still unsent during thread creation");
+    expect(encoded.thread_creation.request_id).toMatch(/^[0-9a-f-]{36}$/);
+    await act(async () => { cleanup(); open(); await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByLabelText("메시지")).toHaveValue("Separate next draft");
+    expect(creates).toBe(1);
+    expect(postCalls(test.calls)).toHaveLength(0);
+    if (route === "button") {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Retry new conversation" }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(postCalls(test.calls)).toHaveLength(0);
+      expect(screen.getByLabelText("메시지")).toHaveValue("Separate next draft");
+    }
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "같은 요청 다시 제출" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const creationCalls = test.calls.filter(call => call.path === "/threads" && call.method === "POST");
+    expect(creationCalls).toHaveLength(2);
+    expect(creationCalls[1].body).toEqual(creationCalls[0].body);
+    expect(postCalls(test.calls)).toHaveLength(1);
+    expect(postCalls(test.calls)[0].body).toMatchObject({ request_id: originalMessage.request_id, text: originalMessage.text, schedule_context: originalMessage.schedule_context });
+    expect(screen.getByLabelText("메시지")).toHaveValue("Separate next draft");
+    expect(screen.queryByRole("button", { name: "같은 요청 다시 제출" })).not.toBeInTheDocument();
+    const saved = JSON.parse(sessionStorage.getItem("moosuri.chat-drafts.v1")!);
+    expect(saved.thread_creation).toBeUndefined();
+    expect(saved.slots.some((row: { id: string }) => row.id === "new")).toBe(false);
+    const cancel = vi.fn();
+    await act(async () => { held.resolve(new Response(new ReadableStream({ cancel }))); await vi.advanceTimersByTimeAsync(0); });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(postCalls(test.calls)).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
+
+
+it("explicit empty-conversation recovery reuses the original creation UUID", async () => {
+  let creates = 0;
+  const test = fixture({ extra: call => {
+    if (call.path === "/threads" && call.method === "POST") {
+      if (++creates === 1) return new Promise<Response>(() => {});
+      return response(thread, 201);
+    }
+  }});
+  open();
+  await ready(test.streams);
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    const original = test.calls.find(call => call.path === "/threads" && call.method === "POST")!;
+    expect(original.body?.request_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(creates).toBe(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry new conversation" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const requests = test.calls.filter(call => call.path === "/threads" && call.method === "POST");
+    expect(requests).toHaveLength(2);
+    expect(requests[1].body).toEqual(original.body);
+    expect(postCalls(test.calls)).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it.each([404, 409])("a definite creation %s restores unsent text and clears only its unusable creation carrier", async status => {
+  let creates = 0;
+  const test = fixture({ threads: [], extra: call => {
+    if (call.path === "/threads" && call.method === "POST") {
+      return ++creates === 1 ? new Promise<Response>(() => {}) : response({ code: status === 404 ? "not_found" : "conflict" }, status);
+    }
+  }});
+  test.state.session = { ...account, chat_draft_scope: "a".repeat(64) };
+  open();
+  await screen.findByText("Hello, Alice.");
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Original unsent message" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "메시지 전송" }));
+      await vi.advanceTimersByTimeAsync(0);
+      fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Next draft" } });
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "같은 요청 다시 제출" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByLabelText("메시지")).toHaveValue("Original unsent message\n\nNext draft");
+    expect(screen.getByRole("button", { name: "New conversation" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "같은 요청 다시 제출" })).not.toBeInTheDocument();
+    expect(creates).toBe(2);
+    const calls = test.calls.filter(call => call.path === "/threads" && call.method === "POST");
+    expect(calls[0].body).toEqual(calls[1].body);
+    expect(postCalls(test.calls)).toHaveLength(0);
+    expect(JSON.parse(sessionStorage.getItem("moosuri.chat-drafts.v1")!).thread_creation).toBeUndefined();
+  } finally { vi.useRealTimers(); }
+});
+
+it("a late explicit new-conversation receipt preserves the thread and draft selected while it was pending", async () => {
+  const user = userEvent.setup();
+  const held = deferred<Response>();
+  const other = { ...thread, id: "thread-b", title: "Other conversation" };
+  const created = { ...thread, id: "thread-new", title: "New conversation" };
+  const test = fixture({ threads: [thread, other], extra: call => {
+    if (call.path === "/threads" && call.method === "POST") {
+      test.state.threads = [created, thread, other];
+      return held.promise;
+    }
+    if (call.path === `/threads/${other.id}/messages`) return response({ thread_id: other.id, cursor: 0, turns: [], next_before: null });
+  }});
+  open();
+  await ready(test.streams);
+  await user.click(screen.getByRole("button", { name: "New conversation" }));
+  await user.click(screen.getByRole("button", { name: "Other conversation" }));
+  await screen.findByRole("heading", { name: "Other conversation" });
+  await user.type(screen.getByLabelText("메시지"), "Other thread draft stays here");
+  await act(async () => { held.resolve(response(created, 201)); });
+  expect(screen.getByRole("heading", { name: "Other conversation" })).toBeInTheDocument();
+  expect(screen.getByLabelText("메시지")).toHaveValue("Other thread draft stays here");
+  expect(postCalls(test.calls)).toHaveLength(0);
+});
+
+it("creation recovery preserves both drafts when its admitted thread was selected and edited before recovery", async () => {
+  const user = userEvent.setup();
+  let creates = 0;
+  const test = fixture({ threads: [], extra: call => {
+    if (call.path === "/threads" && call.method === "POST") {
+      test.state.threads = [thread];
+      return ++creates === 1 ? new Promise<Response>(() => {}) : response(thread, 201);
+    }
+  }});
+  test.state.session = { ...account, chat_draft_scope: "a".repeat(64) };
+  open();
+  await screen.findByText("Hello, Alice.");
+  await user.type(screen.getByLabelText("메시지"), "Immutable first request");
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "메시지 전송" }));
+      await vi.advanceTimersByTimeAsync(0);
+      fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Original separate next draft" } });
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: thread.title }));
+      await vi.advanceTimersByTimeAsync(0);
+      fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Draft written in admitted thread" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry new conversation" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByLabelText("메시지")).toHaveValue("Draft written in admitted thread");
+    expect(screen.getByText(/새 대화에 다른 초안이나 접수 확인 중인 메시지가 있습니다/)).toBeInTheDocument();
+    expect(postCalls(test.calls)).toHaveLength(0);
+    let saved = JSON.parse(sessionStorage.getItem("moosuri.chat-drafts.v1")!);
+    expect(saved.slots.find((row: { id: string }) => row.id === "new").draft).toBe("Original separate next draft");
+    expect(saved.slots.find((row: { id: string }) => row.id === "new").pending.text).toBe("Immutable first request");
+    expect(saved.thread_creation.request_id).toBe(test.calls.find(call => call.path === "/threads" && call.method === "POST")!.body?.request_id);
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry new conversation" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByLabelText("메시지")).toHaveValue("Original separate next draft");
+    expect(screen.getByRole("button", { name: "같은 요청 다시 제출" })).toBeEnabled();
+    expect(postCalls(test.calls)).toHaveLength(0);
+    saved = JSON.parse(sessionStorage.getItem("moosuri.chat-drafts.v1")!);
+    expect(saved.thread_creation).toBeUndefined();
+    expect(saved.slots.find((row: { id: string }) => row.id === thread.id).pending.text).toBe("Immutable first request");
+    const creationCalls = test.calls.filter(call => call.path === "/threads" && call.method === "POST");
+    expect(creationCalls).toHaveLength(3);
+    expect(creationCalls.every(call => JSON.stringify(call.body) === JSON.stringify(creationCalls[0].body))).toBe(true);
   } finally { vi.useRealTimers(); }
 });

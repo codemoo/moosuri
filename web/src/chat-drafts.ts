@@ -1,7 +1,7 @@
 /** Tab-session plaintext recovery, never an authentication capability or send queue.
  * Storage is touched only after server authentication. No localStorage/cache/media bodies. */
 import type { SessionView } from "../shared/api-types";
-import type { ChatMemory, PendingSend } from "./ChatPanel";
+import type { ChatMemory, PendingSend, PendingThreadCreation } from "./ChatPanel";
 export const CHAT_DRAFT_KEY = "moosuri.chat-drafts.v1";
 export const CHAT_DRAFT_TTL = 8 * 60 * 60 * 1000;
 export const CHAT_DRAFT_MAX_BYTES = 128 * 1024;
@@ -39,6 +39,12 @@ function zone(v: unknown): v is string {
     catch {
         return false;
     }
+}
+function creation(v: unknown): PendingThreadCreation | null {
+    return object(v) && exact(v, ["request_id", "title", "status"]) && uuid(v.request_id) &&
+        typeof v.title === "string" && !!v.title.trim() && bytes(v.title) <= 512 &&
+        ["sending", "uncertain"].includes(String(v.status))
+        ? { request_id: v.request_id, title: v.title, status: "uncertain" } : null;
 }
 /** Rebuild a closed carrier. Persisted bytes never authorize an automatic POST. */
 function pending(v: unknown): PendingSend | null {
@@ -106,7 +112,7 @@ export class ChatDraftSession {
             if (bytes(raw) > CHAT_DRAFT_MAX_BYTES)
                 throw new Error();
             const v: unknown = JSON.parse(raw), now = this.clock();
-            if (!object(v) || !exact(v, ["version", "account", "scope", "saved_at", "selected", "slots"]) || v.version !== 1 || v.account !== this.account || v.scope !== this.scope ||
+            if (!object(v) || !exact(v, ["version", "account", "scope", "saved_at", "selected", "slots", "thread_creation"]) || v.version !== 1 || v.account !== this.account || v.scope !== this.scope ||
                 typeof v.saved_at !== "number" || !Number.isSafeInteger(v.saved_at) || v.saved_at < 0 || v.saved_at > now || now - v.saved_at >= CHAT_DRAFT_TTL ||
                 !(v.selected === null || slot(v.selected)) || !Array.isArray(v.slots) || v.slots.length > CHAT_DRAFT_MAX_SLOTS)
                 throw new Error();
@@ -125,6 +131,8 @@ export class ChatDraftSession {
                         out.memory.pending[row.id] = p;
                 }
             }
+            const threadCreation = creation(v.thread_creation);
+            if (threadCreation) out.memory.threadCreation = threadCreation;
             out.selected = v.selected !== null && threads.includes(v.selected) ? v.selected : null;
             out.restored = true;
             return out;
@@ -145,7 +153,8 @@ export class ChatDraftSession {
                 draft?: string;
                 pending?: PendingSend;
             }> = [];
-            const envelope = () => JSON.stringify({ version: 1, account: this.account, scope: this.scope, saved_at: this.clock(), selected: selected && threads.includes(selected) ? selected : null, slots: rows });
+            const threadCreation = creation(memory.threadCreation);
+            const envelope = () => JSON.stringify({ ...(threadCreation ? { thread_creation: threadCreation } : {}), version: 1, account: this.account, scope: this.scope, saved_at: this.clock(), selected: selected && threads.includes(selected) ? selected : null, slots: rows });
             for (const id of ids) {
                 if (rows.length >= CHAT_DRAFT_MAX_SLOTS)
                     break;
@@ -172,7 +181,7 @@ export class ChatDraftSession {
                 if (bytes(envelope()) > CHAT_DRAFT_MAX_BYTES)
                     rows.pop();
             }
-            if (!rows.length && !selected)
+            if (!rows.length && !selected && !threadCreation)
                 remove(this.store);
             else
                 this.store.setItem(CHAT_DRAFT_KEY, envelope());

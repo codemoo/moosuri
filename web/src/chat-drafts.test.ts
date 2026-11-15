@@ -21,3 +21,33 @@ describe("authenticated tab-only draft recovery", () => {
         expect(lease.load(["thread"]).memory.pending.thread).toEqual({ ...p, status: "uncertain" });
     } });
 });
+
+it("recovers an empty creation carrier with no selected thread only as uncertain under its exact session", () => {
+    const { s, map } = store();
+    const recovery = new ChatDraftRecovery(() => s);
+    const lease = recovery.confirm(session())!;
+    const threadCreation = { request_id: target, title: "New conversation", status: "sending" as const };
+    lease.save({ drafts: {}, pending: {}, threadCreation }, null, []);
+    expect(map.has(CHAT_DRAFT_KEY)).toBe(true);
+    expect(lease.load([]).memory.threadCreation).toEqual({ ...threadCreation, status: "uncertain" });
+    recovery.confirm(session("alice", "b".repeat(64)));
+    expect(map.has(CHAT_DRAFT_KEY)).toBe(false);
+});
+
+it("retains immutable creation and original message beside its next draft, dropping malformed creation carriers", () => {
+    const { s, map } = store();
+    const lease = new ChatDraftRecovery(() => s).confirm(session())!;
+    const original = memory().pending.thread;
+    lease.save({ drafts: { new: "Next draft" }, pending: { new: original }, threadCreation: { request_id: target, title: "New conversation", status: "sending" } }, null, []);
+    const saved = map.get(CHAT_DRAFT_KEY)!;
+    const result = lease.load([]);
+    expect(result.memory.pending.new.request_id).toBe(original.request_id);
+    expect(result.memory.drafts.new).toBe("Next draft");
+    for (const invalid of [{ request_id: "guess", title: "New conversation", status: "uncertain" }, { request_id: target, title: "x".repeat(513), status: "uncertain" }, { request_id: target, title: "New conversation", status: "uncertain", authority: true }]) {
+        const envelope = JSON.parse(saved);
+        envelope.thread_creation = invalid;
+        map.set(CHAT_DRAFT_KEY, JSON.stringify(envelope));
+        expect(lease.load([]).memory.threadCreation).toBeUndefined();
+        expect(lease.load([]).memory.drafts.new).toBe("Next draft");
+    }
+});

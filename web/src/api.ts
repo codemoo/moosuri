@@ -1,3 +1,5 @@
+export type RequestOptions = { timeoutMs?: number };
+
 /** An account lifetime owns every request. Closing it aborts transport and fences
  * responses even when a transport/server ignores AbortSignal. No private cache. */
 export class RequestScope {
@@ -137,6 +139,7 @@ export class RequestScope {
     method = "GET",
     body?: unknown,
     signal?: AbortSignal,
+    options?: RequestOptions,
   ): Promise<T> {
     if (!this.active)
       throw new DOMException("Closed account lifetime", "AbortError");
@@ -145,15 +148,16 @@ export class RequestScope {
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) controller.abort();
     this.controllers.add(controller);
-    // Read-only recovery must not hang behind a half-open snapshot GET. The
-    // single deadline covers headers and the complete JSON body; writes retain
-    // their existing uncertain-outcome/explicit-reconciliation semantics.
-    const readOnly = method.toUpperCase() === "GET";
+    // GET recovery always has a complete-response deadline. Foreground writes
+    // opt in explicitly: expiration only means the receipt is unknown, never
+    // permission to replay a mutation. Long-running probes retain their timing.
+    const timeoutMs = options?.timeoutMs ?? (method.toUpperCase() === "GET" ? 30000 : undefined);
+    const bounded = timeoutMs !== undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const cancelReader = () => { void reader?.cancel().catch(() => {}); };
-    if (readOnly) controller.signal.addEventListener("abort", cancelReader);
+    if (bounded) controller.signal.addEventListener("abort", cancelReader);
     const readJson = async (response: Response) => {
-      if (!readOnly) return response.json();
+      if (!bounded) return response.json();
       if (!response.body) return JSON.parse("");
       reader = response.body.getReader();
       try {
@@ -217,13 +221,13 @@ export class RequestScope {
       return result as T;
     };
     try {
-      if (!readOnly) return await operation();
+      if (!bounded) return await operation();
       const deadline = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           timedOut = true;
           reject(timeout());
           controller.abort();
-        }, 30000);
+        }, timeoutMs);
         abortWait = () => reject(new DOMException("Closed account lifetime", "AbortError"));
         controller.signal.addEventListener("abort", abortWait, { once: true });
         if (controller.signal.aborted) abortWait();
@@ -237,7 +241,7 @@ export class RequestScope {
     } finally {
       clearTimeout(timer);
       if (abortWait) controller.signal.removeEventListener("abort", abortWait);
-      if (readOnly) controller.signal.removeEventListener("abort", cancelReader);
+      if (bounded) controller.signal.removeEventListener("abort", cancelReader);
       this.controllers.delete(controller);
       signal?.removeEventListener("abort", abort);
     }

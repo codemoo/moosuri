@@ -106,7 +106,7 @@ pub(super) async fn tool_response(
     )
         .into_response()
 }
-async fn configured() -> (
+pub(super) async fn configured() -> (
     tempfile::TempDir,
     Store,
     UserContext,
@@ -167,7 +167,7 @@ async fn enable(store: &Store, u: &UserContext, l: &LocalLoginLaunch) -> ModelCh
         .await
         .unwrap()
 }
-async fn run(
+pub(super) async fn run(
     store: &Store,
     u: &UserContext,
     s: &SubscriptionService,
@@ -278,10 +278,17 @@ async fn personal_tool_partial_namespace_and_trailing_error_never_execute() {
 #[tokio::test]
 async fn personal_tool_round_refreshes_before_result_and_cancel_fences_late_call() {
     let _g = crate::tests::TEST_LOCK.lock().await;
-    for cancel in [false, true] {
+    for boundary in [
+        "unchanged",
+        "rotate",
+        "cancel",
+        "disconnect",
+        "account_epoch",
+    ] {
         let (_d, store, u, f, s, l, _) = configured().await;
         enable(&store, &u, &l).await;
         f.state.tool_mode.store(1, Ordering::SeqCst);
+        f.state.model_peers.lock().unwrap().clear();
         f.state.hold_tool.store(1, Ordering::SeqCst);
         let t = store.create_thread(&u, "Held tool".into()).await.unwrap();
         let turn = store
@@ -312,30 +319,67 @@ async fn personal_tool_round_refreshes_before_result_and_cancel_fences_late_call
         tokio::time::timeout(Duration::from_secs(5), f.state.tool_entered.notified())
             .await
             .unwrap();
-        if cancel {
-            store.cancel_run(&u, turn.run.id, 1).await.unwrap();
-        } else {
-            store
-                .expire_subscription_fixture(&u, l.binding_id, l.revision)
-                .await
-                .unwrap();
+        match boundary {
+            "cancel" => {
+                store.cancel_run(&u, turn.run.id, 1).await.unwrap();
+            }
+            "disconnect" => {
+                s.disconnect(&u, l.binding_id, l.revision).await.unwrap();
+            }
+            "account_epoch" => {
+                store
+                    .change_password(&u, "Synthetic-new-owner-password-43".into())
+                    .await
+                    .unwrap();
+            }
+            "rotate" => {
+                store
+                    .expire_subscription_fixture(&u, l.binding_id, l.revision)
+                    .await
+                    .unwrap();
+            }
+            "unchanged" => (),
+            _ => unreachable!(),
         }
         f.state.tool_release.notify_one();
         task.await.unwrap();
+        let observer = if boundary == "account_epoch" {
+            store
+                .login(
+                    "owner@example.test".into(),
+                    "Synthetic-new-owner-password-43".into(),
+                )
+                .await
+                .unwrap()
+                .user
+        } else {
+            u.clone()
+        };
         let done = store
-            .conversation(&u, t.id, None)
+            .conversation(&observer, t.id, None)
             .await
             .unwrap()
             .turns
             .remove(0);
-        if cancel {
-            assert_eq!(done.run.state, RunState::Cancelled);
-            assert_eq!(f.state.requests.lock().unwrap().len(), 1);
+        if matches!(boundary, "cancel" | "disconnect" | "account_epoch") {
+            assert_ne!(done.run.state, RunState::Completed, "{boundary}");
+            assert_eq!(f.state.requests.lock().unwrap().len(), 1, "{boundary}");
         } else {
-            assert_eq!(done.run.state, RunState::Completed);
-            assert_eq!(f.state.refreshes.load(Ordering::SeqCst), 1);
+            assert_eq!(done.run.state, RunState::Completed, "{boundary}");
+            let rotated = boundary == "rotate";
+            assert_eq!(
+                f.state.refreshes.load(Ordering::SeqCst),
+                usize::from(rotated)
+            );
             let auth = f.state.authorizations.lock().unwrap();
-            assert_ne!(auth[0], auth[1]);
+            assert_eq!(auth.len(), 2);
+            assert_eq!(auth[0] != auth[1], rotated);
+            let peers = f.state.model_peers.lock().unwrap();
+            assert!(peers.len() >= 2);
+            assert!(
+                peers.iter().all(|peer| *peer == peers[0]),
+                "planner/tool rounds must share this run's socket: {boundary}"
+            );
         }
     }
 }

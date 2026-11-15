@@ -15,7 +15,7 @@ export class SseDecoder {
   private eventBytes = 0;
   private afterCR = false;
   private first = true;
-  push(bytes: Uint8Array): StreamFrame[] {
+  push(bytes: Uint8Array, heartbeat?: () => void): StreamFrame[] {
     if (bytes.byteLength > 1024 * 1024) throw new StreamFailure();
     let text: string;
     try {
@@ -36,7 +36,7 @@ export class SseDecoder {
       }
       if (char !== "\n" && char !== "\r") continue;
       this.append(text.slice(start, index));
-      this.consume(frames);
+      this.consume(frames, heartbeat);
       this.afterCR = char === "\r";
       start = index + 1;
     }
@@ -55,7 +55,7 @@ export class SseDecoder {
     if (this.line.length + text.length > 1024 * 1024) throw new StreamFailure();
     this.line += text;
   }
-  private consume(frames: StreamFrame[]) {
+  private consume(frames: StreamFrame[], heartbeat?: () => void) {
     let line = this.line;
     this.line = "";
     if (this.first) {
@@ -77,7 +77,7 @@ export class SseDecoder {
       this.eventBytes = 0;
       return;
     }
-    if (line.startsWith(":")) return;
+    if (line.startsWith(":")) { heartbeat?.(); return; }
     const colon = line.indexOf(":");
     const field = colon < 0 ? line : line.slice(0, colon);
     const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");

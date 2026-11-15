@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 const MAX_CALLS: usize = 12;
 const MAX_ARGUMENTS: usize = 16 * 1024;
 const MAX_CAPSULE: usize = 256 * 1024;
-// Current combined foreground read profiles expose 21 definitions. Keep bounded
-// headroom without changing schema bytes, per-round calls or runtime dispatches.
-const MAX_DEFINITIONS: usize = 32;
+// Complete foreground profiles expose32 definitions, or40 with credential broker.
+// Keep bounded headroom without changing bytes, calls or runtime dispatch limits.
+const MAX_DEFINITIONS: usize = 48;
 
 /// Explicit opt-in for this connection/model. Text verification does not grant it.
 #[derive(Default)]

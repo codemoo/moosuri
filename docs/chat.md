@@ -152,3 +152,15 @@ a measured general latency or live-model quality claim.
 지원 브라우저에서는 키보드로 줄어든 visual viewport에 화면 높이를 맞춘다.
 확대/축소는 제한하지 않으며, 확대 중에는 앱의 원래 배치를 유지한다. Chrome의
 합성 화면 크기·비동기 높이 변화 검증과 실제 iOS/Android 키보드·접근성 수락은 별도다.
+
+Read-only JSON GET requests, including canonical history snapshots, have one
+30-second deadline across connecting and reading the body. A timeout leaves loading
+and shows the existing retry/refresh error; it never resubmits a mutation.
+Browser SSE connections bound connecting to 15 seconds and missing raw bytes to 45
+seconds; the server sends comment heartbeats every 15 seconds even during quiet
+conversations. Reconnects use the saved cursor and never repeat a model submission.
+The six-failure limit counts consecutive unhealthy connections; validated event
+progress or a delayed heartbeat resets it. Fresh sends keep their live stream and
+loaded history when SSE confirms the request within one second; missing receipts
+and explicit same-ID resubmission still reload the canonical page. See the
+[synthetic responsiveness checks](reviews/2026-11-15-responsive-chat-stream.md).

@@ -46,7 +46,8 @@ export function useScope(expectedAccountId?: string, lifetime?: string | null) {
         receive: (frame: StreamFrame) => void,
         signal?: AbortSignal,
         opened?: () => void,
-      ) => ref.current!.stream(path, receive, signal, opened),
+        heartbeat?: () => void,
+      ) => ref.current!.stream(path, receive, signal, opened, heartbeat),
     }),
     [ref],
   );

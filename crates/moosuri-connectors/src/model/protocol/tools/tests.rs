@@ -20,13 +20,13 @@ fn bounded_definitions(count: usize) -> Vec<FunctionDefinition> {
 }
 
 #[test]
-fn definition_ceiling_accepts_32_without_truncation_and_rejects_33_in_every_dialect() {
+fn definition_ceiling_accepts_48_without_truncation_and_rejects_49_in_every_dialect() {
     let text = text();
     let caps = ToolCapabilities {
         function_tools: true,
     };
     let text_caps = TextCapabilities::default();
-    for count in [32, 33] {
+    for count in [48, 49] {
         let definitions = bounded_definitions(count);
         let request = ToolRequest {
             text: &text,
@@ -41,21 +41,21 @@ fn definition_ceiling_accepts_32_without_truncation_and_rejects_33_in_every_dial
             Protocol::ChatCompletions,
         ] {
             let result = encode_tool_request(protocol, &request, &text_caps, &caps);
-            if count == 32 {
+            if count == 48 {
                 let body = result.unwrap();
-                assert_eq!(body["tools"].as_array().unwrap().len(), 32);
+                assert_eq!(body["tools"].as_array().unwrap().len(), 48);
             } else {
                 assert_eq!(result.err(), Some(ProtocolError::LimitExceeded));
             }
         }
         let result = encode_chatgpt_plan_tool_request(&request, &text_caps, &caps);
-        if count == 32 {
+        if count == 48 {
             assert_eq!(
                 result.unwrap()["tools"][0]["tools"]
                     .as_array()
                     .unwrap()
                     .len(),
-                32
+                48
             );
         } else {
             assert_eq!(result.err(), Some(ProtocolError::LimitExceeded));
@@ -70,7 +70,7 @@ fn larger_definition_count_retains_aggregate_schema_budget_and_closed_names() {
         function_tools: true,
     };
     let text_caps = TextCapabilities::default();
-    let mut definitions = bounded_definitions(32);
+    let mut definitions = bounded_definitions(48);
     // Each schema/description is individually valid; only their 64KiB sum fails.
     for definition in &mut definitions {
         definition.description = "d".repeat(1024);
@@ -95,7 +95,7 @@ fn larger_definition_count_retains_aggregate_schema_budget_and_closed_names() {
         Some(ProtocolError::LimitExceeded)
     );
 
-    let definitions = bounded_definitions(32);
+    let definitions = bounded_definitions(48);
     let request = ToolRequest {
         text: &text,
         tools: &definitions,

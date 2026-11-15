@@ -5,6 +5,11 @@
 전체 단계, 아래 날짜별 기록은 해당 소스의 증거다. 공개 개발 저장소는
 [codemoo/moosuri](https://github.com/codemoo/moosuri)이며 안정판·운영 전환은 아직 아니다.
 GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 작업 단위별로 수행한다.
+[응답 경로 후속 수정](reviews/2026-11-15-response-pipeline.md)으로 전체 도구 구성의
+호출 전 실패, 멈춘 스트림/기록 조회, 정상 연결 뒤 재연결 중단과 전송 직후 기록 초기화를
+고쳤다. 실제 브라우저의 연속 전송에서 기록 재조회·SSE 재연결 없이 기존 답변과
+새 스트리밍 답변이 유지됐다. 모델 통신은 같은 클라이언트의 검증된 연결을 재사용한다.
+현재 개인 구독의 라운드별 클라이언트 재생성에는 이 연결 재사용 이점이 적용되지 않는다.
 일반 질문의 “부탁해” 표현만으로 추가하던 업무 분류 모델 호출을 제거했다. 해당 경로의
 호출 수와 기존 예약 해석을 Linux 실제 Runtime에서 확인했으며 실모델 속도 비율을 주장하지 않는다.
 [호출 감소 검증](reviews/2026-11-13-conversational-missions.md#2026-11-14-ordinary-polite-request-routing).
@@ -84,13 +89,14 @@ D의 요청한 로컬/Gmail 초안·기본 개인 일정 작업, E의 근거 계
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 브라우저 대화 스트림 복구 | 반쯤 끊긴 SSE의 15초 연결/45초 무수신·복구 GET 전체 30초 제한, 실제 이벤트·지연 heartbeat 뒤 연속 실패 수 초기화, 새 전송의 SSE 접수 확인 시 현재 스트림·이전 페이지 보존 | [합성 검증·한계](reviews/2026-11-15-responsive-chat-stream.md) |
 | 빠진 값 답하고 업무 계속하기 | 원래 카드의 수신인/날짜/시각/길이 질문·새로고침 복구·같은 실행 재개·원래 값/예산 보존 | [사용법](mission-input-continuation.md)·[검증](reviews/2026-11-15-mission-input-continuation.md) |
 | 한글 수량과 근거 계산 | 조사·단위·서술 어미가 붙은 완전한 수치 처리, 부분 숫자·배수 모호성 거절·새 원문 학습 재사용 | [검증](reviews/2026-11-15-live-agent-wave3.md) |
 | 연결된 복합 비서 업무 | native 메일 대기/재개·초안/일정 실제 결과·두 사례의 구조 학습·선택 페이지 연결·기기 브라우저 세션 | [통합 검증](reviews/2026-11-15-compound-capabilities.md)·[초안/일정](compound-actions.md)·[학습](compound-learning.md) |
 | 계정 선택·원래 업무 이어하기 | 명시한 Gmail 계정 우선, 유효한 단일 연결 재사용, 다중 계정 선택·연결 대기, 원래 호출 수/만료·공정 재개·선택 결과 재확인 | [사용법](connection-waits.md)·[검증](reviews/2026-11-15-connection-waits.md) |
 | 복합 조사 보고서 | 명시한 요청의 자료 읽기·정확 계산·비공개 문서 하나 저장, 실제 단계/출처/문서 revision·검토 상태, 중복·철회·복원 경계 | [사용법](compound-reports.md)·[검증](reviews/2026-11-15-compound-reports.md) |
 | 실모델 기억·업무·학습 후속 개선 | 문서/업무 분류 단계 연결, 소유자 기억 대상 보존, 정확 소수 표시와 학습 근거 일치, Calendar 후속 답변 경계·schema58 이전/복원 | [최초 실패·수정 후 전체 재실행](reviews/2026-11-15-live-agent-wave2.md) |
-| 연결 도구의 대화 호환성 | Gmail 첨부 도구의 지원하지 않는 모델 요청 형식 수정, 기존 읽기 제한을 유지하며 공유/개인 연결의 대화 계속하기 검증 | [검증](reviews/2026-11-14-combined-tool-profiles.md) |
+| 연결 도구의 대화 호환성 | Gmail 첨부 도구의 지원하지 않는 모델 요청 형식 수정, 기존 읽기 제한을 유지하며 공유/개인 연결의 대화 계속하기 검증 | [검증](reviews/2026-11-14-combined-tool-profiles.md)·[전체 구성 회귀](reviews/2026-11-15-complete-tool-profiles.md) |
 | 일본우편 표시 배송 이력 | 공식 상세 주소를 한 번 읽어 확인한 표의 사건별 날짜·상태·장소를 보존, 모르는 형식·번호 불일치는 실패 표시 | [사용법](parcel-tracking.md)·[검증](reviews/2026-11-15-parcel-history.md) |
 | 기록에 근거한 검토 제안 | 날짜 없는 요청·약속을 저장하면 현재 기록으로 연결되는 제안, 개별 숨김·주제 전체 끄기, 철회/조용한 시간/Push 중복 정책 | [사용법](proactive-suggestions.md)·[검증](reviews/2026-11-15-proactive-suggestions.md) |
 | 기기 볼트로 승인한 메일 발송 | 별도 Google 발송 연결·기존 최종 내용/시각 승인·정확한 한 번의 기기 전송·불명 결과 조회·복원 시 재발송 방지 | [사용법](native-approved-gmail-send.md)·[검증](reviews/2026-11-15-native-approved-gmail-send.md) |

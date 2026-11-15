@@ -210,6 +210,31 @@ export function ChatPanel(props: Props) {
     Array<{ thread: string; resolve: (page: ChatPage | null) => void }>
   >([]);
   const flushRef = useRef<() => void>(() => {});
+  const streamThread = useRef<{ thread: string; owner: object } | null>(null);
+  const receiptWaiters = useRef<Array<{
+    thread: string; request: string; owner: object; finish: (confirmed: boolean) => void;
+  }>>([]);
+  function finishReceipts(thread: string, request?: string, confirmed = false, owner?: object) {
+    for (const waiter of [...receiptWaiters.current])
+      if (waiter.thread === thread && (!request || waiter.request === request) && (!owner || waiter.owner === owner))
+        waiter.finish(confirmed);
+  }
+  function streamedReceipt(thread: string, request: string): Promise<boolean> {
+    flushRef.current();
+    if (turnsRef.current.some(turn => turn.run.thread_id === thread && turn.run.request_id === request))
+      return Promise.resolve(true);
+    const stream = streamThread.current;
+    if (stream?.thread !== thread) return Promise.resolve(false);
+    return new Promise(resolve => {
+      const waiter = { thread, request, owner: stream.owner, finish: (confirmed: boolean) => {
+        window.clearTimeout(timer);
+        receiptWaiters.current = receiptWaiters.current.filter(value => value !== waiter);
+        resolve(confirmed);
+      } };
+      const timer = window.setTimeout(() => waiter.finish(false), 1000);
+      receiptWaiters.current.push(waiter);
+    });
+  }
 
   function acknowledgeSchedule(thread:string,value:PendingSend,turn:ChatTurn) {
     if(currentThread.current!==thread)return;
@@ -231,6 +256,7 @@ export function ChatPanel(props: Props) {
       if(turn)acknowledgeSchedule(thread,value,turn);
     }
     callbacks.current.onPending(thread,null,requestId);
+    finishReceipts(thread, requestId, true);
   }
   function settle(page: ChatPage) {
     for (const turn of page.turns) accepted(page.thread_id,turn.run.request_id,turn);
@@ -346,6 +372,7 @@ export function ChatPanel(props: Props) {
     let stopped = false;
     const controller = new AbortController();
     const thread = threadId;
+    const streamOwner = {};
     const changed = displayedThread.current !== thread;
     displayedThread.current = thread;
     if (changed) {
@@ -476,10 +503,12 @@ export function ChatPanel(props: Props) {
     }
     void (async () => {
       if (!thread || !(await snapshot())) return;
-      for (let attempt = 0; live && !stopped && attempt < 6; attempt++) {
+      let failures = 0;
+      while (live && !stopped && failures < 6) {
         needsSnapshot = false;
         connectionController = new AbortController();
-        setConnection(attempt === 0 ? "연결 중…" : "연결을 다시 확인하는 중…");
+        let openedAt = 0;
+        setConnection(failures === 0 ? "연결 중…" : "연결을 다시 확인하는 중…");
         try {
           await readScope.stream(
             `/threads/${encodeURIComponent(thread)}/events?after=${cursor}`,
@@ -539,18 +568,30 @@ export function ChatPanel(props: Props) {
                 needsSnapshot = true;
                 throw new StreamFailure();
               }
+              // A real, validated new event proves recovery. Merely receiving
+              // HTTP headers must not reset an immediately failing loop.
+              failures = 0;
               cursor = event.sequence;
               queue.push(event);
               setConnection("");
               schedule();
             },
             connectionController.signal,
-            () => { if (live) setConnection(""); },
+            () => { if (live) { openedAt = Date.now(); streamThread.current = { thread, owner: streamOwner }; setConnection(""); } },
+            () => {
+              // An idle connection is healthy once a delayed server heartbeat
+              // arrives. An immediate comment followed by EOF is not recovery.
+              if (live && Date.now() - openedAt >= 15000) failures = 0;
+            },
           );
         } catch (error) {
           if (!live || stopped) return;
           if (boundary(error, thread)) return;
           if (error instanceof StreamFailure) needsSnapshot = true;
+        } finally {
+          if (streamThread.current?.owner === streamOwner) streamThread.current = null;
+          if (live && !stopped) flush();
+          finishReceipts(thread, undefined, false, streamOwner);
         }
         flush();
         if (!live || stopped) return;
@@ -558,7 +599,8 @@ export function ChatPanel(props: Props) {
         setConnection(
           "연결이 끊겼습니다. 전송을 다시 실행하지 않고 기록만 확인합니다.",
         );
-        await delay(Math.min(500 * 2 ** attempt, 8000));
+        failures++;
+        if (failures < 6) await delay(Math.min(500 * 2 ** (failures - 1), 8000));
       }
       if (live && !stopped)
         setConnection(
@@ -568,6 +610,8 @@ export function ChatPanel(props: Props) {
     return () => {
       flush();
       live = false;
+      if (thread) finishReceipts(thread, undefined, false, streamOwner);
+      if (streamThread.current?.owner === streamOwner) streamThread.current = null;
       controller.abort();
       connectionController?.abort();
       olderController.current?.abort();
@@ -731,7 +775,7 @@ export function ChatPanel(props: Props) {
         );
     }
   }
-  async function post(thread: string, value: PendingSend) {
+  async function post(thread: string, value: PendingSend, resubmit: boolean) {
     const controller = new AbortController();
     posts.current.set(thread, controller);
     try {
@@ -754,12 +798,18 @@ export function ChatPanel(props: Props) {
         { ...value, status: "accepted" },
         value.request_id,
       );
-      // A duplicate POST may return a running turn containing text whose SSE
-      // deltas are still queued. Its body has no cursor, so never merge it with
-      // that stream. Reload the committed page and resume at its exact cursor.
+      // Keep the live cursor and older pages when SSE confirms a fresh send.
+      // Never merge the cursorless POST body with incremental deltas. Explicit
+      // same-ID resubmission and missing receipts still reanchor a snapshot.
       if (currentThread.current === thread) {
-        const page = await refreshSnapshot();
-        if (page) callbacks.current.onPending(thread, null, value.request_id);
+        const confirmed = !resubmit && await streamedReceipt(thread, value.request_id);
+        if (!controller.signal.aborted && currentThread.current === thread) {
+          if (confirmed) accepted(thread, value.request_id);
+          else {
+            const page = await refreshSnapshot();
+            if (page) callbacks.current.onPending(thread, null, value.request_id);
+          }
+        }
       }
       callbacks.current.onThreadUpdated();
     } catch (error) {
@@ -851,7 +901,7 @@ export function ChatPanel(props: Props) {
         posts.current.delete("new");
       }
     }
-    await post(thread, value);
+    await post(thread, value, !!resubmit);
   }
   async function action(run: RunView, kind: "cancel" | "retry") {
     flushRef.current();

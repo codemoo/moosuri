@@ -3,7 +3,7 @@ use crate::model::protocol::{FinishOutcome, TextMessage, TextRole};
 use axum::{
     Router,
     body::{Body, Bytes},
-    extract::Request,
+    extract::{ConnectInfo, Request},
     http::{HeaderMap, StatusCode},
     response::Response,
     routing::post,
@@ -31,6 +31,7 @@ enum Reply {
 }
 
 struct Captured {
+    peer: SocketAddr,
     path: String,
     headers: HeaderMap,
     body: serde_json::Value,
@@ -59,108 +60,118 @@ async fn fixture(reply: Reply) -> Fixture {
     let handler_captures = captures.clone();
     let router = Router::new().route(
         "/{*path}",
-        post(move |request: Request| {
-            let reply = reply.clone();
-            let count = handler_count.clone();
-            let captures = handler_captures.clone();
-            async move {
-                let (parts, body) = request.into_parts();
-                let bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
-                captures.lock().await.push(Captured {
-                    path: parts.uri.path().to_string(),
-                    headers: parts.headers,
-                    body: serde_json::from_slice(&bytes).unwrap(),
-                });
-                count.fetch_add(1, Ordering::SeqCst);
-                match reply.as_ref() {
-                    Reply::Stream(frames) => {
-                        let items: Vec<Result<Bytes, std::io::Error>> = frames
-                            .iter()
-                            .map(|v| Ok(Bytes::copy_from_slice(v)))
-                            .collect();
-                        Response::builder()
-                            .header("content-type", "text/event-stream; charset=utf-8")
-                            .body(Body::from_stream(futures_util::stream::iter(items)))
-                            .unwrap()
-                    }
-                    Reply::HeldTail {
-                        prefix,
-                        tail,
-                        waiting,
-                        release,
-                    } => {
-                        let prefix = prefix.clone();
-                        let tail = tail.clone();
-                        let waiting = waiting.clone();
-                        let release = release.clone();
-                        let body = futures_util::stream::unfold(
-                            (0, prefix, tail, waiting, release),
-                            |(stage, prefix, tail, waiting, release)| async move {
-                                match stage {
-                                    0 => Some((
-                                        Ok::<_, std::io::Error>(Bytes::copy_from_slice(&prefix)),
-                                        (1, prefix, tail, waiting, release),
-                                    )),
-                                    1 => {
-                                        waiting.notify_one();
-                                        release.notified().await;
-                                        if tail.is_empty() {
-                                            None
-                                        } else {
-                                            Some((
-                                                Ok(Bytes::copy_from_slice(&tail)),
-                                                (2, prefix, tail, waiting, release),
-                                            ))
+        post(
+            move |ConnectInfo(peer): ConnectInfo<SocketAddr>, request: Request| {
+                let reply = reply.clone();
+                let count = handler_count.clone();
+                let captures = handler_captures.clone();
+                async move {
+                    let (parts, body) = request.into_parts();
+                    let bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
+                    captures.lock().await.push(Captured {
+                        peer,
+                        path: parts.uri.path().to_string(),
+                        headers: parts.headers,
+                        body: serde_json::from_slice(&bytes).unwrap(),
+                    });
+                    count.fetch_add(1, Ordering::SeqCst);
+                    match reply.as_ref() {
+                        Reply::Stream(frames) => {
+                            let items: Vec<Result<Bytes, std::io::Error>> = frames
+                                .iter()
+                                .map(|v| Ok(Bytes::copy_from_slice(v)))
+                                .collect();
+                            Response::builder()
+                                .header("content-type", "text/event-stream; charset=utf-8")
+                                .body(Body::from_stream(futures_util::stream::iter(items)))
+                                .unwrap()
+                        }
+                        Reply::HeldTail {
+                            prefix,
+                            tail,
+                            waiting,
+                            release,
+                        } => {
+                            let prefix = prefix.clone();
+                            let tail = tail.clone();
+                            let waiting = waiting.clone();
+                            let release = release.clone();
+                            let body = futures_util::stream::unfold(
+                                (0, prefix, tail, waiting, release),
+                                |(stage, prefix, tail, waiting, release)| async move {
+                                    match stage {
+                                        0 => Some((
+                                            Ok::<_, std::io::Error>(Bytes::copy_from_slice(
+                                                &prefix,
+                                            )),
+                                            (1, prefix, tail, waiting, release),
+                                        )),
+                                        1 => {
+                                            waiting.notify_one();
+                                            release.notified().await;
+                                            if tail.is_empty() {
+                                                None
+                                            } else {
+                                                Some((
+                                                    Ok(Bytes::copy_from_slice(&tail)),
+                                                    (2, prefix, tail, waiting, release),
+                                                ))
+                                            }
                                         }
+                                        _ => None,
                                     }
-                                    _ => None,
-                                }
-                            },
-                        );
-                        Response::builder()
-                            .header("content-type", "text/event-stream")
-                            .body(Body::from_stream(body))
-                            .unwrap()
-                    }
-                    Reply::JsonStatus(code, body) => Response::builder()
-                        .status(StatusCode::from_u16(*code).unwrap())
-                        .header("retry-after", "9")
-                        .header("content-type", "application/json")
-                        .body(Body::from(body.to_string()))
-                        .unwrap(),
-                    Reply::Status(code) => Response::builder()
-                        .status(StatusCode::from_u16(*code).unwrap())
-                        .header("retry-after", "9")
-                        .body(Body::from("synthetic-secret-must-not-appear-in-error"))
-                        .unwrap(),
-                    Reply::Redirect(target) => Response::builder()
-                        .status(307)
-                        .header("location", target)
-                        .body(Body::empty())
-                        .unwrap(),
-                    Reply::Idle => Response::builder()
-                        .header("content-type", "text/event-stream")
-                        .body(Body::from_stream(futures_util::stream::pending::<
-                            Result<Bytes, std::io::Error>,
-                        >()))
-                        .unwrap(),
-                    Reply::DelayedHeaders => {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        Response::builder()
-                            .header("content-type", "text/event-stream")
+                                },
+                            );
+                            Response::builder()
+                                .header("content-type", "text/event-stream")
+                                .body(Body::from_stream(body))
+                                .unwrap()
+                        }
+                        Reply::JsonStatus(code, body) => Response::builder()
+                            .status(StatusCode::from_u16(*code).unwrap())
+                            .header("retry-after", "9")
+                            .header("content-type", "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                        Reply::Status(code) => Response::builder()
+                            .status(StatusCode::from_u16(*code).unwrap())
+                            .header("retry-after", "9")
+                            .body(Body::from("synthetic-secret-must-not-appear-in-error"))
+                            .unwrap(),
+                        Reply::Redirect(target) => Response::builder()
+                            .status(307)
+                            .header("location", target)
                             .body(Body::empty())
-                            .unwrap()
+                            .unwrap(),
+                        Reply::Idle => Response::builder()
+                            .header("content-type", "text/event-stream")
+                            .body(Body::from_stream(futures_util::stream::pending::<
+                                Result<Bytes, std::io::Error>,
+                            >()))
+                            .unwrap(),
+                        Reply::DelayedHeaders => {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            Response::builder()
+                                .header("content-type", "text/event-stream")
+                                .body(Body::empty())
+                                .unwrap()
+                        }
+                        Reply::WrongType => Response::builder()
+                            .header("content-type", "application/json")
+                            .body(Body::from("{}"))
+                            .unwrap(),
                     }
-                    Reply::WrongType => Response::builder()
-                        .header("content-type", "application/json")
-                        .body(Body::from("{}"))
-                        .unwrap(),
                 }
-            }
-        }),
+            },
+        ),
     );
     let task = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     Fixture {
         base: format!("http://{address}/v1"),
@@ -813,6 +824,82 @@ async fn tool_round_real_transport_returns_calls_only_after_complete_stream() {
     let captures = f.captures.lock().await;
     assert_eq!(captures[0].body["tools"][0]["function"]["strict"], true);
     assert_eq!(captures[0].body["parallel_tool_calls"], false);
+}
+
+#[tokio::test]
+async fn completed_model_rounds_reuse_one_connection_but_not_other_clients_or_limits() {
+    let f = fixture(Reply::Stream(vec![tool_chat_stream().into_bytes()])).await;
+    let client = local(&f);
+    let cancel = CancellationToken::new();
+    for _ in 0..3 {
+        let (result, _) = run_tools(&client, &cancel).await;
+        assert_eq!(result.unwrap().calls.len(), 1);
+    }
+    // The owner/configuration-specific client lifetime bounds the pool. A new
+    // client cannot inherit another client's socket or HTTP authorization state.
+    let other = local(&f);
+    assert!(run_tools(&other, &cancel).await.0.is_ok());
+    let changed = client
+        .with_limits(TransportLimits {
+            idle: Duration::from_secs(4),
+            ..TransportLimits::default()
+        })
+        .unwrap();
+    assert!(run_tools(&changed, &cancel).await.0.is_ok());
+    let captured = f.captures.lock().await;
+    assert_eq!(captured.len(), 5);
+    assert!(captured[..3].iter().all(|c| c.peer == captured[0].peer));
+    assert_ne!(captured[3].peer, captured[0].peer);
+    assert_ne!(captured[4].peer, captured[0].peer);
+    assert!(
+        captured
+            .iter()
+            .all(|c| c.headers["authorization"] == "Bearer synthetic-fixture-key")
+    );
+}
+
+#[tokio::test]
+async fn pooled_transport_rechecks_destination_and_replaces_changed_address_sets() {
+    let f = fixture(Reply::Stream(vec![tool_chat_stream().into_bytes()])).await;
+    let mut client = local(&f);
+    let cancel = CancellationToken::new();
+    assert!(run_tools(&client, &cancel).await.0.is_ok());
+    // Even an already connected socket cannot bypass current address policy.
+    client.network = NetworkPolicy::PublicHttps;
+    assert!(matches!(
+        run_tools(&client, &cancel).await.0,
+        Err(TransportError::DestinationDenied)
+    ));
+    assert_eq!(f.count.load(Ordering::SeqCst), 1);
+    client.network = NetworkPolicy::LocalExact(vec![
+        "127.0.0.1".parse().unwrap(),
+        "127.0.0.2".parse().unwrap(),
+    ]);
+    let port = client.endpoint.port().unwrap();
+    let one = SocketAddr::new("127.0.0.1".parse().unwrap(), port);
+    assert!(matches!(
+        client.pinned_http(
+            &client.endpoint,
+            vec![one, "169.254.169.254:80".parse().unwrap()]
+        ),
+        Err(TransportError::DestinationDenied)
+    ));
+    assert!(matches!(
+        client.pinned_http(&client.endpoint, vec![one; 33]),
+        Err(TransportError::DestinationDenied)
+    ));
+    // Synthetic resolver answer change retires the old pool. The next actual
+    // request resolves again and connects only to its freshly validated set.
+    let _ = client
+        .pinned_http(
+            &client.endpoint,
+            vec![one, SocketAddr::new("127.0.0.2".parse().unwrap(), port)],
+        )
+        .unwrap();
+    assert!(run_tools(&client, &cancel).await.0.is_ok());
+    let captured = f.captures.lock().await;
+    assert_eq!(captured.len(), 2);
+    assert_ne!(captured[0].peer, captured[1].peer);
 }
 #[tokio::test]
 async fn tool_transport_prefix_error_cancellation_and_limit_never_return_calls() {

@@ -48,7 +48,7 @@ runtime must branch on outcome before continuing or reporting success.
 ## Bounds and validation
 
 - 12 calls per round; 16 KiB arguments/result per call.
-- 32 definitions; 64 KiB schemas/descriptions; closed, depth-bounded schema subset.
+- 48 definitions; 64 KiB schemas/descriptions; closed, depth-bounded schema subset.
 - 256 KiB private checkpoint; 512 KiB encoded protocol request.
 - Existing SSE, response, backpressure and transport deadlines remain active.
 
@@ -57,18 +57,23 @@ tools, output, deadline and mutations. Synthetic streams and real loopback HTTP
 cover fragmented/interleaved arguments, all four continuation encodings,
 identity, phase/reasoning and checkpoint correlation. No live model was called.
 
-The definition ceiling admits the current combined foreground read composition:
-knowledge/recipes/decimal5, Gmail4, HTTP/search/browser6, read-only artifacts3,
-and Calendar3 (21 total). Definitions are never silently truncated. A larger
-definition budget grants no new operation: exact admitted names, schemas, account
-pins, capability proof and runtime authority checks still apply. The 12-call round
+The complete current foreground vocabulary contains32 definitions: saved-source and
+calculation tools8, conversation recall2, public-page collection1, private learned
+executor1, Gmail6, HTTP/search/parcel/browser8, read-only artifacts3 and Calendar3.
+With credential-broker chat, four terminal credential reads and four native Gmail
+reads raise this to40. Multiple usable recipes/connections add metadata or enum
+values, not more function names. The48-definition ceiling leaves bounded headroom;
+the separate64KiB schema/description limit still rejects oversized compositions.
+Definitions are never silently truncated. Exact admitted names, schemas, owner
+pins, capability proof and runtime authority checks still apply. The12-call round
 cap and six-dispatch run budget remain separate from definition count.
 
-The combined-profile regression builds these actual production definitions and
-passes all21 through plan and shared-compatible HTTP transports, a decoded decimal
-call, an explicit synthetic result and a completed final continuation. This is
-definition-composition/transport evidence, not full Store profile admission,
-external Gmail/Calendar/browser execution or live-provider acceptance.
+The combined regression builds these actual production vocabularies, validates all
+supported encoders, and passes all32/40 definitions through plan and shared-compatible
+HTTP transports, a decoded decimal call, an explicit synthetic result and a final
+continuation. This is definition-composition/transport evidence, not full Store
+admission, external execution or live-provider acceptance. See the
+[complete-profile regression](reviews/2026-11-15-complete-tool-profiles.md).
 
 Independent review found chunk-dependent authorization when transport returned at
 a terminal before reading the next chunk. The corrected tool path waits for EOF.

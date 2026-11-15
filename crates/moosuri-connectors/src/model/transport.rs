@@ -6,7 +6,11 @@ use super::protocol::{
     ModelEvent, Protocol, ProtocolError, StreamDecoder, TextCapabilities, TextRequest,
 };
 use reqwest::{Client, header};
-use std::{net::IpAddr, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Mutex,
+    time::Duration,
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -126,6 +130,15 @@ pub struct ModelClient {
     capabilities: TextCapabilities,
     router: Option<RouterPolicy>,
     limits: TransportLimits,
+    // Per configured client only: no global pool, credentials or owner state.
+    // Reuse is permitted only after every current DNS answer is revalidated.
+    http: Mutex<Option<PinnedHttp>>,
+}
+
+struct PinnedHttp {
+    origin: String,
+    addresses: Vec<SocketAddr>,
+    client: Client,
 }
 
 pub struct CatalogModel {
@@ -178,6 +191,7 @@ impl ModelClient {
             capabilities,
             router,
             limits: TransportLimits::default(),
+            http: Mutex::new(None),
         })
     }
 
@@ -280,6 +294,7 @@ impl ModelClient {
             capabilities,
             router: None,
             limits: TransportLimits::default(),
+            http: Mutex::new(None),
         })
     }
 
@@ -302,6 +317,7 @@ impl ModelClient {
     pub fn with_limits(mut self, limits: TransportLimits) -> Result<Self, TransportError> {
         limits.validate()?;
         self.limits = limits;
+        self.http = Mutex::new(None);
         Ok(self)
     }
 
@@ -379,12 +395,24 @@ impl ModelClient {
         let port = endpoint
             .port_or_known_default()
             .ok_or(TransportError::InvalidConfiguration)?;
-        // Resolve once, inspect every answer, and pin the complete bounded set.
+        // Resolve on every request, inspect every answer, and pin the complete
+        // bounded set. Pool reuse must never bypass a fresh destination check.
         let addresses: Vec<_> = tokio::net::lookup_host((host.trim_matches(['[', ']']), port))
             .await
             .map_err(|_| TransportError::Transport)?
             .take(33)
             .collect();
+        self.pinned_http(endpoint, addresses)
+    }
+
+    fn pinned_http(
+        &self,
+        endpoint: &Url,
+        mut addresses: Vec<SocketAddr>,
+    ) -> Result<Client, TransportError> {
+        let host = endpoint
+            .host_str()
+            .ok_or(TransportError::InvalidConfiguration)?;
         if addresses.is_empty()
             || addresses.len() > 32
             || addresses
@@ -393,17 +421,34 @@ impl ModelClient {
         {
             return Err(TransportError::DestinationDenied);
         }
-        Client::builder()
+        addresses.sort_unstable();
+        addresses.dedup();
+        let origin = endpoint.origin().ascii_serialization();
+        let mut cached = self.http.lock().map_err(|_| TransportError::Transport)?;
+        if let Some(pinned) = cached.as_ref()
+            && pinned.origin == origin
+            && pinned.addresses == addresses
+        {
+            return Ok(pinned.client.clone());
+        }
+        let client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(self.limits.connect)
             .read_timeout(self.limits.idle)
             .timeout(self.limits.total)
-            .pool_max_idle_per_host(0)
+            .pool_max_idle_per_host(1)
+            .pool_idle_timeout(Duration::from_secs(30))
             .resolve_to_addrs(host, &addresses)
             .build()
-            .map_err(|_| TransportError::Transport)
+            .map_err(|_| TransportError::Transport)?;
+        *cached = Some(PinnedHttp {
+            origin,
+            addresses,
+            client: client.clone(),
+        });
+        Ok(client)
     }
 
     fn authorize(

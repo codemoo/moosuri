@@ -71,12 +71,13 @@ it.each([false, true])("continues with the committed reminder revision after a m
   fireEvent.click(await screen.findByRole("button", { name: "이 알림 선택" }));
   await send("pause reminder");
   await screen.findAllByRole("link", { name: "알림 · Water ↗" });
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "이 알림 선택" })).toHaveLength(2));
+  // This fixture intentionally emits no SSE receipt: allow the one-second GET fallback.
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "이 알림 선택" })).toHaveLength(2), { timeout: 2000 });
   await send("resume reminder");
   await waitFor(() => expect(posts).toHaveLength(2));
   expect(posts[0].schedule_context.target).toEqual({ id: "water", revision: 1 });
   expect(posts[1].schedule_context.target).toEqual({ id: "water", revision: 2 });
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "이 알림 선택" })).toHaveLength(3));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "이 알림 선택" })).toHaveLength(3), { timeout: 2000 });
 });
 it("a delayed mutation acknowledgement preserves a newer reminder selection", async () => {
   let release!: () => void;
@@ -89,7 +90,7 @@ it("a delayed mutation acknowledgement preserves a newer reminder selection", as
   await waitFor(() => expect(posts).toHaveLength(1));
   fireEvent.click(choices[1]);
   await act(async () => release());
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "이 알림 선택" })).toHaveLength(3));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "이 알림 선택" })).toHaveLength(3), { timeout: 2000 });
   expect(screen.getByText("선택한 알림: Stretch")).toBeInTheDocument();
   await send("pause reminder");
   await waitFor(() => expect(posts).toHaveLength(2));

@@ -11,7 +11,7 @@ use moosuri_core::{
 };
 use std::collections::BTreeSet;
 
-const NAMES: [&str; 28] = [
+const COMMON_NAMES: [&str; 32] = [
     "knowledge_search",
     "knowledge_read_source",
     "knowledge_read_memory",
@@ -40,28 +40,65 @@ const NAMES: [&str; 28] = [
     "calendar_list_events",
     "calendar_read_event",
     "calendar_action_status",
+    "conversation_search",
+    "conversation_read",
+    "public_pages_collect",
+    "learned_skill_execute",
 ];
+fn expected_names() -> BTreeSet<&'static str> {
+    let mut names: BTreeSet<_> = COMMON_NAMES.into_iter().collect();
+    if cfg!(feature = "credential-broker-chat") {
+        names.extend([
+            "github_repository_metadata",
+            "gitea_repository_issues",
+            "google_inbox_counts",
+            "google_inbox_preview",
+            "native_mail_search",
+            "native_mail_message",
+            "native_mail_thread",
+            "native_mail_attachment",
+        ]);
+    }
+    names
+}
 const FINAL: &str = "Exact synthetic result: 0.3. No external action was performed.";
 
 fn combined_definitions() -> Vec<FunctionDefinition> {
     let profile = RunToolProfile {
-        native_mail_scope: None,
-        native_mail_model_read: false,
+        // Store admits the native vocabulary even when binding choices are empty.
+        native_mail_scope: cfg!(feature = "credential-broker-chat").then(|| {
+            moosuri_core::NativeMailRunScope {
+                version: 1,
+                operation: 8,
+                candidate_binding_ids: vec![],
+            }
+        }),
+        native_mail_model_read: cfg!(feature = "credential-broker-chat"),
         native_mail_model_background: false,
         evidence_calculation: true,
         source_calculation: true,
-        credential_github: false,
-        credential_gitea: false,
-        credential_google: false,
-        credential_google_preview: false,
-        conversation_recall: false,
+        credential_github: cfg!(feature = "credential-broker-chat"),
+        credential_gitea: cfg!(feature = "credential-broker-chat"),
+        credential_google: cfg!(feature = "credential-broker-chat"),
+        credential_google_preview: cfg!(feature = "credential-broker-chat"),
+        conversation_recall: true,
         mission_reads: None,
         version: 5,
-        skills: vec![moosuri_core::SkillPin {
-            id: "parcel-tracking".into(),
-            revision: "1.1.0".into(),
-            digest: "synthetic".into(),
-        }],
+        // The normal Store profile contains every bundled skill. A usable owner
+        // recipe adds one executor definition regardless of recipe count.
+        skills: moosuri_core::BUNDLED_SKILLS
+            .iter()
+            .map(|skill| moosuri_core::SkillPin {
+                id: skill.id.into(),
+                revision: skill.revision.into(),
+                digest: "synthetic".into(),
+            })
+            .chain(std::iter::once(moosuri_core::SkillPin {
+                id: "private:synthetic".into(),
+                revision: "1".into(),
+                digest: "synthetic".into(),
+            }))
+            .collect(),
         community_metadata: vec![],
         mail_connections: vec![MailConnectionPin {
             native_send: false,
@@ -100,7 +137,7 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
             }],
         },
     )));
-    assert_eq!(definitions.len(), NAMES.len());
+    assert_eq!(definitions.len(), expected_names().len());
     definitions
 }
 
@@ -124,8 +161,8 @@ fn assert_definitions(body: &Value, plan: bool) {
         .iter()
         .map(|d| d["name"].as_str().unwrap())
         .collect::<BTreeSet<_>>();
-    assert_eq!(functions.len(), NAMES.len()); // Provider sees every definition; none is silently dropped.
-    assert_eq!(names, NAMES.into_iter().collect());
+    assert_eq!(functions.len(), expected_names().len()); // Provider sees every definition; none is silently dropped.
+    assert_eq!(names, expected_names());
     for definition in functions {
         assert_eq!(definition["strict"], true);
         assert_eq!(definition["parameters"]["additionalProperties"], false);
@@ -362,4 +399,55 @@ async fn combined_read_profiles_reach_plan_model_and_complete_continuation() {
 #[tokio::test]
 async fn combined_read_profiles_reach_shared_model_and_complete_continuation() {
     combined_roundtrip(false).await;
+}
+
+#[test]
+fn complete_admitted_foreground_vocabulary_encodes_in_every_dialect() {
+    use moosuri_connectors::model::protocol::{
+        Protocol,
+        tools::{encode_chatgpt_plan_tool_request, encode_tool_request},
+    };
+    let definitions = combined_definitions();
+    assert_eq!(
+        definitions.len(),
+        if cfg!(feature = "credential-broker-chat") {
+            40
+        } else {
+            32
+        }
+    );
+    let text = TextRequest {
+        model: "fixture-model".into(),
+        effort: None,
+        max_output_tokens: 128,
+        messages: vec![TextMessage {
+            role: TextRole::User,
+            text: "Synthetic current-owner read request.".into(),
+            phase: None,
+        }],
+    };
+    let request = ToolRequest {
+        text: &text,
+        tools: &definitions,
+        continuation: None,
+        results: &[],
+    };
+    let caps = ToolCapabilities {
+        function_tools: true,
+    };
+    let text_caps = TextCapabilities::default();
+    for protocol in [
+        Protocol::Responses,
+        Protocol::AnthropicMessages,
+        Protocol::OpenRouterChat,
+        Protocol::ChatCompletions,
+    ] {
+        let body = encode_tool_request(protocol, &request, &text_caps, &caps).unwrap();
+        assert_eq!(body["tools"].as_array().unwrap().len(), definitions.len());
+    }
+    let body = encode_chatgpt_plan_tool_request(&request, &text_caps, &caps).unwrap();
+    assert_eq!(
+        body["tools"][0]["tools"].as_array().unwrap().len(),
+        definitions.len()
+    );
 }

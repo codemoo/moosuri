@@ -949,6 +949,9 @@ describe("durable text chat", () => {
       configurable: true,
       value: 400,
     });
+    // Let the layout observer see the synthetic resize before simulating a
+    // reader scroll. A resize-induced scroll is deliberately not reader intent.
+    fireEvent(window, new Event("resize"));
     element.scrollTop = 100;
     fireEvent.scroll(element);
     await act(async () => {
@@ -1249,6 +1252,176 @@ it("opens only the exact backend evidence revision from a chat reference",async(
 it("attaches an exact private file from the library and keeps its original refs through lost ACK retry",async()=>{
  const user=userEvent.setup();const id="11111111-1111-4111-8111-111111111111";const original={id,revision:1,filename:"synthetic-receipt.json",media_type:"application/json",digest:"a".repeat(64),state:"ready",width:0,height:0,bytes:15,created_at:1};let attempts=0;
  const test=fixture({extra:call=>{if(call.path==="/media")return response({items:[original],used_bytes:30,quota_bytes:67108864});if(call.path===`/files/${id}/preview`)return response('{"quantity":37}');},post:call=>{if(++attempts===1)return Promise.reject(new TypeError("Synthetic lost ACK"));const accepted={...turn({request_id:String(call.body?.request_id)},String(call.body?.text)),attachments:[original]};test.state.page={thread_id:thread.id,cursor:1,turns:[accepted],next_before:null};return response(accepted,201);}});
- open();await ready(test.streams);await user.click(screen.getByText("내 이미지·파일 보관함"));await user.click(await screen.findByRole("button",{name:"대화에 첨부"}));await user.type(screen.getByLabelText("메시지"),"What is quantity in my exact selected file?");await user.click(screen.getByRole("button",{name:"메시지 전송"}));await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(1));await user.type(screen.getByLabelText("메시지"),"Next draft remains");
+ open();await ready(test.streams);await user.click(screen.getByLabelText("내 이미지·파일 보관함"));await user.click(await screen.findByRole("button",{name:"대화에 첨부"}));await user.type(screen.getByLabelText("메시지"),"What is quantity in my exact selected file?");await user.click(screen.getByRole("button",{name:"메시지 전송"}));await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(1));await user.type(screen.getByLabelText("메시지"),"Next draft remains");
  const retry=await screen.findByRole("button",{name:/같은 요청 다시 제출/});await user.click(retry);await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(2));expect(postCalls(test.calls)[0].body?.attachments).toEqual([{id,revision:1}]);expect(postCalls(test.calls)[1].body).toEqual(postCalls(test.calls)[0].body);expect(screen.getByLabelText("메시지")).toHaveValue("Next draft remains");expect(screen.getAllByText("synthetic-receipt.json").length).toBeGreaterThan(0);
+});
+
+it("fresh sends keep the existing stream and loaded history while their SSE receipt races the POST", async () => {
+  const user = userEvent.setup();
+  const ack = deferred<Response>();
+  const old = { ...turn({ id: "old-run", request_id: "old-request", state: "completed", can_cancel: false }, "Older preserved question"), sequence: 1 };
+  const latest = { ...turn({ id: "latest-run", request_id: "latest-request", state: "completed", can_cancel: false }, "Latest preserved question"), sequence: 2 };
+  const test = fixture({ turns: [latest], cursor: 2, before: { thread_id: thread.id, cursor: 2, turns: [old], next_before: null }, post: () => ack.promise });
+  open();
+  await ready(test.streams);
+  await user.click(screen.getByRole("button", { name: /이전 대화/ }));
+  expect(await screen.findByText("Older preserved question")).toBeInTheDocument();
+  const live = test.streams.at(-1)!;
+  const historyCount = test.calls.filter(call => call.path.includes("/messages") && call.method === "GET").length;
+  await user.type(screen.getByLabelText("메시지"), "Fresh receipt question");
+  await user.dblClick(screen.getByRole("button", { name: "메시지 전송" }));
+  const fresh = { ...turn({ id: "fresh-run", request_id: String(postCalls(test.calls)[0].body?.request_id) }, "Fresh receipt question"), sequence: 3 };
+  await act(async () => { ack.resolve(response(fresh, 201)); });
+  await act(async () => {
+    test.emit({ sequence: 3, change: { kind: "turn", turn: fresh } }, live);
+    test.emit({ sequence: 4, change: { kind: "delta", run_id: fresh.run.id, attempt: 1, message_id: "fresh-answer", text: "Immediate visible answer", phase: null, refusal: false } }, live);
+  });
+  expect(await screen.findByText("Immediate visible answer")).toBeInTheDocument();
+  expect(screen.getByText("Older preserved question")).toBeInTheDocument();
+  expect(live.init.signal?.aborted).toBe(false);
+  expect(test.calls.filter(call => call.path.includes("/messages") && call.method === "GET")).toHaveLength(historyCount);
+  expect(postCalls(test.calls)).toHaveLength(1);
+});
+
+it("resets reconnect failures after new validated events, while open-only failures remain bounded", async () => {
+  const saved = turn();
+  const test = fixture({ turns: [saved], cursor: 1 });
+  open();
+  await ready(test.streams);
+  vi.useFakeTimers();
+  try {
+    for (let recovered = 0; recovered < 7; recovered++) {
+      await act(async () => {
+        test.emit({ sequence: 2 + recovered, change: { kind: "state", run: { ...saved.run, state: "running", version: 2 + recovered } } });
+        await vi.advanceTimersByTimeAsync(40);
+      });
+      const live = test.streams.at(-1)!;
+      await act(async () => {
+        live.closed = true;
+        live.controller.close();
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(test.streams.at(-1)).not.toBe(live);
+    }
+    expect(screen.queryByText(/자동 재연결을 멈췄습니다/)).not.toBeInTheDocument();
+    const count = test.streams.length;
+    for (let failure = 1; failure <= 5; failure++) {
+      const live = test.streams.at(-1)!;
+      await act(async () => {
+        live.controller.enqueue(new TextEncoder().encode(": immediate comment\n\n"));
+        await vi.advanceTimersByTimeAsync(0);
+        live.closed = true;
+        live.controller.close();
+        await vi.advanceTimersByTimeAsync(8000);
+      });
+    }
+    expect(screen.getByText(/자동 재연결을 멈췄습니다/)).toBeInTheDocument();
+    expect(test.streams).toHaveLength(count + 4);
+    await act(async () => {
+      fireEvent(window, new Event("focus"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(test.streams).toHaveLength(count + 5);
+    expect(screen.queryByText(/자동 재연결을 멈췄습니다/)).not.toBeInTheDocument();
+    expect(postCalls(test.calls)).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it("keeps quiet heartbeat connections healthy and recovers a half-open stream by GET only", async () => {
+  const test = fixture();
+  open();
+  await ready(test.streams);
+  vi.useFakeTimers();
+  try {
+    for (let recovered = 0; recovered < 7; recovered++) {
+      const live = test.streams.at(-1)!;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+        live.controller.enqueue(new TextEncoder().encode(": keepalive\n\n"));
+        await vi.advanceTimersByTimeAsync(0);
+        live.closed = true;
+        live.controller.close();
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(test.streams.at(-1)).not.toBe(live);
+    }
+    const stalled = test.streams.at(-1)!;
+    const histories = test.calls.filter(call => call.path.endsWith("/messages")).length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(46000); });
+    expect(stalled.init.signal?.aborted).toBe(true);
+    expect(test.streams.at(-1)).not.toBe(stalled);
+    expect(test.calls.filter(call => call.path.endsWith("/messages"))).toHaveLength(histories + 1);
+    expect(postCalls(test.calls)).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it("falls back to a canonical page when a fresh accepted request has no SSE receipt", async () => {
+  const user = userEvent.setup();
+  const ack = deferred<Response>();
+  const test = fixture({ post: () => ack.promise });
+  open();
+  await ready(test.streams);
+  await user.type(screen.getByLabelText("메시지"), "Accepted without an event");
+  await user.click(screen.getByRole("button", { name: "메시지 전송" }));
+  const accepted = turn({ request_id: String(postCalls(test.calls)[0].body?.request_id) }, "Accepted without an event");
+  test.state.page = { thread_id: thread.id, cursor: 1, turns: [accepted], next_before: null };
+  const live = test.streams.at(-1)!;
+  vi.useFakeTimers();
+  try {
+    await act(async () => { ack.resolve(response(accepted, 201)); await vi.advanceTimersByTimeAsync(1000); });
+    expect(live.init.signal?.aborted).toBe(true);
+    expect(test.streams.at(-1)?.path).toContain("after=1");
+    expect(screen.getAllByText("Accepted without an event")).toHaveLength(1);
+    expect(postCalls(test.calls)).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("logout fences a pending streamed receipt before its delayed GET fallback", async () => {
+  const user = userEvent.setup();
+  const ack = deferred<Response>();
+  const test = fixture({ post: () => ack.promise });
+  open();
+  await ready(test.streams);
+  await user.type(screen.getByLabelText("메시지"), "Do not restore this account after logout");
+  await user.click(screen.getByRole("button", { name: "메시지 전송" }));
+  const accepted = turn({ request_id: String(postCalls(test.calls)[0].body?.request_id) }, "Do not restore this account after logout");
+  await act(async () => { ack.resolve(response(accepted, 201)); });
+  const histories = test.calls.filter(call => call.path.endsWith("/messages") && call.method === "GET").length;
+  await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+  await screen.findByRole("button", { name: "Sign in" });
+  vi.useFakeTimers();
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(test.calls.filter(call => call.path.endsWith("/messages") && call.method === "GET")).toHaveLength(histories);
+    expect(screen.queryByText("Do not restore this account after logout")).not.toBeInTheDocument();
+  } finally { vi.useRealTimers(); }
+});
+
+
+it("a timed-out canonical snapshot leaves loading and permits explicit GET-only recovery", async () => {
+  const held = deferred<Response>();
+  let hold = true;
+  const test = fixture({ history: () => hold ? held.promise : undefined });
+  vi.useFakeTimers();
+  try {
+    open();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText("대화 기록을 불러오는 중…")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(screen.getByText("대화 기록을 불러오지 못했습니다. 새로고침해 주세요.")).toBeInTheDocument();
+    expect(screen.queryByText("대화 기록을 불러오는 중…")).not.toBeInTheDocument();
+    hold = false;
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "기록 새로고침" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(test.streams.some(stream => !stream.closed)).toBe(true);
+    expect(screen.queryByText("대화 기록을 불러오지 못했습니다. 새로고침해 주세요.")).not.toBeInTheDocument();
+    await act(async () => {
+      held.resolve(response({ thread_id: thread.id, cursor: 1, turns: [turn({}, "Abandoned snapshot must stay hidden")], next_before: null }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.queryByText("Abandoned snapshot must stay hidden")).not.toBeInTheDocument();
+    expect(postCalls(test.calls)).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
 });

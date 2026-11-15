@@ -11,6 +11,7 @@ const requestId = "00000000-0000-4000-8000-000000000001", attachment = "00000000
 const choice = { provider_id: "p", provider_revision: 1, provider_name: "fixture", kind: "compatible" as const, model: "fixture", effort: null, function_tools: true, verified_at: 1 };
 const json = (v: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: unknown) => void; const promise = new Promise<T>((r, j) => { resolve = r; reject = j; }); return { resolve, reject, promise }; }
+// Distinct HTTP requests need distinct bodies, including overlapping StrictMode GETs.
 function setup() {
     let onSystem: (() => Promise<Response>) | null = null;
     let session: SessionView | null = alice, threads = [t1, t2], turns: ChatTurn[] = [], onThreads: (() => Promise<Response>) | null = null, onSession: (() => Promise<Response>) | null = null, onPost: ((body: Record<string, unknown>) => Promise<Response>) | null = null, logout: Promise<Response> | null = null;
@@ -49,7 +50,7 @@ function setup() {
         }
         return json({}, 204);
     }));
-    return { calls, onSystem: (handler: (() => Promise<Response>) | null) => { onSystem = handler; }, onSession: (handler: (() => Promise<Response>) | null) => { onSession = handler; }, setSession: (s: SessionView | null) => { session = s; }, setThreads: (v: typeof threads) => { threads = v; }, setTurns: (v: ChatTurn[]) => { turns = v; }, holdThreads: (p: Promise<Response>) => { onThreads = () => p; }, holdSession: (p: Promise<Response>) => { onSession = () => p; }, holdPost: (p: Promise<Response>) => { onPost = () => p; }, failLogout: () => { logout = Promise.reject(new TypeError("lost logout")); logout.catch(() => { }); } };
+    return { calls, onSystem: (handler: (() => Promise<Response>) | null) => { onSystem = handler; }, onSession: (handler: (() => Promise<Response>) | null) => { onSession = handler; }, setSession: (s: SessionView | null) => { session = s; }, setThreads: (v: typeof threads) => { threads = v; }, setTurns: (v: ChatTurn[]) => { turns = v; }, holdThreads: (p: Promise<Response>) => { onThreads = () => p.then(response => response.clone()); }, holdSession: (p: Promise<Response>) => { onSession = () => p.then(response => response.clone()); }, holdPost: (p: Promise<Response>) => { onPost = () => p; }, failLogout: () => { logout = Promise.reject(new TypeError("lost logout")); logout.catch(() => { }); } };
 }
 function seed() { const lease = new ChatDraftRecovery().confirm(alice)!; lease.save({ drafts: { [t1.id]: "first draft", [t2.id]: "selected next draft" }, pending: {} }, t2.id, [t1.id, t2.id]); }
 const savedPending = { request_id: requestId, text: "saved uncertain request", attachments: [{ id: attachment, revision: 4 }], artifact_target: { id: target, revision: 7 }, schedule_context: { timezone: "America/New_York", target: null }, status: "sending" as const };

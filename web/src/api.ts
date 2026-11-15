@@ -145,7 +145,41 @@ export class RequestScope {
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) controller.abort();
     this.controllers.add(controller);
-    try {
+    // Read-only recovery must not hang behind a half-open snapshot GET. The
+    // single deadline covers headers and the complete JSON body; writes retain
+    // their existing uncertain-outcome/explicit-reconciliation semantics.
+    const readOnly = method.toUpperCase() === "GET";
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const cancelReader = () => { void reader?.cancel().catch(() => {}); };
+    if (readOnly) controller.signal.addEventListener("abort", cancelReader);
+    const readJson = async (response: Response) => {
+      if (!readOnly) return response.json();
+      if (!response.body) return JSON.parse("");
+      reader = response.body.getReader();
+      try {
+        const decoder = new TextDecoder();
+        const pieces: string[] = [];
+        while (true) {
+          const chunk = await reader.read();
+          if (!this.active || controller.signal.aborted)
+            throw new DOMException("Closed account lifetime", "AbortError");
+          if (chunk.done) break;
+          pieces.push(decoder.decode(chunk.value, { stream: true }));
+        }
+        pieces.push(decoder.decode());
+        return JSON.parse(pieces.join(""));
+      } finally {
+        reader.releaseLock();
+        reader = undefined;
+      }
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let abortWait: (() => void) | undefined;
+    let timedOut = false;
+    const timeout = () => new ApiFailure(504, "request_timed_out");
+    const operation = async () => {
+      if (!this.active || controller.signal.aborted)
+        throw new DOMException("Closed account lifetime", "AbortError");
       const response = await fetch(`/api/v1${path}`, {
         method,
         credentials: "same-origin",
@@ -163,10 +197,12 @@ export class RequestScope {
               body: JSON.stringify(body),
             }),
       });
-      if (!this.active || controller.signal.aborted)
+      if (!this.active || controller.signal.aborted) {
+        void response.body?.cancel().catch(() => {});
         throw new DOMException("Closed account lifetime", "AbortError");
+      }
       if (!response.ok) {
-        const value = await response.json().catch(() => ({}));
+        const value = await readJson(response).catch(() => ({}));
         if (!this.active || controller.signal.aborted)
           throw new DOMException("Closed account lifetime", "AbortError");
         throw new ApiFailure(
@@ -175,15 +211,33 @@ export class RequestScope {
         );
       }
       const result =
-        response.status === 204 ? undefined : await response.json();
+        response.status === 204 ? undefined : await readJson(response);
       if (!this.active || controller.signal.aborted)
         throw new DOMException("Closed account lifetime", "AbortError");
       return result as T;
+    };
+    try {
+      if (!readOnly) return await operation();
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(timeout());
+          controller.abort();
+        }, 30000);
+        abortWait = () => reject(new DOMException("Closed account lifetime", "AbortError"));
+        controller.signal.addEventListener("abort", abortWait, { once: true });
+        if (controller.signal.aborted) abortWait();
+      });
+      return await Promise.race([operation(), deadline]);
     } catch (error) {
-      if (!this.active || controller.signal.aborted)
+      if (!this.active || (controller.signal.aborted && !timedOut))
         throw new DOMException("Closed account lifetime", "AbortError");
+      if (timedOut) throw timeout();
       throw error;
     } finally {
+      clearTimeout(timer);
+      if (abortWait) controller.signal.removeEventListener("abort", abortWait);
+      if (readOnly) controller.signal.removeEventListener("abort", cancelReader);
       this.controllers.delete(controller);
       signal?.removeEventListener("abort", abort);
     }
@@ -194,6 +248,7 @@ export class RequestScope {
     receive: (frame: StreamFrame) => void,
     signal?: AbortSignal,
     opened?: () => void,
+    heartbeat?: () => void,
   ): Promise<void> {
     if (!this.active)
       throw new DOMException("Closed account lifetime", "AbortError");
@@ -207,13 +262,33 @@ export class RequestScope {
       void reader?.cancel().catch(() => {});
     };
     controller.signal.addEventListener("abort", cancelReader);
+    // The server sends a comment heartbeat every 15s, including idle chats.
+    // Bound both connecting and reading so a half-open socket can reconnect.
+    const bounded = async <T>(operation: Promise<T>, milliseconds: number): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let abortWait: (() => void) | undefined;
+      try {
+        return await Promise.race([
+          operation,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new StreamFailure()), milliseconds);
+            abortWait = () => reject(new DOMException("Closed account lifetime", "AbortError"));
+            controller.signal.addEventListener("abort", abortWait, { once: true });
+            if (controller.signal.aborted) abortWait();
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+        if (abortWait) controller.signal.removeEventListener("abort", abortWait);
+      }
+    };
     const check = () => {
       if (!this.active || controller.signal.aborted)
         throw new DOMException("Closed account lifetime", "AbortError");
     };
     try {
       check();
-      const response = await fetch(`/api/v1${path}`, {
+      const response = await bounded(fetch(`/api/v1${path}`, {
         credentials: "same-origin",
         cache: "no-store",
         signal: controller.signal,
@@ -223,10 +298,13 @@ export class RequestScope {
             ? { "X-Moosuri-Account": this.expectedAccountId }
             : {}),
         },
-      });
+      }).then(response => {
+        if (controller.signal.aborted) void response.body?.cancel().catch(() => {});
+        return response;
+      }), 15000);
       check();
       if (!response.ok) {
-        const value = await response.json().catch(() => ({}));
+        const value = await bounded(response.json().catch(() => ({})), 15000);
         check();
         throw new ApiFailure(
           response.status,
@@ -247,13 +325,13 @@ export class RequestScope {
       opened?.();
       const decoder = new SseDecoder();
       while (true) {
-        const result = await reader.read();
+        const result = await bounded(reader.read(), 45000);
         check();
         if (result.done) {
           decoder.finish();
           return;
         }
-        for (const frame of decoder.push(result.value)) {
+        for (const frame of decoder.push(result.value, heartbeat)) {
           check();
           receive(frame);
         }

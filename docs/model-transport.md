@@ -45,8 +45,12 @@ schemes, link-local/unspecified/multicast destinations and known cloud metadata
 addresses are rejected. IPv4-mapped IPv6 is normalized before policy checks.
 
 Each invocation resolves the host once, validates every answer and pins that
-address set in its HTTP client. Redirects, ambient proxies and transport retries
-are disabled. TLS verification remains enabled. OpenRouter requires an explicit
+address set in its HTTP client. Within one configured ModelClient lifetime, a
+validated unchanged origin/address set may reuse one idle HTTP connection for up
+to 30 seconds. Every invocation still resolves and validates all current answers
+before cache lookup. Changed address sets/origin or transport limits retire the
+old pool. No process-global pool, credentials or account state is shared. Redirects,
+ambient proxies and transport retries remain disabled. TLS verification remains enabled. OpenRouter requires an explicit
 provider/endpoint list, `allow_fallbacks:false`, `require_parameters:true` and
 `data_collection:deny`; zero-data-retention may also be required. These parameters
 request a route policy; actual provider eligibility/routing still needs live
@@ -98,3 +102,13 @@ are recorded in [status](status.md).
 
 Checked 2026-11-12. Primary documentation and synthetic fixtures do not establish
 an individual account's model access or a real provider's current availability.
+
+The connection-reuse regression checks actual accepted TCP peers across completed
+tool rounds and verifies separate clients/changed limits use fresh connections.
+Denied or changed resolver answer sets cannot use an old authorized pool. Existing
+clean-EOF, cancellation, partial-response and no-retry checks still apply. This
+removes repeated handshakes where a ModelClient is retained across calls; it does
+not establish a live-provider latency percentage or reuse clients that the caller
+reconstructs for refreshed personal authorization.
+The integrated checks and browser behavior are recorded in the
+[response pipeline review](reviews/2026-11-15-response-pipeline.md).

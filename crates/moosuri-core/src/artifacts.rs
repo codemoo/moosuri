@@ -135,11 +135,26 @@ pub struct ArtifactSummary {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct ArtifactVersion {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<ArtifactExternalEvidence>>", optional)]
+    pub external_evidence: Vec<ArtifactExternalEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub reminders: Option<Vec<FollowupReminder>>,
     pub artifact: ArtifactSummary,
     pub draft: Option<ArtifactDraft>,
+}
+/// Store-derived exact external tool receipt identity. No credential or copied body.
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct ArtifactExternalEvidence {
+    pub kind: String,
+    pub run_id: String,
+    #[ts(type = "number")]
+    pub step: i64,
+    pub call_id: String,
+    pub request: String,
+    pub request_sha256: String,
+    pub result_sha256: String,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct FollowupReminder {
@@ -183,6 +198,8 @@ pub struct ArtifactTarget {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactRunProfile {
+    #[serde(default)]
+    pub external_reports: bool,
     pub schema_version: u32,
     pub selected: Option<ArtifactTarget>,
     pub planned: bool,

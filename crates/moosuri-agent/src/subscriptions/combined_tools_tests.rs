@@ -64,6 +64,7 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
     assert_eq!(definitions.len(), 17);
     definitions.extend(crate::artifact_tools::definitions(Some(
         &ArtifactRunProfile {
+            external_reports: false,
             schema_version: 1,
             selected: None,
             planned: true,

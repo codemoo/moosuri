@@ -6,7 +6,7 @@ pub(crate) fn profile(
     run: &str,
 ) -> Result<Option<ArtifactRunProfile>> {
     let row:Option<(i64,Option<String>,Option<i64>,bool)>=conn.query_row("SELECT schema_version,selected_id,selected_revision,planned FROM personal_artifact_run_profiles WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
-    row.map(|(schema,id,revision,planned)|{if schema!=1{return Err(StoreError::Conflict)}let selected=id.map(|id|revision.map(|revision|ArtifactTarget{id,revision}).ok_or(StoreError::Corrupt)).transpose()?;let write=conn.query_row("SELECT EXISTS(SELECT 1 FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2)",params![tenant,run],|r|r.get(0))?;let kind:Option<String>=conn.query_row("SELECT kind FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|r.get(0)).optional()?;let kind=kind.map(|k|match k.as_str(){"document"=>Ok(ArtifactKind::Document),"goal"=>Ok(ArtifactKind::Goal),"followup"=>Ok(ArtifactKind::Followup),_=>Err(StoreError::Corrupt)}).transpose()?;Ok(ArtifactRunProfile{schema_version:1,selected,planned,write,kind})}).transpose()
+    row.map(|(schema,id,revision,planned)|{if schema!=1{return Err(StoreError::Conflict)}let selected=id.map(|id|revision.map(|revision|ArtifactTarget{id,revision}).ok_or(StoreError::Corrupt)).transpose()?;let write=conn.query_row("SELECT EXISTS(SELECT 1 FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2)",params![tenant,run],|r|r.get(0))?;let kind:Option<String>=conn.query_row("SELECT kind FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|r.get(0)).optional()?;let kind=kind.map(|k|match k.as_str(){"document"=>Ok(ArtifactKind::Document),"goal"=>Ok(ArtifactKind::Goal),"followup"=>Ok(ArtifactKind::Followup),_=>Err(StoreError::Corrupt)}).transpose()?;Ok(ArtifactRunProfile{external_reports:conn.query_row("SELECT EXISTS(SELECT 1 FROM artifact_external_profiles WHERE tenant_id=?1 AND run_id=?2)",params![tenant,run],|r|r.get(0))?,schema_version:1,selected,planned,write,kind})}).transpose()
 }
 fn run_refs(conn: &Connection, run: &Run, target: Option<&str>) -> Result<Vec<ArtifactDependency>> {
     let mut refs=conn.prepare("SELECT kind,object_id,revision FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2")?.query_map(params![run.tenant,run.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?)))?.map(|r|{let(k,id,revision)=r?;Ok(ArtifactDependency{kind:if k=="source"{ArtifactDependencyKind::Source}else{ArtifactDependencyKind::Memory},id,revision})}).collect::<Result<Vec<_>>>()?;
@@ -136,9 +136,23 @@ pub(crate) fn tool(
             if body.len() > 2048 || encode(payload)?.len() > 1024 {
                 return Err(StoreError::InvalidInput);
             }
-            let external:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM external_tool_dispatches d JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.run_id WHERE r.tenant_id=?1 AND r.thread_id=?3 AND r.sequence<=?4)",params![run.tenant,run.id,run.thread,run.sequence],|r|r.get(0))?;
-            if external || crate::calendar::agent::persistence_context(conn, run)? {
-                return Ok(serde_json::json!({"error":"external_provenance_unavailable"}));
+            let external = match external::current(conn, run) {
+                Ok(evidence) => evidence,
+                Err(StoreError::Forbidden) => {
+                    return Ok(serde_json::json!({"error":"external_context_unsupported"}));
+                }
+                Err(StoreError::Conflict) => {
+                    return Ok(serde_json::json!({"error":"external_evidence_unavailable"}));
+                }
+                Err(StoreError::InvalidInput) => {
+                    return Ok(serde_json::json!({"error":"external_evidence_limit"}));
+                }
+                Err(e) => return Err(e),
+            };
+            if !external.is_empty()
+                && (!profile.external_reports || payload.kind() != ArtifactKind::Document)
+            {
+                return Ok(serde_json::json!({"error":"external_document_required"}));
             }
             let plan:Option<StoredPlan>=conn.query_row("SELECT action,kind,target_id,target_revision,generation,request_id FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2 AND schema_version=1",params![run.tenant,run.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
             let Some((action, k, target, revision, generation, request_id)) = plan else {
@@ -249,10 +263,17 @@ pub(crate) fn tool(
             let r = write(conn, &run.tenant, input, refs, Some(&run.id))?;
             conn.execute("UPDATE personal_artifact_command_plans SET used=1 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id])?;
             // Future context containing the receipt remains dependent on the saved object.
-            conn.execute(
-                "INSERT OR IGNORE INTO personal_artifact_run_dependencies VALUES(?1,?2,?3,?4)",
-                params![run.tenant, run.id, r.id, r.revision],
-            )?;
+            if external::evidence(conn, &run.tenant, &r.id, r.revision)?.is_empty() {
+                conn.execute(
+                    "INSERT OR IGNORE INTO personal_artifact_run_dependencies VALUES(?1,?2,?3,?4)",
+                    params![run.tenant, run.id, r.id, r.revision],
+                )?;
+            } else {
+                // The terminal response contains only a content-free version receipt.
+                // Retire its write projection on edit/delete without revoking the
+                // independent external read receipts needed by later revisions.
+                conn.execute("UPDATE artifact_external_profiles SET artifact_id=?3,artifact_revision=?4 WHERE tenant_id=?1 AND run_id=?2", params![run.tenant,run.id,r.id,r.revision])?;
+            }
             serde_json::to_value(r).map_err(|_| StoreError::Corrupt)
         }
     })();

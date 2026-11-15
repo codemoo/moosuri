@@ -25,6 +25,7 @@ distribution remain unfinished.
 An explicit [legacy v1 encrypted-file import](docs/vault-v1-migration.md) locally
 authenticates the old export before re-encrypting selected items for the current vault.
 Account deletion clears active private data and delivers durable deletion to the separate vault.
+An explicit document request can read connected Gmail, primary Calendar or configured public web sources and save a [report with exact private provenance](docs/external-reports.md), including a supported earlier read in the same conversation. Connection/source-thread withdrawal also withdraws its derived documents.
 Every mail send needs the user's explicit approval of its final preview, including scheduled timing. Unknown sends
 have conservative read-only Sent checks and are never automatically resent.
 

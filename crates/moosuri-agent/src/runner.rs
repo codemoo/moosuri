@@ -936,11 +936,8 @@ pub(crate) async fn execute_with_calendar(
                 .as_ref()
                 .map(|reference| (&subscriptions, reference)),
         };
-        let Some(next) = mission_chat::run(&planning, context, current_text, &calendar).await
-        else {
-            return;
-        };
-        context = next;
+        // A sealed document write stage admits reads only; it never enters the
+        // separate Calendar/mission effect planner even when the request is mixed.
         let Some((next, next_profile)) =
             artifact_intent::plan(&planning, context, artifact_profile, current_text).await
         else {
@@ -950,6 +947,10 @@ pub(crate) async fn execute_with_calendar(
         if artifact_profile.as_ref().is_some_and(|p| p.write) {
             context = next;
         } else {
+            let Some(next) = mission_chat::run(&planning, next, current_text, &calendar).await
+            else {
+                return;
+            };
             let Some(next) = memory::run(&planning, next, current_text).await else {
                 return;
             };
@@ -959,7 +960,12 @@ pub(crate) async fn execute_with_calendar(
     request.messages[0]
         .text
         .push_str(&crate::artifact_tools::system(artifact_profile.as_ref()));
-    if !media_context && !artifact_profile.as_ref().is_some_and(|p| p.write) {
+    if !media_context
+        && (!artifact_profile.as_ref().is_some_and(|p| p.write)
+            || artifact_profile.as_ref().is_some_and(|p| {
+                p.external_reports && p.kind == Some(moosuri_core::ArtifactKind::Document)
+            }))
+    {
         request.messages[0]
             .text
             .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
@@ -967,10 +973,17 @@ pub(crate) async fn execute_with_calendar(
     if personal && model.function_tools {
         request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. One explicit current-user solo-event Calendar command uses its separate typed action and actual receipt. Background work requires an original explicit owner mission delegation and its durable grant; foreground tools alone grant none. Media attachments remain unavailable.");
     }
-    // A write grant supports saved-evidence provenance only. Keep this common
-    // across personal/shared providers; undeclared calls fail in the decoder.
     let artifact_write = artifact_profile.as_ref().is_some_and(|p| p.write);
+    let external_report = artifact_profile.as_ref().is_some_and(|p| {
+        p.write && p.external_reports && p.kind == Some(moosuri_core::ArtifactKind::Document)
+    });
     let mut answer_profile = tool_profile.clone();
+    if external_report {
+        request.messages[0].text = request.messages[0].text.replace(
+            "Calendar-derived memory/artifact persistence is unavailable.",
+            "Calendar-derived document persistence requires this sealed current-user document grant and actual read receipts. Memory writes remain unavailable.",
+        );
+    }
     if artifact_write {
         let recall_instructions = crate::conversation_tools::system(tool_profile.as_ref());
         if !recall_instructions.is_empty() {
@@ -979,17 +992,39 @@ pub(crate) async fn execute_with_calendar(
         if let Some(profile) = &mut answer_profile {
             profile.credential_github = false;
             profile.credential_google = false;
+            profile.credential_google_preview = false;
             profile.conversation_recall = false;
-            profile.mail_connections.clear();
-            profile.web = None;
+            if external_report {
+                if let Some(web) = &mut profile.web {
+                    web.browser_pin = None;
+                }
+            } else {
+                profile.mail_connections.clear();
+                profile.web = None;
+            }
         }
-        request.messages[0].text.push_str(" This artifact-write stage exposes saved source/memory/skill/calculation/artifact tools only. Live mail/web/browser/Calendar reads are unavailable in this stage; use existing saved evidence. Prior external provenance can still prevent a save.");
+        request.messages[0].text.push_str(if external_report {
+            " This CURRENT-user document grant also admits configured public HTTP and the frozen current-owner Gmail/primary Calendar READ tools. Read relevant evidence, preserve partial coverage and cite actual source identities. Save one grounded document through artifact_write. No mail draft/send, Calendar effects, browser, native credential/preview or conversation recall is admitted. Exact external receipts are saved as provenance; connection/evidence withdrawal also withdraws the document. Prior supported completed reads selected into this conversation may ground the current explicit save; unrelated private previews cannot."
+        } else {
+            " This artifact-write stage uses saved source/memory/skill/calculation/artifact evidence only. External reads are unavailable."
+        });
     }
     let mut definitions = knowledge_tools::definitions(answer_profile.as_ref());
-    if !media_context && !artifact_write {
-        definitions.extend(crate::calendar_tools::definitions(
-            calendar_profile.as_ref(),
-        ));
+    if artifact_write {
+        definitions.retain(|d| {
+            !d.name.starts_with("browser_")
+                && !matches!(
+                    d.name.as_str(),
+                    "mail_prepare_draft" | "parcel_track" | "learned_skill_execute"
+                )
+        });
+    }
+    if !media_context && (!artifact_write || external_report) {
+        definitions.extend(
+            crate::calendar_tools::definitions(calendar_profile.as_ref())
+                .into_iter()
+                .filter(|d| !artifact_write || d.name != "calendar_action_status"),
+        );
     }
     definitions.extend(crate::artifact_tools::definitions(
         artifact_profile.as_ref(),
@@ -1259,9 +1294,9 @@ pub(crate) async fn execute_with_calendar(
                     }
                 };
             if artifact_write
-                && matches!(&value,KnowledgeToolResult::External(v) if v["error"]=="external_provenance_unavailable")
+                && matches!(&value,KnowledgeToolResult::External(v) if matches!(v["error"].as_str(),Some("external_provenance_unavailable" | "external_context_unsupported" | "external_evidence_unavailable" | "external_document_required" | "external_evidence_limit")))
             {
-                let _=store.append_agent_output(&step,vec![OutputPatch::Append{item:"artifact-external-context".into(),text:"이 대화의 메일·웹·브라우저 근거는 아직 기록의 철회 연결로 보관할 수 없습니다. 근거를 자료에 저장하거나 새 대화에서 작성해 주세요. 기록을 변경하지 않았습니다.".into(),phase:Some(MessagePhase::FinalAnswer),refusal:false}]).await;
+                let _=store.append_agent_output(&step,vec![OutputPatch::Append{item:"artifact-external-context".into(),text:"이 외부 근거로 기록을 저장하지 않았습니다. 완료된 공개 HTTP·연결 Gmail·기본 Calendar 읽기만 문서에 보관할 수 있습니다. 브라우저·미리보기·대화 회상이나 철회·불명 상태의 근거는 제외됩니다. 외부 읽기 근거는 문서당 최대 64개입니다. 필요한 근거를 현재 연결에서 다시 읽어 새 문서 요청으로 이어 주세요.".into(),phase:Some(MessagePhase::FinalAnswer),refusal:false}]).await;
                 finish(
                     &store,
                     &lease,

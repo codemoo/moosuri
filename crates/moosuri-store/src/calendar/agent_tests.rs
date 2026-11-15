@@ -510,7 +510,7 @@ async fn calendar_schema30_late_migration_failure_rolls_back_and_retries() {
         .unwrap();
     drop(s);
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;CREATE TABLE calendar_agent_action_links(conflict INTEGER);PRAGMA user_version=29;").unwrap();
+    c.execute_batch("DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;CREATE TABLE calendar_agent_action_links(conflict INTEGER);PRAGMA user_version=29;").unwrap();
     drop(c);
     assert!(Store::open(dir.path()).is_err());
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
@@ -1061,4 +1061,107 @@ async fn request_continuation_reopen_freezes_operation_and_fields_and_rejects_an
             .duration_minutes,
         Some(45)
     );
+}
+
+#[tokio::test]
+async fn external_report_rejects_selected_completed_calendar_command_context() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, s, u, c) = setup().await;
+    let (thread, command) = source(&s, &u, TEXT, None).await;
+    commit(&s, &command, &decision(TEXT)).await;
+    let binding = s.calendar_binding(&u, c.id.clone(), app()).await.unwrap();
+    let CalendarAdmission::Dispatch(dispatch) = s
+        .admit_calendar_agent_change(&command, &binding, primary(), None)
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    s.settle_calendar_change(
+        &dispatch,
+        "applied".into(),
+        None,
+        "synthetic-confirmed-calendar-command".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(s.finish_calendar_chat(&command, None).await.unwrap());
+    // The actual completed command receipt is selected into the new model context;
+    // the current document request does not authorize persisting Calendar effects.
+    let text = "방금 결과를 보고서 문서로 저장해 줘";
+    s.submit_turn(&u, thread.clone(), Uuid::new_v4().to_string(), text.into())
+        .await
+        .unwrap();
+    let writer = s.claim_agent_run().await.unwrap().unwrap();
+    let plan = s
+        .begin_agent_step(&writer.lease, writer.context.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &plan,
+        PrivateCheckpoint {
+            bytes: br#"{"v":1,"synthetic":"artifact-plan"}"#.to_vec(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    s.prepare_artifact_intent(
+        &plan,
+        Some(ArtifactIntent {
+            action: "create".into(),
+            kind: ArtifactKind::Document,
+            intent_quote: text.into(),
+            target_quote: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let ctx = s.agent_context(&writer.lease).await.unwrap();
+    let write = s
+        .begin_agent_step(&writer.lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &write,
+        PrivateCheckpoint {
+            bytes: br#"{"v":1,"synthetic":"artifact-save"}"#.to_vec(),
+        },
+        vec![PendingKnowledgeCall {
+            call_id: "report".into(),
+            input: KnowledgeToolInput::Artifact {
+                request: ArtifactToolRequest::Write {
+                    title: "Must not save Calendar command".into(),
+                    body: "Untracked Calendar effect context".into(),
+                    payload: ArtifactPayload::Document,
+                    anchor: None,
+                },
+            },
+        }],
+    )
+    .await
+    .unwrap();
+    let result = s
+        .execute_knowledge_tool(&write, "report".into())
+        .await
+        .unwrap();
+    assert!(
+        matches!(result,KnowledgeToolResult::External(v) if v["error"]=="external_context_unsupported")
+    );
+    assert!(s.artifacts(&u, None, None).await.unwrap().items.is_empty());
+    let tenant = u.tenant.0.clone();
+    let run = writer.lease.run_id().to_owned();
+    let original = command.run_id().to_owned();
+    s.call(move|db|{
+        assert!(db.conn.query_row("SELECT EXISTS(SELECT 1 FROM artifact_external_context WHERE tenant_id=?1 AND run_id=?2 AND origin_run=?3)",params![tenant,run,original],|r|r.get::<_,bool>(0))?);
+        // Missing command markers must not turn inherited connection dependencies
+        // into read provenance: no successful supported external receipt covers it.
+        db.conn.execute("DELETE FROM calendar_command_plans WHERE tenant_id=?1 AND run_id=?2",params![tenant,original])?;
+        db.conn.execute("DELETE FROM calendar_agent_action_links WHERE tenant_id=?1 AND run_id=?2",params![tenant,original])?;
+        db.conn.execute("DELETE FROM calendar_agent_action_origins WHERE tenant_id=?1 AND run_id=?2",params![tenant,original])?;
+        let run=crate::chat::load_run(&db.conn,&tenant,&run)?;
+        assert!(matches!(crate::artifacts::external::current(&db.conn,&run),Err(StoreError::Forbidden)));
+        Ok(())
+    }).await.unwrap();
 }

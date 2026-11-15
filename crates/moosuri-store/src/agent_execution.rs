@@ -311,6 +311,7 @@ pub(super) fn inherit_dependencies(
     run: &str,
     prior: &str,
 ) -> Result<()> {
+    crate::artifacts::external::inherit(conn, tenant, run, prior)?;
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM learned_skill_uses WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM conversation_recall_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM media_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
         params![tenant, prior],
@@ -362,7 +363,11 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
         ids = crate::conversation_recall::expand(
             conn,
             tenant,
-            crate::learned_skills::invalidate_runs(conn, tenant, ids)?,
+            crate::artifacts::external::invalidate_runs(
+                conn,
+                tenant,
+                crate::learned_skills::invalidate_runs(conn, tenant, ids)?,
+            )?,
         )?;
         if ids.iter().cloned().collect::<BTreeSet<_>>() == before {
             break;
@@ -521,6 +526,11 @@ pub(crate) fn read_tool(
 ) -> Result<KnowledgeToolResult> {
     if crate::missions::is_mission(conn, &run.tenant, &run.id)?
         && !crate::missions::tool_allowed(input)
+    {
+        return Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable));
+    }
+    if let KnowledgeToolInput::External { request } = input
+        && !crate::artifacts::external::allowed(conn, run, request)?
     {
         return Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable));
     }

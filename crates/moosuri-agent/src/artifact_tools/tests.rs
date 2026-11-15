@@ -8,7 +8,7 @@ use axum::{
     routing::post,
 };
 use moosuri_core::*;
-use moosuri_store::{CredentialChange, ProviderChange, UserContext};
+use moosuri_store::{CredentialChange, KnowledgeToolResult, ProviderChange, UserContext};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
@@ -74,6 +74,31 @@ async fn response(State(s): State<Arc<Script>>, axum::Json(input): axum::Json<Va
             "artifact_intent",
             json!({"decision":"command","action":if edit{"edit"}else{"create"},"kind":"document","intent_quote":text,"target_quote":null}),
         )]
+    } else if mode == 4 {
+        let names = input["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["function"]["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"web_read") && names.contains(&"artifact_write"));
+        assert!(!names.iter().any(|n| n.starts_with("browser_")
+            || n.starts_with("google_inbox")
+            || *n == "mail_prepare_draft"
+            || n.starts_with("conversation_")));
+        if prior.iter().any(|v| v["value"]["web_page"].is_object()) {
+            vec![call(
+                0,
+                "artifact_write",
+                json!({"title":"실제 외부 근거 보고서","body":"Synthetic external observation · https://example.test/report","payload":{"kind":"document"},"anchor":null}),
+            )]
+        } else {
+            vec![call(
+                0,
+                "web_read",
+                json!({"url":"https://example.test/report"}),
+            )]
+        }
     } else if let Some(t) = target {
         if !prior
             .iter()
@@ -164,8 +189,19 @@ async fn response(State(s): State<Arc<Script>>, axum::Json(input): axum::Json<Va
         .unwrap()
 }
 async fn setup(base: &str) -> (tempfile::TempDir, Store, UserContext, String) {
+    setup_profile(base, false).await
+}
+async fn setup_profile(base: &str, read: bool) -> (tempfile::TempDir, Store, UserContext, String) {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).unwrap();
+    let store = Store::open_with_web(
+        dir.path(),
+        WebToolProfile {
+            read,
+            search: false,
+            browser_pin: None,
+        },
+    )
+    .unwrap();
     let password = "Synthetic-artifact-password-2026";
     store
         .bootstrap(
@@ -467,6 +503,7 @@ fn admitted_schemas_encode_in_all_existing_dialects_and_legacy_gets_no_vocabular
         ArtifactKind::Followup,
     ] {
         let p = ArtifactRunProfile {
+            external_reports: false,
             schema_version: 1,
             selected: None,
             planned: true,
@@ -509,4 +546,60 @@ fn admitted_schemas_encode_in_all_existing_dialects_and_legacy_gets_no_vocabular
             )
         }
     }
+}
+
+#[tokio::test]
+async fn runtime_external_read_to_durable_report_uses_actual_receipt_and_terminal_confirmation() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let server = server().await;
+    server.state.mode.store(4, Ordering::SeqCst);
+    let (dir, store, u, t) = setup_profile(&server.base, true).await;
+    let web = crate::web::Service::fixture(Arc::new(|request, _| {
+        Box::pin(async move {
+            assert!(
+                matches!(request,WebToolRequest::Read{url} if url=="https://example.test/report")
+            );
+            KnowledgeToolResult::External(
+                json!({"web_page":{"url":"https://example.test/report","title":"Synthetic page","text":"Synthetic external observation","retrieved_at_unix_ms":1,"truncated":false}}),
+            )
+        })
+    }));
+    let runtime = Runtime::start_with_web_service(store.clone(), None, web);
+    store
+        .submit_turn(
+            &u,
+            t.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "공개 자료를 읽고 보고서 문서로 저장해 줘".into(),
+        )
+        .await
+        .unwrap();
+    runtime.wake();
+    let done = wait(&store, &u, &t).await;
+    assert_eq!(done.run.state, RunState::Completed, "{:?}", done.run.error);
+    let receipt = &done.run.artifact_receipts.as_ref().unwrap()[0];
+    let v = store.artifact(&u, receipt.id.clone(), None).await.unwrap();
+    assert!(
+        v.draft
+            .unwrap()
+            .body
+            .contains("Synthetic external observation")
+    );
+    assert_eq!(v.external_evidence.len(), 1);
+    assert!(done.assistant.iter().any(|v| v.text.contains(&receipt.url)));
+    let id = receipt.id.clone();
+    runtime.shutdown().await;
+    drop(runtime);
+    drop(store);
+    let store = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        store
+            .artifact(&u, id, None)
+            .await
+            .unwrap()
+            .external_evidence
+            .len(),
+        1
+    );
+    assert!(store.claim_agent_run().await.unwrap().is_none());
 }

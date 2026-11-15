@@ -413,7 +413,7 @@ async fn cyclic_derivation_rejection_and_late_sql_failure_leave_no_partial_mutat
     );
 }
 #[tokio::test]
-async fn sealed_write_refuses_external_context_until_its_withdrawal_edges_are_supported() {
+async fn sealed_write_refuses_stale_unreceipted_external_context() {
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
@@ -539,7 +539,7 @@ async fn sealed_write_refuses_external_context_until_its_withdrawal_edges_are_su
         .await
         .unwrap();
     assert!(
-        matches!(result,KnowledgeToolResult::External(v) if v["error"]=="external_provenance_unavailable")
+        matches!(result,KnowledgeToolResult::External(v) if v["error"]=="external_evidence_unavailable")
     );
     assert!(
         store

@@ -46,10 +46,11 @@ slot은 기존4096바이트**를 초과할 수 없다. 큰 인용/escape가 enve
 이 v1에서 거절한다. 저장 후 추가 모델을 호출하지 않고 실제 DB receipt로 고정 확인문과
 버전 링크를 반환한다. 저장 모델의 미확정 preview는 사용자 확인문으로 전달하지 않는다.
 
-v1 채팅 저장은 source/memory/artifact provenance만 지원한다. 메일·웹·브라우저 직접
-읽기 이력이 있는 대화의 저장은 외부 근거 철회 연결을 구현하기 전까지 명시적으로 거절한다.
-해당 write run에서는 외부 읽기 도구도 노출하지 않는다. 필요한 내용을 먼저 자료로
-수집하거나 새 대화에서 현재 요청과 저장된 자료로 작성한다. 이를 외부 근거 지원으로 표시하지 않는다.
+채팅의 문서 저장은 source/memory/artifact와 완료된 공개 HTTP·자기 Gmail·기본 Calendar
+읽기의 실제 근거를 연결한다. 현재 요청의 읽기와 같은 대화에서 선택된 이전 읽기를
+문서 하나로 저장·수정할 수 있다. 브라우저·native 미리보기·Calendar 변경 같은 지원하지
+않는 외부 문맥은 저장하지 않는다. 목표/요청·약속의 직접 외부 읽기 저장 권한을 넓히지
+않는다. [외부 자료 보고서](external-reports.md)의 지원 범위와 철회 동작을 따른다.
 
 ## 수정·철회·복구
 
@@ -71,8 +72,10 @@ invalidation 경로를 통해 dependent title/body/payload/history와 run output
 
 삭제는 기존 successor destructive-intent journal에 opaque DeleteArtifact intent로 추가한다.
 append/fsync가 adoption이며 DB effect/receipt/watermark가 함께 commit한다. source/memory
-정상 경로와 replay가 같은 hook을 탄다. conversation 삭제는 saved artifact를 삭제하거나
-재생성하지 않는다. 기존 backup은 authoritative SQLite의 artifact tables도 포함한다.
+정상 경로와 replay가 같은 hook을 탄다. 독립 작성한 saved artifact는 대화 삭제로
+삭제되거나 재생성되지 않는다. 외부 읽기에 근거한 문서는 원래 대화 삭제 시 함께 철회한다.
+기존 backup은 authoritative SQLite의 artifact tables도 포함하며, 복원은 외부 근거 문서를
+보수적으로 철회한다.
 
 ## 저장 형식과 검증
 

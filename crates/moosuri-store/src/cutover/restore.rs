@@ -521,6 +521,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0053_browser_recovery.sql"
         ))?;
     }
+    if captured < 54 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0054_external_report_documents.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -623,6 +628,7 @@ fn quarantine(
         "DELETE FROM personal_artifact_command_plans WHERE used=0",
         [],
     )?;
+    crate::artifacts::external::quarantine_restore(&tx)?;
     crate::calendar::agent::quarantine_restore(&tx)?;
     tx.execute("DELETE FROM request_continuations", [])?;
     crate::schedules::quarantine_for_restore(&tx)?;

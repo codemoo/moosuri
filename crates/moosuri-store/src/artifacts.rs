@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::BTreeSet;
 pub(crate) mod agent;
 mod exports;
+pub(crate) mod external;
+#[cfg(test)]
+mod external_tests;
 #[cfg(test)]
 mod tests;
 fn encode<T: Serialize>(v: &T) -> Result<String> {
@@ -113,6 +116,11 @@ pub(crate) fn version(
         None
     };
     Ok(ArtifactVersion {
+        external_evidence: if state == ArtifactStatus::Active {
+            external::evidence(conn, tenant, object, revision)?
+        } else {
+            vec![]
+        },
         reminders: if k == "followup" && revision == head && state == ArtifactStatus::Active {
             Some(crate::schedules::followups::receipts(
                 conn, tenant, object, revision,
@@ -351,6 +359,7 @@ fn write_body(
         "INSERT INTO personal_artifact_versions VALUES(?1,?2,?3,'active',?4,?5)",
         params![tenant, object, revision, encode(&input.draft)?, time],
     )?;
+    external::save(conn, tenant, &object, revision, &refs, origin_run)?;
     for d in refs {
         conn.execute(
             "INSERT INTO personal_artifact_dependencies VALUES(?1,?2,?3,?4,?5,?6)",
@@ -397,6 +406,7 @@ fn invalidate_inner(
             return Err(StoreError::Corrupt);
         }
         if k == "artifact" {
+            external::retire_writers(conn, tenant, &object, revision, except)?;
             crate::schedules::followups::retire(conn, tenant, &object, revision, now()?)?;
             let runs=conn.prepare("SELECT DISTINCT run_id FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND artifact_id=?2 AND (?3 IS NULL OR revision=?3)")?.query_map(params![tenant,object,revision],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
             agent_execution::purge_runs(
@@ -410,6 +420,7 @@ fn invalidate_inner(
         let dependents=conn.prepare("SELECT DISTINCT d.artifact_id,d.artifact_revision FROM personal_artifact_dependencies d JOIN personal_artifact_versions v ON v.tenant_id=d.tenant_id AND v.artifact_id=d.artifact_id AND v.revision=d.artifact_revision WHERE d.tenant_id=?1 AND d.kind=?2 AND d.object_id=?3 AND (?4 IS NULL OR d.revision=?4) AND v.status='active'")?.query_map(params![tenant,k,object,revision],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
         for (object, revision) in dependents {
             conn.execute("UPDATE personal_artifact_versions SET status='withdrawn',draft=NULL WHERE tenant_id=?1 AND artifact_id=?2 AND revision=?3",params![tenant,object,revision])?;
+            external::redact(conn, tenant, &object, Some(revision))?;
             conn.execute("UPDATE personal_artifacts SET status='withdrawn',updated_at=?4 WHERE tenant_id=?1 AND id=?2 AND revision=?3",params![tenant,object,revision,now()?])?;
             pending.push(("artifact".into(), object, Some(revision)));
         }
@@ -434,6 +445,7 @@ pub(crate) fn apply_delete(
     }
     invalidate_dependency(conn, tenant, "artifact", object, None)?;
     conn.execute("UPDATE personal_artifact_versions SET status='deleted',draft=NULL WHERE tenant_id=?1 AND artifact_id=?2",params![tenant,object])?;
+    external::redact(conn, tenant, object, None)?;
     let revision = current.artifact.revision + 1;
     conn.execute("UPDATE personal_artifacts SET revision=?3,status='deleted',updated_at=?4 WHERE tenant_id=?1 AND id=?2",params![tenant,object,revision,now()?])?;
     conn.execute(
@@ -685,9 +697,9 @@ impl Store {
         let v = self.artifact(user, object, Some(revision)).await?;
         let d = v.draft.ok_or(StoreError::NotFound)?;
         if html {
-            Ok(exports::html(&d))
+            Ok(exports::html(&d, &v.external_evidence))
         } else {
-            Ok(exports::markdown(&d))
+            Ok(exports::markdown(&d, &v.external_evidence))
         }
     }
 }

@@ -1072,6 +1072,10 @@ fn submit_turn_context_in(
     let run = load_run(tx, &user.tenant.0, &id)?;
     if run.tool_profile.is_some() {
         tx.execute(
+            "INSERT INTO artifact_external_profiles(tenant_id,run_id) VALUES(?1,?2)",
+            params![user.tenant.0, id],
+        )?;
+        tx.execute(
             "INSERT INTO personal_artifact_run_profiles VALUES(?1,?2,1,?3,?4,0)",
             params![
                 user.tenant.0,

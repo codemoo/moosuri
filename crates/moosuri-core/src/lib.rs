@@ -200,6 +200,7 @@ pub fn typescript_contract() -> String {
         ArtifactDelete::decl(),
         ArtifactSummary::decl(),
         ArtifactVersion::decl(),
+        ArtifactExternalEvidence::decl(),
         FollowupReminder::decl(),
         ArtifactReceipt::decl(),
         ArtifactPage::decl(),

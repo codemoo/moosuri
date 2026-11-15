@@ -7,6 +7,11 @@ The foreground user SHALL be able to calculate from one uniquely identified comp
 - **WHEN** a current literal query yields exactly one complete untruncated source at its current revision, an exact user-quoted prefix occurs exactly once, and fresh scalar quotes resolve uniquely without overlap
 - **THEN** the server derives the adjacent strict decimal, evaluates the explicit exact graph and records actual read and arithmetic provenance without model-supplied source values or byte offsets.
 
+#### Scenario: A digit appears inside a different amount
+- **WHEN** a scalar quote matches one complete current numeric token and also appears only as a substring of another amount
+- **THEN** only the complete token supplies the scalar, preserving the existing sign, delimiter, overlap, source and receipt checks
+- **AND** two complete matches remain ambiguous and are rejected
+
 #### Scenario: Ambiguous, stale or unsupported evidence
 - **WHEN** source identity or field is ambiguous, evidence is stale or incomplete, a quote is absent/repeated/overlapping, a receipt belongs elsewhere, a decimal is unsupported, or a numeric quote is a grouping/expression fragment
 - **THEN** no successful bound calculation or learning proof is created and the system declines or requests the missing explicit input

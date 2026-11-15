@@ -25,7 +25,7 @@ orphan reaping용 init을 사용했으며 제품의 headed 실행 flags는 바�
 운영 서버·기존 서비스·cron·실제 계정은 변경하지 않았다.
 
 통합 React credential4개, production build/typecheck를 통과했다. Linux에서 실제 Store
-시험 컴파일·Gitea policy 검사·navigation context loss와 graceful close 검사를 수행했다.
+시험 컴파일과 local_browser lifecycle7개를 통과했다(별도 opt-in 시험1개는 기본 실행에서 제외). navigation context loss와 graceful close를 포함하며, `gitea` 이름 필터는 매칭0개라 별도 policy 시험 통과로 계산하지 않는다.
 같은 원래 채팅을 완료하고 새 채팅에서 같은 session을 재사용하는 실제 경로와
 서버 SQLite/WAL·native journal의 password/TOTP canary 검사를 최종 수락 항목으로 삼았다.
 

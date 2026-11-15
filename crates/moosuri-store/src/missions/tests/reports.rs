@@ -450,6 +450,11 @@ async fn compound_report_pins_constraints_and_sum_calculation_prerequisites() {
             "Read offers, add 2.5 and 2.5 and save one private report",
             "",
         ),
+        (
+            "자료의 금액을 수량으로 나누어 비공개 보고서로 저장해 줘",
+            "",
+        ),
+        ("자료의 금액을 2로 나눠 비공개 보고서로 저장해 줘", ""),
     ] {
         let mut req = request();
         req.task = task.into();
@@ -559,6 +564,14 @@ async fn compound_report_comparison_and_citations_do_not_require_unrequested_ari
         (
             "Read offers, compare the claims and save one private report",
             "Add citations and describe the differences",
+        ),
+        (
+            "두 자료를 읽고 비공개 보고서로 저장해 줘",
+            "서로 다른 기록은 출처를 나누어 보여 주고 모르는 항목은 확인이 필요하다고 적어 줘",
+        ),
+        (
+            "두 자료를 읽고 비공개 보고서로 저장해 줘",
+            "출처별로 나누어 기록하고 누락은 표시해 줘",
         ),
     ] {
         let mut req = request();

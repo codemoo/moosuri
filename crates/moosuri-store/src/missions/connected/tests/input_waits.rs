@@ -30,7 +30,7 @@ async fn mission_input_reply_releases_capacity_preserves_work_and_one_draft_afte
     let _guard = TEST_LOCK.lock().await;
     let (_d, s, u) = crate::missions::tests::setup().await;
     let (mail, _) = connections(&s, &u, "owner").await;
-    let task = "Read Gmail and prepare an email draft";
+    let task = "Gmail용 로컬 메일 초안을 준비하는 일을 맡아 줘. 발송은 하지 마. 받는 사람 이메일은 아직 적지 않았어.";
     let m = s
         .create_mission(&u, input(MissionMode::Durable, task))
         .await
@@ -167,6 +167,10 @@ async fn mission_input_fields_cannot_replace_original_values_or_create_new_effec
     connections(&s, &u, "owner").await;
     for (task, field) in [
         ("Read Gmail", MissionInputField::MailTo),
+        (
+            "Gmail용 메일 초안을 준비하는 일을 하지 마. 발송은 하지 마.",
+            MissionInputField::MailTo,
+        ),
         (
             "Read Calendar and create primary Calendar event named Synthetic on 2027-04-12 오전9시부터10시까지",
             MissionInputField::CalendarDuration,

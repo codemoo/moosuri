@@ -44,6 +44,25 @@ fn quote(text: &str, literal: &str) -> Option<CurrentSpan> {
         end_byte: (positions[0] + literal.len()) as u32,
     })
 }
+fn scalar_quote(text: &str, literal: &str) -> Option<CurrentSpan> {
+    if literal.is_empty() {
+        return None;
+    }
+    // Count complete numeric tokens, not digits inside another amount. The
+    // same boundary/sign checks apply before choosing and before execution.
+    let mut matches = text.char_indices().filter_map(|(at, _)| {
+        if !text[at..].starts_with(literal) {
+            return None;
+        }
+        let range = CurrentSpan {
+            start_byte: at as u32,
+            end_byte: (at + literal.len()) as u32,
+        };
+        scalar(text, &range).map(|_| range)
+    });
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
+}
 fn resolve_parameters(
     text: &str,
     query: &str,
@@ -65,7 +84,7 @@ fn resolve_parameters(
         prefix: quote(text, prefix)?,
         scalars: scalars
             .iter()
-            .map(|v| quote(text, v))
+            .map(|v| scalar_quote(text, v))
             .collect::<Option<Vec<_>>>()?,
     };
     let mut ranges = [&resolved.query, &resolved.prefix]

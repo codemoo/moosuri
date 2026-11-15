@@ -40,6 +40,26 @@ fn calculation_required(input: &MissionCreate) -> bool {
                 .next()
                 .is_some_and(|c| c.is_ascii_digit() || c == '-')
     });
+    // Korean division has a denominator marked by 로/으로. Keep its receipt
+    // requirement while presentation-only "출처를 나누어" stays read-only.
+    let korean_division = text.split(['.', '!', '?', '\n']).any(|clause| {
+        let compact = clause
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+        ["로나누", "로나눠"].iter().any(|verb| {
+            compact.match_indices(verb).any(|(at, _)| {
+                let before = compact[..at].strip_suffix('으').unwrap_or(&compact[..at]);
+                before.chars().last().is_some_and(|c| c.is_ascii_digit())
+                    || [
+                        "수량", "개수", "인원", "금액", "가격", "길이", "시간", "단가", "값",
+                        "총수", "기간", "횟수",
+                    ]
+                    .iter()
+                    .any(|operand| before.ends_with(operand))
+            })
+        })
+    });
     // These are bounded arithmetic cues, not semantic certification. Generic
     // prose such as product documentation, differences in claims, adding
     // citations or dividing a report into sections must remain read-only.
@@ -48,6 +68,7 @@ fn calculation_required(input: &MissionCreate) -> bool {
         .iter()
         .any(|v| matches!(v, MissionCheck::DecimalEquals { .. }))
         || numeric_operator
+        || korean_division
         || words.iter().any(|v| {
             [
                 "calculate",
@@ -80,7 +101,8 @@ fn calculation_required(input: &MissionCreate) -> bool {
             "곱해",
             "빼기",
             "차액",
-            "나누",
+            // "출처를 나누어" describes presentation, not division.
+            "나눗셈",
             "평균",
             "비율",
             "백분율",

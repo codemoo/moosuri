@@ -9,9 +9,12 @@ field prefix and all other decimal inputs. For example:
 > 자료의 숫자에 수량을 곱하고 수수료를 더해줘.
 
 The model sends those exact query/prefix/scalar **quotes**, never UTF-8 offsets or
-its own extracted source amount. The server requires each quote to occur exactly
-once in the current user message and resolves disjoint UTF-8 ranges itself. A
-missing, repeated, overlapping or attached numeric substring is rejected. Korean
+its own extracted source amount. Query and prefix quotes must occur exactly once.
+Each numeric quote must resolve to exactly one complete numeric token in the current
+user message; a digit inside another amount is not another token. Thus quantity `5`
+and fee `0.65` can coexist, while two separate quantities `5` still require clarification.
+The server resolves disjoint UTF-8 ranges itself. A missing, repeated, overlapping
+or attached numeric substring is rejected. Korean
 and emoji before a parameter do not change this contract. Values only available
 in history, another message or a learned example cannot fill a current parameter. A single sentence-final period may delimit a current numeric
 quote. Only explicit ordinary separators (whitespace, quotes, brackets and

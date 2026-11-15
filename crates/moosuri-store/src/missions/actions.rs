@@ -9,7 +9,13 @@ pub(crate) fn requested(text: &str) -> (bool, bool) {
         .replace("don't send", "")
         .replace("never send", "")
         .replace("보내지 말고", "")
-        .replace("발송하지 말고", "");
+        .replace("발송하지 말고", "")
+        .replace("발송은 하지 마", "")
+        .replace("발송은하지마", "")
+        .replace("발송하지 마", "")
+        .replace("발송하지마", "")
+        .replace("보내지 마", "")
+        .replace("보내지마", "");
     if [
         "do not",
         "don't",
@@ -45,6 +51,10 @@ pub(crate) fn requested(text: &str) -> (bool, bool) {
                 "초안만들어",
                 "초안을작성해",
                 "초안작성해",
+                "초안을준비해",
+                "초안준비해",
+                "초안을준비하는일",
+                "초안준비하는일",
                 "회신초안을",
                 "답장초안을",
                 "메일보내줘",

@@ -14,6 +14,62 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '-')
         .collect::<String>();
+    // Optimize only a complete unquoted imperative clause. A quoted search
+    // phrase or a mention followed by another task must reach normal planning.
+    // This cost gate never grants a memory write; the isolated classifier does.
+    let memory_mutation = low.split(['.', '!', '?', '\n']).any(|clause| {
+        if clause
+            .chars()
+            .any(|c| matches!(c, '\'' | '"' | '`' | '‘' | '’' | '“' | '”'))
+        {
+            return false;
+        }
+        let clause = clause
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+        [
+            "기억해",
+            "기억해줘",
+            "기억해주세요",
+            "기억해줘요",
+            "기억해둬",
+        ]
+        .iter()
+        .any(|ending| clause.ends_with(ending))
+            || [
+                "기억을수정",
+                "기억수정",
+                "기억을정정",
+                "기억정정",
+                "기억을삭제",
+                "기억삭제",
+            ]
+            .iter()
+            .any(|stem| {
+                ["해", "해줘", "해주세요", "해줘요"]
+                    .iter()
+                    .any(|ending| clause.ends_with(&format!("{stem}{ending}")))
+            })
+            || [
+                "기억을고쳐",
+                "기억고쳐",
+                "기억을지워",
+                "기억만지워",
+                "기억을잊어",
+                "기억은잊어",
+                "기억만잊어",
+            ]
+            .iter()
+            .any(|stem| {
+                ["", "줘", "주세요", "줘요"]
+                    .iter()
+                    .any(|ending| clause.ends_with(&format!("{stem}{ending}")))
+            })
+    });
+    if memory_mutation {
+        return false;
+    }
     // A civil date/clock is itself a scheduling cue, independent of verb spelling.
     let civil = low
         .split(|c: char| !c.is_ascii_digit() && c != ':' && c != '-')

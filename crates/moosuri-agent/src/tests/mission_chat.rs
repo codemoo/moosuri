@@ -46,7 +46,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     }}));
     let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let (_d, s, u, thread) = knowledge::tool_configured(&base).await;
-    let text = "매일 아침9시에 공개 뉴스 찾아서 요약해 줘";
+    let text = "매일 아침9시에 '기억해 줘' 관련 공개 뉴스 찾아서 요약해 줘";
     s.submit_turn_with_schedule_context(
         &u,
         thread.clone(),
@@ -135,6 +135,8 @@ fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_c
     for text in [
         "매일 아침9시에 공개 뉴스 찾아서 요약해 줘",
         "매일 아침9시에 공개 뉴스 요약 부탁해",
+        "매일 아침9시에 '기억해 줘' 관련 공개 뉴스를 찾아서 요약해 줘",
+        "매일 아침9시에 기억해 줘 관련 공개 뉴스를 찾아서 요약해 줘",
         "1분 뒤에 저장한 자료를 읽고 남은 준비를 정리해서 알려 줘.",
         "두 시간 후에 저장한 자료를 읽어서 요약해 줘",
         "In 1 minute read my saved notes and summarize them",

@@ -6,6 +6,7 @@ use moosuri_store::PrivateCheckpoint;
 const REMEMBER: &str = "나는 홍차를 좋아해. 이 사실을 기억해 줘.";
 const CORRECT: &str = "홍차 취향을 수정해 줘. 나는 녹차를 좋아해.";
 const FORGET: &str = "녹차 취향을 잊어 줘.";
+const WEEKDAY_CORRECTION: &str = "운동에 관한 기억을 수정해 줘. 나는 금요일 저녁에 달리기를 한다.";
 const PRIVATE_PREVIEW: &str = "INTERNAL-SYNTHETIC-PLANNER-PREVIEW";
 
 #[derive(Clone, Copy)]
@@ -147,6 +148,13 @@ async fn memory_response(
                     Some("나는 녹차를 좋아해"),
                     Some("음료 취향"),
                     Some("홍차 취향"),
+                ),
+                WEEKDAY_CORRECTION => command(
+                    "correct",
+                    "기억을 수정해 줘",
+                    Some("나는 금요일 저녁에 달리기를 한다"),
+                    Some("운동 시간"),
+                    Some("운동"),
                 ),
                 FORGET => command("forget", "잊어 줘", None, None, Some("녹차 취향")),
                 "아침 운동에 대한 기억만 지워 줘." => {
@@ -431,6 +439,57 @@ async fn morning_topic_forget_uses_only_memory_planning_and_preserves_unrelated_
 }
 
 #[tokio::test]
+async fn weekday_memory_correction_clarifies_ambiguous_target_without_schedule_dispatch() {
+    let _guard = TEST_LOCK.lock().await;
+    let model = memory_model(Mode::Commands).await;
+    let (_dir, store, user, thread) = enabled(&model.base).await;
+    let mut before = vec![];
+    for (subject, text) in [
+        ("운동 시간", "나는 화요일 저녁에 달리기를 한다"),
+        ("운동 장소", "나는 호수 체육관에서 수영을 한다"),
+    ] {
+        before.push(
+            store
+                .create_memory(
+                    &user,
+                    uuid::Uuid::new_v4().to_string(),
+                    MemoryDraft {
+                        text: text.into(),
+                        subject: subject.into(),
+                        speaker: None,
+                        valid_from: None,
+                        valid_until: None,
+                        evidence: vec![],
+                    },
+                )
+                .await
+                .unwrap(),
+        );
+    }
+    let runtime = Runtime::start(store.clone());
+    let run = ask_memory(&store, &user, &thread, WEEKDAY_CORRECTION).await;
+    runtime.wake();
+    let result = completed(&store, &user, &thread, &run.run.id).await;
+    assert_eq!(result.run.state, RunState::Completed);
+    assert!(!result.assistant.is_empty());
+    assert!(result.run.mission_receipt.is_none());
+    assert!(result.run.calendar_receipt.is_none());
+    let after = store.memories(&user, None).await.unwrap().items;
+    assert_eq!(after.len(), before.len());
+    for expected in before {
+        let actual = after.iter().find(|m| m.id == expected.id).unwrap();
+        assert_eq!(actual.revision, expected.revision);
+        assert_eq!(actual.draft.text, expected.draft.text);
+    }
+    assert_eq!(model.state.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        model.state.requests.lock().await[0]["tools"][0]["function"]["name"],
+        "memory_command_decision"
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn no_command_drops_private_planner_history_but_retains_both_call_receipts() {
     let _guard = TEST_LOCK.lock().await;
     let model = memory_model(Mode::NoCommand).await;
@@ -669,8 +728,8 @@ async fn dated_command_runtime_saves_server_bounds_without_model_continuation() 
     assert_eq!(saved.draft.valid_until, Some(4039513200));
     assert_eq!(
         model.state.calls.load(Ordering::SeqCst),
-        2,
-        "domain no-command plus memory classification, no post-write model call"
+        1,
+        "explicit memory classification only, no schedule or post-write model call"
     );
     let count = store.memories(&user, None).await.unwrap().items.len();
     let text = format!("내일부터, {REMEMBER}");
@@ -682,6 +741,6 @@ async fn dated_command_runtime_saves_server_bounds_without_model_continuation() 
         store.memories(&user, None).await.unwrap().items.len(),
         count
     );
-    assert_eq!(model.state.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(model.state.calls.load(Ordering::SeqCst), 2);
     runtime.shutdown().await;
 }

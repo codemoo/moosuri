@@ -2,6 +2,11 @@
 - [x] 1.1 Specify scoped binding, automatic reuse, trust limits and failure scenarios.
 
 ## 2. Implement and validate
+
+The [additional implementation plan](../../../docs/additional-capabilities-plan.md) sequences
+remaining account selection, composable native reads and task waits. Existing narrow
+adapters do not close all aggregate tasks below.
+
 - [x] 2.1 Select and independently review device pairing, request authentication and receipt protocol. The default-off foundation is implemented and tested; actual adapters and user flows remain below.
 - [ ] 2.2 Implement opaque bindings and first-use/ambiguous-account UX without repeated routine approvals.
 - [ ] 2.3 Add typed API/Google credential adapters with no secret-bearing tool results.

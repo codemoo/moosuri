@@ -45,6 +45,10 @@
 
 ## 단계별 진행
 
+P4/P5/P6/P8의 남은 복합 업무·학습·credential 구현은
+[추가 구현 계획](additional-capabilities-plan.md)의 A–F 순서와 결과 기준으로 진행한다.
+기존 P 단계·요구 범위는 유지하며 해당 문서는 구현 완료 증거가 아니다.
+
 | 단계 | 산출물 | 종료 조건 |
 | --- | --- | --- |
 | P0 경계와 공개 기반 | crate 후보 spike, 공통 타입, OpenSpec/기여 CI·공개 개발 repo 준비·라이선스/의존성 정책, 새 합성 평가 규격·재현 baseline 연결·broker 경계 spike, React/PWA·볼트 worker·provider capability proof | 실제 Linux/React 빌드, worker 이벤트·암호 호환 시험; 비밀 없는 새 이력 |

@@ -8,7 +8,8 @@
 - [x] Root: integrate schema25 after push23/vault24 and independently review authority/recovery.
 - [x] Root: bounded Linux and actual Chrome verification; documented preview scope.
 - [x] Integration: schema28 direct recurring read-only execution and narrow exact successful decimal/source result comparison passed root integration/review/platform acceptance; [evidence](../../../docs/reviews/2026-11-13-recurring-missions.md) and the [recurring change](../recurring-read-only-missions/tasks.md) preserve the exact scope.
-- [ ] Remaining v1 work: conversational mission capture/control and broader contracted tool support; the read-only recurring slice does not complete F27/F29–F31.
+- [x] Conversational mission capture/control is implemented by schema29 and current planner composition; see the scoped changes and docs/status rather than treating it as new work.
+- [ ] Remaining v1 work: broader contracted tool support and outcome-bound composition; follow [additional implementation](../../../docs/additional-capabilities-plan.md). Existing read-only slices do not complete F27/F29–F31.
 - [ ] Release: applicable real-provider/device, deployment and full evaluation gates.
 - [ ] Additional scope: general semantic result equivalence and unsupported external actions need their own bounded contracts; they are not implied by recurring read-only execution.
 

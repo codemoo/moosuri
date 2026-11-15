@@ -2,6 +2,7 @@
 //! A durable grant is never converted to a session UserContext.
 use super::*;
 mod acceptance;
+mod reports;
 pub(crate) use acceptance::floor as acceptance_floor;
 pub(crate) mod chat;
 pub(crate) mod connected;
@@ -98,6 +99,7 @@ pub(crate) fn tool_allowed(v: &KnowledgeToolInput) -> bool {
             | KnowledgeToolInput::ReadMemory { .. }
             | KnowledgeToolInput::SkillRead { .. }
             | KnowledgeToolInput::DecimalCalculate { .. }
+            | KnowledgeToolInput::EvidenceCalculate { .. }
             | KnowledgeToolInput::DecimalWorkflow { .. }
             | KnowledgeToolInput::LearnedSkill { .. }
             | KnowledgeToolInput::CollectPages { .. }
@@ -379,6 +381,11 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
         }
     }
     Ok(MissionView {
+        compound: if invalid {
+            None
+        } else {
+            reports::view(c, t, &raw.10)?
+        },
         id: raw.0,
         revision: raw.1,
         state: if invalid { "quarantined".into() } else { raw.2 },
@@ -498,6 +505,7 @@ pub(crate) fn apply_delete(c: &Connection, t: &str, id: &str) -> Result<()> {
         )
         .optional()?;
     if let Some(thread) = thread {
+        crate::artifacts::external::delete_thread(c, t, &thread)?;
         c.execute("UPDATE missions SET state='deleted',grant_enabled=0,payload='',steering='[]',plan='[]',candidate=NULL,report='[]',round_text=NULL WHERE tenant_id=?1 AND id=?2",params![t,id])?;
         c.execute(
             "DELETE FROM mission_acceptances WHERE tenant_id=?1 AND mission_id=?2",
@@ -674,7 +682,7 @@ impl Store {
         plan: Vec<String>,
     ) -> Result<()> {
         let l = lease.clone();
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}reports::admit(&tx,&r,acceptance_revision)?;tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
     }
     /// Evidence references are resolved exclusively against this run's committed typed slots.
     pub async fn mission_verify(
@@ -703,14 +711,22 @@ impl Store {
  match raw {Some(raw)=>{let v:KnowledgeToolResult=parse(&raw)?;if matches!(v,KnowledgeToolResult::Error(crate::ToolReadError::OutcomeUnknown)){unknown=true;}
 if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} is a failed tool result",e.step,e.call_id));}else{evidence.push(v)}},None=>report.push(format!("Missing receipt {}:{}",e.step,e.call_id))}
  }
+ let mechanical_ready=report.is_empty() && !unknown && input.checks.iter().all(|check|match check {
+ MissionCheck::PrivateReport{..}|MissionCheck::UserReview{..}=>true,
+ MissionCheck::DecimalEquals{expected}=>candidate.text.contains(expected)&&evidence.iter().any(|v|matches!(v,KnowledgeToolResult::Decimal{exact}|KnowledgeToolResult::DecimalWorkflow{exact,..}|KnowledgeToolResult::EvidenceCalculation{exact,..} if exact==expected)),
+ MissionCheck::SourceQuote{id,revision,quote}=>candidate.text.contains(quote)&&evidence.iter().any(|v|matches!(v,KnowledgeToolResult::Source(s) if s.source.id==*id && s.source.revision==*revision && s.text.contains(quote))),
+ MissionCheck::OutputContains{text}=>candidate.text.contains(text)&&!evidence.is_empty(),
+ });
+ let saved_report=mechanical_ready && reports::save(&tx,&r,acceptance_revision,&candidate)?;
  let mut passed=0;
  for (i,check) in input.checks.iter().enumerate(){let valid=match check {
+ MissionCheck::PrivateReport{..}=>saved_report,
  MissionCheck::DecimalEquals{expected}=>candidate.text.contains(expected)&&evidence.iter().any(|v|matches!(v,KnowledgeToolResult::Decimal{exact} | KnowledgeToolResult::DecimalWorkflow{exact,..} | KnowledgeToolResult::EvidenceCalculation{exact,..} if exact==expected)),
  MissionCheck::SourceQuote{id,revision,quote}=>candidate.text.contains(quote)&&evidence.iter().any(|v|matches!(v,KnowledgeToolResult::Source(s) if s.source.id==*id && s.source.revision==*revision && s.text.contains(quote))),
  MissionCheck::OutputContains{text}=>candidate.text.contains(text)&&!evidence.is_empty(),
  MissionCheck::UserReview{..}=>false,
  };if valid{passed+=1}else{report.push(format!("Check {} needs valid evidence or owner review",i+1));}}
- let implicit_review=!input.constraints.trim().is_empty()&&!input.checks.iter().any(|c|matches!(c,MissionCheck::UserReview{..}));
+ let implicit_review=(!input.constraints.trim().is_empty() || reports::requested(&input).is_some())&&!input.checks.iter().any(|c|matches!(c,MissionCheck::UserReview{..}));
  if implicit_review{report.push("Additional constraints need owner review".into());}
  let achieved=report.is_empty()&&!unknown&&!evidence.is_empty();
  if evidence.is_empty(){report.push("No current-run evidence. A model's declaration is insufficient.".into())}
@@ -739,8 +755,22 @@ pub(crate) fn validate_input(input: &MissionCreate) -> Result<()> {
     {
         return Err(StoreError::InvalidInput);
     }
+    if input
+        .checks
+        .iter()
+        .filter(|c| matches!(c, MissionCheck::PrivateReport { .. }))
+        .count()
+        > 1
+    {
+        return Err(StoreError::InvalidInput);
+    }
     for check in &input.checks {
         let valid = match check {
+            MissionCheck::PrivateReport { title } => {
+                !title.trim().is_empty()
+                    && title.len() <= 200
+                    && !title.chars().any(char::is_control)
+            }
             MissionCheck::DecimalEquals { expected } => {
                 !expected.is_empty() && expected.len() <= 128
             }

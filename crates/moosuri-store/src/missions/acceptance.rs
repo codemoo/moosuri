@@ -50,6 +50,7 @@ impl Store {
             if matches!(before.request.execution_mode,MissionMode::CurrentSession) {crate::chat::authority(&tx,&carrier)?;if carrier.session!=u.digest{return Err(StoreError::Unauthorized)}}
             let mut next=before.request.clone();next.task=input.task;next.constraints=input.constraints;next.checks=input.checks;
             validate_input(&next)?;
+            if reports::requested(&next).is_some() && !reports::originally_requested(&tx,&carrier)? {return Err(StoreError::Forbidden)}
             let text=format!("{}\n{}",next.task,next.constraints);
             let (mail,calendar)=moosuri_core::mission_read_domains(&text);
             let connected=carrier.tool_profile.as_ref().and_then(|p|p.mission_reads.as_ref());

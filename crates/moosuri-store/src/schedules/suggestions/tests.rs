@@ -604,7 +604,7 @@ fn predecessor56(
         .write_all(&items[1].1)
         .unwrap();
     let c = Connection::open(&db).unwrap();
-    c.execute_batch("DROP TABLE agent_planner_steps;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DELETE FROM notification_source_preferences;DELETE FROM reminder_schedules;DROP TRIGGER installation_cutover_monotonic;PRAGMA user_version=56;").unwrap();
+    c.execute_batch("DROP TABLE mission_report_contracts;DROP TABLE agent_planner_steps;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DELETE FROM notification_source_preferences;DELETE FROM reminder_schedules;DROP TRIGGER installation_cutover_monotonic;PRAGMA user_version=56;").unwrap();
     c.execute(
         "UPDATE installation_cutover SET seal=?1",
         [serde_json::to_string(&manifest.seal).unwrap()],

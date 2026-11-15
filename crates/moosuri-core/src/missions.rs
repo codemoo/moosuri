@@ -10,6 +10,10 @@ pub enum MissionMode {
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MissionCheck {
+    /// Explicit current owner authority to create one private report.
+    PrivateReport {
+        title: String,
+    },
     DecimalEquals {
         expected: String,
     },
@@ -87,6 +91,9 @@ pub struct MissionReceipt {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MissionView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub compound: Option<MissionCompound>,
     pub id: String,
     #[ts(type = "number")]
     pub revision: i64,
@@ -193,4 +200,62 @@ pub enum MissionChatTime {
 pub struct MissionChatCandidate {
     pub target: MissionChatTarget,
     pub title: String,
+}
+
+/// Store-built bounded structure; tool outputs cannot add a node or an effect.
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct MissionCompound {
+    pub schema_version: u32,
+    pub calculation_required: bool,
+    #[ts(type = "number")]
+    pub acceptance_revision: i64,
+    pub capability_profile_sha256: String,
+    pub steps: Vec<MissionCompoundStep>,
+    pub output: Option<crate::ArtifactReceipt>,
+    pub review_required: bool,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct MissionCompoundStep {
+    pub id: String,
+    pub purpose: String,
+    pub capability: String,
+    pub input_slots: Vec<String>,
+    pub depends_on: Vec<String>,
+    pub receipts: Vec<MissionCompoundReceipt>,
+    pub output: String,
+    pub checks: Vec<String>,
+    pub state: String,
+}
+/// Cost routing only. Actual command interpretation is isolated from evidence.
+pub fn compound_report_candidate(text: &str) -> bool {
+    let low = text.to_lowercase();
+    ["report", "document", "보고서", "문서"]
+        .iter()
+        .any(|v| low.contains(v))
+        && ["save", "create", "write", "저장", "만들", "작성"]
+            .iter()
+            .any(|v| low.contains(v))
+        && [
+            "research",
+            "compare",
+            "read",
+            "calculate",
+            "조사",
+            "비교",
+            "읽",
+            "확인",
+            "계산",
+        ]
+        .iter()
+        .any(|v| low.contains(v))
+}
+
+/// Exact top-level or trusted learned-child receipt identity. Legacy candidate
+/// references remain unchanged; only Store may resolve a child reference.
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct MissionCompoundReceipt {
+    #[ts(type = "number")]
+    pub step: i64,
+    pub call_id: String,
+    pub ordinal: Option<u8>,
 }

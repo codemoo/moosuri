@@ -338,7 +338,6 @@ pub(crate) fn execute(
         .tool_profile
         .as_ref()
         .is_some_and(|p| p.evidence_calculation)
-        || crate::missions::is_mission(c, &r.tenant, &r.id)?
     {
         return Ok((Output::Error(ToolReadError::Unavailable), 1));
     }
@@ -346,6 +345,20 @@ pub(crate) fn execute(
     {
         return Ok((Output::Error(ToolReadError::InvalidInput), 1));
     }
+    let mut accepted;
+    let r = if crate::missions::is_mission(c, &r.tenant, &r.id)? {
+        let floor = crate::missions::acceptance_floor(c, &r.tenant, &r.id)?;
+        if i64::from(calculation.binding.search.step) < floor
+            || i64::from(calculation.binding.source.step) < floor
+        {
+            return Ok((Output::Error(ToolReadError::InvalidInput), 1));
+        }
+        accepted = r.clone();
+        accepted.text = crate::missions::learned_task_text(c, r)?;
+        &accepted
+    } else {
+        r
+    };
     execute_at(c, r, calculation, step, call, step)
 }
 fn execute_at(

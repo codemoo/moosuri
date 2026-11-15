@@ -8,7 +8,11 @@ pub(crate) fn profile(
     let row:Option<(i64,Option<String>,Option<i64>,bool)>=conn.query_row("SELECT schema_version,selected_id,selected_revision,planned FROM personal_artifact_run_profiles WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
     row.map(|(schema,id,revision,planned)|{if schema!=1{return Err(StoreError::Conflict)}let selected=id.map(|id|revision.map(|revision|ArtifactTarget{id,revision}).ok_or(StoreError::Corrupt)).transpose()?;let write=conn.query_row("SELECT EXISTS(SELECT 1 FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2)",params![tenant,run],|r|r.get(0))?;let kind:Option<String>=conn.query_row("SELECT kind FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|r.get(0)).optional()?;let kind=kind.map(|k|match k.as_str(){"document"=>Ok(ArtifactKind::Document),"goal"=>Ok(ArtifactKind::Goal),"followup"=>Ok(ArtifactKind::Followup),_=>Err(StoreError::Corrupt)}).transpose()?;Ok(ArtifactRunProfile{external_reports:conn.query_row("SELECT EXISTS(SELECT 1 FROM artifact_external_profiles WHERE tenant_id=?1 AND run_id=?2)",params![tenant,run],|r|r.get(0))?,schema_version:1,selected,planned,write,kind})}).transpose()
 }
-fn run_refs(conn: &Connection, run: &Run, target: Option<&str>) -> Result<Vec<ArtifactDependency>> {
+pub(crate) fn run_refs(
+    conn: &Connection,
+    run: &Run,
+    target: Option<&str>,
+) -> Result<Vec<ArtifactDependency>> {
     let mut refs=conn.prepare("SELECT kind,object_id,revision FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2")?.query_map(params![run.tenant,run.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?)))?.map(|r|{let(k,id,revision)=r?;Ok(ArtifactDependency{kind:if k=="source"{ArtifactDependencyKind::Source}else{ArtifactDependencyKind::Memory},id,revision})}).collect::<Result<Vec<_>>>()?;
     let artifacts=conn.prepare("SELECT artifact_id,revision FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2")?.query_map(params![run.tenant,run.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for (id, revision) in artifacts {

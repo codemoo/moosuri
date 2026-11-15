@@ -58,7 +58,7 @@ pub(super) async fn plan(
     if profile.planned {
         return Some((context, Some(profile)));
     }
-    if !cue(text) && profile.selected.is_none() {
+    if (!cue(text) || moosuri_core::compound_report_candidate(text)) && profile.selected.is_none() {
         return match session
             .store
             .initialize_artifact_readonly(session.lease)

@@ -506,6 +506,13 @@ async fn korean_aliases_evidence_binding_declines_even_when_literal_fallback_fou
 
 #[tokio::test]
 async fn mission_evidence_recipe_uses_accepted_task_and_fresh_source_then_withdraws() {
+    mission_evidence_recipe_outcome(false).await;
+}
+#[tokio::test]
+async fn compound_report_learned_evidence_recipe_retains_actual_child_read_then_withdraws() {
+    mission_evidence_recipe_outcome(true).await;
+}
+async fn mission_evidence_recipe_outcome(report: bool) {
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();
     let s = Store::open(dir.path()).unwrap();
@@ -569,13 +576,14 @@ async fn mission_evidence_recipe_uses_accepted_task_and_fresh_source_then_withdr
         digest: card.digest,
     };
     let (_, source_id) = source(&s, &u, "MissionFreshLookup cost: 2.50").await;
-    let m = s
-        .create_mission(
-            &u,
-            super::missions::template("Find SupersededLookup; prefix retired:; quantity 8", "64"),
-        )
-        .await
-        .unwrap();
+    let mut original =
+        super::missions::template("Find SupersededLookup; prefix retired:; quantity 8", "64");
+    if report {
+        original.checks.push(MissionCheck::PrivateReport {
+            title: "Synthetic learned report".into(),
+        });
+    }
+    let m = s.create_mission(&u, original).await.unwrap();
     let paused = s
         .control_mission(
             &u,
@@ -596,9 +604,17 @@ async fn mission_evidence_recipe_uses_accepted_task_and_fresh_source_then_withdr
             expected_revision: paused.revision,
             task: "Find MissionFreshLookup; prefix cost:; quantity 3".into(),
             constraints: String::new(),
-            checks: vec![MissionCheck::DecimalEquals {
-                expected: "7.5".into(),
-            }],
+            checks: {
+                let mut checks = vec![MissionCheck::DecimalEquals {
+                    expected: "7.5".into(),
+                }];
+                if report {
+                    checks.push(MissionCheck::PrivateReport {
+                        title: "Synthetic learned report".into(),
+                    });
+                }
+                checks
+            },
         },
     )
     .await
@@ -663,7 +679,26 @@ async fn mission_evidence_recipe_uses_accepted_task_and_fresh_source_then_withdr
         .into_iter()
         .find(|v| v.id == m.id)
         .unwrap();
-    assert_eq!(completed.state, "achieved");
+    assert_eq!(completed.state, if report { "partial" } else { "achieved" });
+    let saved = if report {
+        let contract = completed.compound.as_ref().unwrap();
+        let read = &contract.steps[0].receipts[0];
+        assert_eq!(read.step, step.step());
+        assert_eq!(read.call_id, "fresh-reuse");
+        assert_eq!(read.ordinal, Some(1));
+        assert_eq!(contract.steps[2].receipts[0].ordinal, None);
+        let output = contract.output.clone().unwrap();
+        assert!(
+            s.artifact(&u, output.id.clone(), None)
+                .await
+                .unwrap()
+                .draft
+                .is_some()
+        );
+        Some(output)
+    } else {
+        None
+    };
     assert!(
         completed
             .receipts
@@ -686,6 +721,15 @@ async fn mission_evidence_recipe_uses_accepted_task_and_fresh_source_then_withdr
     .await
     .unwrap();
     s.delete_source(&u, source_id, 1).await.unwrap();
+    if let Some(output) = saved {
+        assert!(
+            s.artifact(&u, output.id, None)
+                .await
+                .unwrap()
+                .draft
+                .is_none()
+        );
+    }
     let withdrawn = s
         .missions(&u)
         .await

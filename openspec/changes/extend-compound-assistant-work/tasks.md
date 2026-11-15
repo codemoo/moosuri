@@ -8,9 +8,9 @@
 
 ## A — Research to requested private report
 
-- [ ] Add versioned step/output/receipt contracts to existing missions; preserve old plans, owner scope and budgets.
-- [ ] Connect requested report save/CAS/provenance to actual mission execution and existing React result cards.
-- [ ] Verify report outcome, duplicate/restart/withdrawal behavior; update status and publish the complete slice.
+- [x] Add versioned step/output/receipt contracts to existing missions; preserve old plans, owner scope and budgets.
+- [x] Connect requested report save/CAS/provenance to actual mission execution and existing React result cards.
+- [x] Verify report outcome, duplicate/restart/withdrawal behavior; update status and publish the complete slice.
 
 ## B — Select once and resume the original task
 
@@ -43,5 +43,5 @@
 - [ ] At adapter kickoff, pin one actual site/read outcome, official API alternative, test account/policy and completion evidence; implement only its supported login/read adapter and independently review secret/session/recovery behavior.
 - [ ] Keep arbitrary form/payment/purchase/phone/government actions unavailable; require a separate typed effect/reconciliation contract for later submissions.
 
-Implementation boxes remain open. The [plan](../../../docs/additional-capabilities-plan.md)
+B–F implementation boxes remain open. A evidence: [compound report validation](../../../docs/reviews/2026-11-15-compound-reports.md). The [plan](../../../docs/additional-capabilities-plan.md)
 does not complete official release, real-provider/device acceptance, broad holdout or production cutover.

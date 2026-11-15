@@ -850,7 +850,13 @@ impl Store {
                         if super::connected::unsupported_effect(&crate::request_continuations::text(&tx,&r)?){return Err(StoreError::Forbidden)}
                         let task=d.task_quote.clone().ok_or(StoreError::InvalidInput)?;let constraints=d.constraints_quote.clone().unwrap_or_default();
                         let required=moosuri_core::mission_read_domains(&crate::request_continuations::text(&tx,&r)?);let retained=moosuri_core::mission_read_domains(&format!("{task}\n{constraints}"));if required.0&&!retained.0||required.1&&!retained.1{return Err(StoreError::InvalidInput)}
-                        let input=MissionCreate{request_id:r.request.clone(),task:task.clone(),constraints,checks:vec![MissionCheck::UserReview{description:"요청과 조건의 내용은 직접 검토가 필요합니다.".into()}],execution_mode:MissionMode::Durable};
+                        let mut checks=vec![MissionCheck::UserReview{description:"요청과 조건의 내용은 직접 검토가 필요합니다.".into()}];
+                        // Only an isolated affirmative command whose exact current
+                        // task span retains both research and save may add this output.
+                        let compound=moosuri_core::compound_report_candidate(&task);
+                        if moosuri_core::compound_report_candidate(&crate::request_continuations::text(&tx,&r)?) && !compound {return Err(StoreError::InvalidInput)}
+                        if compound { checks.push(MissionCheck::PrivateReport{title:"조사 보고서".into()}); }
+                        let input=MissionCreate{request_id:r.request.clone(),task:task.clone(),constraints,checks,execution_mode:MissionMode::Durable};
                         let profile=r.tool_profile.clone().ok_or(StoreError::InvalidInput)?;
                         if action=="create_now"{let id=super::create_owner_in(&tx,&db.provider_key,&u,input,r.model.clone(),profile)?;receipt.target=Some(MissionChatTarget{kind:"one_off".into(),id,revision:1});receipt.state="queued".into();}
                         else{let rule=rule(&crate::request_continuations::time_decision(&tx,&r,&d)?,anchor,zone.as_deref(),&crate::request_continuations::text(&tx,&r)?)?;let title=task.chars().scan(0usize,|n,c|{*n+=c.len_utf8();(*n<=160).then_some(c)}).collect();let out=crate::recurring_missions::create_owner_in(&tx,&db.provider_key,&u,RecurringMissionCreate{request_id:r.request.clone(),template:input,schedule:ScheduleDraft{title,message:"예약한 읽기 업무".into(),rule,valid_until:None},changes_only:false},r.model.clone(),profile)?;receipt.target=Some(MissionChatTarget{kind:"recurring".into(),id:out.schedule.id,revision:out.schedule.revision});receipt.state=out.schedule.state;receipt.next_local_slot=out.schedule.next_local_slot;}

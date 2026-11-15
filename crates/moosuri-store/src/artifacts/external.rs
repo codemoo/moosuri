@@ -220,7 +220,7 @@ pub(crate) fn invalidate_runs(
 ) -> Result<Vec<String>> {
     let mut versions = BTreeSet::new();
     for run in &runs {
-        let rows=c.prepare("SELECT DISTINCT e.artifact_id,e.artifact_revision FROM artifact_external_evidence e JOIN personal_artifact_versions v ON v.tenant_id=e.tenant_id AND v.artifact_id=e.artifact_id AND v.revision=e.artifact_revision WHERE e.tenant_id=?1 AND e.origin_run=?2 AND v.status='active'")?.query_map(params![t,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows=c.prepare("SELECT DISTINCT e.artifact_id,e.artifact_revision FROM artifact_external_evidence e JOIN personal_artifact_versions v ON v.tenant_id=e.tenant_id AND v.artifact_id=e.artifact_id AND v.revision=e.artifact_revision WHERE e.tenant_id=?1 AND e.origin_run=?2 AND v.status='active' UNION SELECT p.artifact_id,v.revision FROM mission_report_contracts p JOIN personal_artifact_versions v ON v.tenant_id=p.tenant_id AND v.artifact_id=p.artifact_id WHERE p.tenant_id=?1 AND p.run_id=?2 AND v.status='active'")?.query_map(params![t,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         versions.extend(rows);
     }
     let mut pending = versions.into_iter().collect::<Vec<_>>();
@@ -296,13 +296,13 @@ pub(crate) fn delete_thread(c: &Connection, t: &str, thread: &str) -> Result<()>
 }
 pub(crate) fn quarantine_restore(c: &Connection) -> Result<()> {
     let tenants = c
-        .prepare("SELECT DISTINCT tenant_id FROM artifact_external_evidence")?
+        .prepare("SELECT DISTINCT tenant_id FROM artifact_external_evidence UNION SELECT tenant_id FROM mission_report_contracts WHERE artifact_id IS NOT NULL")?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     for t in tenants {
         let runs = c
             .prepare(
-                "SELECT DISTINCT origin_run FROM artifact_external_evidence WHERE tenant_id=?1",
+                "SELECT DISTINCT origin_run FROM artifact_external_evidence WHERE tenant_id=?1 UNION SELECT run_id FROM mission_report_contracts WHERE tenant_id=?1 AND artifact_id IS NOT NULL",
             )?
             .query_map([&t], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;

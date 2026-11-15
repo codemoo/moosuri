@@ -75,7 +75,7 @@ reported_speaker: string, daily_calls: number, daily_input_bytes: number, daily_
 export type MemoryExtractionStatus = { revision: number, enabled: boolean, attribution_mode: string, reported_speaker: string, daily_calls: number, daily_input_bytes: number, daily_output_tokens: number, state: string, reason: string | null, saved_count: number, };
 export type MemoryExtractionOrigin = { model: string, provider_revision: number, source_id: string, source_revision: number, policy_revision: string, reported_speaker: string, };
 export type MissionMode = "current_session" | "durable";
-export type MissionCheck = { "kind": "decimal_equals", expected: string, } | { "kind": "source_quote", id: string, revision: number, quote: string, } | { "kind": "output_contains", text: string, } | { "kind": "user_review", description: string, };
+export type MissionCheck = { "kind": "private_report", title: string, } | { "kind": "decimal_equals", expected: string, } | { "kind": "source_quote", id: string, revision: number, quote: string, } | { "kind": "output_contains", text: string, } | { "kind": "user_review", description: string, };
 export type MissionCreate = { request_id: string, task: string, constraints: string, checks: Array<MissionCheck>, execution_mode: MissionMode, };
 export type MissionControl = { request_id: string, expected_revision: number, action: MissionAction, };
 export type MissionAcceptanceUpdate = { request_id: string, expected_revision: number, task: string, constraints: string, checks: Array<MissionCheck>, };
@@ -83,7 +83,7 @@ export type MissionAcceptanceSnapshot = { revision: number, request: MissionCrea
 export type MissionAction = { "kind": "pause" } | { "kind": "resume" } | { "kind": "cancel" } | { "kind": "steer", instruction: string, };
 export type MissionEvidence = { step: number, call_id: string, };
 export type MissionCandidate = { text: string, evidence: Array<MissionEvidence>, };
-export type MissionView = { id: string, revision: number, state: string, request: MissionCreate,
+export type MissionView = { compound?: MissionCompound, id: string, revision: number, state: string, request: MissionCreate,
 /**
  * Absent for unchanged/recurring missions; request is the active snapshot.
  */
@@ -271,3 +271,8 @@ observed_from?: number | null,
 observed_until?: number | null, cursor: string | null, };
 export type KnowledgeHit = { kind: KnowledgeKind, id: string, revision: number, title: string, snippet: string, subject: string | null, speaker: string | null, valid_from: number | null, valid_until: number | null, };
 export type KnowledgeSearch = { hits: Array<KnowledgeHit>, next_cursor: string | null, truncated: boolean, generation: number, };
+
+export type MissionCompound = { schema_version: number, calculation_required: boolean, acceptance_revision: number, capability_profile_sha256: string, steps: Array<MissionCompoundStep>, output: ArtifactReceipt | null, review_required: boolean, };
+export type MissionCompoundStep = { id: string, purpose: string, capability: string, input_slots: Array<string>, depends_on: Array<string>, receipts: Array<MissionCompoundReceipt>, output: string, checks: Array<string>, state: string, };
+
+export type MissionCompoundReceipt = { step: number, call_id: string, ordinal: number | null, };

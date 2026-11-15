@@ -141,3 +141,17 @@ it("shows exact skill recovery without automatic resume or losing the draft",asy
  fireEvent.click(screen.getByRole("button",{name:"다음 회차부터 재개"}));await waitFor(()=>expect(commands).toEqual([{action:"resume",expected_revision:2}]));
  expect((screen.getByLabelText("예약할 일") as HTMLTextAreaElement).value).toBe("Keep this draft while recovering");
 });
+it("requests one explicit private report and shows the actual revision separately from content review",async()=>{
+ const writes:any[]=[];
+ const saved={...mission,state:"partial",compound:{schema_version:1,acceptance_revision:1,capability_profile_sha256:"a".repeat(64),steps:[],output:{request_id:"report-mutation",id:"saved-report",revision:2,status:"active",url:"/app/artifacts/saved-report"},review_required:true}};
+ vi.stubGlobal("fetch",vi.fn(async(_url,init)=>{if(init?.method==="POST"){writes.push(JSON.parse(String(init.body)));return new Response(JSON.stringify(saved))}return new Response(JSON.stringify([saved]))}));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ expect(await screen.findByRole("link",{name:"보고서 열기 · 버전 2"})).toHaveAttribute("href","/app/artifacts/saved-report");
+ expect(screen.getByText(/출처별 주장·누락·충돌/)).toBeTruthy();
+ fireEvent.change(screen.getByLabelText("맡길 일"),{target:{value:"Compare synthetic offers"}});
+ fireEvent.change(screen.getByLabelText("저장할 비공개 보고서 제목 (선택)"),{target:{value:"Synthetic comparison"}});
+ fireEvent.click(screen.getByRole("button",{name:"일 맡기기"}));
+ await waitFor(()=>expect(writes).toHaveLength(1));
+ expect(writes[0].checks).toContainEqual({kind:"private_report",title:"Synthetic comparison"});
+ expect(writes[0].checks).toContainEqual({kind:"user_review",description:"요청과 제약 조건을 충족하는지 직접 검토"});
+});

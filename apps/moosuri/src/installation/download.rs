@@ -4,19 +4,21 @@ use std::time::Duration;
 use url::Url;
 
 const MANIFEST_CAP: u64 = 16384;
-const TOTAL_TIMEOUT: Duration = Duration::from_secs(300);
+pub(super) const TOTAL_TIMEOUT: Duration = Duration::from_secs(300);
 const FILE_TIMEOUT: Duration = Duration::from_secs(120);
-const FILES: [&str; 5] = [
+const FILES: [&str; 7] = [
     "manifest.json",
     "manifest.ed25519",
     "moosuri",
+    "moosuri-credential-broker",
+    "moosuri-vault-service",
     release_evidence::PROVENANCE,
     release_evidence::INVENTORY,
 ];
 
 // Reject normalization, userinfo and encoded separators before URL parsing. Only
 // literal public path segments are supported; secrets must never be URL inputs.
-fn base_url(input: &str) -> Result<Url> {
+pub(super) fn base_url(input: &str) -> Result<Url> {
     if input.len() > 2048
         || !input.is_ascii()
         || input
@@ -60,14 +62,14 @@ fn version_matches(url: &Url, manifest: &Manifest) -> Result<()> {
 
 // A new staging directory is the only cleanup authority. Never recurse, remove
 // a replaced inode or clean an operator-selected existing destination.
-struct Staging {
-    path: PathBuf,
+pub(super) struct Staging {
+    pub(super) path: PathBuf,
     identity: (u64, u64),
     files: Vec<(String, u64, u64)>,
-    published: bool,
+    pub(super) published: bool,
 }
 impl Staging {
-    fn new(parent: &Path) -> Result<Self> {
+    pub(super) fn new(parent: &Path) -> Result<Self> {
         let path = parent.join(format!(".moosuri-download-{}", uuid::Uuid::new_v4()));
         path_checked(&path)?;
         fs::DirBuilder::new()
@@ -86,7 +88,7 @@ impl Staging {
         sync(parent)?;
         Ok(staging)
     }
-    fn put(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
+    pub(super) fn put(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
         if !FILES.contains(&name) {
             return Err("installation_download_filename_refused".into());
         }
@@ -95,7 +97,16 @@ impl Staging {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(if name == "moosuri" { 0o700 } else { 0o600 })
+            .mode(
+                if matches!(
+                    name,
+                    "moosuri" | "moosuri-credential-broker" | "moosuri-vault-service"
+                ) {
+                    0o700
+                } else {
+                    0o600
+                },
+            )
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&path)
             .map_err(error)?;
@@ -131,7 +142,7 @@ impl Drop for Staging {
 
 // Plain rename may overwrite an empty destination directory. Both supported
 // platforms provide an atomic no-replace publication primitive instead.
-fn publish(source: &Path, destination: &Path) -> Result<()> {
+pub(super) fn publish(source: &Path, destination: &Path) -> Result<()> {
     use std::ffi::CString;
     let source = CString::new(source.as_os_str().as_encoded_bytes()).map_err(error)?;
     let destination = CString::new(destination.as_os_str().as_encoded_bytes()).map_err(error)?;
@@ -156,7 +167,7 @@ fn publish(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn fetch(
+pub(super) async fn fetch(
     client: &reqwest::Client,
     base: &Url,
     name: &str,
@@ -207,6 +218,24 @@ async fn fetch(
     Ok(bytes)
 }
 
+pub(super) fn client(ca: Option<&Path>) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(FILE_TIMEOUT);
+    if let Some(path) = ca {
+        let pem = read(path, 65536, true)?;
+        let cert =
+            reqwest::Certificate::from_pem(&pem).map_err(|_| "installation_download_ca_invalid")?;
+        builder = builder.tls_certs_merge([cert]);
+    }
+    builder
+        .build()
+        .map_err(|_| "installation_download_transport_failed".into())
+}
+
 async fn download(
     base: &Url,
     key_path: &Path,
@@ -226,21 +255,7 @@ async fn download(
     if key.len() != 32 {
         return Err("installation_public_key_length".into());
     }
-    let mut builder = reqwest::Client::builder()
-        .https_only(true)
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(FILE_TIMEOUT);
-    if let Some(path) = ca {
-        let pem = read(path, 65536, true)?;
-        let cert =
-            reqwest::Certificate::from_pem(&pem).map_err(|_| "installation_download_ca_invalid")?;
-        builder = builder.tls_certs_merge([cert]);
-    }
-    let client = builder
-        .build()
-        .map_err(|_| "installation_download_transport_failed")?;
+    let client = client(ca)?;
     let mut staging = Staging::new(parent)?;
     let bytes = fetch(&client, base, "manifest.json", MANIFEST_CAP, None).await?;
     let sig = fetch(&client, base, "manifest.ed25519", 64, Some(64)).await?;

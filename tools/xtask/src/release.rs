@@ -47,6 +47,27 @@ fn encode(v: &Value) -> Check<Vec<u8>> {
 fn manifest(bundle: &Path) -> Check<(Vec<u8>, Value)> {
     let raw = read(&bundle.join("manifest.json"), 16384)?;
     let m: Value = serde_json::from_slice(&raw).map_err(|_| fail())?;
+    if m["purpose"] == super::release_components::PURPOSE {
+        let component = m["component"].as_str().ok_or_else(fail)?;
+        let target = m["target"].as_str().ok_or_else(fail)?;
+        super::release_components::validate(&m, component, target).map_err(str::to_owned)?;
+        let bytes = read(
+            &bundle.join(super::release_components::binary(component).map_err(str::to_owned)?),
+            BINARY_CAP,
+        )?;
+        let rebuilt = super::release_components::make(
+            component,
+            target,
+            m["version"].as_str().ok_or_else(fail)?,
+            m["sequence"].as_u64().ok_or_else(fail)?,
+            &bytes,
+        )
+        .map_err(str::to_owned)?;
+        if rebuilt["size"] != m["size"] || rebuilt["sha256"] != m["sha256"] {
+            return Err("component_bundle_binary_hash_mismatch".into());
+        }
+        return Ok((raw, m));
+    }
     let required = [
         "format",
         "product",
@@ -145,7 +166,7 @@ fn require_new(bundle: &Path, name: &str) -> Check<()> {
 pub(super) fn run(root: &Path, args: &[String]) -> Check<()> {
     if args.len() != 3 || args[1] != "--bundle" {
         return Err(
-            "usage: xtask <release-provenance|verify-provenance> --bundle DIRECTORY".into(),
+            "usage: xtask <release-provenance|verify-provenance|component-provenance|verify-component-provenance> --bundle DIRECTORY".into(),
         );
     }
     let bundle = PathBuf::from(&args[2]);
@@ -154,7 +175,11 @@ pub(super) fn run(root: &Path, args: &[String]) -> Check<()> {
         return Err("release_private_bundle_required".into());
     }
     let (original, mut manifest) = manifest(&bundle)?;
-    if args[0] == "verify-provenance" {
+    let component = manifest["purpose"] == super::release_components::PURPOSE;
+    if component != args[0].contains("component") {
+        return Err("release_component_command_required".into());
+    }
+    if args[0] == "verify-provenance" || args[0] == "verify-component-provenance" {
         verify(&bundle, &manifest)?;
         println!(
             "Release artifact/provenance/inventory bytes agree. No signature or builder identity was authenticated; use the installer with an independent trust pin."
@@ -300,6 +325,98 @@ mod tests {
             ],
         );
         root
+    }
+    #[test]
+    fn component_provenance_packaging_binds_both_components_without_execution() {
+        let dir = std::env::temp_dir().join(format!(
+            "moosuri-component-provenance-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+        let temp = Temporary(dir);
+        let root = fixture_source(&temp.0);
+        let mut binary = vec![0; 128];
+        binary[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+        for (offset, value) in [
+            (16, 3),
+            (18, 62),
+            (20, 1),
+            (24, 120),
+            (32, 64),
+            (52, 64),
+            (54, 56),
+            (56, 1),
+            (64, 1),
+            (68, 1),
+            (96, 128),
+            (104, 128),
+        ] {
+            binary[offset] = value;
+        }
+        for component in ["credential-broker", "vault-service"] {
+            let bundle = temp.0.join(component);
+            fs::DirBuilder::new().mode(0o700).create(&bundle).unwrap();
+            let m = super::super::release_components::make(
+                component,
+                "x86_64-unknown-linux-gnu",
+                env!("CARGO_PKG_VERSION"),
+                1,
+                &binary,
+            )
+            .unwrap();
+            let name = super::super::release_components::binary(component).unwrap();
+            create(&bundle.join(name), &binary).unwrap();
+            create(&bundle.join("manifest.json"), &encode(&m).unwrap()).unwrap();
+            let path = bundle.to_str().unwrap().to_owned();
+            assert!(
+                run(
+                    &root,
+                    &["release-provenance".into(), "--bundle".into(), path.clone()]
+                )
+                .is_err()
+            );
+            run(
+                &root,
+                &[
+                    "component-provenance".into(),
+                    "--bundle".into(),
+                    path.clone(),
+                ],
+            )
+            .unwrap();
+            run(
+                &root,
+                &[
+                    "verify-component-provenance".into(),
+                    "--bundle".into(),
+                    path,
+                ],
+            )
+            .unwrap();
+            let (_, m) = manifest(&bundle).unwrap();
+            let p = read(&bundle.join(evidence::PROVENANCE), evidence::PROVENANCE_CAP).unwrap();
+            let provenance: Value = serde_json::from_slice(&p).unwrap();
+            assert_eq!(provenance["artifact"]["component"], component);
+            assert_eq!(
+                read(&bundle.join(evidence::INVENTORY), evidence::INVENTORY_CAP).unwrap(),
+                sbom::generate(&root).unwrap()
+            );
+            let mut changed = m;
+            changed["component"] = json!("unrelated-component");
+            assert!(
+                evidence::verify(
+                    &changed["provenance"],
+                    &p,
+                    &read(&bundle.join(evidence::INVENTORY), evidence::INVENTORY_CAP).unwrap(),
+                    &changed
+                )
+                .is_err()
+            );
+        }
     }
     #[test]
     fn release_provenance_actual_packaging_binds_fresh_inventory_and_rejects_mutation() {

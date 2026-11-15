@@ -3,4 +3,4 @@
 - [x] Paired signed result adoption and fixed same-run answer without LLM redispatch
 - [x] Chat wait/status/action UI and cancel/delete/restore fences
 - [x] Focused native/UI verification
-- [ ] Independent integration/security review
+- [x] Independent integration/security review and original-session race repair: [integrated evidence](../../../docs/reviews/2026-11-14-assistant-flows-integration.md).

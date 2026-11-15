@@ -1,4 +1,5 @@
 //! Signed bundles and stopped forward-schema activation. No service mutation.
+mod component;
 mod download;
 use clap::{Subcommand, ValueEnum};
 use fs2::FileExt;
@@ -46,6 +47,11 @@ pub enum Command {
         bundle: PathBuf,
         #[arg(long)]
         trust_key: PathBuf,
+    },
+    /// Package, authenticate or download a separate optional native component; never deploy it.
+    Component {
+        #[command(subcommand)]
+        command: component::Command,
     },
     /// Download a pinned signed bundle from an explicit versioned HTTPS mirror; never execute it.
     Download {
@@ -849,6 +855,7 @@ fn templates(prefix: &Path, i: &Installation) -> Result<BTreeMap<String, String>
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Component { command } => component::run(command)?,
         Command::Probe => println!("{}", serde_json::to_string(&own_probe()).map_err(error)?),
         Command::Manifest {
             binary,

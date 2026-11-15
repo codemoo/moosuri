@@ -11,8 +11,10 @@ routing and broader Google adapters remain open. The separate [Google INBOX-coun
 
 ## Trusted-device connection
 
-Build the workspace's `moosuri-credential-broker` binary from reviewed source.
-No signed binary/installer or independent signed distribution is provided (P10).
+Build the workspace's `moosuri-credential-broker` binary from reviewed source,
+or explicitly download and verify a [separately signed component package](component-packages.md)
+using an independently obtained signing-key pin. Official packages/key distribution
+and automatic installation are not yet provided.
 Use a private owner0700 local directory and an existing HTTPS assistant origin:
 
 ```sh

@@ -6,5 +6,5 @@
 - [x] Author one actual mock-provider/parser→Runtime/tool→chat/source regression plus focused format/markup check.
 - [x] Focused native2/2: real mock-provider/parser→Runtime/source/reuse/current-B precedence/cross-thread refusal and connector format/changed-markup check.
 - [x] Repair reviewed current-literal precedence P2 and actual Runtime-discovered outer tool-dispatch omission.
-- [ ] Root bounded re-review and integrated Linux acceptance.
+- [x] Root bounded re-review and integrated Linux acceptance: [credential/parcel/followup integration](../../../docs/reviews/2026-11-14-assistant-flows-integration.md).
 - [x] Document current positive/history/live limitations and unsupported carriers/actions.

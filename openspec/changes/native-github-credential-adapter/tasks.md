@@ -4,4 +4,4 @@
 - [x] Durable user request/status/reuse and personal experimental page
 - [x] Focused synthetic native/server/web verification
 - [x] Independent security review accepted expiry repair; integrated Linux native/Store/HTTP, migration/restore and web acceptance recorded.
-- [ ] Google and model-tool waiting integration (next slice, not P8 complete)
+- [x] Bounded Google counts/preview and original-chat waiting integration: [Google acceptance](../../../docs/reviews/2026-11-15-native-google-credential.md), [preview acceptance](../../../docs/reviews/2026-11-15-native-google-inbox-preview.md). General adapters and approved mail effects remain in the parent credential change.

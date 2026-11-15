@@ -45,3 +45,21 @@ official-runtime compatibility fix. No global CLI update, model/effort downgrade
 capability override, synthetic final answer or raw internal-event capture was
 used. The eleven application scenarios remain **not_run**; compilation of the
 current application does not change that result.
+
+## Persistent-history diagnostic
+
+A single additional synthetic probe used a persistent thread with the same official
+Codex0.168.0, GPT-6.1 Terra/high and disabled native capabilities. The official
+[history API](https://learn.chatgpt.com/docs/app-server#list-thread-turns) supports
+`thread/turns/list` with `itemsView: full` for persistent sessions. After the one
+dynamic tool result was acknowledged, the exact completed turn was retrieved once.
+Its persisted final-answer item also contained zero text, matching the empty live
+events. No recoverable final answer was found in that supported history route.
+The diagnostic deleted only its newly created synthetic thread through
+`thread/delete`; deletion succeeded. Only metadata was retained in the private
+report, without auth values, prompt/answer text or raw reasoning.
+
+This rules out missing ephemeral history as a sufficient explanation or repair.
+The eleven semantic application cases remain `not_run`; unchanged live probes
+will not be repeated. A runtime/provider fix or a separately validated integration
+is still required before a current model-quality claim.

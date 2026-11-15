@@ -57,6 +57,21 @@ pub fn check_reference(v: &Value, bytes: &[u8], name: &str, cap: u64) -> Result<
 /// Exact public artifact fields; signed sequence is intentionally outside this reusable evidence.
 pub fn artifact(manifest: &Value) -> Value {
     let mut o = serde_json::Map::new();
+    if manifest["purpose"] == "moosuri-component-bundle-v1" {
+        for key in [
+            "purpose",
+            "product",
+            "component",
+            "version",
+            "target",
+            "binary",
+            "size",
+            "sha256",
+        ] {
+            o.insert(key.into(), manifest[key].clone());
+        }
+        return Value::Object(o);
+    }
     for key in [
         "product",
         "version",

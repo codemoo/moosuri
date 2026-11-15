@@ -5,5 +5,5 @@
 - [x] Complete scoped Clippy, actual wasm32/React builds, format/spec checks on frozen source.
 
 ## Integration acceptance owned by root
-- [ ] Independent crypto/Worker/import review of frozen source and repair recheck if required.
-- [ ] Root-owned Linux integration and actual browser gates before publication.
+- [x] Independent crypto/Worker/import review of frozen source: [bounded acceptance](../../../docs/reviews/2026-11-15-vault-v1-migration.md).
+- [x] Root-owned Linux integration and actual Chrome synthetic import gates before publication, recorded in the same acceptance. Real personal archives and physical devices remain separate.

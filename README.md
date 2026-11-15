@@ -20,8 +20,10 @@ selected account's Gmail INBOX total/unread counts. A separately selected
 subject/from/date/snippet summaries in settings or the original chat. OAuth refresh
 and account/scope verification stay on the device. Preview mail remains outside
 later model history, conversation recall and learned recipes.
-Its routes remain default-off; general credential tools and signed companion
-distribution remain unfinished.
+Its routes remain default-off; general credential tools remain unfinished.
+Separate [signed native packages](docs/component-packages.md) can be prepared,
+verified and downloaded with an independent signing-key pin. Official artifacts
+and signing-key distribution remain unpublished.
 An explicit [legacy v1 encrypted-file import](docs/vault-v1-migration.md) locally
 authenticates the old export before re-encrypting selected items for the current vault.
 Account deletion clears active private data and delivers durable deletion to the separate vault.

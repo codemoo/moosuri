@@ -768,6 +768,8 @@ impl Store {
  match raw {Some(raw)=>{let v:KnowledgeToolResult=parse(&raw)?;if matches!(v,KnowledgeToolResult::Error(crate::ToolReadError::OutcomeUnknown)){unknown=true;}
 if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} is a failed tool result",e.step,e.call_id));}else{evidence.push(v)}},None=>report.push(format!("Missing receipt {}:{}",e.step,e.call_id))}
  }
+ let input_answers=inputs::values(&tx,&r)?;
+ for answer in &input_answers { if answer.field==moosuri_core::MissionInputField::SourceChoice { let chosen=answer.candidates.iter().find(|c|Some(&c.id)==answer.value.as_ref()).ok_or(StoreError::Conflict)?; if !candidate.evidence.iter().any(|e|e.step==chosen.step && e.call_id==chosen.call_id){report.push("Chosen source receipt is missing from the result evidence".into());} } }
  let(action_report,action_unknown)=actions::verification(&tx,&r)?;report.extend(action_report);unknown|=action_unknown;
  let mechanical_ready=report.is_empty() && !unknown && input.checks.iter().all(|check|match check {
  MissionCheck::PrivateReport{..}|MissionCheck::UserReview{..}=>true,
@@ -784,7 +786,7 @@ if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} 
  MissionCheck::OutputContains{text}=>candidate.text.contains(text)&&!evidence.is_empty(),
  MissionCheck::UserReview{..}=>false,
  };if valid{passed+=1}else{report.push(format!("Check {} needs valid evidence or owner review",i+1));}}
- let implicit_review=(!input.constraints.trim().is_empty() || reports::requested(&input).is_some())&&!input.checks.iter().any(|c|matches!(c,MissionCheck::UserReview{..}));
+ let implicit_review=(!input.constraints.trim().is_empty() || reports::requested(&input).is_some() || input_answers.iter().any(|w|w.field==moosuri_core::MissionInputField::Context))&&!input.checks.iter().any(|c|matches!(c,MissionCheck::UserReview{..}));
  if implicit_review{report.push("Additional constraints need owner review".into());}
  let achieved=report.is_empty()&&!unknown&&!evidence.is_empty();
  if evidence.is_empty(){report.push("No current-run evidence. A model's declaration is insufficient.".into())}

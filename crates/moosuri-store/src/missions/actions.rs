@@ -553,7 +553,7 @@ fn calendar_context(
             continue;
         };
         let valid = match answer.field {
-            F::MailTo => true,
+            F::MailTo | F::Context | F::SourceChoice | F::CalendarTarget => true,
             F::CalendarDate => {
                 if proposed == Some("create") {
                     decision.date.as_deref() == Some(v) && decision.date_quote.as_deref() == Some(v)
@@ -597,8 +597,12 @@ fn calendar_context(
     }
     let mut values = base;
     for answer in answers {
-        if answer.field != moosuri_core::MissionInputField::MailTo
-            && let Some(v) = answer.value
+        if matches!(
+            answer.field,
+            moosuri_core::MissionInputField::CalendarDate
+                | moosuri_core::MissionInputField::CalendarStart
+                | moosuri_core::MissionInputField::CalendarDuration
+        ) && let Some(v) = answer.value
         {
             values.push('\n');
             values.push_str(&v);
@@ -629,6 +633,19 @@ fn calendar_context(
             if decision.target_quote.as_ref() == Some(&e.fields.title) {
                 unique.insert(e.id.clone(), e);
             }
+        }
+        // A target answer selects an existing observation; it cannot supply a
+        // new title, account or operation. Preserve the chosen exact ETag.
+        if let Some(selection) = super::inputs::values(c, r)?
+            .into_iter()
+            .find(|w| w.field == moosuri_core::MissionInputField::CalendarTarget)
+        {
+            let selected = selection
+                .candidates
+                .iter()
+                .find(|c| Some(&c.id) == selection.value.as_ref())
+                .ok_or(StoreError::Conflict)?;
+            unique.retain(|id, event| id == &selected.id && event.etag == selected.revision);
         }
         if unique.len() != 1 {
             return Err(StoreError::InvalidInput);

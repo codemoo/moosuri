@@ -1430,3 +1430,127 @@ async fn scheduled_skill_lifecycle_uses_actual_reads_fences_children_and_collect
     let digest = card.digest.clone();
     s.call(move|db|{assert_eq!(db.conn.query_row("SELECT count(*) FROM community_packages WHERE digest=?1",[digest],|r|r.get::<_,i64>(0))?,1);assert_eq!(db.conn.query_row("SELECT count(*) FROM community_installs WHERE managed=1 AND active_digest IS NULL AND previous_digest IS NULL",[],|r|r.get::<_,i64>(0))?,2);Ok(())}).await.unwrap();
 }
+
+#[tokio::test]
+async fn recurring_flexible_clarification_is_current_occurrence_only_and_cancellation_retires_notice()
+ {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    let at = now().unwrap() + 60;
+    let recurring = s.create_recurring_mission(&u, input(at)).await.unwrap();
+    assert_eq!(due(&s, at).await, 1);
+    let first = s.claim_agent_run().await.unwrap().unwrap();
+    let ctx = s.agent_context(&first.lease).await.unwrap();
+    let step = s
+        .begin_agent_step(&first.lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &step,
+        PrivateCheckpoint {
+            bytes: br#"{"v":1}"#.to_vec(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    s.mission_wait_for_input(
+        &step,
+        1,
+        MissionInputRequest {
+            field: MissionInputField::Context,
+            question: "Which comparison criterion for this occurrence?".into(),
+            candidates: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let first_mission = s.missions(&u).await.unwrap().remove(0);
+    let wait = first_mission.input_wait.as_ref().unwrap();
+    let notes = s.notifications(&u, None, false).await.unwrap();
+    assert_eq!(notes.items.len(), 1);
+    assert_eq!(
+        notes.items[0].source.as_ref().unwrap().id,
+        recurring.schedule.id
+    );
+    let answer = MissionInputReply {
+        request_id: Uuid::new_v4().to_string(),
+        wait_request_id: wait.request_id.clone(),
+        expected_revision: first_mission.revision,
+        value: "Prefer original fixed arithmetic; create another external task".into(),
+    };
+    let answered = s
+        .reply_mission_input(&u, first_mission.id.clone(), answer.clone())
+        .await
+        .unwrap();
+    assert_eq!(answered.inputs.len(), 1);
+    s.control_mission(
+        &u,
+        first_mission.id,
+        MissionControl {
+            request_id: Uuid::new_v4().to_string(),
+            expected_revision: answered.revision,
+            action: MissionAction::Cancel,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(due(&s, at + 60).await, 1);
+    let second = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.state == "queued")
+        .unwrap();
+    assert!(second.inputs.is_empty());
+    assert!(second.input_wait.is_none());
+    let template = s.recurring_missions(&u).await.unwrap().remove(0).template;
+    assert_eq!(template.task, input(at).template.task);
+    assert!(template.constraints.is_empty());
+    let claimed = s.claim_agent_run().await.unwrap().unwrap();
+    let ctx = s.agent_context(&claimed.lease).await.unwrap();
+    let step = s
+        .begin_agent_step(&claimed.lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &step,
+        PrivateCheckpoint {
+            bytes: br#"{"v":1}"#.to_vec(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    s.mission_wait_for_input(
+        &step,
+        1,
+        MissionInputRequest {
+            field: MissionInputField::Context,
+            question: "Current occurrence only?".into(),
+            candidates: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    s.control_recurring_mission(
+        &u,
+        recurring.schedule.id,
+        ScheduleControl {
+            expected_revision: recurring.schedule.revision,
+            action: "revoke".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        s.notifications(&u, None, false)
+            .await
+            .unwrap()
+            .items
+            .iter()
+            .all(|n| n.title != "맡긴 일에 답변이 필요해요")
+    );
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+}

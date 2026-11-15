@@ -97,15 +97,36 @@ pub enum MissionInputField {
     CalendarDate,
     CalendarStart,
     CalendarDuration,
+    Context,
+    SourceChoice,
+    CalendarTarget,
+}
+/// A choice is a real current-run receipt observation, never model-created authority.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MissionInputCandidate {
+    pub id: String,
+    pub revision: String,
+    #[ts(type = "number")]
+    pub step: i64,
+    pub call_id: String,
+    #[serde(default)]
+    pub label: String,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct MissionInputRequest {
+    #[serde(default)]
+    #[ts(as = "Option<Vec<MissionInputCandidate>>", optional)]
+    pub candidates: Vec<MissionInputCandidate>,
     pub field: MissionInputField,
     pub question: String,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MissionInputWait {
+    #[serde(default)]
+    #[ts(as = "Option<Vec<MissionInputCandidate>>", optional)]
+    pub candidates: Vec<MissionInputCandidate>,
     pub request_id: String,
     pub field: MissionInputField,
     pub question: String,

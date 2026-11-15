@@ -192,7 +192,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
   }
   useEffect(()=>{if(session)void refreshShareSession().catch(()=>{});},[session?.user.id, session?.chat_draft_scope]);
   useEffect(()=>{if(session)void activatePushAccount(session.user.id).catch(()=>{});},[session?.user.id]);
-  useEffect(()=>{const listener=(event:MessageEvent)=>{if(event.data?.type==="moosuri-open-schedules"&&session)navigate("/app/schedules");};navigator.serviceWorker?.addEventListener("message",listener);return()=>navigator.serviceWorker?.removeEventListener("message",listener);},[session?.user.id]);
+  useEffect(()=>{const listener=(event:MessageEvent)=>{if(event.data?.type==="moosuri-open-schedules"&&session)navigate("/app/schedules");if(event.data?.type==="moosuri-open-mission"&&session&&event.data.account_id===session.user.id&&typeof event.data.mission_id==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event.data.mission_id))navigate(`/app/missions#mission-${event.data.mission_id}`);};navigator.serviceWorker?.addEventListener("message",listener);return()=>navigator.serviceWorker?.removeEventListener("message",listener);},[session?.user.id]);
   function retryBoot() {
     // Connectivity is not an authentication transition. Keep saved bytes opaque
     // until the fresh session and owned inventory confirm them, but synchronously

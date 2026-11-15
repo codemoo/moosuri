@@ -601,6 +601,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0069_mission_input_waits.sql"
         ))?;
     }
+    if captured < 70 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0070_flexible_mission_inputs.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -661,6 +666,12 @@ fn quarantine(
         let next = old.checked_add(1).ok_or(Error::Integrity)?;
         let record = auth.append(&a.account_id, next)?;
         epochs.push((a.account_id.clone(), next, record));
+    }
+    // This is a verified private staging DB, never an admitted live Store.
+    // SQLite table replacement requires FK enforcement disabled before BEGIN;
+    // all relationships are checked again before this destination is published.
+    if provenance.schema < 70 {
+        conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
     }
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     migrate(&tx, provenance.schema)?;
@@ -780,6 +791,11 @@ fn quarantine(
         .ok_or(Error::Integrity)?;
     tx.execute_batch(triggers)?;
     tx.commit()?;
+    conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+    if conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(Error::Integrity);
+    }
+
     let _key = crate::providers::open_key(conn, root)?;
     Ok(RestoreSummary {
         installation_id,

@@ -20,6 +20,8 @@
 
 - [x] Extend the original-task wait flow to finite missing recipient/date/start/duration values for already-admitted one-off actions, preserving operation authority, completed receipts and original budgets; verify resume/restore and original-value protection. See [input continuation](../resume-mission-with-missing-values/tasks.md).
 
+- [x] Extend original-task clarification to bounded context and receipt-bound source/Calendar choices, current recurring read occurrences, and action-needed inbox/opt-in Push; preserve original identity/budgets and revoke answered or stale questions. See [clarification](../clarify-original-mission/tasks.md).
+
 ## C — Separately granted native mailbox work
 
 - [x] Add model-readable native Gmail search/page/message/thread, explicit grant and source/dependency path; preserve legacy display-only exclusions.

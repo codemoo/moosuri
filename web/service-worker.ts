@@ -127,7 +127,7 @@ type PushIds = { v: number; notification_id: string; binding_id: string };
 const uuid = (v: unknown): v is string =>
   typeof v === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-async function authorizePush(value: PushIds): Promise<PushBinding | null> {
+async function authorizePush(value: PushIds): Promise<(PushBinding & {mission_id?: string}) | null> {
   try {
     const binding = await readPushBinding();
     if (!binding?.account_id || binding.binding_id !== value.binding_id)
@@ -147,11 +147,12 @@ async function authorizePush(value: PushIds): Promise<PushBinding | null> {
       }),
     });
     if (response.status !== 204) return null;
+    const mission=response.headers.get("x-moosuri-mission");
     const current = await readPushBinding();
     return current?.generation === binding.generation &&
       current.binding_id === binding.binding_id &&
       current.account_id === binding.account_id
-      ? current
+      ? {...current,...(uuid(mission)?{mission_id:mission}:{})}
       : null;
   } catch {
     return null;
@@ -208,10 +209,12 @@ self.addEventListener("notificationclick", (event) => {
         !value ||
         value.v !== 1 ||
         !uuid(value.notification_id) ||
-        !uuid(value.binding_id) ||
-        !(await authorizePush(value))
+        !uuid(value.binding_id)
       )
         return;
+      const authorized=await authorizePush(value);
+      if(!authorized)return;
+      const target=authorized.mission_id?`/app/missions#mission-${authorized.mission_id}`:"/app/schedules";
       const windows = await self.clients.matchAll({
         type: "window",
         includeUncontrolled: true,
@@ -220,9 +223,9 @@ self.addEventListener("notificationclick", (event) => {
         (client) => new URL(client.url).origin === self.location.origin,
       );
       if (existing) {
-        existing.postMessage({ type: "moosuri-open-schedules" });
+        existing.postMessage(authorized.mission_id?{type:"moosuri-open-mission",mission_id:authorized.mission_id,account_id:authorized.account_id}:{ type: "moosuri-open-schedules" });
         await existing.focus();
-      } else await self.clients.openWindow("/app/schedules");
+      } else await self.clients.openWindow(target);
     })(),
   );
 });

@@ -67,9 +67,17 @@ pub(super) async fn authorize(
         .authenticate_push_passive(cookie_token(&headers)?)
         .await?;
     expected_account(&headers, &user)?;
-    state
+    let mission = state
         .store
         .authorize_push_display(&user, input.binding_id, input.notification_id)
         .await?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    if let Some(id) = mission {
+        response.headers_mut().insert(
+            "x-moosuri-mission",
+            id.parse()
+                .map_err(|_| HttpError::from(moosuri_store::StoreError::Corrupt))?,
+        );
+    }
+    Ok(response)
 }

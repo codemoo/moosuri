@@ -904,3 +904,16 @@ it("opens a typed inbox mission link in the app without losing the chat draft",a
  expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("소식함 확인 후 이어 쓸 초안");
  expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);
 });
+it("opens an authorized action-needed mission push only for the active account and keeps the draft",async()=>{
+ const id="30000000-0000-4000-8000-000000000001";const worker=new EventTarget();const old=Object.getOwnPropertyDescriptor(navigator,"serviceWorker");
+ Object.defineProperty(navigator,"serviceWorker",{configurable:true,value:worker});
+ try{
+  server(path=>["/missions","/recurring-missions"].includes(path)?response([]):response({threads:[]}));render(<App/>);
+  const composer=await screen.findByRole("textbox",{name:"메시지"});fireEvent.change(composer,{target:{value:"Keep the unsent original draft"}});
+  await act(async()=>{worker.dispatchEvent(new MessageEvent("message",{data:{type:"moosuri-open-mission",mission_id:id,account_id:"b"}}))});
+  expect(screen.getByRole("textbox",{name:"메시지"})).toHaveValue("Keep the unsent original draft");
+  await act(async()=>{worker.dispatchEvent(new MessageEvent("message",{data:{type:"moosuri-open-mission",mission_id:id,account_id:"a"}}))});
+  await screen.findByRole("heading",{name:"맡긴 일",level:2});expect(window.location.hash).toBe(`#mission-${id}`);
+  fireEvent.click(screen.getByRole("button",{name:"← 대화로"}));expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("Keep the unsent original draft");
+ }finally{if(old)Object.defineProperty(navigator,"serviceWorker",old);else Reflect.deleteProperty(navigator,"serviceWorker")}
+});

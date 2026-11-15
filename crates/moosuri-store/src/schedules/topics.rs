@@ -16,6 +16,16 @@ fn source(conn: &Connection, tenant: &str, account: &str, id: &str) -> Result<No
         |r| r.get(0),
     )?;
     let followup = super::followups::is_followup(conn, tenant, &id)?;
+    let mission:Option<(String,i64,bool)>=conn.query_row("SELECT m.id,coalesce(p.revision,0),coalesce(p.muted,0) FROM missions m LEFT JOIN notification_source_preferences p ON p.tenant_id=m.tenant_id AND p.account_id=m.account_id AND p.schedule_id=m.id WHERE m.tenant_id=?1 AND m.account_id=?2 AND m.id=?3",params![tenant,account,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    if let Some((id, revision, muted)) = mission {
+        return Ok(NotificationSource {
+            id,
+            title: "맡긴 일의 정보 요청".into(),
+            kind: "mission_input".into(),
+            revision,
+            muted,
+        });
+    }
     conn.query_row(
         "SELECT s.id,s.title,EXISTS(SELECT 1 FROM recurring_missions r WHERE r.tenant_id=s.tenant_id AND r.account_id=s.account_id AND r.schedule_id=s.id),coalesce(p.revision,0),coalesce(p.muted,0) FROM reminder_schedules s LEFT JOIN notification_source_preferences p ON p.tenant_id=s.tenant_id AND p.account_id=s.account_id AND p.schedule_id=s.id WHERE s.tenant_id=?1 AND s.account_id=?2 AND s.id=?3",
         params![tenant, account, id], |r| Ok(NotificationSource {

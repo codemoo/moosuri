@@ -177,6 +177,7 @@ pub fn typescript_contract() -> String {
         MissionEvidence::decl(),
         MissionCandidate::decl(),
         MissionInputField::decl(),
+        MissionInputCandidate::decl(),
         MissionInputRequest::decl(),
         MissionInputWait::decl(),
         MissionInputReply::decl(),

@@ -83,9 +83,10 @@ export type MissionAcceptanceSnapshot = { revision: number, request: MissionCrea
 export type MissionAction = { "kind": "pause" } | { "kind": "resume" } | { "kind": "cancel" } | { "kind": "steer", instruction: string, };
 export type MissionEvidence = { step: number, call_id: string, };
 export type MissionCandidate = { text: string, evidence: Array<MissionEvidence>, };
-export type MissionInputField = "mail_to" | "calendar_date" | "calendar_start" | "calendar_duration";
-export type MissionInputRequest = { field: MissionInputField, question: string, };
-export type MissionInputWait = { request_id: string, field: MissionInputField, question: string, state: string, value: string | null, acceptance_revision: number, expires_at_ms: number, };
+export type MissionInputField = "mail_to" | "calendar_date" | "calendar_start" | "calendar_duration" | "context" | "source_choice" | "calendar_target";
+export type MissionInputCandidate = { id: string, revision: string, step: number, call_id: string, label: string, };
+export type MissionInputRequest = { candidates?: Array<MissionInputCandidate>, field: MissionInputField, question: string, };
+export type MissionInputWait = { candidates?: Array<MissionInputCandidate>, request_id: string, field: MissionInputField, question: string, state: string, value: string | null, acceptance_revision: number, expires_at_ms: number, };
 export type MissionInputReply = { request_id: string, wait_request_id: string, expected_revision: number, value: string, };
 export type MissionView = { input_wait?: MissionInputWait, inputs?: Array<MissionInputWait>, actions?: Array<MissionLinkedAction>, compound?: MissionCompound, wait?: MissionWaitView, id: string, revision: number, state: string, request: MissionCreate,
 /**

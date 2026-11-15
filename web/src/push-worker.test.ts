@@ -161,3 +161,11 @@ it("an old account cleanup cannot close B's generic notice", async () => {
   expect(a).toHaveBeenCalled();
   expect(b).not.toHaveBeenCalled();
 });
+it("action-needed clicks resolve the current original mission on the server and fence stale account messages",async()=>{
+ const f=fixture();const mission="30000000-0000-4000-8000-000000000001";
+ f.network.mockResolvedValue(new Response(null,{status:204,headers:{"x-moosuri-mission":mission}}));
+ await f.event("notificationclick",{notification:{close:vi.fn(),data:{...ids,mission_id:"invented-from-payload"}}});
+ expect(f.post).toHaveBeenCalledWith({type:"moosuri-open-mission",mission_id:mission,account_id:"a"});
+ f.setWindows([]);await f.event("notificationclick",{notification:{close:vi.fn(),data:ids}});
+ expect(f.open).toHaveBeenCalledWith(`/app/missions#mission-${mission}`);
+});

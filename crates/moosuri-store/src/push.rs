@@ -245,16 +245,20 @@ impl Store {
         user: &UserContext,
         binding: String,
         notification: String,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         let user = user.clone();
         uuid(&binding)?;
         uuid(&notification)?;
-        self.call(move|db|{let user=validate(&db.conn,&user,true,false)?;let row:bool=db.conn.query_row("SELECT EXISTS(SELECT 1 FROM push_subscriptions p JOIN local_notifications n ON n.tenant_id=p.tenant_id AND n.account_id=p.account_id WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.binding_id=?3 AND p.session_digest=?4 AND n.id=?5 AND n.is_read=0 AND n.dismissed=0 AND n.quiet=0 AND n.source_suppressed=0 AND n.push_suppressed=0 AND NOT EXISTS(SELECT 1 FROM notification_source_preferences sp WHERE sp.tenant_id=n.tenant_id AND sp.account_id=n.account_id AND sp.schedule_id=coalesce((SELECT source_schedule_id FROM followup_reminders f WHERE f.tenant_id=n.tenant_id AND f.schedule_id=n.schedule_id),(SELECT pt.schedule_id FROM proactive_suggestions ps JOIN proactive_topics pt ON pt.tenant_id=ps.tenant_id AND pt.account_id=n.account_id WHERE ps.tenant_id=n.tenant_id AND ps.schedule_id=n.schedule_id),n.schedule_id) AND sp.muted=1) AND n.delivered_at>?6 AND EXISTS(SELECT 1 FROM push_queue q WHERE q.tenant_id=n.tenant_id AND q.notification_id=n.id AND q.binding_id=p.binding_id AND q.state IN('dispatched','accepted','unknown')))",params![user.tenant.0,user.account.id,binding,user.digest.as_slice(),notification,clock()?-3600],|r|r.get(0))?;if !row||!eligible(&db.conn,&binding,clock()?)?||quiet(&db.conn,&user.tenant.0,&user.account.id,clock()?)?{return Err(StoreError::NotFound)}Ok(())}).await
+        self.call(move|db|{let user=validate(&db.conn,&user,true,false)?;let row:bool=db.conn.query_row("SELECT EXISTS(SELECT 1 FROM push_subscriptions p JOIN local_notifications n ON n.tenant_id=p.tenant_id AND n.account_id=p.account_id WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.binding_id=?3 AND p.session_digest=?4 AND n.id=?5 AND n.is_read=0 AND n.dismissed=0 AND n.quiet=0 AND n.source_suppressed=0 AND n.push_suppressed=0 AND NOT EXISTS(SELECT 1 FROM notification_source_preferences sp WHERE sp.tenant_id=n.tenant_id AND sp.account_id=n.account_id AND sp.schedule_id=coalesce((SELECT source_schedule_id FROM followup_reminders f WHERE f.tenant_id=n.tenant_id AND f.schedule_id=n.schedule_id),(SELECT pt.schedule_id FROM proactive_suggestions ps JOIN proactive_topics pt ON pt.tenant_id=ps.tenant_id AND pt.account_id=n.account_id WHERE ps.tenant_id=n.tenant_id AND ps.schedule_id=n.schedule_id),n.schedule_id) AND sp.muted=1) AND n.delivered_at>?6 AND EXISTS(SELECT 1 FROM push_queue q WHERE q.tenant_id=n.tenant_id AND q.notification_id=n.id AND q.binding_id=p.binding_id AND q.state IN('dispatched','accepted','unknown')))",params![user.tenant.0,user.account.id,binding,user.digest.as_slice(),notification,clock()?-3600],|r|r.get(0))?;if !row||!crate::missions::inputs::notice_current(&db.conn,&user.tenant.0,&notification)?||!eligible(&db.conn,&binding,clock()?)?||quiet(&db.conn,&user.tenant.0,&user.account.id,clock()?)?{return Err(StoreError::NotFound)}
+        Ok(db.conn.query_row("SELECT mission_id FROM mission_input_waits WHERE tenant_id=?1 AND notification_id=?2 AND status='waiting'",params![user.tenant.0,notification],|r|r.get(0)).optional()?)}).await
     }
 }
 
 fn allowed(conn: &Connection, lease: &PushLease, time: i64) -> Result<bool> {
-    if !eligible(conn, &lease.binding, time)? || quiet(conn, &lease.tenant, &lease.account, time)? {
+    if !crate::missions::inputs::notice_current(conn, &lease.tenant, &lease.notification)?
+        || !eligible(conn, &lease.binding, time)?
+        || quiet(conn, &lease.tenant, &lease.account, time)?
+    {
         return Ok(false);
     }
     Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM push_queue q JOIN local_notifications n ON n.tenant_id=q.tenant_id AND n.id=q.notification_id WHERE q.tenant_id=?1 AND q.id=?2 AND q.binding_id=?3 AND q.nonce=?4 AND q.expires_at>?5 AND n.account_id=?6 AND n.is_read=0 AND n.dismissed=0 AND n.quiet=0 AND n.source_suppressed=0 AND n.push_suppressed=0 AND NOT EXISTS(SELECT 1 FROM notification_source_preferences sp WHERE sp.tenant_id=n.tenant_id AND sp.account_id=n.account_id AND sp.schedule_id=coalesce((SELECT source_schedule_id FROM followup_reminders f WHERE f.tenant_id=n.tenant_id AND f.schedule_id=n.schedule_id),(SELECT pt.schedule_id FROM proactive_suggestions ps JOIN proactive_topics pt ON pt.tenant_id=ps.tenant_id AND pt.account_id=n.account_id WHERE ps.tenant_id=n.tenant_id AND ps.schedule_id=n.schedule_id),n.schedule_id) AND sp.muted=1))",params![lease.tenant,lease.id,lease.binding,lease.nonce,time,lease.account],|r|r.get(0))?)

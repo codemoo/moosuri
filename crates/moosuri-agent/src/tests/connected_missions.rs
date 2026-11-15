@@ -945,3 +945,114 @@ async fn mission_input_runtime_reads_once_waits_without_polling_and_continues_sa
     model_server.abort();
     io_server.abort();
 }
+
+async fn flexible_context_model(
+    State(s): State<Arc<Model>>,
+    axum::Json(body): axum::Json<Value>,
+) -> Response {
+    s.calls.fetch_add(1, Ordering::SeqCst);
+    let context: Value =
+        serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    let receipts = context["receipts"].as_array().unwrap();
+    let (delta, reason) = if context["plan"].as_array().unwrap().is_empty() {
+        (
+            json!({"role":"assistant","content":json!({"steps":["Calculate the exact total","Ask for the original comparison criterion","Present saved evidence"]}).to_string()}),
+            "stop",
+        )
+    } else if receipts.is_empty() {
+        (
+            json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"saved-sum".into(),"decimal_calculate",json!({"operation":"sum","operands":["0.1","0.2"]}))]}),
+            "tool_calls",
+        )
+    } else if context["owner_inputs"].as_array().unwrap().is_empty() {
+        (
+            json!({"role":"assistant","content":json!({"input_request":{"field":"context","question":"Which original comparison criterion should the answer emphasize?","candidates":[]}}).to_string()}),
+            "stop",
+        )
+    } else {
+        assert_eq!(context["owner_inputs"][0]["value"], "Emphasize exact cost");
+        assert_eq!(context["original"]["task"], context["accepted"]["task"]);
+        let r = &receipts[0];
+        (
+            json!({"role":"assistant","content":json!({"text":"Exact cost is 0.3", "evidence":[{"step":r["step"],"call_id":r["call_id"]}]}).to_string()}),
+            "stop",
+        )
+    };
+    let data = frame(
+        json!({"id":"flexible-context","model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}),
+    ) + &frame(
+        json!({"id":"flexible-context","model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":3}}),
+    ) + "data: [DONE]\n\n";
+    Response::builder()
+        .header("content-type", "text/event-stream")
+        .body(Body::from(data))
+        .unwrap()
+}
+#[tokio::test]
+async fn mission_flexible_context_runtime_pauses_without_polling_and_resumes_completed_work() {
+    let _guard = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let script = Arc::new(Model {
+        calls: AtomicUsize::new(0),
+    });
+    let app = Router::new()
+        .route("/v1/chat/completions", post(flexible_context_model))
+        .with_state(script.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_d, s, u, _) = knowledge::tool_configured(&base).await;
+    let m = s
+        .create_mission(
+            &u,
+            MissionCreate {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task: "Compute the synthetic exact cost".into(),
+                constraints: String::new(),
+                checks: vec![MissionCheck::DecimalEquals {
+                    expected: "0.3".into(),
+                }],
+                execution_mode: MissionMode::Durable,
+            },
+        )
+        .await
+        .unwrap();
+    let engine = Runtime::start(s.clone());
+    engine.wake();
+    let wait = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let view = s.missions(&u).await.unwrap().remove(0);
+            if view.state == "waiting" {
+                break view;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(script.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(wait.completed_steps, 1);
+    engine.shutdown().await;
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+    assert_eq!(script.calls.load(Ordering::SeqCst), 3);
+    let answer = MissionInputReply {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        wait_request_id: wait.input_wait.unwrap().request_id,
+        expected_revision: wait.revision,
+        value: "Emphasize exact cost".into(),
+    };
+    s.reply_mission_input(&u, m.id.clone(), answer.clone())
+        .await
+        .unwrap();
+    s.reply_mission_input(&u, m.id.clone(), answer)
+        .await
+        .unwrap();
+    let engine = Runtime::start(s.clone());
+    engine.wake();
+    let done = finished(&s, &u, &m.id).await;
+    assert_eq!(done.state, "partial", "{:?}", done.report);
+    assert!(done.report.iter().any(|r| r.contains("owner review")));
+    assert_eq!(done.completed_steps, 1);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 4);
+    engine.shutdown().await;
+    server.abort();
+}

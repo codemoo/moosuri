@@ -398,14 +398,14 @@ fn time_proposal(time: MissionChatTime, q: String) -> MissionChatDecision {
         clarification: None,
     }
 }
-fn zone(p: &CalendarRunProfile, d: &CalendarChatDecision) -> Result<chrono_tz::Tz> {
-    crate::missions::chat::source_zone(
-        d.date_quote.as_deref().unwrap_or(""),
-        p.timezone.as_deref(),
-    )?
-    .ok_or(StoreError::InvalidInput)?
-    .parse()
-    .map_err(|_| StoreError::InvalidInput)
+fn zone(p: &CalendarRunProfile, _d: &CalendarChatDecision) -> Result<chrono_tz::Tz> {
+    // Only the full-request timezone frozen at acknowledgement can authorize IO.
+    // A selected date quote cannot recover a rejected or missing timezone.
+    p.timezone
+        .as_deref()
+        .ok_or(StoreError::InvalidInput)?
+        .parse()
+        .map_err(|_| StoreError::InvalidInput)
 }
 fn moment(
     p: &CalendarRunProfile,
@@ -424,20 +424,12 @@ fn moment(
     if !crate::missions::chat::civil_consistent(&proposal, p.reference, &zone.to_string()) {
         return Err(StoreError::InvalidInput);
     }
-    let base = chrono::DateTime::from_timestamp(p.reference, 0)
-        .ok_or(StoreError::Corrupt)?
-        .with_timezone(&zone)
-        .date_naive();
-    let date = match d.date.as_deref() {
-        Some("today") => base,
-        Some("tomorrow") => base
-            .checked_add_days(Days::new(1))
-            .ok_or(StoreError::InvalidInput)?,
-        Some(v) => {
-            NaiveDate::parse_from_str(v, "%Y-%m-%d").map_err(|_| StoreError::InvalidInput)?
-        }
-        None => return Err(StoreError::InvalidInput),
-    };
+    let date = crate::schedules::civil_time::date_value(
+        d.date.as_deref().ok_or(StoreError::InvalidInput)?,
+        d.date_quote.as_deref().unwrap_or(""),
+        p.reference,
+        &zone.to_string(),
+    )?;
     let time = NaiveTime::parse_from_str(time, "%H:%M").map_err(|_| StoreError::InvalidInput)?;
     Ok(zone
         .from_local_datetime(&date.and_time(time))
@@ -448,33 +440,8 @@ fn moment(
 /// Validate the date quote using the existing civil oracle, without resolving
 /// any local midnight. A civil day is not a UTC instant or a 24-hour duration.
 fn civil_date(p: &CalendarRunProfile, date: &str, quote: &str) -> Result<NaiveDate> {
-    let z: chrono_tz::Tz = p
-        .timezone
-        .as_deref()
-        .ok_or(StoreError::InvalidInput)?
-        .parse()
-        .map_err(|_| StoreError::InvalidInput)?;
-    let proposal = time_proposal(
-        MissionChatTime::LocalOnce {
-            date: date.into(),
-            time: "00:00".into(),
-        },
-        format!("{quote} 00:00"),
-    );
-    if !crate::missions::chat::civil_consistent(&proposal, p.reference, &z.to_string()) {
-        return Err(StoreError::InvalidInput);
-    }
-    let base = chrono::DateTime::from_timestamp(p.reference, 0)
-        .ok_or(StoreError::Corrupt)?
-        .with_timezone(&z)
-        .date_naive();
-    match date {
-        "today" => Ok(base),
-        "tomorrow" => base
-            .checked_add_days(Days::new(1))
-            .ok_or(StoreError::InvalidInput),
-        v => NaiveDate::parse_from_str(v, "%Y-%m-%d").map_err(|_| StoreError::InvalidInput),
-    }
+    let zone = p.timezone.as_deref().ok_or(StoreError::InvalidInput)?;
+    crate::schedules::civil_time::date_value(date, quote, p.reference, zone)
 }
 pub(crate) fn range(p: &CalendarRunProfile, d: &CalendarChatDecision) -> Result<CalendarRange> {
     let start = moment(p, d, "00:00", "00:00")?;
@@ -830,6 +797,46 @@ pub(crate) fn record(c: &Connection, r: &Run, raw: serde_json::Value) -> Result<
     let d: CalendarChatDecision =
         serde_json::from_value(raw).map_err(|_| StoreError::InvalidInput)?;
     validate_decision(&crate::request_continuations::text(c, r)?, &d)?;
+    let source = crate::request_continuations::text(c, r)?;
+    let p = profile(c, &r.tenant, &r.id)?.ok_or(StoreError::Forbidden)?;
+    // Literal-span validation must not turn an unsupported timezone into a
+    // failed chat. Actual admission below freezes it as unavailable and clarifies.
+    let zone = match crate::missions::chat::source_zone(&source, p.timezone.as_deref()) {
+        Ok(zone) => zone,
+        Err(StoreError::InvalidInput) => None,
+        Err(error) => return Err(error),
+    };
+    let data = [d.title_quote.as_deref(), d.target_quote.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    for quote in [&d.date_quote, &d.move_date_quote, &d.last_date_quote]
+        .into_iter()
+        .flatten()
+    {
+        if !crate::schedules::civil_time::complete_quote(
+            &source,
+            quote,
+            &data,
+            p.reference,
+            zone.as_deref().unwrap_or("UTC"),
+            false,
+        ) {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    for quote in [&d.start_quote, &d.end_quote].into_iter().flatten() {
+        if !crate::schedules::civil_time::complete_quote(
+            &source,
+            quote,
+            &data,
+            p.reference,
+            zone.as_deref().unwrap_or("UTC"),
+            true,
+        ) {
+            return Err(StoreError::InvalidInput);
+        }
+    }
     crate::request_continuations::validate_scope(c, r, &CurrentChatDecision::Calendar(d.clone()))?;
     if d.decision == "clarify" {
         crate::request_continuations::pending(
@@ -1223,6 +1230,50 @@ mod civil_tests {
             timezone: Some(zone.into()),
             connections: vec![],
         }
+    }
+    #[test]
+    fn conversational_civil_time_calendar_shared_relative_weekday_and_native_clock_oracles() {
+        let p = clock_profile("Asia/Seoul");
+        for (date, quote, clock, origin, utc) in [
+            (
+                "모레",
+                "모레",
+                "15:30",
+                "오후 세 시 반",
+                "2027-01-03T06:30:00+00:00",
+            ),
+            (
+                "다음 주 금요일",
+                "다음 주 금요일",
+                "09:15",
+                "오전 아홉 시 십오 분",
+                "2027-01-08T00:15:00+00:00",
+            ),
+            (
+                "this Friday",
+                "this Friday",
+                "09:00",
+                "9AM",
+                "2027-01-01T00:00:00+00:00",
+            ),
+        ] {
+            assert_eq!(
+                moment(&p, &proposal(date, quote), clock, origin)
+                    .unwrap()
+                    .to_rfc3339(),
+                utc
+            )
+        }
+        assert!(moment(&p, &proposal("2027-01-08", "next Friday"), "09:00", "9AM").is_err());
+        assert!(
+            moment(
+                &p,
+                &proposal("다음 주 금요일", "다음 주 금요일"),
+                "09:00",
+                "오전 아홉 시 십오 분"
+            )
+            .is_err()
+        );
     }
     #[test]
     fn calendar_civil_oracle_month_boundary_dst_gap_fold_and_explicit_clock_consistency() {

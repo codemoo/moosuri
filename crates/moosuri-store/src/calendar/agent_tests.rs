@@ -783,6 +783,33 @@ async fn calendar_explicit_iana_zone_in_current_text_overrides_browser_and_is_fr
     };
     assert_eq!(fields.start, "2026-12-01T15:00:00+00:00");
     assert_eq!(fields.end, "2026-12-01T16:00:00+00:00");
+    // The negative request gets an independent fixture: the positive dispatch
+    // deliberately still holds its original per-account execution lease.
+    let (_negative_dir, s, u, c) = setup().await;
+    let b = s.calendar_binding(&u, c.id, app()).await.unwrap();
+    // A selected valid zone must not recover rejected full-request zone authority.
+    let text = "Create Synthetic meeting on 2026-12-01 UTC from 10:00 to 11:00 UTC+09:00";
+    let (_, invalid) = source(&s, &u, text, None).await;
+    let mut proposal = decision(text);
+    proposal.date_quote = Some("2026-12-01 UTC".into());
+    commit(&s, &invalid, &proposal).await;
+    assert!(
+        s.calendar_agent_command(&invalid)
+            .await
+            .unwrap()
+            .unwrap()
+            .profile
+            .timezone
+            .is_none()
+    );
+    assert!(s.calendar_agent_range(&invalid).await.is_err());
+    let before = s.calendar_actions(&u).await.unwrap().len();
+    assert!(
+        s.admit_calendar_agent_change(&invalid, &b, primary(), None)
+            .await
+            .is_err()
+    );
+    assert_eq!(s.calendar_actions(&u).await.unwrap().len(), before);
 }
 
 #[tokio::test]
@@ -1164,4 +1191,58 @@ async fn external_report_rejects_selected_completed_calendar_command_context() {
         assert!(matches!(crate::artifacts::external::current(&db.conn,&run),Err(StoreError::Forbidden)));
         Ok(())
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn conversational_civil_time_calendar_commit_binds_full_date_without_title_authority() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, s, u, _c) = setup().await;
+    let text = "Create \"Synthetic meeting next Friday\" next week Friday at 9AM until 10AM";
+    let (_, l) = source(&s, &u, text, None).await;
+    let run = l.run_id().to_string();
+    s.call(move |db| {
+        let profile: String = db.conn.query_row(
+            "SELECT profile FROM calendar_agent_profiles WHERE run_id=?1",
+            params![run],
+            |r| r.get(0),
+        )?;
+        let mut profile: serde_json::Value = serde_json::from_str(&profile).unwrap();
+        profile["reference"] = serde_json::json!(1798731000_i64); // 2026-12-31T15:30:00Z.
+        db.conn.execute(
+            "UPDATE calendar_agent_profiles SET profile=?2 WHERE run_id=?1",
+            params![run, profile.to_string()],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let mut d = decision(text);
+    d.title_quote = Some("Synthetic meeting next Friday".into());
+    d.date_quote = Some("Friday".into());
+    d.date = Some("2027-01-01".into());
+    d.start_quote = Some("9AM".into());
+    d.start = Some("09:00".into());
+    d.end_quote = Some("10AM".into());
+    d.end = Some("10:00".into());
+    let ctx = s.agent_context(&l).await.unwrap();
+    let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+    let checkpoint = |d: &CalendarChatDecision| PrivateCheckpoint {
+        bytes: serde_json::json!({"kind":"mission_chat_decision","decision":d})
+            .to_string()
+            .into_bytes(),
+    };
+    assert!(
+        s.commit_agent_step(&step, checkpoint(&d), vec![])
+            .await
+            .is_err()
+    );
+    assert!(s.calendar_agent_command(&l).await.unwrap().is_none());
+    assert!(s.calendar_actions(&u).await.unwrap().is_empty());
+    d.date_quote = Some("next week Friday".into());
+    d.date = Some("2027-01-08".into());
+    s.commit_agent_step(&step, checkpoint(&d), vec![])
+        .await
+        .unwrap();
+    assert!(s.calendar_agent_command(&l).await.unwrap().is_some());
+    assert!(s.calendar_actions(&u).await.unwrap().is_empty());
 }

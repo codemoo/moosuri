@@ -142,21 +142,16 @@ fn ambiguity_injection_unicode_and_scheduled_missions_have_no_write_intent() {
             parser::Decision::Clarify(_)
         ));
     }
-    let c = match parser::parse(
-        "remind me 2027-11-07 at 01:30 to stretch",
-        Some("America/New_York"),
-        ts("2027-11-07T04:00:00Z"),
-        false,
-    ) {
-        parser::Decision::Command(c) => c,
-        _ => panic!(),
-    };
-    assert_eq!(
-        c.rule,
-        Some(ScheduleRule::Once {
-            at: ts("2027-11-07T05:30:00Z")
-        })
-    );
+    // A one-shot fold needs clarification instead of silently choosing an occurrence.
+    assert!(matches!(
+        parser::parse(
+            "remind me 2027-11-07 at 01:30 to stretch",
+            Some("America/New_York"),
+            ts("2027-11-07T04:00:00Z"),
+            false,
+        ),
+        parser::Decision::Clarify(_)
+    ));
 }
 #[test]
 fn weekly_gap_fold_downtime_and_invalid_days() {

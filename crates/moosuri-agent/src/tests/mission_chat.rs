@@ -306,3 +306,116 @@ async fn request_continuation_runtime_clock_answer_saves_original_weekly_task_an
     runtime.shutdown().await;
     upstream.abort();
 }
+
+#[tokio::test]
+async fn conversational_civil_time_runtime_missing_clock_reopen_preserves_original_week_and_zone() {
+    let _g = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let counted = count.clone();
+    let first = "next week Friday summarize public notices";
+    let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{let counted=counted.clone();async move{
+        let n=counted.fetch_add(1,Ordering::SeqCst);
+        let intent=body["tools"].as_array().is_some_and(|v|v.iter().any(|d|d["function"]["name"]=="mission_chat_decision"));
+        let(delta,reason)=if intent {
+            assert_eq!(body["messages"].as_array().unwrap().len(),2);
+            let text=body["messages"][1]["content"].as_str().unwrap();let answer=text.contains("오전 아홉 시 십오 분");
+            assert!(text.contains(first));
+            let d=MissionChatDecision{decision:if answer{"command"}else{"clarify"}.into(),action:Some("create_scheduled".into()),target_kind:None,intent_quote:Some(first.into()),task_quote:Some("summarize public notices".into()),constraints_quote:None,time_quote:answer.then(||"오전 아홉 시 십오 분".into()),target_quote:None,instruction_quote:None,time:answer.then(||MissionChatTime::LocalOnce{date:"next week Friday".into(),time:"09:15".into()}),clarification:(!answer).then(||"time".into())};
+            (json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("civil-{n}"),"mission_chat_decision",serde_json::to_value(d).unwrap())]}),"tool_calls")
+        }else{(json!({"role":"assistant","content":"Synthetic ordinary answer"}),"stop")};
+        let body=frame(json!({"id":format!("civil-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";
+        Response::builder().header("content-type","text/event-stream").body(Body::from(body)).unwrap()
+    }}));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (dir, s, u, t) = knowledge::tool_configured(&base).await;
+    let start = s
+        .submit_turn_with_schedule_context(
+            &u,
+            t.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            first.into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let runtime = Runtime::start(s.clone());
+    let question = wait(&s, &u, &t).await;
+    assert_eq!(
+        question.run.mission_receipt.as_ref().unwrap().state,
+        "clarify"
+    );
+    assert!(s.recurring_missions(&u).await.unwrap().is_empty());
+    runtime.shutdown().await;
+    drop(runtime);
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    let answer_id = uuid::Uuid::new_v4().to_string();
+    let answer = "오전 아홉 시 십오 분";
+    s.submit_turn_with_schedule_context(
+        &u,
+        t.clone(),
+        answer_id.clone(),
+        answer.into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "America/New_York".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let runtime = Runtime::start(s.clone());
+    let done = wait(&s, &u, &t).await;
+    assert_eq!(done.run.state, RunState::Completed, "{:?}", done.run.error);
+    assert_eq!(done.run.mission_receipt.as_ref().unwrap().state, "active");
+    let saved = s.recurring_missions(&u).await.unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].template.task, "summarize public notices");
+    // Independent weekday construction from the original admission instant; no
+    // call to the production expression parser or proposed model calendar date.
+    let local_day = (start.run.created_at + 9 * 3600).div_euclid(86400);
+    // Unix epoch was Thursday (Monday-based index3); Seoul has no DST.
+    let monday = local_day - (local_day + 3).rem_euclid(7);
+    let expected = (monday + 11) * 86400 + 15 * 60; // next Friday09:15KST = Friday00:15UTC
+    assert_eq!(
+        saved[0].schedule.rule,
+        moosuri_core::ScheduleRule::Once { at: expected }
+    );
+    let replay = s
+        .submit_turn_with_schedule_context(
+            &u,
+            t.clone(),
+            answer_id,
+            answer.into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "America/New_York".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.run.id, done.run.id);
+    assert_eq!(count.load(Ordering::SeqCst), 2);
+    s.submit_turn(
+        &u,
+        t.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        "What is 2 plus 2?".into(),
+    )
+    .await
+    .unwrap();
+    runtime.wake();
+    wait(&s, &u, &t).await;
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+    assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
+    runtime.shutdown().await;
+    drop(runtime);
+    server.abort();
+}

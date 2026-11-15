@@ -328,7 +328,7 @@ async fn reminder_followup_schema50_forward_migration_rollback_fk_and_quarantine
     let u = configured(&s).await;
     s.call(|db| {
         db.conn
-            .execute_batch("DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;PRAGMA user_version=50;")?;
+            .execute_batch("ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;PRAGMA user_version=50;")?;
         Ok(())
     })
     .await
@@ -338,7 +338,7 @@ async fn reminder_followup_schema50_forward_migration_rollback_fk_and_quarantine
     at(&s, BASE).await;
     s.call(|db| {
         let version: i64 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        assert_eq!(version, 51);
+        assert_eq!(version, crate::CURRENT_SCHEMA_VERSION);
         assert!(!db.conn.prepare("PRAGMA foreign_key_check")?.exists([])?);
         Ok(())
     })
@@ -556,4 +556,181 @@ async fn reminder_followup_repair_cancel_meta_iso_and_exhaustion_do_not_expand_a
     assert!(ended.assistant.iter().any(|m| m.text.contains("새 요청")));
     assert!(!ended.assistant.iter().any(|m| m.text.contains("어떤 문구")));
     ignored(&s, &u, &t, "stretch").await;
+}
+
+#[tokio::test]
+async fn conversational_civil_time_reminder_outcomes_followup_reopen_timezone_and_dst_oracles() {
+    let _serial = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = configured(&s).await;
+    let anchor = chrono::DateTime::parse_from_rfc3339("2026-12-31T15:30:00Z")
+        .unwrap()
+        .timestamp();
+    at(&s, anchor).await;
+    // Fixed external calendar oracle: Seoul is Jan1 (Friday), LA is Dec31 (Thursday).
+    for (command, zone, utc) in [
+        (
+            "내일 오전9:30에 60분 동안 물 마시라고 알려줘",
+            "Asia/Seoul",
+            "2027-01-02T00:30:00Z",
+        ),
+        (
+            "모레 오후 세 시 반에 물 마시라고 알려줘",
+            "Asia/Seoul",
+            "2027-01-03T06:30:00Z",
+        ),
+        (
+            "다음 주 금요일 오전 아홉 시 십오 분에 합성 자료 확인하라고 알려줘",
+            "Asia/Seoul",
+            "2027-01-08T00:15:00Z",
+        ),
+        (
+            "remind me this Friday at 9:30AM to stretch",
+            "America/Los_Angeles",
+            "2027-01-01T17:30:00Z",
+        ),
+        (
+            "remind me day after tomorrow at midnight to stretch",
+            "America/Los_Angeles",
+            "2027-01-02T08:00:00Z",
+        ),
+    ] {
+        let t = thread(&s, &u).await;
+        let done = send(&s, &u, &t, &Uuid::new_v4().to_string(), command, zone)
+            .await
+            .unwrap();
+        assert_eq!(done.run.state, RunState::Completed, "{command}");
+        let r = receipt(&done);
+        let saved = s
+            .schedules(&u)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|v| v.id == r.id)
+            .unwrap();
+        if command == "내일 오전9:30에 60분 동안 물 마시라고 알려줘" {
+            assert_eq!(saved.message, "60분 동안 물 마시라고");
+        }
+        assert_eq!(
+            saved.rule,
+            ScheduleRule::Once {
+                at: chrono::DateTime::parse_from_rfc3339(utc)
+                    .unwrap()
+                    .timestamp()
+            },
+            "{command}"
+        );
+    }
+    // A supplied native-word clock keeps its original weekday/date while AM/PM is answered.
+    let t = thread(&s, &u).await;
+    let initial = turn(&s, &u, &t, "다음 주 금요일 아홉 시에 물 마시라고 알려줘").await;
+    assert!(initial.run.schedule_receipts.is_none());
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    at(&s, anchor + 300).await;
+    let id = Uuid::new_v4().to_string();
+    let done = send(&s, &u, &t, &id, "오전", "America/New_York")
+        .await
+        .unwrap();
+    assert_eq!(receipt(&done).timezone, "Asia/Seoul");
+    let saved = s
+        .schedules(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.id == receipt(&done).id)
+        .unwrap();
+    assert_eq!(
+        saved.rule,
+        ScheduleRule::Once {
+            at: chrono::DateTime::parse_from_rfc3339("2027-01-08T00:00:00Z")
+                .unwrap()
+                .timestamp()
+        }
+    );
+    assert_eq!(
+        send(&s, &u, &t, &id, "오전", "America/New_York")
+            .await
+            .unwrap()
+            .run
+            .id,
+        done.run.id
+    );
+    assert!(matches!(
+        parser::parse("내일 날씨 알려줘", Some("Asia/Seoul"), anchor, false),
+        parser::Decision::None
+    ));
+    assert!(matches!(
+        parser::parse(
+            "아침에 물 마시라고 알려줘",
+            Some("Asia/Seoul"),
+            anchor,
+            false
+        ),
+        parser::Decision::Clarify(_)
+    ));
+    let before = s.schedules(&u).await.unwrap().len();
+    for command in [
+        "내일 오전9시60분 물 마시라고 알려줘",
+        "내일 오전9시 육십분에 물 마시라고 알려줘",
+        "내일 오전13시 물 마시라고 알려줘",
+        "내일 09:60 물 마시라고 알려줘",
+        "내일 오전9시 오후 물 마시라고 알려줘",
+    ] {
+        let t = thread(&s, &u).await;
+        let result = send(
+            &s,
+            &u,
+            &t,
+            &Uuid::new_v4().to_string(),
+            command,
+            "Asia/Seoul",
+        )
+        .await
+        .unwrap();
+        assert!(result.run.schedule_receipts.is_none(), "{command}");
+        assert_eq!(result.run.state, RunState::Completed, "{command}");
+    }
+    for (base, command) in [
+        (
+            "2027-03-13T12:00:00Z",
+            "remind me tomorrow at 2:30AM to stretch",
+        ),
+        (
+            "2027-11-06T12:00:00Z",
+            "remind me tomorrow at 1:30AM to stretch",
+        ),
+        (
+            "2026-12-31T15:30:00Z",
+            "remind me next Friday at 9AM to stretch",
+        ),
+        (
+            "2026-12-31T15:30:00Z",
+            "remind me next week in the morning to stretch",
+        ),
+    ] {
+        at(
+            &s,
+            chrono::DateTime::parse_from_rfc3339(base)
+                .unwrap()
+                .timestamp(),
+        )
+        .await;
+        let t = thread(&s, &u).await;
+        let result = send(
+            &s,
+            &u,
+            &t,
+            &Uuid::new_v4().to_string(),
+            command,
+            "America/Los_Angeles",
+        )
+        .await
+        .unwrap();
+        assert!(result.run.schedule_receipts.is_none(), "{command}");
+        assert_eq!(result.run.state, RunState::Completed);
+    }
+    assert_eq!(s.schedules(&u).await.unwrap().len(), before);
+    assert!(s.claim_agent_run().await.unwrap().is_none()); // zero model admission for reminders/clarifications.
 }

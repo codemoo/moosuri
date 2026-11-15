@@ -62,7 +62,8 @@ fn time_candidate(s: &str) -> bool {
     let s = s.to_ascii_lowercase();
     s.len() <= 160
         && !s.contains(['\n', '\r', '?', '"', '\'', '`', ';'])
-        && (parser::future_prefix(&s)
+        && (crate::schedules::civil_time::day_cue(&s)
+            || parser::future_prefix(&s)
             || matches!(s.as_str(), "tomorrow" | "today" | "내일" | "오늘" | "모레")
             || s.starts_with("in ")
             || s.starts_with("tomorrow ")
@@ -73,20 +74,21 @@ fn time_candidate(s: &str) -> bool {
 }
 fn has_day(s: &str) -> bool {
     let s = s.to_ascii_lowercase();
-    [
-        "tomorrow ",
-        "today ",
-        "내일",
-        "오늘",
-        "모레",
-        "매일",
-        "매주",
-        "every ",
-        "daily ",
-        "in ",
-    ]
-    .iter()
-    .any(|p| s.starts_with(p))
+    crate::schedules::civil_time::day_cue(&s)
+        || [
+            "tomorrow ",
+            "today ",
+            "내일",
+            "오늘",
+            "모레",
+            "매일",
+            "매주",
+            "every ",
+            "daily ",
+            "in ",
+        ]
+        .iter()
+        .any(|p| s.starts_with(p))
         || s.get(..10)
             .is_some_and(|p| chrono::NaiveDate::parse_from_str(p, "%Y-%m-%d").is_ok())
         || ["뒤", "뒤에", "후", "후에", "마다"]
@@ -296,22 +298,21 @@ fn answer_time(d: &Draft, text: &str, now: i64) -> Option<ScheduleRule> {
             if text.is_ascii() {
                 format!("{spec}{lower}")
             } else {
-                let clock_from = if spec
-                    .get(..10)
-                    .is_some_and(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok())
-                {
-                    10
-                } else {
-                    0
-                };
-                let split = clock_from + spec[clock_from..].find(|c: char| c.is_ascii_digit())?;
+                let consumed = d
+                    .timezone
+                    .as_deref()
+                    .and_then(|z| {
+                        crate::schedules::civil_time::date_prefix(spec, d.reference, z)
+                            .ok()
+                            .flatten()
+                            .map(|(_, n)| n)
+                    })
+                    .unwrap_or(0);
+                let remainder = spec[consumed..].trim_start();
+                let split = spec.len() - remainder.len();
                 format!("{}{} {}", &spec[..split], text, &spec[split..])
             }
-        } else if matches!(
-            lower.as_str(),
-            "tomorrow" | "today" | "내일" | "오늘" | "모레"
-        ) && !has_day(spec)
-        {
+        } else if crate::schedules::civil_time::day_cue(&lower) && !has_day(spec) {
             format!("{text} {spec}")
         } else {
             return None;

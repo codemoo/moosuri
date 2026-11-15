@@ -1,5 +1,5 @@
 use super::*;
-use chrono::{Days, LocalResult, NaiveDate, NaiveTime, TimeZone};
+use chrono::{Days, NaiveDate, NaiveTime};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Action {
     Create,
@@ -393,9 +393,11 @@ fn iso_date_tail(value: &str) -> Option<&str> {
     Some(value.get(10..)?.trim_start())
 }
 pub(super) fn future_prefix(value: &str) -> bool {
-    iso_date_tail(value).is_some_and(korean_time)
+    crate::schedules::civil_time::day_cue(value)
+        || iso_date_tail(value).is_some_and(korean_time)
         || [
-            "내일", "모레", "오늘", "매일", "매주", "오전", "오후", "every ", "매 ",
+            "내일", "모레", "오늘", "매일", "매주", "오전", "오후", "아침", "저녁", "정오", "자정",
+            "every ", "매 ",
         ]
         .iter()
         .any(|s| value.starts_with(s))
@@ -406,6 +408,21 @@ pub(super) fn future_prefix(value: &str) -> bool {
         })
 }
 fn korean_time(mut value: &str) -> bool {
+    if crate::schedules::civil_time::day_cue(value) {
+        // A civil day alone is ordinary content (e.g. 내일 날씨 알려줘).
+        // Capture only a clock-looking tail; malformed clock components clarify.
+        for (at, _) in value.char_indices() {
+            let tail = value[at..].trim_start();
+            if ["오전", "오후", "아침", "저녁", "정오", "자정"]
+                .iter()
+                .any(|p| tail.starts_with(p))
+                || number(tail).is_some_and(|(_, t)| t.trim_start().starts_with(['시', ':']))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
     if let Some(rest) = iso_date_tail(value) {
         value = rest;
     }
@@ -425,6 +442,9 @@ fn korean_time(mut value: &str) -> bool {
     }
     value.starts_with("오전")
         || value.starts_with("오후")
+        || ["아침", "저녁", "정오", "자정"]
+            .iter()
+            .any(|v| value.starts_with(v))
         || number(value).is_some_and(|(_, tail)| {
             ["시", ":", "분", "시간", "초"]
                 .iter()
@@ -485,61 +505,7 @@ fn number(v: &str) -> Option<(u32, &str)> {
     None
 }
 fn clock(v: &str) -> Option<(String, &str)> {
-    let mut v = v.trim_start();
-    if let Some(rest) = v.strip_prefix("at ") {
-        v = rest.trim_start()
-    }
-    let mut pm = None;
-    for (s, p) in [("오전", false), ("오후", true)] {
-        if let Some(rest) = v.strip_prefix(s) {
-            pm = Some(p);
-            v = rest.trim_start();
-            break;
-        }
-    }
-    let (h, mut tail) = number(v)?;
-    let mut m = 0;
-    let mut hour = h;
-    if let Some(rest) = tail.strip_prefix(':') {
-        let (n, rest) = number(rest)?;
-        m = n;
-        tail = rest;
-    } else if let Some(rest) = tail.strip_prefix('시') {
-        tail = rest.trim_start();
-        if let Some((n, rest)) = number(tail)
-            && let Some(rest) = rest.strip_prefix('분')
-        {
-            m = n;
-            tail = rest;
-        }
-    } else if pm.is_some() {
-        return None;
-    }
-    let t = tail.trim_start();
-    if let Some(rest) = t.strip_prefix("am") {
-        pm = Some(false);
-        tail = rest
-    } else if let Some(rest) = t.strip_prefix("pm") {
-        pm = Some(true);
-        tail = rest
-    }
-    if let Some(pm) = pm {
-        if !(1..=12).contains(&h) {
-            return None;
-        }
-        hour = h % 12 + if pm { 12 } else { 0 };
-    } else if h <= 12 && !v.contains(':') {
-        return None;
-    }
-    if hour > 23 || m > 59 {
-        return None;
-    }
-    let tail = tail.trim_start();
-    let tail = tail
-        .strip_prefix("에 ")
-        .or_else(|| tail.strip_prefix('에'))
-        .unwrap_or(tail);
-    Some((format!("{hour:02}:{m:02}"), tail.trim_start()))
+    crate::schedules::civil_time::clock_prefix(v)
 }
 fn weekdays(v: &str) -> Option<Vec<u8>> {
     let v = v.trim().trim_end_matches(',');
@@ -690,28 +656,10 @@ fn rule_lower<'a>(spec: &'a str, tz: Option<&str>, now: i64) -> Result<(Schedule
     };
     let mut date = base.date_naive();
     let mut explicit = false;
-    for (prefix, add) in [
-        ("tomorrow ", 1),
-        ("today ", 0),
-        ("내일", 1),
-        ("오늘", 0),
-        ("모레", 2),
-    ] {
-        if let Some(tail) = v.strip_prefix(prefix) {
-            date = date
-                .checked_add_days(Days::new(add))
-                .ok_or(StoreError::InvalidInput)?;
-            v = tail.trim();
-            explicit = true;
-            break;
-        }
-    }
-    if v.len() >= 11
-        && let Some(prefix) = v.get(..10)
-        && let Ok(d) = NaiveDate::parse_from_str(prefix, "%Y-%m-%d")
+    if let Some((resolved, consumed)) = crate::schedules::civil_time::date_prefix(v, now, timezone)?
     {
-        date = d;
-        v = v[10..].trim_start();
+        date = resolved;
+        v = v[consumed..].trim();
         explicit = true;
     }
     let (hhmm, rest) = clock(v).ok_or(StoreError::InvalidInput)?;
@@ -735,11 +683,7 @@ fn rule_lower<'a>(spec: &'a str, tz: Option<&str>, now: i64) -> Result<(Schedule
         ));
     }
     let t = NaiveTime::parse_from_str(&hhmm, "%H:%M").map_err(|_| StoreError::InvalidInput)?;
-    let local = |d: NaiveDate| match zone.from_local_datetime(&d.and_time(t)) {
-        LocalResult::Single(v) => Ok(v.timestamp()),
-        LocalResult::Ambiguous(a, b) => Ok(a.timestamp().min(b.timestamp())),
-        LocalResult::None => Err(StoreError::InvalidInput),
-    };
+    let local = |d: NaiveDate| crate::schedules::civil_time::local_instant(d, t, timezone);
     let mut at = local(date)?;
     if at <= now && !explicit {
         date = date

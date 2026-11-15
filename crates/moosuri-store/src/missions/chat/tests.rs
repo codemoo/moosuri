@@ -427,7 +427,7 @@ async fn mission_chat_schema29_rolls_back_late_failure_without_recreating_prior_
     let d = crate::tests::directory();
     drop(Store::open(d.path()).unwrap());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;CREATE TABLE mission_chat_commands(conflict INTEGER);PRAGMA user_version=28;").unwrap();
+    c.execute_batch("DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;CREATE TABLE mission_chat_commands(conflict INTEGER);PRAGMA user_version=28;").unwrap();
     drop(c);
     assert!(Store::open(d.path()).is_err());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
@@ -1502,6 +1502,184 @@ fn implicit_english_intervals_preserve_exact_unit_and_numeric_control() {
         assert!(
             !civil_consistent(&d, 1700000000, "UTC"),
             "must not infer a relative delay: {quote}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn conversational_civil_time_mission_admission_uses_exact_next_week_and_rejects_forged_or_dst_times()
+ {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, s, u) = setup().await;
+    let anchor = chrono::DateTime::parse_from_rfc3339("2026-12-31T15:30:00Z")
+        .unwrap()
+        .timestamp();
+    let quote = "다음 주 금요일 오전 아홉 시 십오 분";
+    let task = "공개 항만 공지를 요약해 줘";
+    let text = format!("{quote}에 {task}");
+    let (thread, lease) = source(&s, &u, &text, None).await;
+    let run = lease.run_id().to_string();
+    s.call(move |db| {
+        db.conn.execute(
+            "UPDATE mission_chat_plans SET anchor=?2 WHERE run_id=?1",
+            params![run, anchor],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let mut d = decision(&text, true);
+    d.task_quote = Some(task.into());
+    d.time_quote = Some(quote.into());
+    d.time = Some(MissionChatTime::LocalOnce {
+        date: "다음 주 금요일".into(),
+        time: "09:15".into(),
+    });
+    assert!(civil_consistent(&d, anchor, "Asia/Seoul"));
+    let mut wrong = d.clone();
+    wrong.time = Some(MissionChatTime::LocalOnce {
+        date: "2027-01-01".into(),
+        time: "09:15".into(),
+    });
+    assert!(!civil_consistent(&wrong, anchor, "Asia/Seoul"));
+    commit(&s, &lease, d).await;
+    s.apply_mission_chat(&lease).await.unwrap();
+    let actual = s.recurring_missions(&u).await.unwrap();
+    assert_eq!(actual.len(), 1);
+    assert_eq!(
+        actual[0].schedule.rule,
+        ScheduleRule::Once {
+            at: chrono::DateTime::parse_from_rfc3339("2027-01-08T00:15:00Z")
+                .unwrap()
+                .timestamp()
+        }
+    );
+    let done = s.conversation(&u, thread, None).await.unwrap();
+    assert_eq!(
+        done.turns[0].run.mission_receipt.as_ref().unwrap().state,
+        "active"
+    );
+    for (quote, date, time, anchor) in [
+        (
+            "tomorrow at 2:30AM",
+            "tomorrow",
+            "02:30",
+            "2027-03-13T12:00:00Z",
+        ),
+        (
+            "tomorrow at 1:30AM",
+            "tomorrow",
+            "01:30",
+            "2027-11-06T12:00:00Z",
+        ),
+        (
+            "next Friday at 9AM",
+            "2027-01-01",
+            "09:00",
+            "2026-12-31T15:30:00Z",
+        ),
+    ] {
+        let mut proposed = decision(quote, true);
+        proposed.time_quote = Some(quote.into());
+        proposed.time = Some(MissionChatTime::LocalOnce {
+            date: date.into(),
+            time: time.into(),
+        });
+        assert!(
+            rule(
+                &proposed,
+                chrono::DateTime::parse_from_rfc3339(anchor)
+                    .unwrap()
+                    .timestamp(),
+                Some("America/Los_Angeles"),
+                quote
+            )
+            .is_err(),
+            "{quote}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn conversational_civil_time_full_source_qualifier_and_frequency_survive_model_truncation() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, s, u) = setup().await;
+    let anchor = chrono::DateTime::parse_from_rfc3339("2026-12-31T15:30:00Z")
+        .unwrap()
+        .timestamp();
+    let task = "summarize the public bulletin named next Friday";
+    let text = format!("next week Friday at 9AM {task}");
+    let (_, l) = source(&s, &u, &text, None).await;
+    let run = l.run_id().to_string();
+    s.call(move |db| {
+        db.conn.execute(
+            "UPDATE mission_chat_plans SET anchor=?2 WHERE run_id=?1",
+            params![run, anchor],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let mut d = decision(&text, true);
+    d.task_quote = Some(task.into());
+    d.time_quote = Some("Friday at 9AM".into());
+    d.time = Some(MissionChatTime::LocalOnce {
+        date: "2027-01-01".into(),
+        time: "09:00".into(),
+    });
+    let ctx = s.agent_context(&l).await.unwrap();
+    let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+    let checkpoint = |d: &MissionChatDecision| PrivateCheckpoint {
+        bytes: serde_json::json!({"kind":"mission_chat_decision","decision":d})
+            .to_string()
+            .into_bytes(),
+    };
+    assert!(
+        s.commit_agent_step(&step, checkpoint(&d), vec![])
+            .await
+            .is_err()
+    );
+    assert!(s.recurring_missions(&u).await.unwrap().is_empty());
+    d.time_quote = Some("next week Friday at 9AM".into());
+    d.time = Some(MissionChatTime::LocalOnce {
+        date: "2027-01-08".into(),
+        time: "09:00".into(),
+    });
+    s.commit_agent_step(&step, checkpoint(&d), vec![])
+        .await
+        .unwrap();
+    s.apply_mission_chat(&l).await.unwrap();
+    assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
+    for (quote, time) in [
+        (
+            "every Friday at 9AM",
+            MissionChatTime::LocalOnce {
+                date: "2027-01-01".into(),
+                time: "09:00".into(),
+            },
+        ),
+        (
+            "Friday at 9AM",
+            MissionChatTime::Weekly {
+                days: vec![5],
+                time: "09:00".into(),
+            },
+        ),
+    ] {
+        let task = "summarize the public bulletin";
+        let text = format!("{quote} {task}");
+        let (thread, l) = source(&s, &u, &text, None).await;
+        let mut d = decision(&text, true);
+        d.task_quote = Some(task.into());
+        d.time_quote = Some(quote.into());
+        d.time = Some(time);
+        commit(&s, &l, d).await;
+        s.apply_mission_chat(&l).await.unwrap();
+        assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1, "{quote}");
+        let done = s.conversation(&u, thread, None).await.unwrap();
+        assert_eq!(
+            done.turns[0].run.mission_receipt.as_ref().unwrap().state,
+            "clarify"
         );
     }
 }

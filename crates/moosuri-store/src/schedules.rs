@@ -3,6 +3,7 @@ use super::*;
 use moosuri_core::*;
 use serde::{Serialize, de::DeserializeOwned};
 pub(crate) mod chat;
+pub(crate) mod civil_time;
 pub(crate) mod followups;
 #[cfg(test)]
 mod tests;

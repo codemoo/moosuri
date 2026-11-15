@@ -234,6 +234,35 @@ pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
     original_authority(c, r)?;
     allowed_mission_decision(r, &d)?;
     validate(&crate::request_continuations::text(c, r)?, &d)?;
+    if let Some(quote) = d.time_quote.as_deref() {
+        let (anchor, zone): (i64, Option<String>) = c.query_row(
+            "SELECT anchor,timezone FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2",
+            params![r.tenant, r.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let text = crate::request_continuations::text(c, r)?;
+        // This check protects literal spans, not execution timezone admission.
+        // Keep unsupported zones for the existing apply-time clarification path.
+        let zone = match source_zone(&text, zone.as_deref()) {
+            Ok(zone) => zone,
+            Err(StoreError::InvalidInput) => None,
+            Err(error) => return Err(error),
+        };
+        let data = [d.task_quote.as_deref(), d.constraints_quote.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        if !crate::schedules::civil_time::complete_quote(
+            &text,
+            quote,
+            &data,
+            anchor,
+            zone.as_deref().unwrap_or("UTC"),
+            true,
+        ) {
+            return Err(StoreError::InvalidInput);
+        }
+    }
     crate::request_continuations::validate_scope(c, r, &CurrentChatDecision::Mission(d.clone()))?;
     if d.decision == "clarify" {
         crate::request_continuations::pending(
@@ -251,176 +280,9 @@ pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 // Only explicit civil components are checked here; this is not a full command grammar.
-fn normalized_time(q: &str) -> String {
-    let mut q = q.to_lowercase();
-    for (word, n) in [
-        ("forty-five", "45"),
-        ("forty five", "45"),
-        ("thirty", "30"),
-        ("fifteen", "15"),
-        ("eleven", "11"),
-        ("twelve", "12"),
-        ("eight", "8"),
-        ("seven", "7"),
-        ("three", "3"),
-        ("four", "4"),
-        ("five", "5"),
-        ("six", "6"),
-        ("nine", "9"),
-        ("ten", "10"),
-        ("two", "2"),
-        ("one", "1"),
-        ("열두", "12"),
-        ("열한", "11"),
-        ("아홉", "9"),
-        ("여덟", "8"),
-        ("일곱", "7"),
-        ("여섯", "6"),
-        ("다섯", "5"),
-        ("서른", "30"),
-        ("열", "10"),
-        ("네 시", "4시"),
-        ("세 시", "3시"),
-        ("두 시", "2시"),
-        ("한 시", "1시"),
-        ("한 시간", "1시간"),
-        ("두 시간", "2시간"),
-        ("한 분", "1분"),
-    ] {
-        q = q.replace(word, n);
-    }
-    q = q.chars().filter(|c| !c.is_whitespace()).collect();
-    let digit = ["", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
-    for n in (1..60).rev() {
-        let word = if n < 10 {
-            digit[n].to_owned()
-        } else {
-            format!(
-                "{}십{}",
-                if n < 20 { "" } else { digit[n / 10] },
-                digit[n % 10]
-            )
-        };
-        q = q.replace(&format!("{word}분"), &format!("{n}분"));
-    }
-    for (word, n) in [
-        ("네시", "4시"),
-        ("세시", "3시"),
-        ("두시", "2시"),
-        ("한시", "1시"),
-        ("한시간", "1시간"),
-        ("두시간", "2시간"),
-        ("한분", "1분"),
-    ] {
-        q = q.replace(word, n);
-    }
-    q
-}
-fn numbers(q: &str) -> Vec<(usize, usize, u32)> {
-    let bytes = q.as_bytes();
-    let mut out = vec![];
-    let mut i = 0;
-    while i < bytes.len() {
-        if !bytes[i].is_ascii_digit() {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            i += 1
-        }
-        if let Ok(n) = q[start..i].parse() {
-            out.push((start, i, n));
-        }
-    }
-    out
-}
-fn explicit_clock(q: &str) -> Option<(u32, u32)> {
-    let am = ["morning", "a.m.", "am", "아침", "오전"]
-        .iter()
-        .any(|w| q.contains(w));
-    let pm = ["afternoon", "evening", "p.m.", "pm", "오후", "저녁", "밤"]
-        .iter()
-        .any(|w| q.contains(w));
-    let noon = q.replace("afternoon", "").contains("noon") || q.contains("정오");
-    let midnight = q.contains("midnight") || q.contains("자정");
-    if am && pm || noon && midnight {
-        return None;
-    }
-    if noon || midnight {
-        if !numbers(q).is_empty() {
-            return None;
-        }
-        return Some((if noon { 12 } else { 0 }, 0));
-    }
-    if q.contains("quarterto") || q.contains("halfto") {
-        return None;
-    }
-    let past = if q.contains("halfpast") {
-        Some(30)
-    } else if q.contains("quarterpast") {
-        Some(15)
-    } else {
-        None
-    };
-    let mut found = vec![];
-    for (start, end, mut hour) in numbers(q) {
-        let tail = &q[end..];
-        let prefix = &q[..start];
-        if prefix.ends_with(':') {
-            continue;
-        }
-        let mut minute = past.unwrap_or(0);
-        if let Some(after) = tail.strip_prefix(':') {
-            let digits = after.bytes().take_while(u8::is_ascii_digit).count();
-            if digits != 2 {
-                return None;
-            }
-            minute = after[..digits].parse().ok()?;
-            // The number after ':' is not another hour.
-        } else if let Some(after) = tail.strip_prefix('시') {
-            if after.starts_with('간') {
-                continue;
-            }
-            if after.starts_with('반') {
-                minute = 30
-            } else {
-                let digits = after.bytes().take_while(u8::is_ascii_digit).count();
-                if digits > 0 {
-                    if !after[digits..].starts_with('분') {
-                        return None;
-                    }
-                    minute = after[..digits].parse().ok()?;
-                }
-            }
-        } else if !(tail.starts_with("am")
-            || tail.starts_with("pm")
-            || tail.starts_with("a.m.")
-            || tail.starts_with("p.m.")
-            || tail.starts_with("o'clock")
-            || prefix.ends_with("at")
-            || past.is_some() && prefix.ends_with("past")
-            || (am || pm) && !prefix.ends_with(':') && numbers(q).len() == 1)
-        {
-            continue;
-        }
-        if hour > 23 || minute > 59 {
-            return None;
-        }
-        if am || pm {
-            if hour == 0 || hour > 12 {
-                return None;
-            }
-            hour = hour % 12 + if pm { 12 } else { 0 };
-        } else if !tail.starts_with(':') && hour <= 12 {
-            return None;
-        }
-        found.push((hour, minute));
-    }
-    if found.len() == 1 { found.pop() } else { None }
-}
+use crate::schedules::civil_time::{explicit_clock, normalized_time, numbers};
 pub(crate) fn civil_consistent(d: &MissionChatDecision, anchor: i64, zone: &str) -> bool {
-    use chrono::{Days, NaiveDate, NaiveTime, Timelike};
+    use chrono::{NaiveDate, NaiveTime, Timelike};
     let raw = d.time_quote.as_deref().unwrap_or("");
     let mut civil = raw.to_owned();
     for token in
@@ -431,6 +293,9 @@ pub(crate) fn civil_consistent(d: &MissionChatDecision, anchor: i64, zone: &str)
         }
     }
     let q = normalized_time(&civil);
+    if crate::schedules::civil_time::ambiguous(&civil) {
+        return false;
+    }
     // Keep ISO dates separate from the clock before whitespace normalization;
     // otherwise "2026-12-07 23:15" becomes a spurious hour of 723.
     let explicit_dates = numbers(&civil)
@@ -516,49 +381,30 @@ pub(crate) fn civil_consistent(d: &MissionChatDecision, anchor: i64, zone: &str)
         return false;
     }
     if let Some(MissionChatTime::Weekly { days, .. }) = &d.time {
+        if !crate::schedules::civil_time::weekly_authority(&civil) {
+            return false;
+        }
         let mut actual = days.clone();
         actual.sort_unstable();
         actual.dedup();
         if actual.len() != days.len() || actual != mentioned_days || actual.is_empty() {
             return false;
         }
-    } else if !mentioned_days.is_empty() {
+    } else if !mentioned_days.is_empty()
+        && !matches!(d.time, Some(MissionChatTime::LocalOnce { .. }))
+    {
         return false;
     }
     if let Some(MissionChatTime::LocalOnce { date, .. }) = &d.time {
-        let Ok(zone) = zone.parse::<chrono_tz::Tz>() else {
-            return false;
-        };
-        let Some(base) = chrono::DateTime::from_timestamp(anchor, 0)
-            .map(|v| v.with_timezone(&zone).date_naive())
-        else {
-            return false;
-        };
-        let mut dates = vec![];
-        for (names, days) in [
-            (["tomorrow", "내일"], 1),
-            (["today", "오늘"], 0),
-            (["dayaftertomorrow", "모레"], 2),
-        ] {
-            if names.iter().any(|w| q.contains(w)) && !(days == 1 && q.contains("dayaftertomorrow"))
-            {
-                let Some(date) = base.checked_add_days(Days::new(days)) else {
-                    return false;
-                };
-                dates.push(date);
-            }
-        }
-        dates.extend(explicit_dates.iter().map(|(_, _, date)| *date));
-        let actual = match date.as_str() {
-            "today" => Some(base),
-            "tomorrow" => base.checked_add_days(Days::new(1)),
-            _ => NaiveDate::parse_from_str(date, "%Y-%m-%d").ok(),
-        };
-        if dates.len() != 1 || actual != dates.first().copied() {
+        if crate::schedules::civil_time::weekly_authority(&civil) {
             return false;
         }
-    } else if !explicit_dates.is_empty()
-        || ["today", "tomorrow", "오늘", "내일", "모레"]
+        if crate::schedules::civil_time::date_value(date, raw, anchor, zone).is_err() {
+            return false;
+        }
+    } else if crate::schedules::civil_time::scoped_week(&civil)
+        || !explicit_dates.is_empty()
+        || ["today", "tomorrow", "오늘", "내일", "모레", "글피"]
             .iter()
             .any(|w| q.contains(w))
     {
@@ -653,13 +499,19 @@ fn rule(
             timezone: zone.into(),
         },
         MissionChatTime::LocalOnce { date, time } => {
-            // All local gap/fold and relative civil-date interpretation uses the existing oracle.
-            let spec = format!("{date} at {time}");
-            let (rule, tail) = crate::schedules::chat::parser::rule(&spec, Some(zone), anchor)?;
-            if !tail.trim().is_empty() {
+            let date = crate::schedules::civil_time::date_value(
+                date,
+                d.time_quote.as_deref().unwrap_or(""),
+                anchor,
+                zone,
+            )?;
+            let clock = chrono::NaiveTime::parse_from_str(time, "%H:%M")
+                .map_err(|_| StoreError::InvalidInput)?;
+            let at = crate::schedules::civil_time::local_instant(date, clock, zone)?;
+            if at <= anchor {
                 return Err(StoreError::InvalidInput);
             }
-            rule
+            ScheduleRule::Once { at }
         }
         _ => return Err(StoreError::InvalidInput),
     })

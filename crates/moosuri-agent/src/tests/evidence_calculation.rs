@@ -70,6 +70,13 @@ async fn response(
         let pin = json!({"id":fields[0],"revision":fields[1].strip_prefix("revision=").unwrap(),"digest":fields[2].strip_prefix("digest=").unwrap().trim_end_matches(':')});
         assert_eq!(pin["revision"], "3");
         calls.push(tool_call(0,"fresh-bound".into(),"learned_skill_execute",json!({"pin":pin,"arguments":{"kind":"evidence","text":null,"operands":null,"inputs":null,"tracking_number":null,"parameters":parameters}})));
+    } else if previous.is_empty() && label == "B" {
+        calls.push(tool_call(
+            0,
+            "fresh-source".into(),
+            "source_calculate",
+            json!({"plan":plan(),"parameters":parameters}),
+        ));
     } else if previous.is_empty() {
         calls.push(tool_call(0,"search".into(),"knowledge_search",json!({"kind":"source","text":query,"collection_id":null,"subject":null,"speaker":null,"valid_at":null,"cursor":null})));
     } else if previous.last().unwrap()["kind"] == "search" {
@@ -108,7 +115,7 @@ async fn response(
             "server resolved UTF8 bytes after Korean/emoji"
         );
         assert_eq!(value["results"].as_array().unwrap().len(), 2);
-        if label == "C" {
+        if label != "A" {
             assert_eq!(value["evidence"]["source"]["ordinal"], 1);
         }
         text = format!(
@@ -160,9 +167,12 @@ async fn runtime_evidence_calculation_learns_two_sources_reuses_fresh_c_and_with
             .await
             .unwrap();
         let request = uuid::Uuid::new_v4().to_string();
-        let text = format!(
+        let mut text = format!(
             "🌱 한글 요청입니다. 자료 {q}; 숫자 앞 문구 {prefix}; 수량 {qty}; 수수료 {fee}. Calculate source number times quantity plus fee."
         );
+        if q == "BravoLookup" {
+            text.push_str(" 결과 제목은 BravoLookup 검토.");
+        }
         store
             .submit_turn(&user, thread.id.clone(), request.clone(), text.clone())
             .await
@@ -195,6 +205,22 @@ async fn runtime_evidence_calculation_learns_two_sources_reuses_fresh_c_and_with
         threads.push(thread.id);
     }
     let requests = state.requests.lock().await;
+    let fresh_rounds = requests
+        .iter()
+        .filter(|v| {
+            v["tools"][0]["function"]["name"] != "memory_command_decision"
+                && v["messages"].as_array().unwrap().iter().any(|m| {
+                    m["role"] == "user"
+                        && m["content"]
+                            .as_str()
+                            .is_some_and(|s| s.contains("BravoLookup"))
+                })
+        })
+        .count();
+    assert_eq!(
+        fresh_rounds, 2,
+        "fresh source route uses one tool round and one final round"
+    );
     let c = requests
         .iter()
         .filter(|v| {

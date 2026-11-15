@@ -448,6 +448,7 @@ fn browser_requires_v4_and_identical_current_deployment_pin() {
             native_mail_model_read: false,
             native_mail_model_background: false,
             evidence_calculation: false,
+            source_calculation: false,
             credential_github: false,
             credential_gitea: false,
             credential_google: false,

@@ -532,6 +532,9 @@ fn typed_input(
         },
         Invocation::LearnedSkill(invocation) => KnowledgeToolInput::LearnedSkill { invocation },
         Invocation::SkillRead(pin) => KnowledgeToolInput::SkillRead { pin },
+        Invocation::SourceCalculate(calculation) => {
+            KnowledgeToolInput::SourceCalculate { calculation }
+        }
         Invocation::EvidenceCalculate(calculation) => {
             KnowledgeToolInput::EvidenceCalculate { calculation }
         }

@@ -450,7 +450,7 @@ async fn connected_missions_runtime_private_briefing_and_late_calendar_disconnec
     ] {
         assert!(!visible.contains(private));
     }
-    assert_eq!(script.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 3);
     assert_eq!(io.searches.load(Ordering::SeqCst), 1);
     assert_eq!(io.writes.load(Ordering::SeqCst), 0);
     assert!(s.mail_actions(&fresh).await.unwrap().is_empty());
@@ -471,7 +471,7 @@ async fn connected_missions_runtime_private_briefing_and_late_calendar_disconnec
         "quarantined" | "unknown" | "partial"
     ));
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(script.calls.load(Ordering::SeqCst), 7);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 5);
     assert_eq!(io.writes.load(Ordering::SeqCst), 0);
     assert!(
         s.missions(&fresh)
@@ -831,7 +831,7 @@ async fn compound_actions_runtime_reads_prepares_gmail_and_creates_calendar_with
     assert_eq!(io.drafts.load(Ordering::SeqCst), 1);
     assert_eq!(io.calendars.load(Ordering::SeqCst), 1);
     assert_eq!(io.sends.load(Ordering::SeqCst), 0);
-    assert_eq!(script.calls.load(Ordering::SeqCst), 6);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 5);
     assert!(s.next_mail_dispatch().await.unwrap().is_none());
     runtime.shutdown().await;
     model_server.abort();
@@ -904,14 +904,14 @@ async fn mission_input_runtime_reads_once_waits_without_polling_and_continues_sa
     })
     .await
     .unwrap();
-    assert_eq!(script.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 3);
     assert_eq!(wait.completed_steps, 3);
     assert!(wait.actions.is_empty());
     // The original engine can be stopped and restarted while the owner answers.
     engine.shutdown().await;
     assert!(s.claim_agent_run().await.unwrap().is_none());
     assert!(s.claim_agent_run().await.unwrap().is_none());
-    assert_eq!(script.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 3);
     let answer = moosuri_core::MissionInputReply {
         request_id: uuid::Uuid::new_v4().to_string(),
         wait_request_id: wait.input_wait.as_ref().unwrap().request_id.clone(),
@@ -939,7 +939,7 @@ async fn mission_input_runtime_reads_once_waits_without_polling_and_continues_sa
     assert_eq!(io.calendars.load(Ordering::SeqCst), 1);
     assert_eq!(io.drafts.load(Ordering::SeqCst), 0);
     assert_eq!(io.sends.load(Ordering::SeqCst), 0);
-    assert_eq!(script.calls.load(Ordering::SeqCst), 6);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 5);
     assert!(s.next_mail_dispatch().await.unwrap().is_none());
     resumed.shutdown().await;
     model_server.abort();
@@ -1029,11 +1029,11 @@ async fn mission_flexible_context_runtime_pauses_without_polling_and_resumes_com
     })
     .await
     .unwrap();
-    assert_eq!(script.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 2);
     assert_eq!(wait.completed_steps, 1);
     engine.shutdown().await;
     assert!(s.claim_agent_run().await.unwrap().is_none());
-    assert_eq!(script.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 2);
     let answer = MissionInputReply {
         request_id: uuid::Uuid::new_v4().to_string(),
         wait_request_id: wait.input_wait.unwrap().request_id,
@@ -1052,7 +1052,7 @@ async fn mission_flexible_context_runtime_pauses_without_polling_and_resumes_com
     assert_eq!(done.state, "partial", "{:?}", done.report);
     assert!(done.report.iter().any(|r| r.contains("owner review")));
     assert_eq!(done.completed_steps, 1);
-    assert_eq!(script.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 3);
     engine.shutdown().await;
     server.abort();
 }

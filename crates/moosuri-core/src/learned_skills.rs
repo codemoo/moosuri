@@ -170,7 +170,7 @@ impl EvidencePlan {
         Some(plan)
     }
 }
-/// Exact quotes in the current user message. The server resolves unique ranges.
+/// Exact current-user selectors and uniquely occurring complete scalar tokens.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceParameters {
@@ -193,6 +193,13 @@ pub struct EvidenceBinding {
 pub struct EvidenceCalculation {
     pub plan: EvidencePlan,
     pub binding: EvidenceBinding,
+}
+/// Fresh source selection and arithmetic, with read receipts assigned by Store.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceCalculation {
+    pub plan: EvidencePlan,
+    pub parameters: EvidenceParameters,
 }
 /// Server-derived provenance. The actual arithmetic operations have child receipts.
 #[derive(Clone, Serialize, Deserialize)]

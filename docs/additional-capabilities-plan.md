@@ -255,7 +255,9 @@ unknown으로 남긴다. 특정 모델 이름으로 tool capability를 추정하
 [새 통합 change](../openspec/changes/extend-compound-assistant-work/tasks.md)가 A–F를 추적한다.
 추가 [독립 합성 요청 평가](reviews/2026-11-15-live-agent-wave4.md)로 기억/보고서/초안
 접수 오류를 고쳤다. E의 실제 모델이 잘못된 source query/receipt를 예산 안에서 바로잡는
-능력과 두 proof 이후 재사용의 안정성은 미완료 품질 항목으로 유지한다.
+능력은 [후속 비교](reviews/2026-11-15-source-repair-latency.md)에서 서버의 fresh 조회·계산 연결로
+보완했다. 노출된 실패 보고서와 새 두 proof→재사용은 통과했으며 전체 E 품질이나 출시
+수락을 닫는 증거로 확대하지 않는다.
 기존 [mission](../openspec/changes/build-owner-missions/tasks.md),
 [credential](../openspec/changes/connect-vault-credentials/tasks.md),
 [학습](../openspec/changes/learn-private-task-routes/tasks.md)의 미완료 상위 요구는 닫지 않는다.

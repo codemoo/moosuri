@@ -4,6 +4,122 @@ use moosuri_core::{
     DecimalGraph, DecimalReference, DecimalStep, EvidenceBinding, EvidenceCalculation,
     EvidenceOrigin, EvidencePlan, ToolReceiptReference,
 };
+
+fn fresh_input(query: &str, scalar: &str) -> KnowledgeToolInput {
+    KnowledgeToolInput::SourceCalculate {
+        calculation: moosuri_core::SourceCalculation {
+            plan: plan(),
+            parameters: moosuri_core::EvidenceParameters {
+                query: query.into(),
+                prefix: "price:".into(),
+                scalars: vec![scalar.into()],
+            },
+        },
+    }
+}
+
+#[tokio::test]
+async fn fresh_source_calculation_repeated_selector_retry_cost_and_owner_isolation() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    source(&s, &u, "솔잎표찰 price: 4.86").await;
+    let text =
+        "솔잎표찰 단가 price: 뒤에 수량 5를 곱해. 별도 금액 0.65. 보고서 솔잎표찰 price: 검토";
+    let r = start(&s, &u, text).await;
+    let (step, result) = execute(&s, &r, "fresh", fresh_input("솔잎표찰", "5")).await;
+    let KnowledgeToolResult::EvidenceCalculation {
+        exact, evidence, ..
+    } = &result
+    else {
+        panic!("fresh evidence")
+    };
+    assert_eq!(exact, "24.3");
+    assert_eq!(evidence.literal, "4.86");
+    assert_eq!(evidence.search.ordinal, Some(0));
+    assert_eq!(evidence.source.ordinal, Some(1));
+    let replay = s
+        .execute_knowledge_tool(&step, "fresh".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_string(&result).unwrap(),
+        serde_json::to_string(&replay).unwrap()
+    );
+    let run = r.lease.run_id().to_string();
+    let counts = s.call(move |db| Ok(db.conn.query_row(
+        "SELECT tool_calls,(SELECT count(*) FROM learned_skill_receipts WHERE run_id=?1) FROM agent_execution WHERE run_id=?1", [run],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?)).await.unwrap();
+    assert_eq!(counts, (3, 3));
+    stop(&s, &r).await;
+    let other = member(&s, &u, "fresh-source-outsider@example.test")
+        .await
+        .user;
+    let r = start(&s, &other, text).await;
+    let (_, result) = execute(&s, &r, "foreign", fresh_input("솔잎표찰", "5")).await;
+    assert!(matches!(
+        result,
+        KnowledgeToolResult::Error(ToolReadError::NotFound)
+    ));
+    stop(&s, &r).await;
+}
+
+#[tokio::test]
+async fn fresh_source_calculation_reports_recoverable_failures_and_keeps_legacy_profiles_closed() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    for (query, body, expected) in [
+        (
+            "TwoSources",
+            "price: 2.35",
+            ToolReadError::EvidenceSourceNotUnique,
+        ),
+        (
+            "TwoFields",
+            "price: 2.35\nprice: 4.5",
+            ToolReadError::EvidenceFieldInvalid,
+        ),
+        (
+            "BadDecimal",
+            "price: 2.35e2",
+            ToolReadError::EvidenceFieldInvalid,
+        ),
+        (
+            "Noncurrent",
+            "price: 2.35",
+            ToolReadError::EvidenceParametersInvalid,
+        ),
+    ] {
+        source(&s, &u, &format!("{query} {body}")).await;
+        if query == "TwoSources" {
+            source(&s, &u, "TwoSources price: 8.5").await;
+        }
+        let text = format!("Find {query}; prefix price:; quantity 4");
+        let r = start(&s, &u, &text).await;
+        let scalar = if query == "Noncurrent" { "5" } else { "4" };
+        let (_, result) = execute(&s, &r, "fresh", fresh_input(query, scalar)).await;
+        assert!(
+            matches!(result, KnowledgeToolResult::Error(error) if error == expected),
+            "{query}"
+        );
+        stop(&s, &r).await;
+    }
+    let r = start(&s, &u, "Find Noncurrent; prefix price:; quantity 4").await;
+    let run = r.lease.run_id().to_string();
+    s.call(move |db| {
+        db.conn.execute("UPDATE chat_runs SET model=json_remove(model,'$.agent_profile.source_calculation') WHERE id=?1", [run])?;
+        Ok(())
+    }).await.unwrap();
+    let (_, result) = execute(&s, &r, "legacy", fresh_input("Noncurrent", "4")).await;
+    assert!(matches!(
+        result,
+        KnowledgeToolResult::Error(ToolReadError::Unavailable)
+    ));
+    stop(&s, &r).await;
+}
 fn plan() -> EvidencePlan {
     EvidencePlan {
         origins: vec![EvidenceOrigin::Source, EvidenceOrigin::Current],

@@ -114,7 +114,7 @@ async fn native_mail_runtime_current_chat_and_background_mission_continue_from_s
         let planning=mission&&context.as_ref().unwrap()["plan"].as_array().unwrap().is_empty();
         let has_result=all.contains("Synthetic amount 42");
         let (delta,reason)=if planning{(json!({"role":"assistant","content":"{\"steps\":[\"Read native Gmail\",\"Summarize actual receipt\"]}"}),"stop")}else if has_result{
-            let text=if mission{json!({"text":"Synthetic amount 42 from the authenticated native read","evidence":[{"step":2,"call_id":"native-real-call"}]}).to_string()}else{"Synthetic amount 42 from the authenticated native read".into()};(json!({"role":"assistant","content":text}),"stop")
+            let text=if mission{json!({"text":"Synthetic amount 42 from the authenticated native read","evidence":[{"step":1,"call_id":"native-real-call"}]}).to_string()}else{"Synthetic amount 42 from the authenticated native read".into()};(json!({"role":"assistant","content":text}),"stop")
         }else{assert!(body["tools"].as_array().unwrap().iter().any(|t|t["function"]["name"]=="native_mail_search"));(json!({"role":"assistant","tool_calls":[tool_call(0,"native-real-call".into(),"native_mail_search",json!({"query":"newer_than:7d","cursor":null}))]}),"tool_calls")};
         let data=frame(json!({"id":"native-model-step","model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":reason}],"usage":{"prompt_tokens":5,"completion_tokens":2}}))+"data: [DONE]\n\n";Response::builder().header("content-type","text/event-stream").body(Body::from(data)).unwrap()
     }}));
@@ -222,9 +222,9 @@ async fn native_mail_runtime_current_chat_and_background_mission_continue_from_s
     .await
     .unwrap();
     let run = waiting.wait.as_ref().unwrap().run_id.clone();
-    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
     tokio::time::sleep(Duration::from_millis(700)).await;
-    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
     deliver(&store, &device, &k, &run).await;
     runtime.wake();
     let finished = tokio::time::timeout(Duration::from_secs(4), async {
@@ -251,7 +251,7 @@ async fn native_mail_runtime_current_chat_and_background_mission_continue_from_s
             .text
             .contains("Synthetic amount 42")
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 5);
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
     runtime.shutdown().await;
     upstream.abort();
 }

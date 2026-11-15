@@ -31,17 +31,13 @@ fn quote(text: &str, literal: &str) -> Option<CurrentSpan> {
     if literal.is_empty() {
         return None;
     }
-    let positions = text
-        .char_indices()
-        .filter_map(|(at, _)| text[at..].starts_with(literal).then_some(at))
-        .take(2)
-        .collect::<Vec<_>>();
-    if positions.len() != 1 {
-        return None;
-    }
+    // Repeating the same selector in an output title does not select a second
+    // source/field. Persist the first exact occurrence; source/field uniqueness
+    // is independently enforced against the current saved evidence below.
+    let start = text.find(literal)?;
     Some(CurrentSpan {
-        start_byte: positions[0] as u32,
-        end_byte: (positions[0] + literal.len()) as u32,
+        start_byte: start as u32,
+        end_byte: (start + literal.len()) as u32,
     })
 }
 fn scalar_quote(text: &str, literal: &str) -> Option<CurrentSpan> {
@@ -475,6 +471,60 @@ fn execute_at(
     }
     Ok((result, (calls.len() as i64).max(1)))
 }
+pub(crate) fn execute_source(
+    c: &Connection,
+    r: &chat::Run,
+    calculation: &moosuri_core::SourceCalculation,
+    step: i64,
+    call: &str,
+) -> Result<(Output, i64)> {
+    if !r
+        .tool_profile
+        .as_ref()
+        .is_some_and(|p| p.source_calculation)
+    {
+        return Ok((Output::Error(ToolReadError::Unavailable), 1));
+    }
+    let mut accepted;
+    let r = if crate::missions::is_mission(c, &r.tenant, &r.id)? {
+        accepted = r.clone();
+        accepted.text = crate::missions::learned_task_text(c, r)?;
+        &accepted
+    } else {
+        r
+    };
+    let (output, cost) = execute_fresh(
+        c,
+        r,
+        calculation.plan.clone(),
+        &calculation.parameters,
+        step,
+        call,
+    )?;
+    // Expose bounded corrective categories, never private source text in errors.
+    let output = match output {
+        Output::Error(ToolReadError::InvalidInput) => Output::Error(
+            if !calculation.plan.valid()
+                || resolve_parameters(
+                    &r.text,
+                    &calculation.parameters.query,
+                    &calculation.parameters.prefix,
+                    &calculation.parameters.scalars,
+                )
+                .is_none()
+                || calculation.parameters.scalars.len() + 1 != calculation.plan.origins.len()
+            {
+                ToolReadError::EvidenceParametersInvalid
+            } else if cost == 1 {
+                ToolReadError::EvidenceSourceNotUnique
+            } else {
+                ToolReadError::EvidenceFieldInvalid
+            },
+        ),
+        output => output,
+    };
+    Ok((output, cost))
+}
 pub(super) fn execute_fresh(
     c: &Connection,
     r: &chat::Run,
@@ -574,13 +624,14 @@ pub(super) fn qualify(
 ) -> Result<Option<Proof>> {
     let tenant = r.tenant.as_str();
     let run = r.id.as_str();
-    let [
-        (Input::Search { .. }, _),
-        (Input::ReadSource { .. }, _),
-        (Input::EvidenceCalculate { calculation }, result),
-    ] = calls
-    else {
-        return Ok(None);
+    let (parent_input, result) = match calls {
+        [
+            (Input::Search { .. }, _),
+            (Input::ReadSource { .. }, _),
+            (input @ Input::EvidenceCalculate { .. }, result),
+        ] => (input, result),
+        [(input @ Input::SourceCalculate { .. }, result)] => (input, result),
+        _ => return Ok(None),
     };
     if r.account != account
         || !r
@@ -590,14 +641,48 @@ pub(super) fn qualify(
     {
         return Ok(None);
     }
-    let parent:Option<(i64,String)>=c.query_row("SELECT step,call_id FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND input=?3",params![tenant,run,encode(&Input::EvidenceCalculate{calculation:calculation.clone()})?],|v|Ok((v.get(0)?,v.get(1)?))).optional()?;
+    let parent: Option<(i64, String)> = c.query_row(
+        "SELECT step,call_id FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND input=?3",
+        params![tenant, run, encode(parent_input)?], |v| Ok((v.get(0)?, v.get(1)?)),
+    ).optional()?;
     let Some((step, call)) = parent else {
         return Ok(None);
     };
-    let Some(bound) = resolve(c, r, calculation, step)? else {
+    let (calculation, offset) = match parent_input {
+        Input::EvidenceCalculate { calculation } => (calculation.clone(), 0usize),
+        Input::SourceCalculate { calculation } => {
+            if !r
+                .tool_profile
+                .as_ref()
+                .is_some_and(|p| p.source_calculation)
+            {
+                return Ok(None);
+            }
+            let address = |ordinal| ToolReceiptReference {
+                step: step as u32,
+                call_id: call.clone(),
+                ordinal: Some(ordinal),
+            };
+            (
+                EvidenceCalculation {
+                    plan: calculation.plan.clone(),
+                    binding: EvidenceBinding {
+                        search: address(0),
+                        source: address(1),
+                        query: calculation.parameters.query.clone(),
+                        prefix: calculation.parameters.prefix.clone(),
+                        scalars: calculation.parameters.scalars.clone(),
+                    },
+                },
+                2usize,
+            )
+        }
+        _ => return Ok(None),
+    };
+    let Some(bound) = resolve(c, r, &calculation, step + i64::from(offset != 0))? else {
         return Ok(None);
     };
-    let Ok((expected, operations)) = expected(calculation, &bound) else {
+    let Ok((expected, operations)) = expected(&calculation, &bound) else {
         return Ok(None);
     };
     let Output::EvidenceCalculation { exact, .. } = &expected else {
@@ -607,10 +692,10 @@ pub(super) fn qualify(
         return Ok(None);
     }
     let children=c.prepare("SELECT input,result FROM learned_skill_receipts WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 ORDER BY ordinal")?.query_map(params![tenant,run,step,call],|v|Ok((v.get::<_,String>(0)?,v.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
-    if children.len() != operations.len() {
+    if children.len() != operations.len() + offset {
         return Ok(None);
     }
-    for ((input, result), (calculation, value)) in children.iter().zip(operations) {
+    for ((input, result), (calculation, value)) in children.iter().skip(offset).zip(operations) {
         let Ok(exact) = value else {
             return Ok(None);
         };

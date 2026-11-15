@@ -25,6 +25,8 @@ pub struct RunToolProfile {
     #[serde(default, skip_serializing_if = "is_false")]
     pub evidence_calculation: bool,
     #[serde(default, skip_serializing_if = "is_false")]
+    pub source_calculation: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub credential_github: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub credential_gitea: bool,

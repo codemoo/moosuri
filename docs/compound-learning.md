@@ -2,13 +2,13 @@
 
 지원하는 첫 복합 절차는 **새 저장 원문을 유일하게 찾기 → 정확 계산 → 명시적으로 요청한 비공개 보고서**다. A의 보고서 결과에서 **검토한 수치 결과를 채택해 절차 학습**을 누르면 현재 소유자의 실제 원문·계산 영수증과 정확한 문서 버전을 검증한다. 같은 typed 구조의 서로 다른 원문/현재 입력으로 만든 독립 결과 두 개가 있어야 기존 **제안 · 할 수 있는 일**에서 사용 가능해진다. 일반 미션 성공을 학습하는 기존 전체 제외는 유지한다.
 
-수치·원문 title/prefix/관측 값의 문서 채택과 실제 저장을 확인한다. 문서 body는 최종 mission candidate와 같아야 하며 현재 active revision이어야 한다. 서버가 실제 search/read 결과에서 숫자를 재추출하고 모든 arithmetic child 영수증을 검산한다. 도구 성공 또는 모델의 성공 선언, 보고서 저장 버튼만으로 proof를 만들지 않는다. 의미상 비교·추천·누락 판단은 계속 `review_required`이고 미션의 `partial`/검토 상태도 바꾸지 않는다. 순수 요약처럼 독립적인 사실/수치 predicate가 없는 모양은 승격하지 않는다.
+수치·원문 title/prefix/관측 값의 문서 채택과 실제 저장을 확인한다. 문서 body는 최종 mission candidate와 같아야 하며 현재 active revision이어야 한다. 서버가 실제 search/read 결과에서 숫자를 재추출하고 모든 arithmetic child 영수증을 검산한다. 새 `source_calculate`의 서버 생성 조회/계산 child도 같은 검증을 거치므로 별도 모델 왕복 없이 첫 결과를 학습 근거로 남길 수 있다. 도구 성공 또는 모델의 성공 선언, 보고서 저장 버튼만으로 proof를 만들지 않는다. 의미상 비교·추천·누락 판단은 계속 `review_required`이고 미션의 `partial`/검토 상태도 바꾸지 않는다. 순수 요약처럼 독립적인 사실/수치 predicate가 없는 모양은 승격하지 않는다.
 
 ## 새 입력으로 이용하기
 
 사용 가능한 절차는 새로 맡긴 일의 기존 discovery/pin에 들어간다. 사용자 요청에는 새 검색 문구, 숫자 앞의 정확한 문구, 모든 scalar, 보고서 저장 요청을 명시한다. 모델은 기존 `learned_skill_execute`의 `kind:evidence`와 새 parameters만 전달한다. 원문 조회와 숫자 추출은 서버가 다시 수행한다. 보고서 생성은 A의 현재 미션 요청과 별도 artifact mutation 영수증에 따르며, 절차가 저장 권한을 주지 않는다. foreground chat에 보고서 절차를 직접 호출하거나 보고서를 요청하지 않은 미션에서 호출하면 사용할 수 없다.
 
-구조는 schema/revision과 `EvidencePlan`만 보관한다. 고정 search/read/계산/report 연결은 순환이 없고 실제 산술 1–4개를 포함해 최대7개 node, 도구 종류4개다. 전체 상한8node/9toolkind 안에 있다. graph에는 상수·코드·계정/resource/binding·원문·credential·과거 입력을 저장하지 않는다. 기존 source-bound DAG 검사, 소수 정밀도, 현재 메시지의 유일하고 겹치지 않는 인용, complete source 검사, 실제 child receipt를 그대로 사용한다. search/read/각 산술 호출은 기존12tool 예산을 차감하며 새로운 model/tool 예산을 만들지 않는다. 보고서는 A의 기존 단일 Store mutation이다. 실패한 현재 자료/인수는 과거 값이나 합성 예제로 대체하지 않는다.
+구조는 schema/revision과 `EvidencePlan`만 보관한다. 고정 search/read/계산/report 연결은 순환이 없고 실제 산술 1–4개를 포함해 최대7개 node, 도구 종류4개다. 전체 상한8node/9toolkind 안에 있다. graph에는 상수·코드·계정/resource/binding·원문·credential·과거 입력을 저장하지 않는다. 기존 source-bound DAG 검사, 소수 정밀도, 현재 메시지의 literal selector와 유일한 완전 숫자 token·겹치지 않는 인용 범위, complete source 검사, 실제 child receipt를 그대로 사용한다. search/read/각 산술 호출은 기존12tool 예산을 차감하며 새로운 model/tool 예산을 만들지 않는다. 보고서는 A의 기존 단일 Store mutation이다. 실패한 현재 자료/인수는 과거 값이나 합성 예제로 대체하지 않는다.
 
 기존 recipe의 실행 결과와 예약 회차는 새로운 proof가 아니다. imported instruction을 읽은 run도 proof가 아니다. 같은 run/정규화 입력/같은 원문을 다시 채택해도 두 번째 예제로 세지 않는다. content-free observation marker는 증거가 지워진 과거 결과를 다시 수확하지 못하게 한다. proof에는 해시와 원래 run link만 저장한다. 채택 테이블에는 기존 run/artifact identity·revision과 처음 채택 때 선택한 구조 route를 연결한다. 이 route는 고정되므로 다른 절차를 같은 계산 모양으로 편집해도 이미 채택한 proof나 그 pin을 사용한 예약은 새 revision으로 이동하지 않는다. 새 채택만 새 구조 revision을 선택한다.
 

@@ -44,3 +44,7 @@ unobserved이며 현재 성공으로 추정하지 않는다. percentile은 표�
 chat_runs 행을 남기면 숫자 관측과 accounting도 남을 수 있다. 행 삭제 후에도 남는 기존
 model_call_receipts 토큰 집계와 이 보관-history 시간 창은 범위가 다르다. 시간 값 자체만으로
 성공·실제 외부 실행·비용·모델 품질이나 전체 성능 목표를 통과했다고 판단하지 않는다.
+
+[호출 감소의 실제 개발 비교](reviews/2026-11-15-source-repair-latency.md)는 같은 Terra/high로
+새 자료 보고서5→2회, 학습 재사용3→2회를 관측했다. 누락된 report terminal/first-final span을
+harness 완료 관측과 혼동하지 않으며 간단한 대화의 전체 속도 개선을 주장하지 않는다.

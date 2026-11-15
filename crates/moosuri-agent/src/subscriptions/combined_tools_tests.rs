@@ -11,7 +11,7 @@ use moosuri_core::{
 };
 use std::collections::BTreeSet;
 
-const NAMES: [&str; 27] = [
+const NAMES: [&str; 28] = [
     "knowledge_search",
     "knowledge_read_source",
     "knowledge_read_memory",
@@ -19,6 +19,7 @@ const NAMES: [&str; 27] = [
     "decimal_calculate",
     "decimal_workflow",
     "evidence_calculate",
+    "source_calculate",
     "mail_search",
     "mail_read",
     "mail_thread",
@@ -48,6 +49,7 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
         native_mail_model_read: false,
         native_mail_model_background: false,
         evidence_calculation: true,
+        source_calculation: true,
         credential_github: false,
         credential_gitea: false,
         credential_google: false,

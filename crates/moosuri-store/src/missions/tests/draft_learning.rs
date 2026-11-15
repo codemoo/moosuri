@@ -56,6 +56,7 @@ fn request(key: &str, scalar: &str, total: &str, recipient: &str) -> MissionCrea
         execution_mode: MissionMode::Durable,
     }
 }
+#[allow(clippy::too_many_arguments)] // Explicit fixture source, draft and expected outcome.
 async fn execute(
     s: &Store,
     u: &UserContext,

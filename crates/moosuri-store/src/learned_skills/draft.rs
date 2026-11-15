@@ -126,7 +126,10 @@ pub(super) fn proof(c: &Connection, t: &str, a: &str, run: &str) -> Result<Optio
             prepare = Some((step, call));
             continue;
         }
-        if matches!(input, Input::EvidenceCalculate { .. }) {
+        if matches!(
+            input,
+            Input::EvidenceCalculate { .. } | Input::SourceCalculate { .. }
+        ) {
             if !linked_refs
                 .iter()
                 .any(|e| e.step == step && e.call_id == call)

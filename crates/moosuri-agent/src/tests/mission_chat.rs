@@ -324,6 +324,9 @@ async fn delayed_saved_read_schedules_future_work_without_early_reads_or_literal
         "no reduced email task saved"
     );
     assert!(s.missions(&u).await.unwrap().is_empty());
+    assert!(s.mail_actions(&u).await.unwrap().is_empty());
+    assert!(s.calendar_actions(&u).await.unwrap().is_empty());
+    assert!(s.next_mail_dispatch().await.unwrap().is_none());
     assert_eq!(count.load(Ordering::SeqCst), 6);
     runtime.shutdown().await;
     upstream.abort();

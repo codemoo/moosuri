@@ -50,6 +50,9 @@ pub enum KnowledgeToolInput {
     EvidenceCalculate {
         calculation: moosuri_core::EvidenceCalculation,
     },
+    SourceCalculate {
+        calculation: moosuri_core::SourceCalculation,
+    },
     CollectPages {
         urls: Vec<String>,
     },
@@ -112,6 +115,9 @@ pub enum ToolReadError {
     Unavailable,
     ArithmeticOverflow,
     OutcomeUnknown,
+    EvidenceParametersInvalid,
+    EvidenceSourceNotUnique,
+    EvidenceFieldInvalid,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -593,6 +599,7 @@ pub(crate) fn read_tool(
             crate::recurring_missions::read_skill(conn, run, pin)
         }
         KnowledgeToolInput::EvidenceCalculate { .. }
+        | KnowledgeToolInput::SourceCalculate { .. }
         | KnowledgeToolInput::DecimalWorkflow { .. } => {
             Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
         }
@@ -931,6 +938,7 @@ impl Store {
             if matches!(&input,KnowledgeToolInput::Artifact{request:moosuri_core::ArtifactToolRequest::Write{..}}) && tx.query_row("SELECT count(*) FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get::<_,i64>(0))?!=1{return Err(StoreError::InvalidInput)}
             let (result,cost)=match &input {
                 KnowledgeToolInput::LearnedSkill{invocation}=>crate::learned_skills::execute(&tx,&run,invocation,lease.step,&call_id)?,
+                KnowledgeToolInput::SourceCalculate{calculation}=>crate::learned_skills::execute_source(&tx,&run,calculation,lease.step,&call_id)?,
                 KnowledgeToolInput::EvidenceCalculate{calculation}=>crate::learned_skills::execute_evidence(&tx,&run,calculation,lease.step,&call_id)?,
                 KnowledgeToolInput::DecimalWorkflow{workflow}=>crate::learned_skills::execute_workflow(&tx,&run,workflow,lease.step,&call_id)?,
                 _=>(read_tool(&tx,&run,&input)?,1),

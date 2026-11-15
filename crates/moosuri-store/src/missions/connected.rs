@@ -8,6 +8,13 @@ use moosuri_core::{
 };
 
 /// Reject clear required effects; this conservative gate never grants an action.
+pub(super) fn local_delivery(text: &str) -> bool {
+    !text.contains('@')
+        && (text
+            .split(|c: char| !c.is_ascii_alphabetic())
+            .any(|w| w == "here")
+            || text.contains("여기"))
+}
 pub(crate) fn unsupported_effect(text: &str) -> bool {
     let lower = text.to_lowercase();
     let (mail, _) = moosuri_core::mission_read_domains(&lower);
@@ -26,7 +33,7 @@ pub(crate) fn unsupported_effect(text: &str) -> bool {
         || ["발송해", "보내줘", "보내 줘", "전송해", "답장해"]
             .iter()
             .any(|w| lower.contains(w));
-    let local = (words.contains(&"here") || lower.contains("여기")) && !lower.contains('@');
+    let local = local_delivery(&lower);
     let draft = words.iter().enumerate().any(|(i, w)| {
         matches!(*w, "create" | "write" | "prepare")
             && words.iter().skip(i + 1).take(3).any(|w| *w == "draft")

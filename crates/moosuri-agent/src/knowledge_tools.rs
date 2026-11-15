@@ -104,10 +104,17 @@ pub(super) fn definitions(profile: Option<&RunToolProfile>) -> Vec<FunctionDefin
             })),
         });
     }
+    if profile.is_some_and(|p| p.source_calculation && p.evidence_calculation) {
+        definitions.push(FunctionDefinition {
+            name: "source_calculate".into(),
+            description: "Preferred fresh saved-source arithmetic: one call searches, reads and calculates with real child receipts. Quote query, numeric prefix and scalar strings literally from the current accepted task. Repeated identical query/prefix text is allowed; scalars must be unique complete numeric tokens with disjoint ranges. Store requires one complete current source and one field prefix in its text, then extracts the adjacent decimal. Supply one source origin and all current scalars in a1..4-step graph; every input/operation contributes. Report source title, prefix, observed decimal and exact result. Costs two reads plus arithmetic within the existing budget. evidence_parameters_invalid: fix literal fields/graph; evidence_source_not_unique: ask for a narrower source; evidence_field_invalid: clarify missing/repeated/malformed field. Never guess missing values. If an admitted matching private recipe exists and reuse is requested, use learned_skill_execute instead.".into(),
+            parameters: object(json!({"plan":evidence_plan_schema(),"parameters":evidence_parameters_schema()})),
+        });
+    }
     if profile.is_some_and(|p| p.evidence_calculation) {
         definitions.push(FunctionDefinition {
             name:"evidence_calculate".into(),
-            description:"Exact arithmetic bound to one fresh saved source. Search a literal current-request phrase yielding one complete result; read its full current revision from byte0, max_bytes4096. Copy both receipt addresses. Quote query, field prefix and fresh scalars from the accepted task/constraints. Query/prefix must occur once, including output titles: extend a repeated short phrase to a unique literal source title. Scalars must be unique complete numeric tokens (5 differs from 0.65); duplicate whole numbers are ambiguous. Ranges must be disjoint. Store reads the decimal immediately after one unique source prefix. Never guess offsets/values or choose among hits; clarify ambiguous fields. Bind one source input and all current scalars in a1..4-step graph; every input/operation contributes. Report source title, prefix, source number and exact result. Each operation costs one tool; earlier reads were charged.".into(),
+            description:"Exact arithmetic bound to one fresh saved source. Search a literal current-request phrase yielding one complete result; read its full current revision from byte0, max_bytes4096. Copy both receipt addresses. Quote query, field prefix and fresh scalars from the accepted task/constraints. Query/prefix must be literal current-task selectors; repeating identical text is allowed. Prefer source_calculate to create fresh search/read receipts automatically. Scalars must be unique complete numeric tokens (5 differs from 0.65); duplicate whole numbers are ambiguous. Ranges must be disjoint. Store reads the decimal immediately after one unique source prefix. Never guess offsets/values or choose among hits; clarify ambiguous fields. Bind one source input and all current scalars in a1..4-step graph; every input/operation contributes. Report source title, prefix, source number and exact result. Each operation costs one tool; earlier reads were charged.".into(),
             parameters:object(json!({"plan":evidence_plan_schema(),"binding":object(json!({"search":receipt_schema(),"source":receipt_schema(),"query":{"type":"string"},"prefix":{"type":"string"},"scalars":{"type":"array","items":{"type":"string"}}}))})),
         });
     }
@@ -294,6 +301,7 @@ pub(super) enum Invocation {
     DecimalCalculate(DecimalCalculation),
     DecimalWorkflow(moosuri_core::DecimalWorkflow),
     EvidenceCalculate(moosuri_core::EvidenceCalculation),
+    SourceCalculate(moosuri_core::SourceCalculation),
     External(moosuri_core::ExternalToolRequest),
     Artifact(moosuri_core::ArtifactToolRequest),
     LearnedSkill(moosuri_core::LearnedSkillInvocation),
@@ -440,6 +448,9 @@ pub(super) fn parse(name: &str, arguments: &str) -> Invocation {
             .unwrap_or(Invocation::InvalidArguments),
         "skill_read" => serde_json::from_str::<SkillPin>(arguments)
             .map(Invocation::SkillRead)
+            .unwrap_or(Invocation::InvalidArguments),
+        "source_calculate" => serde_json::from_str::<moosuri_core::SourceCalculation>(arguments)
+            .map(Invocation::SourceCalculate)
             .unwrap_or(Invocation::InvalidArguments),
         "evidence_calculate" => {
             serde_json::from_str::<moosuri_core::EvidenceCalculation>(arguments)
@@ -590,6 +601,7 @@ mod tests {
             native_mail_model_read: false,
             native_mail_model_background: false,
             evidence_calculation: false,
+            source_calculation: false,
             credential_github: false,
             credential_gitea: false,
             credential_google: false,

@@ -694,6 +694,31 @@ fn resolve_target(
     receipt.candidates.clear();
     Ok(target)
 }
+// A scheduled read cannot acquire future external delivery by dropping that
+// requirement from the model's task quote. Explicit draft-only requests retain
+// their existing admission; this check adds no sending authority.
+fn scheduled_mail_delivery(text: &str) -> bool {
+    if !moosuri_core::mission_read_domains(text).0 {
+        return false;
+    }
+    let low = text
+        .to_lowercase()
+        .replace("do not send", "")
+        .replace("don't send", "")
+        .replace("never send", "")
+        .replace("보내지", "")
+        .replace("발송하지", "")
+        .replace("발송은 하지 마", "")
+        .replace("발송은하지마", "");
+    if super::connected::local_delivery(&low) {
+        return false;
+    }
+    low.split(|c: char| !c.is_alphabetic())
+        .any(|word| matches!(word, "send" | "forward"))
+        || ["발송해", "보내줘", "보내 줘", "전송해"]
+            .iter()
+            .any(|word| low.contains(word))
+}
 fn new_receipt(r: &Run, d: &MissionChatDecision) -> MissionChatReceipt {
     MissionChatReceipt {
         request_id: r.request.clone(),
@@ -847,7 +872,15 @@ impl Store {
                 let mut controlled_target=None;
                 let attempt=(||->Result<()> {
                     if matches!(action,"create_now"|"create_scheduled"){
-                        if super::connected::unsupported_effect(&crate::request_continuations::text(&tx,&r)?){return Err(StoreError::Forbidden)}
+                        let original = crate::request_continuations::text(&tx,&r)?;
+                        // Check future delivery and Calendar effects in the full
+                        // owner request before inspecting a reduced task quote.
+                        // A dropped effect must not become a time clarification.
+                        let calendar_effect = super::actions::requested(&original).1;
+                        if super::connected::unsupported_effect(&original)
+                            || action == "create_scheduled"
+                                && (scheduled_mail_delivery(&original) || calendar_effect)
+                        {return Err(StoreError::Forbidden)}
                         let task=d.task_quote.clone().ok_or(StoreError::InvalidInput)?;let constraints=d.constraints_quote.clone().unwrap_or_default();
                         let required=moosuri_core::mission_read_domains(&crate::request_continuations::text(&tx,&r)?);let retained=moosuri_core::mission_read_domains(&format!("{task}\n{constraints}"));if required.0&&!retained.0||required.1&&!retained.1{return Err(StoreError::InvalidInput)}
                         let mut checks=vec![MissionCheck::UserReview{description:"요청과 조건의 내용은 직접 검토가 필요합니다.".into()}];

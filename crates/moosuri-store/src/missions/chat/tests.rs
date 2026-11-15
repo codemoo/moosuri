@@ -1985,3 +1985,23 @@ async fn completed_untyped_history_is_not_backfilled_as_fresh_mission_authority(
     );
     assert!(s.missions(&u).await.unwrap().is_empty());
 }
+
+#[test]
+fn scheduled_delivery_is_distinct_from_explicit_draft_only_preparation() {
+    for text in [
+        "Read Gmail and send a summary to owner@example.test in one minute",
+        "1분 뒤에 자료를 읽고 예시@example.test로 이메일 보내 줘",
+        "Read Gmail and send the summary here and to owner@example.test in one minute",
+    ] {
+        assert!(scheduled_mail_delivery(text), "{text}");
+    }
+    for text in [
+        "Read Gmail and prepare a draft, do not send it",
+        "Gmail을 읽고 초안을 준비해. 발송은 하지 마",
+        "Read the saved report and summarize it here",
+        "In one minute, read Gmail and send the summary here",
+        "1분 뒤 Gmail을 읽고 요약을 여기로 보내 줘",
+    ] {
+        assert!(!scheduled_mail_delivery(text), "{text}");
+    }
+}

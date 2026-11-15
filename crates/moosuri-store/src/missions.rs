@@ -107,6 +107,7 @@ pub(crate) fn tool_allowed(v: &KnowledgeToolInput) -> bool {
             | KnowledgeToolInput::SkillRead { .. }
             | KnowledgeToolInput::DecimalCalculate { .. }
             | KnowledgeToolInput::EvidenceCalculate { .. }
+            | KnowledgeToolInput::SourceCalculate { .. }
             | KnowledgeToolInput::DecimalWorkflow { .. }
             | KnowledgeToolInput::LearnedSkill { .. }
             | KnowledgeToolInput::CollectPages { .. }
@@ -739,7 +740,10 @@ impl Store {
         plan: Vec<String>,
     ) -> Result<()> {
         let l = lease.clone();
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}reports::admit(&tx,&r,acceptance_revision)?;actions::admit_revision(&tx,&r,acceptance_revision)?;tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
+        // A local plan may share the first completed execution round. Preserve
+        // that round for tool/final recovery; only legacy narrative plans are
+        // consumed here. Admission and acceptance guards stay step-bound.
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}reports::admit(&tx,&r,acceptance_revision)?;actions::admit_revision(&tx,&r,acceptance_revision)?;tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=CASE WHEN json_extract(round_text,'$.planning')=0 THEN round_text ELSE NULL END WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
     }
     /// Evidence references are resolved exclusively against this run's committed typed slots.
     pub async fn mission_verify(

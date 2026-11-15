@@ -79,7 +79,10 @@ pub(super) fn proof(c: &Connection, t: &str, a: &str, run: &str) -> Result<Optio
             return Ok(None);
         };
         let result: Output = serde_json::from_str(&result).map_err(|_| StoreError::Corrupt)?;
-        if matches!(input, Input::EvidenceCalculate { .. }) {
+        if matches!(
+            input,
+            Input::EvidenceCalculate { .. } | Input::SourceCalculate { .. }
+        ) {
             if !candidate
                 .evidence
                 .iter()

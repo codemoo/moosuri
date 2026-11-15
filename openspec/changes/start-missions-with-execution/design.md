@@ -1,0 +1,7 @@
+# Keep admission and recovery step-bound
+
+The plan display contains the current accepted task (bounded at a UTF-8 boundary) and a receipt-verification stage. These labels describe work; they do not reinterpret the request or assert completion. The first model request receives those stages alongside the full unchanged accepted request, constraints and checks, and uses the ordinary mission tools immediately.
+
+After that real model round is durably committed, its completed StepLease saves the display stages through the existing acceptance-revision, report-contract and action-contract guards before any proposed tool executes. A process can stop between acknowledgement, plan saving and execution. Recovery admits an absent local plan from the acknowledged non-planning round before replaying its slots. Saving a local plan retains that round's tool/final proposal until the existing consumer clears it. Legacy acknowledged narrative plans still recover without replanning.
+
+No migration, new RunLease mutation capability, budget reset, continuation transport, early unverified output or new external effect is added. Uncertain dispatches, stale acceptance revisions, withdrawal, pause/cancel and original lifetime limits retain the existing fences. Synthetic counted Runtime outcomes establish one fewer dispatch; development bridge timings do not establish production latency or model-quality improvement.

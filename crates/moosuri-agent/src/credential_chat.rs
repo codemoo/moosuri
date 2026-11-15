@@ -55,6 +55,15 @@ pub(super) fn parse_google_preview(arguments: &str) -> Invocation {
         .unwrap_or(Invocation::InvalidArguments)
 }
 
+pub(super) fn parse_gitea(arguments: &str) -> Invocation {
+    serde_json::from_str::<Input>(arguments)
+        .map(|i| Invocation::CredentialGitea {
+            owner: i.owner,
+            repository: i.repository,
+        })
+        .unwrap_or(Invocation::InvalidArguments)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,13 +108,4 @@ mod tests {
             Invocation::CredentialGitHub { .. }
         ));
     }
-}
-
-pub(super) fn parse_gitea(arguments: &str) -> Invocation {
-    serde_json::from_str::<Input>(arguments)
-        .map(|i| Invocation::CredentialGitea {
-            owner: i.owner,
-            repository: i.repository,
-        })
-        .unwrap_or(Invocation::InvalidArguments)
 }

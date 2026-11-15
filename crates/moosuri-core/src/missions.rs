@@ -330,12 +330,27 @@ pub struct MissionCompoundStep {
 /// Cost routing only. Actual command interpretation is isolated from evidence.
 pub fn compound_report_candidate(text: &str) -> bool {
     let low = text.to_lowercase();
+    // "saved document" / "저장된 문서" describes input, not a request
+    // to save new output. Keep separate active save occurrences eligible.
+    let english_output = low
+        .split(|c: char| !c.is_alphabetic())
+        .any(|word| matches!(word, "save" | "create" | "write"));
+    let compact = low.split_whitespace().collect::<String>();
+    let korean_output = ["저장", "작성", "만들"].iter().any(|stem| {
+        compact.match_indices(stem).any(|(at, _)| {
+            let tail = &compact[at + stem.len()..];
+            let modifiers: &[&str] = if *stem == "만들" {
+                &["어진", "어둔", "어놓은", "었던"]
+            } else {
+                &["된", "한", "되어", "돼", "해둔", "해놓은", "했던", "하던"]
+            };
+            !modifiers.iter().any(|modifier| tail.starts_with(modifier))
+        })
+    });
     ["report", "document", "보고서", "문서"]
         .iter()
         .any(|v| low.contains(v))
-        && ["save", "create", "write", "저장", "만들", "작성"]
-            .iter()
-            .any(|v| low.contains(v))
+        && (english_output || korean_output)
         && [
             "research",
             "compare",
@@ -359,4 +374,29 @@ pub struct MissionCompoundReceipt {
     pub step: i64,
     pub call_id: String,
     pub ordinal: Option<u8>,
+}
+
+#[cfg(test)]
+mod compound_report_tests {
+    use super::compound_report_candidate;
+
+    #[test]
+    fn existing_document_modifiers_do_not_request_a_new_report_but_explicit_output_still_routes() {
+        for text in [
+            "저장된 syntheticcapacity 문서를 찾아 읽고 기준량을 알려 줘.",
+            "작성한 보고서를 읽고 요약해 줘.",
+            "Read the saved document and summarize it.",
+            "Read the created report and compare its claims.",
+        ] {
+            assert!(!compound_report_candidate(text), "{text}");
+        }
+        for text in [
+            "자료를 읽고 보고서를 저장해 줘.",
+            "저장된 문서를 읽고 비교 보고서로 저장해 줘.",
+            "작성한 보고서를 비교하고 새 보고서를 작성해 줘.",
+            "Read the saved document and save a comparison report.",
+        ] {
+            assert!(compound_report_candidate(text), "{text}");
+        }
+    }
 }

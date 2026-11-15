@@ -390,8 +390,8 @@ async fn personal_missions_runtime_direct_and_natural_recurring_keep_owner_proof
         .unwrap();
     let rt = runtime(s.clone(), service.clone(), None);
     assert_eq!(finished(&s, &u, &one.id).await.state, "achieved");
-    assert_eq!(f.state.models.load(Ordering::SeqCst), 4);
-    assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 4);
+    assert_eq!(f.state.models.load(Ordering::SeqCst), 3);
+    assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 3);
     assert!(f.state.refreshes.load(Ordering::SeqCst) >= 1);
     let t = s
         .create_thread(&u, "Explicit repeat delegation".into())
@@ -428,11 +428,11 @@ async fn personal_missions_runtime_direct_and_natural_recurring_keep_owner_proof
     })
     .await
     .unwrap();
-    assert_eq!(f.state.models.load(Ordering::SeqCst), 5);
+    assert_eq!(f.state.models.load(Ordering::SeqCst), 4);
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert_eq!(
         f.state.models.load(Ordering::SeqCst),
-        5,
+        4,
         "idle due polling must not infer"
     );
     // A durable original delegation survives ordinary logout without becoming a
@@ -456,8 +456,8 @@ async fn personal_missions_runtime_direct_and_natural_recurring_keep_owner_proof
         .find(|v| v.id != one.id)
         .unwrap();
     assert_eq!(finished(&s, &u, &child.id).await.state, "partial");
-    assert_eq!(f.state.models.load(Ordering::SeqCst), 8);
-    assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 8);
+    assert_eq!(f.state.models.load(Ordering::SeqCst), 6);
+    assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 6);
     // Natural control is a new explicit owner command, retaining target revision.
     let schedule = s.recurring_missions(&u).await.unwrap().remove(0);
     s.submit_turn_with_mission_context(
@@ -491,7 +491,7 @@ async fn personal_missions_runtime_direct_and_natural_recurring_keep_owner_proof
     .await
     .unwrap();
     assert_eq!(paused.schedule.state, "paused");
-    assert_eq!(f.state.models.load(Ordering::SeqCst), 9);
+    assert_eq!(f.state.models.load(Ordering::SeqCst), 7);
     rt.shutdown().await;
 }
 fn google_pin() -> moosuri_store::GoogleAppPin {
@@ -625,8 +625,8 @@ async fn personal_missions_runtime_delegated_connected_reads_and_connection_with
     let result = finished(&s, &u, &one.id).await;
     assert_eq!(result.state, "partial");
     assert_eq!(result.receipts.len(), 2);
-    assert_eq!(f.state.models.load(Ordering::SeqCst), 4);
-    assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 4);
+    assert_eq!(f.state.models.load(Ordering::SeqCst), 3);
+    assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 3);
     assert_eq!(g.writes.load(Ordering::SeqCst), 0);
     assert!(g.reads.load(Ordering::SeqCst) >= 4);
     rt.shutdown().await;

@@ -47,6 +47,7 @@ pub(super) async fn fixture(s: &Store, u: &UserContext, key: &str, amount: &str)
     .unwrap();
     s.sources(u, col.id, None).await.unwrap().items.remove(0)
 }
+#[allow(clippy::too_many_arguments)] // Explicit independent fixture values and expected outcome.
 async fn example(
     s: &Store,
     u: &UserContext,
@@ -59,6 +60,7 @@ async fn example(
 ) -> MissionView {
     example_with_plan(s, u, key, src, scalar, amount, total, learned, plan()).await
 }
+#[allow(clippy::too_many_arguments)] // Explicit independent fixture values and expected outcome.
 async fn example_with_plan(
     s: &Store,
     u: &UserContext,
@@ -69,6 +71,33 @@ async fn example_with_plan(
     total: &str,
     learned: Option<SkillPin>,
     calculation_plan: EvidencePlan,
+) -> MissionView {
+    example_mode(
+        s,
+        u,
+        key,
+        src,
+        scalar,
+        amount,
+        total,
+        learned,
+        calculation_plan,
+        false,
+    )
+    .await
+}
+#[allow(clippy::too_many_arguments)] // Explicit independent fixture values and expected outcome.
+async fn example_mode(
+    s: &Store,
+    u: &UserContext,
+    key: &str,
+    src: &SourceSummary,
+    scalar: &str,
+    amount: &str,
+    total: &str,
+    learned: Option<SkillPin>,
+    calculation_plan: EvidencePlan,
+    fresh: bool,
 ) -> MissionView {
     let m = s
         .create_mission(
@@ -104,6 +133,17 @@ async fn example_with_plan(
                         prefix: "cost:".into(),
                         scalars: vec![scalar.into()],
                     },
+                },
+            },
+        }
+    } else if fresh {
+        KnowledgeToolInput::SourceCalculate {
+            calculation: moosuri_core::SourceCalculation {
+                plan: calculation_plan,
+                parameters: EvidenceParameters {
+                    query: key.into(),
+                    prefix: "cost:".into(),
+                    scalars: vec![scalar.into()],
                 },
             },
         }
@@ -304,7 +344,7 @@ async fn compound_learning_two_adoptions_fresh_replay_edit_and_withdrawal() {
         "candidate"
     );
     let b = fixture(&s, &u, "OfferBeta", "4").await;
-    let mb = example(&s, &u, "OfferBeta", &b, "6", "4", "24", None).await;
+    let mb = example_mode(&s, &u, "OfferBeta", &b, "6", "4", "24", None, plan(), true).await;
     assert_eq!(
         s.adopt_compound_report(&u, mb.id.clone(), adoption(&mb))
             .await

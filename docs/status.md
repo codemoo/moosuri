@@ -19,7 +19,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | 도구·스킬 | 검증된 bounded tool loop, 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회·일본우편 최근 요약의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 2–4단계 정확 계산과 유일한 저장 자료의 숫자를 읽는 근거 계산의 구조 학습·새 입력 재사용·합성 export도 구현했다. 공개 URL2~4개의 실제 수집·두 사례 학습·새 대상/명시한 미션 재사용·합성 export도 구현. 일반 외부 복합 업무 학습/export·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
 | 웹·브라우저·메일 | 공개 HTTP/Brave·검증된 Linux Chromium 읽기, 대화별 workspace·화면 보기·사람의 로그인/조작·같은 페이지 후속 대화, 개인 Gmail 읽기/thread·PDF/텍스트 첨부 페이지 읽기·로컬/Google 초안 CRUD·승인된 즉시/고정 예약 발송·불명 결과의 제한된 보낸편지함 조회 | 메일은 매번 최종 수신인/본문 등을 보고 명시적으로 허락해야 한다. 원래 수명 안의 명시적 profile 복구와 Linux 실제 재시작/강제 종료 후 복구를 확인했다. 인증된 자동 폼/장기 로그인 유지·실제 Gmail 계정 검증은 미완료. [웹](web-research.md)·[브라우저](browser-workspaces.md)·[메일](mail.md) |
 | 공식·custom 자료 연결 | 개인 Gmail/Slack 수집·custom ingest, 선택한 Codex 사용자 요청·정규화 통화 전사의 일회 수집, scope/cursor/receipt/provenance·상태 화면·철회, 일본우편 최근 상태 조회 | 합성 Linux 검증은 실제 OAuth/계정 scope/rate 검증을 대신하지 않는다. 카톡 코드는 공개 패키지에서 제외. schema48에서 시작 ACK 유실 복구를 추가했다. 통화 원본 기기/포맷·실제 전사 품질·다른 작업 세션 형식·다른 배송사/전체 이력은 남음. [연결](data-connections.md)·[검증](reviews/2026-11-13-source-connections.md) |
-| 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control·일상 날짜/요일/한글 시각·명확한 주 범위 보존, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours·예약별 소식 끄기/다시 받기, 저장한 followup 마감/재확인/미룬 날짜 알림, opt-in 기기 Push | 전체 proactive 제안 정책·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[소식 제어](reviews/2026-11-14-notification-topics.md) |
+| 알림·소식·Push | 한글/영문 제한 고정 알림 capture/control·일상 날짜/요일/한글 시각·명확한 주 범위 보존, 일회/간격/매일/매주·IANA/DST·latest-only 회차, inbox·quiet hours·예약별 소식 끄기/다시 받기, 저장한 followup 마감/재확인/미룬 날짜 알림, opt-in 기기 Push | 날짜 없는 요청·약속의 저장 근거 제안·개별 숨김·고정 주제 전체 끄기를 구현했다. 일반 의미 기반 제안 발굴·실제 휴대폰 설치/수신/백그라운드는 미완료. [예약](schedules.md)·[Push](web-push.md)·[소식 제어](reviews/2026-11-14-notification-topics.md) |
 | 맡긴 일 | 양식/API와 현재 대화의 명시적 위임으로 일회성·반복 읽기/계산/공개 HTTP·명시한 개인 Gmail/기본 Calendar 읽기 업무 등록·제어, 실제 영수증과 좁은 정확 일치 알림 생략, 의미 조건은 검토 필요 | 빠진 값을 다음 답변으로 보완하고 직전 업무 영수증으로 제어한다. 일상 요일/주·한글 시각을 원래 시간대로 검증한다. 정지한 일회성 업무는 기존 한도 안에서 조건을 고쳐 다시 계획할 수 있다. 넓은 자연어 해석·메일/일정 쓰기·browser/vault 미션 실행·Claude background는 미완료. 개인 ChatGPT의 명시적 읽기 미션은 지원한다. [맡긴 일](missions.md)·[일회성 검증](reviews/2026-11-13-owner-missions.md)·[반복 검증](reviews/2026-11-13-recurring-missions.md)·[대화 검증](reviews/2026-11-13-conversational-missions.md) |
 | Calendar | 별도 개인 동의, 대화/직접 양식의 기본 캘린더 읽기·명확한 단일 timed/종일 solo-event 생성/수정/삭제, ETag/dispatch receipt·불명 결과 lookup | 확인 질문의 다음 답변·직전 일정 지칭·기간을 유지한 날짜 이동을 지원한다. 반복/참석자/보조 캘린더 쓰기·실계정 검증은 미완료. [Calendar](calendar.md)·[대화 검증](reviews/2026-11-13-conversational-calendar.md) |
 | 미디어·PWA | 독립 image/UTF-8/PDF 텍스트 upload·preview/library·삭제 철회, 실제 vision probe, 녹음·미리 듣기·별도 OpenAI STT·수정 후 초안 삽입, PWA 글/링크/사진/파일/음성 공유받기·공개 offline shell·설치/업데이트 | 실제 음성 인식 품질·PDF OCR/시각 이해·휴대폰 OS 공유 메뉴·실기기는 미완료. 첨부 문맥은 도구/지속 쓰기를 제한한다. [이미지](media.md)·[파일](private-files.md)·[PWA](pwa.md)·[파일 검증](reviews/2026-11-13-private-files.md)·[PDF 검증](reviews/2026-11-14-private-pdf-files.md) |
@@ -30,6 +30,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 기록에 근거한 검토 제안 | 날짜 없는 요청·약속을 저장하면 현재 기록으로 연결되는 제안, 개별 숨김·주제 전체 끄기, 철회/조용한 시간/Push 중복 정책 | [사용법](proactive-suggestions.md)·[검증](reviews/2026-11-15-proactive-suggestions.md) |
 | 기기 볼트로 승인한 메일 발송 | 별도 Google 발송 연결·기존 최종 내용/시각 승인·정확한 한 번의 기기 전송·불명 결과 조회·복원 시 재발송 방지 | [사용법](native-approved-gmail-send.md)·[검증](reviews/2026-11-15-native-approved-gmail-send.md) |
 | 일상적인 날짜·시간 입력 | 오늘/내일/모레·이번/다음 주 요일·한글 시각을 알림/맡긴 일/Calendar에서 공통 해석; 빠진 값 후속 답변·원래 시간대 보존 | [사용법](conversational-civil-time.md)·[검증](reviews/2026-11-15-conversational-civil-time.md) |
 | 공개 페이지 수집 학습 | 현재 URL2~4개의 실제 관측·개별 실패, 서로 다른 두 사례 뒤 새 대상으로 재사용·명시한 읽기 미션·합성 공유 | [사용법](public-page-recipes.md)·[검증](reviews/2026-11-15-public-page-recipes.md) |
@@ -107,7 +108,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    정확 계산 그래프·저장 원문에 묶은 계산·명시한 공개 URL2~4개 수집의 두 사례 학습/새 입력 실행/합성 export는 구현했다. 일반 외부 복합 절차·전체 이력 보존/정리 정책은 남는다.
    정지한 일회성 업무의 기준 수정·기존 한도 내 재계획/검증/보완과 검증된 로컬 학습 절차의 일회성·반복 실행을 구현했다.
    제한된 여러 턴 명확화와 일상적인 날짜/요일/이번·다음 주/한글 시각을 공통으로 검증한다. 더 넓은 시간 해석·일반 복합 작업으로 이어간다.
-3. **P5/P6 예약·외부 연결**: Gmail의 제한된 PDF/텍스트 첨부 읽기를 구현했고, 자료 수집은 본문만 색인한다. 전체 알림/제안 정책,
+3. **P5/P6 예약·외부 연결**: Gmail의 제한된 PDF/텍스트 첨부 읽기를 구현했고, 자료 수집은 본문만 색인한다. 날짜 없는 요청·약속의 고정 주제 제안과 소식 제어를 구현했다. 더 넓은 의미 기반 제안 발굴,
    구현한 Gmail provider draft·승인된 고정 예약 발송과 Calendar 후속 명확화의 실계정 검증,
    선택한 Codex 요청과 정규화 통화 전사 수집·schema48 시작 ACK 복구는 구현했다. 통화 vendor 포맷/실제 전사·다른 작업 형식(Claude 원본 로그의 사람/자동화 구분은 [공식 형식의 한계](local-work-sessions.md#claude-transcript-provenance-limit))·
    배송 전체 이력/다른 배송사와 실제 OAuth/계정 검증을 진행한다.

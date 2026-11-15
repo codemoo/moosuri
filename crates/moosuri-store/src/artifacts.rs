@@ -367,6 +367,7 @@ fn write_body(
         )?;
     }
     crate::schedules::followups::schedule(conn, tenant, &object, revision, &input.draft, time)?;
+    crate::schedules::suggestions::save(conn, tenant, &object, revision, &input.draft, time)?;
     knowledge::bump(conn, tenant)?;
     save_receipt(
         conn,

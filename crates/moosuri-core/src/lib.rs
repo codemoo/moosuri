@@ -138,6 +138,7 @@ pub fn typescript_contract() -> String {
         NotificationSource::decl(),
         NotificationSourceChange::decl(),
         LocalNotification::decl(),
+        ProactiveSuggestion::decl(),
         NotificationPage::decl(),
         CalendarConnection::decl(),
         CalendarConnections::decl(),

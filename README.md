@@ -7,7 +7,8 @@ Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes iso
 accounts, durable chat with bounded tab-refresh draft recovery and older-conversation recall,
 private knowledge with recorded-time source filters and opt-in fixed Korean word aliases, and memories with bounded date-scoped conversational updates, editable records, bounded
 read-only missions from chat or forms with editable paused one-off criteria and preserved request history, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary lookups, personal Gmail with bounded PDF/text attachment reads, provider drafts and approved fixed scheduled sends, bounded timed/all-day Calendar actions and follow-up clarification from chat or forms, browser workspaces with optional login-profile recovery within their original lifetime, local reminders with bounded missing-time/content replies, shared [Korean/English civil dates and clocks](docs/conversational-civil-time.md) that preserve the requested week and recurrence,
-opt-in Web Push, per-schedule notification mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
+opt-in Web Push, per-schedule notification mute, evidence-bound followup review
+suggestions with a shared topic mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
 The experimental [native credential companion](docs/native-credential-github.md)
 can unlock the independent live vault or an explicit encrypted archive locally and

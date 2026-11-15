@@ -3,17 +3,23 @@ use super::*;
 
 pub(super) fn muted(conn: &Connection, tenant: &str, account: &str, id: &str) -> Result<bool> {
     Ok(conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM notification_source_preferences WHERE tenant_id=?1 AND account_id=?2 AND schedule_id=coalesce((SELECT source_schedule_id FROM followup_reminders WHERE tenant_id=?1 AND schedule_id=?3),?3) AND muted=1)",
+        "SELECT EXISTS(SELECT 1 FROM notification_source_preferences WHERE tenant_id=?1 AND account_id=?2 AND schedule_id=coalesce((SELECT source_schedule_id FROM followup_reminders WHERE tenant_id=?1 AND schedule_id=?3),(SELECT pt.schedule_id FROM proactive_suggestions ps JOIN reminder_schedules rs ON rs.tenant_id=ps.tenant_id AND rs.id=ps.schedule_id JOIN proactive_topics pt ON pt.tenant_id=rs.tenant_id AND pt.account_id=rs.account_id WHERE ps.tenant_id=?1 AND ps.schedule_id=?3),?3) AND muted=1)",
         params![tenant, account, id], |r| r.get(0),
     )?)
 }
 fn source(conn: &Connection, tenant: &str, account: &str, id: &str) -> Result<NotificationSource> {
     let id: String = conn.query_row("SELECT source_schedule_id FROM followup_reminders WHERE tenant_id=?1 AND schedule_id=?2", params![tenant,id], |r|r.get(0)).optional()?.unwrap_or_else(||id.to_owned());
+    let id: String = conn.query_row("SELECT pt.schedule_id FROM proactive_suggestions ps JOIN reminder_schedules rs ON rs.tenant_id=ps.tenant_id AND rs.id=ps.schedule_id JOIN proactive_topics pt ON pt.tenant_id=rs.tenant_id AND pt.account_id=rs.account_id WHERE ps.tenant_id=?1 AND ps.schedule_id=?2",params![tenant,id],|r|r.get(0)).optional()?.unwrap_or(id);
+    let topic: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM proactive_topics WHERE tenant_id=?1 AND schedule_id=?2)",
+        params![tenant, id],
+        |r| r.get(0),
+    )?;
     let followup = super::followups::is_followup(conn, tenant, &id)?;
     conn.query_row(
         "SELECT s.id,s.title,EXISTS(SELECT 1 FROM recurring_missions r WHERE r.tenant_id=s.tenant_id AND r.account_id=s.account_id AND r.schedule_id=s.id),coalesce(p.revision,0),coalesce(p.muted,0) FROM reminder_schedules s LEFT JOIN notification_source_preferences p ON p.tenant_id=s.tenant_id AND p.account_id=s.account_id AND p.schedule_id=s.id WHERE s.tenant_id=?1 AND s.account_id=?2 AND s.id=?3",
         params![tenant, account, id], |r| Ok(NotificationSource {
-            id:r.get(0)?,title:r.get(1)?,kind:if followup {"followup"} else if r.get::<_,bool>(2)? {"recurring_mission"} else {"reminder"}.into(),revision:r.get(3)?,muted:r.get(4)?,
+            id:r.get(0)?,title:r.get(1)?,kind:if topic {"proactive_topic"} else if followup {"followup"} else if r.get::<_,bool>(2)? {"recurring_mission"} else {"reminder"}.into(),revision:r.get(3)?,muted:r.get(4)?,
         }),
     ).optional()?.ok_or(StoreError::NotFound)
 }
@@ -66,8 +72,8 @@ impl Store {
             tx.execute("INSERT INTO notification_source_preferences(tenant_id,account_id,schedule_id,revision,muted) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(tenant_id,account_id,schedule_id) DO UPDATE SET revision=excluded.revision,muted=excluded.muted",params![u.tenant.0,u.account.id,id,old.revision+1,input.muted])?;
             if input.muted {
                 // Latch even unscanned notices. Unmute must never replay old Push.
-                tx.execute("UPDATE local_notifications SET push_suppressed=1 WHERE tenant_id=?1 AND account_id=?2 AND (schedule_id=?3 OR schedule_id IN(SELECT schedule_id FROM followup_reminders WHERE tenant_id=?1 AND source_schedule_id=?3)) AND push_suppressed=0",params![u.tenant.0,u.account.id,id])?;
-                tx.execute("UPDATE push_queue SET state='suppressed',nonce=NULL,deadline=NULL,finished_at=?4,reason='source_muted' WHERE tenant_id=?1 AND account_id=?2 AND state IN('queued','claimed') AND notification_id IN(SELECT id FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND (schedule_id=?3 OR schedule_id IN(SELECT schedule_id FROM followup_reminders WHERE tenant_id=?1 AND source_schedule_id=?3)))",params![u.tenant.0,u.account.id,id,clock()?])?;
+                tx.execute("UPDATE local_notifications SET push_suppressed=1 WHERE tenant_id=?1 AND account_id=?2 AND (schedule_id=?3 OR schedule_id IN(SELECT schedule_id FROM followup_reminders WHERE tenant_id=?1 AND source_schedule_id=?3) OR schedule_id IN(SELECT ps.schedule_id FROM proactive_suggestions ps JOIN reminder_schedules rs ON rs.tenant_id=ps.tenant_id AND rs.id=ps.schedule_id JOIN proactive_topics pt ON pt.tenant_id=rs.tenant_id AND pt.account_id=rs.account_id WHERE ps.tenant_id=?1 AND pt.schedule_id=?3)) AND push_suppressed=0",params![u.tenant.0,u.account.id,id])?;
+                tx.execute("UPDATE push_queue SET state='suppressed',nonce=NULL,deadline=NULL,finished_at=?4,reason='source_muted' WHERE tenant_id=?1 AND account_id=?2 AND state IN('queued','claimed') AND notification_id IN(SELECT id FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND (schedule_id=?3 OR schedule_id IN(SELECT schedule_id FROM followup_reminders WHERE tenant_id=?1 AND source_schedule_id=?3) OR schedule_id IN(SELECT ps.schedule_id FROM proactive_suggestions ps JOIN reminder_schedules rs ON rs.tenant_id=ps.tenant_id AND rs.id=ps.schedule_id JOIN proactive_topics pt ON pt.tenant_id=rs.tenant_id AND pt.account_id=rs.account_id WHERE ps.tenant_id=?1 AND pt.schedule_id=?3)))",params![u.tenant.0,u.account.id,id,clock()?])?;
             }
             let out=source(&tx,&u.tenant.0,&u.account.id,&id)?;
             tx.commit()?;

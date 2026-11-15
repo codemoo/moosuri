@@ -5,6 +5,7 @@ use serde::{Serialize, de::DeserializeOwned};
 pub(crate) mod chat;
 pub(crate) mod civil_time;
 pub(crate) mod followups;
+pub(crate) mod suggestions;
 #[cfg(test)]
 mod tests;
 mod time;
@@ -91,6 +92,7 @@ fn owned(conn: &Connection, user: &UserContext, id: &str) -> Result<Schedule> {
     uuid(id)?;
     if crate::recurring_missions::is_recurring(conn, &user.tenant.0, id)?
         || followups::is_followup(conn, &user.tenant.0, id)?
+        || suggestions::internal(conn, &user.tenant.0, id)?
     {
         return Err(StoreError::NotFound);
     }
@@ -294,9 +296,10 @@ fn notification(
     id: &str,
 ) -> Result<LocalNotification> {
     let source = topics::for_notification(conn, tenant, account, id)?;
+    let suggestion = suggestions::for_notification(conn, tenant, account, id)?;
     let followup = followups::for_notification(conn, tenant, account, id)?;
     let mission_id: Option<String>=conn.query_row("SELECT m.id FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN reminder_schedules s ON s.tenant_id=o.tenant_id AND s.id=o.schedule_id JOIN accounts a ON a.tenant_id=m.tenant_id AND a.id=m.account_id WHERE o.tenant_id=?1 AND o.notification_id=?2 AND m.account_id=?3 AND m.state NOT IN('deleted','quarantined') AND s.state IN('active','completed') AND s.revision=o.schedule_revision AND s.auth_epoch=m.auth_epoch AND a.auth_epoch=m.auth_epoch AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?4) AND (s.valid_until IS NULL OR s.valid_until>?4)",params![tenant,id,account,now()?],|r|r.get(0)).optional()?;
-    conn.query_row("SELECT id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,is_read,dismissed FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(LocalNotification{followup:followup.clone(),source:source.clone(),mission_id:mission_id.clone(),id:r.get(0)?,schedule_id:r.get(1)?,occurrence_id:r.get(2)?,title:r.get(3)?,message:r.get(4)?,scheduled_for:r.get(5)?,delivered_at:r.get(6)?,delayed:r.get(7)?,quiet:r.get(8)?,read:r.get(9)?,dismissed:r.get(10)?})).optional()?.ok_or(StoreError::NotFound)
+    conn.query_row("SELECT id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,is_read,dismissed FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(LocalNotification{suggestion:suggestion.clone(),followup:followup.clone(),source:source.clone(),mission_id:mission_id.clone(),id:r.get(0)?,schedule_id:r.get(1)?,occurrence_id:r.get(2)?,title:r.get(3)?,message:r.get(4)?,scheduled_for:r.get(5)?,delivered_at:r.get(6)?,delayed:r.get(7)?,quiet:r.get(8)?,read:r.get(9)?,dismissed:r.get(10)?})).optional()?.ok_or(StoreError::NotFound)
 }
 
 fn finish(conn: &Connection, lease: &ReminderLease, now: i64) -> Result<LocalNotification> {
@@ -319,6 +322,7 @@ fn finish(conn: &Connection, lease: &ReminderLease, now: i64) -> Result<LocalNot
         || s.view.state != "active"
         || s.view.revision != revision
         || !followups::current(conn, &lease.tenant, &schedule, now)?
+        || !suggestions::current(conn, &lease.tenant, &schedule)?
         || !eligible(conn, &lease.tenant, &s, now)?
         || s.view.valid_until.is_some_and(|end| now > end)
     {
@@ -376,7 +380,7 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             let u=validate(&db.conn,&user,true,false)?;
-            let ids=db.conn.prepare("SELECT id FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' AND NOT EXISTS(SELECT 1 FROM followup_reminders f WHERE f.tenant_id=reminder_schedules.tenant_id AND f.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM recurring_missions x WHERE x.tenant_id=reminder_schedules.tenant_id AND x.schedule_id=reminder_schedules.id) ORDER BY created_at DESC,id")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+            let ids=db.conn.prepare("SELECT id FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' AND NOT EXISTS(SELECT 1 FROM followup_reminders f WHERE f.tenant_id=reminder_schedules.tenant_id AND f.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM proactive_suggestions p WHERE p.tenant_id=reminder_schedules.tenant_id AND p.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM proactive_topics p WHERE p.tenant_id=reminder_schedules.tenant_id AND p.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM recurring_missions x WHERE x.tenant_id=reminder_schedules.tenant_id AND x.schedule_id=reminder_schedules.id) ORDER BY created_at DESC,id")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
             ids.iter().map(|id| owner_view(&db.conn,&u.tenant.0,load(&db.conn,&u.tenant.0,id)?)).collect()
         }).await
     }
@@ -539,7 +543,7 @@ pub(super) fn create_in(
     }
     draft(&input.draft, time)?;
     let slot = time::after(&input.draft.rule, time)?.ok_or(StoreError::InvalidInput)?;
-    let count:i64=conn.query_row("SELECT count(*) FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' AND NOT EXISTS(SELECT 1 FROM followup_reminders f WHERE f.tenant_id=reminder_schedules.tenant_id AND f.schedule_id=reminder_schedules.id)",params![user.tenant.0,user.account.id],|r|r.get(0))?;
+    let count:i64=conn.query_row("SELECT count(*) FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' AND NOT EXISTS(SELECT 1 FROM followup_reminders f WHERE f.tenant_id=reminder_schedules.tenant_id AND f.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM proactive_suggestions p WHERE p.tenant_id=reminder_schedules.tenant_id AND p.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM proactive_topics p WHERE p.tenant_id=reminder_schedules.tenant_id AND p.schedule_id=reminder_schedules.id)",params![user.tenant.0,user.account.id],|r|r.get(0))?;
     if count >= 64 {
         return Err(StoreError::BudgetExhausted);
     }

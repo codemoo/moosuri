@@ -1,4 +1,4 @@
-import {act,fireEvent,render,screen,waitFor} from "@testing-library/react";
+import {act,fireEvent,render,screen,waitFor,within} from "@testing-library/react";
 import {beforeEach,expect,it,vi} from "vitest";
 import {Schedules} from "./Schedules";
 import type {ScheduleView,ScheduleDraft,LocalNotification,QuietHours,NotificationSource} from "../shared/api-types";
@@ -151,3 +151,15 @@ it("shows a stale source revision conflict without pretending the mute succeeded
  render(<Schedules {...props}/>);fireEvent.click(await screen.findByRole("button",{name:"이 예약 소식 끄기"}));await screen.findByRole("alert");expect(screen.getByRole("button",{name:"이 예약 소식 끄기"})).toBeInTheDocument();expect(screen.queryByRole("button",{name:"Garden reminder 소식 다시 받기"})).not.toBeInTheDocument();
 });
 it("opens the actual followup with its pinned revision and date receipt",async()=>{const id="a0000000-0000-4000-8000-000000000001";const n=note({quiet:false,followup:{artifact_id:id,artifact_revision:7,date_kind:"snooze",date:{utc:1800000000,timezone:"UTC"},scheduled_for:1800000000,state:"completed"},source:{id:"stable-source",title:"Synthetic followup",kind:"followup",revision:0,muted:false}});vi.stubGlobal("fetch",vi.fn(async(path:string)=>response(data(path,[],[n]))));const openArtifact=vi.fn();render(<Schedules {...props} openArtifact={openArtifact}/>);const link=await screen.findByRole("link",{name:"요청·약속 열기"});expect(link).toHaveAttribute("href",`/app/artifacts/${id}`);expect(screen.getByText(/버전 7 · 미루기/)).toBeInTheDocument();fireEvent.click(link);expect(openArtifact).toHaveBeenCalledWith(id);});
+
+it("opens a current evidence suggestion without execution and mutes its product topic across records",async()=>{
+ let topic=source({id:"topic-review",title:"날짜 없는 요청·약속 검토",kind:"proactive_topic"});
+ const n=note({id:"suggestion",title:"Reply to synthetic request",suggestion:{topic:"followup_review",artifact_id:"owned-record"},source:topic});const writes:{path:string;body:unknown}[]=[];const openArtifact=vi.fn();
+ vi.stubGlobal("fetch",vi.fn(async(path:string,init?:RequestInit)=>{if(init?.method&&init.method!=="GET"){const body=JSON.parse(String(init.body));writes.push({path,body});if(path.endsWith("/sources/topic-review")){topic={...topic,revision:topic.revision+1,muted:body.muted};return response(topic)}}if(path.endsWith("/notifications/sources"))return response(topic.muted?[topic]:[]);return response(data(path,[],[{...n,source:topic}]));}));
+ render(<Schedules {...props} openArtifact={openArtifact}/>);const link=await screen.findByRole("link",{name:"기록을 열어 날짜 정하기"});expect(link).toHaveAttribute("href","/app/artifacts/owned-record");fireEvent.click(link);expect(openArtifact).toHaveBeenCalledWith("owned-record");expect(writes).toEqual([]);expect(screen.getByText(/제안은 실행을 시작하지 않습니다/)).toBeInTheDocument();fireEvent.click(screen.getByRole("button",{name:"이 주제 제안 끄기"}));await screen.findByText("이 주제의 새 제안을 껐습니다.");expect(writes).toEqual([{path:"/api/v1/notifications/sources/topic-review",body:{expected_revision:0,muted:true}}]);expect(screen.getByRole("region",{name:"제안 주제"})).toHaveTextContent("날짜 없는 요청·약속 검토");
+ const region=screen.getByRole("region",{name:"제안 주제"});fireEvent.click(within(region).getByRole("button",{name:"이 주제 제안 다시 받기"}));await screen.findByText(/앞으로 이 주제의 제안을 다시 받습니다/);expect(writes[1]).toEqual({path:"/api/v1/notifications/sources/topic-review",body:{expected_revision:1,muted:false}});
+});
+it("hides one suggestion while keeping the topic and record unchanged",async()=>{
+ const n=note({id:"suggestion-hide",suggestion:{topic:"followup_review",artifact_id:"record"},source:source({kind:"proactive_topic"})});const writes:string[]=[];
+ vi.stubGlobal("fetch",vi.fn(async(path:string,init?:RequestInit)=>{if(init?.method==="POST"){writes.push(path);return response({...n,dismissed:true,read:true})}return response(data(path,[],[n]));}));render(<Schedules {...props}/>);await screen.findByRole("link",{name:"기록을 열어 날짜 정하기"});fireEvent.click(screen.getByRole("button",{name:"숨기기"}));await waitFor(()=>expect(screen.queryByRole("link",{name:"기록을 열어 날짜 정하기"})).not.toBeInTheDocument());expect(writes).toEqual(["/api/v1/notifications/suggestion-hide/dismiss"]);
+});

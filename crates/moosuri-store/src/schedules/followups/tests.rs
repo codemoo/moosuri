@@ -471,7 +471,7 @@ async fn upgrade_never_backfills_existing_dates_until_explicit_resave() {
     let r = s.write_artifact(&u, v.clone()).await.unwrap();
     // Reconstruct the pre-followup snapshot: the record exists without its scheduler.
     s.call(|db| {
-        db.conn.execute_batch("DELETE FROM followup_reminders;DELETE FROM reminder_schedules;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;")?;
+        db.conn.execute_batch("DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DELETE FROM followup_reminders;DELETE FROM reminder_schedules;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;")?;
         db.conn.pragma_update(None,"user_version",45)?;
         Ok(())
     }).await.unwrap();

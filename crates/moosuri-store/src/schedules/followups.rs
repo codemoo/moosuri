@@ -24,6 +24,7 @@ pub(crate) fn retire(
     revision: Option<i64>,
     at: i64,
 ) -> Result<()> {
+    super::suggestions::retire(conn, tenant, artifact, revision, at)?;
     let ids=conn.prepare("SELECT schedule_id FROM followup_reminders WHERE tenant_id=?1 AND artifact_id=?2 AND (?3 IS NULL OR artifact_revision=?3)")?.query_map(params![tenant,artifact,revision],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for id in ids {
         fence(conn, tenant, &id, "artifact_changed", at)?;

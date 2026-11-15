@@ -148,6 +148,10 @@ pub struct NotificationSourceChange {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct LocalNotification {
+    // Present only while the exact saved owned evidence is current.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub suggestion: Option<ProactiveSuggestion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub followup: Option<crate::FollowupReminder>,
@@ -203,4 +207,10 @@ pub struct ScheduleChatReceipt {
     pub next_local_slot: Option<String>,
     pub timezone: String,
     pub url: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct ProactiveSuggestion {
+    pub topic: String,
+    pub artifact_id: String,
 }

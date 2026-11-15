@@ -90,8 +90,10 @@ page lists every muted reservation, including paused/deleted ones, and offers
 **소식 다시 받기**. This does not pause/resume/delete work or change model/tool
 execution authority. The stable owned schedule ID identifies the source; title
 edits do not reset it, and matching words in other reservations do not group them.
-This bounded F32 slice does not implement arbitrary semantic topics or a general
-proactive recommendation policy.
+This source preference stays independent of the fixed
+[followup-review suggestion topic](proactive-suggestions.md). That category can
+silence suggestions across different records while leaving dated alerts active.
+Arbitrary semantic topics and wider proactive discovery remain unsupported.
 
 Mute and publication are ordered by the Store transaction. Publications while
 muted keep actual occurrence/mission receipts and an immutable suppression snapshot;

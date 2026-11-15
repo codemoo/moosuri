@@ -115,6 +115,51 @@ async fn stop(s: &Store, r: &AgentClaim) {
         .unwrap();
 }
 #[tokio::test]
+async fn evidence_calculation_accepts_complete_korean_number_suffixes_not_substrings() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    source(&s, &u, "KoreanSuffixLookup price: 2.35").await;
+    for (current, literal, expected) in [
+        ("4.08을", "4.08", Some("9.588")),
+        ("2.64야", "2.64", Some("6.204")),
+        ("4개를", "4", Some("9.4")),
+        ("4상자씩", "4", Some("9.4")),
+        ("4개만", "4", Some("9.4")),
+        ("-4.08원으로", "-4.08", Some("-9.588")),
+        ("4만", "4", None),
+        ("4.08만", "4.08", None),
+        ("14개를", "4", None),
+        ("4,080원을", "4", None),
+        ("4.08원을", "4", None),
+        ("-4원을", "4", None),
+        ("4/2개를", "4", None),
+        ("4개×2", "4", None),
+        ("4개별", "4", None),
+        ("4을림", "4", None),
+    ] {
+        let text = format!("자료 KoreanSuffixLookup; 숫자 앞 문구 price:; 수량 {current} 곱해 줘.");
+        let r = start(&s, &u, &text).await;
+        let calculation = prepare(&s, &r, &text, "KoreanSuffixLookup", "price:", literal).await;
+        let (_, result) = execute(
+            &s,
+            &r,
+            "korean-quantity",
+            KnowledgeToolInput::EvidenceCalculate { calculation },
+        )
+        .await;
+        match (expected, result) {
+            (Some(expected), KnowledgeToolResult::EvidenceCalculation { exact, .. }) => {
+                assert_eq!(exact, expected, "{current}");
+            }
+            (None, KnowledgeToolResult::Error(ToolReadError::InvalidInput)) => {}
+            _ => panic!("unexpected evidence outcome for {current}"),
+        }
+        stop(&s, &r).await;
+    }
+}
+#[tokio::test]
 async fn evidence_calculation_declines_ambiguous_incomplete_stale_forged_and_noncurrent_origins() {
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();

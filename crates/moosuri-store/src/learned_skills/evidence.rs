@@ -104,8 +104,16 @@ fn scalar(text: &str, range: &CurrentSpan) -> Option<String> {
         Some(',' | ':') => preceding.next().is_none_or(|c| !c.is_ascii_digit()),
         _ => false,
     };
-    let mut following = text[range.end_byte as usize..].chars();
-    let right_separated = match following.next() {
+    let after = &text[range.end_byte as usize..];
+    let right_separated = scalar_end(after) || korean_number_suffix(after);
+    if !left_separated || !right_separated {
+        return None;
+    }
+    number(literal).ok()
+}
+fn scalar_end(after: &str) -> bool {
+    let mut following = after.chars();
+    match following.next() {
         None => true,
         Some(c) if c.is_whitespace() => true,
         Some(')' | ']' | '}' | '\'' | '"' | '’' | '”' | ';' | '!' | '?') => true,
@@ -116,11 +124,54 @@ fn scalar(text: &str, range: &CurrentSpan) -> Option<String> {
             c.is_whitespace() || matches!(c, ')' | ']' | '}' | '\'' | '"' | '’' | '”')
         }),
         _ => false,
-    };
-    if !left_separated || !right_separated {
-        return None;
     }
-    number(literal).ok()
+}
+/// Korean particles attach to numbers and counters without a space. Recognize
+/// the entire suffix token; arbitrary words, numeric continuations and operators
+/// cannot turn a substring into a current parameter. This never converts units.
+fn korean_number_suffix(after: &str) -> bool {
+    const PARTICLES: &[&str] = &[
+        "을",
+        "를",
+        "은",
+        "는",
+        "이",
+        "가",
+        "의",
+        "에",
+        "에서",
+        "으로",
+        "로",
+        "씩",
+        "까지",
+        "부터",
+        "도",
+        "야",
+        "이야",
+        "예요",
+        "이에요",
+        "입니다",
+        "이고",
+        "이며",
+    ];
+    const COUNTERS: &[&str] = &[
+        "개", "명", "원", "회", "장", "건", "대", "권", "상자", "박스",
+    ];
+    let particle_ends = |tail: &str| {
+        PARTICLES
+            .iter()
+            .any(|p| tail.strip_prefix(p).is_some_and(scalar_end))
+    };
+    particle_ends(after)
+        || COUNTERS.iter().any(|unit| {
+            after.strip_prefix(unit).is_some_and(|tail| {
+                scalar_end(tail)
+                        || particle_ends(tail)
+                        // Bare "4만" is a scaled number; "4개만" unambiguously
+                        // applies the limiting particle to an explicit counter.
+                        || tail.strip_prefix("만").is_some_and(scalar_end)
+            })
+        })
 }
 fn slot(
     c: &Connection,

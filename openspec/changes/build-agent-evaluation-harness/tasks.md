@@ -39,3 +39,10 @@ Commands/report semantics: `docs/agent-evaluation.md`. Integration evidence is s
 - [ ] Complete32-world×3 pilot, fresh independent holdout, calibrated grading/skill comparisons and supported production-provider/device gates. The temporary official replay bridge and exposed-case repeat do not close these requirements.
 
 See [wave2 evidence and limits](../../../docs/reviews/2026-11-15-live-agent-wave2.md).
+
+## Fresh compound development evidence
+- [x] Freeze five new synthetic worlds/nine requests with separate hidden outcome criteria, no numeric gold in model-facing checks, and explicit original-contract limitations.
+- [x] Retain the original7/9 semantic and3/9 strict outcomes; expand bounded Korean numeric suffix support and independently grade one unchanged-case fresh-state recheck9/9.
+- [x] Verify actual source-bound calculation, saved reports, same-owner memory correction and A/B proof qualification→freshC learned execution; preserve unknown usage and zero external actions.
+
+Evidence: [wave3 scope and results](../../../docs/reviews/2026-11-15-live-agent-wave3.md). This does not complete the32-world pilot, new holdout, production provider or release gates.

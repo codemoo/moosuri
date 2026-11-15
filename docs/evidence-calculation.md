@@ -17,7 +17,7 @@ in history, another message or a learned example cannot fill a current parameter
 quote. Only explicit ordinary separators (whitespace, quotes, brackets and
 semicolon, with bounded comma/colon/terminal-period handling) delimit numbers.
 Grouping and expression fragments such as `1` in `1,234` or `3` in `1/3`,
-including adjacent Unicode operator symbols, are rejected.
+including adjacent Unicode operator symbols, are rejected. Common Korean particles, counters and copula endings can attach to a complete current number, as in `4.08을`, `4개를`, `4상자씩` or `2.64야`. The entire supported suffix must end at an ordinary separator; partial numbers, arbitrary words and adjacent expressions remain rejected. Bare scaled numbers such as `4만` remain invalid; `4개만` has an explicit counter and is accepted. This parses the literal amount and does not infer or convert units.
 
 ## One unambiguous complete source
 

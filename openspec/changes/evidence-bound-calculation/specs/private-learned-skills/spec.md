@@ -12,6 +12,11 @@ The foreground user SHALL be able to calculate from one uniquely identified comp
 - **THEN** no successful bound calculation or learning proof is created and the system declines or requests the missing explicit input
 - **AND** missing or ambiguous current evidence does not count as a learned arithmetic structure failure.
 
+#### Scenario: Korean suffixes delimit complete current numbers
+- **WHEN** a unique fresh numeric quote is followed by a supported Korean particle, copula ending or counter plus optional particle, ending at an ordinary separator
+- **THEN** source-bound calculations SHALL accept that complete number without converting units
+- **AND** embedded signed/decimal/grouped numbers, ambiguous bare scale suffixes, operator fragments, arbitrary suffix words and repeated or overlapping quotes SHALL remain invalid.
+
 ### Requirement: Structural mixed-tool learning and isolated fresh reuse
 A mixed source/calculation procedure SHALL store only typed origin-slot kinds and arithmetic structure, require two distinct finalized source/parameter proofs with terminal adoption, and reuse only fresh current-input reads within existing budgets and authority.
 

@@ -8,3 +8,8 @@
 - [x] Repair current scalar delimiter boundaries and executable export example parameter collisions after independent review.
 - [x] Validate repaired direct/learned rejection and actual12-input exported example execution; refresh scoped Clippy on R1.
 - [x] Independent review and root integration acceptance before publication.
+
+## Natural Korean quantity expressions
+- [x] Accept complete current decimals with bounded Korean particles/counters/copula endings while retaining unique-origin, numeric substring and operator boundaries.
+- [x] Independently review scaled-number ambiguity; reject bare `만` and verify actual Store calculation/rejection outcomes plus affected Linux Runtime and Clippy.
+- [x] Independently adjudicate the fresh development corpus and one unchanged-case regression run with original failures and contract limits preserved.

@@ -424,6 +424,8 @@ mod tests {
     #[test]
     fn mission_definitions_admit_pinned_local_recipes_but_keep_external_writes_out() {
         let profile = moosuri_core::RunToolProfile {
+            native_mail_model_read: false,
+            native_mail_model_background: false,
             evidence_calculation: false,
             credential_github: false,
             credential_google: false,

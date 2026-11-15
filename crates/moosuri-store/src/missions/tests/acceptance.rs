@@ -258,7 +258,7 @@ async fn mission_acceptance_schema51_and_current_owner_scope_guards() {
     let (d, s, u) = setup().await;
     s.call(|db| {
         db.conn
-            .execute_batch("DROP TABLE mission_report_contracts;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;PRAGMA user_version=51;")?;
+            .execute_batch("DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;PRAGMA user_version=51;")?;
         Ok(())
     })
     .await

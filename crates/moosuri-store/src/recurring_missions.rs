@@ -49,7 +49,7 @@ fn view(c: &Connection, u: &UserContext, id: &str) -> Result<RecurringMissionVie
 }
 // Fence only unfinished children. Committed historical results and accounting stay historical.
 fn fence_children(c: &Connection, t: &str, id: &str) -> Result<()> {
-    let runs=c.prepare("SELECT m.run_id FROM missions m JOIN recurring_mission_occurrences o ON o.tenant_id=m.tenant_id AND o.mission_id=m.id WHERE o.tenant_id=?1 AND o.schedule_id=?2 AND m.state IN('queued','planning','executing','verifying','paused')")?.query_map(params![t,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let runs=c.prepare("SELECT m.run_id FROM missions m JOIN recurring_mission_occurrences o ON o.tenant_id=m.tenant_id AND o.mission_id=m.id WHERE o.tenant_id=?1 AND o.schedule_id=?2 AND m.state IN('queued','planning','executing','verifying','paused','waiting')")?.query_map(params![t,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for run in runs {
         crate::missions::connected::withdraw_private(c, t, &run)?;
         let dispatched:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",params![t,run],|r|r.get(0))?;
@@ -151,13 +151,14 @@ impl Store {
     }
 }
 fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
+    crate::connection_waits::poll(c, time.checked_mul(1000).ok_or(StoreError::InvalidInput)?)?;
     crate::missions::expire(
         c,
         time.checked_mul(1000).ok_or(StoreError::InvalidInput)?,
         None,
     )?;
     // Account epoch/suspension and parent changes also retire unfinished children during idle polling.
-    let stale=c.prepare("SELECT DISTINCT o.tenant_id,o.schedule_id FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN reminder_schedules s ON s.tenant_id=o.tenant_id AND s.id=o.schedule_id JOIN accounts a ON a.tenant_id=s.tenant_id AND a.id=s.account_id WHERE m.state IN('queued','planning','executing','verifying','paused') AND (s.state!='active' OR s.revision!=o.schedule_revision OR s.auth_epoch!=m.auth_epoch OR a.auth_epoch!=m.auth_epoch OR a.status!='active' OR a.recovery_required=1 OR a.must_change_password=1) LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let stale=c.prepare("SELECT DISTINCT o.tenant_id,o.schedule_id FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN reminder_schedules s ON s.tenant_id=o.tenant_id AND s.id=o.schedule_id JOIN accounts a ON a.tenant_id=s.tenant_id AND a.id=s.account_id WHERE m.state IN('queued','planning','executing','verifying','paused','waiting') AND (s.state!='active' OR s.revision!=o.schedule_revision OR s.auth_epoch!=m.auth_epoch OR a.auth_epoch!=m.auth_epoch OR a.status!='active' OR a.recovery_required=1 OR a.must_change_password=1) LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for (t, id) in stale {
         fence_children(c, &t, &id)?;
     }
@@ -196,7 +197,17 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
             fence_children(c, &t, &schedule)?;
             continue;
         }
-        let busy:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM missions WHERE tenant_id=?1 AND state IN('queued','planning','executing','verifying','paused')) OR (SELECT count(*) FROM missions WHERE state IN('queued','planning','executing','verifying'))>=16",[&t],|r|r.get(0))?;
+        let pinned: serde_json::Value =
+            serde_json::from_str(&model).map_err(|_| StoreError::Corrupt)?;
+        let pending = pinned
+            .get("agent_profile")
+            .cloned()
+            .map(serde_json::from_value::<moosuri_core::RunToolProfile>)
+            .transpose()
+            .map_err(|_| StoreError::Corrupt)?
+            .as_ref()
+            .is_some_and(crate::connection_waits::unresolved);
+        let busy = !crate::connection_waits::capacity(c, &t, &account, pending)?;
         if busy {
             continue;
         }
@@ -274,7 +285,7 @@ fn exact_result(c: &Connection, t: &str, id: &str) -> Result<Option<String>> {
     )?))
 }
 fn publish_results(c: &Connection, time: i64) -> Result<()> {
-    let rows=c.prepare("SELECT o.tenant_id,o.occurrence_id,o.schedule_id,o.mission_id,o.scheduled_for,o.schedule_revision,m.account_id,m.state,m.auth_epoch,x.changes_only FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN recurring_missions x ON x.tenant_id=o.tenant_id AND x.schedule_id=o.schedule_id WHERE o.publication_state='pending' AND m.state NOT IN('queued','planning','executing','verifying','paused') ORDER BY o.scheduled_for,o.occurrence_id LIMIT 32")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,i64>(8)?,r.get::<_,bool>(9)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let rows=c.prepare("SELECT o.tenant_id,o.occurrence_id,o.schedule_id,o.mission_id,o.scheduled_for,o.schedule_revision,m.account_id,m.state,m.auth_epoch,x.changes_only FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN recurring_missions x ON x.tenant_id=o.tenant_id AND x.schedule_id=o.schedule_id WHERE o.publication_state='pending' AND m.state NOT IN('queued','planning','executing','verifying','paused','waiting') ORDER BY o.scheduled_for,o.occurrence_id LIMIT 32")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,i64>(8)?,r.get::<_,bool>(9)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for (t, occurrence, schedule, mission, at, revision, account, state, epoch, changes) in rows {
         let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM reminder_schedules s JOIN accounts a ON a.tenant_id=s.tenant_id AND a.id=s.account_id WHERE s.tenant_id=?1 AND s.id=?2 AND s.revision=?3 AND s.auth_epoch=?4 AND s.state='active' AND a.auth_epoch=?4 AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (s.valid_until IS NULL OR s.valid_until>?5))",params![t,schedule,revision,epoch,time],|r|r.get(0))?;
         if !valid || state == "deleted" {

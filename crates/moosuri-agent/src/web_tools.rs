@@ -69,6 +69,8 @@ mod tests {
     #[test]
     fn history_vocabulary_is_new_pin_only_and_typed_arguments_remain_narrow() {
         let mut profile = RunToolProfile {
+            native_mail_model_read: false,
+            native_mail_model_background: false,
             evidence_calculation: false,
             credential_github: false,
             credential_google: false,
@@ -117,6 +119,8 @@ mod tests {
     #[test]
     fn workspace_capability_does_not_expand_old_runs_or_expose_human_inputs() {
         let mut profile = RunToolProfile {
+            native_mail_model_read: false,
+            native_mail_model_background: false,
             evidence_calculation: false,
             credential_github: false,
             credential_google: false,
@@ -176,6 +180,8 @@ mod tests {
     #[test]
     fn web_requires_new_pinned_profile_and_search_requires_key_capability() {
         let mut profile = RunToolProfile {
+            native_mail_model_read: false,
+            native_mail_model_background: false,
             evidence_calculation: false,
             credential_github: false,
             credential_google: false,
@@ -212,6 +218,8 @@ mod tests {
     #[test]
     fn browser_schema_is_v4_url_only_and_has_no_action_surface() {
         let mut profile = RunToolProfile {
+            native_mail_model_read: false,
+            native_mail_model_background: false,
             evidence_calculation: false,
             credential_github: false,
             credential_google: false,
@@ -266,6 +274,8 @@ mod tests {
             tools::{ToolCapabilities, ToolRequest, encode_tool_request},
         };
         let profile = RunToolProfile {
+            native_mail_model_read: false,
+            native_mail_model_background: false,
             evidence_calculation: false,
             credential_github: false,
             credential_google: false,

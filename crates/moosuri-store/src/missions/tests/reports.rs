@@ -644,7 +644,7 @@ async fn compound_report_schema58_upgrade_preserves_legacy_mission_without_write
     store
         .call(|db| {
             db.conn
-                .execute_batch("DROP TABLE mission_report_contracts;PRAGMA user_version=58;")?;
+                .execute_batch("DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;PRAGMA user_version=58;")?;
             Ok(())
         })
         .await

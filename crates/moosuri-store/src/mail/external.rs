@@ -161,8 +161,14 @@ impl Store {
                 Err(e)=>return Err(e),
             };
             if let ExternalToolRequest::Mail(mail)=&request {
-                let pin=run.tool_profile.as_ref().and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).ok_or(StoreError::Conflict)?;
-                tx.execute("INSERT OR IGNORE INTO mail_run_dependencies VALUES(?1,?2,?3,?4)",params![run.tenant,run.id,pin.id,pin.epoch])?;
+                if crate::missions::is_mission(&tx,&run.tenant,&run.id)? {
+                    let actual=crate::connection_waits::mail_id(&run,mail.connection_id()).ok_or(StoreError::Conflict)?;
+                    let pin=run.tool_profile.as_ref().and_then(|p|p.mission_reads.as_ref()).and_then(|p|p.mail.iter().find(|p|p.connection.id==actual)).ok_or(StoreError::Conflict)?;
+                    tx.execute("INSERT OR IGNORE INTO mail_run_dependencies VALUES(?1,?2,?3,?4)",params![run.tenant,run.id,pin.connection.id,pin.connection.epoch])?;
+                }else{
+                    let pin=run.tool_profile.as_ref().and_then(|p|p.mail_connections.iter().find(|p|p.id==mail.connection_id())).ok_or(StoreError::Conflict)?;
+                    tx.execute("INSERT OR IGNORE INTO mail_run_dependencies VALUES(?1,?2,?3,?4)",params![run.tenant,run.id,pin.id,pin.epoch])?;
+                }
             }
 
             if let ExternalToolRequest::Calendar(q)=&request {crate::calendar::agent::admit_read(&tx,&run,q)?;}

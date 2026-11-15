@@ -8,6 +8,8 @@ pub use audio::*;
 mod push;
 pub use push::*;
 
+mod connections;
+pub use connections::*;
 mod missions;
 pub use missions::*;
 mod schedules;
@@ -178,6 +180,10 @@ pub fn typescript_contract() -> String {
         MissionCompound::decl(),
         MissionCompoundStep::decl(),
         MissionCompoundReceipt::decl(),
+        ScopedConnectionDescriptor::decl(),
+        MissionWaitView::decl(),
+        MissionConnectionSelection::decl(),
+        ConnectionAlias::decl(),
         MissionReceipt::decl(),
         MissionChatCandidate::decl(),
         MissionChatTarget::decl(),

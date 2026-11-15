@@ -14,9 +14,9 @@
 
 ## B — Select once and resume the original task
 
-- [ ] Add scoped device descriptors, deliberate safe aliases, exact first/ambiguous selection and automatic valid-binding reuse.
-- [ ] Add intermediate waits with stable identity/revision, bounded admission, unchanged deadlines/counters, durable ready promotion and slot-free wake-up; setup fills only originally supported/probed unresolved binding slots.
-- [ ] Verify same-task resume, expiry/revoke/rotation/device/selection races and card UX; independently review and publish.
+- [x] Add scoped device descriptors, deliberate safe aliases, exact first/ambiguous selection and automatic valid-binding reuse.
+- [x] Add intermediate waits with stable identity/revision, bounded admission, unchanged deadlines/counters, durable ready promotion and slot-free wake-up; setup fills only originally supported/probed unresolved binding slots.
+- [x] Verify same-task resume, expiry/revoke/rotation/device/selection races and card UX; independently review and publish.
 
 ## C — Separately granted native mailbox work
 
@@ -43,5 +43,5 @@
 - [ ] At adapter kickoff, pin one actual site/read outcome, official API alternative, test account/policy and completion evidence; implement only its supported login/read adapter and independently review secret/session/recovery behavior.
 - [ ] Keep arbitrary form/payment/purchase/phone/government actions unavailable; require a separate typed effect/reconciliation contract for later submissions.
 
-B–F implementation boxes remain open. A evidence: [compound report validation](../../../docs/reviews/2026-11-15-compound-reports.md). The [plan](../../../docs/additional-capabilities-plan.md)
+C–F implementation boxes remain open. B evidence: [connection wait validation](../../../docs/reviews/2026-11-15-connection-waits.md). A evidence: [compound report validation](../../../docs/reviews/2026-11-15-compound-reports.md). The [plan](../../../docs/additional-capabilities-plan.md)
 does not complete official release, real-provider/device acceptance, broad holdout or production cutover.

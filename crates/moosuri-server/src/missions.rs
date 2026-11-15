@@ -17,6 +17,12 @@ pub(super) fn routes() -> Router<AppState> {
         )
         .route("/api/v1/missions", get(list).post(create))
         .route("/api/v1/missions/{id}/control", post(control))
+        .route("/api/v1/missions/{id}/connection", post(select_connection))
+        .route("/api/v1/connections", get(connections))
+        .route(
+            "/api/v1/connections/alias",
+            axum::routing::put(connection_alias),
+        )
         .route(
             "/api/v1/missions/{id}/acceptance",
             axum::routing::put(revise),
@@ -113,4 +119,31 @@ async fn revise(
     let out = s.store.revise_mission_acceptance(&u, id, input).await?;
     s.runtime.wake();
     Ok(Json(out).into_response())
+}
+
+async fn select_connection(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::MissionConnectionSelection>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    let out = s.store.select_mission_connection(&u, id, input).await?;
+    s.runtime.wake();
+    Ok(Json(out).into_response())
+}
+async fn connection_alias(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<moosuri_core::ConnectionAlias>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    s.store.set_connection_alias(&u, input).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn connections(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    Ok(Json(s.store.scoped_connections(&u).await?).into_response())
 }

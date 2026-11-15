@@ -26,8 +26,10 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 A–F의 실제 사용자 결과로 나눴다. A의 조사·계산→요청한 비공개 보고서 저장을 구현했다.
 실제 읽기 영수증과 문서 revision을 원래 맡긴 일에 연결하고, 내용은 검토 필요로 표시한다.
 중복 저장·원문/대화 철회·schema58 이전과 복원을 Linux에서 검증했다.
-B–F의 계정 대기·native 모델 읽기·업무 실행·복합 학습·브라우저는 후속 구현 중이다.
-[보고서 사용법](compound-reports.md)·[검증](reviews/2026-11-15-compound-reports.md).
+B의 연결 Gmail 계정 선택·같은 업무 이어하기도 구현했다. 원래 실행/예산을 유지하고
+여러 계정·연결 필요·대기 만료를 원래 카드에서 처리한다. C–F는 후속 구현 중이다.
+[보고서](compound-reports.md)·[검증](reviews/2026-11-15-compound-reports.md),
+[연결 대기](connection-waits.md)·[검증](reviews/2026-11-15-connection-waits.md).
 
 ## 현재 지원하는 개발 프리뷰
 
@@ -50,6 +52,7 @@ B–F의 계정 대기·native 모델 읽기·업무 실행·복합 학습·브�
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 계정 선택·원래 업무 이어하기 | 명시한 Gmail 계정 우선, 유효한 단일 연결 재사용, 다중 계정 선택·연결 대기, 원래 호출 수/만료·공정 재개·선택 결과 재확인 | [사용법](connection-waits.md)·[검증](reviews/2026-11-15-connection-waits.md) |
 | 복합 조사 보고서 | 명시한 요청의 자료 읽기·정확 계산·비공개 문서 하나 저장, 실제 단계/출처/문서 revision·검토 상태, 중복·철회·복원 경계 | [사용법](compound-reports.md)·[검증](reviews/2026-11-15-compound-reports.md) |
 | 실모델 기억·업무·학습 후속 개선 | 문서/업무 분류 단계 연결, 소유자 기억 대상 보존, 정확 소수 표시와 학습 근거 일치, Calendar 후속 답변 경계·schema58 이전/복원 | [최초 실패·수정 후 전체 재실행](reviews/2026-11-15-live-agent-wave2.md) |
 | 연결 도구의 대화 호환성 | Gmail 첨부 도구의 지원하지 않는 모델 요청 형식 수정, 기존 읽기 제한을 유지하며 공유/개인 연결의 대화 계속하기 검증 | [검증](reviews/2026-11-14-combined-tool-profiles.md) |

@@ -7,6 +7,46 @@ use moosuri_core::{
     ExternalToolRequest, MailToolRequest, MissionMailPin, RunToolProfile,
 };
 
+/// Account intent is an explicit account phrase, never a sender/recipient filter.
+fn requested_mailbox(text: &str) -> Result<Option<String>> {
+    let words = text
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| matches!(c, '"' | '\'' | '(' | ')' | ',' | ';' | ':'))
+                .to_lowercase()
+        })
+        .collect::<Vec<_>>();
+    let account_word = |word: &str| {
+        matches!(
+            word,
+            "account"
+                | "계정"
+                | "계정으로"
+                | "계정에서"
+                | "계정은"
+                | "계정을"
+                | "계정의"
+                | "계정이"
+        )
+    };
+    let mut target = None;
+    for (i, word) in words.iter().enumerate() {
+        if word.is_ascii()
+            && word.len() <= 254
+            && word.contains('@')
+            && !word.contains(':')
+            && (i > 0 && account_word(words[i - 1].as_str())
+                || words.get(i + 1).is_some_and(|w| account_word(w)))
+        {
+            if target.as_ref().is_some_and(|old| old != word) {
+                return Err(StoreError::Unavailable);
+            }
+            target = Some(word.clone());
+        }
+    }
+    Ok(target)
+}
+
 /// Reject clear required effects; this conservative gate never grants an action.
 pub(crate) fn unsupported_effect(text: &str) -> bool {
     let lower = text.to_lowercase();
@@ -100,13 +140,40 @@ pub(crate) fn admit_profile(
     if mail {
         grant.mail=c.prepare("SELECT id,epoch,email,oauth_client_id FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND status='active' AND native_send=0 ORDER BY id LIMIT 9")?.query_map(params![u.tenant.0,u.account.id],|r|Ok(MissionMailPin{connection:moosuri_core::MailConnectionPin{native_send:false,
         id:r.get(0)?,epoch:r.get(1)?,email:r.get(2)?},client_id:r.get::<_,Option<String>>(3)?.unwrap_or_default()}))?.collect::<rusqlite::Result<_>>()?;
-        if grant.mail.is_empty()
-            || grant.mail.len() > 8
+        if grant.mail.len() > 8
             || grant.mail.iter().any(|p| p.client_id.is_empty())
+            || (grant.mail.is_empty() && app_revision.is_none())
         {
             return Err(StoreError::Unavailable);
         }
-        profile.mail_connections = grant.mail.iter().map(|p| p.connection.clone()).collect();
+        if let Some(target) = requested_mailbox(&text)? {
+            grant
+                .mail
+                .retain(|p| p.connection.email.eq_ignore_ascii_case(&target));
+            if grant.mail.len() != 1 {
+                return Err(StoreError::Unavailable);
+            }
+        }
+        if grant.mail.len() != 1 {
+            let slot = MissionMailPin {
+                connection: moosuri_core::MailConnectionPin {
+                    id: crate::connection_waits::MAIL_SLOT.into(),
+                    epoch: 0,
+                    email: String::new(),
+                    native_send: false,
+                },
+                client_id: String::new(),
+            };
+            profile.mail_connections = vec![slot.connection.clone()];
+            grant.mail.insert(0, slot);
+        } else {
+            profile.mail_connections = vec![moosuri_core::MailConnectionPin {
+                id: crate::connection_waits::MAIL_SLOT.into(),
+                epoch: 0,
+                email: String::new(),
+                native_send: false,
+            }];
+        }
     }
     if calendar {
         let pins=c.prepare("SELECT id,title,epoch,client_id,primary_id FROM calendar_connections WHERE tenant_id=?1 AND account_id=?2 AND auth_epoch=?3 AND status='active' ORDER BY id LIMIT 9")?.query_map(params![u.tenant.0,u.account.id,u.epoch],|r|Ok((CalendarAgentPin{id:r.get(0)?,title:r.get(1)?,epoch:r.get(2)?,client_id:r.get(3)?,app_revision},r.get::<_,String>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -148,6 +215,9 @@ fn pins_current(
         return Ok(false);
     }
     for pin in &p.mail {
+        if pin.connection.id == crate::connection_waits::MAIL_SLOT {
+            continue;
+        }
         let row:Option<(i64,String,String,String)>=c.query_row("SELECT epoch,email,coalesce(oauth_client_id,''),scopes FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND status='active' AND native_send=0",params![t,a,pin.connection.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
         let Some((e, email, client, scopes)) = row else {
             return Ok(false);
@@ -200,6 +270,12 @@ pub(crate) fn saved_current(
 }
 pub(crate) fn admit_run(c: &Connection, r: &Run) -> Result<()> {
     let Some(p) = profile(r) else { return Ok(()) };
+    if p.mail
+        .iter()
+        .any(|p| p.connection.id == crate::connection_waits::MAIL_SLOT)
+    {
+        return Ok(());
+    }
     if !current(c, r)? {
         return Err(StoreError::Conflict);
     }
@@ -223,6 +299,17 @@ pub(crate) fn admit_run(c: &Connection, r: &Run) -> Result<()> {
         )?;
     }
     if !p.calendar.is_empty() {
+        let saved:Option<String>=c.query_row("SELECT profile FROM calendar_agent_profiles WHERE tenant_id=?1 AND run_id=?2 AND account_id=?3",params![r.tenant,r.id,r.account],|r|r.get(0)).optional()?;
+        if let Some(saved) = saved {
+            let saved: CalendarRunProfile = parse(&saved)?;
+            if saved.version != 1
+                || saved.reference != r.created
+                || json(&saved.connections)? != json(&p.calendar)?
+            {
+                return Err(StoreError::Conflict);
+            }
+            return Ok(());
+        }
         let timezone: Option<String> = c
             .query_row(
                 "SELECT time_zone FROM calendar_connections WHERE tenant_id=?1 AND id=?2",
@@ -288,7 +375,7 @@ pub(crate) fn allowed(c: &Connection, r: &Run, q: &ExternalToolRequest) -> Resul
     }
     match q {
         ExternalToolRequest::Mail(q) => {
-            if !p.mail.iter().any(|p| p.connection.id == q.connection_id()) {
+            if crate::connection_waits::mail_id(r, q.connection_id()).is_none() {
                 return Ok(false);
             };
             match q {
@@ -325,7 +412,10 @@ pub struct MissionReadCredentials {
 }
 fn connection_id(c: &Connection, r: &Run, q: &ExternalToolRequest) -> Result<(String, bool)> {
     match q {
-        ExternalToolRequest::Mail(q) => Ok((q.connection_id().into(), false)),
+        ExternalToolRequest::Mail(q) => Ok((
+            crate::connection_waits::mail_id(r, q.connection_id()).ok_or(StoreError::Forbidden)?,
+            false,
+        )),
         ExternalToolRequest::Calendar(q) => Ok((
             crate::calendar::agent::request_connection(c, r, q)?.ok_or(StoreError::Forbidden)?,
             true,

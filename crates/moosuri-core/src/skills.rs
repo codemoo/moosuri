@@ -15,6 +15,10 @@ pub struct SkillPin {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunToolProfile {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub native_mail_model_read: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub native_mail_model_background: bool,
     pub version: u32,
     #[serde(default, skip_serializing_if = "is_false")]
     pub evidence_calculation: bool,

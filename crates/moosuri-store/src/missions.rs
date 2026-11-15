@@ -134,9 +134,15 @@ pub(crate) fn carrier_transition(c: &Connection, r: &Run, s: RunState) -> Result
         RunState::Cancelled => "cancelled",
         RunState::Failed | RunState::Refused => "failed",
         RunState::Incomplete => "partial",
-        RunState::Completed => return Ok(()),
+        RunState::Completed => {
+            crate::connection_waits::poll(c, clock()?)?;
+            return Ok(());
+        }
     };
     c.execute("UPDATE missions SET state=CASE WHEN ?3='planning' AND plan!='[]' THEN 'executing' ELSE ?3 END,uncertain=CASE WHEN ?3='unknown' THEN 1 ELSE uncertain END WHERE tenant_id=?1 AND run_id=?2 AND state IN('queued','planning','executing','verifying')",params![r.tenant,r.id,state])?;
+    if !matches!(s, RunState::Queued | RunState::Running) {
+        crate::connection_waits::poll(c, clock()?)?;
+    }
     Ok(())
 }
 // A stable mission continuation is not a fresh model attempt. The legacy chat
@@ -213,7 +219,7 @@ fn expire_scoped(
     tenant: Option<&str>,
     run: Option<&str>,
 ) -> Result<usize> {
-    let rows=c.prepare("SELECT m.tenant_id,m.id,m.run_id,m.uncertain OR r.state='outcome_unknown' OR EXISTS(SELECT 1 FROM agent_steps s WHERE s.tenant_id=m.tenant_id AND s.run_id=m.run_id AND s.state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches d WHERE d.tenant_id=m.tenant_id AND d.run_id=m.run_id AND d.state='started') FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE m.state IN('queued','planning','executing','verifying','paused') AND m.expires_ms<=?1 AND ((?2 IS NOT NULL AND m.tenant_id=?2) OR (?2 IS NULL AND EXISTS(SELECT 1 FROM recurring_mission_occurrences o WHERE o.tenant_id=m.tenant_id AND o.mission_id=m.id))) AND (?3 IS NULL OR m.run_id=?3) LIMIT 64")?.query_map(params![time_ms,tenant,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,bool>(3)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let rows=c.prepare("SELECT m.tenant_id,m.id,m.run_id,m.uncertain OR r.state='outcome_unknown' OR EXISTS(SELECT 1 FROM agent_steps s WHERE s.tenant_id=m.tenant_id AND s.run_id=m.run_id AND s.state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches d WHERE d.tenant_id=m.tenant_id AND d.run_id=m.run_id AND d.state='started') FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE m.state IN('queued','planning','executing','verifying','paused') AND m.expires_ms<=?1 AND ((?2 IS NOT NULL AND m.tenant_id=?2) OR (?2 IS NULL)) AND (?3 IS NULL OR m.run_id=?3) LIMIT 64")?.query_map(params![time_ms,tenant,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,bool>(3)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let count = rows.len();
     for (tenant, id, run, uncertain) in rows {
         let report = if uncertain {
@@ -386,6 +392,11 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
         } else {
             reports::view(c, t, &raw.10)?
         },
+        wait: if invalid {
+            None
+        } else {
+            crate::connection_waits::view(c, t, id)?
+        },
         id: raw.0,
         revision: raw.1,
         state: if invalid { "quarantined".into() } else { raw.2 },
@@ -523,6 +534,11 @@ pub(crate) fn apply_delete(c: &Connection, t: &str, id: &str) -> Result<()> {
             "DELETE FROM threads WHERE tenant_id=?1 AND id=?2",
             params![t, thread],
         )?;
+        c.execute(
+            "DELETE FROM mission_connection_selections WHERE tenant_id=?1 AND mission_id=?2",
+            params![t, id],
+        )?;
+        crate::connection_waits::poll(c, clock()?)?;
     }
     Ok(())
 }
@@ -736,7 +752,7 @@ if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} 
  let terminal=achieved||review_only||repairs>=2||unknown;
  let state=if unknown{"unknown"}else if achieved{"achieved"}else if passed>0 || (!evidence.is_empty() && input.checks.iter().any(|c|matches!(c,MissionCheck::UserReview{..}))){"partial"}else if evidence.is_empty(){"missing_evidence"}else{"failed"};
  tx.execute("UPDATE missions SET candidate=?3,report=?4,state=?5,round_text=NULL,repairs=repairs+?6,uncertain=max(uncertain,?7) WHERE tenant_id=?1 AND id=?2",params![r.tenant,id,json(&candidate)?,json(&report)?,if terminal{state}else{"executing"},if terminal{0}else{1},unknown])?;
- if terminal{tx.execute("UPDATE chat_runs SET state=?3 WHERE tenant_id=?1 AND id=?2",params![r.tenant,r.id,if achieved{"completed"}else{"incomplete"}])?;}
+ if terminal{tx.execute("UPDATE chat_runs SET state=?3 WHERE tenant_id=?1 AND id=?2",params![r.tenant,r.id,if achieved{"completed"}else{"incomplete"}])?;crate::connection_waits::poll(&tx,clock()?)?;}
  tx.commit()?;Ok(terminal)
  }).await
     }
@@ -837,7 +853,21 @@ pub(crate) fn create_pinned_in(
         "INSERT INTO agent_execution(tenant_id,run_id,agent,deadline_ms) VALUES(?1,?2,1,?3)",
         params![tenant, run, expiry],
     )?;
-    connected::admit_run(tx, &crate::chat::load_run(tx, tenant, &run)?)?;
+    let admitted = crate::chat::load_run(tx, tenant, &run)?;
+    let scope = admitted
+        .tool_profile
+        .as_ref()
+        .and_then(|p| p.mission_reads.as_ref())
+        .map(|p| {
+            p.mail
+                .iter()
+                .filter(|p| p.connection.id != crate::connection_waits::MAIL_SLOT)
+                .map(|p| p.connection.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    connected::admit_run(tx, &admitted)?;
+    crate::connection_waits::admit(tx, tenant, &id, &run, scope, expiry)?;
     Ok(id)
 }
 
@@ -859,6 +889,8 @@ pub(crate) fn read_profile(
     profile
         .community_metadata
         .retain(|metadata| profile.skills.contains(&metadata.pin));
+    profile.native_mail_model_read = false;
+    profile.native_mail_model_background = false;
     profile.credential_github = false;
     profile.credential_google = false;
     profile.credential_google_preview = false;
@@ -899,6 +931,7 @@ pub(crate) fn create_owner_in(
     if !choice.function_tools {
         return Err(StoreError::InvalidInput);
     }
+    crate::connection_waits::poll(tx, clock()?)?;
     validate_input(&input)?;
     let payload = json(&input)?;
     let digest = Sha256::digest(payload.as_bytes()).to_vec();
@@ -915,18 +948,6 @@ pub(crate) fn create_owner_in(
         }
         return view(tx, &u.tenant.0, &id).map(|v| v.id);
     }
-    let active:i64=tx.query_row("SELECT count(*) FROM missions WHERE tenant_id=?1 AND state IN('queued','planning','executing','verifying','paused')",[&u.tenant.0],|r|r.get(0))?;
-    if active >= 1 {
-        return Err(StoreError::Busy);
-    }
-    let global: i64 = tx.query_row(
-        "SELECT count(*) FROM missions WHERE state IN('queued','planning','executing','verifying')",
-        [],
-        |r| r.get(0),
-    )?;
-    if global >= 16 {
-        return Err(StoreError::Busy);
-    }
     require_model(tx, key, &u.tenant.0, &u.account.id, &choice)?;
     let profile = connected::admit_profile(
         tx,
@@ -934,6 +955,14 @@ pub(crate) fn create_owner_in(
         &input,
         read_profile(tx, &u.tenant.0, &u.account.id, profile)?,
     )?;
+    if !crate::connection_waits::capacity(
+        tx,
+        &u.tenant.0,
+        &u.account.id,
+        crate::connection_waits::unresolved(&profile),
+    )? {
+        return Err(StoreError::Busy);
+    }
     let mut model = serde_json::to_value(choice).map_err(|_| StoreError::InvalidInput)?;
     model["agent_profile"] = serde_json::to_value(profile).map_err(|_| StoreError::InvalidInput)?;
     let expiry = clock()?
@@ -1011,8 +1040,11 @@ pub(crate) fn control_owner_in(
         MissionAction::Pause | MissionAction::Cancel => {
             if !matches!(
                 current.state.as_str(),
-                "queued" | "planning" | "executing" | "verifying" | "paused"
+                "queued" | "planning" | "executing" | "verifying" | "paused" | "waiting"
             ) {
+                return Err(StoreError::Conflict);
+            }
+            if current.state == "waiting" && matches!(input.action, MissionAction::Pause) {
                 return Err(StoreError::Conflict);
             }
             let state = if matches!(input.action, MissionAction::Pause) {
@@ -1034,6 +1066,10 @@ pub(crate) fn control_owner_in(
                 || !matches!(current.state.as_str(), "paused" | "queued")
             {
                 return Err(StoreError::Conflict);
+            }
+            let other:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM missions WHERE tenant_id=?1 AND account_id=?2 AND id!=?3 AND state IN('queued','planning','executing','verifying','paused'))",params![u.tenant.0,u.account.id,id],|r|r.get(0))?;
+            if other {
+                return Err(StoreError::Busy);
             }
             let carrier = crate::chat::load_run(tx, &u.tenant.0, &run)?;
             if carrier.epoch != u.epoch {
@@ -1074,6 +1110,7 @@ pub(crate) fn control_owner_in(
             }
         }
     }
+    crate::connection_waits::poll(tx, clock()?)?;
     let result = view(tx, &u.tenant.0, id)?;
     tx.execute(
         "INSERT INTO mission_revisions VALUES(?1,?2,?3,?4,?5)",

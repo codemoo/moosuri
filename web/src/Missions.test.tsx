@@ -155,3 +155,32 @@ it("requests one explicit private report and shows the actual revision separatel
  expect(writes[0].checks).toContainEqual({kind:"private_report",title:"Synthetic comparison"});
  expect(writes[0].checks).toContainEqual({kind:"user_review",description:"요청과 제약 조건을 충족하는지 직접 검토"});
 });
+
+it("selects one opaque account and retries its exact wait selection UUID after lost acknowledgement",async()=>{
+ const writes:any[]=[];let current:MissionView={...mission,state:"waiting",wait:{request_id:"wait-uuid",slot_id:"mail-slot",run_id:"original-run",step:2,acceptance_revision:1,cause:"account_selection",state:"waiting",expires_at_ms:2000000000000,choices:[{binding_id:"opaque-one",device_id:"server-oauth",operation:"gmail.read",resource:"mailbox",schema_version:1,state:"ready",expires_at_ms:2000000000000,alias:"업무 계정"},{binding_id:"opaque-two",device_id:"server-oauth",operation:"gmail.read",resource:"mailbox",schema_version:1,state:"ready",expires_at_ms:2000000000000,alias:"개인 계정"}]}};
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>{
+  if(init?.method==="POST"){
+   expect(String(url)).toBe("/api/v1/missions/m/connection");writes.push(JSON.parse(String(init.body)));
+   if(writes.length===1)throw new TypeError("synthetic lost acknowledgement");
+   current={...current,wait:{...current.wait!,state:"ready",choices:[]}};return new Response(JSON.stringify(current));
+  }
+  return new Response(JSON.stringify(String(url).includes("recurring-missions")?[]:[current]));
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole("button",{name:"업무 계정"}));await screen.findByRole("alert");
+ fireEvent.click(screen.getByRole("button",{name:"업무 계정"}));
+ await screen.findByText("연결 준비됨 · 앞선 업무가 끝나면 이어서 진행해요");
+ expect(writes).toHaveLength(2);expect(writes[1]).toEqual(writes[0]);expect(writes[0]).toMatchObject({wait_request_id:"wait-uuid",slot_id:"mail-slot",binding_id:"opaque-one",expected_revision:1});
+ expect(screen.queryByRole("button",{name:"이어서 진행"})).not.toBeInTheDocument();
+});
+it("cancels a waiting mission with its current revision and frees the visible card",async()=>{
+ let current:MissionView={...mission,state:"waiting",revision:4};const writes:any[]=[];
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>{
+  if(init?.method==="POST"){expect(String(url)).toBe("/api/v1/missions/m/control");writes.push(JSON.parse(String(init.body)));current={...current,state:"cancelled",revision:5};return new Response(JSON.stringify(current))}
+  return new Response(JSON.stringify(String(url).includes("recurring-missions")?[]:[current]));
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole("button",{name:"취소"}));await screen.findByText("취소됨");
+ expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({expected_revision:4,action:{kind:"cancel"}});
+ expect(screen.queryByRole("button",{name:"취소"})).not.toBeInTheDocument();
+});

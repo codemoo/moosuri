@@ -482,3 +482,452 @@ async fn gmail_attachment_mission_uses_observed_message_and_real_owner_grant_wit
         .is_err()
     );
 }
+
+fn selection(m: &MissionView, binding: &str) -> MissionConnectionSelection {
+    let w = m.wait.as_ref().unwrap();
+    MissionConnectionSelection {
+        request_id: Uuid::new_v4().to_string(),
+        wait_request_id: w.request_id.clone(),
+        expected_revision: m.revision,
+        slot_id: w.slot_id.clone(),
+        binding_id: binding.into(),
+    }
+}
+async fn control(
+    s: &Store,
+    u: &UserContext,
+    m: &MissionView,
+    action: MissionAction,
+) -> MissionView {
+    s.control_mission(
+        u,
+        m.id.clone(),
+        MissionControl {
+            request_id: Uuid::new_v4().to_string(),
+            expected_revision: m.revision,
+            action,
+        },
+    )
+    .await
+    .unwrap()
+}
+#[tokio::test]
+async fn connected_mission_waits_choose_once_retain_ready_and_promote_oldest_without_displacing_pause()
+ {
+    let _lock = TEST_LOCK.lock().await;
+    let (_d, s, u) = crate::missions::tests::setup().await;
+    let (first, _) = connections(&s, &u, "first-private").await;
+    let (second, _) = connections(&s, &u, "second-private").await;
+    let a = s
+        .create_mission(&u, input(MissionMode::Durable, "Read Gmail first task"))
+        .await
+        .unwrap();
+    let b = s
+        .create_mission(&u, input(MissionMode::Durable, "Read Gmail second task"))
+        .await
+        .unwrap();
+    assert_eq!(a.state, "waiting");
+    assert_eq!(b.state, "waiting");
+    let choices = serde_json::to_string(&a.wait.as_ref().unwrap().choices).unwrap();
+    assert!(!choices.contains("example.test"));
+    assert!(!choices.contains("first-private"));
+    assert!(matches!(
+        s.create_mission(&u, input(MissionMode::Durable, "Read Gmail third task"))
+            .await,
+        Err(StoreError::Busy)
+    ));
+    let local = s
+        .create_mission(&u, input(MissionMode::Durable, "Compute synthetic total"))
+        .await
+        .unwrap();
+    let paused = control(&s, &u, &local, MissionAction::Pause).await;
+    let choose_a = selection(&a, &first);
+    let choose_b = selection(&b, &second);
+    let ready_a = s
+        .select_mission_connection(&u, a.id.clone(), choose_a.clone())
+        .await
+        .unwrap();
+    let ready_b = s
+        .select_mission_connection(&u, b.id.clone(), choose_b)
+        .await
+        .unwrap();
+    assert_eq!(ready_a.wait.as_ref().unwrap().state, "ready");
+    assert_eq!(ready_b.wait.as_ref().unwrap().state, "ready");
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+    let cancel = control(&s, &u, &paused, MissionAction::Cancel).await;
+    assert_eq!(cancel.state, "cancelled");
+    let all = s.missions(&u).await.unwrap();
+    let promoted = all.iter().find(|m| m.id == a.id).unwrap();
+    let retained = all.iter().find(|m| m.id == b.id).unwrap();
+    assert_eq!(promoted.state, "queued");
+    assert_eq!(retained.state, "waiting");
+    assert_eq!(retained.wait.as_ref().unwrap().state, "ready");
+    let duplicate = s
+        .select_mission_connection(&u, a.id.clone(), choose_a)
+        .await
+        .unwrap();
+    assert_eq!(duplicate.id, a.id);
+    assert!(matches!(
+        s.select_mission_connection(&u, a.id.clone(), selection(&a, &second))
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    assert_eq!(claim.lease.run_id(), a.wait.as_ref().unwrap().run_id);
+    let st = step(
+        &s,
+        &claim.lease,
+        vec![call("selected", search(crate::connection_waits::MAIL_SLOT))],
+    )
+    .await;
+    let p = permit(&s, &st, "selected").await;
+    assert_eq!(
+        s.mission_read_credentials(&p, app())
+            .await
+            .unwrap()
+            .connection_id,
+        first
+    );
+}
+#[tokio::test]
+async fn connected_mission_combined_completed_read_yields_and_preserves_calendar_budget_and_schema()
+{
+    let _lock = TEST_LOCK.lock().await;
+    let (_d, s, u) = crate::missions::tests::setup().await;
+    let (mail, _) = connections(&s, &u, "bounded").await;
+    let m = s
+        .create_mission(
+            &u,
+            input(
+                MissionMode::Durable,
+                "Read Gmail and Calendar and calculate",
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(m.state, "queued");
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let st = step(
+        &s,
+        &claim.lease,
+        vec![call("observed", search(crate::connection_waits::MAIL_SLOT))],
+    )
+    .await;
+    let permit = permit(&s, &st, "observed").await;
+    let pending = MissionConnectionWait {
+        request_id: Uuid::new_v4().to_string(),
+        slot_id: crate::connection_waits::MAIL_SLOT.into(),
+        acceptance_revision: 1,
+        cause: "vault_unlock".into(),
+        operation_expires_at_ms: m.expires_at_ms - 1000,
+    };
+    assert!(matches!(
+        s.mission_wait_for_connection(&claim.lease, pending.clone())
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    s.complete_external_tool(
+        &permit,
+        KnowledgeToolResult::External(serde_json::json!({"messages":[{"id":"observed-message"}]})),
+    )
+    .await
+    .unwrap();
+    let tenant = u.tenant.0.clone();
+    let run = claim.lease.run_id().to_owned();
+    let before=s.call(move|db|Ok(db.conn.query_row("SELECT r.model,a.remote_calls,a.tool_calls,a.deadline_ms,m.repairs,(SELECT profile FROM calendar_agent_profiles WHERE tenant_id=r.tenant_id AND run_id=r.id) FROM chat_runs r JOIN agent_execution a ON a.tenant_id=r.tenant_id AND a.run_id=r.id JOIN missions m ON m.tenant_id=r.tenant_id AND m.run_id=r.id WHERE r.tenant_id=?1 AND r.id=?2",params![tenant,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,String>(5)?)))?)).await.unwrap();
+    let w = s
+        .mission_wait_for_connection(&claim.lease, pending)
+        .await
+        .unwrap();
+    assert_eq!(w.step, 2);
+    assert_eq!(w.run_id, claim.lease.run_id());
+    assert_eq!(w.expires_at_ms, m.expires_at_ms - 1000);
+    assert!(s.check_run(&claim.lease).await.is_err());
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+    let waiting = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.id == m.id)
+        .unwrap();
+    let resumed = s
+        .select_mission_connection(&u, m.id.clone(), selection(&waiting, &mail))
+        .await
+        .unwrap();
+    assert_eq!(resumed.state, "queued");
+    let resumed = s.claim_agent_run().await.unwrap().unwrap();
+    assert_eq!(resumed.lease.run_id(), claim.lease.run_id());
+    let tenant = u.tenant.0.clone();
+    let run = resumed.lease.run_id().to_owned();
+    let after=s.call(move|db|Ok(db.conn.query_row("SELECT r.model,a.remote_calls,a.tool_calls,a.deadline_ms,m.repairs,(SELECT profile FROM calendar_agent_profiles WHERE tenant_id=r.tenant_id AND run_id=r.id) FROM chat_runs r JOIN agent_execution a ON a.tenant_id=r.tenant_id AND a.run_id=r.id JOIN missions m ON m.tenant_id=r.tenant_id AND m.run_id=r.id WHERE r.tenant_id=?1 AND r.id=?2",params![tenant,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,String>(5)?)))?)).await.unwrap();
+    assert_eq!(before, after);
+    let context = s.agent_context(&resumed.lease).await.unwrap();
+    let next = s
+        .begin_agent_step(&resumed.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    assert_eq!(next.step, 2);
+}
+#[tokio::test]
+async fn connected_mission_ready_wait_expires_without_ui_and_revocation_never_selects_another_account()
+ {
+    let _lock = TEST_LOCK.lock().await;
+    let (_d, s, u) = crate::missions::tests::setup().await;
+    let (first, _) = connections(&s, &u, "selected").await;
+    let (_other, _) = connections(&s, &u, "not-selected").await;
+    let a = s
+        .create_mission(&u, input(MissionMode::Durable, "Read Gmail"))
+        .await
+        .unwrap();
+    let local = s
+        .create_mission(&u, input(MissionMode::Durable, "Compute total"))
+        .await
+        .unwrap();
+    let ready = s
+        .select_mission_connection(&u, a.id.clone(), selection(&a, &first))
+        .await
+        .unwrap();
+    assert_eq!(ready.wait.as_ref().unwrap().state, "ready");
+    s.disconnect_mail(&u, first).await.unwrap();
+    let paused = control(&s, &u, &local, MissionAction::Pause).await;
+    control(&s, &u, &paused, MissionAction::Cancel).await;
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+    let current = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.id == a.id)
+        .unwrap();
+    assert_ne!(current.state, "queued");
+    let (second, _) = connections(&s, &u, "second-eligible").await;
+    let b = s
+        .create_mission(&u, input(MissionMode::Durable, "Read Gmail again"))
+        .await
+        .unwrap();
+    assert_eq!(b.state, "waiting");
+    let local = s
+        .create_mission(&u, input(MissionMode::Durable, "Compute total again"))
+        .await
+        .unwrap();
+    let ready = s
+        .select_mission_connection(&u, b.id.clone(), selection(&b, &second))
+        .await
+        .unwrap();
+    assert_eq!(ready.wait.as_ref().unwrap().state, "ready");
+    s.poll_recurring_missions_at(b.expires_at_ms / 1000 + 1)
+        .await
+        .unwrap();
+    let id = b.id.clone();
+    let tenant = u.tenant.0.clone();
+    s.call(move |db| {
+        let status: String = db.conn.query_row(
+            "SELECT status FROM mission_connection_waits WHERE tenant_id=?1 AND mission_id=?2",
+            params![tenant, id],
+            |r| r.get(0),
+        )?;
+        assert_eq!(status, "expired");
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        s.select_mission_connection(&u, b.id.clone(), selection(&b, &second))
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let _ = local;
+}
+#[tokio::test]
+async fn connected_mission_explicit_account_is_not_sender_filter_and_wait_cancel_frees_capacity() {
+    let _lock = TEST_LOCK.lock().await;
+    let (_d, s, u) = crate::missions::tests::setup().await;
+    let (first, _) = connections(&s, &u, "account-a").await;
+    for text in [
+        "Use Gmail account account-b@example.test to read my inbox",
+        "account-b@example.test 계정으로 Gmail 읽어 줘",
+        "Gmail 계정은 account-b@example.test 이고 최근 메일 읽어 줘",
+    ] {
+        assert!(matches!(
+            s.create_mission(&u, input(MissionMode::Durable, text))
+                .await,
+            Err(StoreError::Unavailable)
+        ));
+    }
+    assert!(s.missions(&u).await.unwrap().is_empty());
+    let sender = s
+        .create_mission(
+            &u,
+            input(
+                MissionMode::Durable,
+                "Read Gmail from:account-b@example.test",
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sender.state, "queued");
+    let run = sender.wait.as_ref().unwrap().run_id.clone();
+    let tenant = u.tenant.0.clone();
+    let actual = s
+        .call(move |db| {
+            let r = crate::chat::load_run(&db.conn, &tenant, &run)?;
+            Ok(r.tool_profile.unwrap().mission_reads.unwrap().mail[0]
+                .connection
+                .id
+                .clone())
+        })
+        .await
+        .unwrap();
+    assert_eq!(actual, first);
+    control(&s, &u, &sender, MissionAction::Cancel).await;
+    let (second, _) = connections(&s, &u, "account-b").await;
+    let named = s
+        .create_mission(
+            &u,
+            input(
+                MissionMode::Durable,
+                "Use Gmail account account-b@example.test to read my inbox",
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(named.state, "queued");
+    let run = named.wait.as_ref().unwrap().run_id.clone();
+    let tenant = u.tenant.0.clone();
+    let actual = s
+        .call(move |db| {
+            let r = crate::chat::load_run(&db.conn, &tenant, &run)?;
+            Ok(r.tool_profile.unwrap().mission_reads.unwrap().mail[0]
+                .connection
+                .id
+                .clone())
+        })
+        .await
+        .unwrap();
+    assert_eq!(actual, second);
+    control(&s, &u, &named, MissionAction::Cancel).await;
+    let a = s
+        .create_mission(
+            &u,
+            input(
+                MissionMode::Durable,
+                "Read Gmail from:account-b@example.test",
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(a.state, "waiting");
+    assert_eq!(a.wait.as_ref().unwrap().choices.len(), 2);
+    let _b = s
+        .create_mission(&u, input(MissionMode::Durable, "Read Gmail recent"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.create_mission(&u, input(MissionMode::Durable, "Read Gmail extra"))
+            .await,
+        Err(StoreError::Busy)
+    ));
+    assert_eq!(
+        control(&s, &u, &a, MissionAction::Cancel).await.state,
+        "cancelled"
+    );
+    assert_eq!(
+        s.create_mission(
+            &u,
+            input(MissionMode::Durable, "Read Gmail after cancellation")
+        )
+        .await
+        .unwrap()
+        .state,
+        "waiting"
+    );
+}
+#[tokio::test]
+async fn connected_mission_acceptance_two_wait_promotes_exact_current_record_with_history_retained()
+{
+    let _lock = TEST_LOCK.lock().await;
+    let (_d, s, u) = crate::missions::tests::setup().await;
+    let (mail, _) = connections(&s, &u, "revision").await;
+    let m = s
+        .create_mission(&u, input(MissionMode::Durable, "Read Gmail"))
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    step(&s, &claim.lease, vec![]).await;
+    let paused = control(&s, &u, &m, MissionAction::Pause).await;
+    let updated = s
+        .revise_mission_acceptance(
+            &u,
+            m.id.clone(),
+            MissionAcceptanceUpdate {
+                request_id: Uuid::new_v4().to_string(),
+                expected_revision: paused.revision,
+                task: "Read Gmail with revised criteria".into(),
+                constraints: String::new(),
+                checks: vec![MissionCheck::UserReview {
+                    description: "Review the revised output".into(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let st = step(
+        &s,
+        &claim.lease,
+        vec![call("fresh", search(crate::connection_waits::MAIL_SLOT))],
+    )
+    .await;
+    let permit = permit(&s, &st, "fresh").await;
+    s.complete_external_tool(
+        &permit,
+        KnowledgeToolResult::External(serde_json::json!({"messages":[]})),
+    )
+    .await
+    .unwrap();
+    let run = claim.lease.run_id().to_owned();
+    let tenant = u.tenant.0.clone();
+    let before=s.call(move|db|Ok(db.conn.query_row("SELECT remote_calls,tool_calls,deadline_ms,checkpoint_seq FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?)))?)).await.unwrap();
+    s.mission_wait_for_connection(
+        &claim.lease,
+        MissionConnectionWait {
+            request_id: Uuid::new_v4().to_string(),
+            slot_id: crate::connection_waits::MAIL_SLOT.into(),
+            acceptance_revision: 2,
+            cause: "connection_ready".into(),
+            operation_expires_at_ms: updated.expires_at_ms,
+        },
+    )
+    .await
+    .unwrap();
+    let waiting = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.id == m.id)
+        .unwrap();
+    assert_eq!(waiting.wait.as_ref().unwrap().acceptance_revision, 2);
+    let resumed = s
+        .select_mission_connection(&u, m.id.clone(), selection(&waiting, &mail))
+        .await
+        .unwrap();
+    assert_eq!(resumed.state, "queued");
+    for _ in 0..2 {
+        s.poll_recurring_missions().await.unwrap();
+    }
+    let run = claim.lease.run_id().to_owned();
+    let tenant = u.tenant.0.clone();
+    let id = m.id.clone();
+    s.call(move|db|{let after=db.conn.query_row("SELECT remote_calls,tool_calls,deadline_ms,checkpoint_seq FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?)))?;assert_eq!(before,after);let rows=db.conn.prepare("SELECT acceptance_revision,status FROM mission_connection_waits WHERE tenant_id=?1 AND mission_id=?2 ORDER BY acceptance_revision")?.query_map(params![tenant,id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;assert_eq!(rows,vec![(1,"resumed".into()),(2,"resumed".into())]);Ok(())}).await.unwrap();
+    let next = s.claim_agent_run().await.unwrap().unwrap();
+    let c = s.agent_context(&next.lease).await.unwrap();
+    assert_eq!(
+        s.begin_agent_step(&next.lease, c.checkpoint_seq)
+            .await
+            .unwrap()
+            .step(),
+        3
+    );
+}

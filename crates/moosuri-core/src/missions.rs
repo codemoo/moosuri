@@ -94,6 +94,9 @@ pub struct MissionView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub compound: Option<MissionCompound>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wait: Option<crate::MissionWaitView>,
     pub id: String,
     #[ts(type = "number")]
     pub revision: i64,

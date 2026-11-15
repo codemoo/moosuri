@@ -19,6 +19,8 @@ pub(crate) fn current_skill(profile: Option<&RunToolProfile>, id: &str) -> bool 
 }
 pub(crate) fn profile() -> RunToolProfile {
     RunToolProfile {
+        native_mail_model_read: false,
+        native_mail_model_background: false,
         evidence_calculation: true,
         credential_github: false,
         credential_google: false,

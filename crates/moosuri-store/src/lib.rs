@@ -6,11 +6,13 @@ pub mod recovery_budget;
 mod run_timings;
 pub use run_timings::{TimingMark, timing_mark};
 
+mod connection_waits;
 mod conversation_recall;
 pub mod credential_chat;
 mod missions;
 mod recurring_missions;
 mod request_continuations;
+mod scoped_connections;
 pub use missions::{MissionExecution, MissionPendingRound, MissionReadCredentials};
 pub mod credential_broker;
 mod schedules;
@@ -227,7 +229,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 59;
+const CURRENT_SCHEMA_VERSION: i64 = 60;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -775,6 +777,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0059_compound_reports.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 60 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0060_connection_waits.sql"),
                 "COMMIT;"
             ))?;
         }

@@ -83,7 +83,7 @@ export type MissionAcceptanceSnapshot = { revision: number, request: MissionCrea
 export type MissionAction = { "kind": "pause" } | { "kind": "resume" } | { "kind": "cancel" } | { "kind": "steer", instruction: string, };
 export type MissionEvidence = { step: number, call_id: string, };
 export type MissionCandidate = { text: string, evidence: Array<MissionEvidence>, };
-export type MissionView = { compound?: MissionCompound, id: string, revision: number, state: string, request: MissionCreate,
+export type MissionView = { compound?: MissionCompound, wait?: MissionWaitView, id: string, revision: number, state: string, request: MissionCreate,
 /**
  * Absent for unchanged/recurring missions; request is the active snapshot.
  */
@@ -276,3 +276,7 @@ export type MissionCompound = { schema_version: number, calculation_required: bo
 export type MissionCompoundStep = { id: string, purpose: string, capability: string, input_slots: Array<string>, depends_on: Array<string>, receipts: Array<MissionCompoundReceipt>, output: string, checks: Array<string>, state: string, };
 
 export type MissionCompoundReceipt = { step: number, call_id: string, ordinal: number | null, };
+export type ScopedConnectionDescriptor = { binding_id: string, device_id: string, operation: string, resource: string, schema_version: number, state: string, expires_at_ms: number, alias: string | null, };
+export type MissionWaitView = { request_id: string, slot_id: string, run_id: string, step: number, acceptance_revision: number, cause: string, state: string, expires_at_ms: number, choices: Array<ScopedConnectionDescriptor>, };
+export type MissionConnectionSelection = { request_id: string, wait_request_id: string, expected_revision: number, slot_id: string, binding_id: string, };
+export type ConnectionAlias = { binding_id: string, alias: string, };

@@ -108,7 +108,10 @@ pub(crate) fn current(
                 _ => return Err(StoreError::Corrupt),
             }
             let connection = match &request {
-                ExternalToolRequest::Mail(q) => Some(q.connection_id().to_owned()),
+                ExternalToolRequest::Mail(q) => Some(
+                    crate::connection_waits::mail_id(&source, q.connection_id())
+                        .unwrap_or_else(|| q.connection_id().to_owned()),
+                ),
                 ExternalToolRequest::Calendar(q) => {
                     crate::calendar::agent::request_connection(c, &source, q)?
                 }

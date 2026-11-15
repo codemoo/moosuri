@@ -352,3 +352,5 @@ F26/F67/P4의 [원문 근거 계산](evidence-calculation.md)은 현재 요청�
 F55/P10의 [오프라인 고지 보충](notice-supplements.md)은 정확한 lock identity·digest와
 고지 text/hash를 검증해 별도 출처·coverage로 결합한다. 기존 로컬 누락·충돌·strict
 실패는 유지하며 네트워크/설치/원본 manifest 변경 없이 배포 검토 근거를 보존한다.
+
+F53/P10의 [서명 bundle 다운로드](signed-download.md)는 명시한 HTTPS version 경로와 독립 Ed25519 pin을 받아 고정 파일만 내려받는다. signature-first 검증·정확한 크기/hash·출처 확인·새 경로의 원자적 저장을 사용하며 download/verify는 받은 코드를 실행하지 않는다. 공식 release 게시·key 운영·자동 update는 별도다.

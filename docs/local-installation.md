@@ -1,8 +1,9 @@
 # Local signed preview bundles
 
 The Rust installer accepts a **local signed directory bundle** and an explicitly
-pinned Ed25519 public key. It does not download a release or invent an official
-release key. Official signed artifacts, clean Linux x86_64/arm64 acceptance and
+pinned Ed25519 public key. The separate [HTTPS download command](signed-download.md)
+fetches an explicitly chosen version with the same independent pin before installation.
+Official signed artifacts, clean Linux x86_64/arm64 acceptance and
 stable P10 release remain separate gates. The server runs with its React assets
 embedded; Node/Python are not runtime dependencies. The separate vault and optional
 broker are not installed by this command.

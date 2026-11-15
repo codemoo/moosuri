@@ -27,6 +27,8 @@ Tailscale Serve는 tailnet 접근, ordinary HTTPS는 공개 주소 접근이다.
 
 Linux ARM64의 비서·볼트·companion 교차 빌드와 격리된 QEMU의 직접 실행을 확인했다. [빌드와 검증 범위](linux-arm64.md)를 따르며 물리 ARM·child binary를 실행하는 설치/업데이트·공식 release는 별도 수락 대상이다.
 
+명시한 HTTPS version 디렉터리에서 서명 bundle을 받는 Rust [다운로드 명령](signed-download.md)을 추가했다. 독립 공개키 pin으로 manifest를 먼저 인증하고, 고정 파일·크기·hash·출처를 검사해 새 경로에만 저장한다. 공식 artifact/key 운영·자동 최신 버전 탐색은 별도다.
+
 ## 출시 gate
 
 `cargo run --locked -p xtask -- sbom`으로 [CycloneDX source-lock inventory](dependency-inventory.md)를

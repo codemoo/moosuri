@@ -30,6 +30,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 
 | 단위 | 반영 내용과 범위 | 증거 |
 | --- | --- | --- |
+| 서명 bundle 다운로드 | 명시한 HTTPS 버전·독립 공개키 pin, 코드 실행 없이 검증 후 새 경로 저장 | [사용법](signed-download.md)·[검증](reviews/2026-11-15-signed-download.md) |
 | 브라우저 중단 복구 | 운영자 opt-in 전용 profile·원래 앱 session/만료 한도·빈 화면 직접 확인, 과거 입력/이동 재생 없음; Linux 실제 Chromium·앱 재시작/강제 종료 복구 확인 | [사용법](browser-workspaces.md)·[검증](reviews/2026-11-15-browser-recovery.md) |
 | Gmail 첨부 읽기 | 메일 본문과 파일을 분리해 PDF/UTF-8 텍스트를 필요한 부분만 조회; 채팅 도구·메일 화면·명시한 읽기 미션 연결, 발송 승인 유지 | [메일](mail.md)·[검증](reviews/2026-11-15-gmail-attachments.md) |
 | 한국어 별칭 검색 | 휴대전화/휴대폰/핸드폰 등 공개 세 단어군을 선택적으로 함께 검색; 문구의 나머지 순서·범위·페이지를 유지, 화면과 에이전트 도구 연결 | [사용법](korean-search-aliases.md)·[검증](reviews/2026-11-15-korean-search-aliases.md) |
@@ -67,7 +68,7 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·운영 중 snapshot/시점·명시적 최신 journal 복구·주기적 SSH journal receiver·구 v1 파일 이전·실험적 native GitHub/Google INBOX 개수·미리보기 조회·원래 채팅 대기/완료 | 일반 credential/Google 본문·쓰기 도구·실제 옛 파일 수락·실제 off-host/무손실 최신 복구 |
 | P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 operator export·운영 대조·drain/cutover/rollback 실증 |
-| P10 출시 | 개발 프리뷰·공개 문서·key-pinned 로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory·서명된 binary/source/compiler/inventory 연결·ARM64 교차 빌드/직접 에뮬레이션 | 공식 서명 배포·물리 ARM/설치 경로·독립 빌드 증명/license·품질/기기/출시 gate |
+| P10 출시 | 개발 프리뷰·공개 문서·key-pinned HTTPS 다운로드·로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory·서명된 binary/source/compiler/inventory 연결·ARM64 교차 빌드/직접 에뮬레이션 | 공식 서명 배포·물리 ARM/설치 경로·독립 빌드 증명/license·품질/기기/출시 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기와 두 세계 비교 adapter를 구현했다. 기존 비서의 실제 비교 실행은

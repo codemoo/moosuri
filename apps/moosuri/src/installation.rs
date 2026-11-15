@@ -1,4 +1,5 @@
-//! Local signed bundles and stopped forward-schema activation. No network/service mutation.
+//! Signed bundles and stopped forward-schema activation. No service mutation.
+mod download;
 use clap::{Subcommand, ValueEnum};
 use fs2::FileExt;
 use ring::signature;
@@ -45,6 +46,18 @@ pub enum Command {
         bundle: PathBuf,
         #[arg(long)]
         trust_key: PathBuf,
+    },
+    /// Download a pinned signed bundle from an explicit versioned HTTPS mirror; never execute it.
+    Download {
+        #[arg(long)]
+        base_url: String,
+        #[arg(long)]
+        trust_key: PathBuf,
+        #[arg(long)]
+        destination: PathBuf,
+        /// Optional private PEM CA certificate; normal TLS hostname validation remains required.
+        #[arg(long)]
+        tls_ca_file: Option<PathBuf>,
     },
     /// Install a local signed bundle into a new private prefix; initialize separately.
     Install {
@@ -866,6 +879,15 @@ pub fn run(command: &Command) -> Result<()> {
             println!(
                 "Unsigned manifest created. Sign its exact bytes externally with your explicitly pinned Ed25519 key; no official release trust was created."
             );
+        }
+        Command::Download {
+            base_url,
+            trust_key,
+            destination,
+            tls_ca_file,
+        } => {
+            download::run(base_url, trust_key, destination, tls_ca_file.as_deref())?;
+            println!("Authenticated bundle downloaded. No bundle code was executed or installed.");
         }
         Command::Verify {
             bundle: root,

@@ -48,6 +48,7 @@ pub use agent_execution::{
     TOOL_INPUT_LIMIT, ToolReadError,
 };
 pub use chat::{ClaimedRun, ContextMessage, ContextRole, OutputPatch, RunFailure, RunLease};
+pub use learned_skills::pages::{PageCollectionPermit, PageCollectionStart, PageReadPermit};
 pub use memory_commands::{
     MemoryCommandClarification, MemoryCommandOutcome, MemoryCommandPreparation,
     MemoryTargetCandidate, MemoryTargetCandidates, MemoryTargetChoice, PreparedMemoryCommand,
@@ -226,7 +227,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 54;
+const CURRENT_SCHEMA_VERSION: i64 = 55;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -739,6 +740,13 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0054_external_report_documents.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 55 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0055_learned_page_collections.sql"),
                 "COMMIT;"
             ))?;
         }

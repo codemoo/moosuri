@@ -135,6 +135,7 @@ fn compatible_contents(package: Package) -> std::result::Result<Validated, autho
         "mail_thread",
         "mail_prepare_draft",
         "web_read",
+        "public_pages_collect",
         "parcel_track",
     ];
     if metadata.format_version != 1
@@ -404,7 +405,10 @@ fn card(
         .iter()
         .filter(|c| {
             (c.starts_with("mail_") && !mail)
-                || (matches!(c.as_str(), "web_read" | "parcel_track") && !web.read)
+                || (matches!(
+                    c.as_str(),
+                    "web_read" | "parcel_track" | "public_pages_collect"
+                ) && !web.read)
         })
         .cloned()
         .collect();

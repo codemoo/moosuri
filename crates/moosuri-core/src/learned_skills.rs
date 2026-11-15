@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LearnedSkillArguments {
+    Pages {
+        urls: Vec<String>,
+    },
     Source {
         text: String,
     },

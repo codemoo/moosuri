@@ -505,6 +505,7 @@ mod live_memory;
 
 mod learned_parcel;
 mod learned_skills;
+mod public_page_collection;
 mod skills;
 
 mod mail;

@@ -477,6 +477,7 @@ fn typed_input(
     call: &moosuri_connectors::model::protocol::tools::CompletedToolCall,
 ) -> KnowledgeToolInput {
     let input = match knowledge_tools::parse(call.name(), call.arguments()) {
+        Invocation::CollectPages(urls) => KnowledgeToolInput::CollectPages { urls },
         Invocation::CredentialGoogleInbox => KnowledgeToolInput::CredentialGoogleInbox {},
         Invocation::CredentialGooglePreview => KnowledgeToolInput::CredentialGooglePreview {},
         Invocation::CredentialGitHub { owner, repository } => {
@@ -1015,7 +1016,10 @@ pub(crate) async fn execute_with_calendar(
             !d.name.starts_with("browser_")
                 && !matches!(
                     d.name.as_str(),
-                    "mail_prepare_draft" | "parcel_track" | "learned_skill_execute"
+                    "mail_prepare_draft"
+                        | "parcel_track"
+                        | "learned_skill_execute"
+                        | "public_pages_collect"
                 )
         });
     }
@@ -1382,6 +1386,42 @@ async fn execute_tool(
         .await;
     result
 }
+async fn execute_page_collection(
+    store: &Store,
+    step: &StepLease,
+    call: &PendingKnowledgeCall,
+    web: &crate::web::Service,
+    cancel: &CancellationToken,
+) -> Result<KnowledgeToolResult, StoreError> {
+    match store
+        .prepare_page_collection(step, call.call_id.clone())
+        .await?
+    {
+        moosuri_store::PageCollectionStart::Complete(result) => Ok(result),
+        moosuri_store::PageCollectionStart::Dispatch(collection) => {
+            for ordinal in 0..collection.len() {
+                let page = store.begin_collection_page(&collection, ordinal).await?;
+                let io_cancel = cancel.child_token();
+                let request = moosuri_core::WebToolRequest::Read {
+                    url: page.url().into(),
+                };
+                let operation = web.public_http(&request, &io_cancel);
+                tokio::pin!(operation);
+                let mut tick = tokio::time::interval(Duration::from_millis(250));
+                let result = loop {
+                    tokio::select! {biased;
+                        _=cancel.cancelled()=>{io_cancel.cancel();return Err(StoreError::Unavailable)},
+                        _=tick.tick()=>if let Err(error)=store.check_collection_page(&page).await{io_cancel.cancel();return Err(error)},
+                        result=&mut operation=>break result
+                    }
+                };
+                retry_local(|| store.complete_collection_page(&page, result.clone())).await?;
+            }
+            retry_local(|| store.finish_page_collection(&collection)).await
+        }
+    }
+}
+
 async fn execute_tool_inner(
     store: &Store,
     step: &StepLease,
@@ -1390,6 +1430,11 @@ async fn execute_tool_inner(
     web: &crate::web::Service,
     cancel: &CancellationToken,
 ) -> Result<KnowledgeToolResult, StoreError> {
+    if matches!(&call.input, KnowledgeToolInput::CollectPages { .. })
+        || matches!(&call.input,KnowledgeToolInput::LearnedSkill{invocation} if matches!(invocation.arguments,moosuri_core::LearnedSkillArguments::Pages{..}))
+    {
+        return execute_page_collection(store, step, call, web, cancel).await;
+    }
     let external = matches!(&call.input,KnowledgeToolInput::External{request} if !matches!(request,moosuri_core::ExternalToolRequest::Mail(moosuri_core::MailToolRequest::Draft{..})))
         || matches!(&call.input, KnowledgeToolInput::LearnedSkill {invocation} if matches!(invocation.arguments,moosuri_core::LearnedSkillArguments::Parcel{..}));
     if !external {

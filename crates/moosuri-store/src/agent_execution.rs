@@ -47,6 +47,9 @@ pub enum KnowledgeToolInput {
     EvidenceCalculate {
         calculation: moosuri_core::EvidenceCalculation,
     },
+    CollectPages {
+        urls: Vec<String>,
+    },
     DecimalWorkflow {
         workflow: moosuri_core::DecimalWorkflow,
     },
@@ -548,7 +551,7 @@ pub(crate) fn read_tool(
         | KnowledgeToolInput::CredentialGooglePreview {} => {
             Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
         }
-        KnowledgeToolInput::LearnedSkill { .. } => {
+        KnowledgeToolInput::CollectPages { .. } | KnowledgeToolInput::LearnedSkill { .. } => {
             Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
         }
         KnowledgeToolInput::Artifact { request } => {

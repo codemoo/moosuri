@@ -328,7 +328,7 @@ async fn reminder_followup_schema50_forward_migration_rollback_fk_and_quarantine
     let u = configured(&s).await;
     s.call(|db| {
         db.conn
-            .execute_batch("DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;PRAGMA user_version=50;")?;
+            .execute_batch("DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;PRAGMA user_version=50;")?;
         Ok(())
     })
     .await

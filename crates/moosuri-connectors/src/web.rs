@@ -450,6 +450,10 @@ async fn parse_blocking<T: Send + 'static>(
     .map_err(|_| WebError::InvalidResponse)?
 }
 
+pub fn validate_public_url(raw: &str) -> Result<String, WebError> {
+    parse_url(raw).map(|url| url.to_string())
+}
+
 fn parse_url(raw: &str) -> Result<Url, WebError> {
     if raw.len() > MAX_URL || raw.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err(WebError::InvalidUrl);

@@ -100,6 +100,20 @@ fn observation(
 pub(crate) fn evidence(conn: &Connection, tenant: &str, run: &str) -> Result<Vec<WebEvidence>> {
     let values=conn.prepare("SELECT t.input,t.result FROM agent_tool_slots t JOIN external_tool_dispatches d USING(tenant_id,run_id,step,call_id) WHERE t.tenant_id=?1 AND t.run_id=?2 AND t.result IS NOT NULL AND d.state='completed' ORDER BY t.step,t.call_id LIMIT 12")?.query_map(params![tenant,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let mut evidence = Vec::new();
+    let children=conn.prepare("SELECT r.result FROM learned_skill_receipts r JOIN learned_page_dispatches d USING(tenant_id,run_id,step,call_id,ordinal) WHERE r.tenant_id=?1 AND r.run_id=?2 AND d.state='completed' ORDER BY r.step,r.call_id,r.ordinal LIMIT 12")?.query_map(params![tenant,run],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for result in children {
+        if let agent_execution::KnowledgeToolResult::External(v) =
+            serde_json::from_str(&result).map_err(|_| StoreError::Corrupt)?
+            && let Some(page) = v.get("web_page")
+            && let (Some(time), Some(truncated)) = (
+                page["retrieved_at_unix_ms"].as_u64(),
+                page["truncated"].as_bool(),
+            )
+            && let Some(item) = observation(page, WebEvidenceKind::Page, time, truncated)
+        {
+            evidence.push(item)
+        }
+    }
     for (input, result) in values {
         let input: agent_execution::KnowledgeToolInput =
             serde_json::from_str(&input).map_err(|_| StoreError::Corrupt)?;

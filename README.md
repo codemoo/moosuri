@@ -35,6 +35,7 @@ have conservative read-only Sent checks and are never automatically resent.
 
 Private learned skills can reuse verified two-to-four-step exact calculations and Japan Post latest-summary lookups with fresh inputs. A [source-bound calculation](docs/evidence-calculation.md) also composes one unambiguous saved-source read with exact arithmetic, then re-reads the current source on reuse. These routes can export a structural recipe with new synthetic examples.
 Proven local recipes also work in explicitly created one-off and recurring missions, with fresh inputs, current sources and their original execution budget.
+A [public-page collection](docs/public-page-recipes.md) reads two to four explicit URLs, keeps each observation or failure separate, and learns a reusable page-count recipe from two distinct adopted results. Reuse reads the current targets again; evidence adoption does not certify the quality of a comparison.
 Suggestions can discover an explicitly configured public GitHub skill catalog,
 verify selected original packages and keep each user's installations separate.
 Disabling a used recipe pauses its dependent recurring tasks until the original

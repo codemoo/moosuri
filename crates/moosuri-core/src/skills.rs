@@ -94,6 +94,12 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
         description: "Read the correct Gmail conversation and prepare a real local reply draft for mandatory final human approval.",
         instructions: include_str!("../../../community/skills/mail-reply/SKILL.md"),
     },
+    BundledSkill {
+        id: "public-page-comparison",
+        revision: "1.0.0",
+        description: "Collect two to four explicit current-task public pages and compare actual observations with citations and exact short quotes.",
+        instructions: include_str!("../../../community/skills/public-page-comparison/SKILL.md"),
+    },
 ];
 
 #[derive(Clone, Serialize, Deserialize)]

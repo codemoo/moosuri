@@ -100,6 +100,7 @@ pub(crate) fn tool_allowed(v: &KnowledgeToolInput) -> bool {
             | KnowledgeToolInput::DecimalCalculate { .. }
             | KnowledgeToolInput::DecimalWorkflow { .. }
             | KnowledgeToolInput::LearnedSkill { .. }
+            | KnowledgeToolInput::CollectPages { .. }
             | KnowledgeToolInput::External {
                 request: moosuri_core::ExternalToolRequest::Mail(
                     moosuri_core::MailToolRequest::Search { .. }
@@ -306,7 +307,40 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
                             continue;
                         }
                         let page = v.get("web_page");
-                        let detail = if let Some(page) = page {
+                        let detail = if let Some(entries) = v
+                            .pointer("/public_pages/entries")
+                            .and_then(|v| v.as_array())
+                        {
+                            entries
+                                .iter()
+                                .map(|entry| {
+                                    let page = &entry["result"]["web_page"];
+                                    if page.is_object() {
+                                        format!(
+                                            "{}\n{}\n{}\n{}{}",
+                                            entry["requested_url"].as_str().unwrap_or(""),
+                                            page["title"].as_str().unwrap_or(""),
+                                            page["url"].as_str().unwrap_or(""),
+                                            page["text"].as_str().unwrap_or(""),
+                                            if page["truncated"] == true {
+                                                "\n일부 발췌 · 전체 내용은 확인하지 않았습니다."
+                                            } else {
+                                                ""
+                                            }
+                                        )
+                                    } else {
+                                        format!(
+                                            "{}\n읽기 결과: {}",
+                                            entry["requested_url"].as_str().unwrap_or(""),
+                                            entry["result"]["error"]
+                                                .as_str()
+                                                .unwrap_or("unavailable")
+                                        )
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n\n")
+                        } else if let Some(page) = page {
                             format!(
                                 "{}\n{}\n{}",
                                 page["title"].as_str().unwrap_or(""),

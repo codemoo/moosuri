@@ -1,0 +1,9 @@
+# Design
+
+A native successful preview issues random signed per-message selectors and privately journals each selector's actual Gmail ID, preview binding, item/vault/account identity, epochs and original expiry. Optional selectors leave old preview serialization/signature bytes intact; present selectors use projection discriminator6. Body operation5 carries its exact opaque selector. Separate local `select-google-body` grants have different service/policy/hash and register/refresh discriminators14/15. No schema or dependency migration is needed.
+
+The authenticated owner UI selects preview UUID + selector. Store admits only a current stored successful preview receipt, retains a distinct idempotent body request, and fences current account/device/original expiry at dispatch. The native companion resolves the exact journal mapping before entry, verifies matching credential identity/version, repeats refresh/scope/UserInfo/profile checks, and makes only a fixed full-message GET. Entered work never replays after restart. Late signed evidence settles privately after revocation.
+
+Provider JSON<=32768 bytes; decoded plaintext<=16384 bytes; MIME depth<=4 / parts<=32; exactly one inline UTF8/US-ASCII text/plain body; display<=4096 UTF8 bytes. Reject attachments, HTML-only, unsupported encodings, duplicate plaintext, malformed base64, secret echoes and invalid controls. Deleted or non-INBOX messages are unavailable. Other unknown results contain no provider text.
+
+Body content intentionally reaches the assistant receipt store/UI, with no model tool, chat transcript insertion, recall or learning path. The separate React component filters original-run preview receipts and renders literal text only. Old preview turns retain their existing durable exclusion. A malicious assistant server inside an established device grant is not claimed to have cryptographically proven owner intent.

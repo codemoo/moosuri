@@ -360,3 +360,5 @@ F26/F27/F29/P4/P5의 개인 로컬 절차 재사용은 명시한 일회성·반�
 F28/F32/P3/P4의 [외부 자료 보고서](external-reports.md)는 현재 단일 문서 요청에서 설정한 HTTP·자기 Gmail/기본 Calendar 읽기를 사용하고, 같은 대화에서 선택한 완료 읽기의 실제 provenance도 보존한다. 수정·내보내기·연결/원래 대화 철회와 보수적 복구를 연결한다. Calendar 작업·브라우저·native 미리보기·미션 쓰기·일반 외부 워크플로 학습은 이 권한에 포함하지 않는다.
 
 F53/F69/P8/P10의 [독립 native 패키지](component-packages.md)는 vault-service와 credential-broker를 서로 구분한 서명 manifest·명시적 target·고정 파일명·크기/hash로 검증하고 HTTPS에서 새 경로로 받는다. 받은 파일을 실행하거나 볼트 배치/기기 pairing을 자동 수행하지 않는다. 바이너리 형태 검사는 완전한 ABI/동작 증명이 아니며 공식 배포 키/게시·상태 업그레이드·실기기 수락은 별도다.
+
+F69/P8의 [기기 Gmail 선택 본문](native-google-message-body.md)은 실제 서명된 미리보기의 opaque 선택자를 사용해 동일 기기·credential·계정·원래 만료 안에서 일반 텍스트를 조회한다. 별도 본문 권한은 다음 요청에 자동 재사용하고 비밀은 기기에 둔다. 본문은 사용자 화면/서버 receipt에만 전달되며 이후 모델/회상/학습에 넣지 않는다. HTML 전용·첨부 본문·검색·쓰기와 실계정 수락은 별도다.

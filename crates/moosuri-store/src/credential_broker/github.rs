@@ -9,6 +9,8 @@ pub struct GitHubJob {
 }
 #[derive(serde::Serialize)]
 pub struct ScopedJob {
+    pub run_id: String,
+    pub expires_at: i64,
     pub request_id: String,
     pub resource: Resource,
     pub status: String,
@@ -37,7 +39,9 @@ fn scoped_job(conn: &Connection, tenant: &str, id: &str) -> Result<ScopedJob> {
             let r: SignedReceipt = decode(&receipt)?;
             match r.receipt.outcome {
                 Outcome::ProjectedSuccess => {
-                    projection = Some(r.receipt.projection);
+                    if current && !cancelled && device_current(conn, &r)? {
+                        projection = Some(r.receipt.projection);
+                    }
                     "complete"
                 }
                 Outcome::NotDispatched => "not_dispatched",
@@ -59,11 +63,52 @@ fn scoped_job(conn: &Connection, tenant: &str, id: &str) -> Result<ScopedJob> {
         "waiting_for_credential"
     };
     Ok(ScopedJob {
+        run_id: run,
+        expires_at: expires,
         request_id: id.into(),
         resource: decode(&repo)?,
         status: status.into(),
         projection,
     })
+}
+fn device_current(conn: &Connection, receipt: &SignedReceipt) -> Result<bool> {
+    let request = &receipt.receipt.commitment.request;
+    Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM credential_broker_devices d JOIN credential_broker_bindings b ON b.device_id=d.id WHERE d.id=?1 AND d.status='active' AND b.binding_id=?2 AND b.active=1)",params![request.device.id.to_string(),request.binding.id.to_string()],|r|r.get(0))?)
+}
+/// Only a stored, authenticated, successful owner's preview can supply a selector.
+/// Native enforcement separately pins the hidden message ID and credential identity.
+pub(super) fn selection_origin(
+    conn: &Connection,
+    tenant: &str,
+    account: &str,
+    selection: Uuid,
+    preview_id: Option<&str>,
+) -> Result<SignedReceipt> {
+    let rows=conn.prepare("SELECT j.request_id,c.receipt,i.cancelled,j.auth_epoch,a.auth_epoch FROM credential_broker_jobs j JOIN accounts a ON a.tenant_id=j.tenant_id AND a.id=j.account_id JOIN credential_broker_commitments c ON c.tenant_id=j.tenant_id AND c.run_id=j.run_id JOIN credential_broker_invocations i ON i.tenant_id=j.tenant_id AND i.run_id=j.run_id WHERE j.tenant_id=?1 AND j.account_id=?2 AND json_extract(j.repository,'$.google_inbox')='preview_v1' AND c.receipt IS NOT NULL AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 LIMIT 1024")?.query_map(params![tenant,account],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for (id, raw, cancelled, old, current) in rows {
+        if cancelled || old != current || preview_id.is_some_and(|p| p != id) {
+            continue;
+        }
+        let receipt: SignedReceipt = decode(&raw)?;
+        let request = &receipt.receipt.commitment.request;
+        if request.expires_at <= now()?
+            || receipt.receipt.outcome != Outcome::ProjectedSuccess
+            || request.operation != Operation::GoogleInboxPreview
+            || !device_current(conn, &receipt)?
+        {
+            continue;
+        }
+        let binding: Option<String>=conn.query_row("SELECT binding FROM credential_broker_bindings WHERE device_id=?1 AND binding_id=?2 AND active=1",params![request.device.id.to_string(),request.binding.id.to_string()],|r|r.get(0)).optional()?;
+        if binding.map(|s| decode::<Binding>(&s)).transpose()?.as_ref() != Some(&request.binding) {
+            continue;
+        }
+        if let Projection::GoogleInboxPreview { messages, .. } = &receipt.receipt.projection
+            && messages.iter().any(|m| m.selection == Some(selection))
+        {
+            return Ok(receipt);
+        }
+    }
+    Err(StoreError::Forbidden)
 }
 impl Store {
     pub async fn request_github_metadata(
@@ -90,7 +135,7 @@ impl Store {
     pub async fn github_metadata_jobs(&self, user: &UserContext) -> Result<Vec<GitHubJob>> {
         let user = user.clone();
         self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;
-            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox') IS NULL ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox') IS NULL AND json_extract(repository,'$.google_body') IS NULL ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             ids.iter().map(|i|job(&db.conn,&u.tenant.0,i)).collect()
         }).await
     }
@@ -140,6 +185,41 @@ impl Store {
             ids.iter().map(|id|scoped_job(&db.conn,&u.tenant.0,id)).collect()
         }).await
     }
+    pub async fn request_google_body(
+        &self,
+        user: &UserContext,
+        id: String,
+        preview_id: String,
+        selection: Uuid,
+    ) -> Result<ScopedJob> {
+        if Uuid::parse_str(&id).is_err()
+            || Uuid::parse_str(&preview_id).is_err()
+            || selection.is_nil()
+        {
+            return Err(StoreError::InvalidInput);
+        }
+        let user = user.clone();
+        self.call(move|db| {
+            let u=validate(&db.conn,&user,true,false)?;
+            let resource=encode(&Resource::google_body(selection))?;
+            let old:Option<(String,String)>=db.conn.query_row("SELECT repository,account_id FROM credential_broker_jobs WHERE tenant_id=?1 AND request_id=?2",params![u.tenant.0,id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+            if let Some((old,account))=old { if account!=u.account.id { return Err(StoreError::Forbidden); }
+                if old!=resource { return Err(StoreError::Conflict); } }
+            else {
+                let origin=selection_origin(&db.conn,&u.tenant.0,&u.account.id,selection,Some(&preview_id))?;
+                let n:i64=db.conn.query_row("SELECT count(*) FROM credential_broker_jobs WHERE tenant_id=?1",[&u.tenant.0],|r|r.get(0))?; if n>=1024 { return Err(StoreError::Busy); }
+                db.conn.execute("INSERT INTO credential_broker_jobs(tenant_id,account_id,request_id,run_id,call_id,invocation_nonce,repository,auth_epoch,expires_at,request) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL)",params![u.tenant.0,u.account.id,id,Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),Uuid::new_v4().to_string(),resource,u.epoch,origin.receipt.commitment.request.expires_at])?;
+            }
+            scoped_job(&db.conn,&u.tenant.0,&id)
+        }).await
+    }
+    pub async fn google_body_jobs(&self, user: &UserContext) -> Result<Vec<ScopedJob>> {
+        let user = user.clone();
+        self.call(move|db| { let u=validate(&db.conn,&user,true,false)?;
+            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND account_id=?2 AND json_extract(repository,'$.google_body') IS NOT NULL ORDER BY rowid DESC LIMIT 30")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            ids.iter().map(|id|scoped_job(&db.conn,&u.tenant.0,id)).collect()
+        }).await
+    }
     pub async fn broker_devices(&self, user: &UserContext) -> Result<Vec<(String, String)>> {
         let user = user.clone();
         self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;
@@ -166,7 +246,19 @@ pub(super) fn poll(
         {
             continue;
         }
-        let bindings=conn.prepare("SELECT r.device_id,b.binding FROM credential_broker_repositories r JOIN credential_broker_bindings b USING(device_id,binding_id) JOIN credential_broker_devices d ON d.id=r.device_id JOIN sessions live ON live.digest=d.session_digest WHERE live.expires_at>unixepoch() AND live.auth_epoch=?4 AND d.account_id=?1 AND d.tenant_id=?2 AND d.status='active' AND b.active=1 AND json_extract(b.binding,'$.expires_at')>unixepoch() AND r.repository=?3")?.query_map(params![u.account.id,u.tenant.0,repo,u.epoch],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let target = encode(&decode::<Resource>(&repo)?.scope())?;
+        let bindings=conn.prepare("SELECT r.device_id,b.binding FROM credential_broker_repositories r JOIN credential_broker_bindings b USING(device_id,binding_id) JOIN credential_broker_devices d ON d.id=r.device_id JOIN sessions live ON live.digest=d.session_digest WHERE live.expires_at>unixepoch() AND live.auth_epoch=?4 AND d.account_id=?1 AND d.tenant_id=?2 AND d.status='active' AND b.active=1 AND json_extract(b.binding,'$.expires_at')>unixepoch() AND r.repository=?3")?.query_map(params![u.account.id,u.tenant.0,target,u.epoch],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let resource: Resource = decode(&repo)?;
+        if let Resource::GoogleBody(selected) = &resource {
+            let Ok(origin) =
+                selection_origin(conn, &u.tenant.0, &u.account.id, selected.google_body, None)
+            else {
+                continue;
+            };
+            if origin.receipt.commitment.request.device.id != p.device.id {
+                continue;
+            }
+        }
         if bindings.len() != 1 || bindings[0].0 != p.device.id.to_string() {
             continue;
         }
@@ -249,7 +341,13 @@ pub(super) fn refresh_resource(
         let mut request: Request = decode(&text)?;
         if request.device != *device
             || request.binding != *expected
-            || request.operation != resource.operation()
+            || (!matches!(
+                (request.operation, resource.operation()),
+                (
+                    Operation::GoogleInboxBody { .. },
+                    Operation::GoogleInboxBody { .. }
+                )
+            ) && request.operation != resource.operation())
             || request.repository.as_ref() != resource.repository()
         {
             continue;
@@ -804,5 +902,272 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::*;
+    use crate::tests::{TEST_LOCK, admin, directory};
+    use moosuri_credential_broker::{auth::SigningKey, google::GoogleIdentity, policy::LocalGrant};
+    async fn issue(
+        store: &Store,
+        key: &SigningKey,
+        device: &Device,
+        command: Command,
+    ) -> Result<Reply> {
+        let challenge = store.broker_auth_challenge(device.id).await?;
+        let signature = key.sign(
+            &moosuri_credential_broker::auth::authenticated_bytes(
+                &challenge,
+                "POST",
+                DEVICE_PATH,
+                &command,
+            )
+            .unwrap(),
+        );
+        store
+            .broker_command(SignedCommand {
+                challenge: challenge.nonce,
+                command,
+                signature,
+            })
+            .await
+    }
+    fn signed(key: &SigningKey, commitment: Commitment, projection: Projection) -> SignedReceipt {
+        let receipt = Receipt {
+            commitment,
+            outcome: Outcome::ProjectedSuccess,
+            projection_digest: moosuri_credential_broker::auth::projection_digest(
+                projection.clone(),
+            ),
+            projection,
+        };
+        SignedReceipt {
+            signature: key.sign(&receipt_bytes(&receipt)),
+            receipt,
+        }
+    }
+    #[tokio::test]
+    async fn body_owner_selection_separate_grant_original_expiry_and_revoked_late_result() {
+        let _serial = TEST_LOCK.lock().await;
+        let dir = directory();
+        let store = Store::open(dir.path()).unwrap();
+        let user = admin(&store).await.user;
+        let key = SigningKey::from_pkcs8(&SigningKey::generate_pkcs8().unwrap()).unwrap();
+        let pair = store
+            .broker_pair_challenge(
+                &user,
+                "https://assistant.example.test".into(),
+                key.public_key(),
+            )
+            .await
+            .unwrap();
+        let device = store
+            .broker_pair(PairProof {
+                challenge: pair.nonce,
+                signature: key.sign(&pairing_bytes(&pair).unwrap()),
+            })
+            .await
+            .unwrap();
+        let item = Uuid::new_v4();
+        let vault = Uuid::new_v4();
+        let identity = GoogleIdentity {
+            subject: "synthetic".into(),
+            email: "synthetic@example.test".into(),
+        };
+        let preview = LocalGrant::select_google_preview(
+            device.clone(),
+            item,
+            vault,
+            identity.clone(),
+            1,
+            1,
+            now().unwrap() + 600,
+        )
+        .unwrap()
+        .binding;
+        issue(
+            &store,
+            &key,
+            &device,
+            Command::RegisterGooglePreview {
+                binding: preview.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let preview_id = Uuid::new_v4().to_string();
+        store
+            .request_google_preview(&user, preview_id.clone())
+            .await
+            .unwrap();
+        let Reply::Waiting { mut requests, .. } =
+            issue(&store, &key, &device, Command::Poll).await.unwrap()
+        else {
+            panic!("waiting")
+        };
+        assert_eq!(requests.len(), 1);
+        let request = requests.remove(0);
+        let Reply::Commitment { commitment } = issue(
+            &store,
+            &key,
+            &device,
+            Command::CommitCurrent {
+                invocation: request.invocation.clone(),
+                request_digest: moosuri_credential_broker::auth::hash(&request_bytes(&request)),
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("commit")
+        };
+        let selection = Uuid::new_v4();
+        let receipt = signed(
+            &key,
+            *commitment,
+            Projection::GoogleInboxPreview {
+                messages: vec![GoogleMessagePreview {
+                    selection: Some(selection),
+                    subject: "Synthetic".into(),
+                    from: "Sender".into(),
+                    date: "".into(),
+                    snippet: "preview".into(),
+                    truncated: false,
+                }],
+                unavailable: 0,
+                more_available: false,
+            },
+        );
+        issue(
+            &store,
+            &key,
+            &device,
+            Command::Settle {
+                receipt: Box::new(receipt),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            store
+                .request_google_body(
+                    &user,
+                    Uuid::new_v4().to_string(),
+                    preview_id.clone(),
+                    Uuid::new_v4()
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .request_google_body(
+                    &user,
+                    Uuid::new_v4().to_string(),
+                    Uuid::new_v4().to_string(),
+                    selection
+                )
+                .await
+                .is_err()
+        );
+        let body_id = Uuid::new_v4().to_string();
+        let waiting = store
+            .request_google_body(&user, body_id.clone(), preview_id.clone(), selection)
+            .await
+            .unwrap();
+        assert_eq!(waiting.status, "waiting_for_credential");
+        assert_eq!(waiting.expires_at, request.expires_at);
+        let Reply::Waiting { requests, .. } =
+            issue(&store, &key, &device, Command::Poll).await.unwrap()
+        else {
+            panic!("waiting")
+        };
+        assert!(requests.is_empty(), "preview grant cannot escalate");
+        let body = LocalGrant::select_google_body(
+            device.clone(),
+            item,
+            vault,
+            identity,
+            1,
+            1,
+            now().unwrap() + 600,
+        )
+        .unwrap()
+        .binding;
+        issue(
+            &store,
+            &key,
+            &device,
+            Command::RegisterGoogleBody {
+                binding: body.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let Reply::Waiting { mut requests, .. } =
+            issue(&store, &key, &device, Command::Poll).await.unwrap()
+        else {
+            panic!("waiting")
+        };
+        assert_eq!(requests.len(), 1);
+        let request = requests.remove(0);
+        assert!(request.operation == Operation::GoogleInboxBody { selection });
+        assert!(request.binding == body);
+        assert_eq!(
+            store
+                .request_google_body(&user, body_id.clone(), preview_id.clone(), selection)
+                .await
+                .unwrap()
+                .request_id,
+            body_id
+        );
+        let Reply::Commitment { commitment } = issue(
+            &store,
+            &key,
+            &device,
+            Command::CommitCurrent {
+                invocation: request.invocation.clone(),
+                request_digest: moosuri_credential_broker::auth::hash(&request_bytes(&request)),
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("commit")
+        };
+        store.broker_revoke(&user, device.id).await.unwrap();
+        let receipt = signed(
+            &key,
+            *commitment,
+            Projection::GoogleInboxBody {
+                text: "SYNTHETIC PRIVATE BODY".into(),
+                truncated: false,
+                unavailable: false,
+            },
+        );
+        for _ in 0..2 {
+            issue(
+                &store,
+                &key,
+                &device,
+                Command::Settle {
+                    receipt: Box::new(receipt.clone()),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let jobs = store.google_body_jobs(&user).await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(
+            jobs[0].projection.is_none(),
+            "late signed settlement stays private after revoke"
+        );
+        assert!(
+            store
+                .request_google_body(&user, Uuid::new_v4().to_string(), preview_id, selection)
+                .await
+                .is_err()
+        );
     }
 }

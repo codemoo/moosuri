@@ -57,7 +57,8 @@ pub fn projection_digest(projection: moosuri_vault_protocol::broker::Projection)
         moosuri_vault_protocol::broker::Projection::FixedProbeOk => 1,
         p @ (moosuri_vault_protocol::broker::Projection::GitHubRepository { .. }
         | moosuri_vault_protocol::broker::Projection::GoogleInbox { .. }
-        | moosuri_vault_protocol::broker::Projection::GoogleInboxPreview { .. }) => {
+        | moosuri_vault_protocol::broker::Projection::GoogleInboxPreview { .. }
+        | moosuri_vault_protocol::broker::Projection::GoogleInboxBody { .. }) => {
             return hash(&p.bytes());
         }
     };

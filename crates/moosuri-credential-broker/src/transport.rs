@@ -186,21 +186,33 @@ impl Transport {
             .ok_or(Error::Policy)?;
         let preview = grant.google_preview();
         let refresh = grant.pending_refresh().cloned();
-        let command = match (&refresh, preview) {
-            (Some(expected), true) => Command::RefreshGooglePreview {
-                expected: expected.clone(),
-                binding: binding.clone(),
-            },
-            (None, true) => Command::RegisterGooglePreview {
-                binding: binding.clone(),
-            },
-            (Some(expected), false) => Command::RefreshGoogleInbox {
-                expected: expected.clone(),
-                binding: binding.clone(),
-            },
-            (None, false) => Command::RegisterGoogleInbox {
-                binding: binding.clone(),
-            },
+        let command = if grant.google_body() {
+            match &refresh {
+                Some(expected) => Command::RefreshGoogleBody {
+                    expected: expected.clone(),
+                    binding: binding.clone(),
+                },
+                None => Command::RegisterGoogleBody {
+                    binding: binding.clone(),
+                },
+            }
+        } else {
+            match (&refresh, preview) {
+                (Some(expected), true) => Command::RefreshGooglePreview {
+                    expected: expected.clone(),
+                    binding: binding.clone(),
+                },
+                (None, true) => Command::RegisterGooglePreview {
+                    binding: binding.clone(),
+                },
+                (Some(expected), false) => Command::RefreshGoogleInbox {
+                    expected: expected.clone(),
+                    binding: binding.clone(),
+                },
+                (None, false) => Command::RegisterGoogleInbox {
+                    binding: binding.clone(),
+                },
+            }
         };
         if !matches!(self.command(engine, command).await?, Reply::Registered) {
             return Err(Error::Authentication);
@@ -239,7 +251,9 @@ impl Transport {
             .operation;
         let result = match phase {
             Phase::Committed(_) => match operation {
-                Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
+                Operation::GoogleInboxRead
+                | Operation::GoogleInboxPreview
+                | Operation::GoogleInboxBody { .. } => {
                     engine.execute_live_google(vault, &invocation, google).await
                 }
                 Operation::GitHubRepositoryRead => {
@@ -397,7 +411,9 @@ impl Transport {
             let invocation = request.invocation.clone();
             let operation = request.operation;
             match operation {
-                Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
+                Operation::GoogleInboxRead
+                | Operation::GoogleInboxPreview
+                | Operation::GoogleInboxBody { .. } => {
                     engine.prepare_google(archive, request, current_time()?)?
                 }
                 Operation::GitHubRepositoryRead => {
@@ -418,7 +434,9 @@ impl Transport {
             };
             engine.accept_commitment(*commitment)?;
             let receipt = match operation {
-                Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
+                Operation::GoogleInboxRead
+                | Operation::GoogleInboxPreview
+                | Operation::GoogleInboxBody { .. } => {
                     engine.execute_google(archive, &invocation, google).await?
                 }
                 Operation::GitHubRepositoryRead => {

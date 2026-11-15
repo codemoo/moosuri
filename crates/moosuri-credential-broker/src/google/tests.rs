@@ -129,6 +129,30 @@ async fn provider() -> (
                         serde_json::json!({"messages":[{"id":"A1","threadId":REFRESH},{"id":"B2"}],"nextPageToken":REFRESH,"resultSizeEstimate":12345}).to_string()
                     }
                 }
+                _ if path.starts_with("/messages/") && path.contains("format=full") => {
+                    assert_eq!(
+                        path,
+                        "/messages/A1?format=full&fields=id%2ClabelIds%2Cpayload"
+                    );
+                    let text = match mode {
+                        34 => ACCESS.to_owned(),
+                        35 => "한".repeat(2000),
+                        36 => "x".repeat(16385),
+                        _ => "Hello <img src=x>\n[link](https://evil.invalid/) send now".to_owned(),
+                    };
+                    let mut plain = serde_json::json!({"mimeType":"text/plain","filename":"","headers":[{"name":"Content-Type","value":if mode==37 {"text/plain; charset=iso-8859-1"}else{"text/plain; charset=UTF-8"}}],"body":{"size":text.len(),"data":mail_base64(text.as_bytes())}});
+                    if mode == 38 {
+                        plain["body"]["attachmentId"] = serde_json::json!("no-fetch");
+                    }
+                    let payload = if mode == 33 {
+                        serde_json::json!({"mimeType":"text/html","body":{"data":"PGgxPkhUTUw8L2gxPg","size":13}})
+                    } else if mode == 39 || mode == 40 {
+                        serde_json::json!({"mimeType":"multipart/alternative","parts":if mode==40 {vec![plain.clone(),plain]}else{vec![plain,serde_json::json!({"mimeType":"text/html","body":{"data":"","size":0}})]}})
+                    } else {
+                        plain
+                    };
+                    serde_json::json!({"id":if mode==31 {"wrong-id"} else {"A1"},"labelIds":if mode==32 {vec!["TRASH"]}else{vec!["INBOX"]},"payload":payload,"ignored":ACCESS}).to_string()
+                }
                 _ if path.starts_with("/messages/") => {
                     assert!(first.starts_with("GET "));
                     assert!(path.contains("format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date"));
@@ -572,6 +596,7 @@ fn google_protocol_extension_preserves_all_existing_signed_variants() {
             Operation::GoogleInboxPreview,
             Projection::GoogleInboxPreview {
                 messages: vec![moosuri_vault_protocol::broker::GoogleMessagePreview {
+                    selection: None,
                     subject: "Subject".into(),
                     from: "Sender".into(),
                     date: "15 Nov".into(),
@@ -589,6 +614,43 @@ fn google_protocol_extension_preserves_all_existing_signed_variants() {
                 "5663f22b07b1196dfb39ecb1d4c6da4811748ab4a71ca3675626a9d67028929e",
             ],
         ),
+        (
+            Operation::GoogleInboxBody { selection: id(29) },
+            Projection::GoogleInboxBody {
+                text: "Body\ntext".into(),
+                truncated: true,
+                unavailable: false,
+            },
+            [
+                "de2a0c2db85e28489ef98fa509c266d4bcd2ebcfa34ccf15213bbebb398d4890",
+                "d9d8b82752786599b7364482aea1e3db8325b51dfaed259ed5f4bb6f6b1af04c",
+                "f3fb2ab824089ad4449e095b8896a8ecb73e0ecf6054c8161b782d504bee53c5",
+                "3afcf4ed997c6902727e20a6bfb154b7240456b9bfcd0246612eb2892d30d1ff",
+                "f643ece627c727f8bc4efebf453be545ca49a031ba1297cfce97afaad15c082a",
+            ],
+        ),
+        (
+            Operation::GoogleInboxPreview,
+            Projection::GoogleInboxPreview {
+                messages: vec![moosuri_vault_protocol::broker::GoogleMessagePreview {
+                    selection: Some(id(29)),
+                    subject: "Subject".into(),
+                    from: "Sender".into(),
+                    date: "15 Nov".into(),
+                    snippet: "Text".into(),
+                    truncated: false,
+                }],
+                unavailable: 1,
+                more_available: true,
+            },
+            [
+                "52830a20a0a9d816e1e3be96bd5a1ec96310ccf54b37a000c84fa435584927bf",
+                "26979362fd5eaa7def6dda0978fc33a3649bd2d30a0f36ade8247e5d230d2753",
+                "ea47fd2bdf28382c6299118b87ae4ac918dde0c6cab8048ffb5673222a8f655d",
+                "cd34bd801e3fb5800f4ba2b01b20cfa9b0e903b17da37b20de090b1a96226089",
+                "5663f22b07b1196dfb39ecb1d4c6da4811748ab4a71ca3675626a9d67028929e",
+            ],
+        ),
     ] {
         let mut req = request.clone();
         req.operation = operation;
@@ -602,7 +664,11 @@ fn google_protocol_extension_preserves_all_existing_signed_variants() {
             projection: projection.clone(),
             projection_digest: [24; 32],
         };
-        let register = if operation == Operation::GoogleInboxRead {
+        let register = if matches!(operation, Operation::GoogleInboxBody { .. }) {
+            Command::RegisterGoogleBody {
+                binding: binding.clone(),
+            }
+        } else if operation == Operation::GoogleInboxRead {
             Command::RegisterGoogleInbox {
                 binding: binding.clone(),
             }
@@ -611,7 +677,12 @@ fn google_protocol_extension_preserves_all_existing_signed_variants() {
                 binding: binding.clone(),
             }
         };
-        let refresh = if operation == Operation::GoogleInboxRead {
+        let refresh = if matches!(operation, Operation::GoogleInboxBody { .. }) {
+            Command::RefreshGoogleBody {
+                expected: binding.clone(),
+                binding: binding.clone(),
+            }
+        } else if operation == Operation::GoogleInboxRead {
             Command::RefreshGoogleInbox {
                 expected: binding.clone(),
                 binding: binding.clone(),
@@ -946,6 +1017,7 @@ async fn google_preview_separate_grant_signed_receipt_restart_never_replays() {
     largest.receipt.projection = Projection::GoogleInboxPreview {
         messages: (0..5)
             .map(|_| moosuri_vault_protocol::broker::GoogleMessagePreview {
+                selection: None,
                 subject: "\\".repeat(256),
                 from: "\\".repeat(256),
                 date: "\\".repeat(128),
@@ -1031,5 +1103,286 @@ async fn google_preview_separate_grant_signed_receipt_restart_never_replays() {
             assert!(!String::from_utf8_lossy(&std::fs::read(file).unwrap()).contains("CANARY"));
         }
     }
+    server.abort();
+}
+
+fn mail_base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut output = String::new();
+    let mut acc = 0u32;
+    let mut bits = 0;
+    for b in bytes {
+        acc = (acc << 8 | u32::from(*b)) & 0xffffff;
+        bits += 8;
+        while bits >= 6 {
+            bits -= 6;
+            output.push(ALPHABET[((acc >> bits) & 63) as usize] as char)
+        }
+    }
+    if bits > 0 {
+        output.push(ALPHABET[((acc << (6 - bits)) & 63) as usize] as char)
+    }
+    output
+}
+#[tokio::test]
+async fn google_body_fixed_selected_path_plain_mime_bounds_and_credential_echo() {
+    let (adapter, mode, paths, server) = provider().await;
+    for good in [30, 35, 39] {
+        mode.store(good, Ordering::SeqCst);
+        paths.lock().unwrap().clear();
+        let projection = adapter
+            .read_for(&identity(), SECRET, false, Some("A1"), &mut Vec::new())
+            .await
+            .unwrap();
+        let Projection::GoogleInboxBody {
+            text,
+            truncated,
+            unavailable,
+        } = projection
+        else {
+            panic!("body")
+        };
+        assert!(!unavailable);
+        assert_eq!(truncated, good == 35);
+        assert!(text.len() <= 4096);
+        assert!(!text.contains("CANARY"));
+        assert_eq!(paths.lock().unwrap().len(), 4);
+    }
+    for bad in [1, 2, 3, 4, 6, 31, 33, 34, 36, 37, 38, 40] {
+        mode.store(bad, Ordering::SeqCst);
+        assert!(
+            adapter
+                .read_for(&identity(), SECRET, false, Some("A1"), &mut Vec::new())
+                .await
+                .is_err(),
+            "mode {bad}"
+        );
+    }
+    for unavailable in [13, 32] {
+        mode.store(unavailable, Ordering::SeqCst);
+        assert!(
+            matches!(adapter.read_for(&identity(),SECRET,false,Some("A1"),&mut Vec::new()).await.unwrap(),Projection::GoogleInboxBody{text,truncated:false,unavailable:true} if text.is_empty())
+        );
+    }
+    server.abort();
+}
+#[test]
+fn google_body_strict_base64_bounds() {
+    for text in ["", "Hello", "한글\n", "<script>send</script>"] {
+        assert_eq!(
+            decode_mail_base64(&mail_base64(text.as_bytes()))
+                .unwrap()
+                .as_slice(),
+            text.as_bytes()
+        );
+    }
+    for invalid in ["A", "AB", "AA=", "AA===", "AA+_", "AA/0", "AA A", "===="] {
+        assert!(decode_mail_base64(invalid).is_err(), "{invalid}");
+    }
+    assert_eq!(&*decode_mail_base64("SGVsbG8=").unwrap(), b"Hello");
+}
+#[tokio::test]
+async fn google_body_requires_selected_preview_same_grant_identity_and_never_replays() {
+    let (adapter, mode, paths, server) = provider().await;
+    mode.store(10, Ordering::SeqCst);
+    let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let root = tmp.path().join("device");
+    let device = Device {
+        owner: moosuri_vault_protocol::Owner {
+            tenant: uuid::Uuid::new_v4(),
+            account: uuid::Uuid::new_v4(),
+            installation: uuid::Uuid::new_v4(),
+            epoch: 1,
+        },
+        id: uuid::Uuid::new_v4(),
+        generation: 1,
+    };
+    let key = auth::SigningKey::generate_pkcs8().unwrap();
+    let mut engine = Engine::enroll(
+        &root,
+        device.clone(),
+        "https://assistant.example.test".into(),
+        &key,
+    )
+    .unwrap();
+    let (mut archive, item) = archive(&device);
+    let now = current_time().unwrap();
+    let preview = engine
+        .archive_google_preview_grant(&mut archive, item, identity(), now + 600)
+        .unwrap();
+    let make = |binding: Binding, operation, digest| Request {
+        device: device.clone(),
+        invocation: Invocation {
+            run: uuid::Uuid::new_v4(),
+            step: 1,
+            call: uuid::Uuid::new_v4(),
+            nonce: uuid::Uuid::new_v4(),
+        },
+        binding,
+        operation,
+        repository: None,
+        digest,
+        expires_at: now + 300,
+    };
+    let request = make(
+        preview.clone(),
+        Operation::GoogleInboxPreview,
+        preview_digest(),
+    );
+    engine
+        .prepare_google(&archive, request.clone(), now)
+        .unwrap();
+    engine
+        .accept_commitment(Commitment {
+            request: request.clone(),
+            nonce: uuid::Uuid::new_v4(),
+        })
+        .unwrap();
+    let result = engine
+        .execute_google(&mut archive, &request.invocation, &adapter)
+        .await
+        .unwrap();
+    let Projection::GoogleInboxPreview { messages, .. } = &result.receipt.projection else {
+        panic!("preview")
+    };
+    let selection = messages[0].selection.unwrap();
+    assert!(!serde_json::to_string(&result).unwrap().contains("A1"));
+    let denied = make(
+        preview.clone(),
+        Operation::GoogleInboxBody { selection },
+        body_digest(),
+    );
+    assert!(engine.prepare_google(&archive, denied, now).is_err());
+    let body = engine
+        .archive_google_body_grant(&mut archive, item, identity(), now + 600)
+        .unwrap();
+    assert_ne!(body.id, preview.id);
+    let challenge = AuthChallenge {
+        device: device.clone(),
+        origin: "https://assistant.example.test".into(),
+        nonce: uuid::Uuid::new_v4(),
+        expires_at: now + 30,
+    };
+    assert!(
+        engine
+            .sign_command(
+                &challenge,
+                "POST",
+                DEVICE_PATH,
+                Command::RegisterGoogleBody {
+                    binding: preview.clone()
+                },
+                now
+            )
+            .is_err()
+    );
+    let wrong = make(
+        body.clone(),
+        Operation::GoogleInboxBody {
+            selection: uuid::Uuid::new_v4(),
+        },
+        body_digest(),
+    );
+    engine.prepare_google(&archive, wrong.clone(), now).unwrap();
+    engine
+        .accept_commitment(Commitment {
+            request: wrong.clone(),
+            nonce: uuid::Uuid::new_v4(),
+        })
+        .unwrap();
+    paths.lock().unwrap().clear();
+    assert!(
+        engine
+            .execute_google(&mut archive, &wrong.invocation, &adapter)
+            .await
+            .is_err()
+    );
+    assert!(paths.lock().unwrap().is_empty());
+    mode.store(30, Ordering::SeqCst);
+    let request = make(
+        body.clone(),
+        Operation::GoogleInboxBody { selection },
+        body_digest(),
+    );
+    engine
+        .prepare_google(&archive, request.clone(), now)
+        .unwrap();
+    engine
+        .accept_commitment(Commitment {
+            request: request.clone(),
+            nonce: uuid::Uuid::new_v4(),
+        })
+        .unwrap();
+    let receipt = engine
+        .execute_google(&mut archive, &request.invocation, &adapter)
+        .await
+        .unwrap();
+    assert!(receipt.receipt.outcome == Outcome::ProjectedSuccess);
+    assert_eq!(paths.lock().unwrap().len(), 4);
+    assert!(
+        matches!(&receipt.receipt.projection,Projection::GoogleInboxBody{text,..} if text.contains("<img src=x>"))
+    );
+    drop(engine);
+    let mut engine = Engine::open_local(&root).unwrap();
+    assert!(engine.receipt(&request.invocation).unwrap().is_some());
+    assert!(
+        engine
+            .execute_google(&mut archive, &request.invocation, &adapter)
+            .await
+            .is_err()
+    );
+    assert_eq!(paths.lock().unwrap().len(), 4);
+    // Selection survives restart; same local body grant is reused without approval.
+    assert_eq!(
+        engine
+            .archive_google_body_grant(&mut archive, item, identity(), now + 600)
+            .unwrap()
+            .id,
+        body.id
+    );
+    let reused = make(
+        body.clone(),
+        Operation::GoogleInboxBody { selection },
+        body_digest(),
+    );
+    engine
+        .prepare_google(&archive, reused.clone(), now)
+        .unwrap();
+    engine
+        .accept_commitment(Commitment {
+            request: reused.clone(),
+            nonce: uuid::Uuid::new_v4(),
+        })
+        .unwrap();
+    engine
+        .execute_google(&mut archive, &reused.invocation, &adapter)
+        .await
+        .unwrap();
+    assert_eq!(paths.lock().unwrap().len(), 8);
+    // Expiry and preview revocation fence fresh entries even within body scope.
+    engine
+        .state
+        .google_selections
+        .iter_mut()
+        .for_each(|s| s.expires_at = now - 1);
+    let stale = make(
+        body,
+        Operation::GoogleInboxBody { selection },
+        body_digest(),
+    );
+    engine.prepare_google(&archive, stale.clone(), now).unwrap();
+    engine
+        .accept_commitment(Commitment {
+            request: stale.clone(),
+            nonce: uuid::Uuid::new_v4(),
+        })
+        .unwrap();
+    assert!(
+        engine
+            .execute_google(&mut archive, &stale.invocation, &adapter)
+            .await
+            .is_err()
+    );
+    assert_eq!(paths.lock().unwrap().len(), 8);
     server.abort();
 }

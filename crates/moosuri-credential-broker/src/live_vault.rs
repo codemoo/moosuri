@@ -488,7 +488,7 @@ impl Engine {
         identity: crate::google::GoogleIdentity,
         expires: i64,
     ) -> Result<Binding> {
-        self.live_google_grant_for(vault, item, identity, expires, false)
+        self.live_google_grant_for(vault, item, identity, expires, 0)
             .await
     }
     pub async fn live_google_preview_grant(
@@ -498,7 +498,17 @@ impl Engine {
         identity: crate::google::GoogleIdentity,
         expires: i64,
     ) -> Result<Binding> {
-        self.live_google_grant_for(vault, item, identity, expires, true)
+        self.live_google_grant_for(vault, item, identity, expires, 1)
+            .await
+    }
+    pub async fn live_google_body_grant(
+        &mut self,
+        vault: &mut LiveVault,
+        item: Uuid,
+        identity: crate::google::GoogleIdentity,
+        expires: i64,
+    ) -> Result<Binding> {
+        self.live_google_grant_for(vault, item, identity, expires, 2)
             .await
     }
     async fn live_google_grant_for(
@@ -507,7 +517,7 @@ impl Engine {
         item: Uuid,
         identity: crate::google::GoogleIdentity,
         expires: i64,
-        preview: bool,
+        mode: u8,
     ) -> Result<Binding> {
         if vault.owner != self.device().owner {
             return Err(Error::Policy);
@@ -516,7 +526,8 @@ impl Engine {
         vault.state().await?;
         if let Some(at) = self.state.grants.iter().position(|g| {
             g.google().is_some()
-                && g.google_preview() == preview
+                && g.google_preview() == (mode == 1)
+                && g.google_body() == (mode == 2)
                 && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
         }) {
             let grant = &mut self.state.grants[at];
@@ -533,7 +544,9 @@ impl Engine {
             return Ok(binding);
         }
         self.select(
-            (if preview {
+            (if mode == 2 {
+                policy::LocalGrant::select_google_body
+            } else if mode == 1 {
                 policy::LocalGrant::select_google_preview
             } else {
                 policy::LocalGrant::select_google
@@ -615,6 +628,7 @@ impl Engine {
             Operation::GitHubRepositoryRead
                 | Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
+                | Operation::GoogleInboxBody { .. }
         ) || vault.owner != self.device().owner
         {
             return Err(Error::Policy);

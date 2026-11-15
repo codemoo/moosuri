@@ -45,3 +45,9 @@ Public documentation checked on2026-11-15 without any real account or token:
 - [Existing refresh/identity/scope contract](native-credential-google.md#fixed-provider-contract).
 
 Synthetic fixtures cover fixed paths and bounds, empty/moved/deleted/unknown results, scope/identity failures, secret echoes including beyond the truncation boundary, same grant reuse, old counts-grant denial, exact receipt/restart without replay, literal display, original-chat wait/restart/cancel/late duplicate settlement and the existing counts path. Independent binary-encoder hashes check old signatures and the new field order. Execution evidence is recorded in the review/change tasks after checks complete; this document does not certify real Google consent, quota, accounts, packaging or every P8 adapter.
+
+A separately granted [selected-message body reader](native-google-message-body.md)
+adds signed opaque selection handles to new previews. It keeps actual message IDs
+on the device; the preview operation still fetches metadata only. Selector-free
+old records keep their original wire bytes and display behavior. New selectable
+preview projection bytes use a separate discriminant as described in that contract.

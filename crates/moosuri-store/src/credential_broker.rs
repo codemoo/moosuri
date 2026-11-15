@@ -37,6 +37,22 @@ fn commitment(conn: &Connection, tenant: &str, i: &Invocation) -> Result<Option<
 }
 fn projection_allowed(outcome: Outcome, p: &Projection, operation: Operation) -> bool {
     match (outcome, p, operation) {
+        (
+            Outcome::ProjectedSuccess,
+            Projection::GoogleInboxBody {
+                text,
+                truncated,
+                unavailable,
+            },
+            Operation::GoogleInboxBody { selection },
+        ) => {
+            !selection.is_nil()
+                && text.len() <= 4096
+                && (!*unavailable || (text.is_empty() && !truncated))
+                && !text
+                    .chars()
+                    .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
+        }
         (Outcome::ProjectedSuccess, Projection::FixedProbeOk, Operation::FixedProbe) => true,
         (
             Outcome::ProjectedSuccess,
@@ -74,7 +90,16 @@ fn projection_allowed(outcome: Outcome, p: &Projection, operation: Operation) ->
             Operation::GoogleInboxPreview,
         ) => {
             messages.len() + usize::from(*unavailable) <= 5
-                && messages.iter().all(GoogleMessagePreview::valid)
+                && messages
+                    .iter()
+                    .all(|m| m.valid() && m.selection.is_none_or(|s| !s.is_nil()))
+                && {
+                    let mut seen = std::collections::HashSet::new();
+                    messages
+                        .iter()
+                        .filter_map(|m| m.selection)
+                        .all(|id| seen.insert(id))
+                }
         }
         (Outcome::ProjectedSuccess, _, _) => false,
         (_, Projection::None, _) => true,
@@ -130,6 +155,15 @@ fn commit_current(
     let b: Binding = decode(&bs)?;
     if b != r.binding || b.expires_at <= now()? {
         return Err(StoreError::Forbidden);
+    }
+    if let Operation::GoogleInboxBody { selection } = r.operation {
+        let owner = active(conn, p, session)?;
+        let origin = github::selection_origin(conn, tenant, &owner.account.id, selection, None)?;
+        if origin.receipt.commitment.request.device != r.device
+            || r.expires_at > origin.receipt.commitment.request.expires_at
+        {
+            return Err(StoreError::Forbidden);
+        }
     }
     let committed = Commitment {
         request: r,
@@ -346,6 +380,19 @@ impl Store {
     let current:Binding=decode(&saved)?;if current!=binding{if current!=expected{return Err(StoreError::Conflict)}
         tx.execute("UPDATE credential_broker_bindings SET binding=?1 WHERE device_id=?2 AND binding_id=?3 AND binding=?4",params![encode(&binding)?,device,binding.id.to_string(),saved])?;
         github::refresh_resource(&tx,&c.device,&expected,&binding,&Resource::google_inbox())?;
+    }Reply::Registered
+   },
+   Command::RegisterGoogleBody{binding}=>{
+    active(&tx,&p,&session)?;register_google(&tx,&device,&status,&binding,&Resource::google_body(Uuid::nil()))?;Reply::Registered
+   },
+   Command::RefreshGoogleBody{expected,binding}=>{
+    active(&tx,&p,&session)?;
+    if status!="active" || binding.id!=expected.id || binding.epoch!=expected.epoch.checked_add(1).ok_or(StoreError::Forbidden)? || binding.grant_version!=expected.grant_version.checked_add(1).ok_or(StoreError::Forbidden)? || binding.item_epoch<expected.item_epoch || binding.key_epoch<expected.key_epoch || binding.expires_at!=expected.expires_at || binding.expires_at<=now()? || binding.grant_hash==[0;32] || binding.grant_hash==expected.grant_hash{return Err(StoreError::Forbidden)}
+    let (saved,resource):(String,String)=tx.query_row("SELECT b.binding,r.repository FROM credential_broker_bindings b JOIN credential_broker_repositories r USING(device_id,binding_id) WHERE b.device_id=?1 AND b.binding_id=?2 AND b.active=1",params![device,binding.id.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::NotFound)?;
+    if decode::<Resource>(&resource)?!=Resource::google_body(Uuid::nil()){return Err(StoreError::Forbidden)}
+    let current:Binding=decode(&saved)?;if current!=binding{if current!=expected{return Err(StoreError::Conflict)}
+        tx.execute("UPDATE credential_broker_bindings SET binding=?1 WHERE device_id=?2 AND binding_id=?3 AND binding=?4",params![encode(&binding)?,device,binding.id.to_string(),saved])?;
+        github::refresh_resource(&tx,&c.device,&expected,&binding,&Resource::google_body(Uuid::nil()))?;
     }Reply::Registered
    },
    Command::RegisterGooglePreview{binding}=>{

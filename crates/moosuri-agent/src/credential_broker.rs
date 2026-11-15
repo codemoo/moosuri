@@ -27,3 +27,16 @@ pub async fn google_preview(
 ) -> Result<moosuri_store::credential_broker::github::ScopedJob, StoreError> {
     store.request_google_preview(user, request_id).await
 }
+
+/// UI selection only. There is intentionally no model-visible body tool.
+pub async fn google_body(
+    store: &Store,
+    user: &UserContext,
+    request_id: String,
+    preview_request_id: String,
+    selection: uuid::Uuid,
+) -> Result<moosuri_store::credential_broker::github::ScopedJob, StoreError> {
+    store
+        .request_google_body(user, request_id, preview_request_id, selection)
+        .await
+}

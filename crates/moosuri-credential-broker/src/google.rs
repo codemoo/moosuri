@@ -7,6 +7,21 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 pub(crate) const LOCAL_POLICY: &[u8] = b"moosuri/local-google-inbox/v1\0https://oauth2.googleapis.com/token\0https://openidconnect.googleapis.com/v1/userinfo\0https://gmail.googleapis.com/gmail/v1/users/me/profile\0https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX\0openid email https://www.googleapis.com/auth/gmail.readonly";
 pub(crate) const PREVIEW_POLICY: &[u8] = b"moosuri/local-google-inbox-preview/v1\0https://oauth2.googleapis.com/token\0https://openidconnect.googleapis.com/v1/userinfo\0https://gmail.googleapis.com/gmail/v1/users/me/profile\0https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=INBOX&maxResults=5&includeSpamTrash=false\0metadata:Subject,From,Date;snippet\0openid email https://www.googleapis.com/auth/gmail.readonly";
+pub(crate) const BODY_POLICY: &[u8] = b"moosuri/local-google-inbox-body/v1\0selected-preview-only;GET:messages/{local-id}?format=full;INBOX;utf8-text/plain;4096bytes;no-attachments";
+pub fn body_digest() -> [u8; 32] {
+    auth::hash(&Resource::google_body(uuid::Uuid::nil()).bytes())
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BodySelection {
+    selection: uuid::Uuid,
+    id: String,
+    preview_binding: Binding,
+    item: uuid::Uuid,
+    vault: uuid::Uuid,
+    identity: GoogleIdentity,
+    expires_at: i64,
+}
 pub fn preview_digest() -> [u8; 32] {
     auth::hash(&Resource::google_preview().bytes())
 }
@@ -98,6 +113,163 @@ struct Inbox {
     messages_unread: u32,
     threads_total: u32,
     threads_unread: u32,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MimePart {
+    mime_type: SecretText,
+    #[serde(default)]
+    filename: Option<SecretText>,
+    #[serde(default)]
+    headers: Vec<MimeHeader>,
+    #[serde(default)]
+    body: Option<MimeBody>,
+    #[serde(default)]
+    parts: Vec<MimePart>,
+}
+#[derive(Deserialize)]
+struct MimeHeader {
+    name: SecretText,
+    value: SecretText,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MimeBody {
+    #[serde(default)]
+    data: Option<SecretText>,
+    #[serde(default)]
+    attachment_id: Option<SecretText>,
+    size: u64,
+}
+impl MimePart {
+    fn plain<'a>(
+        &'a self,
+        depth: usize,
+        visited: &mut usize,
+        out: &mut Vec<&'a SecretText>,
+    ) -> Result<()> {
+        *visited += 1;
+        if depth > 4 || *visited > 32 || self.headers.len() > 64 {
+            return Err(Error::ProviderContent);
+        }
+        if self
+            .filename
+            .as_ref()
+            .is_some_and(|s| !s.expose().is_empty())
+        {
+            return Ok(());
+        }
+        let mut content_type = None;
+        let mut disposition = None;
+        for h in &self.headers {
+            if h.name.expose().eq_ignore_ascii_case("content-type")
+                && content_type.replace(h.value.expose()).is_some()
+            {
+                return Err(Error::ProviderContent);
+            }
+            if h.name.expose().eq_ignore_ascii_case("content-disposition")
+                && disposition.replace(h.value.expose()).is_some()
+            {
+                return Err(Error::ProviderContent);
+            }
+        }
+        if disposition.is_some_and(|s| {
+            !s.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case("inline")
+        }) {
+            return Ok(());
+        }
+        if self.mime_type.expose().eq_ignore_ascii_case("text/plain") {
+            if !self.parts.is_empty() {
+                return Err(Error::ProviderContent);
+            }
+            if let Some(ct) = content_type {
+                let mut fields = ct.split(';');
+                if !fields
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .eq_ignore_ascii_case("text/plain")
+                {
+                    return Err(Error::ProviderContent);
+                }
+                for parameter in fields {
+                    let (name, value) = parameter
+                        .trim()
+                        .split_once('=')
+                        .ok_or(Error::ProviderContent)?;
+                    if !name.trim().eq_ignore_ascii_case("charset")
+                        || !matches!(
+                            value.trim().trim_matches('"').to_ascii_lowercase().as_str(),
+                            "utf-8" | "us-ascii"
+                        )
+                    {
+                        return Err(Error::ProviderContent);
+                    }
+                }
+            }
+            let body = self.body.as_ref().ok_or(Error::ProviderContent)?;
+            if body.attachment_id.is_some() {
+                return Ok(());
+            }
+            if body.size > 16384 {
+                return Err(Error::ProviderContent);
+            }
+            let data = body.data.as_ref().ok_or(Error::ProviderContent)?;
+            if decode_mail_base64(data.expose())?.len() as u64 != body.size {
+                return Err(Error::ProviderContent);
+            }
+            out.push(data);
+        } else if matches!(
+            self.mime_type.expose().to_ascii_lowercase().as_str(),
+            "multipart/alternative" | "multipart/mixed"
+        ) {
+            for part in &self.parts {
+                part.plain(depth + 1, visited, out)?;
+            }
+        }
+        Ok(())
+    }
+}
+// Strict bounded URL-safe base64 with optional canonical padding. No new dependency.
+fn decode_mail_base64(s: &str) -> Result<Zeroizing<Vec<u8>>> {
+    if s.len() > 21848 {
+        return Err(Error::ProviderContent);
+    }
+    let raw = s.trim_end_matches('=');
+    let padding = s.len() - raw.len();
+    if padding > 2
+        || raw.len() % 4 == 1
+        || (padding != 0 && (s.len() % 4 != 0 || padding != (4 - raw.len() % 4) % 4))
+    {
+        return Err(Error::ProviderContent);
+    }
+    let mut out = Zeroizing::new(Vec::new());
+    let mut acc = 0u32;
+    let mut bits = 0;
+    for b in raw.bytes() {
+        let value = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => return Err(Error::ProviderContent),
+        };
+        acc = (acc << 6 | value as u32) & 0xffffff;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    if bits > 0 && acc & ((1 << bits) - 1) != 0 || out.len() > 16384 {
+        return Err(Error::ProviderContent);
+    }
+    Ok(out)
 }
 pub struct GoogleAdapter {
     client: reqwest::Client,
@@ -203,6 +375,7 @@ impl GoogleAdapter {
         credential: &Credential,
         token: &Token,
         secret: &str,
+        selections: &mut Vec<(uuid::Uuid, String)>,
     ) -> Result<Projection> {
         #[derive(Deserialize)]
         struct Listed {
@@ -313,6 +486,11 @@ impl GoogleAdapter {
                 safe(values.first().map(|h| h.value.expose()).unwrap_or(""), max)
             };
             messages.push(moosuri_vault_protocol::broker::GoogleMessagePreview {
+                selection: Some({
+                    let selection = uuid::Uuid::new_v4();
+                    selections.push((selection, id.to_owned()));
+                    selection
+                }),
                 subject: header("subject", 256)?,
                 from: header("from", 256)?,
                 date: header("date", 128)?,
@@ -326,11 +504,96 @@ impl GoogleAdapter {
             more_available: list.next.is_some_and(|s| !s.expose().is_empty()),
         })
     }
+    async fn body(
+        &self,
+        id: &str,
+        credential: &Credential,
+        token: &Token,
+        secret: &str,
+    ) -> Result<Projection> {
+        #[derive(Deserialize)]
+        struct Message {
+            id: SecretText,
+            #[serde(rename = "labelIds")]
+            labels: Vec<SecretText>,
+            payload: MimePart,
+        }
+        let response = self
+            .client
+            .get(format!(
+                "{}/{id}?format=full&fields=id%2ClabelIds%2Cpayload",
+                self.messages
+            ))
+            .bearer_auth(token.access_token.expose())
+            .send()
+            .await
+            .map_err(|_| Error::Unknown)?;
+        let unavailable = || Projection::GoogleInboxBody {
+            text: String::new(),
+            truncated: false,
+            unavailable: true,
+        };
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(unavailable());
+        }
+        let message: Message = Self::decode_body(response, true).await?;
+        if message.id.expose() != id {
+            return Err(Error::ProviderContent);
+        }
+        if !message.labels.iter().any(|l| l.expose() == "INBOX") {
+            return Ok(unavailable());
+        }
+        let mut visited = 0;
+        let mut plain = Vec::new();
+        message.payload.plain(0, &mut visited, &mut plain)?;
+        // Exactly one inline plaintext part. No HTML conversion or attachment fetch.
+        if plain.len() != 1 {
+            return Err(Error::ProviderContent);
+        }
+        let bytes = decode_mail_base64(plain[0].expose())?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| Error::ProviderContent)?;
+        if [
+            Some(secret),
+            Some(credential.refresh_token.expose()),
+            Some(credential.client_id.expose()),
+            credential.client_secret.as_ref().map(|s| s.expose()),
+            Some(token.access_token.expose()),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|s| !s.is_empty() && text.contains(s))
+            || text
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
+        {
+            return Err(Error::ProviderContent);
+        }
+        let mut end = text.len().min(4096);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        Ok(Projection::GoogleInboxBody {
+            text: text[..end].to_owned(),
+            truncated: end != text.len(),
+            unavailable: false,
+        })
+    }
     async fn read(
         &self,
         identity: &GoogleIdentity,
         secret: &str,
         preview: bool,
+    ) -> Result<Projection> {
+        self.read_for(identity, secret, preview, None, &mut Vec::new())
+            .await
+    }
+    async fn read_for(
+        &self,
+        identity: &GoogleIdentity,
+        secret: &str,
+        preview: bool,
+        selected_id: Option<&str>,
+        selections: &mut Vec<(uuid::Uuid, String)>,
     ) -> Result<Projection> {
         if !identity.valid() {
             return Err(Error::Policy);
@@ -398,8 +661,11 @@ impl GoogleAdapter {
         if profile.email.expose() != verified.email.expose() {
             return Err(Error::Policy);
         }
+        if let Some(id) = selected_id {
+            return self.body(id, &credential, &token, secret).await;
+        }
         if preview {
-            return self.preview(&credential, &token, secret).await;
+            return self.preview(&credential, &token, secret, selections).await;
         }
         let inbox: Inbox = Self::response(
             self.client
@@ -437,7 +703,7 @@ impl Engine {
         identity: GoogleIdentity,
         expires: i64,
     ) -> Result<Binding> {
-        self.archive_google_grant_for(archive, item, identity, expires, false)
+        self.archive_google_grant_for(archive, item, identity, expires, 0)
     }
     pub fn archive_google_preview_grant(
         &mut self,
@@ -446,7 +712,16 @@ impl Engine {
         identity: GoogleIdentity,
         expires: i64,
     ) -> Result<Binding> {
-        self.archive_google_grant_for(archive, item, identity, expires, true)
+        self.archive_google_grant_for(archive, item, identity, expires, 1)
+    }
+    pub fn archive_google_body_grant(
+        &mut self,
+        archive: &mut UnlockedArchive,
+        item: uuid::Uuid,
+        identity: GoogleIdentity,
+        expires: i64,
+    ) -> Result<Binding> {
+        self.archive_google_grant_for(archive, item, identity, expires, 2)
     }
     fn archive_google_grant_for(
         &mut self,
@@ -454,7 +729,7 @@ impl Engine {
         item: uuid::Uuid,
         identity: GoogleIdentity,
         expires: i64,
-        preview: bool,
+        mode: u8,
     ) -> Result<Binding> {
         if archive.header().binding.owner_id != self.device().owner.account
             || archive.header().binding.tenant_id != self.device().owner.tenant
@@ -471,7 +746,8 @@ impl Engine {
         fields(&archive.open(item).map_err(|_| Error::Policy)?)?;
         if let Some(at) = self.grants().iter().position(|g| {
             g.google().is_some()
-                && g.google_preview() == preview
+                && g.google_preview() == (mode == 1)
+                && g.google_body() == (mode == 2)
                 && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
         }) {
             // No retained invocation may cross a credential-version change.
@@ -496,7 +772,9 @@ impl Engine {
             self.save()?;
             return Ok(binding);
         }
-        self.select((if preview {
+        self.select((if mode == 2 {
+            policy::LocalGrant::select_google_body
+        } else if mode == 1 {
             policy::LocalGrant::select_google_preview
         } else {
             policy::LocalGrant::select_google
@@ -518,7 +796,9 @@ impl Engine {
     ) -> Result<()> {
         if !matches!(
             request.operation,
-            Operation::GoogleInboxRead | Operation::GoogleInboxPreview
+            Operation::GoogleInboxRead
+                | Operation::GoogleInboxPreview
+                | Operation::GoogleInboxBody { .. }
         ) || archive.header().binding.owner_id != self.device().owner.account
             || archive.header().binding.tenant_id != self.device().owner.tenant
         {
@@ -599,11 +879,53 @@ impl Engine {
             .request;
         if !matches!(
             request.operation,
-            Operation::GoogleInboxRead | Operation::GoogleInboxPreview
+            Operation::GoogleInboxRead
+                | Operation::GoogleInboxPreview
+                | Operation::GoogleInboxBody { .. }
         ) {
             return Err(Error::Policy);
         }
         let preview = request.operation == Operation::GoogleInboxPreview;
+        let grant = self
+            .grants()
+            .iter()
+            .find(|g| g.binding.id == request.binding.id)
+            .ok_or(Error::Policy)?
+            .clone();
+        let selected = if let Operation::GoogleInboxBody { selection } = request.operation {
+            let local = self
+                .state
+                .google_selections
+                .iter()
+                .find(|s| s.selection == selection)
+                .ok_or(Error::Policy)?;
+            let original = self
+                .grants()
+                .iter()
+                .find(|g| g.binding == local.preview_binding)
+                .ok_or(Error::Policy)?;
+            if local.expires_at <= current_time()?
+                || local.item != grant.item()
+                || Some(local.vault) != grant.vault()
+                || Some(&local.identity) != grant.google()
+                || local.preview_binding.item_epoch != item_epoch
+                || local.preview_binding.key_epoch != key_epoch
+                || original.live().map(|p| &p.origin) != grant.live().map(|p| &p.origin)
+            {
+                return Err(Error::Policy);
+            }
+            // A revoked/suspended/changed preview cannot be used to cross into body authority.
+            let mut check = request.clone();
+            check.operation = Operation::GoogleInboxPreview;
+            check.binding = original.binding.clone();
+            check.digest = preview_digest();
+            check.expires_at = check.expires_at.min(original.binding.expires_at);
+            original.check(&check, current_time()?, item_epoch, key_epoch)?;
+            Some(local.id.clone())
+        } else {
+            None
+        };
+
         let identity = self
             .grants()
             .iter()
@@ -611,11 +933,26 @@ impl Engine {
             .and_then(|g| g.google())
             .ok_or(Error::Policy)?
             .clone();
+        if preview {
+            self.state
+                .google_selections
+                .retain(|s| s.expires_at > current_time().unwrap_or(i64::MAX));
+            if self.state.google_selections.len() > 507 {
+                return Err(Error::PrivateState);
+            }
+        }
         let commitment = self.begin_dispatch(invocation, current_time()?, item_epoch, key_epoch)?;
-        let result = if preview {
+        let mut selections = Vec::new();
+        let result = if preview || selected.is_some() {
             tokio::time::timeout(
                 Duration::from_secs(60),
-                adapter.read(&identity, secret, true),
+                adapter.read_for(
+                    &identity,
+                    secret,
+                    preview,
+                    selected.as_deref(),
+                    &mut selections,
+                ),
             )
             .await
             .unwrap_or(Err(Error::Unknown))
@@ -644,6 +981,25 @@ impl Engine {
                 .find(|g| g.binding.id == signed.receipt.commitment.request.binding.id)
                 .ok_or(Error::Policy)?
                 .suspend_google();
+        }
+        if outcome == Outcome::ProjectedSuccess && preview {
+            self.state
+                .google_selections
+                .retain(|s| s.expires_at > current_time().unwrap_or(i64::MAX));
+            if self.state.google_selections.len() + selections.len() > 512 {
+                return Err(Error::PrivateState);
+            }
+            for (selection, id) in selections {
+                self.state.google_selections.push(BodySelection {
+                    selection,
+                    id,
+                    preview_binding: grant.binding.clone(),
+                    item: grant.item(),
+                    vault: grant.vault().ok_or(Error::Policy)?,
+                    identity: identity.clone(),
+                    expires_at: signed.receipt.commitment.request.expires_at,
+                });
+            }
         }
         self.state
             .entries

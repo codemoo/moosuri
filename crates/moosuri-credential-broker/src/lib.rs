@@ -56,6 +56,8 @@ struct State {
     revoked: bool,
     #[serde(default)]
     delivered: Vec<Invocation>,
+    #[serde(default)]
+    google_selections: Vec<google::BodySelection>,
 }
 pub struct Engine {
     state: State,
@@ -78,6 +80,7 @@ impl Engine {
             entries: vec![],
             revoked: false,
             delivered: vec![],
+            google_selections: vec![],
         };
         let journal = journal::Journal::create(path, pkcs8, &state)?;
         Ok(Self {
@@ -231,12 +234,34 @@ impl Engine {
                     return Err(Error::Policy);
                 }
             }
+            Command::RegisterGoogleBody { binding } => {
+                if self.state.revoked
+                    || !self
+                        .grants()
+                        .iter()
+                        .any(|g| &g.binding == binding && g.google_body())
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::RefreshGoogleBody { expected, binding } => {
+                if self.state.revoked
+                    || !self.grants().iter().any(|g| {
+                        &g.binding == binding
+                            && g.google_body()
+                            && g.pending_refresh() == Some(expected)
+                    })
+                {
+                    return Err(Error::Policy);
+                }
+            }
             Command::RegisterGoogleInbox { binding }
             | Command::RegisterGooglePreview { binding } => {
                 if self.state.revoked
                     || !self.state.grants.iter().any(|g| {
                         &g.binding == binding
                             && g.google().is_some()
+                            && !g.google_body()
                             && g.google_preview()
                                 == matches!(command, Command::RegisterGooglePreview { .. })
                     })
@@ -250,6 +275,7 @@ impl Engine {
                     || !self.state.grants.iter().any(|g| {
                         &g.binding == binding
                             && g.google().is_some()
+                            && !g.google_body()
                             && g.google_preview()
                                 == matches!(command, Command::RefreshGooglePreview { .. })
                             && g.pending_refresh() == Some(expected)

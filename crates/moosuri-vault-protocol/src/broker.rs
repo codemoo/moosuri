@@ -45,6 +45,7 @@ pub enum Operation {
     GitHubRepositoryRead,
     GoogleInboxRead,
     GoogleInboxPreview,
+    GoogleInboxBody { selection: Uuid },
 }
 /// Exact, canonical repository selection. Never a URL or HTTP header.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +85,12 @@ impl GitHubRepository {
 pub enum Resource {
     GitHub(GitHubRepository),
     GoogleInbox(GoogleInboxResource),
+    GoogleBody(GoogleBodyResource),
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoogleBodyResource {
+    pub google_body: Uuid,
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,6 +104,17 @@ pub enum GoogleInboxVersion {
     PreviewV1,
 }
 impl Resource {
+    pub fn google_body(selection: Uuid) -> Self {
+        Self::GoogleBody(GoogleBodyResource {
+            google_body: selection,
+        })
+    }
+    pub fn scope(&self) -> Self {
+        match self {
+            Self::GoogleBody(_) => Self::google_body(Uuid::nil()),
+            _ => self.clone(),
+        }
+    }
     pub fn google_inbox() -> Self {
         Self::GoogleInbox(GoogleInboxResource {
             google_inbox: GoogleInboxVersion::CountsV1,
@@ -111,11 +129,15 @@ impl Resource {
         match self {
             Self::GitHub(r) => r.valid(),
             Self::GoogleInbox(_) => true,
+            Self::GoogleBody(r) => !r.google_body.is_nil(),
         }
     }
     pub fn operation(&self) -> Operation {
         match self {
             Self::GitHub(_) => Operation::GitHubRepositoryRead,
+            Self::GoogleBody(r) => Operation::GoogleInboxBody {
+                selection: r.google_body,
+            },
             Self::GoogleInbox(r) => match r.google_inbox {
                 GoogleInboxVersion::CountsV1 => Operation::GoogleInboxRead,
                 GoogleInboxVersion::PreviewV1 => Operation::GoogleInboxPreview,
@@ -125,12 +147,13 @@ impl Resource {
     pub fn repository(&self) -> Option<&GitHubRepository> {
         match self {
             Self::GitHub(r) => Some(r),
-            Self::GoogleInbox(_) => None,
+            Self::GoogleInbox(_) | Self::GoogleBody(_) => None,
         }
     }
     pub fn bytes(&self) -> Vec<u8> {
         match self {
             Self::GitHub(r) => r.bytes(),
+            Self::GoogleBody(_) => b"moosuri/google-inbox-body/v1".to_vec(),
             Self::GoogleInbox(r) => match r.google_inbox {
                 GoogleInboxVersion::CountsV1 => b"moosuri/google-inbox-counts/v1".to_vec(),
                 GoogleInboxVersion::PreviewV1 => b"moosuri/google-inbox-preview/v1".to_vec(),
@@ -187,6 +210,8 @@ pub enum Outcome {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GoogleMessagePreview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<Uuid>,
     pub subject: String,
     pub from: String,
     pub date: String,
@@ -209,6 +234,11 @@ impl GoogleMessagePreview {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Projection {
+    GoogleInboxBody {
+        text: String,
+        truncated: bool,
+        unavailable: bool,
+    },
     None,
     FixedProbeOk,
     GoogleInbox {
@@ -234,18 +264,35 @@ impl Projection {
     pub fn bytes(&self) -> Vec<u8> {
         let mut b = Bytes::new(b"projection");
         match self {
+            Self::GoogleInboxBody {
+                text,
+                truncated,
+                unavailable,
+            } => {
+                b.0.push(5);
+                b.blob(text.as_bytes());
+                b.0.push(*truncated as u8);
+                b.0.push(*unavailable as u8);
+            }
             Self::GoogleInboxPreview {
                 messages,
                 unavailable,
                 more_available,
             } => {
-                b.0.push(4);
+                let selected = messages.iter().any(|m| m.selection.is_some());
+                b.0.push(if selected { 6 } else { 4 });
                 b.u(messages.len() as u64);
                 for m in messages {
                     for s in [&m.subject, &m.from, &m.date, &m.snippet] {
                         b.blob(s.as_bytes());
                     }
                     b.0.push(m.truncated as u8);
+                    if selected {
+                        b.0.push(m.selection.is_some() as u8);
+                        if let Some(id) = m.selection {
+                            b.id(id);
+                        }
+                    }
                 }
                 b.0.push(*unavailable);
                 b.0.push(*more_available as u8);
@@ -303,6 +350,13 @@ pub struct SignedReceipt {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    RegisterGoogleBody {
+        binding: Binding,
+    },
+    RefreshGoogleBody {
+        expected: Binding,
+        binding: Binding,
+    },
     Register {
         binding: Binding,
     },
@@ -420,6 +474,15 @@ impl Bytes {
         self.invocation(&r.invocation);
         self.binding(&r.binding);
         match r.operation {
+            Operation::GoogleInboxBody { selection } => {
+                self.0.push(5);
+                self.id(selection);
+                self.0.push(r.repository.is_some() as u8);
+                if let Some(repo) = &r.repository {
+                    self.blob(repo.owner.as_bytes());
+                    self.blob(repo.repository.as_bytes());
+                }
+            }
             Operation::FixedProbe => self.0.push(1),
             Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
                 self.0.push(if r.operation == Operation::GoogleInboxRead {
@@ -460,7 +523,14 @@ impl Bytes {
             Outcome::ProjectedSuccess => 3,
         });
         self.0.push(match r.projection {
-            Projection::GoogleInboxPreview { .. } => 4,
+            Projection::GoogleInboxBody { .. } => 5,
+            Projection::GoogleInboxPreview { ref messages, .. } => {
+                if messages.iter().any(|m| m.selection.is_some()) {
+                    6
+                } else {
+                    4
+                }
+            }
             Projection::None => 0,
             Projection::FixedProbeOk => 1,
             Projection::GoogleInbox { .. } => 3,
@@ -496,18 +566,35 @@ impl Bytes {
                 self.u(*value as u64);
             }
         }
+        if let Projection::GoogleInboxBody {
+            text,
+            truncated,
+            unavailable,
+        } = &r.projection
+        {
+            self.blob(text.as_bytes());
+            self.0.push(*truncated as u8);
+            self.0.push(*unavailable as u8);
+        }
         if let Projection::GoogleInboxPreview {
             messages,
             unavailable,
             more_available,
         } = &r.projection
         {
+            let selected = messages.iter().any(|m| m.selection.is_some());
             self.u(messages.len() as u64);
             for m in messages {
                 for s in [&m.subject, &m.from, &m.date, &m.snippet] {
                     self.blob(s.as_bytes());
                 }
                 self.0.push(m.truncated as u8);
+                if selected {
+                    self.0.push(m.selection.is_some() as u8);
+                    if let Some(id) = m.selection {
+                        self.id(id);
+                    }
+                }
             }
             self.0.push(*unavailable);
             self.0.push(*more_available as u8);
@@ -548,6 +635,15 @@ pub fn command_bytes(
     }
     let mut body = Bytes::new(b"command-body");
     match command {
+        Command::RegisterGoogleBody { binding } => {
+            body.0.push(14);
+            body.binding(binding);
+        }
+        Command::RefreshGoogleBody { expected, binding } => {
+            body.0.push(15);
+            body.binding(expected);
+            body.binding(binding);
+        }
         Command::RegisterGooglePreview { binding } => {
             body.0.push(12);
             body.binding(binding);

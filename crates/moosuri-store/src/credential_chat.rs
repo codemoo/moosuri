@@ -21,6 +21,7 @@ fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
 fn profile_enabled(profile: Option<&moosuri_core::RunToolProfile>, resource: &Resource) -> bool {
     profile.is_some_and(|p| match resource {
         Resource::GitHub(_) => p.credential_github,
+        Resource::GoogleBody(_) => false,
         Resource::GoogleInbox(g) => match g.google_inbox {
             moosuri_vault_protocol::broker::GoogleInboxVersion::CountsV1 => p.credential_google,
             moosuri_vault_protocol::broker::GoogleInboxVersion::PreviewV1 => {
@@ -32,6 +33,7 @@ fn profile_enabled(profile: Option<&moosuri_core::RunToolProfile>, resource: &Re
 fn resource_name(resource: &Resource) -> String {
     match resource {
         Resource::GitHub(r) => format!("{}/{}", r.owner, r.repository),
+        Resource::GoogleBody(_) => "INBOX plaintext body".into(),
         Resource::GoogleInbox(g) => {
             if g.google_inbox == moosuri_vault_protocol::broker::GoogleInboxVersion::PreviewV1 {
                 "INBOX preview"
@@ -45,13 +47,13 @@ fn resource_name(resource: &Resource) -> String {
 fn service(resource: &Resource) -> &'static str {
     match resource {
         Resource::GitHub(_) => "github",
-        Resource::GoogleInbox(_) => "google",
+        Resource::GoogleInbox(_) | Resource::GoogleBody(_) => "google",
     }
 }
 fn service_label(resource: &Resource) -> &'static str {
     match resource {
         Resource::GitHub(_) => "GitHub",
-        Resource::GoogleInbox(_) => "Gmail INBOX",
+        Resource::GoogleInbox(_) | Resource::GoogleBody(_) => "Gmail INBOX",
     }
 }
 fn literal_google_preview(text: &str) -> bool {
@@ -878,6 +880,7 @@ mod session_tests {
         .unwrap();
         let messages = (0..5)
             .map(|_| moosuri_vault_protocol::broker::GoogleMessagePreview {
+                selection: None,
                 subject: "S".repeat(256),
                 from: "F".repeat(256),
                 date: "D".repeat(128),
@@ -1059,6 +1062,7 @@ mod preview_tests {
         assert!(profile_enabled(Some(&old), &Resource::google_inbox()));
         let text = preview_summary(
             &[moosuri_vault_protocol::broker::GoogleMessagePreview {
+                selection: None,
                 subject: "[click](https://evil.invalid)".into(),
                 from: "<img src=x>".into(),
                 date: "".into(),

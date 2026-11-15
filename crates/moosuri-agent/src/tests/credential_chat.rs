@@ -502,6 +502,7 @@ async fn google_chat_outcome(preview: bool) {
         let projection = if preview {
             Projection::GoogleInboxPreview {
                 messages: vec![moosuri_vault_protocol::broker::GoogleMessagePreview {
+                    selection: None,
                     subject: "Synthetic subject PRIVATE_PREVIEW_DISPLAY_ONLY_19".into(),
                     from: "Sender <sender@example.test>".into(),
                     date: "15 Nov 2026".into(),

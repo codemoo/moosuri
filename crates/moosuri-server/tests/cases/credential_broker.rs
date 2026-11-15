@@ -304,3 +304,31 @@ async fn google_preview_http_is_separate_idempotent_bounded_and_never_accepts_id
     assert_eq!(status["google_jobs"].as_array().unwrap().len(), 0);
     assert_eq!(status["google_preview_jobs"].as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+#[cfg(feature = "credential-broker-foundation")]
+async fn google_body_http_requires_authenticated_genuine_selection_and_rejects_arbitrary_ids() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, _store, app) = fixture(false).await;
+    let cookie = login(&app, "admin@example.test", PASSWORD).await;
+    let input = json!({"request_id":uuid::Uuid::new_v4(),"preview_request_id":uuid::Uuid::new_v4(),"selection":uuid::Uuid::new_v4()});
+    let path = "/api/v1/credential-broker/google-body";
+    assert_eq!(
+        send(&app, "POST", path, None, input.clone()).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send(&app, "POST", path, Some(&cookie), input.clone())
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let mut arbitrary = input;
+    arbitrary["message_id"] = json!("provider-id");
+    assert_eq!(
+        send(&app, "POST", path, Some(&cookie), arbitrary)
+            .await
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+}

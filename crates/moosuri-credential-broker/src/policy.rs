@@ -31,6 +31,8 @@ pub struct LocalGrant {
     google_suspended: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     google_preview: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    google_body: bool,
     #[serde(default)]
     vault: Option<Uuid>,
     #[serde(default)]
@@ -78,6 +80,7 @@ impl LocalGrant {
             google: None,
             google_suspended: false,
             google_preview: false,
+            google_body: false,
             vault: None,
             live: None,
             previous: None,
@@ -182,11 +185,33 @@ impl LocalGrant {
         g.bind_archive_google()?;
         Ok(g)
     }
+    pub fn select_google_body(
+        device: Device,
+        item: Uuid,
+        vault: Uuid,
+        identity: crate::google::GoogleIdentity,
+        item_epoch: u64,
+        key_epoch: u64,
+        expires_at: i64,
+    ) -> Result<Self> {
+        let mut g = Self::select_google(
+            device, item, vault, identity, item_epoch, key_epoch, expires_at,
+        )?;
+        g.google_body = true;
+        g.service = "google-inbox-body".into();
+        g.bind_archive_google()?;
+        Ok(g)
+    }
+    pub fn google_body(&self) -> bool {
+        self.google_body
+    }
     pub fn google_preview(&self) -> bool {
         self.google_preview
     }
     fn google_policy(&self) -> &'static [u8] {
-        if self.google_preview {
+        if self.google_body {
+            crate::google::BODY_POLICY
+        } else if self.google_preview {
             crate::google::PREVIEW_POLICY
         } else {
             crate::google::LOCAL_POLICY
@@ -348,7 +373,9 @@ impl LocalGrant {
     }
     pub fn digest(&self) -> [u8; 32] {
         if self.google.is_some() {
-            return if self.google_preview {
+            return if self.google_body {
+                crate::google::body_digest()
+            } else if self.google_preview {
                 crate::google::preview_digest()
             } else {
                 crate::google::resource_digest()
@@ -392,8 +419,18 @@ impl LocalGrant {
                     && self.repository.is_none()
                     && self.google.is_none()
             }
+            Operation::GoogleInboxBody { selection } => {
+                self.google_body
+                    && !selection.is_nil()
+                    && self.service == "google-inbox-body"
+                    && self.origin == "https://gmail.googleapis.com"
+                    && self.google.as_ref().is_some_and(|g| g.valid())
+                    && self.repository.is_none()
+                    && request.repository.is_none()
+            }
             Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
-                self.google_preview == (request.operation == Operation::GoogleInboxPreview)
+                !self.google_body
+                    && self.google_preview == (request.operation == Operation::GoogleInboxPreview)
                     && self.service
                         == if self.google_preview {
                             "google-inbox-preview"

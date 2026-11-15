@@ -1,3 +1,4 @@
+import {NativeMailBodies} from './NativeMailBodies';
 import {VoiceComposer,type VoiceComposerHandle} from "./VoiceComposer";
 import { IncomingShare } from "./IncomingShare";
 import { shareFileKind, type ShareFile } from "./share-state";
@@ -1032,6 +1033,7 @@ export function ChatPanel(props: Props) {
                   {turn.run.credential.status==="waiting" && <p>연결한 기기에서 볼트를 열면 이 대화에 결과가 이어집니다. 기다리는 동안 다른 대화를 계속할 수 있어요.</p>}
                   <button className="text-button" onClick={()=>props.openCredentials?.()}>볼트 연결 확인 ↗</button>
                 </section>}
+                {turn.run.credential?.service==='google' && turn.run.credential.repository==='INBOX preview' && turn.run.credential.status==='complete' && <NativeMailBodies accountId={accountId} runId={turn.run.id} onExpired={props.onExpired}/>}
                 <div className="run-footer">
                   <span>{labels[turn.run.state]}</span>
                   {turn.run.can_cancel && (

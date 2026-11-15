@@ -19,7 +19,9 @@ selected account's Gmail INBOX total/unread counts. A separately selected
 [INBOX preview](docs/native-google-inbox-preview.md) shows up to five literal
 subject/from/date/snippet summaries in settings or the original chat. OAuth refresh
 and account/scope verification stay on the device. Preview mail remains outside
-later model history, conversation recall and learned recipes.
+later model history, conversation recall and learned recipes. A separately granted
+[selected message body](docs/native-google-message-body.md) can be opened as
+literal plaintext from its current preview in settings or the original chat.
 Its routes remain default-off; general credential tools remain unfinished.
 Separate [signed native packages](docs/component-packages.md) can be prepared,
 verified and downloaded with an independent signing-key pin. Official artifacts

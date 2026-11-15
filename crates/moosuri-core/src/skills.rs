@@ -54,8 +54,8 @@ pub struct BundledSkill {
 pub const BUNDLED_SKILLS: &[BundledSkill] = &[
     BundledSkill {
         id: "parcel-tracking",
-        revision: "1.0.0",
-        description: "Read actual Japan Post latest parcel status with an official source/time; reuse this thread’s actual tracking receipt on follow-up.",
+        revision: "1.1.0",
+        description: "Read Japan Post latest status or official visible shipment history with actual source/time and same-thread tracking receipt reuse.",
         instructions: include_str!("../../../community/skills/parcel-tracking/SKILL.md"),
     },
     BundledSkill {

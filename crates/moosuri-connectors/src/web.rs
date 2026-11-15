@@ -138,7 +138,27 @@ impl WebClient {
         number: &str,
         cancel: &CancellationToken,
     ) -> Result<crate::parcel::ParcelResult, WebError> {
-        let official = crate::parcel::url(number)?;
+        self.parcel_read(number, false, cancel).await
+    }
+    /// One direct history GET, one caller-owned dispatch/receipt; no summary preflight.
+    pub async fn parcel_history(
+        &self,
+        number: &str,
+        cancel: &CancellationToken,
+    ) -> Result<crate::parcel::ParcelResult, WebError> {
+        self.parcel_read(number, true, cancel).await
+    }
+    async fn parcel_read(
+        &self,
+        number: &str,
+        history: bool,
+        cancel: &CancellationToken,
+    ) -> Result<crate::parcel::ParcelResult, WebError> {
+        let official = if history {
+            crate::parcel::history_url(number)?
+        } else {
+            crate::parcel::url(number)?
+        };
         let number = crate::parcel::normalize(number)?;
         self.bounded(cancel, async {
             #[allow(unused_mut)]
@@ -146,6 +166,7 @@ impl WebClient {
             #[cfg(feature = "test-fixtures")]
             if let Some(endpoint) = &self.parcel_test_endpoint {
                 transport = endpoint.clone();
+                transport.set_path(official.path());
                 transport.set_query(official.query());
             }
             let response = self
@@ -177,7 +198,11 @@ impl WebClient {
             let input = String::from_utf8(body(response).await?)
                 .map_err(|_| WebError::UnsupportedContent)?;
             parse_blocking(move || {
-                crate::parcel::parse(&input, &number, official.to_string(), now())
+                if history {
+                    crate::parcel::parse_history(&input, &number, official.to_string(), now())
+                } else {
+                    crate::parcel::parse(&input, &number, official.to_string(), now())
+                }
             })
             .await
         })

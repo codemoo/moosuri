@@ -42,3 +42,15 @@ The repair makes this existing composition encodable. It does not add tool famil
 authorize new effects, measure real-model selection quality or prove live providers
 accept every configuration. Earlier P3/P4 review records describe the limit as it
 existed at their acceptance; this unit resolves that separately recorded defect.
+
+## 2026-11-15 integrated attachment and parcel profile
+
+The expanded real plan/shared HTTP fixture retains all27 current functions, including
+Gmail attachment listing/reading and both parcel tools. It exposed unsupported
+`minimum`/`maximum` keywords in the attachment definitions that rejected a connected
+mail profile before a provider request. Those model-facing range keywords are
+removed; typed unsigned arguments, actual attachment1–4096-byte admission,
+continuation digest/index checks and fixed result bounds remain enforced by the
+service. Independent source review accepted the change. The combined transport
+and tool-result continuation cases pass with all definitions retained; this is
+protocol acceptance, not a live-model quality result.

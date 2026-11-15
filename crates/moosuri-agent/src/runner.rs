@@ -1018,6 +1018,7 @@ pub(crate) async fn execute_with_calendar(
                     d.name.as_str(),
                     "mail_prepare_draft"
                         | "parcel_track"
+                        | "parcel_history"
                         | "learned_skill_execute"
                         | "public_pages_collect"
                 )

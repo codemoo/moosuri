@@ -11,7 +11,7 @@ use moosuri_core::{
 };
 use std::collections::BTreeSet;
 
-const NAMES: [&str; 23] = [
+const NAMES: [&str; 27] = [
     "knowledge_search",
     "knowledge_read_source",
     "knowledge_read_memory",
@@ -22,7 +22,11 @@ const NAMES: [&str; 23] = [
     "mail_search",
     "mail_read",
     "mail_thread",
+    "mail_attachments",
+    "mail_attachment",
     "mail_prepare_draft",
+    "parcel_track",
+    "parcel_history",
     "web_read",
     "web_search",
     "browser_read",
@@ -47,7 +51,11 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
         conversation_recall: false,
         mission_reads: None,
         version: 5,
-        skills: vec![],
+        skills: vec![moosuri_core::SkillPin {
+            id: "parcel-tracking".into(),
+            revision: "1.1.0".into(),
+            digest: "synthetic".into(),
+        }],
         community_metadata: vec![],
         mail_connections: vec![MailConnectionPin {
             native_send: false,
@@ -62,7 +70,6 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
         }),
     };
     let mut definitions = crate::knowledge_tools::definitions(Some(&profile));
-    assert_eq!(definitions.len(), 17);
     definitions.extend(crate::artifact_tools::definitions(Some(
         &ArtifactRunProfile {
             external_reports: false,
@@ -73,7 +80,6 @@ fn combined_definitions() -> Vec<FunctionDefinition> {
             kind: None,
         },
     )));
-    assert_eq!(definitions.len(), 20);
     definitions.extend(crate::calendar_tools::definitions(Some(
         &CalendarRunProfile {
             version: 1,

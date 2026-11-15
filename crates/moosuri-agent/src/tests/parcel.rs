@@ -35,32 +35,65 @@ async fn parcel_tracking_actual_provider_tool_loop_reuses_only_same_thread_recei
     );
     let provider_calls = Arc::new(AtomicUsize::new(0));
     let counted = provider_calls.clone();
-    let provider = Router::new().route(
-        "/services/srv/search",
-        axum::routing::get(
-            move |headers: HeaderMap,
-                  Query(q): Query<std::collections::HashMap<String, String>>| {
-                let count = counted.clone();
-                async move {
-                    assert!(headers.get("authorization").is_none());
-                    assert!(headers.get("cookie").is_none());
-                    assert_eq!(q.get("locale").unwrap(), "en");
-                    let n = count.fetch_add(1, Ordering::SeqCst);
-                    assert!(n < 4);
-                    let expected = if n == 3 { NUMBER_B } else { NUMBER };
-                    assert_eq!(
-                        q.get("requestNo1").unwrap(),
-                        expected,
-                        "a current explicit B must never dispatch prior A"
-                    );
-                    (
-                        [(axum::http::header::CONTENT_TYPE, "text/html; charset=UTF-8")],
-                        html(n, expected),
-                    )
-                }
-            },
-        ),
-    );
+    let history_calls = Arc::new(AtomicUsize::new(0));
+    let history_counted = history_calls.clone();
+    let provider = Router::new()
+        .route(
+            "/services/srv/search",
+            axum::routing::get(
+                move |headers: HeaderMap,
+                      Query(q): Query<std::collections::HashMap<String, String>>| {
+                    let count = counted.clone();
+                    async move {
+                        assert!(headers.get("authorization").is_none());
+                        assert!(headers.get("cookie").is_none());
+                        assert_eq!(q.get("locale").unwrap(), "en");
+                        let n = count.fetch_add(1, Ordering::SeqCst);
+                        assert!(n < 4);
+                        let expected = if n == 3 { NUMBER_B } else { NUMBER };
+                        assert_eq!(
+                            q.get("requestNo1").unwrap(),
+                            expected,
+                            "a current explicit B must never dispatch prior A"
+                        );
+                        (
+                            [(axum::http::header::CONTENT_TYPE, "text/html; charset=UTF-8")],
+                            html(n, expected),
+                        )
+                    }
+                },
+            ),
+        )
+        .route(
+            "/services/srv/search/direct",
+            axum::routing::get(
+                move |headers: HeaderMap,
+                      Query(q): Query<std::collections::HashMap<String, String>>| {
+                    let count = history_counted.clone();
+                    async move {
+                        assert!(headers.get("authorization").is_none());
+                        assert!(headers.get("cookie").is_none());
+                        assert_eq!(q.get("locale").unwrap(), "ja");
+                        assert_eq!(q.get("reqCodeNo1").unwrap(), NUMBER_B);
+                        assert_eq!(q.len(), 2);
+                        let n = count.fetch_add(1, Ordering::SeqCst);
+                        assert!(n < 2);
+                        let body = if n == 0 {
+                            include_str!(
+                                "../../../moosuri-connectors/src/parcel/history.synthetic.html"
+                            )
+                            .replace(NUMBER, NUMBER_B)
+                        } else {
+                            html(0, NUMBER_B)
+                        };
+                        (
+                            [(axum::http::header::CONTENT_TYPE, "text/html; charset=UTF-8")],
+                            body,
+                        )
+                    }
+                },
+            ),
+        );
     let provider_task =
         tokio::spawn(async move { axum::serve(provider_listener, provider).await.unwrap() });
     let model_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -77,10 +110,10 @@ async fn parcel_tracking_actual_provider_tool_loop_reuses_only_same_thread_recei
             let body=frame(json!({"id":"parcel-no-command","model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[tool_call(0,"classification".into(),function,d)]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}))+"data: [DONE]\n\n";
             return Response::builder().header("content-type","text/event-stream").body(Body::from(body)).unwrap()
         }
-        let n=calls.fetch_add(1,Ordering::SeqCst);assert!(n<10,"one ordinary typed tool round and final per turn");
+        let n=calls.fetch_add(1,Ordering::SeqCst);assert!(n<14,"one ordinary typed tool round and final per turn");
         assert!(input["tools"].as_array().unwrap().iter().any(|v|v["function"]["name"]=="parcel_track"));
-        let (delta,reason)=if n%2==0 {(json!({"role":"assistant","tool_calls":[tool_call(0,format!("parcel-{n}"),"parcel_track",json!({"carrier":"japan_post","tracking_number":if n==0{Some(NUMBER)}else{None}}))]}),"tool_calls")}
-        else {let values=result_values(&input);let value=values.last().unwrap().clone();saved.lock().await.push(value.clone());let text=match n {1=>{assert!(value.to_string().contains("SYNTHETIC_OFFICIAL_VISIBLE_STATUS"),"actual synthetic tool result: {value}");"SYNTHETIC_OFFICIAL_VISIBLE_STATUS is the latest visible Japan Post summary, dated 2026/11/14. Full history and timezone are unavailable."},3=>{assert!(value.to_string().contains("not_found"));"Japan Post currently reports not found for that same tracking number."},5=>{assert!(value.to_string().contains("provider_changed"));"Japan Post returned an unrecognized layout; I could not establish a current parcel status."},7=>{assert_eq!(value.pointer("/value/parcel/tracking_number").unwrap(),NUMBER_B);assert_eq!(value.pointer("/value/parcel/state").unwrap(),"observed");"The fresh official summary is for the newly supplied number B, not the old parcel A."},_=>{assert!(value.to_string().contains("invalid_input"));"Which Japan Post tracking number should I check in this new conversation?"}};(json!({"role":"assistant","content":text}),"stop")};
+        let (delta,reason)=if n%2==0 {(json!({"role":"assistant","tool_calls":[tool_call(0,format!("parcel-{n}"),if n>=10 {"parcel_history"} else {"parcel_track"},json!({"carrier":"japan_post","tracking_number":if n==0{Some(NUMBER)}else{None}}))]}),"tool_calls")}
+        else {let values=result_values(&input);let value=values.last().unwrap().clone();saved.lock().await.push(value.clone());let text=match n {1=>{assert!(value.to_string().contains("SYNTHETIC_OFFICIAL_VISIBLE_STATUS"),"actual synthetic tool result: {value}");"SYNTHETIC_OFFICIAL_VISIBLE_STATUS is the latest visible Japan Post summary, dated 2026/11/14. Full history and timezone are unavailable."},3=>{assert!(value.to_string().contains("not_found"));"Japan Post currently reports not found for that same tracking number."},5=>{assert!(value.to_string().contains("provider_changed"));"Japan Post returned an unrecognized layout; I could not establish a current parcel status."},7=>{assert_eq!(value.pointer("/value/parcel/tracking_number").unwrap(),NUMBER_B);assert_eq!(value.pointer("/value/parcel/state").unwrap(),"observed");"The fresh official summary is for the newly supplied number B, not the old parcel A."},11=>{assert_eq!(value.pointer("/value/parcel/coverage").unwrap(),"official_visible_history");assert_eq!(value.pointer("/value/parcel/events").unwrap().as_array().unwrap().len(),2);assert_eq!(value.pointer("/value/parcel/events/1/reported_time_text").unwrap(),"11/15 03:04");assert!(value.pointer("/value/parcel/events/1/occurred_at").unwrap().is_null());"The official visible history has two events in provider order; the second has no explicit year or timezone. Overseas records may be delayed or missing."},13=>{assert_eq!(value.pointer("/value/parcel/coverage").unwrap(),"history_unavailable");assert_eq!(value.pointer("/value/parcel/state").unwrap(),"provider_changed");assert!(value.pointer("/value/parcel/events").unwrap().as_array().unwrap().is_empty());"Only a summary-shaped page was returned. The full visible history could not be established."},_=>{assert!(value.to_string().contains("invalid_input"));"Which Japan Post tracking number should I check in this new conversation?"}};(json!({"role":"assistant","content":text}),"stop")};
         let body=frame(json!({"id":format!("parcel-round-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";
         Response::builder().header("content-type","text/event-stream").body(Body::from(body)).unwrap()
     }}));
@@ -167,6 +200,40 @@ async fn parcel_tracking_actual_provider_tool_loop_reuses_only_same_thread_recei
         4,
         "no number leaks across threads"
     );
+    for text in [
+        "그 택배 전체 배송 이력을 조회해줘",
+        "그 택배 전체 이력 다시 조회해줘",
+    ] {
+        let request = uuid::Uuid::new_v4().to_string();
+        store
+            .submit_turn(&user, thread.clone(), request.clone(), text.into())
+            .await
+            .unwrap();
+        runtime.wake();
+        let done = wait_for(&store, &user, &thread, |v| !v.run.state.active()).await;
+        assert_eq!(done.run.state, RunState::Completed, "{:?}", done.run.error);
+        let evidence = done.run.web_evidence.as_ref().unwrap();
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(
+            evidence[0].url,
+            moosuri_connectors::parcel::history_url(NUMBER_B)
+                .unwrap()
+                .to_string()
+        );
+        let saved = results.lock().await;
+        let value = saved.last().unwrap();
+        let provenance = value.pointer("/value/parcel/provenance").unwrap();
+        assert_eq!(provenance["number_source_request_id"], requests[3]);
+        assert_eq!(provenance["current_request_id"], request);
+        assert_eq!(provenance["history"], true);
+        assert_eq!(provenance["used_previous_number"], true);
+    }
+    assert_eq!(
+        history_calls.load(Ordering::SeqCst),
+        2,
+        "one direct read per history tool, no summary preflight/fallback"
+    );
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 4);
     runtime.shutdown().await;
     provider_task.abort();
     model_task.abort();

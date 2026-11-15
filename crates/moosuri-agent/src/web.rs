@@ -144,6 +144,10 @@ async fn execute(
         WebToolRequest::Parcel {
             carrier,
             tracking_number,
+        }
+        | WebToolRequest::ParcelHistory {
+            carrier,
+            tracking_number,
         } => {
             if carrier != "japan_post" {
                 return KnowledgeToolResult::Error(ToolReadError::InvalidInput);
@@ -151,10 +155,12 @@ async fn execute(
             let Some(number) = tracking_number else {
                 return KnowledgeToolResult::Error(ToolReadError::InvalidInput);
             };
-            client
-                .parcel(number, cancel)
-                .await
-                .map(|parcel| json!({"parcel":parcel}))
+            let result = if matches!(request, WebToolRequest::ParcelHistory { .. }) {
+                client.parcel_history(number, cancel).await
+            } else {
+                client.parcel(number, cancel).await
+            };
+            result.map(|parcel| json!({"parcel":parcel}))
         }
         WebToolRequest::Read { url } => client
             .read(url, cancel)

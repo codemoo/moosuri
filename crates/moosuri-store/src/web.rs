@@ -40,7 +40,7 @@ pub(crate) fn allowed(
         return false;
     };
     match request {
-        WebToolRequest::Parcel { .. } => {
+        WebToolRequest::Parcel { .. } | WebToolRequest::ParcelHistory { .. } => {
             pin.read
                 && current.read
                 && crate::agent_execution::skills::current_skill(profile, "parcel-tracking")
@@ -124,7 +124,10 @@ pub(crate) fn evidence(conn: &Connection, tenant: &str, run: &str) -> Result<Vec
         };
         match input {
             agent_execution::KnowledgeToolInput::External {
-                request: moosuri_core::ExternalToolRequest::Web(WebToolRequest::Parcel { .. }),
+                request:
+                    moosuri_core::ExternalToolRequest::Web(
+                        WebToolRequest::Parcel { .. } | WebToolRequest::ParcelHistory { .. },
+                    ),
             }
             | agent_execution::KnowledgeToolInput::LearnedSkill {
                 invocation:
@@ -208,6 +211,8 @@ pub(crate) struct ParcelOrigin {
     carrier: String,
     tracking_number: String,
     used_previous_number: bool,
+    #[serde(default)]
+    history: bool,
 }
 pub(crate) fn current_numbers(text: &str) -> std::collections::BTreeSet<String> {
     text.split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
@@ -233,12 +238,22 @@ pub(crate) fn parcel_origin(
     r: &crate::chat::Run,
     request: &mut moosuri_core::ExternalToolRequest,
 ) -> Result<Option<ParcelOrigin>> {
-    let moosuri_core::ExternalToolRequest::Web(WebToolRequest::Parcel {
-        carrier,
-        tracking_number,
-    }) = request
-    else {
-        return Ok(None);
+    let history = matches!(
+        request,
+        moosuri_core::ExternalToolRequest::Web(WebToolRequest::ParcelHistory { .. })
+    );
+    let (carrier, tracking_number) = match request {
+        moosuri_core::ExternalToolRequest::Web(
+            WebToolRequest::Parcel {
+                carrier,
+                tracking_number,
+            }
+            | WebToolRequest::ParcelHistory {
+                carrier,
+                tracking_number,
+            },
+        ) => (carrier, tracking_number),
+        _ => return Ok(None),
     };
     if carrier != "japan_post" {
         return Err(StoreError::InvalidInput);
@@ -265,12 +280,13 @@ pub(crate) fn parcel_origin(
             carrier: carrier.clone(),
             tracking_number: number,
             used_previous_number: false,
+            history,
         }));
     }
     if literals.len() > 1 {
         return Err(StoreError::InvalidInput);
     }
-    let rows=c.prepare("SELECT old.sequence,t.result FROM chat_runs old JOIN agent_execution e ON e.tenant_id=old.tenant_id AND e.run_id=old.id JOIN agent_tool_slots t ON t.tenant_id=old.tenant_id AND t.run_id=old.id JOIN external_tool_dispatches d USING(tenant_id,run_id,step,call_id) WHERE old.tenant_id=?1 AND old.account_id=?2 AND old.thread_id=?3 AND old.sequence<?4 AND old.sequence>=?4-32 AND old.state='completed' AND e.invalidated=0 AND d.state='completed' AND ((json_extract(t.input,'$.request.adapter')='web' AND json_extract(t.input,'$.request.request.operation')='parcel') OR (json_extract(t.input,'$.tool')='learned_skill' AND json_extract(t.input,'$.invocation.arguments.kind')='parcel')) AND t.result IS NOT NULL ORDER BY old.sequence DESC,t.step DESC,t.call_id LIMIT 12")?.query_map(params![r.tenant,r.account,r.thread,r.sequence],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let rows=c.prepare("SELECT old.sequence,t.result FROM chat_runs old JOIN agent_execution e ON e.tenant_id=old.tenant_id AND e.run_id=old.id JOIN agent_tool_slots t ON t.tenant_id=old.tenant_id AND t.run_id=old.id JOIN external_tool_dispatches d USING(tenant_id,run_id,step,call_id) WHERE old.tenant_id=?1 AND old.account_id=?2 AND old.thread_id=?3 AND old.sequence<?4 AND old.sequence>=?4-32 AND old.state='completed' AND e.invalidated=0 AND d.state='completed' AND ((json_extract(t.input,'$.request.adapter')='web' AND json_extract(t.input,'$.request.request.operation') IN ('parcel','parcel_history')) OR (json_extract(t.input,'$.tool')='learned_skill' AND json_extract(t.input,'$.invocation.arguments.kind')='parcel')) AND t.result IS NOT NULL ORDER BY old.sequence DESC,t.step DESC,t.call_id LIMIT 12")?.query_map(params![r.tenant,r.account,r.thread,r.sequence],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let latest = rows.first().map(|row| row.0);
     let mut candidates = std::collections::BTreeMap::new();
     for (sequence, raw) in rows {
@@ -305,6 +321,7 @@ pub(crate) fn parcel_origin(
     {
         return Err(StoreError::InvalidInput);
     }
+    origin.history = history;
     origin.current_request_id = r.request.clone();
     origin.used_previous_number = true;
     *tracking_number = Some(origin.tracking_number.clone());
@@ -321,9 +338,13 @@ pub(crate) fn complete_parcel(
         .get_mut("parcel")
         .and_then(|v| v.as_object_mut())
         .ok_or(StoreError::Corrupt)?;
-    let expected = moosuri_connectors::parcel::url(&origin.tracking_number)
-        .map_err(|_| StoreError::Corrupt)?
-        .to_string();
+    let expected = if origin.history {
+        moosuri_connectors::parcel::history_url(&origin.tracking_number)
+    } else {
+        moosuri_connectors::parcel::url(&origin.tracking_number)
+    }
+    .map_err(|_| StoreError::Corrupt)?
+    .to_string();
     if p.get("carrier").and_then(|v| v.as_str()) != Some("japan_post")
         || p.get("tracking_number").and_then(|v| v.as_str())
             != Some(origin.tracking_number.as_str())
@@ -339,4 +360,45 @@ pub(crate) fn complete_parcel(
         serde_json::to_value(origin).map_err(|_| StoreError::Corrupt)?,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod history_admission_tests {
+    use super::*;
+    #[test]
+    fn old_saved_pin_cannot_admit_history_even_with_crafted_typed_request() {
+        let current = WebToolProfile {
+            read: true,
+            ..Default::default()
+        };
+        let mut profile = crate::agent_execution::skills::profile();
+        profile.web = Some(current.clone());
+        let request = WebToolRequest::ParcelHistory {
+            carrier: "japan_post".into(),
+            tracking_number: Some("00000000000".into()),
+        };
+        assert!(allowed(Some(&profile), &current, &request));
+        let pin = profile
+            .skills
+            .iter_mut()
+            .find(|p| p.id == "parcel-tracking")
+            .unwrap();
+        pin.revision = "1.0.0".into();
+        assert!(!allowed(Some(&profile), &current, &request));
+        let pin = profile
+            .skills
+            .iter_mut()
+            .find(|p| p.id == "parcel-tracking")
+            .unwrap();
+        pin.revision = "1.1.0".into();
+        pin.digest = "stale-instructions".into();
+        assert!(!allowed(Some(&profile), &current, &request));
+        let mut profile = crate::agent_execution::skills::profile();
+        profile.web = Some(current);
+        assert!(!allowed(
+            Some(&profile),
+            &WebToolProfile::default(),
+            &request
+        ));
+    }
 }

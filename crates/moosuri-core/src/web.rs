@@ -5,6 +5,10 @@ use ts_rs::TS;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WebToolRequest {
+    ParcelHistory {
+        carrier: String,
+        tracking_number: Option<String>,
+    },
     Parcel {
         carrier: String,
         tracking_number: Option<String>,

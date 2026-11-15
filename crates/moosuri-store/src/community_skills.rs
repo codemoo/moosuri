@@ -137,6 +137,7 @@ fn compatible_contents(package: Package) -> std::result::Result<Validated, autho
         "web_read",
         "public_pages_collect",
         "parcel_track",
+        "parcel_history",
     ];
     if metadata.format_version != 1
         || metadata.mode != "instructions"
@@ -407,7 +408,7 @@ fn card(
             (c.starts_with("mail_") && !mail)
                 || (matches!(
                     c.as_str(),
-                    "web_read" | "parcel_track" | "public_pages_collect"
+                    "web_read" | "parcel_track" | "parcel_history" | "public_pages_collect"
                 ) && !web.read)
         })
         .cloned()

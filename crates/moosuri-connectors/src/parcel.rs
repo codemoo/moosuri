@@ -1,5 +1,8 @@
-//! Japan Post's fixed public summary endpoint; no cookies, keys or invented history.
+//! Fixed Japan Post reads. History structure evidence is recorded in docs/parcel-tracking.md.
+mod history;
 use crate::web::WebError;
+pub(crate) use history::parse as parse_history;
+pub use history::url as history_url;
 use scraper::{ElementRef, Html, Selector};
 use serde::Serialize;
 pub const HOST: &str = "trackings.post.japanpost.jp";
@@ -12,6 +15,10 @@ pub struct ParcelEvent {
     pub status_text: String,
     pub handling_office: String,
     pub prefecture: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postal_code: Option<String>,
 }
 #[derive(Serialize)]
 pub struct ParcelSource {
@@ -174,6 +181,8 @@ pub(crate) fn parse(
         status_text: cells[3].clone(),
         handling_office: cells[4].clone(),
         prefecture: cells[5].clone(),
+        detail_text: None,
+        postal_code: None,
     });
     result.state = "observed";
     Ok(result)

@@ -81,6 +81,48 @@ pub(crate) fn retry_authority(c: &Connection, r: &Run) -> Result<()> {
     }
     Ok(())
 }
+/// An untouched plan may follow only explicitly acknowledged non-command
+/// classifier rounds from this very lease. Global call counts remain budgets,
+/// never evidence that a particular planner has (or has not) run.
+pub(crate) fn untouched(c: &Connection, r: &Run, l: &crate::RunLease) -> Result<()> {
+    original_authority(c, r)?;
+    let valid: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting')
+         AND NOT EXISTS(SELECT 1 FROM agent_planner_steps WHERE tenant_id=?1 AND run_id=?2 AND domain='mission_chat')
+         AND EXISTS(SELECT 1 FROM agent_execution e WHERE e.tenant_id=?1 AND e.run_id=?2 AND e.tool_calls=0
+           AND e.remote_calls=(SELECT count(*) FROM agent_planner_steps p
+             JOIN agent_steps s USING(tenant_id,run_id,step)
+             JOIN model_call_receipts m ON m.tenant_id=p.tenant_id AND m.run_id=p.run_id AND m.step=p.step AND m.attempt=p.attempt AND m.nonce=p.nonce
+             WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.domain='artifact_no_command'
+               AND p.attempt=?3 AND p.run_nonce=?4 AND m.account_id=?5 AND s.attempt=p.attempt AND s.nonce=p.nonce AND s.state='completed'))
+         AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)
+         AND NOT EXISTS(SELECT 1 FROM personal_artifact_command_plans WHERE tenant_id=?1 AND run_id=?2)",
+        params![r.tenant,r.id,r.attempt,l.nonce.as_slice(),r.account], |row| row.get(0))?;
+    if !valid || crate::media::has_context(c, &r.tenant, &r.id)? {
+        return Err(StoreError::Conflict);
+    }
+    Ok(())
+}
+/// The classifier owns one immutable dispatch receipt. Retry may confirm that
+/// completed decision locally, but cannot acquire another classifier dispatch.
+pub(crate) fn decision_step(c: &Connection, r: &Run, completed: bool) -> Result<i64> {
+    let step: Option<i64> = c.query_row(
+        "SELECT p.step FROM agent_planner_steps p
+         JOIN agent_steps s USING(tenant_id,run_id,step)
+         JOIN agent_run_leases l ON l.tenant_id=p.tenant_id AND l.run_id=p.run_id AND l.attempt=p.attempt AND l.nonce=p.run_nonce
+         JOIN model_call_receipts m ON m.tenant_id=p.tenant_id AND m.run_id=p.run_id AND m.step=p.step AND m.attempt=p.attempt AND m.nonce=p.nonce
+         JOIN agent_execution e ON e.tenant_id=p.tenant_id AND e.run_id=p.run_id
+         WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.domain='mission_chat'
+           AND s.nonce=p.nonce AND s.attempt=p.attempt AND m.account_id=?3
+           AND e.remote_calls=p.step AND e.tool_calls=0
+           AND ((?4 AND s.state IN('completed','purged')) OR (NOT ?4 AND s.state='dispatched'))
+           AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",
+        params![r.tenant,r.id,r.account,completed], |row| row.get(0)).optional()?;
+    if crate::media::has_context(c, &r.tenant, &r.id)? {
+        return Err(StoreError::Conflict);
+    }
+    step.ok_or(StoreError::Conflict)
+}
 fn quote(text: &str, v: &Option<String>, max: usize, required: bool) -> Result<()> {
     match v {
         Some(q) if !q.trim().is_empty() && q.len() <= max && text.contains(q) => Ok(()),
@@ -202,12 +244,28 @@ fn allowed_mission_decision(r: &Run, d: &MissionChatDecision) -> Result<()> {
     Ok(())
 }
 /// Called only inside the same transaction that acknowledges the completed model step.
-pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
+pub(crate) fn record(
+    c: &Connection,
+    r: &Run,
+    lease: &crate::StepLease,
+    bytes: &[u8],
+    no_calls: bool,
+) -> Result<()> {
     let value: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|_| StoreError::InvalidInput)?;
     if value.get("kind").and_then(|v| v.as_str()) != Some("mission_chat_decision") {
         return Ok(());
     }
+    if !no_calls || decision_step(c, r, false)? != lease.step() {
+        return Err(StoreError::Conflict);
+    }
+    // guard_step already checked the current RunLease and StepLease; additionally
+    // bind this receipt to the domain admitted atomically at dispatch.
+    let matches: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM agent_planner_steps WHERE tenant_id=?1 AND run_id=?2 AND domain='mission_chat' AND step=?3 AND attempt=?4 AND nonce=?5 AND run_nonce=?6)", params![r.tenant,r.id,lease.step(),lease.attempt(),lease.nonce.as_slice(),lease.run.nonce.as_slice()], |row| row.get(0))?;
+    if !matches {
+        return Err(StoreError::Conflict);
+    }
+    original_authority(c, r)?;
     if value
         .get("decision")
         .and_then(|v| v.get("domain"))
@@ -218,6 +276,7 @@ pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
         return crate::calendar::agent::record(
             c,
             r,
+            lease.step(),
             value
                 .get("decision")
                 .ok_or(StoreError::InvalidInput)?
@@ -272,7 +331,7 @@ pub(crate) fn record(c: &Connection, r: &Run, bytes: &[u8]) -> Result<()> {
             d.clarification.as_deref(),
         )?;
     }
-    let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting') AND EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
+    let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting')",params![r.tenant,r.id],|r|r.get(0))?;
     if !valid || crate::media::has_context(c, &r.tenant, &r.id)? {
         return Err(StoreError::Conflict);
     }
@@ -668,10 +727,7 @@ fn preflight(db: &mut Database, l: &crate::RunLease) -> Result<Option<StoreError
     let d: MissionChatDecision = decode(&raw)?;
     allowed_mission_decision(&r, &d)?;
     validate(&crate::request_continuations::text(&tx, &r)?, &d)?;
-    let pristine:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|row|row.get(0))?;
-    if !pristine || crate::media::has_context(&tx, &r.tenant, &r.id)? {
-        return Err(StoreError::Conflict);
-    }
+    decision_step(&tx, &r, true)?;
     let mut error = None;
     if d.decision == "command" && matches!(d.action.as_deref(), Some("resume" | "steer")) {
         let mut receipt = new_receipt(&r, &d);
@@ -738,13 +794,27 @@ impl Store {
     /// Retire the unused classifier route before ordinary execution; retries stay ordinary.
     pub async fn skip_mission_chat(&self, lease: &crate::RunLease) -> Result<()> {
         let l = lease.clone();
-        self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};tx.execute("UPDATE mission_chat_plans SET state='passed' WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting' AND EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=0)",params![r.tenant,r.id])?;tx.commit()?;Ok(())}).await
+        self.call(move|db|{
+            let tx=db.conn.transaction()?;
+            let r=match crate::chat::guard(&tx,&db.provider_key,&l){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
+            let state: Option<String> = tx.query_row("SELECT state FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2", params![r.tenant,r.id], |row| row.get(0)).optional()?;
+            match state.as_deref() {
+                None | Some("passed") => {},
+                Some("awaiting") => {
+                    untouched(&tx,&r,&l)?;
+                    tx.execute("UPDATE mission_chat_plans SET state='passed' WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id])?;
+                },
+                _ => return Err(StoreError::Conflict),
+            }
+            tx.commit()?;Ok(())
+        }).await
     }
     pub async fn mission_chat_planning(&self, lease: &crate::RunLease) -> Result<Option<Planning>> {
         let l = lease.clone();
         self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
         retry_authority(&tx,&r)?;
-        let attempted:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans p JOIN agent_execution e ON e.tenant_id=p.tenant_id AND e.run_id=p.run_id WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.state='awaiting' AND e.remote_calls>0)",params![r.tenant,r.id],|r|r.get(0))?;if attempted{return Err(StoreError::Conflict)}
+        let awaiting:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting')",params![r.tenant,r.id],|r|r.get(0))?;
+        if awaiting {untouched(&tx,&r,&l)?;}
         let out=tx.query_row("SELECT anchor,timezone,target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2 AND state='awaiting'",params![r.tenant,r.id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?))).optional()?.map(|(anchor,timezone,target)|Ok::<_,StoreError>(Planning{continuation:crate::request_continuations::context(&tx,&r)?,receipt_target_available:crate::request_continuations::target(&tx,&r)?.is_some(),request_text:crate::request_continuations::text(&tx,&r)?,calendar_only:!commands_allowed(&r),calendar:crate::calendar::agent::profile(&tx,&r.tenant,&r.id)?,anchor,timezone,selected_kind:target.map(|v|decode::<MissionChatTarget>(&v)).transpose()?.map(|v|v.kind)})).transpose()?;tx.commit()?;Ok(out)}).await
     }
     /// None means not yet decided; Some(false) continues ordinary chat without reclassification.
@@ -765,8 +835,7 @@ impl Store {
  if state!="decided"{return Err(StoreError::Conflict)}
             let u=original_authority(&tx,&r)?;let d:MissionChatDecision=decode(&decision.ok_or(StoreError::Corrupt)?)?;allowed_mission_decision(&r,&d)?;validate(&crate::request_continuations::text(&tx,&r)?,&d)?;
             if crate::media::has_context(&tx,&r.tenant,&r.id)?{return Err(StoreError::Conflict)}
-            let pristine:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_execution WHERE tenant_id=?1 AND run_id=?2 AND remote_calls=1 AND tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
-            if !pristine{return Err(StoreError::Conflict)}
+            decision_step(&tx,&r,true)?;
             if d.decision=="no_command"{tx.execute("UPDATE mission_chat_plans SET state='passed' WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id])?;tx.commit()?;return Ok(Some(false))}
             let mut receipt=new_receipt(&r,&d);
             let mut message="언제 실행할지와 어떤 일을 맡길지 구체적으로 말씀해 주세요. / Please include the task and its execution time.".to_owned();

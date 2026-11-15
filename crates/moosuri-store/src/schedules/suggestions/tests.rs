@@ -455,10 +455,10 @@ async fn account_deletion_clears_suggestion_topic_and_record_sidecars_without_to
 }
 
 #[tokio::test]
-async fn sealed_schema56_and57_snapshots_upgrade_without_backfill_or_restored_publication() {
+async fn sealed_schema56_and_current_snapshots_upgrade_without_backfill_or_restored_publication() {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     let _g = TEST_LOCK.lock().await;
-    for captured in [56, 57] {
+    for captured in [56, CURRENT_SCHEMA_VERSION] {
         let d = tempfile::Builder::new()
             .permissions(std::fs::Permissions::from_mode(0o700))
             .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
@@ -515,7 +515,7 @@ async fn sealed_schema56_and57_snapshots_upgrade_without_backfill_or_restored_pu
             assert_eq!(
                 db.conn
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                57
+                CURRENT_SCHEMA_VERSION
             );
             let count: i64 =
                 db.conn
@@ -531,7 +531,7 @@ async fn sealed_schema56_and57_snapshots_upgrade_without_backfill_or_restored_pu
                 )?,
                 0
             );
-            if captured == 57 {
+            if captured == CURRENT_SCHEMA_VERSION {
                 assert_eq!(
                     db.conn.query_row(
                         "SELECT count(*) FROM notification_source_preferences WHERE muted=1",
@@ -596,7 +596,7 @@ fn predecessor56(
         })
         .collect::<Vec<_>>();
     let mut manifest: crate::cutover::Manifest = serde_json::from_slice(&items[0].1).unwrap();
-    assert_eq!(manifest.seal.schema, 57);
+    assert_eq!(manifest.seal.schema, CURRENT_SCHEMA_VERSION);
     manifest.seal.schema = 56;
     let db = kit.join("predecessor56.sqlite");
     files::create_file(&db)
@@ -604,7 +604,7 @@ fn predecessor56(
         .write_all(&items[1].1)
         .unwrap();
     let c = Connection::open(&db).unwrap();
-    c.execute_batch("DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DELETE FROM notification_source_preferences;DELETE FROM reminder_schedules;DROP TRIGGER installation_cutover_monotonic;PRAGMA user_version=56;").unwrap();
+    c.execute_batch("DROP TABLE agent_planner_steps;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DELETE FROM notification_source_preferences;DELETE FROM reminder_schedules;DROP TRIGGER installation_cutover_monotonic;PRAGMA user_version=56;").unwrap();
     c.execute(
         "UPDATE installation_cutover SET seal=?1",
         [serde_json::to_string(&manifest.seal).unwrap()],

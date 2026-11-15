@@ -478,7 +478,7 @@ async fn personal_sealed_calendar_retry_precedes_chatgpt_client_and_unknown_rece
     let (_d, store, u, f, s, l, cal, _, io) = configured().await;
     let (t, v, c) = claim(&store, &u, CREATE).await;
     let step = store
-        .begin_agent_step(&c.lease, c.context.checkpoint_seq)
+        .begin_mission_chat_step(&c.lease, c.context.checkpoint_seq)
         .await
         .unwrap();
     store
@@ -703,7 +703,7 @@ async fn personal_calendar_disconnect_during_dispatch_keeps_only_minimum_receipt
         // Reenter through runner's sealed-command resume branch, before a new
         // ChatGPT client/classifier or its ordinary failure finalizer exists.
         let step = store
-            .begin_agent_step(&c.lease, c.context.checkpoint_seq)
+            .begin_mission_chat_step(&c.lease, c.context.checkpoint_seq)
             .await
             .unwrap();
         store

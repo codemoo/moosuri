@@ -648,7 +648,7 @@ async fn learned_math_example(
     claim
 }
 #[tokio::test]
-async fn learned_exact_numeric_adoption_accepts_sentence_period_not_malformed_or_version_tokens() {
+async fn learned_exact_numeric_adoption_accepts_fixed_point_formatting_with_distinct_receipts() {
     let _lock = TEST_LOCK.lock().await;
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
@@ -656,9 +656,17 @@ async fn learned_exact_numeric_adoption_accepts_sentence_period_not_malformed_or
     for answer in [
         "Version 23.2.3.",
         "Value 23.2..",
-        "Value 23.20.",
-        "Value -23.2.",
-        "Value +23.2.",
+        "Value 23.200001.",
+        "Value -23.20.",
+        "Value 23.20%.",
+        "Value 1,23.20.",
+        "Value 23.20,000.",
+        "Value 23.20e0.",
+        "Value 1/23.20.",
+        "Amount -**$23.20**",
+        "Amount −**$23.20**",
+        "Amount **1**,**23.20**",
+        "Amount **23.20**,**000**",
     ] {
         learned_math_example(&store, &user, &["20", "3.2"], Some(answer)).await;
         assert!(
@@ -666,28 +674,54 @@ async fn learned_exact_numeric_adoption_accepts_sentence_period_not_malformed_or
             "{answer}"
         );
     }
-    learned_math_example(
+    let a = learned_math_example(
         &store,
         &user,
-        &["20", "3.2"],
-        Some("Exact current amount: 23.2."),
+        &["100", "40"],
+        Some("Exact current amount: **$140.00달러**."),
     )
     .await;
     assert_eq!(
         store.learned_skills(&user).await.unwrap()[0].readiness,
         "candidate"
     );
+    // A different final formatting and commuted operand notation still replay A.
     learned_math_example(
         &store,
         &user,
-        &["8.5", "1.5"],
-        Some("Exact current amount: 10."),
+        &["040.00", "100.000"],
+        Some("Exact current amount: +140.000달러입니다."),
     )
     .await;
     assert_eq!(
         store.learned_skills(&user).await.unwrap()[0].readiness,
-        "ready"
+        "candidate"
     );
+    let b = learned_math_example(
+        &store,
+        &user,
+        &["30", "8.6"],
+        Some("Exact current amount: 38.60달러입니다."),
+    )
+    .await;
+    let cards = store.learned_skills(&user).await.unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].readiness, "ready");
+    let runs = [a.lease.run_id().to_owned(), b.lease.run_id().to_owned()];
+    store.call(move |db| {
+        // The two proofs link to independently executed canonical tool results,
+        // rather than learning formatted prose or counting the notation replay.
+        let rows = db.conn.prepare("SELECT p.run_id,s.result FROM learned_skill_proofs p JOIN agent_tool_slots s USING(tenant_id,run_id) ORDER BY s.result")?
+            .query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>,_>>()?;
+        assert_eq!(rows.len(), 2);
+        for (run, raw) in rows {
+            let result: KnowledgeToolResult = serde_json::from_str(&raw).unwrap();
+            let expected = if run == runs[0] { "140" } else { assert_eq!(run, runs[1]); "38.6" };
+            assert!(matches!(result, KnowledgeToolResult::Decimal { exact } if exact == expected));
+        }
+        Ok(())
+    }).await.unwrap();
 }
 
 #[tokio::test]
@@ -1275,7 +1309,7 @@ async fn learned_schema37_upgrade_preserves_ordinary_thread_deletion() {
         .create_thread(&user, "Existing schema37 thread".into())
         .await
         .unwrap();
-    store.call(|db|{db.conn.execute_batch("ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts; DROP TABLE learned_skill_observations; DROP TABLE learned_skill_uses; DROP TABLE learned_skill_proofs; DROP TABLE learned_skills; PRAGMA user_version=37;")?;Ok(())}).await.unwrap();
+    store.call(|db|{db.conn.execute_batch("DROP TABLE agent_planner_steps;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts; DROP TABLE learned_skill_observations; DROP TABLE learned_skill_uses; DROP TABLE learned_skill_proofs; DROP TABLE learned_skills; PRAGMA user_version=37;")?;Ok(())}).await.unwrap();
     drop(store);
     let store = Store::open(dir.path()).unwrap();
     store.delete_thread(&user, thread.id).await.unwrap();
@@ -1673,10 +1707,14 @@ async fn compound_graph_rejects_false_edges_replay_proof_and_budget_bypass() {
     finish(&store, &claim, "No valid calculation").await;
     assert!(store.learned_skills(&user).await.unwrap().is_empty());
     // Canonical notation replay cannot become the second independent example.
-    for (inputs, answer) in [
-        (vec!["1", "2", "3", "4", "0.5"], "7"),
-        (vec!["1.00", "02", "03.0", "4.00", "0.500000"], "7"),
-        (vec!["2", "3", "4", "5", "0.5"], "13"),
+    for (inputs, answer, final_output) in [
+        (vec!["1", "2", "3", "4", "0.5"], "7", "**7.00달러**"),
+        (
+            vec!["1.00", "02", "03.0", "4.00", "0.500000"],
+            "7",
+            "+7.000",
+        ),
+        (vec!["2", "3", "4", "5", "0.5"], "13", "13.00."),
     ] {
         let thread = store
             .create_thread(&user, "Independent graph proof".into())
@@ -1700,7 +1738,7 @@ async fn compound_graph_rejects_false_edges_replay_proof_and_budget_bypass() {
         assert!(
             matches!(store.execute_knowledge_tool(&step,"graph".into()).await.unwrap(),KnowledgeToolResult::DecimalWorkflow{exact,..} if exact==answer)
         );
-        finish(&store, &claim, answer).await;
+        finish(&store, &claim, final_output).await;
         assert_eq!(
             store.learned_skills(&user).await.unwrap()[0].readiness,
             if answer == "7" { "candidate" } else { "ready" }

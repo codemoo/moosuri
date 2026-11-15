@@ -25,6 +25,14 @@ The system SHALL complete an explicit task or Calendar request from a following 
 - **WHEN** a different thread/session/account/model, intervening ordinary turn, expiry, Calendar pin withdrawal or restore breaks lineage
 - **THEN** no pending action SHALL be inherited or replayed.
 
+#### Scenario: Numeric Calendar answer preserves authenticated message boundaries
+- **WHEN** a saved Calendar start quote ends its original message and a later authenticated reply supplies45minutes
+- **THEN** the later digits SHALL NOT invalidate the previously validated clock, including after reopening storage
+- **AND** the typed create SHALL preserve the original start and add exactly45minutes.
+- **WHEN** a new temporal quote occurs in both earlier prose and a malformed current reply
+- **THEN** only the current reply SHALL supply the new field and no earlier occurrence SHALL rescue it
+- **AND** newlines within a single message SHALL retain the complete maximal-span clock validation.
+
 #### Scenario: Malformed short quote drops a weekday
 - **WHEN** an original Monday request is completed by9AM but the interpreter proposes Daily09:00 with only the short answer as its time quote
 - **THEN** Store SHALL reject before saving a schedule.

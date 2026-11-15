@@ -30,3 +30,12 @@ Commands/report semantics: `docs/agent-evaluation.md`. Integration evidence is s
 - [x] Add distinct finalized compound A/B proofs, fresh learned-route C, proof withdrawal and fresh D without the withdrawn usable route; independently grade arithmetic and nested receipts.
 - [x] Include existing RunView stage timings and missing/call coverage for admitted runs without changing result/budget acceptance.
 - [ ] Complete broader 2.3/2.4 acceptance: abrupt crash/checkpoint-gap worlds, real-provider bounded profiles, comparative skill efficiency and semantic evaluation remain outside this expansion.
+
+## Actual-model development evidence (separate from public regression and release acceptance)
+
+- [x] Independently freeze eight new synthetic worlds/22 actions and hidden outcome criteria; retain all baseline pass/fail/not-run, semantic/state distinctions and unknown usage.
+- [x] Diagnose actual planner composition, memory-owner qualifier and numeric-format adoption failures; repeat all exposed cases once on fresh state after repairs and independently grade22/22 with actual receipts and persisted outcomes.
+- [x] Separately exercise live learned scheduling, disable across a real due slot, retained pause after enable and explicit resume with fresh receipts; preserve initial qualification failure and cleanup state.
+- [ ] Complete32-world×3 pilot, fresh independent holdout, calibrated grading/skill comparisons and supported production-provider/device gates. The temporary official replay bridge and exposed-case repeat do not close these requirements.
+
+See [wave2 evidence and limits](../../../docs/reviews/2026-11-15-live-agent-wave2.md).

@@ -1,5 +1,12 @@
 # Tasks
 
+## Live quality follow-up, 2026-11-15
+
+- [x] Make current-target possessive retention explicit in the isolated intent prompt without changing literal ambiguity or mutation guards.
+- [x] Re-evaluate the owner-qualified correction and subsequent recall separately from the original frozen failure; record actual revision1→2 and unrelated-person/account preservation in the [wave2 report](../../../docs/reviews/2026-11-15-live-agent-wave2.md).
+
+## Original implementation
+
 - [x] Implement sealed bounded candidate plans and index-only selection after literal misses.
 - [x] Preserve literal ambiguity, current-request authority, retry/purge and journal contracts.
 - [x] Add synthetic Store and scripted-runtime regressions across topics and failure boundaries.

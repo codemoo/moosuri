@@ -181,6 +181,20 @@ impl StepLease {
         self.step
     }
 }
+pub(crate) fn record_planner_step(
+    c: &Connection,
+    run: &Run,
+    lease: &RunLease,
+    step: i64,
+    nonce: &[u8; 32],
+    domain: &str,
+) -> Result<()> {
+    c.execute(
+        "INSERT INTO agent_planner_steps(tenant_id,run_id,domain,step,attempt,nonce,run_nonce) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        params![run.tenant,run.id,domain,step,run.attempt,nonce.as_slice(),lease.nonce.as_slice()],
+    )?;
+    Ok(())
+}
 fn encoded<T: Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|_| StoreError::InvalidInput)
 }
@@ -804,10 +818,30 @@ impl Store {
         lease: &RunLease,
         expected_checkpoint_seq: i64,
     ) -> Result<StepLease> {
+        self.begin_planner_step(lease, expected_checkpoint_seq, false)
+            .await
+    }
+    /// Admit exactly one current-request mission/Calendar classifier. The durable
+    /// domain marker and model dispatch receipt are committed together.
+    pub async fn begin_mission_chat_step(
+        &self,
+        lease: &RunLease,
+        expected_checkpoint_seq: i64,
+    ) -> Result<StepLease> {
+        self.begin_planner_step(lease, expected_checkpoint_seq, true)
+            .await
+    }
+    async fn begin_planner_step(
+        &self,
+        lease: &RunLease,
+        expected_checkpoint_seq: i64,
+        mission_chat: bool,
+    ) -> Result<StepLease> {
         let lease = lease.clone();
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match chat::guard(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
+            if mission_chat {crate::missions::chat::untouched(&tx,&run,&lease)?;}
             if !is_agent(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
             if let Err(e)=memory_commands::guard_target_dispatch(&tx,&run) {tx.commit()?;return Err(e)}
             if memory_commands::has_slot(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
@@ -823,6 +857,7 @@ impl Store {
             tx.execute("INSERT INTO agent_steps(tenant_id,run_id,step,attempt,nonce,state) VALUES(?1,?2,?3,?4,?5,'dispatched')",params![run.tenant,run.id,step,run.attempt,n.as_slice()])?;
             tx.execute("INSERT INTO model_call_receipts(tenant_id,account_id,run_id,attempt,step,nonce,usage,dispatched_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![run.tenant,run.account,run.id,run.attempt,step,n.as_slice(),encoded(&RunUsage::default())?,now()?])?;
             crate::run_timings::dispatch(&tx,&run,step)?;
+            if mission_chat {record_planner_step(&tx,&run,&lease,step,&n,"mission_chat")?;}
             tx.commit()?;Ok(StepLease{run:lease,step,nonce:n})
         }).await
     }
@@ -848,7 +883,7 @@ impl Store {
                 let used: i64=tx.query_row("SELECT tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
                 if used+calls.iter().map(|c|crate::learned_skills::cost(&c.input)).sum::<i64>()>12{return Err(StoreError::BudgetExhausted)}
                 crate::missions::record_round(&tx,&run,lease.step,&checkpoint.bytes)?;
-                crate::missions::chat::record(&tx,&run,&checkpoint.bytes)?;
+                crate::missions::chat::record(&tx,&run,&lease,&checkpoint.bytes,calls.is_empty())?;
                 tx.execute("UPDATE agent_steps SET state='completed',completion_digest=?4,checkpoint=?5 WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step,digest.as_slice(),checkpoint.bytes])?;
                 for call in calls {tx.execute("INSERT INTO agent_tool_slots(tenant_id,run_id,step,call_id,input) VALUES(?1,?2,?3,?4,?5)",params![run.tenant,run.id,lease.step,call.call_id,encoded(&call.input)?])?;}
                 tx.execute("UPDATE agent_execution SET checkpoint_seq=checkpoint_seq+1 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id])?;

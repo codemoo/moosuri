@@ -99,12 +99,100 @@ struct Proof {
     receipt: String,
     subject: Option<String>,
 }
+// Four bounded arithmetic steps can expand six-place inputs to at most 96
+// fractional places. Leave room for the i128 coefficient, sign and decimal dot.
+const ADOPTED_DECIMAL_BYTES: usize = 128;
+fn normalized_number(value: &str) -> Option<(bool, &str, &str)> {
+    if value.is_empty() || value.len() > ADOPTED_DECIMAL_BYTES {
+        return None;
+    }
+    let (negative, unsigned) = match value.as_bytes()[0] {
+        b'-' => (true, &value[1..]),
+        b'+' => (false, &value[1..]),
+        _ => (false, value),
+    };
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|b| b.is_ascii_digit())
+        || !fraction.bytes().all(|b| b.is_ascii_digit())
+        || (unsigned.contains('.') && fraction.is_empty())
+    {
+        return None;
+    }
+    let whole = whole.trim_start_matches('0');
+    let fraction = fraction.trim_end_matches('0');
+    Some((
+        negative && !(whole.is_empty() && fraction.is_empty()),
+        whole,
+        fraction,
+    ))
+}
 fn adopted_number(output: &str, exact: &str) -> bool {
-    output
-        .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+'))
-        // A single sentence-final full stop is punctuation, not an extra
-        // decimal component. Never trim repeated dots or a version suffix.
-        .any(|part| part == exact || part.strip_suffix('.') == Some(exact))
+    let Some(expected) = normalized_number(exact) else {
+        return false;
+    };
+    // Numeric runs retain every sign/dot so malformed numbers and versions
+    // cannot donate a matching component. Boundaries also exclude grouping,
+    // exponents, percentages and expression/identifier fragments. Korean units
+    // and sentence endings, currency prefixes and Markdown emphasis remain valid.
+    let numeric = |c: char| c.is_ascii_digit() || matches!(c, '.' | '-' | '+');
+    let korean = |c: char| ('\u{ac00}'..='\u{d7a3}').contains(&c);
+    let mut chars = output.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
+        if !numeric(c) {
+            continue;
+        }
+        let mut end = start + c.len_utf8();
+        while let Some(&(at, c)) = chars.peek() {
+            if !numeric(c) {
+                break;
+            }
+            chars.next();
+            end = at + c.len_utf8();
+        }
+        // Formatting cannot hide a sign, grouping separator or adjacent number.
+        // Do not remove markup from the numeric run itself: an infix '*' must
+        // never join the two operands into a different number.
+        let markup = |c: char| matches!(c, '*' | '_' | '`');
+        let currency = |c: char| matches!(c, '$' | '€' | '£' | '¥' | '₩');
+        let mut preceding = output[..start]
+            .chars()
+            .rev()
+            .filter(|c| !markup(*c))
+            .skip_while(|c| currency(*c));
+        let left = match preceding.next() {
+            None => true,
+            Some(c) if c.is_whitespace() || korean(c) => true,
+            Some('(' | '[' | '{' | '\'' | '"' | '‘' | '“' | ';') => true,
+            Some(',' | ':') => preceding.next().is_none_or(|c| !c.is_ascii_digit()),
+            _ => false,
+        };
+        let mut following = output[end..].chars().filter(|c| !markup(*c));
+        let next = following.next();
+        let right = match next {
+            None => true,
+            Some(c) if c.is_whitespace() || korean(c) => true,
+            Some(')' | ']' | '}' | '\'' | '"' | '’' | '”' | ';' | '!' | '?') => true,
+            Some(',' | ':') => following.next().is_none_or(|c| !c.is_ascii_digit()),
+            Some('.') => following.next().is_none_or(|c| {
+                c.is_whitespace() || matches!(c, ')' | ']' | '}' | '\'' | '"' | '’' | '”')
+            }),
+            _ => false,
+        };
+        let part = &output[start..end];
+        let part = if next.is_none_or(|c| {
+            c.is_whitespace() || matches!(c, ')' | ']' | '}' | '\'' | '"' | '’' | '”' | '*')
+        }) {
+            // Strip exactly one sentence-final period, never repeated dots.
+            part.strip_suffix('.').unwrap_or(part)
+        } else {
+            part
+        };
+        if left && right && normalized_number(part) == Some(expected) {
+            return true;
+        }
+    }
+    false
 }
 // Strict supported traces: one decimal, or one search followed by one complete
 // first-hit source read; instruction reads do not affect the route. A successful
@@ -713,4 +801,65 @@ pub(crate) fn invalidate_thread(conn: &Connection, tenant: &str, thread: &str) -
         crate::agent_execution::purge_runs(conn, tenant, runs)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod numeric_adoption_tests {
+    use super::*;
+    #[test]
+    fn fixed_point_equivalence_preserves_precision_sign_and_complete_tokens() {
+        for (exact, output) in [
+            ("140", "**140.00달러**"),
+            ("38.6", "합계는 $38.60입니다."),
+            ("23.2", "Amount +0023.200000."),
+            ("23.2", "Amount **23.20**."),
+            ("23.2", "Amount `23.20`."),
+            ("-23.2", "Amount -23.200."),
+            // Evidence source literals need not already be canonical.
+            ("00023.2000", "23.2"),
+            ("-00023.2000", "-23.20"),
+            ("-0.000", "+0.00"),
+            ("0.000000000001", "0.00000000000100"),
+        ] {
+            assert!(adopted_number(output, exact), "{exact}: {output}");
+        }
+        for output in [
+            "23.21",
+            "23.200001",
+            "-23.20",
+            "23.2.3.",
+            "23.2..",
+            "23.2.0",
+            "123.20",
+            "0.23.20",
+            "23.2e0",
+            "1e23.2",
+            "23.2%",
+            "**23.2**%",
+            "v**23.2**",
+            "1,23.2",
+            "23.2,000",
+            "1/23.2",
+            "23.2/1",
+            "v23.2",
+            "23.2x",
+            "−23.2",
+            "-$23.2",
+            "−$23.2",
+            "++23.2",
+            "--23.2",
+            "+-23.2",
+            "23.2+0",
+            "23.2−0",
+            "23.2.입니다",
+        ] {
+            assert!(!adopted_number(output, "23.2"), "{output}");
+        }
+        let tiny = format!("0.{}1", "0".repeat(95));
+        assert!(adopted_number(&format!("{tiny}00"), &tiny));
+        assert!(!adopted_number("23.20", "-23.2"));
+        assert!(!adopted_number("-23.2001", "-23.2"));
+        assert!(!adopted_number(&format!("23.2{}", "0".repeat(128)), "23.2"));
+        assert!(!adopted_number("23.2", "23.2.0"));
+    }
 }

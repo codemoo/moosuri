@@ -517,6 +517,7 @@ mod web;
 mod connected_missions;
 mod mission_chat;
 mod missions;
+mod planner_composition;
 
 #[cfg(feature = "credential-broker-chat")]
 mod credential_chat;

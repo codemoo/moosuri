@@ -793,11 +793,21 @@ fn event_in_range(e: &CalendarEvent, q: &CalendarRange, p: &CalendarRunProfile) 
         Ok(actual >= start && actual < end)
     }
 }
-pub(crate) fn record(c: &Connection, r: &Run, raw: serde_json::Value) -> Result<()> {
+pub(crate) fn record(
+    c: &Connection,
+    r: &Run,
+    source_step: i64,
+    raw: serde_json::Value,
+) -> Result<()> {
     let d: CalendarChatDecision =
         serde_json::from_value(raw).map_err(|_| StoreError::InvalidInput)?;
-    validate_decision(&crate::request_continuations::text(c, r)?, &d)?;
     let source = crate::request_continuations::text(c, r)?;
+    validate_decision(&source, &d)?;
+    let continuation = crate::request_continuations::context(c, r)?;
+    let previous = continuation.as_ref().and_then(|v| match &v.draft {
+        CurrentChatDecision::Calendar(d) => Some(d),
+        _ => None,
+    });
     let p = profile(c, &r.tenant, &r.id)?.ok_or(StoreError::Forbidden)?;
     // Literal-span validation must not turn an unsupported timezone into a
     // failed chat. Actual admission below freezes it as unavailable and clarifies.
@@ -810,30 +820,62 @@ pub(crate) fn record(c: &Connection, r: &Run, raw: serde_json::Value) -> Result<
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
-    for quote in [&d.date_quote, &d.move_date_quote, &d.last_date_quote]
-        .into_iter()
-        .flatten()
-    {
-        if !crate::schedules::civil_time::complete_quote(
-            &source,
-            quote,
-            &data,
-            p.reference,
-            zone.as_deref().unwrap_or("UTC"),
+    for (quote, previous_quote, clocks) in [
+        (
+            &d.date_quote,
+            previous.and_then(|v| v.date_quote.as_ref()),
             false,
-        ) {
-            return Err(StoreError::InvalidInput);
-        }
-    }
-    for quote in [&d.start_quote, &d.end_quote].into_iter().flatten() {
-        if !crate::schedules::civil_time::complete_quote(
-            &source,
-            quote,
-            &data,
-            p.reference,
-            zone.as_deref().unwrap_or("UTC"),
+        ),
+        (
+            &d.move_date_quote,
+            previous.and_then(|v| v.move_date_quote.as_ref()),
+            false,
+        ),
+        (
+            &d.last_date_quote,
+            previous.and_then(|v| v.last_date_quote.as_ref()),
+            false,
+        ),
+        (
+            &d.start_quote,
+            previous.and_then(|v| v.start_quote.as_ref()),
             true,
-        ) {
+        ),
+        (
+            &d.end_quote,
+            previous.and_then(|v| v.end_quote.as_ref()),
+            true,
+        ),
+    ] {
+        let Some(quote) = quote else { continue };
+        let complete = |text: &str| {
+            crate::schedules::civil_time::complete_quote(
+                text,
+                quote,
+                &data,
+                p.reference,
+                zone.as_deref().unwrap_or("UTC"),
+                clocks,
+            )
+        };
+        // A later numeric answer must not become the suffix of an earlier
+        // validated clock. Only the same inherited field can use earlier
+        // authenticated messages; a new quote must stand in the current answer.
+        // Keep newlines inside each message subject to the full clock grammar.
+        let valid = if let Some(v) = continuation
+            .as_ref()
+            .filter(|_| previous_quote == Some(quote))
+        {
+            v.answers.split_last().is_some_and(|(current, earlier)| {
+                current == &r.text
+                    && std::iter::once(v.initiating_request.as_str())
+                        .chain(earlier.iter().map(String::as_str))
+                        .any(complete)
+            })
+        } else {
+            complete(&r.text)
+        };
+        if !valid {
             return Err(StoreError::InvalidInput);
         }
     }
@@ -846,7 +888,7 @@ pub(crate) fn record(c: &Connection, r: &Run, raw: serde_json::Value) -> Result<
             d.clarification.as_deref(),
         )?;
     }
-    let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans p JOIN agent_execution e USING(tenant_id,run_id) WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.state='awaiting' AND e.remote_calls=1 AND e.tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
+    let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM mission_chat_plans p JOIN agent_execution e USING(tenant_id,run_id) WHERE p.tenant_id=?1 AND p.run_id=?2 AND p.state='awaiting' AND e.remote_calls=?3 AND e.tool_calls=0) AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id,source_step],|r|r.get(0))?;
     if !valid
         || profile(c, &r.tenant, &r.id)?.is_none()
         || crate::media::has_context(c, &r.tenant, &r.id)?
@@ -868,13 +910,14 @@ pub(crate) fn record(c: &Connection, r: &Run, raw: serde_json::Value) -> Result<
         )?;
     }
     c.execute(
-        "INSERT INTO calendar_command_plans VALUES(?1,?2,?3,?4,'sealed',?5,NULL,1)",
+        "INSERT INTO calendar_command_plans VALUES(?1,?2,?3,?4,'sealed',?5,NULL,?6)",
         params![
             r.tenant,
             r.id,
             Uuid::new_v4().to_string(),
             json(&d)?,
-            now()? + 120
+            now()? + 120,
+            source_step
         ],
     )?;
     c.execute(
@@ -924,6 +967,9 @@ fn command(
     let user = original(c, &r)?;
     // Retry may rebind the run lease, never the immutable completed decision step.
     // The original authenticated session is independently checked above.
+    if crate::missions::chat::decision_step(c, &r, true)? != source_step {
+        return Err(StoreError::Conflict);
+    }
     let nonce:Vec<u8>=c.query_row("SELECT s.nonce FROM agent_steps s JOIN agent_execution e USING(tenant_id,run_id) WHERE s.tenant_id=?1 AND s.run_id=?2 AND s.step=?3 AND s.state IN('completed','purged') AND e.remote_calls=?3 AND e.tool_calls=0 AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id,source_step],|r|r.get(0))?;
     let step = StepLease {
         run: l.clone(),

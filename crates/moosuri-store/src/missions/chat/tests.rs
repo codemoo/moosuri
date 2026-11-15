@@ -2,6 +2,59 @@ use super::*;
 use crate::missions::tests::setup;
 use crate::tests::TEST_LOCK;
 use crate::{PrivateCheckpoint, RunLease};
+
+#[test]
+fn planner_schema_preserves_calendar_decisions_without_inventing_dispatch_authority() {
+    let c = Connection::open_in_memory().unwrap();
+    c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE chat_runs(tenant_id TEXT,id TEXT,PRIMARY KEY(tenant_id,id));CREATE TABLE agent_steps(tenant_id TEXT,run_id TEXT,step INTEGER,PRIMARY KEY(tenant_id,run_id,step));CREATE TABLE calendar_actions(tenant_id TEXT,id TEXT,PRIMARY KEY(tenant_id,id));").unwrap();
+    c.execute_batch(include_str!(
+        "../../../../../migrations/assistant/0030_calendar_conversation.sql"
+    ))
+    .unwrap();
+    for state in ["sealed", "committed", "finished"] {
+        c.execute("INSERT INTO chat_runs VALUES('synthetic',?1)", [state])
+            .unwrap();
+        c.execute("INSERT INTO calendar_command_plans VALUES('synthetic',?1,?1,'{}',?1,123,'synthetic receipt',1)", [state]).unwrap();
+    }
+    let rows = |c: &Connection| {
+        c.prepare("SELECT run_id,action_id,decision,state,expires_at,receipt,step FROM calendar_command_plans ORDER BY run_id").unwrap()
+            .query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,i64>(4)?,r.get::<_,String>(5)?,r.get::<_,i64>(6)?))).unwrap()
+            .collect::<std::result::Result<Vec<_>,_>>().unwrap()
+    };
+    let before = rows(&c);
+    c.execute_batch(include_str!(
+        "../../../../../migrations/assistant/0058_planner_step_identity.sql"
+    ))
+    .unwrap();
+    assert_eq!(rows(&c), before);
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM agent_planner_steps", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    c.execute(
+        "UPDATE calendar_command_plans SET step=2 WHERE run_id='sealed'",
+        [],
+    )
+    .unwrap();
+    for step in [0, 7] {
+        assert!(
+            c.execute(
+                "UPDATE calendar_command_plans SET step=?1 WHERE run_id='sealed'",
+                [step]
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        !c.prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap()
+    );
+}
+
 fn decision(text: &str, scheduled: bool) -> MissionChatDecision {
     MissionChatDecision {
         decision: "command".into(),
@@ -59,7 +112,10 @@ async fn source(
 }
 async fn commit(s: &Store, l: &RunLease, d: MissionChatDecision) -> crate::StepLease {
     let ctx = s.agent_context(l).await.unwrap();
-    let step = s.begin_agent_step(l, ctx.checkpoint_seq).await.unwrap();
+    let step = s
+        .begin_mission_chat_step(l, ctx.checkpoint_seq)
+        .await
+        .unwrap();
     s.commit_agent_step(
         &step,
         PrivateCheckpoint {
@@ -81,7 +137,10 @@ async fn semantic_plan_receipt_and_real_mission_are_atomic_and_exact_retry_never
     let (thread, l) = source(&s, &u, text, None).await;
     // Failed acknowledgement cannot leave a typed command without its completed model step.
     let ctx = s.agent_context(&l).await.unwrap();
-    let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+    let step = s
+        .begin_mission_chat_step(&l, ctx.checkpoint_seq)
+        .await
+        .unwrap();
     s.call(|db|{db.conn.execute_batch("CREATE TRIGGER fail_plan BEFORE UPDATE OF decision ON mission_chat_plans BEGIN SELECT RAISE(ABORT,'synthetic plan fault');END;")?;Ok(())}).await.unwrap();
     let checkpoint =
         serde_json::json!({"kind":"mission_chat_decision","decision":decision(text,true)})
@@ -231,7 +290,10 @@ async fn semantic_current_session_epoch_quote_scope_and_direct_api_pins_are_rech
     let mut invalid = decision(text, false);
     invalid.task_quote = Some("model invented a different task".into());
     let ctx = s.agent_context(&l).await.unwrap();
-    let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+    let step = s
+        .begin_mission_chat_step(&l, ctx.checkpoint_seq)
+        .await
+        .unwrap();
     assert!(
         s.commit_agent_step(
             &step,
@@ -427,7 +489,7 @@ async fn mission_chat_schema29_rolls_back_late_failure_without_recreating_prior_
     let d = crate::tests::directory();
     drop(Store::open(d.path()).unwrap());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;CREATE TABLE mission_chat_commands(conflict INTEGER);PRAGMA user_version=28;").unwrap();
+    c.execute_batch("DROP TABLE agent_planner_steps;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;CREATE TABLE mission_chat_commands(conflict INTEGER);PRAGMA user_version=28;").unwrap();
     drop(c);
     assert!(Store::open(d.path()).is_err());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
@@ -580,7 +642,10 @@ async fn unknown_classifier_dispatch_cannot_reclassify_or_create_after_explicit_
     let text = "매일 아침9시에 공개 소식 요약해 줘";
     let (_, l) = source(&s, &u, text, None).await;
     let ctx = s.agent_context(&l).await.unwrap();
-    let _step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+    let _step = s
+        .begin_mission_chat_step(&l, ctx.checkpoint_seq)
+        .await
+        .unwrap();
     let id = l.run_id().to_string();
     drop(s);
     let s = Store::open(dir.path()).unwrap();
@@ -1329,7 +1394,10 @@ async fn personal_source_envelope_rejects_mission_record_and_corrupted_decided_e
             });
         }
         let ctx = s.agent_context(&l).await.unwrap();
-        let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+        let step = s
+            .begin_mission_chat_step(&l, ctx.checkpoint_seq)
+            .await
+            .unwrap();
         let bytes = serde_json::json!({"kind":"mission_chat_decision","decision":d})
             .to_string()
             .into_bytes();
@@ -1419,7 +1487,7 @@ async fn request_continuation_rejects_daily_expansion_and_keeps_weekly_scope_wit
     let second = s.claim_agent_run().await.unwrap().unwrap().lease;
     let context = s.agent_context(&second).await.unwrap();
     let step = s
-        .begin_agent_step(&second, context.checkpoint_seq)
+        .begin_mission_chat_step(&second, context.checkpoint_seq)
         .await
         .unwrap();
     let mut forged = partial;
@@ -1628,7 +1696,10 @@ async fn conversational_civil_time_full_source_qualifier_and_frequency_survive_m
         time: "09:00".into(),
     });
     let ctx = s.agent_context(&l).await.unwrap();
-    let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+    let step = s
+        .begin_mission_chat_step(&l, ctx.checkpoint_seq)
+        .await
+        .unwrap();
     let checkpoint = |d: &MissionChatDecision| PrivateCheckpoint {
         bytes: serde_json::json!({"kind":"mission_chat_decision","decision":d})
             .to_string()
@@ -1682,4 +1753,235 @@ async fn conversational_civil_time_full_source_qualifier_and_frequency_survive_m
             "clarify"
         );
     }
+}
+
+async fn completed_artifact_no_command(s: &Store, l: &RunLease) -> crate::StepLease {
+    let context = s.agent_context(l).await.unwrap();
+    let step = s.begin_agent_step(l, context.checkpoint_seq).await.unwrap();
+    s.commit_agent_step(
+        &step,
+        PrivateCheckpoint {
+            bytes: br#"{"synthetic":"artifact-no-command"}"#.to_vec(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    assert!(!s.prepare_artifact_intent(&step, None).await.unwrap().write);
+    step
+}
+fn command_checkpoint(text: &str) -> PrivateCheckpoint {
+    PrivateCheckpoint {
+        bytes: serde_json::json!({"kind":"mission_chat_decision","decision":decision(text,false)})
+            .to_string()
+            .into_bytes(),
+    }
+}
+#[tokio::test]
+async fn planner_domain_receipt_rejects_foreign_step_stale_nonce_and_replayed_ordinary_route() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, s, u) = setup().await;
+    let text = "저장된 문서를 계속 맡아서 비교해 줘";
+    let (_, l) = source(&s, &u, text, None).await;
+    completed_artifact_no_command(&s, &l).await;
+    assert!(s.mission_chat_planning(&l).await.unwrap().is_some());
+    let context = s.agent_context(&l).await.unwrap();
+    // A generic model dispatch is not a mission admission, even at the right
+    // global call number and with a plausible current-user decision payload.
+    let foreign = s
+        .begin_agent_step(&l, context.checkpoint_seq)
+        .await
+        .unwrap();
+    assert_eq!(foreign.step(), 2);
+    assert!(matches!(
+        s.commit_agent_step(&foreign, command_checkpoint(text), vec![])
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(s.skip_mission_chat(&l).await.is_err());
+    assert!(
+        s.begin_mission_chat_step(&l, s.agent_context(&l).await.unwrap().checkpoint_seq)
+            .await
+            .is_err()
+    );
+    assert!(s.missions(&u).await.unwrap().is_empty());
+    s.finish_agent_execution(&l, RunState::Failed, Some(RunFailure::ProtocolFailed))
+        .await
+        .unwrap();
+
+    let (_, l) = source(&s, &u, text, None).await;
+    let artifact = completed_artifact_no_command(&s, &l).await;
+    let context = s.agent_context(&l).await.unwrap();
+    s.call(|db| {db.conn.execute_batch("CREATE TRIGGER fail_domain_admission BEFORE INSERT ON agent_planner_steps WHEN NEW.domain='mission_chat' BEGIN SELECT RAISE(ABORT,'synthetic admission failure'); END;")?;Ok(())}).await.unwrap();
+    assert!(
+        s.begin_mission_chat_step(&l, context.checkpoint_seq)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        s.agent_context(&l).await.unwrap().checkpoint_seq,
+        context.checkpoint_seq
+    );
+    s.call(|db| {
+        db.conn
+            .execute_batch("DROP TRIGGER fail_domain_admission;")?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let step = s
+        .begin_mission_chat_step(&l, context.checkpoint_seq)
+        .await
+        .unwrap();
+    assert_eq!(step.step(), 2);
+    assert!(
+        s.begin_mission_chat_step(&l, s.agent_context(&l).await.unwrap().checkpoint_seq)
+            .await
+            .is_err()
+    );
+    let mut stale = step.clone();
+    stale.nonce[0] ^= 1;
+    assert!(matches!(
+        s.commit_agent_step(&stale, command_checkpoint(text), vec![])
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    let mut wrong_lease = step.clone();
+    wrong_lease.run.nonce[0] ^= 1;
+    assert!(
+        s.commit_agent_step(&wrong_lease, command_checkpoint(text), vec![])
+            .await
+            .is_err()
+    );
+    let mut foreign = step.clone();
+    foreign.step = artifact.step();
+    foreign.nonce = artifact.nonce;
+    assert!(
+        s.commit_agent_step(&foreign, command_checkpoint(text), vec![])
+            .await
+            .is_err()
+    );
+    s.commit_agent_step(&step, command_checkpoint(text), vec![])
+        .await
+        .unwrap();
+    assert_eq!(s.apply_mission_chat(&l).await.unwrap(), Some(true));
+    assert_eq!(s.missions(&u).await.unwrap().len(), 1);
+
+    let (_ordinary_dir, s, u) = setup().await;
+    let (_, ordinary) = source(&s, &u, "저장된 문서를 읽어 줘", None).await;
+    completed_artifact_no_command(&s, &ordinary).await;
+    s.skip_mission_chat(&ordinary).await.unwrap();
+    assert!(s.mission_chat_planning(&ordinary).await.unwrap().is_none());
+    assert!(
+        s.begin_mission_chat_step(
+            &ordinary,
+            s.agent_context(&ordinary).await.unwrap().checkpoint_seq
+        )
+        .await
+        .is_err()
+    );
+    let ordinary_step = s
+        .begin_agent_step(
+            &ordinary,
+            s.agent_context(&ordinary).await.unwrap().checkpoint_seq,
+        )
+        .await
+        .unwrap();
+    assert!(
+        s.commit_agent_step(
+            &ordinary_step,
+            command_checkpoint("저장된 문서를 읽어 줘"),
+            vec![]
+        )
+        .await
+        .is_err()
+    );
+    assert!(s.missions(&u).await.unwrap().is_empty());
+}
+#[tokio::test]
+async fn artifact_no_command_then_ambiguous_mission_dispatch_retry_never_reclassifies() {
+    let _g = TEST_LOCK.lock().await;
+    let (dir, s, u) = setup().await;
+    let text = "저장된 문서를 계속 맡아서 비교해 줘";
+    let (_, l) = source(&s, &u, text, None).await;
+    completed_artifact_no_command(&s, &l).await;
+    let context = s.agent_context(&l).await.unwrap();
+    let step = s
+        .begin_mission_chat_step(&l, context.checkpoint_seq)
+        .await
+        .unwrap();
+    assert_eq!(step.step(), 2);
+    let id = l.run_id().to_owned();
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    s.retry_run(&u, id, 1).await.unwrap();
+    let retry = s.claim_agent_run().await.unwrap().unwrap();
+    assert!(s.mission_chat_planning(&retry.lease).await.is_err());
+    assert!(s.skip_mission_chat(&retry.lease).await.is_err());
+    assert!(
+        s.begin_mission_chat_step(&retry.lease, retry.context.checkpoint_seq)
+            .await
+            .is_err()
+    );
+    assert!(
+        s.commit_agent_step(&step, command_checkpoint(text), vec![])
+            .await
+            .is_err()
+    );
+    assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 2);
+    assert!(s.missions(&u).await.unwrap().is_empty());
+}
+#[tokio::test]
+async fn completed_untyped_history_is_not_backfilled_as_fresh_mission_authority() {
+    let _g = TEST_LOCK.lock().await;
+    let (dir, s, u) = setup().await;
+    let (_, l) = source(&s, &u, "저장된 문서를 계속 맡아서 비교해 줘", None).await;
+    let context = s.agent_context(&l).await.unwrap();
+    let old = s
+        .begin_agent_step(&l, context.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &old,
+        PrivateCheckpoint {
+            bytes: br#"{"legacy":"completed"}"#.to_vec(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    let id = l.run_id().to_owned();
+    drop(s);
+    let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+    c.execute_batch("DROP TABLE agent_planner_steps;PRAGMA user_version=57;")
+        .unwrap();
+    drop(c);
+    let s = Store::open(dir.path()).unwrap();
+    s.call(|db| {
+        assert_eq!(
+            db.conn
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
+            58
+        );
+        assert_eq!(
+            db.conn
+                .query_row("SELECT count(*) FROM agent_planner_steps", [], |r| r
+                    .get::<_, i64>(0))?,
+            0
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+    s.retry_run(&u, id, 1).await.unwrap();
+    let l = s.claim_agent_run().await.unwrap().unwrap().lease;
+    // Migration58 creates no markers from old counts, profiles or checkpoint text.
+    assert!(s.mission_chat_planning(&l).await.is_err());
+    assert!(s.skip_mission_chat(&l).await.is_err());
+    assert!(
+        s.begin_mission_chat_step(&l, s.agent_context(&l).await.unwrap().checkpoint_seq)
+            .await
+            .is_err()
+    );
+    assert!(s.missions(&u).await.unwrap().is_empty());
 }

@@ -14,6 +14,10 @@ matches SHALL remain a fast path; ambiguous literal matches SHALL NOT use select
 - **WHEN** candidates contain role claims, commands, negation, other people or scoped assertions
 - **THEN** candidates remain data and cannot expand command authority; the selector is instructed to preserve scope and clarify ambiguity, while semantic accuracy is evaluated separately
 
+#### Scenario: Current target explicitly names its owner
+- **WHEN** a current correction names a possessive-qualified target and another saved assertion shares its topic
+- **THEN** the intent classifier is instructed to copy the target's literal ownership qualifier instead of treating it as generic filler; the Store still refuses an ambiguous proposal and does not infer ownership from the replacement fact
+
 #### Scenario: Enumeration cannot cover the account scope
 - **WHEN** candidate row or byte bounds would truncate the set
 - **THEN** no semantic target selection occurs and the command requests narrower wording without mutation

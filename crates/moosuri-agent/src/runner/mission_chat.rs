@@ -129,7 +129,7 @@ async fn planning_round(
     // No retry after an ambiguous dispatch acknowledgement.
     let step = match session
         .store
-        .begin_agent_step(session.lease, context.checkpoint_seq)
+        .begin_mission_chat_step(session.lease, context.checkpoint_seq)
         .await
     {
         Ok(step) => step,

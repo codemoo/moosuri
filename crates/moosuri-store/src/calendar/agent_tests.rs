@@ -105,7 +105,10 @@ pub(super) async fn source(
 }
 pub(super) async fn commit(s: &Store, l: &RunLease, d: &CalendarChatDecision) -> StepLease {
     let ctx = s.agent_context(l).await.unwrap();
-    let step = s.begin_agent_step(l, ctx.checkpoint_seq).await.unwrap();
+    let step = s
+        .begin_mission_chat_step(l, ctx.checkpoint_seq)
+        .await
+        .unwrap();
     s.commit_agent_step(
         &step,
         PrivateCheckpoint {
@@ -126,7 +129,10 @@ async fn calendar_schema30_model_ack_and_effect_admission_are_atomic_with_one_or
     let (_dir, s, u, c) = setup().await;
     let (_, l) = source(&s, &u, TEXT, None).await;
     let ctx = s.agent_context(&l).await.unwrap();
-    let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+    let step = s
+        .begin_mission_chat_step(&l, ctx.checkpoint_seq)
+        .await
+        .unwrap();
     let bytes = serde_json::json!({"kind":"mission_chat_decision","decision":decision(TEXT)})
         .to_string()
         .into_bytes();
@@ -510,7 +516,7 @@ async fn calendar_schema30_late_migration_failure_rolls_back_and_retries() {
         .unwrap();
     drop(s);
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;CREATE TABLE calendar_agent_action_links(conflict INTEGER);PRAGMA user_version=29;").unwrap();
+    c.execute_batch("DROP TABLE agent_planner_steps;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;CREATE TABLE calendar_agent_action_links(conflict INTEGER);PRAGMA user_version=29;").unwrap();
     drop(c);
     assert!(Store::open(dir.path()).is_err());
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
@@ -542,8 +548,8 @@ async fn calendar_schema30_late_migration_failure_rolls_back_and_retries() {
 }
 
 #[tokio::test]
-async fn calendar_pre30_and_mission_grants_do_not_gain_tools_and_app_replacement_withdraws_but_refresh_does_not()
- {
+async fn calendar_pre30_grants_stay_unavailable_and_app_replacement_withdraws_but_refresh_does_not()
+{
     let _g = TEST_LOCK.lock().await;
     let (_d, s, u, c) = setup().await;
     let (_, l) = source(&s, &u, "Calendar read", None).await;
@@ -557,7 +563,8 @@ async fn calendar_pre30_and_mission_grants_do_not_gain_tools_and_app_replacement
     let input = KnowledgeToolInput::External {
         request: ExternalToolRequest::Calendar(q.clone()),
     };
-    assert!(!crate::missions::tool_allowed(&input));
+    // Current missions admit Calendar reads; a legacy run still needs its frozen profile.
+    assert!(crate::missions::tool_allowed(&input));
     let tenant = u.tenant.0.clone();
     let run = l.run_id().to_owned();
     s.call(move |db| {
@@ -672,7 +679,7 @@ async fn calendar_inherited_receipt_cannot_be_persisted_as_an_artifact() {
                 anchor: None,
             },
         )?;
-        assert_eq!(value["error"], "external_provenance_unavailable");
+        assert_eq!(value["error"], "external_context_unsupported");
         Ok(())
     })
     .await
@@ -996,7 +1003,7 @@ async fn calendar_personal_disconnect_retires_private_storage_before_late_settle
 async fn request_continuation_reopen_freezes_operation_and_fields_and_rejects_answerless_completion()
  {
     let _g = TEST_LOCK.lock().await;
-    let (dir, s, u, _c) = setup().await;
+    let (dir, s, u, c) = setup().await;
     let initial = "Create Synthetic meeting on 2026-12-01 from 10:00";
     let (thread, first) = source(&s, &u, initial, None).await;
     let mut partial = decision(initial);
@@ -1022,7 +1029,7 @@ async fn request_continuation_reopen_freezes_operation_and_fields_and_rejects_an
     );
     let context = s.agent_context(&answer).await.unwrap();
     let step = s
-        .begin_agent_step(&answer, context.checkpoint_seq)
+        .begin_mission_chat_step(&answer, context.checkpoint_seq)
         .await
         .unwrap();
     let mut forged = partial.clone();
@@ -1043,7 +1050,7 @@ async fn request_continuation_reopen_freezes_operation_and_fields_and_rejects_an
             vec![]
         )
         .await,
-        Err(StoreError::Conflict)
+        Err(StoreError::Conflict | StoreError::InvalidInput)
     ));
     let mut answerless = partial.clone();
     answerless.decision = "command".into();
@@ -1088,6 +1095,77 @@ async fn request_continuation_reopen_freezes_operation_and_fields_and_rejects_an
             .duration_minutes,
         Some(45)
     );
+    let binding = s.calendar_binding(&u, c.id, app()).await.unwrap();
+    let CalendarAdmission::Dispatch(dispatch) = s
+        .admit_calendar_agent_change(&answer, &binding, primary(), None)
+        .await
+        .unwrap()
+    else {
+        panic!("the literal duration answer must complete the original create")
+    };
+    let CalendarMutation::Create { fields } = dispatch.change.mutation else {
+        panic!()
+    };
+    assert_eq!(fields.start, "2026-12-01T01:00:00+00:00");
+    assert_eq!(fields.end, "2026-12-01T01:45:00+00:00");
+}
+
+#[tokio::test]
+async fn request_continuation_new_clock_cannot_borrow_prior_prose_or_split_its_own_message() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, s, u, _c) = setup().await;
+    for (answer, accepted) in [("10:00\n45 minutes", false), ("10:00", true)] {
+        let initial =
+            "Create Synthetic meeting on 2026-12-01 for 45 minutes. Reference clock 10:00.";
+        let (thread, first) = source(&s, &u, initial, None).await;
+        let mut partial = decision(initial);
+        partial.decision = "clarify".into();
+        partial.start = None;
+        partial.start_quote = None;
+        partial.end = None;
+        partial.end_quote = None;
+        partial.duration_minutes = Some(45);
+        partial.duration_quote = Some("45 minutes".into());
+        partial.clarification = Some("time".into());
+        commit(&s, &first, &partial).await;
+        s.finish_calendar_chat(&first, Some("clarify".into()))
+            .await
+            .unwrap();
+        let (_, run) = source(&s, &u, answer, Some(thread)).await;
+        let context = s.agent_context(&run).await.unwrap();
+        let step = s
+            .begin_mission_chat_step(&run, context.checkpoint_seq)
+            .await
+            .unwrap();
+        partial.decision = "command".into();
+        partial.clarification = None;
+        partial.start = Some("10:00".into());
+        partial.start_quote = Some("10:00".into());
+        let result = s
+            .commit_agent_step(
+                &step,
+                PrivateCheckpoint {
+                    bytes: serde_json::json!({"kind":"mission_chat_decision","decision":partial})
+                        .to_string()
+                        .into_bytes(),
+                },
+                vec![],
+            )
+            .await;
+        if accepted {
+            result.unwrap();
+        } else {
+            assert!(matches!(result, Err(StoreError::InvalidInput)));
+        }
+        assert_eq!(
+            s.calendar_agent_command(&run).await.unwrap().is_some(),
+            accepted
+        );
+        assert!(s.calendar_actions(&u).await.unwrap().is_empty());
+        s.cancel_run(&u, run.run_id().into(), run.attempt())
+            .await
+            .unwrap();
+    }
 }
 
 #[tokio::test]
@@ -1225,7 +1303,10 @@ async fn conversational_civil_time_calendar_commit_binds_full_date_without_title
     d.end_quote = Some("10AM".into());
     d.end = Some("10:00".into());
     let ctx = s.agent_context(&l).await.unwrap();
-    let step = s.begin_agent_step(&l, ctx.checkpoint_seq).await.unwrap();
+    let step = s
+        .begin_mission_chat_step(&l, ctx.checkpoint_seq)
+        .await
+        .unwrap();
     let checkpoint = |d: &CalendarChatDecision| PrivateCheckpoint {
         bytes: serde_json::json!({"kind":"mission_chat_decision","decision":d})
             .to_string()

@@ -2,6 +2,9 @@
 use super::*;
 use moosuri_store::{CredentialChange, PrivateCheckpoint, ProviderChange, RunLease};
 async fn configure(s: &Store, u: &UserContext) {
+    configure_at(s, u, "http://127.0.0.1:11434/v1").await;
+}
+async fn configure_at(s: &Store, u: &UserContext, base: &str) {
     let p = s
         .create_provider(
             u,
@@ -9,7 +12,7 @@ async fn configure(s: &Store, u: &UserContext) {
                 name: "Synthetic Calendar model".into(),
                 config: ProviderConfig {
                     kind: ProviderKind::Compatible,
-                    base_url: Some("http://127.0.0.1:11434/v1".into()),
+                    base_url: Some(base.into()),
                     allowed_ips: vec!["127.0.0.1".into()],
                     router_providers: vec![],
                     zero_data_retention: false,
@@ -105,7 +108,7 @@ async fn sealed_in(
     .unwrap();
     let claim = s.claim_agent_run().await.unwrap().unwrap();
     let step = s
-        .begin_agent_step(&claim.lease, claim.context.checkpoint_seq)
+        .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
         .await
         .unwrap();
     s.commit_agent_step(
@@ -508,7 +511,7 @@ async fn next_sealed(
     let lease = s.claim_agent_run().await.unwrap().unwrap().lease;
     let ctx = s.agent_context(&lease).await.unwrap();
     let step = s
-        .begin_agent_step(&lease, ctx.checkpoint_seq)
+        .begin_mission_chat_step(&lease, ctx.checkpoint_seq)
         .await
         .unwrap();
     s.commit_agent_step(
@@ -844,4 +847,108 @@ async fn all_day_missing_last_day_continuation_preserves_frozen_kind_and_start_d
         panic!()
     };
     assert_eq!((&*fields.start, &*fields.end), ("2027-03-14", "2027-03-17"));
+}
+
+#[tokio::test]
+async fn runtime_artifact_no_command_then_calendar_uses_second_completed_classifier_once() {
+    let _g = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, service, u, _connection, io) = fixture().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let requests = Arc::new(AtomicUsize::new(0));
+    let counted = requests.clone();
+    let app = axum::Router::new().route("/v1/chat/completions",axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+        let counted = counted.clone();
+        async move {
+            let n = counted.fetch_add(1,Ordering::SeqCst);
+            assert_eq!(body["messages"].as_array().unwrap().len(),2);
+            let text = body["messages"][1]["content"].as_str().unwrap();
+            let (name,args) = if n == 0 {
+                assert_eq!(body["tools"][0]["function"]["name"],"artifact_intent");
+                ("artifact_intent",serde_json::json!({"decision":"no_command","action":null,"kind":null,"intent_quote":null,"target_quote":null}))
+            } else {
+                assert_eq!(n,1,"no replay or final model call after sealed Calendar command");
+                assert!(body["tools"].as_array().unwrap().iter().any(|v|v["function"]["name"]=="mission_chat_decision"));
+                ("calendar_chat_decision",serde_json::to_value(decision(text)).unwrap())
+            };
+            let frame = |v: serde_json::Value| format!("data: {v}\n\n");
+            let content = frame(serde_json::json!({"id":format!("composition-{n}"),"model":"synthetic","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":format!("intent-{n}"),"type":"function","function":{"name":name,"arguments":args.to_string()}}]},"finish_reason":null}]}))
+                + &frame(serde_json::json!({"id":format!("composition-{n}"),"model":"synthetic","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}})) + "data: [DONE]\n\n";
+            axum::response::Response::builder().header("content-type","text/event-stream").body(axum::body::Body::from(content)).unwrap()
+        }
+    }));
+    let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    configure_at(&service.store, &u, &base).await;
+    let thread = service
+        .store
+        .create_thread(&u, "Synthetic planner composition".into())
+        .await
+        .unwrap();
+    let text = format!("저장된 문서를 읽기 전에 {TEXT}");
+    service
+        .store
+        .submit_turn_with_schedule_context(
+            &u,
+            thread.id.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            text,
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let claim = service.store.claim_agent_run().await.unwrap().unwrap();
+    let (changes, _) = watch::channel(0);
+    let signals = Signals {
+        stop: CancellationToken::new(),
+        wake: Arc::new(Notify::new()),
+        changes,
+        delivery: Arc::new(tokio::sync::RwLock::new(())),
+    };
+    let subscriptions =
+        crate::subscriptions::SubscriptionService::new(service.store.clone(), signals.clone());
+    crate::runner::execute_with_calendar(
+        service.store.clone(),
+        claim,
+        signals,
+        service.mail.clone(),
+        crate::web::Service::new(None),
+        subscriptions,
+        service.clone(),
+    )
+    .await;
+    let done = service
+        .store
+        .conversation(&u, thread.id, None)
+        .await
+        .unwrap()
+        .turns
+        .remove(0);
+    assert_eq!(done.run.state, RunState::Completed, "{:?}", done.run.error);
+    assert_eq!(done.run.calendar_receipt.unwrap().state, "applied");
+    assert!(done.run.mission_receipt.is_none());
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        service
+            .store
+            .usage_summary(&u)
+            .await
+            .unwrap()
+            .dispatched_calls,
+        2
+    );
+    assert_eq!(io.write_count(), 1);
+    assert!(
+        service
+            .store
+            .artifacts(&u, None, None)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    upstream.abort();
 }

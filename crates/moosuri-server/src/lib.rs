@@ -280,13 +280,14 @@ impl ServerConfig {
         Ok(self)
     }
     pub fn start_runtime(&self, store: Store) -> moosuri_agent::Runtime {
-        moosuri_agent::Runtime::start_with_google_setup_claude(
+        moosuri_agent::Runtime::start_with_google_setup_claude_pdf(
             store,
             self.google.clone(),
             self.web.clone(),
             self.browser.clone(),
             self.google_redirect_uri(),
             self.claude.clone(),
+            self.pdf_extractor.clone(),
         )
     }
     pub fn with_trusted_proxy(

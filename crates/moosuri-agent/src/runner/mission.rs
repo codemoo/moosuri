@@ -21,7 +21,14 @@ fn mission_definitions(
         .filter(|d| {
             (!d.name.starts_with("mail_")
                 || connected.is_some_and(|p| !p.mail.is_empty())
-                    && matches!(d.name.as_str(), "mail_search" | "mail_read" | "mail_thread"))
+                    && matches!(
+                        d.name.as_str(),
+                        "mail_search"
+                            | "mail_read"
+                            | "mail_thread"
+                            | "mail_attachment"
+                            | "mail_attachments"
+                    ))
                 && !d.name.starts_with("browser_")
                 && !d.name.starts_with("artifact_")
                 && !d.name.starts_with("conversation_")

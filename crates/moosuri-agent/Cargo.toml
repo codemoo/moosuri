@@ -12,6 +12,7 @@ credential-broker-chat = ["moosuri-store/credential-broker-chat"]
 test-fixtures = ["moosuri-connectors/test-fixtures"]
 
 [dependencies]
+moosuri-documents = { path = "../moosuri-documents" }
 moosuri-vault-protocol = {path="../moosuri-vault-protocol"}
 moosuri-core = { path = "../moosuri-core" }
 moosuri-store = { path = "../moosuri-store" }

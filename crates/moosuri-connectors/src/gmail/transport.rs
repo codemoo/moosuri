@@ -11,6 +11,7 @@ use zeroize::Zeroizing;
 pub(crate) enum Endpoint {
     Token,
     Gmail,
+    GmailAttachment,
     Calendar,
 }
 pub(crate) enum Body<'a> {
@@ -61,7 +62,7 @@ impl Transport {
             Endpoint::Calendar => {
                 Url::parse(&format!("https://www.googleapis.com/calendar/v3/{path}"))
             }
-            Endpoint::Gmail => Url::parse(&format!(
+            Endpoint::Gmail | Endpoint::GmailAttachment => Url::parse(&format!(
                 "https://gmail.googleapis.com/gmail/v1/users/me/{path}"
             )),
             _ => return Err(GmailError::InvalidInput),
@@ -206,6 +207,7 @@ impl Transport {
         let limit = match endpoint {
             Endpoint::Token => 64 * 1024,
             Endpoint::Gmail | Endpoint::Calendar => 1024 * 1024,
+            Endpoint::GmailAttachment => 2 * 1024 * 1024 * 4 / 3 + 4096,
         };
         #[cfg(any(test, feature = "test-fixtures"))]
         let limit = self.test_limit.unwrap_or(limit).min(limit);

@@ -2,8 +2,7 @@
 //! code or automatic consent is exposed here. Gmail history retention is finite.
 use super::transport::{Endpoint, Transport};
 use super::{Coverage, ReadError, SourceChange, SourceItem, SyncPage, atom, decimal, decode, id};
-use crate::gmail::{SecretString, parse_mail};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use crate::gmail::{SecretString, full::FullMessage};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio_util::sync::CancellationToken;
@@ -299,28 +298,27 @@ impl GmailSyncClient {
         cancel: &CancellationToken,
     ) -> Result<Option<SourceChange>, ReadError> {
         id(message_id)?;
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Wire {
-            id: String,
-            thread_id: String,
-            history_id: String,
-            internal_date: String,
-            #[serde(default)]
-            label_ids: Vec<String>,
-            raw: String,
-        }
-        let wire: Wire = match self.get(&format!("messages/{message_id}?format=raw&fields=id,threadId,historyId,internalDate,labelIds,raw"), token, cancel).await {
-            // A race during backfill is no evidence that other records vanished.
+        let bytes = match self.transport.request(Endpoint::Gmail,
+            &format!("messages/{message_id}?format=full&fields=id,threadId,historyId,internalDate,labelIds,payload"), Some(token), cancel).await {
             Err(ReadError::Http(404)) => return Ok(None), result => result?,
         };
+        let mut wire =
+            FullMessage::decode(&bytes, message_id).map_err(|_| ReadError::InvalidResponse)?;
+        let history_id = wire
+            .history_id
+            .as_deref()
+            .ok_or(ReadError::InvalidResponse)?
+            .to_owned();
+        let internal_date = wire
+            .internal_date
+            .as_deref()
+            .ok_or(ReadError::InvalidResponse)?;
         if wire.id != message_id || wire.label_ids.len() > 128 {
             return Err(ReadError::InvalidResponse);
         }
         id(&wire.thread_id).map_err(|_| ReadError::InvalidResponse)?;
-        decimal(&wire.history_id).map_err(|_| ReadError::InvalidResponse)?;
-        let millis: i64 = wire
-            .internal_date
+        decimal(&history_id).map_err(|_| ReadError::InvalidResponse)?;
+        let millis: i64 = internal_date
             .parse()
             .map_err(|_| ReadError::InvalidResponse)?;
         if millis < 0 {
@@ -335,38 +333,38 @@ impl GmailSyncClient {
             return Ok(if departure {
                 Some(SourceChange::Delete {
                     external_id: wire.id,
-                    remote_version: wire.history_id,
+                    remote_version: history_id,
                 })
             } else {
                 None
             });
         }
-        if wire.raw.len() > 700_000 {
+        // Collection consent covers message body text only. Attachment bytes
+        // and PDF extraction remain explicit interactive reads, not indexed text.
+        for (part, attachment) in wire.external_bodies() {
+            let bytes = self
+                .transport
+                .request(
+                    Endpoint::Gmail,
+                    &format!("messages/{message_id}/attachments/{attachment}"),
+                    Some(token),
+                    cancel,
+                )
+                .await?;
+            wire.hydrate_body(&part, &bytes)
+                .map_err(|_| ReadError::InvalidResponse)?;
+        }
+        let projected = wire.project().map_err(|_| ReadError::InvalidResponse)?;
+        let mail = projected.mail;
+        if mail.subject.len() > 200 || mail.from.len() > 100 {
             return Err(ReadError::LimitExceeded);
         }
-        let raw = URL_SAFE_NO_PAD
-            .decode(wire.raw.trim_end_matches('='))
-            .map_err(|_| ReadError::InvalidResponse)?;
-        let parsed = mail_parser::MessageParser::default()
-            .parse(raw.as_slice())
-            .ok_or(ReadError::InvalidResponse)?;
-        if parsed.subject().is_some_and(|subject| subject.len() > 200)
-            || parsed.from().is_some_and(|from| {
-                from.iter().count() > 100
-                    || from
-                        .iter()
-                        .any(|address| address.address.as_deref().is_some_and(|a| a.len() > 320))
-            })
-        {
-            return Err(ReadError::LimitExceeded);
-        }
-        let mail = parse_mail(&raw).map_err(|_| ReadError::InvalidResponse)?;
         if mail.text_truncated {
             return Err(ReadError::LimitExceeded);
         }
         Ok(Some(SourceChange::Upsert(SourceItem {
             external_id: wire.id,
-            remote_version: wire.history_id,
+            remote_version: history_id,
             subject: mail.subject,
             text: mail.text,
             speaker: mail.from.join(", "),

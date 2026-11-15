@@ -99,6 +99,8 @@ pub(crate) fn tool_allowed(v: &KnowledgeToolInput) -> bool {
                     moosuri_core::MailToolRequest::Search { .. }
                         | moosuri_core::MailToolRequest::Read { .. }
                         | moosuri_core::MailToolRequest::Thread { .. }
+                        | moosuri_core::MailToolRequest::Attachment { .. }
+                        | moosuri_core::MailToolRequest::Attachments { .. }
                 )
             }
             | KnowledgeToolInput::External {

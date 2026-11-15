@@ -146,7 +146,7 @@ pub struct ParsedMail {
     pub bcc: Vec<String>,
     pub text: String,
     pub text_truncated: bool,
-    /// Metadata only. Attachment download/storage is a later artifact adapter.
+    /// Compatibility names; interactive full-message reads also expose exact part metadata.
     pub attachment_names: Vec<String>,
 }
 /// Maintained MIME parser handles header decoding, charsets and transfer

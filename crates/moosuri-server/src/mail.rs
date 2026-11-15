@@ -51,6 +51,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/oauth/complete", post(complete))
         .route("/search", post(search))
         .route("/messages/{id}", get(read))
+        .route("/attachments/read", post(attachment))
         .route("/threads/{id}", get(thread))
         .route("/actions", get(actions).post(draft))
         .route("/actions/{id}", get(action).put(edit))
@@ -254,6 +255,41 @@ async fn read(
             .await?,
     )
     .into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttachmentRead {
+    connection_id: String,
+    message_id: String,
+    part_id: String,
+    attachment_id: Option<String>,
+    start_byte: u32,
+    max_bytes: u32,
+    expected_digest: Option<String>,
+}
+async fn attachment(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<AttachmentRead>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    let value = s
+        .mail
+        .read(
+            &user,
+            &MailToolRequest::Attachment {
+                connection_id: input.connection_id,
+                message_id: input.message_id,
+                part_id: input.part_id,
+                attachment_id: input.attachment_id,
+                start_byte: input.start_byte,
+                max_bytes: input.max_bytes,
+                expected_digest: input.expected_digest,
+            },
+            &CancellationToken::new(),
+        )
+        .await?;
+    Ok(Json(value).into_response())
 }
 async fn thread(
     State(s): State<AppState>,

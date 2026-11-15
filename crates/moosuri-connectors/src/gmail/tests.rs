@@ -204,7 +204,8 @@ async fn gmail_read_path_is_me_and_search_is_encoded_then_parsed() {
         .unwrap()
         .raw_mime()
         .to_vec();
-    let encoded = URL_SAFE_NO_PAD.encode(raw);
+    let parsed = parse_mail(&raw).unwrap();
+    let encoded = serde_json::json!({"partId":"","mimeType":"text/plain","headers":[{"name":"Subject","value":parsed.subject},{"name":"From","value":parsed.from.join(", ")}],"body":{"size":parsed.text.len(),"data":URL_SAFE_NO_PAD.encode(parsed.text.as_bytes())}});
     let observed = Arc::new(Mutex::new(Vec::new()));
     let capture = observed.clone();
     let (client,task)=server(Router::new().fallback(any(move |request:Request|{let encoded=encoded.clone();let capture=capture.clone();async move{
@@ -213,7 +214,7 @@ async fn gmail_read_path_is_me_and_search_is_encoded_then_parsed() {
         if path=="/profile"{json(serde_json::json!({"emailAddress":"sender@example.test"}))}
         else if path=="/messages"{json(serde_json::json!({"messages":[{"id":"m1","threadId":"t1"}],"nextPageToken":"next","resultSizeEstimate":1}))}
         else if path=="/threads/t1"{json(serde_json::json!({"id":"t1","messages":[{"id":"m1"}]}))}
-        else{json(serde_json::json!({"id":"m1","threadId":"t1","labelIds":["INBOX"],"raw":encoded}))}
+        else{json(serde_json::json!({"id":"m1","threadId":"t1","labelIds":["INBOX"],"payload":encoded}))}
     }}))).await;
     let cancel = CancellationToken::new();
     assert_eq!(
@@ -534,4 +535,103 @@ fn downloaded_client_rejects_other_credential_types_and_bounded_bad_inputs() {
     }
     let good=serde_json::json!({"web":{"client_id":"synthetic","client_secret":"secret-canary","redirect_uris":[redirect]}}).to_string();
     assert!(OAuthClient::from_web_client_json(&good, redirect).is_ok());
+}
+
+#[tokio::test]
+async fn attachment_full_message_body_survives_large_external_pdf_and_exact_tuple_is_required() {
+    let pdf = vec![b'x'; 1500 * 1024];
+    let data = URL_SAFE_NO_PAD.encode(&pdf);
+    let (mut client,task)=server(Router::new().fallback(any(move|request:Request| {let data=data.clone();async move {
+        if request.uri().path()=="/messages/m1/attachments/a1" {return json(serde_json::json!({"size":1500*1024,"data":data}));}
+        assert_eq!(request.uri().path(),"/messages/m1");assert!(request.uri().query().unwrap().contains("format=full"));
+        json(serde_json::json!({"id":"m1","threadId":"t1","labelIds":["INBOX"],"payload":{"partId":"","mimeType":"multipart/mixed","headers":[{"name":"Subject","value":"Synthetic large PDF"}],"parts":[{"partId":"0","mimeType":"text/plain","body":{"size":4,"data":"Ym9keQ"}},{"partId":"1","mimeType":"application/pdf","filename":"receipt.pdf","body":{"size":1500*1024,"attachmentId":"a1"}}]}}))
+    }}))).await;
+    client.transport.test_limit = Some(3 * 1024 * 1024);
+    let cancel = CancellationToken::new();
+    let mail = client.get_message(&secret(), "m1", &cancel).await.unwrap();
+    assert_eq!(mail.mail.text, "body");
+    assert!(!mail.mail.text_truncated);
+    assert_eq!(mail.attachments[0].size, 1500 * 1024);
+    let file = client
+        .get_attachment(&secret(), "m1", "1", Some("a1"), &cancel)
+        .await
+        .unwrap();
+    assert_eq!(file.bytes.unwrap().len(), 1500 * 1024);
+    for (part, id) in [
+        ("0", Some("a1")),
+        ("1", Some("wrong")),
+        ("1", None),
+        ("../1", Some("a1")),
+    ] {
+        assert!(
+            client
+                .get_attachment(&secret(), "m1", part, id, &cancel)
+                .await
+                .is_err()
+        );
+    }
+    task.abort();
+}
+#[test]
+fn attachment_full_tree_limits_alternatives_inline_and_duplicate_parts() {
+    let wrap = |payload| {
+        serde_json::to_vec(&serde_json::json!({"id":"m1","threadId":"t1","payload":payload}))
+            .unwrap()
+    };
+    let leaf =
+        serde_json::json!({"partId":"0","mimeType":"text/plain","body":{"size":4,"data":"Ym9keQ"}});
+    let html = serde_json::json!({"partId":"1","mimeType":"text/html","body":{"size":11,"data":URL_SAFE_NO_PAD.encode(b"<p>body</p>")}});
+    let value = wrap(
+        serde_json::json!({"partId":"","mimeType":"multipart/alternative","parts":[leaf.clone(),html]}),
+    );
+    assert_eq!(
+        full::FullMessage::decode(&value, "m1")
+            .unwrap()
+            .project()
+            .unwrap()
+            .mail
+            .text,
+        "body"
+    );
+    let mut nested = leaf.clone();
+    for i in 0..10 {
+        nested = serde_json::json!({"partId":format!("{i}.1"),"mimeType":"multipart/mixed","parts":[nested]});
+    }
+    assert!(full::FullMessage::decode(&wrap(nested), "m1").is_err());
+    assert!(full::FullMessage::decode(&wrap(serde_json::json!({"partId":"","mimeType":"multipart/mixed","parts":[leaf.clone(),leaf]})),"m1").is_err());
+    let value = wrap(
+        serde_json::json!({"partId":"","mimeType":"text/plain","filename":"synthetic.txt","body":{"size":4,"data":"Ym9keQ"}}),
+    );
+    let full = full::FullMessage::decode(&value, "m1").unwrap();
+    assert_eq!(
+        full.project().unwrap().attachments[0].filename,
+        "synthetic.txt"
+    );
+    assert!(full.attachment("", None).is_ok());
+}
+
+#[tokio::test]
+async fn attachment_external_body_text_is_hydrated_with_a_four_call_aggregate_budget() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let seen = requests.clone();
+    let (client,task)=server(Router::new().fallback(any(move|request:Request|{let seen=seen.clone();async move{
+        seen.lock().unwrap().push(request.uri().path().to_owned());
+        if request.uri().path().contains("/attachments/"){return json(serde_json::json!({"size":4,"data":"Ym9keQ"}));}
+        let parts=(0..5).map(|i|serde_json::json!({"partId":i.to_string(),"mimeType":"text/plain","body":{"size":4,"attachmentId":format!("body{i}")}})).chain(std::iter::once(serde_json::json!({"partId":"5","mimeType":"application/pdf","filename":"large.pdf","body":{"size":1800000,"attachmentId":"pdf1"}}))).collect::<Vec<_>>();
+        json(serde_json::json!({"id":"m1","threadId":"t1","payload":{"partId":"","mimeType":"multipart/mixed","parts":parts}}))
+    }}))).await;
+    let mail = client
+        .get_message(&secret(), "m1", &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(mail.mail.text, "body\nbody\nbody\nbody");
+    assert!(mail.mail.text_truncated);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 5);
+    assert!(
+        !requests
+            .iter()
+            .any(|p| p.ends_with("pdf1") || p.ends_with("body4"))
+    );
+    task.abort();
 }

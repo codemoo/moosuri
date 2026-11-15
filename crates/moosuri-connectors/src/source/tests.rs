@@ -110,7 +110,7 @@ async fn gmail_backfill_mapping_history_tokens_nochange_and_deletes() {
     let raw = URL_SAFE_NO_PAD.encode(b"From: Sender <sender@example.test>\r\nTo: owner@example.test\r\nSubject: Synthetic mail\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nprivate body\r\n");
     let (transport, requests, task) = fixture(vec![profile(),
         ok(json!({"messages":[{"id":"abc"}]})),
-        ok(json!({"id":"abc","threadId":"thread1","historyId":"101","internalDate":"150000","labelIds":["INBOX"],"raw":raw})),
+        ok(json!({"id":"abc","threadId":"thread1","historyId":"101","internalDate":"150000","labelIds":["INBOX"],"payload":full_payload(&raw)})),
         profile(),ok(json!({"historyId":"900","nextPageToken":"opaque/+=","history":[{"id":"110","messagesDeleted":[{"message":{"id":"abc"}}]}]})),
         profile(),ok(json!({"historyId":"901"})),
     ]).await;
@@ -484,7 +484,7 @@ async fn cancellation_interrupts_inflight_body_and_google_quota_is_typed() {
 #[tokio::test]
 async fn gmail_label_departure_is_explicit_and_omission_is_never_a_delete() {
     let (transport,_,task)=fixture(vec![profile(),ok(json!({"historyId":"120","history":[{"id":"110","labelsRemoved":[{"message":{"id":"abc"}}]}]})),
-        ok(json!({"id":"abc","threadId":"thread1","historyId":"110","internalDate":"150000","labelIds":[],"raw":""}))]).await;
+        ok(json!({"id":"abc","threadId":"thread1","historyId":"110","internalDate":"150000","labelIds":[],"payload":{"partId":"","mimeType":"text/plain","body":{"size":0,"data":""}}}))]).await;
     let cp = GmailCheckpoint {
         history_id: "100".into(),
         page_token: None,
@@ -512,7 +512,7 @@ async fn gmail_backfill_includes_accepted_spam_trash_and_custom_label_scopes() {
     let raw=URL_SAFE_NO_PAD.encode(b"From: sender@example.test\r\nTo: owner@example.test\r\nSubject: Scoped mail\r\nContent-Type: text/plain\r\n\r\nSynthetic scoped body");
     for label in ["SPAM", "TRASH", "Label_custom"] {
         let (transport,requests,task)=fixture(vec![profile(),ok(json!({"messages":[{"id":"abc"}]})),
-            ok(json!({"id":"abc","threadId":"thread1","historyId":"101","internalDate":"150000","labelIds":[label,"SPAM"],"raw":raw})),
+            ok(json!({"id":"abc","threadId":"thread1","historyId":"101","internalDate":"150000","labelIds":[label,"SPAM"],"payload":full_payload(&raw)})),
             profile(),ok(json!({"historyId":"101"}))]).await;
         let client = GmailSyncClient::fixture(transport);
         let scope = GmailScope {
@@ -541,4 +541,36 @@ async fn gmail_backfill_includes_accepted_spam_trash_and_custom_label_scopes() {
         assert!(seen[1].contains(&format!("labelIds={label}")));
         task.abort();
     }
+}
+
+fn full_payload(raw: &str) -> Value {
+    let bytes = URL_SAFE_NO_PAD.decode(raw).unwrap();
+    let mail = crate::gmail::parse_mail(&bytes).unwrap();
+    json!({"partId":"","mimeType":"text/plain","headers":[{"name":"From","value":mail.from.join(", ")},{"name":"Subject","value":mail.subject}],"body":{"size":mail.text.len(),"data":URL_SAFE_NO_PAD.encode(mail.text.as_bytes())}})
+}
+
+#[tokio::test]
+async fn gmail_attachment_collection_indexes_body_only_without_fetching_large_pdf() {
+    let (transport,requests,task)=fixture(vec![profile(),ok(json!({"messages":[{"id":"abc"}]})),ok(json!({"id":"abc","threadId":"thread1","historyId":"101","internalDate":"150000","labelIds":["INBOX"],"payload":{"partId":"","mimeType":"multipart/mixed","headers":[{"name":"Subject","value":"Synthetic large PDF"},{"name":"From","value":"sender@example.test"}],"parts":[{"partId":"0","mimeType":"text/plain","body":{"size":4,"attachmentId":"body1"}},{"partId":"1","mimeType":"application/pdf","filename":"large.pdf","body":{"size":1800000,"attachmentId":"a1"}}]}})),ok(json!({"size":4,"data":"Ym9keQ"}))]).await;
+    let page = GmailSyncClient::fixture(transport)
+        .next_page(
+            &token(),
+            &gmail_scope(),
+            None,
+            200,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let SourceChange::Upsert(item) = &page.changes[0] else {
+        panic!("expected source")
+    };
+    assert_eq!(item.text, "body");
+    assert_eq!(item.external_id, "abc");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 4);
+    assert!(requests[2].contains("format=full"));
+    assert!(requests[3].contains("attachments/body1"));
+    assert!(!requests.iter().any(|p| p.contains("attachments/a1")));
+    task.abort();
 }

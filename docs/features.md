@@ -115,6 +115,8 @@ F22는 [자료 기록 시각 필터](source-time-filter.md)를 API·읽기 도�
 
 F22의 [한국어 별칭 검색](korean-search-aliases.md)은 공개된 세 단어군과 제한된 문구 치환을 API·에이전트·화면에 연결한다. 별칭 합집합을 페이지 처리 전에 중복 제거하고, 수기로 고정한 원문18개/질문12개를 기존 literal 검색과 비교한다. 일반 한국어 의미·이름·조사 추론은 별도이며 고정 비교를 광범위한 정확도 성적으로 쓰지 않는다.
 
+F34의 [Gmail 첨부 읽기](mail.md)는 실제 메일/파트 ID와 내용 해시에 묶은 PDF·UTF-8 텍스트 페이지를 제공한다. 큰 외부 첨부 때문에 본문 전체를 raw MIME으로 받지 않으며, 선택한 첨부만 내려받는다. 별도 첨부2MiB·PDF50쪽/추출24KiB 등 명시한 범위를 적용하고 스캔 OCR·암호화 PDF·첨부 발송·자동 첨부 색인은 포함하지 않는다. [검증](reviews/2026-11-15-gmail-attachments.md).
+
 ## 시험 선정 규칙
 
 원본에서 정적으로 확인한 Python test 함수772개와 TypeScript test 선언215개는 전체 source 표면의 정적 수다. parametrize·dynamic tests·skip·과거 릴리스 실행 수와 같지 않다. 기존 backend1,121·UI150을 새 Rust 통과 수로 쓰지 않는다. 파일별 test 목록은 `audit/test-surfaces.tsv`에 역사적 근거로만 둔다. 기존112 test/support 파일은108 reference·4 exclude이며 자동 이식 대상은0개다. 새 검사는 [평가 계획](testing.md)과 [시나리오](../audit/evaluation-scenarios.tsv)의 사용자 결과·실제 결함·독립 oracle로 선정한다. 구현을 따라 쓴 검사·동일 CRUD 중복·고정 prompt 문구·폐기한 framework 검사는 버린다. F ID 연결은 누락 탐지이며 테스트 개수나 품질 증명이 아니다.

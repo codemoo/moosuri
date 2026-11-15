@@ -257,6 +257,9 @@ fn observed_mail(
         let Some(v) = value.get("value") else {
             continue;
         };
+        if !thread && v.get("id").and_then(|v| v.as_str()) == Some(id) {
+            return Ok(true);
+        }
         let messages = v.get("messages").and_then(|v| v.as_array());
         if messages.is_some_and(|m| {
             m.iter().any(|m| {
@@ -289,7 +292,9 @@ pub(crate) fn allowed(c: &Connection, r: &Run, q: &ExternalToolRequest) -> Resul
             };
             match q {
                 MailToolRequest::Search { .. } => Ok(true),
-                MailToolRequest::Read { message_id, .. } => {
+                MailToolRequest::Read { message_id, .. }
+                | MailToolRequest::Attachment { message_id, .. }
+                | MailToolRequest::Attachments { message_id, .. } => {
                     observed_mail(c, r, message_id, false, q.connection_id())
                 }
                 MailToolRequest::Thread { thread_id, .. } => {

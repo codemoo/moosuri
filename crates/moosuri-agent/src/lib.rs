@@ -206,12 +206,40 @@ impl Runtime {
             claude,
         )
     }
+    pub fn start_with_google_setup_claude_pdf(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: Option<Arc<moosuri_connectors::web::WebClient>>,
+        browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
+        redirect_uri: String,
+        claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
+        pdf_extractor: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self::start_with_services_pdf(
+            store,
+            oauth,
+            web::Service::new(web).with_browser(browser),
+            Some(redirect_uri),
+            claude,
+            pdf_extractor,
+        )
+    }
     fn start_with_services(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: web::Service,
+        redirect_uri: Option<String>,
+        claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
+    ) -> Self {
+        Self::start_with_services_pdf(store, oauth, web, redirect_uri, claude, None)
+    }
+    fn start_with_services_pdf(
         store: Store,
         oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
         mut web: web::Service,
         redirect_uri: Option<String>,
         claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
+        pdf_extractor: Option<std::path::PathBuf>,
     ) -> Self {
         let (changes, _) = watch::channel(0);
         let (done_tx, done) = watch::channel(false);
@@ -222,7 +250,8 @@ impl Runtime {
             delivery: Arc::new(tokio::sync::RwLock::new(())),
         };
         let mail = mail::MailService::new(store.clone(), oauth, signals.clone())
-            .with_managed_google(redirect_uri);
+            .with_managed_google(redirect_uri)
+            .with_pdf_extractor(pdf_extractor);
         let browser =
             browser::BrowserService::new(store.clone(), web.reader(), signals.stop.clone());
         web.set_workspaces(browser.clone());

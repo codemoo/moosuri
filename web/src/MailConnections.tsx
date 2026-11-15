@@ -12,6 +12,7 @@ import type {
 } from "../shared/api-types";
 import { useScope } from "./account-scope";
 import { ApiFailure, errorText, isAborted } from "./api";
+import { MailAttachments, type MailAttachment } from "./MailAttachments";
 import { GmailDrafts } from "./GmailDrafts";
 import { MailTiming } from "./MailTiming";
 import { MailApproval } from "./MailApproval";
@@ -19,6 +20,7 @@ import "./mail.css";
 type ReadMessage = {
   id: string;
   thread_id: string;
+  attachments?: MailAttachment[];
   mail: {
     subject: string;
     from: string[];
@@ -394,12 +396,7 @@ export function MailConnections({
                 {message.mail.text_truncated && (
                   <p>표시 범위를 넘은 본문이 있습니다.</p>
                 )}
-                {message.mail.attachment_names.length > 0 && (
-                  <p>
-                    첨부: {message.mail.attachment_names.join(", ")} · 첨부 내용
-                    조회는 아직 지원하지 않습니다.
-                  </p>
-                )}
+                {message.attachments && message.attachments.length > 0 && <MailAttachments key={`${connection}:${message.id}`} connection={connection} message={message.id} attachments={message.attachments} request={scope.request} fail={fail}/>}
               </article>
             )}
           </section>

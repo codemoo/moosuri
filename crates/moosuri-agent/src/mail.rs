@@ -12,12 +12,15 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
+mod attachments;
 mod drafts;
+mod projection;
 mod reconcile;
 type MailLocks = Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>;
 #[derive(Clone)]
 pub struct MailService {
     store: Store,
+    pdf_extractor: Option<std::path::PathBuf>,
     client: GmailClient,
     oauth: Option<Arc<OAuthClient>>,
     managed_redirect: Option<String>,
@@ -34,6 +37,7 @@ impl MailService {
     ) -> Self {
         Self {
             store,
+            pdf_extractor: None,
             #[cfg(test)]
             synthetic_google: None,
             client: GmailClient::google(),
@@ -246,6 +250,37 @@ impl MailService {
                     .await
                     .map_err(map)?,
             ),
+            MailToolRequest::Attachments {
+                message_id,
+                start_index,
+                ..
+            } => {
+                let m = self
+                    .client
+                    .get_message(token, message_id, cancel)
+                    .await
+                    .map_err(map)?;
+                let start = *start_index as usize;
+                if start > m.attachments.len() {
+                    return Err(StoreError::InvalidInput);
+                }
+                let mut end = (start + 4).min(m.attachments.len());
+                loop {
+                    let result = serde_json::json!({"message_id":m.id,"thread_id":m.thread_id,"attachments":m.attachments[start..end],"total":m.attachments.len(),"next_start_index":if end<m.attachments.len(){Some(end)}else{None}});
+                    if serde_json::to_vec(&KnowledgeToolResult::External(result.clone()))
+                        .map_err(|_| StoreError::Unavailable)?
+                        .len()
+                        <= 12 * 1024
+                    {
+                        break result;
+                    }
+                    if end == start {
+                        return Err(StoreError::InvalidInput);
+                    }
+                    end -= 1;
+                }
+            }
+            MailToolRequest::Attachment { .. } => self.attachment(token, request, cancel).await?,
             MailToolRequest::Thread { thread_id, .. } => {
                 let t = self
                     .client
@@ -323,36 +358,7 @@ impl MailService {
             .await
         };
         match result {
-            Ok(mut value) => {
-                fn trim(value: &mut serde_json::Value) {
-                    if let Some(text) = value
-                        .pointer_mut("/mail/text")
-                        .and_then(|v| v.as_str().map(str::to_owned))
-                        && text.len() > 4096
-                    {
-                        let mut end = 4096;
-                        while !text.is_char_boundary(end) {
-                            end -= 1;
-                        }
-                        value["mail"]["text"] = text[..end].into();
-                        value["mail"]["text_truncated"] = true.into();
-                    }
-                }
-                trim(&mut value);
-                if let Some(messages) = value.get_mut("messages").and_then(|v| v.as_array_mut()) {
-                    let truncated = messages.len() > 3;
-                    if truncated {
-                        messages.drain(..messages.len() - 3);
-                    }
-                    for m in messages {
-                        trim(m)
-                    }
-                    if truncated {
-                        value["truncated"] = true.into();
-                    }
-                }
-                KnowledgeToolResult::External(value)
-            }
+            Ok(value) => projection::bounded(value),
             Err(StoreError::InvalidInput) => {
                 KnowledgeToolResult::Error(ToolReadError::InvalidInput)
             }
@@ -427,7 +433,7 @@ fn map(error: GmailError) -> StoreError {
     }
 }
 fn project(m: moosuri_connectors::gmail::MailMessage) -> serde_json::Value {
-    serde_json::json!({"id":m.id,"thread_id":m.thread_id,"labels":m.labels,"mail":m.mail})
+    serde_json::json!({"id":m.id,"thread_id":m.thread_id,"labels":m.labels,"mail":m.mail,"attachments":m.attachments})
 }
 
 #[cfg(test)]

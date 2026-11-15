@@ -6,8 +6,10 @@
 //! lost response must be reconciled, never blindly retried. Google acceptance is
 //! not proof of recipient delivery. No model-facing raw send tool belongs here.
 mod drafts;
+pub(crate) mod full;
 mod mime;
 pub use drafts::{Draft, DraftPage, DraftRef};
+pub use full::{AttachmentMetadata, AttachmentRead, attachment_digest};
 mod reconcile;
 pub use reconcile::{SentCandidate, SentObservation, SentSearch, reconciliation_fingerprint};
 #[cfg(test)]
@@ -160,6 +162,7 @@ pub struct MailMessage {
     pub thread_id: String,
     pub labels: Vec<String>,
     pub mail: ParsedMail,
+    pub attachments: Vec<AttachmentMetadata>,
 }
 pub struct MailThread {
     pub id: String,
@@ -199,7 +202,7 @@ impl GmailClient {
             return Err(GmailError::DestinationDenied);
         }
         Ok(Self {
-            transport: transport::Transport::fixture(format!("http://{address}"), 1024 * 1024),
+            transport: transport::Transport::fixture(format!("http://{address}"), 3 * 1024 * 1024),
         })
     }
     /// CSRF state and PKCE verifier storage/one-use callback handling remain the
@@ -399,44 +402,10 @@ impl GmailClient {
         id: &str,
         cancel: &CancellationToken,
     ) -> Result<MailMessage, GmailError> {
-        validate_id(id)?;
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Wire {
-            id: String,
-            thread_id: String,
-            #[serde(default)]
-            label_ids: Vec<String>,
-            raw: String,
-        }
-        let bytes = self
-            .get(
-                &format!("messages/{id}?format=raw&fields=id,threadId,labelIds,raw"),
-                token,
-                cancel,
-            )
-            .await?;
-        let w: Wire = decode(&bytes)?;
-        if w.id != id || w.raw.len() > mime::MAX_MIME_BYTES * 4 / 3 + 8 || w.label_ids.len() > 128 {
-            return Err(GmailError::InvalidResponse);
-        }
-        validate_id(&w.thread_id).map_err(|_| GmailError::InvalidResponse)?;
-        for label in &w.label_ids {
-            validate_atom(label, 256).map_err(|_| GmailError::InvalidResponse)?;
-        }
-        let raw = URL_SAFE_NO_PAD
-            .decode(w.raw.trim_end_matches('='))
-            .map_err(|_| GmailError::InvalidResponse)?;
-        let mail = parse_mail(&raw)?;
-        Ok(MailMessage {
-            id: w.id,
-            thread_id: w.thread_id,
-            labels: w.label_ids,
-            mail,
-        })
+        self.read_full_message(token, id, cancel).await
     }
-    /// Threads have no `raw` format. Fetch bounded IDs, then use Gmail's raw
-    /// message endpoint and the maintained MIME parser for each selected item.
+    /// Threads have no pagination; return the latest bounded messages and an
+    /// explicit truncation flag, each projected from its full-message MIME tree.
     pub async fn get_thread(
         &self,
         token: &SecretString,

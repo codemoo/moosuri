@@ -389,3 +389,96 @@ async fn connected_mission_pause_keeps_dispatch_identity_but_removes_private_che
         })
     }));
 }
+
+#[tokio::test]
+async fn gmail_attachment_mission_uses_observed_message_and_real_owner_grant_without_session() {
+    let _lock = TEST_LOCK.lock().await;
+    let (_dir, s, u) = crate::missions::tests::setup().await;
+    let (connection, _) = connections(&s, &u, "owner").await;
+    s.create_mission(
+        &u,
+        input(MissionMode::Durable, "Read my Gmail attachment briefing"),
+    )
+    .await
+    .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let attachment = |message: &str| {
+        ExternalToolRequest::Mail(MailToolRequest::Attachment {
+            connection_id: connection.clone(),
+            message_id: message.into(),
+            part_id: "1".into(),
+            attachment_id: Some("a1".into()),
+            start_byte: 0,
+            max_bytes: 4096,
+            expected_digest: None,
+        })
+    };
+    let first = step(
+        &s,
+        &claim.lease,
+        vec![
+            call("search", search(&connection)),
+            call("invented", attachment("invented")),
+        ],
+    )
+    .await;
+    assert!(matches!(
+        s.prepare_external_tool(&first, "invented".into())
+            .await
+            .unwrap(),
+        crate::ExternalToolStart::Complete(KnowledgeToolResult::Error(_))
+    ));
+    let search = permit(&s, &first, "search").await;
+    s.complete_external_tool(
+        &search,
+        KnowledgeToolResult::External(
+            serde_json::json!({"messages":[{"id":"m1","threadId":"t1"}]}),
+        ),
+    )
+    .await
+    .unwrap();
+    let next = step(
+        &s,
+        &claim.lease,
+        vec![
+            call("attachment", attachment("m1")),
+            call(
+                "list",
+                ExternalToolRequest::Mail(MailToolRequest::Attachments {
+                    connection_id: connection.clone(),
+                    message_id: "m1".into(),
+                    start_index: 0,
+                }),
+            ),
+        ],
+    )
+    .await;
+    s.logout(&u).await.unwrap();
+    let read = permit(&s, &next, "attachment").await;
+    let list = permit(&s, &next, "list").await;
+    assert!(read.user().is_none() && list.user().is_none());
+    assert_eq!(
+        s.mission_read_credentials(&read, app())
+            .await
+            .unwrap()
+            .access
+            .expose(),
+        "owner"
+    );
+    s.complete_external_tool(&read,KnowledgeToolResult::External(serde_json::json!({"status":"ok","message_id":"m1","attachment":{"part_id":"1"},"text":"Synthetic attachment","content_digest":"synthetic","text_digest":"synthetic"}))).await.unwrap();
+    let fresh = s
+        .login("admin@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    s.disconnect_mail(&fresh, connection).await.unwrap();
+    assert!(s.mission_read_credentials(&list, app()).await.is_err());
+    assert!(
+        s.complete_external_tool(
+            &list,
+            KnowledgeToolResult::External(serde_json::json!({"private":"late metadata"}))
+        )
+        .await
+        .is_err()
+    );
+}

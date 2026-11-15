@@ -508,6 +508,7 @@ mod learned_skills;
 mod skills;
 
 mod mail;
+mod mail_attachments;
 
 mod parcel;
 mod web;

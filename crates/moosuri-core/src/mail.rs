@@ -104,6 +104,21 @@ pub enum MailToolRequest {
         connection_id: String,
         message_id: String,
     },
+    Attachments {
+        connection_id: String,
+        message_id: String,
+        start_index: u32,
+    },
+    Attachment {
+        connection_id: String,
+        message_id: String,
+        part_id: String,
+        attachment_id: Option<String>,
+        start_byte: u32,
+        max_bytes: u32,
+        /// Required for continuation pages, binds the exact extracted document.
+        expected_digest: Option<String>,
+    },
     Thread {
         connection_id: String,
         thread_id: String,
@@ -117,6 +132,8 @@ impl MailToolRequest {
         match self {
             Self::Search { connection_id, .. }
             | Self::Read { connection_id, .. }
+            | Self::Attachment { connection_id, .. }
+            | Self::Attachments { connection_id, .. }
             | Self::Thread { connection_id, .. } => connection_id,
             Self::Draft { input } => &input.connection_id,
         }

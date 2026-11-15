@@ -98,6 +98,14 @@ class Harness:
                         MOOSURI_BROWSER_TENANT=str(uuid.uuid4()), MOOSURI_BROWSER_JAVASCRIPT="enabled")
         self.compose = ["docker", "compose", "-p", self.project, "-f", str(HERE / "compose.yaml"), "-f", str(HERE / "compose.test.yaml")]
         self.workers = []
+        self.volumes = []
+
+    def profile_volume(self):
+        name = self.project + "-profile-" + uuid.uuid4().hex
+        run_output(["docker", "volume", "create", "--label", f"{OWNER_LABEL}={self.owner}", "--label", f"{PROJECT_LABEL}={self.project}", name], self.env)
+        self.volumes.append(name)
+        self.verify_owned("volume", [name])
+        return name
 
     def run(self, *args, timeout=60):
         return run_output(self.compose + list(args), self.env, timeout)
@@ -189,14 +197,25 @@ class Harness:
                     run_output(command + [resource], self.env)
                 except BaseException as error:
                     errors.append(error)
+        for name in self.volumes:
+            try:
+                self.verify_owned("volume", [name])
+                run_output(["docker", "volume", "rm", name], self.env)
+            except BaseException as error:
+                errors.append(error)
         return errors
 
 
 class Worker:
-    def __init__(self, harness, workspace=False):
+    def __init__(self, harness, workspace=False, profile=None):
         self.harness = harness
         self.name = harness.project + "-worker-" + uuid.uuid4().hex[:12]
-        command = harness.compose + ["run", "--rm", "-T", "--no-deps", "--name", self.name, "browser"]
+        command = harness.compose + ["run", "--rm", "-T", "--no-deps", "--name", self.name]
+        if profile:
+            assert workspace and profile in harness.volumes
+            harness.verify_owned("volume", [profile])
+            command += ["--volume", f"{profile}:/profiles/persistent", "--env", "MOOSURI_BROWSER_PROFILE=bounded"]
+        command += ["browser"]
         if workspace:
             command.append("--workspace")
         self.p = subprocess.Popen(command,
@@ -206,6 +225,7 @@ class Worker:
         ready = self.pipe.read(45)
         assert ready.get("ready") and ready.get("javascript_enabled"), ready
         assert bool(ready.get("workspace")) == workspace, ready
+        assert bool(ready.get("profile_persistence")) == bool(profile), ready
         harness.verify_owned("container", [self.name])
         assert self.loopback_hits() == 0, "loopback positive control did not reset"
 
@@ -329,6 +349,31 @@ def main():
         fresh_workspace = Worker(harness, workspace=True)
         fresh_page = fresh_workspace.ask({"op": "workspace_open", "url": "https://93.184.216.34/workspace-home"})
         assert fresh_page["ok"] and "FRESH_PROFILE_NO_COOKIE" in fresh_page["result"]["page"]["text"], fresh_page
+        profile = harness.profile_volume()
+        workspace = Worker(harness, workspace=True, profile=profile)
+        assert workspace.ask({"op":"workspace_open","url":"https://93.184.216.34/workspace-persistent-login"})["ok"]
+        human_input({"kind":"click","x":50,"y":75})
+        human_input({"kind":"insert_text","text":"TYPED_SYNTHETIC_SECRET"})
+        old_token = human_input({"kind":"click","x":50,"y":125})
+        time.sleep(0.5)
+        assert "COOKIE_SESSION_OK" in workspace.ask({"op":"workspace_observe"})["result"]["page"]["text"]
+        before_recovery = json.loads(harness.fixture_get("counts"))
+        assert workspace.loopback_hits() == 0
+        workspace.stop()
+        workspace = Worker(harness, workspace=True, profile=profile)
+        assert workspace.ask({"op":"workspace_blank"}) == {"ok":True,"result":{"blank":True}}
+        blank = workspace.ask({"op":"workspace_frame"})
+        assert blank["ok"] and blank["result"]["url"] == "about:blank", blank
+        old_input = workspace.ask({"op":"workspace_input","expected_frame_token":old_token,"input":{"kind":"key","key":"enter"}})
+        assert not old_input["ok"] and old_input["code"] == "stale_page", old_input
+        after_recovery = json.loads(harness.fixture_get("counts"))
+        for counter in ("persistent_posts", "persistent_authenticated"):
+            assert before_recovery[counter] == after_recovery[counter], "recovery revisited a prior site or replayed a POST"
+        current = workspace.ask({"op":"workspace_open","url":"https://93.184.216.34/workspace-persistent-home"})
+        assert current["ok"] and "COOKIE_SESSION_OK" in current["result"]["page"]["text"], current
+        assert json.loads(harness.fixture_get("counts"))["persistent_posts"] == 1
+        assert workspace.loopback_hits() == 0
+        workspace.stop()
         # Fresh workers avoid a created-tab capacity error masking the rebind test.
         domain_worker = Worker(harness)
         check_page(domain_worker.ask({"op": "open", "url": "http://fixture.example.com/"}))
@@ -346,6 +391,8 @@ def main():
         assert not redirected["ok"], redirected
         assert json.loads(harness.fixture_get("counts"))["canary"] == 0
         for worker in harness.workers:
+            if worker.p.poll() is not None:
+                continue  # Explicitly stopped workers had their canary checked before shutdown.
             assert worker.loopback_hits() == 0, "browser request bypassed proxy to loopback canary"
         assert first.ask({"op": "close", "handle": handle})["ok"]
         assert not first.ask({"op": "read", "handle": handle})["ok"]

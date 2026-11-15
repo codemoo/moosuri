@@ -31,8 +31,8 @@ The reserved `/run/moosuri-browser-empty-docker-config` path must be absent or a
 empty owner/root-controlled directory without group/world write permission. The
 launcher rejects populated/symlinked configuration so Docker cannot inject stored
 credentials or proxy environment variables.
-No socket, home directory, database, credential file or user browser profile is
-mounted inside the capsule.
+No socket, home directory, database, credential file or personal host browser profile is
+mounted inside the capsule. Opted-in workspace recovery uses only dedicated labeled Docker volumes.
 
 An operator must provision the production proxy and a non-overlapping internal
 browser network before starting the application. `compose.yaml` supplies those

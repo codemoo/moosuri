@@ -110,6 +110,7 @@ pub struct BrowserSession {
     child: Arc<Mutex<Option<Child>>>,
     watchdog: tokio::task::JoinHandle<()>,
     profile: PathBuf,
+    persistent: bool,
     cdp: Cdp,
     targets: HashMap<Uuid, Target>,
     deadline: Instant,
@@ -131,21 +132,46 @@ impl BrowserSession {
         lifetime: Duration,
     ) -> Result<Self, BrowserError> {
         capsule_health(&config)?;
+        // Only the dedicated workspace worker can opt into the fixed volume profile.
+        let persistent = lifetime > Duration::from_secs(120)
+            && std::env::var("MOOSURI_BROWSER_PROFILE").ok().as_deref() == Some("bounded");
         let deadline = Instant::now() + lifetime;
         if cancellation.is_cancelled() {
             return Err(BrowserError::Cancelled);
         }
         let generation = Uuid::new_v4();
-        let profile = config
-            .profile_root
-            .join(format!("{}-{}", config.tenant, generation));
-        tokio::fs::create_dir(&profile)
+        let profile = config.profile_root.join(if persistent {
+            "persistent".to_owned()
+        } else {
+            format!("{}-{}", config.tenant, generation)
+        });
+        tokio::fs::create_dir_all(&profile)
             .await
             .map_err(|_| BrowserError::Setup)?;
-        tokio::fs::create_dir(profile.join("Default"))
+        tokio::fs::create_dir_all(profile.join("Default"))
             .await
             .map_err(|_| BrowserError::Setup)?;
-        let preferences = json!({"profile":{"default_content_setting_values":{"javascript": if config.javascript_enabled {1} else {2},"automatic_downloads":2,"notifications":2,"geolocation":2,"media_stream_mic":2,"media_stream_camera":2,"popups":2}}});
+        if persistent {
+            // Never restore tabs, pending POSTs, service workers or cached form/session state.
+            // Containers sharing this profile are removed by the broker before launch.
+            for name in [
+                "SingletonLock",
+                "SingletonCookie",
+                "SingletonSocket",
+                "DevToolsActivePort",
+            ] {
+                let _ = tokio::fs::remove_file(profile.join(name)).await;
+            }
+            for name in ["Sessions", "Service Worker", "Session Storage"] {
+                let path = profile.join("Default").join(name);
+                match tokio::fs::remove_dir_all(path).await {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return Err(BrowserError::Setup),
+                }
+            }
+        }
+        let preferences = json!({"session":{"restore_on_startup":5},"profile":{"default_content_setting_values":{"javascript": if config.javascript_enabled {1} else {2},"automatic_downloads":2,"notifications":2,"geolocation":2,"media_stream_mic":2,"media_stream_camera":2,"popups":2}}});
         tokio::fs::write(profile.join("Default/Preferences"), preferences.to_string())
             .await
             .map_err(|_| BrowserError::Setup)?;
@@ -172,6 +198,8 @@ impl BrowserSession {
                 "--disable-notifications",
                 "--deny-permission-prompts",
                 "--disable-breakpad",
+                "--disk-cache-size=16777216",
+                "--media-cache-size=8388608",
                 "--window-size=1280,900",
                 "about:blank",
             ])
@@ -185,7 +213,9 @@ impl BrowserSession {
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(_) => {
-                let _ = tokio::fs::remove_dir_all(&profile).await;
+                if !persistent {
+                    let _ = tokio::fs::remove_dir_all(&profile).await;
+                }
                 return Err(BrowserError::ExecutableUnavailable);
             }
         };
@@ -225,7 +255,9 @@ impl BrowserSession {
             Ok(cdp) => cdp,
             Err(error) => {
                 let _ = child.kill().await;
-                let _ = tokio::fs::remove_dir_all(&profile).await;
+                if !persistent {
+                    let _ = tokio::fs::remove_dir_all(&profile).await;
+                }
                 return Err(error);
             }
         };
@@ -238,7 +270,9 @@ impl BrowserSession {
             Ok(Ok(_)) => {}
             _ => {
                 let _ = child.kill().await;
-                let _ = tokio::fs::remove_dir_all(&profile).await;
+                if !persistent {
+                    let _ = tokio::fs::remove_dir_all(&profile).await;
+                }
                 return Err(BrowserError::Setup);
             }
         }
@@ -259,6 +293,7 @@ impl BrowserSession {
             child,
             watchdog,
             profile,
+            persistent,
             cdp,
             targets: HashMap::new(),
             deadline,
@@ -341,17 +376,19 @@ impl BrowserSession {
                 Some(&session),
             )
             .await?;
-        self.cdp.before_navigation(&session);
-        let navigation = self
-            .cdp
-            .command("Page.navigate", json!({"url":url}), Some(&session))
-            .await?;
-        if navigation.get("errorText").is_some() {
-            return Err(BrowserError::Network);
+        if url != "about:blank" {
+            self.cdp.before_navigation(&session);
+            let navigation = self
+                .cdp
+                .command("Page.navigate", json!({"url":url}), Some(&session))
+                .await?;
+            if navigation.get("errorText").is_some() {
+                return Err(BrowserError::Network);
+            }
+            self.cdp
+                .wait_loaded(&session, &string(&navigation, "loaderId")?)
+                .await?;
         }
-        self.cdp
-            .wait_loaded(&session, &string(&navigation, "loaderId")?)
-            .await?;
         let frame = self
             .cdp
             .command("Page.getFrameTree", json!({}), Some(&session))
@@ -567,15 +604,34 @@ impl BrowserSession {
             self.kill();
         }
     }
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
         self.watchdog.abort();
-        self.kill();
+        if self.persistent {
+            // Ask Chromium to commit its own cookie store; never read or rewrite it.
+            let _ = tokio::time::timeout(
+                Duration::from_secs(1),
+                self.cdp.command("Browser.close", json!({}), None),
+            )
+            .await;
+        }
+        if !self.persistent {
+            self.kill();
+        }
         let child = self.child.lock().ok().and_then(|mut child| child.take());
-        if let Some(mut child) = child {
+        if let Some(mut child) = child
+            && (!self.persistent
+                || !matches!(
+                    tokio::time::timeout(Duration::from_secs(1), child.wait()).await,
+                    Ok(Ok(_))
+                ))
+        {
+            kill_child(&mut child);
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
-        let _ = tokio::fs::remove_dir_all(&self.profile).await;
+        if !self.persistent {
+            let _ = tokio::fs::remove_dir_all(&self.profile).await;
+        }
     }
 }
 

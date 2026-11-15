@@ -28,6 +28,7 @@ enum WorkerRequest {
     WorkspaceOpen {
         url: String,
     },
+    WorkspaceBlank,
     WorkspaceObserve,
     WorkspaceFrame,
     WorkspaceInput {
@@ -128,7 +129,7 @@ async fn main() {
     let mut output = tokio::io::stdout();
     let ready = format!(
         "{}\n",
-        json!({"ready":true,"javascript_enabled":javascript_enabled,"tenant":tenant,"workspace":workspace})
+        json!({"ready":true,"javascript_enabled":javascript_enabled,"tenant":tenant,"workspace":workspace,"profile_persistence":workspace && std::env::var("MOOSURI_BROWSER_PROFILE").ok().as_deref()==Some("bounded")})
     );
     let _ = output.write_all(ready.as_bytes()).await;
     let _ = output.flush().await;
@@ -167,6 +168,7 @@ async fn main() {
             (Worker::Read(s), Ok(WorkerRequest::Screenshot { handle })) => s.screenshot(&handle).await.map(|v| json!({"handle":v.handle,"mime":"image/png","base64":base64::engine::general_purpose::STANDARD.encode(v.png)})),
             (Worker::Read(s), Ok(WorkerRequest::Close { handle })) => s.close(&handle).await.map(|_|json!({"closed":true})),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceOpen { url })) => s.open(&url).await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceBlank)) => s.blank().await.map(|_|json!({"blank":true})),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceObserve)) => s.observe().await.map(|v|json!(v)),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceFrame)) => s.frame().await.map(|v|json!(v)),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceInput { expected_frame_token, input })) => s.input(&expected_frame_token, input).await.map(|_|json!({"accepted":true})),

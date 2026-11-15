@@ -199,6 +199,7 @@ async fn fixture() -> (
         generation,
         child: Arc::new(Mutex::new(None)),
         watchdog: tokio::spawn(async {}),
+        persistent: false,
         profile: std::env::temp_dir().join(format!("no-browser-profile-{}", Uuid::new_v4())),
         cdp: Cdp::connect(&endpoint).await.unwrap(),
         targets,

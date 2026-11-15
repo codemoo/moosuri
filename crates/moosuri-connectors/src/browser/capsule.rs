@@ -18,6 +18,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+mod profiles;
 pub use workspace::{
     CapsuleWorkspace, WorkspaceFrame, WorkspaceInput, WorkspaceKey, WorkspaceObservation,
 };
@@ -40,6 +41,8 @@ pub struct CapsuleConfig {
     pub verified: bool,
     pub smoke_evidence_sha256: String,
     pub javascript_enabled: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub recover_workspaces: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +66,7 @@ pub struct CapsuleReader {
     config: Arc<CapsuleConfig>,
     pin: String,
     capacity: Arc<Semaphore>,
+    profile_cursor: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(test)]
     fixture: Option<Arc<Fixture>>,
 }
@@ -75,6 +79,9 @@ fn hex64(s: &str) -> bool {
     s.len() == 64
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 impl CapsuleConfig {
     pub fn from_json(bytes: &str) -> Result<Self, BrowserError> {
@@ -160,9 +167,13 @@ impl CapsuleReader {
             config: Arc::new(config),
             pin,
             capacity: Arc::new(Semaphore::new(2)),
+            profile_cursor: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             #[cfg(test)]
             fixture: None,
         })
+    }
+    pub fn recovery_enabled(&self) -> bool {
+        self.config.recover_workspaces
     }
     pub fn deployment_pin(&self) -> &str {
         &self.pin
@@ -216,7 +227,7 @@ impl CapsuleReader {
             self.validate_resources(cancel).await?;
             empty_docker_config(Path::new(DOCKER_CONFIG))?;
         }
-        let mut command = self.worker_command(account, read, &name);
+        let mut command = self.worker_command(account, read, &name, None);
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -237,7 +248,7 @@ impl CapsuleReader {
         // Always close/kill/reap the CLI, even on malformed or stalled stdout. Docker
         // removal is by fresh name plus exact owner/read labels; it never removes siblings.
         let cleanup = self
-            .cleanup(&mut child, &name, read, creation_observed)
+            .cleanup(&mut child, &name, read, creation_observed, false)
             .await;
         #[cfg(test)]
         if let Some(f) = &self.fixture {
@@ -246,7 +257,13 @@ impl CapsuleReader {
         cleanup?;
         result
     }
-    fn worker_command(&self, account: Uuid, read: Uuid, name: &str) -> Command {
+    fn worker_command(
+        &self,
+        account: Uuid,
+        read: Uuid,
+        name: &str,
+        profile: Option<Uuid>,
+    ) -> Command {
         #[cfg(test)]
         if let Some(f) = &self.fixture {
             let mut c = Command::new("/bin/sh");
@@ -305,8 +322,18 @@ impl CapsuleReader {
             } else {
                 "disabled"
             }
-        ))
-        .arg(&self.config.image_id);
+        ));
+        if let Some(workspace) = profile {
+            c.arg(format!(
+                "--mount=type=volume,source={},target=/profiles/persistent",
+                self.profile_name(workspace)
+            ))
+            .arg("--env=MOOSURI_BROWSER_PROFILE=bounded")
+            .arg(format!("--label=io.moosuri.browser.workspace={workspace}"))
+            .arg(format!("--label=io.moosuri.browser.account={account}"))
+            .arg("--label=io.moosuri.browser.kind=bounded-profile-v1");
+        }
+        c.arg(&self.config.image_id);
         c
     }
     async fn validate_resources(&self, cancel: &CancellationToken) -> Result<(), BrowserError> {
@@ -365,6 +392,7 @@ impl CapsuleReader {
         name: &str,
         read: Uuid,
         creation_observed: bool,
+        profile: bool,
     ) -> Result<(), BrowserError> {
         if let Some(mut input) = child.stdin.take() {
             let _ = tokio::time::timeout(
@@ -374,7 +402,12 @@ impl CapsuleReader {
             .await;
             drop(input);
         }
-        let reaped = match tokio::time::timeout(Duration::from_millis(250), child.wait()).await {
+        let reaped = match tokio::time::timeout(
+            Duration::from_millis(if profile { 2500 } else { 250 }),
+            child.wait(),
+        )
+        .await
+        {
             Ok(Ok(_)) => true,
             _ => {
                 let _ = child.start_kill();

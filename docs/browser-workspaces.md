@@ -24,7 +24,17 @@ revision은 즉시 무효다. 조작권은 활동 없이 5분이 지나면 **사
 브라우저는 입력/관측 없이 30분 또는 시작 후 8시간에 만료된다. 사용자당 최대 2개,
 설치의 capsule 동시 실행 한도도 적용한다. 종료·만료 시 세션의 프로필과 쿠키를 폐기한다.
 서버 재시작은 **결과 확인 필요**로 표시하며 과거 클릭/로그인/발송을 재생하지 않는다.
-장기 디스크 프로필과 장애 후 동일 탭 재접속은 아직 구현하지 않았다.
+운영자가 `recover_workspaces: true`를 설정한 새 배포에서는 원래 앱 로그인 세션과
+대화에 묶인 로그인 정보를 원래8시간/30분 한도 안에서 복구할 수 있다. **로그인 정보
+복구 · 직접 확인**을 누르면 새 worker와 조작권으로 **빈 화면**을 연다. 주소는 사용자가
+직접 입력하며 이전 탭·이동·폼·POST·클릭·입력·대화 turn을 복원하거나 재실행하지 않는다.
+이전 조작의 성공 여부는 계속 확인 필요다. 한 번 사람이 조작한 브라우저의 모델 이동
+차단도 유지한다. 다시 시작 자체는 만료 시간을 연장하지 않는다.
+
+복구는 사이트가 디스크에 저장한 persistent cookie/localStorage를 사용한다. session
+cookie는 만료될 수 있고 갑작스러운 장애는 최근 브라우저 저장을 잃을 수 있으므로 사이트가
+재로그인을 요구할 수 있다. 운영자가 이 옵션을 켜지 않은 배포와 일회성 `browser_read`는
+계속 임시 profile을 쓴다. 장기간 로그인 유지나 동일 탭 복원은 지원하지 않는다.
 
 ## 모델과 사람의 경계
 
@@ -50,7 +60,8 @@ vault credential 주입은 [별도 CredentialBroker 계약](credential-use.md)�
 
 ## 구현·운영
 
-- SQLite migration 8에 사용자/대화/workspace ID·상태·revision·조작권 hash를 둔다.
+- SQLite migration53은 기존 migration8 메타데이터에 원래 idle 만료와 앱 session digest를 추가한다. 프로필·쿠키는 DB에 저장하지 않는다.
+- SQLite migration8에 사용자/대화/workspace ID·상태·revision·조작권 hash를 둔다.
   API의 계정 ID로 권한을 만들지 않고 인증한 UserContext와 현재 session/epoch를 확인한다.
 - Rust broker는 대화별 controller를 직렬화한다. SQLite writer를 잡은 채 Chromium IO를
   기다리지 않는다. 입력을 전송한 뒤 응답이 불명확하면 자동 재입력하지 않는다.
@@ -65,5 +76,14 @@ vault credential 주입은 [별도 CredentialBroker 계약](credential-use.md)�
   이미지에 새 `--workspace` worker가 포함되어야 하며 새 이미지로 smoke를 다시 확인한다.
 
 주요 API는 `/api/v1/threads/{id}/browser`와 `/frame`, `/takeover`, `/input`, `/navigate`,
-`/resume`, `/close`다. 원격 CDP 포트를 웹에 공개하지 않는다. React는 인증된 요청으로만
+`/resume`, `/recover`, `/close`다. 원격 CDP 포트를 웹에 공개하지 않는다. React는 인증된 요청으로만
 프레임을 받아 메모리에 표시하고 계정/대화 전환 시 이미지·입력·token을 제거한다.
+
+복구 profile은 전용 Docker local volume에 두며 개인 host 브라우저를 mount하지 않는다.
+owner/project/workspace/account label과 기본 local driver를 검증한다. 앱 시작과 실행 중
+재조정은 현재 DB 권한을 기준으로 닫힘·만료·세션 철회·계정/대화 삭제·배포 변경의 profile을
+제거하고 이전 worker를 종료한다. Docker 실패 시 정리 완료로 보고하지 않으며 closed/expired
+권한을 되살리지 않는다. 앱/daemon이 재개되어야 정리가 이어지고, 폐기한 owner/project 배포는
+운영자가 해당 리소스를 별도로 정리해야 한다. local volume은 파일시스템 용량 quota를 제공하지
+않으므로 운영자는 디스크 용량·quota·monitoring을 준비한다. [구성](../deployment/browser/README.md)과
+[검증 기록](reviews/2026-11-15-browser-recovery.md)을 함께 확인한다.

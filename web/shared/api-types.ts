@@ -131,7 +131,7 @@ export type BrowserWorkspaceView = { id: string, thread_id: string, state: Brows
 /**
  * Once human input is enabled, model navigation remains disabled.
  */
-human_touched: boolean, url: string | null, title: string | null, reason: string | null, expires_at: number, };
+human_touched: boolean, recoverable: boolean, url: string | null, title: string | null, reason: string | null, expires_at: number, };
 export type BrowserWorkspaceStatus = { configured: boolean, workspace: BrowserWorkspaceView | null, };
 export type BrowserControl = { workspace: BrowserWorkspaceView,
 /**

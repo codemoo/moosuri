@@ -15,6 +15,7 @@ const ready: BrowserWorkspaceView = {
   state: "ready",
   revision: 1,
   human_touched: false,
+  recoverable: false,
   url: "https://example.test/",
   title: "Synthetic page",
   reason: null,
@@ -421,4 +422,47 @@ it("drops control when a conflicting capture reveals a newer controller", async 
   expect(screen.queryByRole("img")).toBeNull();
   expect(calls.filter((call) => call.url.endsWith("/input"))).toHaveLength(1);
   expect(calls.some((call) => call.url.endsWith("/resume"))).toBe(false);
+});
+
+it("recovers only after a human click, with blank human control and no old navigation replay", async () => {
+  workspace = {...ready,state:"outcome_unknown",recoverable:true,human_touched:true,url:null,title:null,revision:7};
+  custom = (call) => {
+    if (call.url.endsWith("/recover")) {
+      workspace={...workspace!,state:"user_control",recoverable:false,revision:8,url:null};
+      return json({workspace,control_token:"fresh-recovery-control"});
+    }
+    if (call.url.endsWith("/frame")) return json({...picture(8),url:"about:blank"});
+  };
+  render(<BrowserWorkspace accountId="account-a" threadId="thread-a" onExpired={() => {}} />);
+  await screen.findByText("브라우저 상태 확인 필요");
+  expect(calls.filter(c=>c.url.endsWith("/recover"))).toHaveLength(0);
+  fireEvent.click(screen.getByText("브라우저 열기"));
+  fireEvent.click(screen.getByText("로그인 정보 복구 · 직접 확인"));
+  await screen.findByText("조작 완료 · 대화 이어가기");
+  expect(calls.filter(c=>c.url.endsWith("/recover"))).toHaveLength(1);
+  expect(calls.find(c=>c.url.endsWith("/recover"))!.body).toEqual({workspace_id:"workspace-a",revision:7});
+  expect(calls.filter(c=>c.url.endsWith("/navigate")||c.url.endsWith("/input")||c.url.endsWith("/resume"))).toHaveLength(0);
+  expect(screen.getByLabelText("이동할 주소")).toHaveValue("");
+  expect(screen.getByRole("button", {name:/조작 완료/})).toBeDisabled();
+  expect(screen.getByText("주소를 직접 열어 확인한 뒤 대화를 이어가세요.")).toBeInTheDocument();
+  custom = (call) => {
+    if (call.url.endsWith("/navigate")) {
+      workspace={...workspace!,url:call.body.url as string};
+      return json(workspace);
+    }
+    if (call.url.endsWith("/frame")) return json({...picture(8),url:workspace!.url});
+  };
+  fireEvent.change(screen.getByLabelText("이동할 주소"),{target:{value:"https://example.test/result"}});
+  fireEvent.click(screen.getByRole("button",{name:"이동"}));
+  await waitFor(()=>expect(screen.getByRole("button", {name:/조작 완료/})).toBeEnabled());
+});
+
+it("explains the original-session fence and stops retries after forbidden control", async () => {
+  custom = call => call.url.endsWith("/frame") ? new Response(null,{status:403}) : undefined;
+  render(<BrowserWorkspace accountId="account-a" threadId="thread-a" onExpired={() => {}} />);
+  await screen.findByText("브라우저 준비됨");
+  fireEvent.click(screen.getByText("화면 보기 ↗"));
+  await screen.findByText(/처음 브라우저를 연 앱 세션이 여전히 유효/);
+  expect(calls.filter(call=>call.url.endsWith("/frame"))).toHaveLength(1);
+  expect(screen.queryByText("직접 조작하기")).toBeNull();
 });

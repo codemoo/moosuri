@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium ca-cer
 COPY --from=build /source/target/release/examples/browser_worker /usr/local/bin/browser-worker
 COPY --from=build /source/target/release/examples/browser_proxy /usr/local/bin/browser-proxy
 COPY deployment/browser/entrypoint.sh /capsule/entrypoint.sh
-RUN chmod 0555 /capsule/entrypoint.sh
+RUN mkdir -p /profiles/persistent && chown 10001:10001 /profiles/persistent && chmod 0700 /profiles/persistent \
+    && chmod 0555 /capsule/entrypoint.sh
 ENTRYPOINT ["/usr/bin/tini", "--", "/capsule/entrypoint.sh"]
 
 FROM runtime AS test

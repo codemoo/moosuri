@@ -100,6 +100,26 @@ impl CapsuleReader {
         account: Uuid,
         cancel: &CancellationToken,
     ) -> Result<CapsuleWorkspace, BrowserError> {
+        self.start_workspace_inner(account, None, cancel).await
+    }
+    pub async fn start_profile_workspace(
+        &self,
+        account: Uuid,
+        workspace: Uuid,
+        cancel: &CancellationToken,
+    ) -> Result<CapsuleWorkspace, BrowserError> {
+        self.start_workspace_inner(account, Some(workspace), cancel)
+            .await
+    }
+    async fn start_workspace_inner(
+        &self,
+        account: Uuid,
+        profile: Option<Uuid>,
+        cancel: &CancellationToken,
+    ) -> Result<CapsuleWorkspace, BrowserError> {
+        if profile.is_some() && !self.config.recover_workspaces {
+            return Err(BrowserError::IsolationRequired);
+        }
         if account.is_nil() {
             return Err(BrowserError::IsolationRequired);
         }
@@ -121,7 +141,7 @@ impl CapsuleReader {
         tokio::spawn(async move {
             let _capacity = capacity;
             let result = this
-                .workspace_actor(account, actor_cancel, rx, started)
+                .workspace_actor(account, profile, actor_cancel, rx, started)
                 .await;
             let _ = finished.send(result);
         });
@@ -136,6 +156,7 @@ impl CapsuleReader {
     async fn workspace_actor(
         &self,
         account: Uuid,
+        profile: Option<Uuid>,
         cancel: CancellationToken,
         mut requests: mpsc::Receiver<Request>,
         started: oneshot::Sender<Result<(), BrowserError>>,
@@ -162,7 +183,7 @@ impl CapsuleReader {
         }
         let identity = Uuid::new_v4();
         let name = format!("moosuri-browser-workspace-{identity}");
-        let mut command = self.worker_command(account, identity, &name);
+        let mut command = self.worker_command(account, identity, &name, profile);
         command
             .arg("--workspace")
             .stdin(Stdio::piped())
@@ -185,6 +206,7 @@ impl CapsuleReader {
                 || ready["workspace"] != true
                 || ready["tenant"] != account.to_string()
                 || ready["javascript_enabled"] != self.config.javascript_enabled
+                || (profile.is_some() && ready["profile_persistence"] != true)
             {
                 return Err(BrowserError::Protocol);
             }
@@ -268,7 +290,13 @@ impl CapsuleReader {
             }
         }
         let cleanup = self
-            .cleanup(&mut child, &name, identity, creation_observed)
+            .cleanup(
+                &mut child,
+                &name,
+                identity,
+                creation_observed,
+                profile.is_some(),
+            )
             .await;
         #[cfg(test)]
         if let Some(f) = &self.fixture {
@@ -315,6 +343,14 @@ impl CapsuleWorkspace {
             .request(json!({"op":"workspace_open","url":url}), MAX_RESPONSE)
             .await?;
         self.checked(observation(value))
+    }
+    pub async fn blank(&mut self) -> Result<(), BrowserError> {
+        let value = self.request(json!({"op":"workspace_blank"}), 2048).await?;
+        self.checked(if value == json!({"blank":true}) {
+            Ok(())
+        } else {
+            Err(BrowserError::Protocol)
+        })
     }
     pub async fn observe(&mut self) -> Result<WorkspaceObservation, BrowserError> {
         let value = self
@@ -383,7 +419,9 @@ fn observation(value: Value) -> Result<WorkspaceObservation, BrowserError> {
 fn frame(value: Value) -> Result<WorkspaceFrame, BrowserError> {
     let result: WorkspaceFrame =
         serde_json::from_value(value).map_err(|_| BrowserError::Protocol)?;
-    public_url(&result.url)?;
+    if result.url != "about:blank" {
+        public_url(&result.url)?;
+    }
     if result.width != 1280
         || result.height != 900
         || !hex64(&result.frame_token)

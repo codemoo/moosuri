@@ -12,6 +12,7 @@ fn fixture(account: Uuid, responses: &[Value]) -> CapsuleReader {
             .join("../../deployment/browser/seccomp.json"),
         verified: true,
         smoke_evidence_sha256: "d".repeat(64),
+        recover_workspaces: false,
         javascript_enabled: false,
     };
     let mut reader = CapsuleReader::new(config).unwrap();
@@ -275,4 +276,33 @@ fn key_names_match_the_human_ui_snake_case_contract() {
         json!("arrow_left")
     );
     assert!(serde_json::from_value::<WorkspaceKey>(json!("Enter")).is_err());
+}
+
+#[tokio::test]
+async fn persistent_recovery_requires_worker_capability_and_blank_does_not_open_old_url() {
+    let account = Uuid::new_v4();
+    let workspace = Uuid::new_v4();
+    let mut legacy = fixture(account, &[]);
+    Arc::make_mut(&mut legacy.config).recover_workspaces = true;
+    assert!(
+        legacy
+            .start_profile_workspace(account, workspace, &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    cleaned(&legacy).await;
+    let mut capable = fixture(account, &[json!({"ok":true,"result":{"blank":true}})]);
+    Arc::make_mut(&mut capable.config).recover_workspaces = true;
+    let fixture = capable.fixture.as_mut().unwrap();
+    let script = fixture.script.replace(
+        "\"workspace\":true",
+        "\"workspace\":true,\"profile_persistence\":true",
+    );
+    Arc::get_mut(fixture).unwrap().script = script;
+    let mut worker = capable
+        .start_profile_workspace(account, workspace, &CancellationToken::new())
+        .await
+        .unwrap();
+    worker.blank().await.unwrap();
+    worker.shutdown().await.unwrap();
 }

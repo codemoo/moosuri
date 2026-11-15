@@ -23,6 +23,7 @@ pub struct BrowserWorkspaceView {
     pub revision: i64,
     /// Once human input is enabled, model navigation remains disabled.
     pub human_touched: bool,
+    pub recoverable: bool,
     pub url: Option<String>,
     pub title: Option<String>,
     pub reason: Option<String>,

@@ -49,6 +49,7 @@ pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/threads/{id}/browser", get(status).post(open))
         .route("/api/v1/threads/{id}/browser/takeover", post(takeover))
+        .route("/api/v1/threads/{id}/browser/recover", post(recover))
         .route("/api/v1/threads/{id}/browser/frame", post(frame))
         .route("/api/v1/threads/{id}/browser/input", post(input))
         .route("/api/v1/threads/{id}/browser/navigate", post(navigate))
@@ -74,6 +75,20 @@ async fn open(
     let result = s.browser.open(&user, &thread, &input.url).await?;
     s.runtime.wake();
     Ok((StatusCode::CREATED, Json(result)).into_response())
+}
+async fn recover(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(thread): Path<String>,
+    Json(input): Json<Version>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    Ok(Json(
+        s.browser
+            .recover(&user, &thread, &input.workspace_id, input.revision)
+            .await?,
+    )
+    .into_response())
 }
 async fn takeover(
     State(s): State<AppState>,

@@ -11,7 +11,7 @@ import urllib.parse
 
 PROXY = str(ipaddress.IPv4Address(os.environ["MOOSURI_BROWSER_PROXY_IP"]))
 PUBLIC = "93.184.216.34"  # assigned only to this container's loopback by proxy-test.sh
-counts = {"canary": 0, "public": 0, "dns_public": 0, "dns_private": 0, "workspace_posts": 0}
+counts = {"canary": 0, "public": 0, "dns_public": 0, "dns_private": 0, "workspace_posts": 0, "persistent_posts": 0, "persistent_authenticated": 0}
 dns_private = False
 
 
@@ -44,7 +44,7 @@ class Public(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        if self.path != "/workspace-auth":
+        if self.path not in ("/workspace-auth", "/workspace-persistent-auth"):
             self.send_error(404)
             return
         # Synthetic form only; neither store nor echo the submitted password.
@@ -56,15 +56,16 @@ class Public(BaseHTTPRequestHandler):
         if not isinstance(self.connection, ssl.SSLSocket) or "TYPED_SYNTHETIC_SECRET" not in payload.get("password", [""])[0]:
             self.send_error(400)
             return
-        counts["workspace_posts"] += 1
+        persistent = self.path == "/workspace-persistent-auth"
+        counts["persistent_posts" if persistent else "workspace_posts"] += 1
         self.send_response(303)
-        self.send_header("Set-Cookie", "fixture_workspace=synthetic; Secure; HttpOnly; SameSite=Strict; Path=/")
-        self.send_header("Location", "/workspace-home")
+        self.send_header("Set-Cookie", "fixture_workspace=synthetic; Secure; HttpOnly; SameSite=Strict; Path=/" + ("; Max-Age=3600" if persistent else ""))
+        self.send_header("Location", "/workspace-persistent-home" if persistent else "/workspace-home")
         self.end_headers()
 
     def do_GET(self):
         global dns_private
-        if self.path == "/workspace-login":
+        if self.path in ("/workspace-login", "/workspace-persistent-login"):
             data = b'''<!doctype html><title>Workspace login fixture</title>
 <p><span aria-hidden="true">not </span>refundable</p>
 <style>@keyframes paint { from { background: red; } to { background: blue; } }
@@ -72,6 +73,8 @@ class Public(BaseHTTPRequestHandler):
 <form method="post" action="/workspace-auth">
 <input type="password" name="password" aria-label="Synthetic password" value="FORM_DEFAULT_SECRET" style="position:absolute;left:20px;top:60px;width:200px;height:30px">
 <button style="position:absolute;left:20px;top:110px;width:200px;height:30px">Sign in fixture</button></form>'''
+            if self.path == "/workspace-persistent-login":
+                data = data.replace(b'action="/workspace-auth"', b'action="/workspace-persistent-auth"')
         elif self.path == "/workspace-shift":
             data = b'''<title>Shifted geometry fixture</title><button id="move" style="position:absolute;left:20px;top:60px;width:200px;height:30px">Move target</button>
 <script>setTimeout(()=>document.getElementById('move').style.left='220px',2000)</script>'''
@@ -83,8 +86,10 @@ class Public(BaseHTTPRequestHandler):
             data = b'''<title>Focus fixture</title><input id="first" autofocus style="position:absolute;left:20px;top:60px;width:200px;height:30px">
 <input id="second" style="position:absolute;left:20px;top:110px;width:200px;height:30px">
 <script>setTimeout(()=>document.getElementById('second').focus(),2000)</script>'''
-        elif self.path == "/workspace-home":
+        elif self.path in ("/workspace-home", "/workspace-persistent-home"):
             logged_in = "fixture_workspace=synthetic" in self.headers.get("Cookie", "")
+            if logged_in and self.path == "/workspace-persistent-home":
+                counts["persistent_authenticated"] += 1
             data = b"<title>Workspace home</title><p>COOKIE_SESSION_OK</p>" if logged_in else b"<p>FRESH_PROFILE_NO_COOKIE</p>"
         elif self.path == "/rebind":
             dns_private = True

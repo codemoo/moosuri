@@ -58,6 +58,12 @@ impl BrowserWorkspace {
             proof: None,
         })
     }
+    /// Fresh target only, with no prior URL, POST, input or handle restored.
+    pub async fn blank(&mut self) -> Result<(), BrowserError> {
+        self.proof = None;
+        self.current = Some(bounded!(self, self.session.create_page("about:blank"))?);
+        Ok(())
+    }
     pub fn expires_in(&self) -> Duration {
         self.session.expires_in()
     }
@@ -114,7 +120,14 @@ impl BrowserWorkspace {
         let identity = Identity {
             frame: string(frame, "id")?,
             loader: string(frame, "loaderId")?,
-            url: net::public_url(&string(frame, "url")?)?.to_string(),
+            url: {
+                let url = string(frame, "url")?;
+                if url == "about:blank" {
+                    url
+                } else {
+                    net::public_url(&url)?.to_string()
+                }
+            },
         };
         let handle = self.current.as_ref().ok_or(BrowserError::InvalidHandle)?;
         let target = self

@@ -37,6 +37,8 @@ pub struct BrowserService {
     reader: Option<Arc<CapsuleReader>>,
     entries: Arc<Mutex<HashMap<Key, Arc<Mutex<Entry>>>>>,
     stop: CancellationToken,
+    profiles: Arc<Mutex<()>>,
+    active_profiles: Arc<Mutex<std::collections::HashSet<uuid::Uuid>>>,
 }
 impl BrowserService {
     pub(crate) fn new(
@@ -49,7 +51,35 @@ impl BrowserService {
             reader,
             entries: Arc::new(Mutex::new(HashMap::new())),
             stop,
+            profiles: Arc::new(Mutex::new(())),
+            active_profiles: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
+    }
+    async fn reconcile_profiles(&self) -> Result<()> {
+        let Some(reader) = &self.reader else {
+            return Ok(());
+        };
+        let _guard = self.profiles.lock().await;
+        let leases = self
+            .store
+            .browser_profile_leases(reader.deployment_pin().to_owned())
+            .await?;
+        let keep = leases
+            .into_iter()
+            .map(|l| {
+                Ok((
+                    uuid::Uuid::parse_str(&l.id).map_err(|_| StoreError::Corrupt)?,
+                    uuid::Uuid::parse_str(&l.account).map_err(|_| StoreError::Corrupt)?,
+                ))
+            })
+            .collect::<Result<std::collections::HashSet<_>>>()?;
+        // Lifecycle writers update this identity set while holding profiles. A
+        // busy browser operation never blocks unrelated stale-resource cleanup.
+        let active = self.active_profiles.lock().await.clone();
+        reader
+            .reconcile_profiles(&keep, &active)
+            .await
+            .map_err(|_| StoreError::Unavailable)
     }
     pub fn configured(&self) -> bool {
         self.reader.is_some()
@@ -160,6 +190,13 @@ impl BrowserService {
         Ok(view)
     }
     async fn broken(&self, entry: &mut Entry, user: &UserContext) -> Result<()> {
+        if let Some(id) = entry
+            .id
+            .as_deref()
+            .and_then(|v| uuid::Uuid::parse_str(v).ok())
+        {
+            self.active_profiles.lock().await.remove(&id);
+        }
         if let Some(worker) = entry.worker.take() {
             let _ = worker.shutdown().await;
         }
@@ -213,6 +250,13 @@ impl BrowserService {
             .store
             .browser_workspace(user, entry.thread.clone())
             .await?;
+        if agent
+            && current
+                .as_ref()
+                .is_some_and(|v| v.state == State::OutcomeUnknown && v.recoverable)
+        {
+            return Err(StoreError::Conflict);
+        }
         if let Some(view) = current.filter(|v| !terminal(v.state)) {
             if !agent {
                 return Err(StoreError::Conflict);
@@ -244,6 +288,7 @@ impl BrowserService {
                 .await?;
             return Ok((updated, observation));
         }
+        let _profile_guard = self.profiles.lock().await;
         if let Some(worker) = entry.worker.take() {
             worker
                 .shutdown()
@@ -259,10 +304,26 @@ impl BrowserService {
             )
             .await?;
         entry.id = Some(view.id.clone());
+        self.active_profiles
+            .lock()
+            .await
+            .insert(uuid::Uuid::parse_str(&view.id).map_err(|_| StoreError::Corrupt)?);
         entry.user = user.clone();
         entry.touched = Instant::now();
         let account = uuid::Uuid::parse_str(&user.account().id).map_err(|_| StoreError::Corrupt)?;
-        let started = reader.start_workspace(account, &self.stop).await;
+        let workspace = uuid::Uuid::parse_str(&view.id).map_err(|_| StoreError::Corrupt)?;
+        let started = if reader.recovery_enabled() {
+            match reader.prepare_profile(workspace, account, true).await {
+                Ok(()) => {
+                    reader
+                        .start_profile_workspace(account, workspace, &self.stop)
+                        .await
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            reader.start_workspace(account, &self.stop).await
+        };
         entry.worker = Some(match started {
             Ok(worker) => worker,
             Err(error) => {
@@ -273,6 +334,12 @@ impl BrowserService {
                 return Err(mapped.err().unwrap_or(StoreError::Unavailable));
             }
         });
+        if reader.recovery_enabled()
+            && let Err(error) = self.store.enable_browser_recovery(user, view.clone()).await
+        {
+            let _ = self.broken(entry, user).await;
+            return Err(error);
+        }
         let result = entry
             .worker
             .as_mut()
@@ -314,6 +381,83 @@ impl BrowserService {
         let mut entry = self.lock_slot(slot).await?;
         let (view, _) = self.open_locked(&mut entry, user, url, false).await?;
         Ok(view)
+    }
+    /// Human-only explicit restart recovery. No old location or command is read.
+    pub async fn recover(
+        &self,
+        user: &UserContext,
+        thread: &str,
+        id: &str,
+        revision: i64,
+    ) -> Result<BrowserControl> {
+        let reader = self.reader.as_ref().ok_or(StoreError::Unavailable)?;
+        if !reader.recovery_enabled() {
+            return Err(StoreError::Unavailable);
+        }
+        let slot = self.slot(user, thread, true).await?;
+        let mut entry = self.lock_slot(slot).await?;
+        let _guard = self.profiles.lock().await;
+        let control = self
+            .store
+            .recover_browser_workspace(
+                user,
+                thread.to_owned(),
+                id.to_owned(),
+                revision,
+                reader.deployment_pin().to_owned(),
+            )
+            .await?;
+        if let Some(worker) = entry.worker.take() {
+            worker
+                .shutdown()
+                .await
+                .map_err(|_| StoreError::Unavailable)?;
+        }
+        entry.id = Some(id.to_owned());
+        self.active_profiles
+            .lock()
+            .await
+            .insert(uuid::Uuid::parse_str(id).map_err(|_| StoreError::Corrupt)?);
+        entry.user = user.clone();
+        entry.touched = Instant::now();
+        let account = uuid::Uuid::parse_str(&user.account().id).map_err(|_| StoreError::Corrupt)?;
+        let workspace = uuid::Uuid::parse_str(id).map_err(|_| StoreError::InvalidInput)?;
+        let start = async {
+            reader.prepare_profile(workspace, account, false).await?;
+            let mut worker = reader
+                .start_profile_workspace(account, workspace, &self.stop)
+                .await?;
+            if let Err(error) = worker.blank().await {
+                let _ = worker.shutdown().await;
+                return Err(error);
+            }
+            Ok(worker)
+        }
+        .await;
+        match start {
+            Ok(worker) => entry.worker = Some(worker),
+            Err(error) => {
+                let _ = self.broken(&mut entry, user).await;
+                return Err(match error {
+                    BrowserError::Capacity => StoreError::Busy,
+                    _ => StoreError::Unavailable,
+                });
+            }
+        }
+        // Check authority again after startup. Revoked/deleted/expired profiles are
+        // never returned as live control; maintenance then removes their storage.
+        let valid = self.store.browser_workspace(user, thread.to_owned()).await;
+        if !valid.as_ref().is_ok_and(|view| {
+            view.as_ref().is_some_and(|v| {
+                v.id == id
+                    && v.revision == control.workspace.revision
+                    && v.state == State::UserControl
+            })
+        }) {
+            let _ = self.broken(&mut entry, user).await;
+            return Err(valid.err().unwrap_or(StoreError::Conflict));
+        }
+        Ok(control)
     }
     pub async fn takeover(
         &self,
@@ -457,9 +601,10 @@ impl BrowserService {
         id: &str,
         revision: i64,
     ) -> Result<BrowserWorkspaceView> {
-        let slot = self.slot(user, thread, false).await?;
+        let slot = self.slot(user, thread, true).await?;
         let mut entry = self.lock_slot(slot).await?;
-        let mut view = self
+        let _guard = self.profiles.lock().await;
+        let view = self
             .store
             .end_browser_workspace(
                 user,
@@ -469,20 +614,27 @@ impl BrowserService {
                 State::Closed,
             )
             .await?;
+        if let Ok(id) = uuid::Uuid::parse_str(id) {
+            self.active_profiles.lock().await.remove(&id);
+        }
         if entry.id.as_deref() == Some(id)
             && let Some(worker) = entry.worker.take()
-            && worker.shutdown().await.is_err()
         {
-            view = self
-                .store
-                .end_browser_workspace(
-                    user,
-                    thread.to_owned(),
-                    id.to_owned(),
-                    view.revision,
-                    State::OutcomeUnknown,
+            worker
+                .shutdown()
+                .await
+                .map_err(|_| StoreError::Unavailable)?;
+        }
+        if let Some(reader) = &self.reader
+            && reader.recovery_enabled()
+        {
+            reader
+                .delete_profile(
+                    uuid::Uuid::parse_str(id).map_err(|_| StoreError::InvalidInput)?,
+                    uuid::Uuid::parse_str(&user.account().id).map_err(|_| StoreError::Corrupt)?,
                 )
-                .await?;
+                .await
+                .map_err(|_| StoreError::Unavailable)?;
         }
         Ok(view)
     }
@@ -586,8 +738,13 @@ impl BrowserService {
     }
     pub(crate) async fn maintenance(&self) {
         let mut tick = tokio::time::interval(Duration::from_secs(2));
+        let mut cleanup_tick = 0u32;
         loop {
             tokio::select! {biased;_=self.stop.cancelled()=>break,_=tick.tick()=>{}}
+            if cleanup_tick.is_multiple_of(5) {
+                let _ = self.reconcile_profiles().await;
+            }
+            cleanup_tick = cleanup_tick.wrapping_add(1);
             let entries = self
                 .entries
                 .lock()
@@ -632,23 +789,15 @@ impl BrowserService {
                             )
                             .await;
                     }
-                    if let Some(worker) = entry.worker.take()
-                        && worker.shutdown().await.is_err()
-                        && let Ok(Some(view)) = self
-                            .store
-                            .browser_workspace(&entry.user, entry.thread.clone())
-                            .await
+                    if let Some(worker) = entry.worker.take() {
+                        let _ = worker.shutdown().await;
+                    }
+                    if let Some(id) = entry
+                        .id
+                        .as_deref()
+                        .and_then(|v| uuid::Uuid::parse_str(v).ok())
                     {
-                        let _ = self
-                            .store
-                            .end_browser_workspace(
-                                &entry.user,
-                                entry.thread.clone(),
-                                view.id,
-                                view.revision,
-                                State::OutcomeUnknown,
-                            )
-                            .await;
+                        self.active_profiles.lock().await.remove(&id);
                     }
                     self.entries.lock().await.remove(&key);
                 }

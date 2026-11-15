@@ -326,3 +326,418 @@ async fn model(store: &Store, user: &UserContext) {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn recovery_keeps_original_deadlines_and_fences_previous_control_without_replaying_a_turn() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user, thread, view) = setup().await;
+    // Enablement is only legal in Starting, after a capable worker is ready.
+    assert!(
+        store
+            .enable_browser_recovery(&user, view.clone())
+            .await
+            .is_err()
+    );
+    store
+        .call(|db| {
+            db.conn
+                .execute("UPDATE browser_workspaces SET state='starting'", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    store
+        .enable_browser_recovery(&user, view.clone())
+        .await
+        .unwrap();
+    let view = store
+        .activate_browser_workspace(
+            &user,
+            thread.clone(),
+            view.id,
+            "https://example.com/".into(),
+            "".into(),
+        )
+        .await
+        .unwrap();
+    let old = store
+        .take_browser_control(&user, thread.clone(), view.id.clone(), view.revision)
+        .await
+        .unwrap();
+    let before = store
+        .call(|db| {
+            Ok(db.conn.query_row(
+                "SELECT expires_at,idle_until FROM browser_workspaces",
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )?)
+        })
+        .await
+        .unwrap();
+    store.call(|db| restart(&db.conn)).await.unwrap();
+    let interrupted = store
+        .browser_workspace(&user, thread.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(interrupted.recoverable);
+    assert_eq!(interrupted.state, State::OutcomeUnknown);
+    assert!(interrupted.url.is_none());
+    let new_session = store
+        .login(user.account.email.clone(), PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    assert!(
+        !store
+            .browser_workspace(&new_session, thread.clone())
+            .await
+            .unwrap()
+            .unwrap()
+            .recoverable
+    );
+    assert!(
+        store
+            .recover_browser_workspace(
+                &new_session,
+                thread.clone(),
+                interrupted.id.clone(),
+                interrupted.revision,
+                "fixture-pin".into()
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .recover_browser_workspace(
+                &user,
+                thread.clone(),
+                interrupted.id.clone(),
+                interrupted.revision,
+                "changed-pin".into()
+            )
+            .await
+            .is_err()
+    );
+    let recovered = store
+        .recover_browser_workspace(
+            &user,
+            thread.clone(),
+            interrupted.id.clone(),
+            interrupted.revision,
+            "fixture-pin".into(),
+        )
+        .await
+        .unwrap();
+    assert!(recovered.workspace.human_touched);
+    assert_eq!(recovered.workspace.state, State::UserControl);
+    assert_ne!(old.control_token, recovered.control_token);
+    assert!(
+        store
+            .check_browser_workspace(
+                &new_session,
+                thread.clone(),
+                interrupted.id.clone(),
+                recovered.workspace.revision,
+                BrowserAccess::Human(recovered.control_token.clone())
+            )
+            .await
+            .is_err()
+    );
+    assert!(recovered.workspace.url.is_none());
+    let after = store
+        .call(|db| {
+            Ok(db.conn.query_row(
+                "SELECT expires_at,idle_until FROM browser_workspaces",
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+    assert!(
+        store
+            .recover_browser_workspace(
+                &user,
+                thread.clone(),
+                interrupted.id.clone(),
+                interrupted.revision,
+                "fixture-pin".into()
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .check_browser_workspace(
+                &user,
+                thread.clone(),
+                interrupted.id.clone(),
+                recovered.workspace.revision,
+                BrowserAccess::Human(old.control_token)
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .check_browser_workspace(
+                &user,
+                thread.clone(),
+                interrupted.id.clone(),
+                recovered.workspace.revision,
+                BrowserAccess::AgentNavigate
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .conversation(&user, thread.clone(), None)
+            .await
+            .unwrap()
+            .turns
+            .is_empty()
+    );
+    model(&store, &user).await;
+    assert!(matches!(
+        store
+            .resume_browser(
+                &user,
+                thread.clone(),
+                interrupted.id.clone(),
+                recovered.workspace.revision,
+                recovered.control_token.clone()
+            )
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let blank = store
+        .browser_workspace(&user, thread.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(blank.state, State::UserControl);
+    assert_eq!(blank.revision, recovered.workspace.revision);
+    assert!(
+        store
+            .conversation(&user, thread.clone(), None)
+            .await
+            .unwrap()
+            .turns
+            .is_empty()
+    );
+    let opened = store
+        .browser_location(
+            &user,
+            blank,
+            BrowserAccess::Human(recovered.control_token.clone()),
+            "https://example.com/result".into(),
+            "Result".into(),
+        )
+        .await
+        .unwrap();
+    store
+        .resume_browser(
+            &user,
+            thread.clone(),
+            opened.id.clone(),
+            opened.revision,
+            recovered.control_token,
+        )
+        .await
+        .unwrap();
+    let completed = store
+        .browser_workspace(&user, thread.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(completed.state, State::Ready);
+    assert_eq!(
+        store
+            .conversation(&user, thread.clone(), None)
+            .await
+            .unwrap()
+            .turns
+            .len(),
+        1
+    );
+    store
+        .end_browser_workspace(
+            &user,
+            thread.clone(),
+            interrupted.id,
+            completed.revision,
+            State::Closed,
+        )
+        .await
+        .unwrap();
+    store.call(|db| restart(&db.conn)).await.unwrap();
+    assert!(
+        store
+            .browser_profile_leases("fixture-pin".into())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !store
+            .browser_workspace(&user, thread)
+            .await
+            .unwrap()
+            .unwrap()
+            .recoverable
+    );
+}
+
+#[tokio::test]
+async fn expired_idle_profile_cannot_revive_after_restart_or_token_loss() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user, thread, view) = setup().await;
+    store.call(|db|{db.conn.execute("UPDATE browser_workspaces SET owner_session=(SELECT digest FROM sessions LIMIT 1),idle_until=0",[])?;restart(&db.conn)}).await.unwrap();
+    let expired = store
+        .browser_workspace(&user, thread.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(expired.state, State::Expired);
+    assert!(!expired.recoverable);
+    assert!(
+        store
+            .recover_browser_workspace(
+                &user,
+                thread,
+                view.id,
+                expired.revision,
+                "fixture-pin".into()
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .browser_profile_leases("fixture-pin".into())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn profile_cleanup_authority_excludes_revoked_deleted_and_changed_deployment_leases() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user, thread, view) = setup().await;
+    store
+        .call(|db| {
+            db.conn
+                .execute("UPDATE browser_workspaces SET state='starting'", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    store
+        .enable_browser_recovery(&user, view.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .browser_profile_leases("fixture-pin".into())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        store
+            .browser_profile_leases("changed-pin".into())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    store.delete_thread(&user, thread).await.unwrap();
+    assert!(
+        store
+            .browser_profile_leases("fixture-pin".into())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let thread = store
+        .create_thread(&user, "Revocation".into())
+        .await
+        .unwrap()
+        .id;
+    let view = store
+        .begin_browser_workspace(&user, thread.clone(), "fixture-pin".into())
+        .await
+        .unwrap();
+    store.enable_browser_recovery(&user, view).await.unwrap();
+    assert_eq!(
+        store
+            .browser_profile_leases("fixture-pin".into())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    store.logout(&user).await.unwrap();
+    assert!(
+        store
+            .browser_profile_leases("fixture-pin".into())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    store.call(|db| restart(&db.conn)).await.unwrap();
+    assert!(store.browser_workspace(&user, thread).await.is_err());
+}
+
+#[tokio::test]
+async fn revoked_profile_leases_do_not_consume_capacity_for_a_new_login_session() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user, _thread, view) = setup().await;
+    store
+        .call(|db| {
+            db.conn
+                .execute("UPDATE browser_workspaces SET state='starting'", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    store.enable_browser_recovery(&user, view).await.unwrap();
+    let second = store
+        .create_thread(&user, "Second profile".into())
+        .await
+        .unwrap()
+        .id;
+    let view = store
+        .begin_browser_workspace(&user, second, "fixture-pin".into())
+        .await
+        .unwrap();
+    store.enable_browser_recovery(&user, view).await.unwrap();
+    let third = store
+        .create_thread(&user, "Fresh session capacity".into())
+        .await
+        .unwrap()
+        .id;
+    assert!(matches!(
+        store
+            .begin_browser_workspace(&user, third.clone(), "fixture-pin".into())
+            .await,
+        Err(StoreError::Busy)
+    ));
+    store.logout(&user).await.unwrap();
+    let fresh = store
+        .login(user.account.email.clone(), PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    assert!(
+        store
+            .begin_browser_workspace(&fresh, third, "fixture-pin".into())
+            .await
+            .is_ok()
+    );
+}

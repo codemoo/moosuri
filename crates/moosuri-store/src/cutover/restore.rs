@@ -516,6 +516,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0052_mission_acceptances.sql"
         ))?;
     }
+    if captured < 53 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0053_browser_recovery.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);

@@ -130,7 +130,7 @@ The default worker reads bounded JSON lines on stdin, emits a readiness record, 
 `{"op":"open","url":"https://example.com/"}`, then `read`, `screenshot` or `close`
 with the exact returned `handle`, and `{"op":"shutdown"}`. Stdin EOF/cancellation
 shuts down Chromium. The Docker init process reaps child processes; capsule removal
-discards its tmpfs profile. The app must never automatically reattach old handles
+discards its tmpfs profile unless the operator enables bounded workspace recovery below. The app must never automatically reattach old handles
 after a worker restart or replay an ambiguous external action.
 
 Workspace mode instead accepts `workspace_open`, `workspace_observe`,
@@ -172,3 +172,37 @@ NoNewPrivs; production health checks require Eff/Prm/Inh/Amb/Bnd all zero and
 Seccomp2. The synthetic worker additionally checks direct non-namespaced
 `chroot("/")` fails EPERM. Keep those controls in actual Linux smoke evidence.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for exact hashes and attribution.
+
+## Optional bounded workspace recovery
+
+Add `"recover_workspaces": true` to the reviewed capsule JSON only after testing
+this image/host. It defaults to false and false is omitted from canonical config
+serialization, preserving existing pins. Enabling it changes the deployment pin.
+The worker must explicitly report `profile_persistence: true`; older images fail
+closed. One-shot public reads and workspaces with the option disabled retain
+tmpfs profiles and their existing discard behavior.
+
+The app creates dedicated local Docker volumes with exact owner/project/account/
+workspace/generation labels, mounts only their fixed profile directory and never
+mounts a personal host browser. Only the original authenticated app session can
+request recovery before the original idle/absolute deadlines. Human recovery
+starts a fresh blank target; it does not restore tabs, navigation, POSTs, input or
+service workers. Persistent cookies/localStorage committed by Chromium may remain;
+session cookies may expire and sites may ask the user to log in again. Cookies
+remain server-managed, with no vault or malicious-admin protection.
+
+Close/expiry/deleted thread/account/revoked session and deployment-pin changes
+invalidate the lease. Startup/background reconciliation removes only exact-owned
+ineligible profiles and stale workers. Failed Docker cleanup leaves the labels
+and invalid DB state for retry; it never restores authority. If this app/daemon
+stays stopped, cleanup is delayed. Retiring an owner/project requires separately
+scoped operator cleanup. Never prune volumes across tenants or mount arbitrary
+host storage as a substitute.
+
+Local Docker volumes do **not** impose a hard per-profile filesystem quota.
+Provision disk capacity, quota/monitoring and operational cleanup before opting
+in. Downloads remain denied; small disk/media cache limits reduce routine cache
+use but do not cap cookies/site storage. Do not describe this option as indefinite
+or guaranteed crash-durable login retention. The synthetic smoke now exercises
+persistent-cookie continuity across worker restart and requires a blank recovery,
+no prior GET/POST replay and invalid old frame tokens.

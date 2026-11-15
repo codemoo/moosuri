@@ -44,7 +44,7 @@ fn load(
 ) -> Result<Option<BrowserWorkspaceView>> {
     thread(conn, user, thread_id)?;
     let time = now()?;
-    conn.execute("UPDATE browser_workspaces SET state='expired',revision=revision+1,control_hash=NULL,control_session=NULL,control_until=NULL,url=NULL,title=NULL,reason=NULL WHERE tenant_id=?1 AND thread_id=?2 AND state IN('starting','ready','waiting_for_user','user_control') AND (expires_at<=?3 OR auth_epoch!=?4)",params![user.tenant.0,thread_id,time,user.epoch])?;
+    conn.execute("UPDATE browser_workspaces SET state='expired',revision=revision+1,control_hash=NULL,control_session=NULL,control_until=NULL,url=NULL,title=NULL,reason=NULL WHERE tenant_id=?1 AND thread_id=?2 AND state IN('starting','ready','waiting_for_user','user_control','outcome_unknown') AND (expires_at<=?3 OR idle_until<=?3 OR auth_epoch!=?4)",params![user.tenant.0,thread_id,time,user.epoch])?;
     // Lease expiry never gives the model control. An explicit completion is required.
     conn.execute("UPDATE browser_workspaces SET state='waiting_for_user',revision=revision+1,control_hash=NULL,control_session=NULL,control_until=NULL WHERE tenant_id=?1 AND thread_id=?2 AND state='user_control' AND (control_until<=?3 OR NOT EXISTS(SELECT 1 FROM sessions WHERE digest=control_session AND auth_epoch=?4 AND expires_at>?3))",params![user.tenant.0,thread_id,time,user.epoch])?;
     let row = conn.query_row("SELECT id,state,revision,human_touched,url,title,reason,expires_at FROM browser_workspaces WHERE tenant_id=?1 AND account_id=?2 AND thread_id=?3",params![user.tenant.0,user.account.id,thread_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).optional()?;
@@ -52,9 +52,10 @@ fn load(
         Ok(BrowserWorkspaceView {
             id: r.0,
             thread_id: thread_id.to_owned(),
-            state: serde_json::from_value(serde_json::Value::String(r.1))
+            state: serde_json::from_value(serde_json::Value::String(r.1.clone()))
                 .map_err(|_| StoreError::Corrupt)?,
             revision: r.2,
+            recoverable: r.1 == "outcome_unknown" && conn.query_row("SELECT COALESCE(owner_session=?3,0) AND idle_until>?4 AND auth_epoch=?5 FROM browser_workspaces WHERE tenant_id=?1 AND thread_id=?2", params![user.tenant.0,thread_id,user.digest.as_slice(),time,user.epoch],|row|row.get::<_,bool>(0))?,
             human_touched: r.3,
             url: r.4,
             title: r.5,
@@ -77,6 +78,10 @@ fn checked(
     if view.id != id || view.revision != revision {
         return Err(StoreError::Conflict);
     }
+    let session_matches:bool=conn.query_row("SELECT owner_session IS NULL OR owner_session=?3 FROM browser_workspaces WHERE tenant_id=?1 AND thread_id=?2",params![user.tenant.0,thread_id,user.digest.as_slice()],|r|r.get(0))?;
+    if !session_matches {
+        return Err(StoreError::Forbidden);
+    }
     match access {
         BrowserAccess::Watch if matches!(view.state, State::Ready | State::WaitingForUser) => {}
         BrowserAccess::Takeover
@@ -94,10 +99,14 @@ fn checked(
         }
         _ => return Err(StoreError::Conflict),
     }
+    conn.execute("UPDATE browser_workspaces SET idle_until=MIN(expires_at,?3) WHERE tenant_id=?1 AND thread_id=?2",params![user.tenant.0,thread_id,now()?+1800])?;
     Ok(view)
 }
 
 fn location(url: &str, title: &str) -> Result<()> {
+    if url == "about:blank" && title.is_empty() {
+        return Ok(());
+    }
     let parsed = url::Url::parse(url).map_err(|_| StoreError::InvalidInput)?;
     if url.len() > 2048
         || title.len() > 512
@@ -111,7 +120,41 @@ fn location(url: &str, title: &str) -> Result<()> {
     Ok(())
 }
 
+/// Internal cleanup authority, never exported as a tool or HTTP DTO.
+#[derive(Clone)]
+pub struct BrowserProfileLease {
+    pub id: String,
+    pub account: String,
+}
 impl Store {
+    pub async fn browser_profile_leases(&self, pin: String) -> Result<Vec<BrowserProfileLease>> {
+        self.call(move |db| {
+            let mut stmt=db.conn.prepare("SELECT b.id,b.account_id FROM browser_workspaces b JOIN accounts a ON a.id=b.account_id AND a.tenant_id=b.tenant_id JOIN sessions s ON s.digest=b.owner_session AND s.account_id=b.account_id WHERE b.state IN('starting','ready','waiting_for_user','user_control','outcome_unknown') AND b.expires_at>?1 AND b.idle_until>?1 AND b.auth_epoch=a.auth_epoch AND s.auth_epoch=a.auth_epoch AND s.expires_at>?1 AND a.status='active' AND a.deleted=0 AND a.recovery_required=0 AND s.password_change_only=0 AND b.deployment_pin=?2")?;
+            let rows=stmt.query_map(params![now()?,pin],|r|Ok(BrowserProfileLease{id:r.get(0)?,account:r.get(1)?}))?;
+            Ok(rows.collect::<std::result::Result<Vec<_>,_>>()?)
+        }).await
+    }
+    /// Claim recovery before launching IO: stale requests cannot launch a second worker.
+    /// The original absolute and idle deadlines are preserved across a failed claim.
+    pub async fn recover_browser_workspace(
+        &self,
+        user: &UserContext,
+        thread_id: String,
+        id: String,
+        revision: i64,
+        pin: String,
+    ) -> Result<BrowserControl> {
+        let user = user.clone();
+        self.call(move|db|{
+            let view=load(&db.conn,&user,&thread_id)?.ok_or(StoreError::NotFound)?;
+            if view.id!=id || view.revision!=revision || !view.recoverable || db.web_profile.browser_pin.as_deref()!=Some(&pin){return Err(StoreError::Conflict)}
+            let valid:bool=db.conn.query_row("SELECT deployment_pin=?3 AND owner_session=?4 FROM browser_workspaces WHERE tenant_id=?1 AND thread_id=?2",params![user.tenant.0,thread_id,pin,user.digest.as_slice()],|r|r.get(0))?;
+            if !valid{return Err(StoreError::Conflict)}
+            let token=random_token()?;
+            db.conn.execute("UPDATE browser_workspaces SET state='user_control',human_touched=1,revision=revision+1,url=NULL,title=NULL,reason='재시작 전 조작의 결과는 확인되지 않았습니다. 빈 화면에서 주소를 직접 열어 확인하세요.',control_hash=?3,control_session=?4,control_until=?5,resume_request=?6,resumed_request=NULL WHERE tenant_id=?1 AND thread_id=?2",params![user.tenant.0,thread_id,digest(&token).as_slice(),user.digest.as_slice(),now()?+300,Uuid::new_v4().to_string()])?;
+            Ok(BrowserControl{workspace:load(&db.conn,&user,&thread_id)?.ok_or(StoreError::Corrupt)?,control_token:token})
+        }).await
+    }
     pub async fn browser_workspace(
         &self,
         user: &UserContext,
@@ -131,9 +174,26 @@ impl Store {
             thread(&db.conn,&user,&thread_id)?;
             if db.web_profile.browser_pin.as_deref()!=Some(&pin) {return Err(StoreError::Conflict)}
             if let Some(old)=load(&db.conn,&user,&thread_id)? && !matches!(old.state,State::Closed|State::Expired|State::OutcomeUnknown) {return Err(StoreError::Conflict)}
-            let id=Uuid::new_v4().to_string();let time=now()?;
+            let time=now()?;
+            let (installation,account):(i64,i64)=db.conn.query_row("SELECT COUNT(*),COALESCE(SUM(b.account_id=?5),0) FROM browser_workspaces b JOIN accounts a ON a.tenant_id=b.tenant_id AND a.id=b.account_id LEFT JOIN sessions s ON s.digest=b.owner_session AND s.account_id=b.account_id AND s.tenant_id=b.tenant_id WHERE NOT(b.tenant_id=?1 AND b.thread_id=?2) AND b.expires_at>?3 AND b.idle_until>?3 AND b.deployment_pin=?4 AND b.auth_epoch=a.auth_epoch AND a.status='active' AND a.deleted=0 AND a.recovery_required=0 AND ((b.owner_session IS NULL AND b.state IN('starting','ready','waiting_for_user','user_control')) OR (b.owner_session IS NOT NULL AND b.state IN('starting','ready','waiting_for_user','user_control','outcome_unknown') AND s.auth_epoch=a.auth_epoch AND s.expires_at>?3 AND s.password_change_only=0))",params![user.tenant.0,thread_id,time,pin,user.account.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            if account>=2 || installation>=16{return Err(StoreError::Busy)}
+            let id=Uuid::new_v4().to_string();
             db.conn.execute("INSERT INTO browser_workspaces(tenant_id,account_id,thread_id,id,auth_epoch,deployment_pin,state,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,'starting',?7,?8) ON CONFLICT(tenant_id,thread_id) DO UPDATE SET id=excluded.id,auth_epoch=excluded.auth_epoch,deployment_pin=excluded.deployment_pin,state='starting',revision=1,human_touched=0,url=NULL,title=NULL,reason=NULL,created_at=excluded.created_at,expires_at=excluded.expires_at,control_hash=NULL,control_session=NULL,control_until=NULL,resume_request=NULL,resumed_request=NULL",params![user.tenant.0,user.account.id,thread_id,id,user.epoch,pin,time,time+8*60*60])?;
+            db.conn.execute("UPDATE browser_workspaces SET owner_session=NULL,idle_until=?3 WHERE tenant_id=?1 AND thread_id=?2",params![user.tenant.0,thread_id,time+1800])?;
             load(&db.conn,&user,&thread_id)?.ok_or(StoreError::Corrupt)
+        }).await
+    }
+    /// Called only after a persistence-capable worker confirmed readiness.
+    pub async fn enable_browser_recovery(
+        &self,
+        user: &UserContext,
+        view: BrowserWorkspaceView,
+    ) -> Result<()> {
+        let user = user.clone();
+        self.call(move|db|{
+            thread(&db.conn,&user,&view.thread_id)?;
+            if db.conn.execute("UPDATE browser_workspaces SET owner_session=?4 WHERE tenant_id=?1 AND thread_id=?2 AND id=?3 AND state='starting' AND expires_at>?5 AND idle_until>?5",params![user.tenant.0,view.thread_id,view.id,user.digest.as_slice(),now()?])?!=1 {return Err(StoreError::Conflict)}
+            Ok(())
         }).await
     }
     pub async fn activate_browser_workspace(
@@ -230,7 +290,8 @@ impl Store {
                 _=>None,
             };
             let request=if let Some(request)=resumed {request} else {
-                checked(&tx,&user,&thread_id,&id,revision,&BrowserAccess::Human(token.clone()))?;
+                let view=checked(&tx,&user,&thread_id,&id,revision,&BrowserAccess::Human(token.clone()))?;
+                if view.url.as_deref().is_none_or(|url|url=="about:blank"){return Err(StoreError::Conflict)}
                 let request:String=tx.query_row("SELECT resume_request FROM browser_workspaces WHERE tenant_id=?1 AND thread_id=?2 AND id=?3",params![user.tenant.0,thread_id,id],|r|r.get(0))?;
                 tx.execute("UPDATE browser_workspaces SET state='ready',revision=revision+1,reason=NULL,control_until=NULL,resumed_request=resume_request WHERE tenant_id=?1 AND thread_id=?2 AND id=?3",params![user.tenant.0,thread_id,id])?;
                 request
@@ -256,7 +317,7 @@ impl Store {
         let user = user.clone();
         self.call(move|db|{
             let view=load(&db.conn,&user,&thread_id)?.ok_or(StoreError::NotFound)?;
-            if view.id!=id || view.revision!=revision{return Err(StoreError::Conflict)}
+            if view.id!=id || view.revision!=revision || (matches!(view.state,State::Closed|State::Expired) && state==State::OutcomeUnknown){return Err(StoreError::Conflict)}
             let state=serde_json::to_value(state).map_err(|_|StoreError::Corrupt)?;
             db.conn.execute("UPDATE browser_workspaces SET state=?4,revision=revision+1,control_hash=NULL,control_session=NULL,control_until=NULL,url=NULL,title=NULL,reason=NULL WHERE tenant_id=?1 AND thread_id=?2 AND id=?3",params![user.tenant.0,thread_id,id,state.as_str().ok_or(StoreError::Corrupt)?])?;
             load(&db.conn,&user,&thread_id)?.ok_or(StoreError::Corrupt)

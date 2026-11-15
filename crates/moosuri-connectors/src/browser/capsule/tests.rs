@@ -12,6 +12,7 @@ fn config() -> CapsuleConfig {
             .join("../../deployment/browser/seccomp.json"),
         verified: true,
         smoke_evidence_sha256: "d".repeat(64),
+        recover_workspaces: false,
         javascript_enabled: false,
     }
 }
@@ -292,4 +293,19 @@ async fn automatic_removal_race_requires_observed_absence_and_keeps_unknown_fail
     })
     .await
     .unwrap();
+}
+
+#[test]
+fn recovery_opt_in_preserves_historical_config_bytes_and_changes_enabled_pin() {
+    let old = config();
+    let encoded = serde_json::to_value(&old).unwrap();
+    assert!(encoded.get("recover_workspaces").is_none());
+    let restored = CapsuleConfig::from_json(&encoded.to_string()).unwrap();
+    assert!(!restored.recover_workspaces);
+    let mut enabled = old.clone();
+    enabled.recover_workspaces = true;
+    assert_ne!(
+        CapsuleReader::new(old).unwrap().deployment_pin(),
+        CapsuleReader::new(enabled).unwrap().deployment_pin()
+    );
 }

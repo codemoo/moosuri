@@ -46,6 +46,7 @@ function publicUrl(text: string) {
   }
 }
 function safeLocation(text?: string | null) {
+  if (text === "about:blank") return "빈 페이지";
   return text ? (publicUrl(text) ?? "주소를 표시할 수 없습니다") : "";
 }
 
@@ -148,6 +149,10 @@ function Workspace(props: Props & { threadId: string }) {
       blocked.current = true;
       lifetime.current.abort();
       if (value.status === 401) callbacks.current.onExpired();
+      if (value.status === 403) {
+        setStatus({configured:true,workspace:null});
+        setError("이 앱 로그인 세션에서는 브라우저에 접근할 수 없습니다. 로그인 정보를 복구하려면 처음 브라우저를 연 앱 세션이 여전히 유효해야 합니다.");
+      }
       return true;
     }
     return false;
@@ -169,6 +174,7 @@ function Workspace(props: Props & { threadId: string }) {
     }
     workspace.current = next;
     setStatus({ configured: true, workspace: next });
+    if (next && !next.url) setLocation("");
     if (next?.url && (!old || old.url !== next.url || old.id !== next.id))
       setLocation(safeLocation(next.url));
   }
@@ -336,7 +342,7 @@ function Workspace(props: Props & { threadId: string }) {
     lifetime.current = new AbortController();
   }
   async function mutate(
-    kind: "takeover" | "input" | "navigate" | "resume" | "close" | "create",
+    kind: "takeover" | "input" | "navigate" | "resume" | "close" | "create" | "recover",
     input?: Input,
   ) {
     if (
@@ -401,7 +407,7 @@ function Workspace(props: Props & { threadId: string }) {
         BrowserControl | BrowserWorkspaceView | undefined
       >(kind === "create" ? "" : `/${kind}`, "POST", body);
       if (!current(epoch)) return;
-      if (kind === "takeover") {
+      if (kind === "takeover" || kind === "recover") {
         const control = result as BrowserControl;
         if (
           !control?.workspace ||
@@ -485,6 +491,7 @@ function Workspace(props: Props & { threadId: string }) {
     }
   }
   if (!status?.configured) return null;
+  if (blocked.current && error) return <div className="browser-workspace"><p className="browser-error" role="alert">{error}</p></div>;
   const value = status.workspace;
   const ended = !value || terminal(value);
   const canTake = value && !ended && value.state !== "starting";
@@ -522,6 +529,7 @@ function Workspace(props: Props & { threadId: string }) {
             </button>
           </header>
           <div className="browser-workspace-content">
+            {value?.recoverable && <p className="browser-help">브라우저가 중단됐습니다. 원래 만료 시간 안에서 로그인 정보를 복구할 수 있습니다. 이전 조작의 결과는 확인되지 않았으며, 빈 화면에서 주소를 직접 열어 확인하세요. 사이트에 따라 다시 로그인해야 할 수 있습니다.</p>}
             {value?.reason && <p className="browser-reason">{value.reason}</p>}
             {error && (
               <p className="browser-error" role="alert">
@@ -739,6 +747,7 @@ function Workspace(props: Props & { threadId: string }) {
                 </button>
               </div>
             )}
+            {controlling && frame?.url === "about:blank" && <p className="browser-help">주소를 직접 열어 확인한 뒤 대화를 이어가세요.</p>}
             {!ended && (
               <p className="browser-help">
                 화면을 접거나 탭을 닫아도 대기는 유지됩니다. 조작을 마치면 완료
@@ -747,6 +756,7 @@ function Workspace(props: Props & { threadId: string }) {
             )}
           </div>
           <div className="browser-actions">
+              {value?.recoverable && <button className="primary" disabled={busy} onClick={() => void mutate("recover")}>로그인 정보 복구 · 직접 확인</button>}
               {resumeUncertain && (
                 <button
                   className="primary"
@@ -768,13 +778,13 @@ function Workspace(props: Props & { threadId: string }) {
               {controlling && (
                 <button
                   className="primary"
-                  disabled={busy || !frame}
+                  disabled={busy || !frame || frame.url === "about:blank"}
                   onClick={() => void mutate("resume")}
                 >
                   조작 완료 · 대화 이어가기
                 </button>
               )}
-              {value && !ended && (
+              {value && (!ended || value.recoverable) && (
                 <button
                   className="text-button"
                   disabled={busy}

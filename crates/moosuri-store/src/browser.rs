@@ -1,6 +1,7 @@
 //! Durable ownership and controller fencing. All browser IO lives outside this actor.
 use super::*;
 use moosuri_core::{BrowserControl, BrowserWorkspaceState as State, BrowserWorkspaceView};
+pub(crate) mod selected;
 
 /// Constructed only by the trusted broker, never deserialized as a model request.
 #[derive(Clone)]

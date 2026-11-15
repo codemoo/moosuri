@@ -150,6 +150,12 @@ export function MailConnections({
       setRecipients({ to: "", cc: "", bcc: "" });
     }
   }, [actions, editing]);
+  const linkedAction = useRef(window.location.hash.startsWith("#action-") ? window.location.hash.slice(8) : null);
+  useEffect(() => {
+    const id=linkedAction.current;
+    const linked=id ? actions.find(a=>a.id===id) : null;
+    if(linked){linkedAction.current=null;setSelected(linked.id);setConnection(linked.connection_id);}
+  }, [actions]);
   const action = actions.find((a) => a.id === selected) ?? null;
   async function connect(compose = false) {
     setBusy(true);

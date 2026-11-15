@@ -82,6 +82,7 @@ impl Store {
                 now()?+3600
             };
             tx.execute("UPDATE mail_actions SET revision=revision+1,version=version+1,state='pending_approval',expires_at=?3 WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,id,expires])?;
+            crate::learned_skills::draft::invalidate_action(&tx,&user.tenant.0,&id)?;
             let a=action(&tx,&user,&id)?;
             tx.commit()?;
             Ok(a)

@@ -5,6 +5,7 @@ use moosuri_vault_protocol::broker::Command;
 use moosuri_vault_protocol::broker::*;
 use serde::{Serialize, de::DeserializeOwned};
 pub mod github;
+pub mod native_model_mail;
 fn encode<T: Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|_| StoreError::Corrupt)
 }
@@ -24,6 +25,7 @@ fn active(conn: &Connection, pair: &PairChallenge, session: &[u8]) -> Result<Use
     Ok(u)
 }
 pub(crate) fn quarantine(conn: &Connection) -> Result<()> {
+    crate::native_task_mail::quarantine(conn)?;
     crate::mail::native::quarantine(conn)?;
     conn.execute_batch("DELETE FROM credential_broker_pairs; DELETE FROM credential_broker_auth; UPDATE credential_broker_devices SET status=CASE WHEN status='active' THEN 'revocation_pending' ELSE status END; UPDATE credential_broker_bindings SET active=0;")?;
     Ok(())
@@ -38,6 +40,18 @@ fn commitment(conn: &Connection, tenant: &str, i: &Invocation) -> Result<Option<
 }
 fn projection_allowed(outcome: Outcome, p: &Projection, operation: Operation) -> bool {
     match (outcome, p, operation) {
+        (
+            Outcome::ProjectedSuccess | Outcome::Rejected,
+            Projection::GoogleMailModelRead { result },
+            Operation::GoogleMailModelRead { .. },
+        ) => {
+            result.valid()
+                && (outcome == Outcome::ProjectedSuccess
+                    || matches!(
+                        result.status,
+                        MailModelStatus::ScopeMissing | MailModelStatus::AccountMismatch
+                    ))
+        }
         (
             Outcome::ProjectedSuccess,
             Projection::GoogleMailSent {
@@ -160,8 +174,12 @@ fn commit_current(
         r.operation,
         Operation::GoogleMailSend { .. } | Operation::GoogleMailLookup { .. }
     );
+    let task_native = matches!(r.operation, Operation::GoogleMailModelRead { .. })
+        && crate::native_task_mail::dispatch_current(conn, tenant, invocation)?.is_some();
     if native {
         crate::mail::native::guard(conn, p, &r, false)?;
+    } else if task_native {
+        crate::native_task_mail::payload(conn, p, &r)?.ok_or(StoreError::Forbidden)?;
     } else {
         active(conn, p, session)?;
     }
@@ -201,6 +219,10 @@ fn commit_current(
             return Err(StoreError::Forbidden);
         }
     }
+    if matches!(r.operation, Operation::GoogleMailModelRead { .. }) && !task_native {
+        let u = active(conn, p, session)?;
+        native_model_mail::payload(conn, p, &u, &r)?;
+    }
     let committed = Commitment {
         request: r,
         nonce: Uuid::new_v4(),
@@ -219,6 +241,7 @@ fn commit_current(
             encode(&committed)?
         ],
     )?;
+    crate::native_task_mail::committed(conn, tenant, invocation)?;
     Ok(Reply::Commitment {
         commitment: Box::new(committed),
     })
@@ -401,6 +424,10 @@ impl Store {
   tx.execute("DELETE FROM credential_broker_auth WHERE nonce=?1",[c.nonce.to_string()])?;
   let tenant=c.device.owner.tenant.to_string();let device=c.device.id.to_string();
   let reply=match input.command {
+   Command::RegisterGoogleModelRead{binding,background}=>{active(&tx,&p,&session)?;native_model_mail::register(&tx,&p,&status,&binding,background,None)?;Reply::Registered},
+   Command::RefreshGoogleModelRead{expected,binding,background}=>{active(&tx,&p,&session)?;native_model_mail::register(&tx,&p,&status,&binding,background,Some(&expected))?;Reply::Registered},
+   Command::ModelMailPayload{invocation,request_digest}=>{let request=stored_request(&tx,&tenant,&invocation)?;if status!="active" || request_digest!=moosuri_credential_broker::auth::hash(&request_bytes(&request)){return Err(StoreError::Forbidden)}
+    if let Some(reply)=crate::native_task_mail::payload(&tx,&p,&request)? {reply}else{let owner=active(&tx,&p,&session)?;native_model_mail::payload(&tx,&p,&owner,&request)?}},
    Command::RegisterGoogleSend {binding,email}=>{let u=active(&tx,&p,&session)?;if status!="active"{return Err(StoreError::Forbidden)}crate::mail::native::register(&tx,&p,&u,&binding,&email,None)?;Reply::Registered},
    Command::RefreshGoogleSend {expected,binding,email}=>{let u=active(&tx,&p,&session)?;if status!="active"{return Err(StoreError::Forbidden)}crate::mail::native::register(&tx,&p,&u,&binding,&email,Some(&expected))?;Reply::Registered},
    Command::PollMail=>crate::mail::native::poll(&tx,&p,&status)?,
@@ -413,7 +440,7 @@ impl Store {
     crate::mail::native::abandon(&tx,&request)?;
     tx.execute("UPDATE credential_broker_invocations SET cancelled=1 WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4 AND invocation_nonce=?5",params![tenant,invocation.run.to_string(),invocation.step,invocation.call.to_string(),invocation.nonce.to_string()])?;Reply::Abandoned
    },
-   Command::Poll=>github::poll(&tx,&p,&session,&status)?,
+   Command::Poll=>if let Some(reply)=crate::native_task_mail::poll_device(&tx,&p,&status)? {reply}else{github::poll(&tx,&p,&session,&status)?},
    Command::RegisterGoogleInbox{binding}=>{
     active(&tx,&p,&session)?;register_google(&tx,&device,&status,&binding,&Resource::google_inbox())?;Reply::Registered
    },
@@ -514,7 +541,7 @@ impl Store {
         self.call(move|db|{
   let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&user,true,false)?;
   if tx.execute("UPDATE credential_broker_devices SET status=CASE WHEN status='active' THEN 'revocation_pending' ELSE status END WHERE id=?1 AND account_id=?2 AND tenant_id=?3",params![device.to_string(),u.account.id,u.tenant.0])?!=1{return Err(StoreError::NotFound)}
-  tx.execute("UPDATE credential_broker_bindings SET active=0 WHERE device_id=?1",[device.to_string()])?;crate::mail::native::revoke(&tx,&device.to_string())?;tx.commit()?;Ok(())
+  tx.execute("UPDATE credential_broker_bindings SET active=0 WHERE device_id=?1",[device.to_string()])?;crate::mail::native::revoke(&tx,&device.to_string())?;crate::native_task_mail::revoke_device(&tx,&device.to_string())?;tx.commit()?;Ok(())
  }).await
     }
 }

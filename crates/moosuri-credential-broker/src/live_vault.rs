@@ -521,6 +521,23 @@ impl Engine {
         self.live_google_grant_for(vault, item, identity, expires, 3)
             .await
     }
+    pub async fn live_google_model_read_grant(
+        &mut self,
+        vault: &mut LiveVault,
+        item: Uuid,
+        identity: crate::google::GoogleIdentity,
+        expires: i64,
+        background: bool,
+    ) -> Result<Binding> {
+        self.live_google_grant_for(
+            vault,
+            item,
+            identity,
+            expires,
+            if background { 5 } else { 4 },
+        )
+        .await
+    }
     async fn live_google_grant_for(
         &mut self,
         vault: &mut LiveVault,
@@ -539,6 +556,8 @@ impl Engine {
                 && g.google_preview() == (mode == 1)
                 && g.google_body() == (mode == 2)
                 && g.google_send() == (mode == 3)
+                && g.google_model_read() == (mode >= 4)
+                && g.google_model_background() == (mode == 5)
                 && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
         }) {
             let grant = &mut self.state.grants[at];
@@ -553,6 +572,21 @@ impl Engine {
             let binding = grant.binding.clone();
             self.save()?;
             return Ok(binding);
+        }
+        if mode >= 4 {
+            return self.select(
+                policy::LocalGrant::select_google_model_read(
+                    self.device().clone(),
+                    item,
+                    id,
+                    identity,
+                    item_epoch,
+                    key_epoch,
+                    expires,
+                    mode == 5,
+                )?
+                .select_live(pin)?,
+            );
         }
         self.select(
             (if mode == 3 {
@@ -656,6 +690,7 @@ impl Engine {
                 | Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailModelRead { .. }
                 | Operation::GoogleMailSend { .. }
                 | Operation::GoogleMailLookup { .. }
         ) || vault.owner != self.device().owner

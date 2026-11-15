@@ -2204,6 +2204,7 @@ dependencies = [
  "fs2",
  "libc",
  "moosuri-connectors",
+ "moosuri-documents",
  "moosuri-vault-core",
  "moosuri-vault-protocol",
  "reqwest",

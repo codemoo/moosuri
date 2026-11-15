@@ -35,6 +35,10 @@ pub struct LocalGrant {
     google_body: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     google_send: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    google_model_read: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    google_model_background: bool,
     #[serde(default)]
     vault: Option<Uuid>,
     #[serde(default)]
@@ -84,6 +88,8 @@ impl LocalGrant {
             google_preview: false,
             google_body: false,
             google_send: false,
+            google_model_read: false,
+            google_model_background: false,
             vault: None,
             live: None,
             previous: None,
@@ -222,6 +228,34 @@ impl LocalGrant {
         g.bind_archive_google()?;
         Ok(g)
     }
+    /// Explicit device-local consent to send read mail content to the configured model.
+    /// A display-only grant cannot call this constructor or acquire this flag.
+    #[allow(clippy::too_many_arguments)]
+    pub fn select_google_model_read(
+        device: Device,
+        item: Uuid,
+        vault: Uuid,
+        identity: crate::google::GoogleIdentity,
+        item_epoch: u64,
+        key_epoch: u64,
+        expires_at: i64,
+        background: bool,
+    ) -> Result<Self> {
+        let mut g = Self::select_google(
+            device, item, vault, identity, item_epoch, key_epoch, expires_at,
+        )?;
+        g.google_model_read = true;
+        g.google_model_background = background;
+        g.service = "google-mail-model-read".into();
+        g.bind_archive_google()?;
+        Ok(g)
+    }
+    pub fn google_model_read(&self) -> bool {
+        self.google_model_read
+    }
+    pub fn google_model_background(&self) -> bool {
+        self.google_model_background
+    }
     pub fn google_send(&self) -> bool {
         self.google_send
     }
@@ -232,7 +266,9 @@ impl LocalGrant {
         self.google_preview
     }
     fn google_policy(&self) -> &'static [u8] {
-        if self.google_send {
+        if self.google_model_read {
+            crate::google::model_mail::MODEL_POLICY
+        } else if self.google_send {
             crate::google::SEND_POLICY
         } else if self.google_body {
             crate::google::BODY_POLICY
@@ -256,6 +292,9 @@ impl LocalGrant {
             ))
             .map_err(|_| Error::Policy)?,
         );
+        if self.google_model_read {
+            bytes.push(self.google_model_background as u8);
+        }
         self.binding.grant_hash = hash(&bytes);
         Ok(())
     }
@@ -326,6 +365,9 @@ impl LocalGrant {
         } else {
             Vec::from(b"moosuri/local-live-github-grant/v1".as_slice())
         };
+        if self.google_model_read {
+            bytes.push(self.google_model_background as u8);
+        }
         if let Some(google) = self.google.as_ref() {
             bytes.extend(serde_json::to_vec(google).map_err(|_| Error::Policy)?)
         }
@@ -398,7 +440,9 @@ impl LocalGrant {
     }
     pub fn digest(&self) -> [u8; 32] {
         if self.google.is_some() {
-            return if self.google_send {
+            return if self.google_model_read {
+                crate::google::model_mail::resource_digest()
+            } else if self.google_send {
                 crate::google::send_digest()
             } else if self.google_body {
                 crate::google::body_digest()
@@ -439,6 +483,15 @@ impl LocalGrant {
         }
         // Digest is derived locally from a typed fixed resource, not a URL supplied by server.
         let scope = match request.operation {
+            Operation::GoogleMailModelRead { selection } => {
+                self.google_model_read
+                    && !selection.is_nil()
+                    && self.service == "google-mail-model-read"
+                    && self.origin == "https://gmail.googleapis.com"
+                    && self.google.as_ref().is_some_and(|g| g.valid())
+                    && self.repository.is_none()
+                    && request.repository.is_none()
+            }
             Operation::GoogleMailSend { effect, .. }
             | Operation::GoogleMailLookup { effect, .. } => {
                 self.google_send
@@ -467,7 +520,8 @@ impl LocalGrant {
                     && request.repository.is_none()
             }
             Operation::GoogleInboxRead | Operation::GoogleInboxPreview => {
-                !self.google_send
+                !self.google_model_read
+                    && !self.google_send
                     && !self.google_body
                     && self.google_preview == (request.operation == Operation::GoogleInboxPreview)
                     && self.service
@@ -489,7 +543,10 @@ impl LocalGrant {
                     && self.repository.as_ref().is_some_and(|r| r.valid())
             }
         };
-        if !scope || request.digest != self.digest() {
+        if !scope
+            || (!matches!(request.operation, Operation::GoogleMailModelRead { .. })
+                && request.digest != self.digest())
+        {
             return Err(Error::Policy);
         }
         Ok(())

@@ -64,6 +64,9 @@ pub struct ChatEvidence {
 pub struct RunView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub connection_wait: Option<crate::MissionWaitView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub timings: Option<crate::RunTimings>,
     pub id: String,
     pub request_id: String,

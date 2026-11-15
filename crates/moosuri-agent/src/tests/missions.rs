@@ -236,8 +236,8 @@ async fn mission_model_plan_two_tools_and_deterministic_result_survive_reopen() 
  let (delta,reason)=match n {
  0=>(json!({"role":"assistant","content":"{\"steps\":[\"Read an admitted evidence recipe\",\"Calculate the exact total\",\"Verify the result\"]}"}),"stop"),
  1=>{let message=body["messages"][1]["content"].as_str().unwrap();let original:Value=serde_json::from_str(message).unwrap();assert_eq!(original["original"]["execution_mode"],"durable");let defs=body["tools"].as_array().unwrap();assert!(defs.iter().all(|d|!d["function"]["name"].as_str().unwrap().contains("mail")));let system=body["messages"][0]["content"].as_str().unwrap();let pins:Value=serde_json::from_str(system.split("Admitted recipe metadata: ").nth(1).unwrap()).unwrap();let pin=pins.as_array().unwrap().iter().find(|p|p["id"]=="evidence-comparison").unwrap();(json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"exact-total".into(),"decimal_calculate",json!({"operation":"sum","operands":["0.1","0.2"]})),knowledge::tool_call(1,"find-source".into(),"knowledge_search",json!({"kind":"source","text":"Synthetic invoice","collection_id":null,"subject":null,"speaker":null,"valid_at":null,"cursor":null})),knowledge::tool_call(2,"recipe".into(),"skill_read",pin.clone())]}),"tool_calls")},
- 2=>{let context:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();let slots=context["receipts"].as_array().unwrap();let receipt=|name:&str|->Value{serde_json::from_str(slots.iter().find(|v|v["call_id"]==name).unwrap()["result"].as_str().unwrap()).unwrap()};assert_eq!(receipt("exact-total")["value"]["exact"],"0.3");assert_eq!(receipt("recipe")["kind"],"skill");let search=receipt("find-source");let hit=&search["value"]["hits"][0];(json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"invoice".into(),"knowledge_read_source",json!({"id":hit["id"],"revision":hit["revision"],"start_byte":0,"max_bytes":4096}))]}),"tool_calls")},
- 3=>{let context:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();let slot=context["receipts"].as_array().unwrap().iter().find(|v|v["call_id"]=="invoice").unwrap();let source:Value=serde_json::from_str(slot["result"].as_str().unwrap()).unwrap();assert_eq!(source["value"]["text"],"Synthetic invoice: apples 0.1, tea 0.2.");(json!({"role":"assistant","content":json!({"text":"The exact total is 0.3. Synthetic invoice: apples 0.1, tea 0.2.","evidence":[{"step":2,"call_id":"exact-total"},{"step":2,"call_id":"recipe"},{"step":3,"call_id":"invoice"}]}).to_string()}),"stop")},
+ 2=>{let context:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();let slots=context["receipts"].as_array().unwrap();let receipt=|name:&str|->Value{slots.iter().find(|v|v["call_id"]==name).unwrap()["result"].clone()};assert_eq!(receipt("exact-total")["value"]["exact"],"0.3");assert_eq!(receipt("recipe")["kind"],"skill");let search=receipt("find-source");let hit=&search["value"]["hits"][0];(json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"invoice".into(),"knowledge_read_source",json!({"id":hit["id"],"revision":hit["revision"],"start_byte":0,"max_bytes":4096}))]}),"tool_calls")},
+ 3=>{let context:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();let slot=context["receipts"].as_array().unwrap().iter().find(|v|v["call_id"]=="invoice").unwrap();let source:Value=slot["result"].clone();assert_eq!(source["value"]["text"],"Synthetic invoice: apples 0.1, tea 0.2.");(json!({"role":"assistant","content":json!({"text":"The exact total is 0.3. Synthetic invoice: apples 0.1, tea 0.2.","evidence":[{"step":2,"call_id":"exact-total"},{"step":2,"call_id":"recipe"},{"step":3,"call_id":"invoice"}]}).to_string()}),"stop")},
  _=>panic!("mission exceeded its necessary model calls"),
  };
  let content=frame(json!({"id":format!("mission-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}))+&frame(json!({"id":format!("mission-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";
@@ -415,7 +415,7 @@ async fn current_chat_compound_request_reads_calculates_and_saves_one_real_priva
             3=>{
                 let context:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
                 assert_eq!(context["compound"]["schema_version"],1);
-                let search:Value=serde_json::from_str(context["receipts"].as_array().unwrap().iter().find(|v|v["call_id"]=="offers").unwrap()["result"].as_str().unwrap()).unwrap();
+                let search:Value=context["receipts"].as_array().unwrap().iter().find(|v|v["call_id"]=="offers").unwrap()["result"].clone();
                 assert_eq!(search["value"]["hits"].as_array().unwrap().len(),2);
                 let calls=search["value"]["hits"].as_array().unwrap().iter().enumerate().map(|(i,hit)|knowledge::tool_call(i,format!("offer-{i}"),"knowledge_read_source",json!({"id":hit["id"],"revision":hit["revision"],"start_byte":0,"max_bytes":4096}))).collect::<Vec<_>>();
                 (json!({"role":"assistant","tool_calls":calls}),"tool_calls")
@@ -442,10 +442,10 @@ async fn current_chat_compound_request_reads_calculates_and_saves_one_real_priva
     let runtime = Runtime::start(s.clone());
     let done = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
-            if let Some(m) = s.missions(&u).await.unwrap().into_iter().next() {
-                if !["queued", "planning", "executing", "verifying"].contains(&m.state.as_str()) {
-                    break m;
-                }
+            if let Some(m) = s.missions(&u).await.unwrap().into_iter().next()
+                && !["queued", "planning", "executing", "verifying"].contains(&m.state.as_str())
+            {
+                break m;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

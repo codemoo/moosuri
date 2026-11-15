@@ -158,6 +158,27 @@ impl BrowserWorkspace {
         }
         Ok(observation)
     }
+    /// Human selection is bound to the exact document last shown by the viewer.
+    pub async fn observe_selected(
+        &mut self,
+        expected: &str,
+    ) -> Result<WorkspaceObservation, BrowserError> {
+        bounded!(self, self.observe_selected_inner(expected))
+    }
+    async fn observe_selected_inner(
+        &mut self,
+        expected: &str,
+    ) -> Result<WorkspaceObservation, BrowserError> {
+        let proof = self
+            .proof
+            .take()
+            .filter(|p| p.token == expected)
+            .ok_or(BrowserError::StalePage)?;
+        if proof.captured_at.elapsed() > FRAME_MAX_AGE || self.refresh().await? != proof.identity {
+            return Err(BrowserError::StalePage);
+        }
+        self.observe_inner().await
+    }
     pub async fn frame(&mut self) -> Result<WorkspaceFrame, BrowserError> {
         bounded!(self, self.frame_inner())
     }

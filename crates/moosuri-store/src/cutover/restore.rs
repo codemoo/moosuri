@@ -556,6 +556,46 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0060_connection_waits.sql"
         ))?;
     }
+    if captured < 61 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0061_native_model_mail.sql"
+        ))?;
+    }
+    if captured < 62 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0062_provider_draft_receipts.sql"
+        ))?;
+    }
+    if captured < 63 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0063_native_task_mail.sql"
+        ))?;
+    }
+    if captured < 64 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0064_compound_learning.sql"
+        ))?;
+    }
+    if captured < 65 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0065_mission_actions.sql"
+        ))?;
+    }
+    if captured < 66 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0066_selected_browser_missions.sql"
+        ))?;
+    }
+    if captured < 67 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0067_compound_draft_learning.sql"
+        ))?;
+    }
+    if captured < 68 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0068_native_mail_settlement_cursor.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -647,8 +687,10 @@ fn quarantine(
             format!("urn:uuid:{}", Uuid::new_v4())
         ],
     )?;
+    crate::browser::selected::quarantine_restore(&tx).map_err(|_| Error::Unavailable)?;
     tx.execute_batch("DELETE FROM mission_connection_waits;DELETE FROM mission_connection_selections;DELETE FROM mission_connection_slots;")?;
     tx.execute_batch("UPDATE missions SET grant_enabled=0,state=CASE WHEN state IN('queued','planning','executing','verifying','paused','waiting') THEN 'quarantined' ELSE state END; DELETE FROM calendar_oauth_sessions; UPDATE calendar_connections SET status='needs_reconnect',credential=NULL,epoch=epoch+1,credential_revision=credential_revision+1; UPDATE calendar_actions SET state=CASE WHEN state IN('dispatch_committed','outcome_unknown') THEN 'quarantined' ELSE state END,payload=NULL,event=NULL; DELETE FROM sessions; DELETE FROM agent_run_leases; UPDATE agent_execution SET invalidated=1; UPDATE agent_steps SET checkpoint=NULL,completion_digest=NULL,state=CASE WHEN state='dispatched' THEN 'unknown' ELSE state END; UPDATE agent_tool_slots SET input=NULL; DELETE FROM memory_command_plans; DELETE FROM memory_target_plans; DELETE FROM memory_command_slots WHERE state='prepared'; UPDATE chat_runs SET state=CASE WHEN state='running' THEN 'outcome_unknown' ELSE 'cancelled' END,error='interrupted',version=version+1 WHERE state IN('queued','running');
+    UPDATE mail_provider_saves SET state='quarantined',receipt=NULL WHERE state IN('started','outcome_unknown');
     UPDATE mail_reconciliations SET quarantined=1,lease_nonce=NULL,lease_until=NULL,next_due=NULL,status='restore_quarantined';
     UPDATE invitation_deliveries SET state=CASE WHEN state='dispatch_committed' THEN 'delivery_unknown' WHEN state IN('created','delivery_pending') THEN 'expired' ELSE state END,payload=NULL; DELETE FROM mail_oauth_sessions; UPDATE mail_schedules SET approved_revision=NULL,auth_epoch=NULL; UPDATE mail_actions SET state='outcome_unknown',raw=NULL,content=NULL,version=version+1 WHERE state='dispatch_committed'; UPDATE mail_actions SET state='cancelled',raw=NULL,content=NULL,version=version+1 WHERE state IN('pending_approval','approved'); UPDATE mail_connections SET status='needs_reconnect',credential=NULL,epoch=epoch+1,credential_revision=credential_revision+1;
     UPDATE browser_workspaces SET state='closed',reason='restore_quarantine',revision=revision+1,control_hash=NULL,control_session=NULL,control_until=NULL,resume_request=NULL,resumed_request=NULL;
@@ -671,7 +713,7 @@ fn quarantine(
     tx.execute_batch("DELETE FROM vault_handoffs; DELETE FROM vault_grants;")?;
     crate::credential_broker::quarantine(&tx)?;
     crate::credential_chat::quarantine(&tx)?;
-    tx.execute_batch("DELETE FROM learned_skill_proofs; DELETE FROM learned_skill_receipts; DELETE FROM learned_skill_uses; UPDATE learned_skills SET state='invalidated',revision=revision+1 WHERE state IN('candidate','usable');")?;
+    tx.execute_batch("DELETE FROM compound_report_adoptions; DELETE FROM compound_draft_adoptions; DELETE FROM learned_skill_proofs; DELETE FROM learned_skill_receipts; DELETE FROM learned_skill_uses; UPDATE learned_skills SET state='invalidated',revision=revision+1 WHERE state IN('candidate','usable');")?;
     crate::media::quarantine(&tx)?;
     crate::audio::quarantine_restore(&tx)?;
     tx.execute("DELETE FROM provider_vision_probes", [])?;

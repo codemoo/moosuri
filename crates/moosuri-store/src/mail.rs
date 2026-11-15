@@ -8,8 +8,10 @@ use moosuri_core::*;
 
 mod external;
 pub(crate) mod native;
+pub(crate) mod provider_saves;
 mod reconcile;
 mod workflows;
+pub use provider_saves::{ProviderDraftPermit, ProviderDraftSave};
 pub use reconcile::{MailReconcileCredentials, MailReconcilePermit};
 
 pub use external::{ExternalToolPermit, ExternalToolStart};
@@ -143,7 +145,15 @@ pub(crate) fn connection(
     user: &UserContext,
     id: &str,
 ) -> Result<MailConnection> {
-    conn.query_row("SELECT id,email,epoch,status,scopes,native_send FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![user.tenant.0,user.account.id,id],|r|Ok(MailConnection{
+    connection_owned(conn, &user.tenant.0, &user.account.id, id)
+}
+pub(crate) fn connection_owned(
+    conn: &Connection,
+    tenant: &str,
+    account: &str,
+    id: &str,
+) -> Result<MailConnection> {
+    conn.query_row("SELECT id,email,epoch,status,scopes,native_send FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(MailConnection{
         native_send:r.get(5)?,
         id:r.get(0)?,email:r.get(1)?,epoch:r.get(2)?,status:r.get(3)?,compose_enabled:serde_json::from_str::<Vec<String>>(&r.get::<_,String>(4)?).map_err(|_|rusqlite::Error::InvalidQuery)?.iter().any(|s|s==moosuri_connectors::gmail::COMPOSE_SCOPE)}
     )).optional()?.ok_or(StoreError::NotFound)
@@ -190,13 +200,39 @@ fn action(conn: &Connection, user: &UserContext, id: &str) -> Result<MailAction>
 pub(crate) fn draft(
     conn: &Connection,
     user: &UserContext,
-    mut input: MailDraftInput,
+    input: MailDraftInput,
     origin_run: Option<&str>,
     replace: Option<(String, i64)>,
 ) -> Result<MailAction> {
+    let id = draft_owned(
+        conn,
+        &user.tenant.0,
+        &user.account.id,
+        user.epoch,
+        input,
+        origin_run,
+        replace,
+        None,
+    )?;
+    action(conn, user, &id)
+}
+
+/// Domain writer shared by already authenticated session and mission authorities.
+/// The caller validates its authority; this helper never invents a session.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draft_owned(
+    conn: &Connection,
+    tenant: &str,
+    account: &str,
+    epoch: i64,
+    mut input: MailDraftInput,
+    origin_run: Option<&str>,
+    replace: Option<(String, i64)>,
+    stable_id: Option<&str>,
+) -> Result<String> {
     let mut retained_origin = origin_run.map(str::to_owned);
 
-    let c = connection(conn, user, &input.connection_id)?;
+    let c = connection_owned(conn, tenant, account, &input.connection_id)?;
 
     if c.native_send && input.content.reply.is_some() {
         return Err(StoreError::InvalidInput);
@@ -208,7 +244,7 @@ pub(crate) fn draft(
     if let Some(thread) = &input.origin_thread_id
         && !conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM threads WHERE tenant_id=?1 AND account_id=?2 AND id=?3)",
-            params![user.tenant.0, user.account.id, thread],
+            params![tenant, account, thread],
             |r| r.get::<_, bool>(0),
         )?
     {
@@ -216,29 +252,35 @@ pub(crate) fn draft(
     }
 
     let (id, revision) = if let Some((id, revision)) = replace {
-        let old = action(conn, user, &id)?;
+        let (old_revision,old_state,old_thread): (i64,String,Option<String>) = conn.query_row("SELECT revision,state,origin_thread FROM mail_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
 
         if retained_origin.is_none() {
             retained_origin = conn.query_row(
                 "SELECT origin_run FROM mail_actions WHERE tenant_id=?1 AND id=?2",
-                params![user.tenant.0, id],
+                params![tenant, id],
                 |r| r.get::<_, Option<String>>(0),
             )?;
         }
 
-        if old.origin_thread_id.is_some() {
-            input.origin_thread_id = old.origin_thread_id.clone();
+        if old_thread.is_some() {
+            input.origin_thread_id = old_thread.clone();
         }
 
-        if old.revision != revision
-            || !matches!(old.state.as_str(), "pending_approval" | "approved")
+        if old_revision != revision
+            || !matches!(old_state.as_str(), "pending_approval" | "approved")
         {
             return Err(StoreError::Conflict);
         }
 
+        crate::learned_skills::draft::invalidate_action(conn, tenant, &id)?;
         (id, revision.checked_add(1).ok_or(StoreError::Corrupt)?)
     } else {
-        (Uuid::new_v4().to_string(), 1)
+        (
+            stable_id
+                .map(str::to_owned)
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            1,
+        )
     };
 
     let message_id = format!("{}@moosuri.local", Uuid::new_v4());
@@ -262,13 +304,13 @@ pub(crate) fn draft(
     // Content/connection edits retire the old timing and its background approval.
     conn.execute(
         "DELETE FROM mail_schedules WHERE tenant_id=?1 AND action_id=?2",
-        params![user.tenant.0, id],
+        params![tenant, id],
     )?;
     let expires = now()? + 3600;
 
-    conn.execute("INSERT INTO mail_actions(tenant_id,account_id,id,revision,connection_id,connection_epoch,auth_epoch,content,raw,digest,message_id,reply_thread,origin_thread,origin_run,state,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'pending_approval',?15) ON CONFLICT(tenant_id,id) DO UPDATE SET version=mail_actions.version+1,revision=excluded.revision,connection_id=excluded.connection_id,connection_epoch=excluded.connection_epoch,auth_epoch=excluded.auth_epoch,content=excluded.content,raw=excluded.raw,digest=excluded.digest,message_id=excluded.message_id,reply_thread=excluded.reply_thread,origin_thread=excluded.origin_thread,origin_run=excluded.origin_run,state='pending_approval',expires_at=excluded.expires_at,dispatch_nonce=NULL,provider_message=NULL,provider_thread=NULL",params![user.tenant.0,user.account.id,id,revision,c.id,c.epoch,user.epoch,json(&input.content)?,frozen.raw_mime(),digest_string(frozen.digest()),message_id,frozen.thread_id(),input.origin_thread_id,retained_origin,expires])?;
+    conn.execute("INSERT INTO mail_actions(tenant_id,account_id,id,revision,connection_id,connection_epoch,auth_epoch,content,raw,digest,message_id,reply_thread,origin_thread,origin_run,state,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'pending_approval',?15) ON CONFLICT(tenant_id,id) DO UPDATE SET version=mail_actions.version+1,revision=excluded.revision,connection_id=excluded.connection_id,connection_epoch=excluded.connection_epoch,auth_epoch=excluded.auth_epoch,content=excluded.content,raw=excluded.raw,digest=excluded.digest,message_id=excluded.message_id,reply_thread=excluded.reply_thread,origin_thread=excluded.origin_thread,origin_run=excluded.origin_run,state='pending_approval',expires_at=excluded.expires_at,dispatch_nonce=NULL,provider_message=NULL,provider_thread=NULL",params![tenant,account,id,revision,c.id,c.epoch,epoch,json(&input.content)?,frozen.raw_mime(),digest_string(frozen.digest()),message_id,frozen.thread_id(),input.origin_thread_id,retained_origin,expires])?;
 
-    action(conn, user, &id)
+    Ok(id)
 }
 
 pub(super) fn purge_run(conn: &Connection, tenant: &str, run: &str) -> Result<()> {
@@ -695,8 +737,11 @@ impl Store {
             if tx.execute("UPDATE mail_actions SET version=version+1,state=?4,raw=CASE WHEN ?4='rejected' THEN NULL ELSE raw END,content=CASE WHEN ?4='rejected' THEN NULL ELSE content END WHERE tenant_id=?1 AND id=?2 AND connection_epoch=?3 AND auth_epoch=?5",params![user.tenant.0,id,c.epoch,state,user.epoch])?!=1{
                 return Err(StoreError::Conflict)}
             if approve {
+                // A retained mission draft is not a seven-day send approval.
+                tx.execute("UPDATE mail_actions SET expires_at=min(expires_at,?3) WHERE tenant_id=?1 AND id=?2 AND NOT EXISTS(SELECT 1 FROM mail_schedules WHERE tenant_id=?1 AND action_id=?2) AND EXISTS(SELECT 1 FROM mission_action_contracts WHERE tenant_id=?1 AND action_id=?2 AND kind='mail')",params![user.tenant.0,id,now()?+3600])?;
                 tx.execute("UPDATE mail_schedules SET approved_revision=?3,auth_epoch=?4 WHERE tenant_id=?1 AND action_id=?2",params![user.tenant.0,id,a.revision,user.epoch])?;
             }
+            if !approve {crate::learned_skills::draft::invalidate_action(&tx,&user.tenant.0,&id)?;}
             let a=action(&tx,&user,&id)?;
             tx.commit()?;
             Ok(a)}
@@ -792,6 +837,7 @@ impl Store {
                 ,None,None)};
             if db.conn.execute("UPDATE mail_actions SET version=version+1,state=?4,provider_message=?5,provider_thread=?6,raw=NULL,content=CASE WHEN ?4='outcome_unknown' THEN NULL ELSE content END WHERE tenant_id=?1 AND id=?2 AND dispatch_nonce=?3 AND state IN('dispatch_committed','outcome_unknown')",params![tenant,id,nonce,state,message,thread])?!=1{
                 return Err(StoreError::Conflict)}
+            if state!="sent" {crate::learned_skills::draft::invalidate_action(&db.conn,&tenant,&id)?;}
             Ok(())}
         ).await
     }

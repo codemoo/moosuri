@@ -7,46 +7,6 @@ use moosuri_core::{
     ExternalToolRequest, MailToolRequest, MissionMailPin, RunToolProfile,
 };
 
-/// Account intent is an explicit account phrase, never a sender/recipient filter.
-fn requested_mailbox(text: &str) -> Result<Option<String>> {
-    let words = text
-        .split_whitespace()
-        .map(|w| {
-            w.trim_matches(|c: char| matches!(c, '"' | '\'' | '(' | ')' | ',' | ';' | ':'))
-                .to_lowercase()
-        })
-        .collect::<Vec<_>>();
-    let account_word = |word: &str| {
-        matches!(
-            word,
-            "account"
-                | "계정"
-                | "계정으로"
-                | "계정에서"
-                | "계정은"
-                | "계정을"
-                | "계정의"
-                | "계정이"
-        )
-    };
-    let mut target = None;
-    for (i, word) in words.iter().enumerate() {
-        if word.is_ascii()
-            && word.len() <= 254
-            && word.contains('@')
-            && !word.contains(':')
-            && (i > 0 && account_word(words[i - 1].as_str())
-                || words.get(i + 1).is_some_and(|w| account_word(w)))
-        {
-            if target.as_ref().is_some_and(|old| old != word) {
-                return Err(StoreError::Unavailable);
-            }
-            target = Some(word.clone());
-        }
-    }
-    Ok(target)
-}
-
 /// Reject clear required effects; this conservative gate never grants an action.
 pub(crate) fn unsupported_effect(text: &str) -> bool {
     let lower = text.to_lowercase();
@@ -78,14 +38,20 @@ pub(crate) fn unsupported_effect(text: &str) -> bool {
             *w,
             "create" | "update" | "edit" | "delete" | "reschedule" | "move"
         ) && words.iter().enumerate().skip(i + 1).take(3).any(|(j, w)| {
-            matches!(*w, "event" | "meeting" | "appointment")
-                || *w == "calendar"
-                    && !words.get(j + 1).is_some_and(|w| {
-                        matches!(
-                            *w,
-                            "briefing" | "summary" | "digest" | "report" | "overview"
-                        )
-                    })
+            matches!(*w, "event" | "meeting" | "appointment" | "calendar")
+                && !words.iter().skip(j + 1).take(2).any(|next| {
+                    matches!(
+                        *next,
+                        "briefing"
+                            | "summary"
+                            | "digest"
+                            | "report"
+                            | "overview"
+                            | "table"
+                            | "note"
+                            | "document"
+                    )
+                })
         })
     });
     let compact = lower.split_whitespace().collect::<String>();
@@ -108,7 +74,8 @@ pub(crate) fn unsupported_effect(text: &str) -> bool {
         .any(|w| compact.contains(w));
     // The write predicate already requires an event/meeting/Calendar noun.
     // A direct "create a meeting" must not need the extra word "Calendar".
-    mail && (delivery && !local || draft) || calendar_write
+    let supported = super::actions::requested(text);
+    mail && (delivery && !local || draft) && !supported.0 || calendar_write && !supported.1
 }
 pub(crate) fn admit_profile(
     c: &Connection,
@@ -120,7 +87,17 @@ pub(crate) fn admit_profile(
     if unsupported_effect(&text) {
         return Err(StoreError::Forbidden);
     }
-    let (mail, calendar) = moosuri_core::mission_read_domains(&text);
+    let (mut mail, calendar) = moosuri_core::mission_read_domains(&text);
+    let native = text.to_lowercase().contains("native gmail") || text.contains("기기 Gmail");
+    if native {
+        crate::native_task_mail::admit_profile(
+            c,
+            u,
+            &mut profile,
+            matches!(input.execution_mode, moosuri_core::MissionMode::Durable),
+        )?;
+        mail = false;
+    }
     if !mail && !calendar {
         return Ok(profile);
     }
@@ -146,7 +123,7 @@ pub(crate) fn admit_profile(
         {
             return Err(StoreError::Unavailable);
         }
-        if let Some(target) = requested_mailbox(&text)? {
+        if let Some(target) = crate::mailbox_intent::requested(&text)? {
             grant
                 .mail
                 .retain(|p| p.connection.email.eq_ignore_ascii_case(&target));

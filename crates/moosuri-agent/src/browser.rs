@@ -41,6 +41,55 @@ pub struct BrowserService {
     active_profiles: Arc<Mutex<std::collections::HashSet<uuid::Uuid>>>,
 }
 impl BrowserService {
+    pub async fn select_for_mission(
+        &self,
+        user: &UserContext,
+        thread: &str,
+        input: moosuri_core::BrowserMissionSelection,
+    ) -> Result<moosuri_core::BrowserMissionReceipt> {
+        if let Some(saved) = self
+            .store
+            .browser_mission_selection_preflight(user, thread.to_owned(), input.clone())
+            .await?
+        {
+            return Ok(saved);
+        }
+        let slot = self.slot(user, thread, false).await?;
+        let mut entry = self.lock_slot(slot).await?;
+        self.check(
+            user,
+            &mut entry,
+            &input.workspace_id,
+            input.revision,
+            BrowserAccess::Human(input.control_token.clone()),
+        )
+        .await?;
+        let result = entry
+            .worker
+            .as_mut()
+            .ok_or(StoreError::Unavailable)?
+            .observe_selected(&input.frame_token)
+            .await;
+        let observation = self.outcome(&mut entry, user, result).await?;
+        let view = self
+            .store
+            .browser_workspace(user, thread.to_owned())
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        self.store
+            .browser_location(
+                user,
+                view,
+                BrowserAccess::Human(input.control_token.clone()),
+                observation.page.url.clone(),
+                observation.page.title.clone(),
+            )
+            .await?;
+        self.store
+            .attach_selected_browser_page(user, thread.to_owned(), input, observation.page)
+            .await
+    }
+
     pub(crate) fn new(
         store: Store,
         reader: Option<Arc<CapsuleReader>>,

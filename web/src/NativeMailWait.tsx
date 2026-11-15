@@ -1,0 +1,10 @@
+import {useRef,useState} from "react";
+import type {MissionConnectionSelection,MissionWaitView} from "../shared/api-types";
+import {useScope} from "./account-scope";
+import {ApiFailure,isAborted} from "./api";
+export function NativeMailWait({accountId,runId,revision,wait,openSettings,onExpired}:{accountId:string;runId:string;revision:number;wait:MissionWaitView;openSettings:()=>void;onExpired:()=>void}){
+ const scope=useScope(accountId,runId),pending=useRef<MissionConnectionSelection|null>(null);const [busy,setBusy]=useState(false),[error,setError]=useState("");
+ async function choose(binding:string){if(busy)return;setBusy(true);setError("");if(pending.current?.binding_id!==binding||pending.current.wait_request_id!==wait.request_id)pending.current={request_id:crypto.randomUUID(),wait_request_id:wait.request_id,expected_revision:revision,slot_id:wait.slot_id,binding_id:binding};try{await scope.request(`/native-mail/${encodeURIComponent(runId)}/connection`,"POST",pending.current);pending.current=null}catch(e){if(isAborted(e))return;if(e instanceof ApiFailure&&e.status===401){onExpired();return}if(e instanceof ApiFailure&&e.status>=400&&e.status<500)pending.current=null;setError("현재 연결 상태를 확인하지 못했어요. 같은 선택으로 다시 확인할 수 있어요.")}finally{setBusy(false)}}
+ const ended=wait.state==="expired"||wait.state==="unknown"||wait.state==="cancelled";
+ return <section className="run-explanation" aria-label="기기 Gmail 읽기 상태"><p role="status">{wait.state==="unknown"?"기기에서 시작한 읽기 결과 확인 필요":ended?"원래 읽기 기간 종료":wait.state==="committed"?"신뢰한 기기에서 조회 중 · 원래 응답을 기다리는 중":wait.choices.length?"이번 업무에서 읽을 Gmail 계정 선택":"신뢰한 기기에서 볼트 잠금 해제 · 같은 읽기를 기다리는 중"}</p><p>원래 종료 시각: {new Date(wait.expires_at_ms).toLocaleString()}</p>{!ended&&<><p>기기에서 별도로 허락한 읽기만 사용해요. 암호·TOTP는 신뢰한 기기에서 입력하세요. 연결·잠금 해제로 종료 시각이나 호출 한도가 늘어나지 않아요.</p>{wait.choices.map(c=><button key={c.binding_id} disabled={busy} onClick={()=>void choose(c.binding_id)}>{c.alias||`기기 Gmail ${c.binding_id.slice(-8)}`}</button>)}<button className="text-button" onClick={openSettings}>기기 읽기 연결 확인 ↗</button></>}{error&&<p role="alert">{error}</p>}</section>
+}

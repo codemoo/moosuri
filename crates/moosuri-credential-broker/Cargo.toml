@@ -10,6 +10,7 @@ license.workspace = true
 test-fixtures=["moosuri-connectors/test-fixtures"]
 
 [dependencies]
+moosuri-documents = { path = "../moosuri-documents" }
 moosuri-connectors = { path = "../moosuri-connectors" }
 base64 = "=0.23.1"
 moosuri-vault-core = { path = "../moosuri-vault-core" }

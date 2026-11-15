@@ -4,6 +4,7 @@ pub mod github;
 pub mod google;
 mod journal;
 pub mod live_vault;
+pub mod local_browser;
 pub mod policy;
 pub mod transport;
 use moosuri_vault_protocol::broker::*;
@@ -16,6 +17,12 @@ pub enum Error {
     Authentication,
     #[error("broker local policy denied")]
     Policy,
+    #[error("broker request selector is invalid or stale")]
+    Request,
+    #[error("Google readonly scope missing; reconnect locally")]
+    GoogleScope,
+    #[error("Google account differs from selected account; reconnect locally")]
+    GoogleAccount,
     #[error("broker provider content is unusable for this request")]
     ProviderContent,
     #[error("broker private state unavailable")]
@@ -58,6 +65,10 @@ struct State {
     delivered: Vec<Invocation>,
     #[serde(default)]
     google_selections: Vec<google::BodySelection>,
+    #[serde(default)]
+    model_mail_selections: google::model_mail::Selections,
+    #[serde(default)]
+    local_browser: Option<local_browser::Record>,
 }
 pub struct Engine {
     state: State,
@@ -66,8 +77,16 @@ pub struct Engine {
     poisoned: bool,
     mail_transport: Option<transport::Transport>,
     mail_payloads: Vec<(Invocation, GoogleMailPayload)>,
+    model_mail_payloads: Vec<(Invocation, MailModelRequest)>,
+    pdf_extractor: Option<std::path::PathBuf>,
+    local_root: std::path::PathBuf,
+    local_browser: Option<local_browser::Browser>,
 }
 impl Engine {
+    pub fn with_pdf_extractor(mut self, path: Option<std::path::PathBuf>) -> Self {
+        self.pdf_extractor = path.filter(|p| p.is_absolute());
+        self
+    }
     /// New pairing only. Existing/missing/damaged state must never call this as recovery.
     pub fn enroll(path: &Path, device: Device, origin: String, pkcs8: &[u8]) -> Result<Self> {
         if device.generation == 0 || device.id.is_nil() || !auth::valid_origin(&origin) {
@@ -83,6 +102,8 @@ impl Engine {
             revoked: false,
             delivered: vec![],
             google_selections: vec![],
+            model_mail_selections: Default::default(),
+            local_browser: None,
         };
         let journal = journal::Journal::create(path, pkcs8, &state)?;
         Ok(Self {
@@ -91,6 +112,10 @@ impl Engine {
             key,
             poisoned: false,
             mail_payloads: vec![],
+            model_mail_payloads: vec![],
+            pdf_extractor: None,
+            local_root: path.to_path_buf(),
+            local_browser: None,
             mail_transport: None,
         })
     }
@@ -113,6 +138,10 @@ impl Engine {
             key,
             poisoned: false,
             mail_payloads: vec![],
+            model_mail_payloads: vec![],
+            pdf_extractor: None,
+            local_root: path.to_path_buf(),
+            local_browser: None,
             mail_transport: None,
         };
         // Retained work can only reconcile. Restart is never adapter permission.
@@ -123,6 +152,7 @@ impl Engine {
                 other => other.clone(),
             };
         }
+        engine.retain_browser();
         engine.save()?;
         Ok(engine)
     }
@@ -304,6 +334,54 @@ impl Engine {
                     return Err(Error::Policy);
                 }
             }
+            Command::RegisterGoogleModelRead {
+                binding,
+                background,
+            } => {
+                if self.state.revoked
+                    || !self.grants().iter().any(|g| {
+                        &g.binding == binding
+                            && g.google_model_read()
+                            && g.google_model_background() == *background
+                    })
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::RefreshGoogleModelRead {
+                expected,
+                binding,
+                background,
+            } => {
+                if self.state.revoked
+                    || !self.grants().iter().any(|g| {
+                        &g.binding == binding
+                            && g.google_model_read()
+                            && g.google_model_background() == *background
+                            && g.pending_refresh() == Some(expected)
+                    })
+                {
+                    return Err(Error::Policy);
+                }
+            }
+            Command::ModelMailPayload {
+                invocation,
+                request_digest,
+            } => {
+                let e = self
+                    .state
+                    .entries
+                    .iter()
+                    .find(|e| &e.request.invocation == invocation)
+                    .ok_or(Error::Policy)?;
+                if self.state.revoked
+                    || *request_digest != auth::hash(&request_bytes(&e.request))
+                    || !matches!(e.request.operation, Operation::GoogleMailModelRead { .. })
+                    || !matches!(e.phase, Phase::Prepared)
+                {
+                    return Err(Error::Policy);
+                }
+            }
             Command::RegisterGoogleBody { binding } => {
                 if self.state.revoked
                     || !self
@@ -331,6 +409,7 @@ impl Engine {
                     || !self.state.grants.iter().any(|g| {
                         &g.binding == binding
                             && g.google().is_some()
+                            && !g.google_model_read()
                             && !g.google_body()
                             && !g.google_send()
                             && g.google_preview()
@@ -346,6 +425,7 @@ impl Engine {
                     || !self.state.grants.iter().any(|g| {
                         &g.binding == binding
                             && g.google().is_some()
+                            && !g.google_model_read()
                             && !g.google_body()
                             && !g.google_send()
                             && g.google_preview()
@@ -505,6 +585,10 @@ impl Engine {
             key,
             poisoned: false,
             mail_payloads: vec![],
+            model_mail_payloads: vec![],
+            pdf_extractor: None,
+            local_root: path.to_path_buf(),
+            local_browser: None,
             mail_transport: None,
         };
         for entry in &mut e.state.entries {
@@ -514,12 +598,15 @@ impl Engine {
                 x => x.clone(),
             };
         }
+        e.retain_browser();
         e.save()?;
         Ok(e)
     }
     /// Immediately fences local entry. This is not upstream provider revocation.
     pub fn revoke(&mut self) -> Result<()> {
         self.state.revoked = true;
+        self.local_browser.take();
+        self.retain_browser();
         for g in &mut self.state.grants {
             g.revoke()
         }

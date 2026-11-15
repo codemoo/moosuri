@@ -52,7 +52,7 @@ fn fence_children(c: &Connection, t: &str, id: &str) -> Result<()> {
     let runs=c.prepare("SELECT m.run_id FROM missions m JOIN recurring_mission_occurrences o ON o.tenant_id=m.tenant_id AND o.mission_id=m.id WHERE o.tenant_id=?1 AND o.schedule_id=?2 AND m.state IN('queued','planning','executing','verifying','paused','waiting')")?.query_map(params![t,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for run in runs {
         crate::missions::connected::withdraw_private(c, t, &run)?;
-        let dispatched:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",params![t,run],|r|r.get(0))?;
+        let dispatched:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started') OR EXISTS(SELECT 1 FROM native_task_mail_reads WHERE tenant_id=?1 AND run_id=?2 AND status='committed')",params![t,run],|r|r.get(0))?;
         c.execute("UPDATE missions SET grant_enabled=0,state=?3,uncertain=max(uncertain,?4),candidate=NULL,round_text=NULL,plan='[]',revision=revision+1,report='[\"Recurring authority changed; this occurrence will not resume.\"]' WHERE tenant_id=?1 AND run_id=?2",params![t,run,if dispatched{"unknown"}else{"cancelled"},dispatched])?;
         c.execute(
             "UPDATE chat_runs SET state=?3 WHERE tenant_id=?1 AND id=?2",
@@ -151,6 +151,7 @@ impl Store {
     }
 }
 fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
+    crate::native_task_mail::settle(c, time.checked_mul(1000).ok_or(StoreError::InvalidInput)?)?;
     crate::connection_waits::poll(c, time.checked_mul(1000).ok_or(StoreError::InvalidInput)?)?;
     crate::missions::expire(
         c,
@@ -337,6 +338,14 @@ pub(crate) fn create_owner_in(
 ) -> Result<RecurringMissionView> {
     Uuid::parse_str(&input.request_id).map_err(|_| StoreError::InvalidInput)?;
     crate::missions::validate_input(&input.template)?;
+    if crate::missions::actions::requested(&format!(
+        "{}\n{}",
+        input.template.task, input.template.constraints
+    ))
+    .1
+    {
+        return Err(StoreError::Forbidden);
+    }
     if !matches!(input.template.execution_mode, MissionMode::Durable) {
         return Err(StoreError::InvalidInput);
     }

@@ -44,6 +44,7 @@ const FINAL: &str = "Exact synthetic result: 0.3. No external action was perform
 
 fn combined_definitions() -> Vec<FunctionDefinition> {
     let profile = RunToolProfile {
+        native_mail_scope: None,
         native_mail_model_read: false,
         native_mail_model_background: false,
         evidence_calculation: true,

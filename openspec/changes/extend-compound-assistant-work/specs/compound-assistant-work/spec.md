@@ -66,6 +66,12 @@ Tasks SHALL link existing domain actions by stable identity, revision and payloa
 - **THEN** values SHALL retain evidence and target checks while authority comes from the owner request
 - **AND** source instructions or ambiguous targets SHALL not independently cause a write
 
+#### Scenario: Output nouns do not authorize Calendar effects
+
+- WHEN the owner requests a table of Calendar events, a meeting summary or an event report
+- THEN the mission MAY perform supported reads and report work but SHALL admit no Calendar effect from that output-creation verb
+- AND a supported event command SHALL retain its original exact create/date-move operation
+
 ### Requirement: Compound learning requires supported independent evidence
 A recipe SHALL contain supported typed structure, fresh input slots, receipt edges and checks, bounded to eight nodes/nine tool kinds within existing budgets. Two distinct adopted finalized outcomes SHALL qualify supported objective structures. Semantic claims, imported samples and recipe reuse SHALL not self-certify success. Send approval SHALL never be a replayable node.
 
@@ -91,3 +97,97 @@ Native-vault password/TOTP operations SHALL execute only through a supported ada
 - **WHEN** an arbitrary submission is unsupported or an entered action has an unknown outcome
 - **THEN** the system SHALL retain a truthful unsupported/unknown result and no automatic replay
 - **AND** operator-browser manual takeover SHALL not be advertised as native-vault secrecy
+
+### Requirement: Explicit numeric report adoption qualifies only supported structure
+
+The system SHALL qualify a fixed saved-source search/read → source-bound exact DAG → requested private report recipe only after the current owner adopts two independently finalized report artifacts. Numeric/factual postconditions SHALL NOT certify narrative quality; review_required and mission review status SHALL remain unchanged.
+
+#### Scenario: Adoption revalidates original report evidence
+
+- WHEN the current owner adopts a supported original report
+- THEN proof SHALL revalidate actual search/read and arithmetic child receipts, current complete source identity, distinct normalized inputs and source identity
+- AND artifact body adoption and exact current artifact revision SHALL remain valid
+
+#### Scenario: Reuse does not manufacture training success
+
+- GIVEN two adopted independent supported reports produce a usable owner-local pin
+- WHEN a new accepted report mission invokes that pin with fresh literal parameters
+- THEN the system performs fresh reads and exact child calculations within the existing twelve-tool budget and uses the current report writer for its output
+- AND recipe replays, recurring occurrences, imported instruction examples and model success claims SHALL NOT become new proof
+
+#### Scenario: Editing creates a new unproved revision
+
+- WHEN the owner edits a supported recipe with its current revision
+- THEN a new typed recipe revision SHALL start as candidate without inherited proof
+- AND the previous pin SHALL be removed with a tombstone and actually dependent outputs/schedules SHALL be withdrawn or paused
+- AND old adopted outputs SHALL NOT qualify the new revision through replay
+
+#### Scenario: Artifact changes withdraw qualification
+
+- WHEN a qualifying artifact is edited, deleted, withdrawn or changes current revision
+- THEN its qualification proof SHALL be removed immediately and dependent uses SHALL be invalidated
+- AND unrelated discovery-only pins SHALL NOT pause their schedules
+- AND re-enabling an available pin SHALL NOT automatically resume a paused schedule
+
+#### Scenario: Portable package contains structure and synthetic examples only
+
+- WHEN an owner previews a supported compound recipe export
+- THEN the package SHALL be rebuilt from the allowed typed structure and repository-owned synthetic examples
+- AND it SHALL contain no private trace, source/account/credential bindings, original values, content or proof
+- AND recipients SHALL use the existing Git/card lifecycle and begin without inherited owner-local qualification
+
+### Requirement: Original local draft results qualify preparation without inheriting approval
+
+The system SHALL admit a source search/read → source-bound exact calculation → local PrepareMail recipe only through dedicated current-owner adoption of the original D MailAction identity, revision and digest. Two distinct current inputs and sources SHALL be required. The recipe SHALL contain structure only and SHALL keep narrative/recipient review required.
+
+#### Scenario: Draft adoption verifies source and arithmetic
+
+- WHEN the current owner adopts an original draft result
+- THEN the actual finalized draft body and result SHALL adopt the observed source title, numeric prefix, source number and independently recalculated exact result
+
+#### Scenario: Fresh draft replay remains under original D authority
+
+- GIVEN two independently finalized and owner-adopted local draft results qualify a private pin
+- WHEN a newly delegated task explicitly requests draft preparation and supplies fresh source/value/recipient/body inputs
+- THEN the recipe SHALL perform new actual reads and calculations within the existing twelve-tool budget
+- AND the current D proposal SHALL prepare a new original local MailAction and retain its actual source receipt linkage
+- AND no approval, send, provider draft save, Calendar effect or prior account/resource/credential binding SHALL be a replayable recipe node
+- AND prior approval SHALL NOT authorize the new action
+
+#### Scenario: Learned child source is resolved by actual address
+
+- WHEN D receives an actual EvidenceCalculation receipt from a learned execution
+- THEN it SHALL resolve only that receipt's actual same-run current-acceptance source address and verify current source identity/revision
+- AND numeric equality or matching text SHALL NOT establish source identity
+
+#### Scenario: Draft changes and unknown effects withdraw proof
+
+- WHEN a qualifying original draft is edited, rejected, changes timing revision, or settles as failed/unknown
+- THEN proof and actually used descendants SHALL be invalidated and only dependent schedules SHALL pause
+- AND source/account withdrawal SHALL retain the existing run dependency revocation behavior
+- AND unknown external outcomes SHALL NOT create another action, resend or new proof
+
+#### Scenario: Draft recipe editing and sharing preserve owner isolation
+
+- WHEN a draft recipe is edited
+- THEN a new draft recipe revision SHALL start without inherited proof and old adoption route bindings SHALL remain immutable
+- WHEN the owner exports it through the existing community preview
+- THEN the package SHALL reconstruct only the typed structure with new synthetic examples and preserve the existing Git/card lifecycle
+- AND the receiving account SHALL inherit no private content, recipient, binding, credential, proof or send authority
+
+
+### Requirement: Local browser groundwork does not imply website authority
+
+The trusted companion SHALL expose local-human-only fresh private browser sessions with inherited pipe transport and a bounded page-count/lifecycle projection. Model/server browser execution, secret use and site-content export SHALL remain unavailable before a separately reviewed site adapter.
+
+#### Scenario: Recovery retains the original session boundary
+
+- WHEN a local browser session is recovered after restart
+- THEN its journal and original lifetime/idle/handoff limits SHALL survive without attaching to or signalling a retained process identity
+- AND recovery SHALL require a new blank profile and local human confirmation
+
+#### Scenario: Journal failure during local lock
+
+- WHEN the user locally locks the companion and persistence fails
+- THEN the unlocked vault SHALL already be retired and browser suspension SHALL not preserve it for subsequent polling
+- AND the failure SHALL not become a successful cleanup claim

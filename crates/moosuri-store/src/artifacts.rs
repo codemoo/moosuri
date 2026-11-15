@@ -407,6 +407,7 @@ fn invalidate_inner(
             return Err(StoreError::Corrupt);
         }
         if k == "artifact" {
+            crate::learned_skills::compound::invalidate_artifact(conn, tenant, &object, revision)?;
             external::retire_writers(conn, tenant, &object, revision, except)?;
             crate::schedules::followups::retire(conn, tenant, &object, revision, now()?)?;
             let runs=conn.prepare("SELECT DISTINCT run_id FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND artifact_id=?2 AND (?3 IS NULL OR revision=?3)")?.query_map(params![tenant,object,revision],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;

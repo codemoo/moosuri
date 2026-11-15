@@ -54,8 +54,23 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/api/v1/threads/{id}/browser/input", post(input))
         .route("/api/v1/threads/{id}/browser/navigate", post(navigate))
         .route("/api/v1/threads/{id}/browser/resume", post(resume))
+        .route(
+            "/api/v1/threads/{id}/browser/mission",
+            post(select_mission_page),
+        )
         .route("/api/v1/threads/{id}/browser/close", post(close))
         .layer(DefaultBodyLimit::max(16 * 1024))
+}
+async fn select_mission_page(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(thread): Path<String>,
+    Json(input): Json<moosuri_core::BrowserMissionSelection>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    let receipt = s.browser.select_for_mission(&user, &thread, input).await?;
+    s.runtime.wake();
+    Ok(Json(receipt).into_response())
 }
 async fn status(
     State(s): State<AppState>,

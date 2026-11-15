@@ -20,28 +20,30 @@
 
 ## C — Separately granted native mailbox work
 
-- [ ] Add model-readable native Gmail search/page/message/thread, explicit grant and source/dependency path; preserve legacy display-only exclusions.
-- [ ] Add selected PDF/UTF-8 attachment reads with device-local parsing and bounded projections; keep token-bearing server interfaces separate.
-- [ ] Integrate one-off and explicitly delegated recurring read missions, capability probes, scope/secret/recovery verification and status evidence.
+- [x] Add model-readable native Gmail search/page/message/thread, explicit grant and source/dependency path; preserve legacy display-only exclusions.
+- [x] Add selected PDF/UTF-8 attachment reads with device-local parsing and bounded projections; keep token-bearing server interfaces separate.
+- [x] Integrate one-off and explicitly delegated recurring read missions, capability probes, scope/secret/recovery verification and status evidence.
 
 ## D — Existing actions in composed missions
 
-- [ ] Prepare/link supported local and provider drafts idempotently from read evidence and current owner intent.
-- [ ] Link exact final-preview approval and original MailAction receipt to mission status; preserve scheduled-send expiry, unknown reconciliation and no replay.
-- [ ] Add requested current primary solo-event Calendar actions with source-bound values and existing ETag/receipt rules; independently verify/publish each usable action slice.
+- [x] Prepare/link supported local and provider drafts idempotently from read evidence and current owner intent.
+- [x] Link exact final-preview approval and original MailAction receipt to mission status; preserve scheduled-send expiry, unknown reconciliation and no replay.
+- [x] Add requested current primary solo-event Calendar actions with source-bound values and existing ETag/receipt rules; independently verify/publish each usable action slice.
 
 ## E — Compound learning and existing community flow
 
-- [ ] Qualify bounded typed read/calculation/report and later draft-preparation structures from two independent adopted results; no automatic semantic success or approval replay.
-- [ ] Verify unseen-input reuse, owner editing/new revision, proof/source withdrawal, failure attribution and dependent schedule pause/resume.
-- [ ] Add structural import/export from new synthetic examples and existing discovery/cards/Git lifecycle; verify per-owner qualification and private-data exclusion.
+- [x] Qualify bounded typed read/calculation/report structures from two independent owner-adopted actual artifacts; preserve numeric predicates, semantic review and generic mission exclusion.
+- [x] Extend the dedicated qualification allowlist to original D local draft revisions/digests with fresh current-owner preparation; approval, send and provider-save effects remain excluded.
+- [x] Verify read/calculation/report unseen-input reuse, owner editing/new revision, proof/artifact withdrawal, actual child budget and dependent schedule disable/explicit resume.
+- [x] Verify draft A/B adoption → fresh C pending-approval action, exact numeric/factual outcome predicates, original-slot replay budget, owner edit/new revision, source/account/draft withdrawal, unknown settlement/no dispatch replay and actually used schedule isolation.
+- [x] Reconstruct supported report/draft structure export from repository synthetic examples and use existing discovery/cards/Git install lifecycle; verify owner boundary and private-data exclusion.
 
 ## F — Authenticated browser adapter gate
 
-- [ ] Connect selected-page observation and existing manual handoff to the original work with honest server-browser trust labeling.
-- [ ] Implement trusted local browser/broker observation and session/journal boundaries before native-vault password/TOTP automation.
+- [x] Connect selected-page observation and existing manual handoff to the original work with honest server-browser trust labeling.
+- [x] Implement trusted local browser/broker observation and session/journal boundaries before native-vault password/TOTP automation.
 - [ ] At adapter kickoff, pin one actual site/read outcome, official API alternative, test account/policy and completion evidence; implement only its supported login/read adapter and independently review secret/session/recovery behavior.
-- [ ] Keep arbitrary form/payment/purchase/phone/government actions unavailable; require a separate typed effect/reconciliation contract for later submissions.
+- [x] Keep arbitrary form/payment/purchase/phone/government actions unavailable; require a separate typed effect/reconciliation contract for later submissions.
 
-C–F implementation boxes remain open. B evidence: [connection wait validation](../../../docs/reviews/2026-11-15-connection-waits.md). A evidence: [compound report validation](../../../docs/reviews/2026-11-15-compound-reports.md). The [plan](../../../docs/additional-capabilities-plan.md)
+A–E and F selected-page/local-session groundwork are implemented and integrated; F's actual site login/read adapter remains open. [Integrated evidence](../../../docs/reviews/2026-11-15-compound-capabilities.md). B evidence: [connection wait validation](../../../docs/reviews/2026-11-15-connection-waits.md). A evidence: [compound report validation](../../../docs/reviews/2026-11-15-compound-reports.md). The [plan](../../../docs/additional-capabilities-plan.md)
 does not complete official release, real-provider/device acceptance, broad holdout or production cutover.

@@ -273,8 +273,10 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             let r = crate::schedules::chat::receipts(conn, &run.tenant, &run.id)?;
             (!r.is_empty()).then_some(r)
         },
+        connection_wait: crate::native_task_mail::view(conn, &run.tenant, &run.id)?,
         credential: crate::credential_chat::status(conn, run)?,
-        can_retry: !crate::credential_chat::has(conn, &run.tenant, &run.id)?
+        can_retry: !crate::native_task_mail::has(conn, &run.tenant, &run.id)?
+            && !crate::credential_chat::has(conn, &run.tenant, &run.id)?
             && !run.state.active()
             && run.state != RunState::Completed
             && run.attempt < 32
@@ -347,6 +349,7 @@ pub(super) fn transition(
         ],
     )?;
     if !state.active() {
+        crate::native_task_mail::cancel(conn, run)?;
         crate::credential_chat::cancel(conn, run)?;
     }
     crate::missions::carrier_transition(conn, run, state)?;
@@ -1218,7 +1221,17 @@ fn cancel_run_inner(
         return Err(StoreError::Conflict);
     }
     crate::calendar::agent::cancel(&tx, &run)?;
-    transition(&tx, &run, RunState::Cancelled, None)?;
+    let native_unknown = crate::native_task_mail::cancel(&tx, &run)?;
+    transition(
+        &tx,
+        &run,
+        if native_unknown {
+            RunState::OutcomeUnknown
+        } else {
+            RunState::Cancelled
+        },
+        None,
+    )?;
     let result = turn(&tx, &load_run(&tx, &run.tenant, &run.id)?)?;
     tx.commit()?;
     Ok(result)
@@ -1234,7 +1247,8 @@ fn retry_run_inner(
         .conn
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
     let run = load_run(&tx, &user.tenant.0, &run_id)?;
-    if crate::credential_chat::has(&tx, &run.tenant, &run.id)?
+    if crate::native_task_mail::has(&tx, &run.tenant, &run.id)?
+        || crate::credential_chat::has(&tx, &run.tenant, &run.id)?
         || run.attempt != expected_attempt
         || run.state.active()
         || run.state == RunState::Completed
@@ -1280,7 +1294,7 @@ fn claim_run_inner(db: &mut Database) -> Result<Option<ClaimedRun>> {
     if running >= 2 {
         return Ok(None);
     }
-    let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND NOT EXISTS(SELECT 1 FROM mission_connection_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status IN('waiting','ready')) AND NOT EXISTS(SELECT 1 FROM credential_chat_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=chat_runs.tenant_id AND a.run_id=chat_runs.id AND a.agent=1) AND tenant_id NOT IN (SELECT tenant_id FROM chat_runs WHERE state='running') ORDER BY admitted_order LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND NOT EXISTS(SELECT 1 FROM native_task_mail_reads n WHERE n.tenant_id=chat_runs.tenant_id AND n.run_id=chat_runs.id AND n.status IN('waiting','committed','ready')) AND NOT EXISTS(SELECT 1 FROM mission_connection_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status IN('waiting','ready')) AND NOT EXISTS(SELECT 1 FROM credential_chat_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=chat_runs.tenant_id AND a.run_id=chat_runs.id AND a.agent=1) AND tenant_id NOT IN (SELECT tenant_id FROM chat_runs WHERE state='running') ORDER BY admitted_order LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for (tenant, id) in queued {
         let run = load_run(&tx, &tenant, &id)?;
         if authority(&tx, &run).is_err() {

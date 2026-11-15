@@ -55,3 +55,32 @@ pub struct BrowserFrame {
     pub height: u32,
     pub url: String,
 }
+
+/// Explicit human selection of the current rendered page, never a model tool.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserMissionSelection {
+    pub request_id: String,
+    pub frame_token: String,
+    pub workspace_id: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    pub control_token: String,
+    pub mission_id: String,
+    #[ts(type = "number")]
+    pub mission_revision: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct BrowserMissionReceipt {
+    pub request_id: String,
+    pub mission_id: String,
+    pub source_id: String,
+    #[ts(type = "number")]
+    pub source_revision: i64,
+    pub url: String,
+    pub title: String,
+    pub truncated: bool,
+    #[ts(type = "number")]
+    pub observed_at_ms: u64,
+}

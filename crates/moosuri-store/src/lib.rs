@@ -9,11 +9,16 @@ pub use run_timings::{TimingMark, timing_mark};
 mod connection_waits;
 mod conversation_recall;
 pub mod credential_chat;
+mod mailbox_intent;
 mod missions;
+mod native_task_mail;
 mod recurring_missions;
 mod request_continuations;
 mod scoped_connections;
-pub use missions::{MissionExecution, MissionPendingRound, MissionReadCredentials};
+pub use missions::{
+    MissionActionPermit, MissionActionStart, MissionCalendarCredentials, MissionExecution,
+    MissionPendingRound, MissionProviderCredentials, MissionReadCredentials,
+};
 pub mod credential_broker;
 mod schedules;
 pub mod vault_authority;
@@ -229,7 +234,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 60;
+const CURRENT_SCHEMA_VERSION: i64 = 68;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -784,6 +789,68 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0060_connection_waits.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 61 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0061_native_model_mail.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 62 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0062_provider_draft_receipts.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 63 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0063_native_task_mail.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 64 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0064_compound_learning.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 65 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0065_mission_actions.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        conn.execute(
+            "UPDATE mail_provider_saves SET state='outcome_unknown' WHERE state='started'",
+            [],
+        )?;
+        if version < 66 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0066_selected_browser_missions.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 67 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0067_compound_draft_learning.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 68 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!(
+                    "../../../migrations/assistant/0068_native_mail_settlement_cursor.sql"
+                ),
                 "COMMIT;"
             ))?;
         }

@@ -421,7 +421,7 @@ async fn calendar_cancellation_after_settlement_before_finish_purges_already_sto
         .unwrap();
     // Complete the actual typed provider IO and ledger settlement; hold chat finish at this seam.
     let applied = service
-        .dispatch(binding, admission, None, CancellationToken::new())
+        .dispatch(binding.access, admission, None, CancellationToken::new())
         .await
         .unwrap();
     assert!(applied.event.is_some());

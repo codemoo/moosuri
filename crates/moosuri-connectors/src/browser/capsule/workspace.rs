@@ -358,6 +358,16 @@ impl CapsuleWorkspace {
             .await?;
         self.checked(observation(value))
     }
+    pub async fn observe_selected(
+        &mut self,
+        expected_frame_token: &str,
+    ) -> Result<WorkspaceObservation, BrowserError> {
+        if !hex64(expected_frame_token) {
+            return Err(BrowserError::StalePage);
+        }
+        let value=self.request(json!({"op":"workspace_observe_selected","expected_frame_token":expected_frame_token}),MAX_RESPONSE).await?;
+        self.checked(observation(value))
+    }
     /// Human-only screenshot. Never include it in model context or durable chat.
     pub async fn frame(&mut self) -> Result<WorkspaceFrame, BrowserError> {
         let value = self

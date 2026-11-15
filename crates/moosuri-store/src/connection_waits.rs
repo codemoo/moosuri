@@ -230,8 +230,14 @@ pub(crate) fn poll(c: &Connection, time: i64) -> Result<()> {
         c.execute("UPDATE missions SET state='partial',grant_enabled=0,report='[\"Original connection wait expired or authority changed. Review saved results or create a new task.\"]' WHERE tenant_id=?1 AND id=?2 AND state='waiting'",params![t,id])?;
         c.execute("UPDATE chat_runs SET state='incomplete',error='budget_exhausted',version=version+1 WHERE tenant_id=?1 AND id=?2 AND state='queued'",params![t,run])?;
     }
-    let rows=c.prepare("SELECT w.tenant_id,w.mission_id,w.run_id,w.status,m.account_id,w.request_id FROM mission_connection_waits w JOIN missions m ON m.tenant_id=w.tenant_id AND m.id=w.mission_id WHERE w.status IN('waiting','ready') AND m.state='waiting' ORDER BY w.created_order LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    for (t, id, run, status, account, wait_id) in rows {
+    let rows=c.prepare("SELECT w.tenant_id,w.mission_id,w.run_id,w.status,m.account_id,w.request_id,0 AS native,r.admitted_order FROM mission_connection_waits w JOIN missions m ON m.tenant_id=w.tenant_id AND m.id=w.mission_id JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE w.status IN('waiting','ready') AND m.state='waiting' UNION ALL SELECT n.tenant_id,m.id,n.run_id,'ready',m.account_id,n.request_id,1,r.admitted_order FROM native_task_mail_reads n JOIN missions m ON m.tenant_id=n.tenant_id AND m.run_id=n.run_id JOIN chat_runs r ON r.tenant_id=n.tenant_id AND r.id=n.run_id WHERE n.status='ready' AND m.state='waiting' ORDER BY admitted_order LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,bool>(6)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for (t, id, run, status, account, wait_id, native) in rows {
+        if native {
+            if runnable_free(c, &t, &account, &id)? {
+                crate::native_task_mail::promote(c, &t, &run, &wait_id)?;
+            }
+            continue;
+        }
         if status == "waiting" {
             let initial:bool=c.query_row("SELECT cause='account_selection' FROM mission_connection_waits WHERE tenant_id=?1 AND mission_id=?2 AND request_id=?3",params![t,id,wait_id],|r|r.get(0))?;
             let choices = eligible(c, &t, &run)?;

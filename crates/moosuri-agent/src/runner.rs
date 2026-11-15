@@ -476,6 +476,31 @@ where
 fn typed_input(
     call: &moosuri_connectors::model::protocol::tools::CompletedToolCall,
 ) -> KnowledgeToolInput {
+    if call.name() == "mission_prepare_mail"
+        || call.name() == "mission_calendar_action"
+        || call.name() == "mission_save_provider_draft"
+    {
+        let operation = if call.name() == "mission_prepare_mail" {
+            "prepare_mail"
+        } else if call.name() == "mission_save_provider_draft" {
+            "save_provider_draft"
+        } else {
+            "calendar"
+        };
+        let input = serde_json::from_str::<serde_json::Value>(call.arguments())
+            .ok()
+            .and_then(|mut v| {
+                v.as_object_mut()?
+                    .insert("operation".into(), operation.into());
+                serde_json::from_value(v).ok()
+            });
+        return input
+            .filter(|v: &moosuri_core::MissionActionRequest| {
+                serde_json::to_vec(v).is_ok_and(|v| v.len() <= moosuri_store::TOOL_INPUT_LIMIT)
+            })
+            .map(|request| KnowledgeToolInput::MissionAction { request })
+            .unwrap_or(KnowledgeToolInput::InvalidArguments);
+    }
     let input = match knowledge_tools::parse(call.name(), call.arguments()) {
         Invocation::CollectPages(urls) => KnowledgeToolInput::CollectPages { urls },
         Invocation::CredentialGoogleInbox => KnowledgeToolInput::CredentialGoogleInbox {},
@@ -511,6 +536,7 @@ fn typed_input(
         Invocation::DecimalCalculate(calculation) => {
             KnowledgeToolInput::DecimalCalculate { calculation }
         }
+        Invocation::NativeMail(read) => KnowledgeToolInput::NativeMail { read },
         Invocation::External(request) => KnowledgeToolInput::External { request },
         Invocation::Artifact(request) => KnowledgeToolInput::Artifact { request },
         Invocation::InvalidArguments => KnowledgeToolInput::InvalidArguments,
@@ -747,6 +773,10 @@ pub(crate) async fn execute_with_calendar(
         .await;
         return;
     }
+    let native_resume = store
+        .native_mail_continuation(&lease)
+        .await
+        .unwrap_or(false);
     let personal = binding.subscription.is_some();
     if personal && (media_context || !images.is_empty() || !documents.is_empty()) {
         // Defense after claim: no unsupported raw attachment may enter plan IO.
@@ -775,13 +805,15 @@ pub(crate) async fn execute_with_calendar(
         .await;
         return;
     }
-    match calendar.chat(&lease).await {
-        Ok(true) => {
-            signals.changed();
-            return;
+    if !native_resume {
+        match calendar.chat(&lease).await {
+            Ok(true) => {
+                signals.changed();
+                return;
+            }
+            Ok(false) => {}
+            Err(_) => return,
         }
-        Ok(false) => {}
-        Err(_) => return,
     }
     // A completed typed intent resumes before any classifier or ordinary capsule handling.
     {
@@ -801,12 +833,12 @@ pub(crate) async fn execute_with_calendar(
     // Explicit retry clears provider checkpoints, but preserves a separately
     // sealed local intent. Resume that identity before unrelated classifiers
     // or model client construction, with the existing Store authority checks.
-    if memory::resume_prepared(&store, &lease, &signals).await {
+    if !native_resume && memory::resume_prepared(&store, &lease, &signals).await {
         return;
     }
     // Explicit retry starts a new attempt. Unknown remote work is never resumed
     // merely because a private checkpoint exists in a previous attempt.
-    if context.checkpoint.is_some() || !context.calls.is_empty() {
+    if !native_resume && (context.checkpoint.is_some() || !context.calls.is_empty()) {
         finish(
             &store,
             &lease,
@@ -904,7 +936,7 @@ pub(crate) async fn execute_with_calendar(
             return;
         }
     };
-    if model.function_tools {
+    if model.function_tools && !native_resume {
         // The final user message is the original current turn. No prior messages
         // or source results are included in the separate intent request.
         let Some(current_text) = request
@@ -1000,6 +1032,8 @@ pub(crate) async fn execute_with_calendar(
                     web.browser_pin = None;
                 }
             } else {
+                profile.native_mail_model_read = false;
+                profile.native_mail_scope = None;
                 profile.mail_connections.clear();
                 profile.web = None;
             }
@@ -1037,6 +1071,93 @@ pub(crate) async fn execute_with_calendar(
     let mut continuation: Option<Continuation> = None;
     let mut results = Vec::<ToolResult>::new();
     let mut total_bytes = 0;
+    if native_resume {
+        let slots = context
+            .calls
+            .iter()
+            .map(|slot| {
+                (
+                    slot.step,
+                    PendingKnowledgeCall {
+                        call_id: slot.call_id.clone(),
+                        input: slot.input.clone(),
+                    },
+                    slot.result.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (number, call, saved) in slots {
+            let step = match store.native_mail_step_lease(&lease, number).await {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let value = if let Some(value) = saved {
+                value
+            } else {
+                if matches!(&call.input, KnowledgeToolInput::NativeMail { .. }) {
+                    match store
+                        .wait_for_native_mail_tool(&step, call.call_id.clone())
+                        .await
+                    {
+                        Ok(true) => {
+                            signals.changed();
+                            return;
+                        }
+                        Ok(false) => {}
+                        Err(_) => return,
+                    }
+                }
+                match execute_tool(&store, &step, &call, &mail, &web, signals.stopping()).await {
+                    Ok(v) => v,
+                    Err(_) => return,
+                }
+            };
+            let output = match serde_json::to_string(&value) {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            results.push(ToolResult {
+                call_id: call.call_id,
+                output,
+                is_error: matches!(value, KnowledgeToolResult::Error(_)),
+            });
+        }
+        context = match store.agent_context(&lease).await {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let Some(saved) = context.checkpoint.as_ref() else {
+            return;
+        };
+        continuation = match if personal {
+            Continuation::from_chatgpt_plan_checkpoint(
+                &saved.bytes,
+                &request.model,
+                request.effort.as_deref(),
+            )
+        } else {
+            Continuation::from_private_checkpoint(
+                &saved.bytes,
+                protocol,
+                &request.model,
+                request.effort.as_deref(),
+            )
+        } {
+            Ok(v) => Some(v),
+            Err(_) => {
+                finish(
+                    &store,
+                    &lease,
+                    None,
+                    RunState::Incomplete,
+                    Some(RunFailure::ProtocolFailed),
+                    &signals,
+                )
+                .await;
+                return;
+            }
+        };
+    }
     for _ in 0..6 {
         let tool_request = ToolRequest {
             text: &request,
@@ -1267,6 +1388,23 @@ pub(crate) async fn execute_with_calendar(
             } else {
                 None
             };
+            if matches!(&call.input, KnowledgeToolInput::NativeMail { .. }) {
+                match store
+                    .wait_for_native_mail_tool(&step, call.call_id.clone())
+                    .await
+                {
+                    Ok(true) => {
+                        signals.changed();
+                        return;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        let (state, error) = store_failure(&error);
+                        finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
+                        return;
+                    }
+                }
+            }
             if matches!(
                 call.input,
                 KnowledgeToolInput::CredentialGitHub { .. }
@@ -1431,6 +1569,40 @@ async fn execute_tool_inner(
     web: &crate::web::Service,
     cancel: &CancellationToken,
 ) -> Result<KnowledgeToolResult, StoreError> {
+    if matches!(
+        &call.input,
+        KnowledgeToolInput::MissionAction {
+            request: moosuri_core::MissionActionRequest::Calendar { .. }
+                | moosuri_core::MissionActionRequest::SaveProviderDraft { .. }
+        }
+    ) {
+        return match store
+            .prepare_mission_action(step, call.call_id.clone())
+            .await?
+        {
+            moosuri_store::MissionActionStart::Complete(v) => Ok(v),
+            moosuri_store::MissionActionStart::Dispatch(permit) => {
+                let result = if matches!(
+                    permit.request(),
+                    moosuri_core::MissionActionRequest::SaveProviderDraft { .. }
+                ) {
+                    mail.save_mission_provider_draft(&permit, cancel).await
+                } else {
+                    crate::calendar::CalendarService::new(store.clone(), mail.clone())
+                        .mission_action(&permit, cancel)
+                        .await
+                };
+                let result = match result {
+                    Ok(v) => v,
+                    Err(StoreError::InvalidInput | StoreError::NotFound | StoreError::Conflict) => {
+                        KnowledgeToolResult::Error(moosuri_store::ToolReadError::InvalidInput)
+                    }
+                    Err(_) => KnowledgeToolResult::Error(moosuri_store::ToolReadError::Unavailable),
+                };
+                store.complete_mission_action(&permit, result).await
+            }
+        };
+    }
     if matches!(&call.input, KnowledgeToolInput::CollectPages { .. })
         || matches!(&call.input,KnowledgeToolInput::LearnedSkill{invocation} if matches!(invocation.arguments,moosuri_core::LearnedSkillArguments::Pages{..}))
     {

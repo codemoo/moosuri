@@ -482,6 +482,28 @@ pub(super) fn proof(
     calls: &[(Input, Output)],
     receipt: &str,
 ) -> Result<Option<Proof>> {
+    let r = chat::load_run(c, tenant, run)?;
+    qualify(
+        c,
+        &r,
+        account,
+        calls,
+        receipt,
+        &terminal_output(c, tenant, run)?,
+    )
+}
+/// Dedicated compound qualification supplies its finalized artifact body and
+/// accepted task. Generic mission finalization remains excluded from learning.
+pub(super) fn qualify(
+    c: &Connection,
+    r: &chat::Run,
+    account: &str,
+    calls: &[(Input, Output)],
+    receipt: &str,
+    output: &str,
+) -> Result<Option<Proof>> {
+    let tenant = r.tenant.as_str();
+    let run = r.id.as_str();
     let [
         (Input::Search { .. }, _),
         (Input::ReadSource { .. }, _),
@@ -490,7 +512,6 @@ pub(super) fn proof(
     else {
         return Ok(None);
     };
-    let r = chat::load_run(c, tenant, run)?;
     if r.account != account
         || !r
             .tool_profile
@@ -503,7 +524,7 @@ pub(super) fn proof(
     let Some((step, call)) = parent else {
         return Ok(None);
     };
-    let Some(bound) = resolve(c, &r, calculation, step)? else {
+    let Some(bound) = resolve(c, r, calculation, step)? else {
         return Ok(None);
     };
     let Ok((expected, operations)) = expected(calculation, &bound) else {
@@ -529,9 +550,8 @@ pub(super) fn proof(
             return Ok(None);
         }
     }
-    let output = terminal_output(c, tenant, run)?;
-    if !adopted_number(&output, exact)
-        || !adopted_number(&output, &bound.evidence.literal)
+    if !adopted_number(output, exact)
+        || !adopted_number(output, &bound.evidence.literal)
         || !output.contains(&bound.evidence.source_title)
         || !output.contains(&bound.prefix)
     {

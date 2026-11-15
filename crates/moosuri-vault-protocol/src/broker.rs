@@ -3,6 +3,8 @@
 use crate::Owner;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+mod model_mail;
+pub use model_mail::*;
 
 pub const DEVICE_PATH: &str = "/api/v1/credential-broker/device/command";
 pub const MAX_SIGNED_BYTES: usize = 16_384;
@@ -48,6 +50,7 @@ pub enum Operation {
     GoogleInboxBody { selection: Uuid },
     GoogleMailSend { effect: Uuid, execution: [u8; 32] },
     GoogleMailLookup { effect: Uuid, execution: [u8; 32] },
+    GoogleMailModelRead { selection: Uuid },
 }
 /// Exact, canonical repository selection. Never a URL or HTTP header.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +91,12 @@ pub enum Resource {
     GitHub(GitHubRepository),
     GoogleInbox(GoogleInboxResource),
     GoogleBody(GoogleBodyResource),
+    GoogleModelRead(GoogleModelReadResource),
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoogleModelReadResource {
+    pub google_model_read: Uuid,
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +115,11 @@ pub enum GoogleInboxVersion {
     PreviewV1,
 }
 impl Resource {
+    pub fn google_model_read(selection: Uuid) -> Self {
+        Self::GoogleModelRead(GoogleModelReadResource {
+            google_model_read: selection,
+        })
+    }
     pub fn google_body(selection: Uuid) -> Self {
         Self::GoogleBody(GoogleBodyResource {
             google_body: selection,
@@ -114,6 +128,7 @@ impl Resource {
     pub fn scope(&self) -> Self {
         match self {
             Self::GoogleBody(_) => Self::google_body(Uuid::nil()),
+            Self::GoogleModelRead(_) => Self::google_model_read(Uuid::nil()),
             _ => self.clone(),
         }
     }
@@ -132,11 +147,15 @@ impl Resource {
             Self::GitHub(r) => r.valid(),
             Self::GoogleInbox(_) => true,
             Self::GoogleBody(r) => !r.google_body.is_nil(),
+            Self::GoogleModelRead(r) => !r.google_model_read.is_nil(),
         }
     }
     pub fn operation(&self) -> Operation {
         match self {
             Self::GitHub(_) => Operation::GitHubRepositoryRead,
+            Self::GoogleModelRead(r) => Operation::GoogleMailModelRead {
+                selection: r.google_model_read,
+            },
             Self::GoogleBody(r) => Operation::GoogleInboxBody {
                 selection: r.google_body,
             },
@@ -149,12 +168,13 @@ impl Resource {
     pub fn repository(&self) -> Option<&GitHubRepository> {
         match self {
             Self::GitHub(r) => Some(r),
-            Self::GoogleInbox(_) | Self::GoogleBody(_) => None,
+            Self::GoogleInbox(_) | Self::GoogleBody(_) | Self::GoogleModelRead(_) => None,
         }
     }
     pub fn bytes(&self) -> Vec<u8> {
         match self {
             Self::GitHub(r) => r.bytes(),
+            Self::GoogleModelRead(_) => b"moosuri/google-mail-model-read/v1".to_vec(),
             Self::GoogleBody(_) => b"moosuri/google-inbox-body/v1".to_vec(),
             Self::GoogleInbox(r) => match r.google_inbox {
                 GoogleInboxVersion::CountsV1 => b"moosuri/google-inbox-counts/v1".to_vec(),
@@ -236,6 +256,9 @@ impl GoogleMessagePreview {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Projection {
+    GoogleMailModelRead {
+        result: Box<MailModelResult>,
+    },
     GoogleMailSent {
         message_id: String,
         thread_id: String,
@@ -276,6 +299,10 @@ impl Projection {
     pub fn bytes(&self) -> Vec<u8> {
         let mut b = Bytes::new(b"projection");
         match self {
+            Self::GoogleMailModelRead { result } => {
+                b.0.push(9);
+                b.blob(&result.bytes());
+            }
             Self::GoogleMailSent {
                 message_id,
                 thread_id,
@@ -382,6 +409,19 @@ pub struct SignedReceipt {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    RegisterGoogleModelRead {
+        binding: Binding,
+        background: bool,
+    },
+    RefreshGoogleModelRead {
+        expected: Binding,
+        binding: Binding,
+        background: bool,
+    },
+    ModelMailPayload {
+        invocation: Invocation,
+        request_digest: [u8; 32],
+    },
     RegisterGoogleSend {
         binding: Binding,
         email: String,
@@ -464,6 +504,9 @@ pub struct SignedCommand {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    ModelMailPayload {
+        payload: Box<MailModelRequest>,
+    },
     MailCurrent,
     MailPayload {
         payload: Box<GoogleMailPayload>,
@@ -528,6 +571,15 @@ impl Bytes {
         self.invocation(&r.invocation);
         self.binding(&r.binding);
         match r.operation {
+            Operation::GoogleMailModelRead { selection } => {
+                self.0.push(8);
+                self.id(selection);
+                self.0.push(r.repository.is_some() as u8);
+                if let Some(repo) = &r.repository {
+                    self.blob(repo.owner.as_bytes());
+                    self.blob(repo.repository.as_bytes());
+                }
+            }
             Operation::GoogleMailSend { effect, execution }
             | Operation::GoogleMailLookup { effect, execution } => {
                 self.0
@@ -593,6 +645,7 @@ impl Bytes {
             Outcome::ProjectedSuccess => 3,
         });
         self.0.push(match r.projection {
+            Projection::GoogleMailModelRead { .. } => 9,
             Projection::GoogleMailSent { .. } => 7,
             Projection::GoogleMailObserved { .. } => 8,
             Projection::GoogleInboxBody { .. } => 5,
@@ -692,6 +745,9 @@ impl Bytes {
             self.0.push(*unavailable);
             self.0.push(*more_available as u8);
         }
+        if let Projection::GoogleMailModelRead { result } = &r.projection {
+            self.blob(&result.bytes());
+        }
         self.0.extend_from_slice(&r.projection_digest);
     }
 }
@@ -728,6 +784,32 @@ pub fn command_bytes(
     }
     let mut body = Bytes::new(b"command-body");
     match command {
+        Command::RegisterGoogleModelRead {
+            binding,
+            background,
+        } => {
+            body.0.push(21);
+            body.binding(binding);
+            body.0.push(*background as u8);
+        }
+        Command::RefreshGoogleModelRead {
+            expected,
+            binding,
+            background,
+        } => {
+            body.0.push(22);
+            body.binding(expected);
+            body.binding(binding);
+            body.0.push(*background as u8);
+        }
+        Command::ModelMailPayload {
+            invocation,
+            request_digest,
+        } => {
+            body.0.push(23);
+            body.invocation(invocation);
+            body.blob(request_digest);
+        }
         Command::RegisterGoogleSend { binding, email } => {
             body.0.push(16);
             body.binding(binding);

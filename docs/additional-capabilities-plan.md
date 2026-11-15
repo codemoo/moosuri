@@ -1,6 +1,6 @@
 # 비서 업무의 추가 구현 계획
 
-2026-11-15, 기준 소스 `07a6b80`. **승인된 구현 계획이다. A/B 구현·검증 완료, C–F 진행 중이며 세부 정본은 [현재 상태](status.md)다.**
+2026-11-15, 기준 소스 `07a6b80`. **승인된 구현 계획이다. A–E와 F의 선택 페이지·기기 세션 기반을 구현·검증했다. F의 실제 사이트 로그인/읽기 adapter는 남아 있으며 세부 정본은 [현재 상태](status.md)다.**
 [현재 상태](status.md), [전체 P0–P10 계획](plan.md), [기능 계약](features.md)을 유지하면서
 P4/P5/P6/P8의 복합 업무·학습·credential 연결을 실제 구현 단위로 좁힌다.
 출시 패키지·실계정/실기기 수락·운영 이전은 별도 남은 작업이다.
@@ -277,3 +277,8 @@ Muse를 주 기준으로 한 [기존 공개 사례/구조 조사](research/perso
 - [Anthropic, Building effective agents](https://www.anthropic.com/research/building-effective-agents): 단순한 도구 loop, 환경의 실제 결과, 필요한 경우에만 workflow 복잡도 추가.
 - [Anthropic, Effective harnesses for long-running agents](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents): 명시한 완료 항목·영속 진행·다음 실행이 이해할 수 있는 증거. 코딩 에이전트의 구체 구현을 비서에 그대로 이식하지 않음.
 - [Agent Skills specification](https://agentskills.io/specification): 작은 discovery metadata, 필요할 때 읽는 본문, Git에서 관리할 수 있는 패키지. 표준의 선택적 executable script는 무수리의 임의 코드 실행 허용이 아님.
+
+
+## 현재 구현과 남은 착수 조건
+
+A–E와 F의 선택 페이지/기기 세션 기반은 [통합 검증](reviews/2026-11-15-compound-capabilities.md)에 대응한다. native 경로는 기본 꺼짐과 실제 profile probe를 유지하며, 계정·대기·원래 예산과 초안별 최종 발송 승인은 그대로다. F의 사이트별 로그인/읽기 adapter는 아직 없다. 실제 대상 사이트·정확한 읽기 결과·전용 테스트 계정과 공식 API/정책을 고정해야 구현·수락할 수 있다. 현재 서버/기기 브라우저 기반을 범용 vault 자동 로그인으로 표시하지 않는다. 새 독립 실모델 holdout, 실제 provider/device·공식 release·운영 전환 수락도 별도다.

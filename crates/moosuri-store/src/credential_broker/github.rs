@@ -28,7 +28,7 @@ fn job(conn: &Connection, tenant: &str, id: &str) -> Result<GitHubJob> {
         projection: j.projection,
     })
 }
-fn scoped_job(conn: &Connection, tenant: &str, id: &str) -> Result<ScopedJob> {
+pub(super) fn scoped_job(conn: &Connection, tenant: &str, id: &str) -> Result<ScopedJob> {
     let (repo,run,expires,request):(String,String,i64,Option<String>)=conn.query_row("SELECT repository,run_id,expires_at,request FROM credential_broker_jobs WHERE tenant_id=?1 AND request_id=?2",params![tenant,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::NotFound)?;
     let row:Option<(String,Option<String>)>=conn.query_row("SELECT commitment,receipt FROM credential_broker_commitments WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     let mut projection = None;
@@ -71,7 +71,7 @@ fn scoped_job(conn: &Connection, tenant: &str, id: &str) -> Result<ScopedJob> {
         projection,
     })
 }
-fn device_current(conn: &Connection, receipt: &SignedReceipt) -> Result<bool> {
+pub(super) fn device_current(conn: &Connection, receipt: &SignedReceipt) -> Result<bool> {
     let request = &receipt.receipt.commitment.request;
     Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM credential_broker_devices d JOIN credential_broker_bindings b ON b.device_id=d.id WHERE d.id=?1 AND d.status='active' AND b.binding_id=?2 AND b.active=1)",params![request.device.id.to_string(),request.binding.id.to_string()],|r|r.get(0))?)
 }
@@ -135,7 +135,7 @@ impl Store {
     pub async fn github_metadata_jobs(&self, user: &UserContext) -> Result<Vec<GitHubJob>> {
         let user = user.clone();
         self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;
-            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox') IS NULL AND json_extract(repository,'$.google_body') IS NULL ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let ids=db.conn.prepare("SELECT request_id FROM credential_broker_jobs WHERE tenant_id=?1 AND json_extract(repository,'$.google_inbox') IS NULL AND json_extract(repository,'$.google_body') IS NULL AND json_extract(repository,'$.google_model_read') IS NULL ORDER BY rowid DESC LIMIT 30")?.query_map([&u.tenant.0],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             ids.iter().map(|i|job(&db.conn,&u.tenant.0,i)).collect()
         }).await
     }
@@ -247,8 +247,19 @@ pub(super) fn poll(
             continue;
         }
         let target = encode(&decode::<Resource>(&repo)?.scope())?;
-        let bindings=conn.prepare("SELECT r.device_id,b.binding FROM credential_broker_repositories r JOIN credential_broker_bindings b USING(device_id,binding_id) JOIN credential_broker_devices d ON d.id=r.device_id JOIN sessions live ON live.digest=d.session_digest WHERE live.expires_at>unixepoch() AND live.auth_epoch=?4 AND d.account_id=?1 AND d.tenant_id=?2 AND d.status='active' AND b.active=1 AND json_extract(b.binding,'$.expires_at')>unixepoch() AND r.repository=?3")?.query_map(params![u.account.id,u.tenant.0,target,u.epoch],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut bindings=conn.prepare("SELECT r.device_id,b.binding FROM credential_broker_repositories r JOIN credential_broker_bindings b USING(device_id,binding_id) JOIN credential_broker_devices d ON d.id=r.device_id JOIN sessions live ON live.digest=d.session_digest WHERE live.expires_at>unixepoch() AND live.auth_epoch=?4 AND d.account_id=?1 AND d.tenant_id=?2 AND d.status='active' AND b.active=1 AND json_extract(b.binding,'$.expires_at')>unixepoch() AND r.repository=?3")?.query_map(params![u.account.id,u.tenant.0,target,u.epoch],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let resource: Resource = decode(&repo)?;
+        if matches!(resource, Resource::GoogleModelRead(_)) {
+            bindings.retain(|(device, raw)| {
+                device == &p.device.id.to_string()
+                    && decode::<Binding>(raw).is_ok_and(|binding| {
+                        super::native_model_mail::admit(conn, &u, &id, &p.device, &binding)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                    })
+            });
+        }
         if let Resource::GoogleBody(selected) = &resource {
             let Ok(origin) =
                 selection_origin(conn, &u.tenant.0, &u.account.id, selected.google_body, None)
@@ -284,6 +295,14 @@ pub(super) fn poll(
             digest: Sha256::digest(resource.bytes()).into(),
             expires_at: expiry.min(b.expires_at),
         };
+        let mut request = request;
+        if matches!(request.operation, Operation::GoogleMailModelRead { .. }) {
+            let Some(digest) = super::native_model_mail::admit(conn, &u, &id, &p.device, &b)?
+            else {
+                continue;
+            };
+            request.digest = digest;
+        }
         let json = encode(&request)?;
         conn.execute(
             "INSERT INTO credential_broker_invocations VALUES(?1,?2,?6,?3,?4,?5,0)",
@@ -352,6 +371,9 @@ pub(super) fn refresh_resource(
                 (
                     Operation::GoogleInboxBody { .. },
                     Operation::GoogleInboxBody { .. }
+                ) | (
+                    Operation::GoogleMailModelRead { .. },
+                    Operation::GoogleMailModelRead { .. }
                 )
             ) && request.operation != resource.operation())
             || request.repository.as_ref() != resource.repository()

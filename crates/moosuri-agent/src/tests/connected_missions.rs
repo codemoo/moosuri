@@ -112,8 +112,8 @@ async fn io_response(State(s): State<Arc<Io>>, req: Request<Body>) -> Response {
             json!({"messages":[{"id":format!("ownedmessage{n}"),"threadId":format!("ownedthread{n}")}],"resultSizeEstimate":1})
         }
         p if p.starts_with("/messages/") => {
-            let mime = "From: sender@example.test\r\nTo: owner@example.test\r\nSubject: Owned briefing memo\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\nOwned mail body";
-            json!({"id":p.trim_start_matches("/messages/"),"threadId":"ownedthread1","labelIds":["INBOX"],"raw":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mime)})
+            let text = b"Owned mail body";
+            json!({"id":p.trim_start_matches("/messages/"),"threadId":"ownedthread1","labelIds":["INBOX"],"payload":{"partId":"","mimeType":"text/plain","filename":"","headers":[{"name":"From","value":"sender@example.test"},{"name":"To","value":"owner@example.test"},{"name":"Subject","value":"Owned briefing memo"},{"name":"Message-ID","value":"<owned-source@example.test>"}],"body":{"size":text.len(),"data":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text)}}})
         }
         "/users/me/calendarList/primary" => {
             json!({"id":"owner@example.test","summary":"Owned primary","timeZone":"UTC","primary":true,"accessRole":"owner"})
@@ -219,12 +219,7 @@ async fn model(State(s): State<Arc<Model>>, axum::Json(body): axum::Json<Value>)
                 .clone();
         let cal=find("calendar_list_events")["function"]["parameters"]["properties"]["connection_id"]["enum"][0].clone();
         let result = |id: &str| -> Value {
-            serde_json::from_str(
-                receipts.iter().find(|r| r["call_id"] == id).unwrap()["result"]
-                    .as_str()
-                    .unwrap(),
-            )
-            .unwrap()
+            receipts.iter().find(|r| r["call_id"] == id).unwrap()["result"].clone()
         };
         match receipts.len() {
             0 => (
@@ -590,4 +585,237 @@ async fn connected_missions_current_delegation_preserves_required_domains_and_re
     assert_eq!(script.calls.load(Ordering::SeqCst), 5);
     runtime.shutdown().await;
     server.abort();
+}
+
+struct CompoundIo {
+    read: Arc<Io>,
+    drafts: AtomicUsize,
+    calendars: AtomicUsize,
+    sends: AtomicUsize,
+}
+async fn compound_io(State(s): State<Arc<CompoundIo>>, req: Request<Body>) -> Response {
+    if req.method() == Method::GET {
+        return io_response(State(s.read.clone()), req).await;
+    }
+    let path = req.uri().path().to_owned();
+    if path.contains("send") {
+        s.sends.fetch_add(1, Ordering::SeqCst);
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    let mut body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(req.into_body(), 1000000)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    match path.as_str() {
+        "/drafts" => {
+            s.drafts.fetch_add(1, Ordering::SeqCst);
+            assert!(body["message"]["raw"].is_string());
+            axum::Json(json!({"id":"compounddraft","message":{"id":"compoundmessage","threadId":"compoundthread"}})).into_response()
+        }
+        "/calendars/primary/events" => {
+            s.calendars.fetch_add(1, Ordering::SeqCst);
+            body["etag"] = json!("\"compound-etag\"");
+            body["status"] = json!("confirmed");
+            body["organizer"] = json!({"self":true,"email":"owner@example.test"});
+            body["eventType"] = json!("default");
+            axum::Json(body).into_response()
+        }
+        _ => panic!("unexpected effect endpoint {path}"),
+    }
+}
+fn compound_decision(task: &str) -> Value {
+    json!({"domain":"calendar","decision":"command","operation":"create","connection_quote":null,"intent_quote":task,"title_quote":"Synthetic","target_quote":null,"date_quote":"2027-04-12","date":"2027-04-12","move_date_quote":null,"move_date":null,"all_day_quote":null,"last_date_quote":null,"last_date":null,"start_quote":"09:00","start":"09:00","end_quote":null,"end":null,"duration_quote":"30 minutes","duration_minutes":30,"clarification":null})
+}
+async fn compound_model(
+    State(s): State<Arc<Model>>,
+    axum::Json(body): axum::Json<Value>,
+) -> Response {
+    s.calls.fetch_add(1, Ordering::SeqCst);
+    let context: Value =
+        serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    let task = context["accepted"]["task"].as_str().unwrap();
+    let receipts = context["receipts"].as_array().unwrap();
+    let tools = body["tools"].as_array();
+    let definition = |name: &str| {
+        tools
+            .unwrap()
+            .iter()
+            .find(|t| t["function"]["name"] == name)
+            .unwrap()
+    };
+    let result = |id: &str| -> Value {
+        receipts.iter().find(|r| r["call_id"] == id).unwrap()["result"].clone()
+    };
+    let reference = |id: &str| -> Value {
+        let r = receipts.iter().find(|r| r["call_id"] == id).unwrap();
+        json!({"step":r["step"],"call_id":id})
+    };
+    let (delta, reason) = if context["plan"].as_array().unwrap().is_empty() {
+        (
+            json!({"role":"assistant","content":json!({"steps":["Read the requested evidence","Prepare exact mail and Calendar actions","Save the requested Gmail draft for later final approval"]}).to_string()}),
+            "stop",
+        )
+    } else {
+        match receipts.len() {
+            0 => {
+                let mail=definition("mail_search")["function"]["parameters"]["properties"]["connection_id"]["enum"][0].clone();
+                let cal=definition("calendar_list_events")["function"]["parameters"]["properties"]["connection_id"]["enum"][0].clone();
+                (
+                    json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"search".into(),"mail_search",json!({"connection_id":mail,"query":"newer_than:1d","page_token":null})),knowledge::tool_call(1,"list".into(),"calendar_list_events",json!({"connection_id":cal,"start":"2026-11-14T00:00:00Z","end":"2026-11-15T00:00:00Z","page_token":null}))]}),
+                    "tool_calls",
+                )
+            }
+            2 => {
+                let mail=definition("mail_read")["function"]["parameters"]["properties"]["connection_id"]["enum"][0].clone();
+                (
+                    json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"read".into(),"mail_read",json!({"connection_id":mail,"message_id":result("search")["value"]["messages"][0]["id"]}))]}),
+                    "tool_calls",
+                )
+            }
+            3 => {
+                let mail=definition("mission_prepare_mail")["function"]["parameters"]["properties"]["input"]["properties"]["connection_id"]["enum"][0].clone();
+                (
+                    json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"prepare".into(),"mission_prepare_mail",json!({"intent_quote":task,"input":{"connection_id":mail,"origin_thread_id":null,"content":{"from":"owner@example.test","to":["recipient@example.test"],"cc":[],"bcc":[],"subject":"Synthetic compound draft","text":"Owned mail body","reply":null}},"evidence":[reference("read")]})),knowledge::tool_call(1,"calendar".into(),"mission_calendar_action",json!({"decision":compound_decision(task),"evidence":[reference("list")]}))]}),
+                    "tool_calls",
+                )
+            }
+            5 => {
+                let p = result("prepare");
+                assert_eq!(
+                    p["kind"],
+                    "external",
+                    "prepare={p}, read={}",
+                    result("read")
+                );
+                assert_eq!(result("calendar")["value"]["state"], "applied");
+                (
+                    json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"provider".into(),"mission_save_provider_draft",json!({"intent_quote":task,"action_id":p["value"]["action_id"],"expected":{"revision":p["value"]["revision"],"digest":p["value"]["digest"]}}))]}),
+                    "tool_calls",
+                )
+            }
+            6 => {
+                assert_eq!(
+                    result("provider")["value"]["state"],
+                    "saved",
+                    "provider={}",
+                    result("provider")
+                );
+                (
+                    json!({"role":"assistant","content":json!({"text":"Prepared the exact local and Gmail drafts; Calendar creation has its actual receipt. Mail remains pending final owner approval.","evidence":[reference("read"),reference("prepare"),reference("calendar"),reference("provider")]}).to_string()}),
+                    "stop",
+                )
+            }
+            n => panic!("unexpected compound receipt count {n}"),
+        }
+    };
+    let data = frame(
+        json!({"id":"compound-actions","model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}),
+    ) + &frame(
+        json!({"id":"compound-actions","model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":3}}),
+    ) + "data: [DONE]\n\n";
+    Response::builder()
+        .header("content-type", "text/event-stream")
+        .body(Body::from(data))
+        .unwrap()
+}
+#[tokio::test]
+async fn compound_actions_runtime_reads_prepares_gmail_and_creates_calendar_without_sending() {
+    let _guard = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let script = Arc::new(Model {
+        calls: AtomicUsize::new(0),
+    });
+    let model_app = Router::new()
+        .route("/v1/chat/completions", post(compound_model))
+        .with_state(script.clone());
+    let model_server = tokio::spawn(async move { axum::serve(listener, model_app).await.unwrap() });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let io = Arc::new(CompoundIo {
+        read: Arc::new(Io {
+            reads: AtomicUsize::new(0),
+            searches: AtomicUsize::new(0),
+            writes: AtomicUsize::new(0),
+            hold: AtomicU8::new(0),
+            started: tokio::sync::Notify::new(),
+            release: Semaphore::new(0),
+        }),
+        drafts: AtomicUsize::new(0),
+        calendars: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    });
+    let io_app = Router::new().fallback(compound_io).with_state(io.clone());
+    let io_server = tokio::spawn(async move { axum::serve(listener, io_app).await.unwrap() });
+    let (_dir, s, u, _) = knowledge::tool_configured(&base).await;
+    let (read_only_mail, _) = connections(&s, &u, "owner").await;
+    s.disconnect_mail(&u, read_only_mail).await.unwrap();
+    let begin = s
+        .start_mail_compose_oauth_with_app(&u, pin())
+        .await
+        .unwrap();
+    let handle = s
+        .capture_mail_oauth(begin.state, secret("code"))
+        .await
+        .unwrap();
+    let exchange = s
+        .claim_mail_oauth_with_app(&u, handle, pin())
+        .await
+        .unwrap();
+    s.complete_mail_oauth(
+        exchange,
+        TokenSet {
+            access_token: secret("owner-mail"),
+            refresh_token: Some(secret("refresh")),
+            expires_in: 3600,
+            scopes: Some(
+                moosuri_connectors::gmail::COMPOSE_SCOPES
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect(),
+            ),
+        },
+        "owner@example.test".into(),
+    )
+    .await
+    .unwrap();
+    let task = "Read Gmail and Calendar, prepare an email draft to recipient@example.test and create primary Calendar event named Synthetic on 2027-04-12 at 09:00 for 30 minutes and save Gmail draft";
+    let m = s
+        .create_mission(
+            &u,
+            MissionCreate {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task: task.into(),
+                constraints: String::new(),
+                checks: vec![MissionCheck::UserReview {
+                    description: "Review the exact draft".into(),
+                }],
+                execution_mode: MissionMode::Durable,
+            },
+        )
+        .await
+        .unwrap();
+    let runtime = runtime(s.clone(), address);
+    runtime.wake();
+    let done = finished(&s, &u, &m.id).await;
+    assert_eq!(done.state, "partial", "{:?}", done.report);
+    assert_eq!(done.actions.len(), 2);
+    assert!(done.actions.iter().any(|a| a.kind == "mail"
+        && a.state == "pending_approval"
+        && a.provider_receipt.is_some()));
+    assert!(
+        done.actions
+            .iter()
+            .any(|a| a.kind == "calendar" && a.state == "applied" && a.provider_receipt.is_some())
+    );
+    assert_eq!(io.drafts.load(Ordering::SeqCst), 1);
+    assert_eq!(io.calendars.load(Ordering::SeqCst), 1);
+    assert_eq!(io.sends.load(Ordering::SeqCst), 0);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 6);
+    assert!(s.next_mail_dispatch().await.unwrap().is_none());
+    runtime.shutdown().await;
+    model_server.abort();
+    io_server.abort();
 }

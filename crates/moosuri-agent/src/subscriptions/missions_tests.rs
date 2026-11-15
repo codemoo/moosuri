@@ -84,12 +84,7 @@ pub(super) async fn response(s: &Provider, headers: &HeaderMap, body: &Value) ->
     let task = context["original"]["task"].as_str().unwrap();
     let receipts = context["receipts"].as_array().unwrap();
     let result = |id: &str| -> Value {
-        serde_json::from_str(
-            receipts.iter().find(|r| r["call_id"] == id).unwrap()["result"]
-                .as_str()
-                .unwrap(),
-        )
-        .unwrap()
+        receipts.iter().find(|r| r["call_id"] == id).unwrap()["result"].clone()
     };
     if s.hold_tool.swap(0, Ordering::SeqCst) == 1 {
         s.tool_entered.notify_one();
@@ -592,7 +587,9 @@ async fn google_response(State(g): State<Arc<Google>>, request: Request<Body>) -
             json!({"messages":[{"id":"ownedmessage","threadId":"ownedthread"}],"resultSizeEstimate":1})
         }
         "/messages/ownedmessage" => {
-            json!({"id":"ownedmessage","threadId":"ownedthread","labelIds":["INBOX"],"raw":URL_SAFE_NO_PAD.encode("From: sender@example.test\r\nTo: owner@example.test\r\nSubject: Owned briefing\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\nSynthetic owned mail")})
+            assert!(request.uri().query().unwrap().contains("format=full"));
+            let text = b"Synthetic owned mail";
+            json!({"id":"ownedmessage","threadId":"ownedthread","labelIds":["INBOX"],"payload":{"partId":"","mimeType":"text/plain","filename":"","headers":[{"name":"From","value":"sender@example.test"},{"name":"To","value":"owner@example.test"},{"name":"Subject","value":"Owned briefing"},{"name":"Message-ID","value":"<owned-message@example.test>"}],"body":{"size":text.len(),"data":URL_SAFE_NO_PAD.encode(text)}}})
         }
         "/users/me/calendarList/primary" => {
             json!({"id":"owner@example.test","summary":"Synthetic primary","timeZone":"UTC","primary":true,"accessRole":"owner"})

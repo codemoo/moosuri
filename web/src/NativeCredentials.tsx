@@ -1,5 +1,6 @@
 import {NativeMailBodies} from './NativeMailBodies';
 import {useEffect,useState} from 'react';
+import type {ScopedConnectionDescriptor} from '../shared/api-types';
 import {useScope} from './account-scope';
 import {ApiFailure,errorText,isAborted} from './api';
 type Job={request_id:string;repository:{owner:string;repository:string};status:string;projection:null|{git_hub_repository:{id:number;private:boolean;archived:boolean;stars:number;open_issues:number}}};
@@ -8,11 +9,12 @@ type Preview={subject:string;from:string;date:string;snippet:string;truncated:bo
 type PreviewJob={request_id:string;status:string;projection:null|{google_inbox_preview:{messages:Preview[];unavailable:number;more_available:boolean}}};
 type Status={devices:[string,string][];jobs:Job[];google_jobs?:GoogleJob[];google_preview_jobs?:PreviewJob[]};
 export function NativeCredentials({accountId,onExpired,back}:{accountId:string;onExpired:()=>void;back:()=>void}){
+ const [connections,setConnections]=useState<ScopedConnectionDescriptor[]>([]);
  const [pendingPreview,setPendingPreview]=useState<string|null>(null);
  const [pendingGoogle,setPendingGoogle]=useState<string|null>(null);
  const scope=useScope(accountId);const [state,setState]=useState<Status|null>(null);const [error,setError]=useState('');const [available,setAvailable]=useState(true);const [key,setKey]=useState('');const [challenge,setChallenge]=useState('');const [owner,setOwner]=useState('');const [repository,setRepository]=useState('');const [busy,setBusy]=useState(false);const [pending,setPending]=useState<{request_id:string;repository:{owner:string;repository:string}}|null>(null);
  function fail(e:unknown){if(isAborted(e))return;if(e instanceof ApiFailure&&e.status===401){onExpired();return}if(e instanceof ApiFailure&&e.status===404){setAvailable(false);return}setError(errorText(e))}
- async function refresh(){try{setState(await scope.request<Status>('/credential-broker/status'));}catch(e){fail(e)}}
+ async function refresh(){try{setState(await scope.request<Status>('/credential-broker/status'));const connections=await scope.request<ScopedConnectionDescriptor[]>('/connections');setConnections(Array.isArray(connections)?connections:[]);}catch(e){fail(e)}}
  useEffect(()=>{if(!available)return;void refresh();const timer=setInterval(()=>void refresh(),5000);return()=>clearInterval(timer)},[scope,available]);
  async function pair(){if(busy||!/[a-fA-F0-9]{64}/.test(key.trim())||key.trim().length!==64)return;setBusy(true);setError('');try{const public_key=key.trim().match(/../g)!.map(v=>parseInt(v,16));const value=await scope.request('/credential-broker/pair','POST',{public_key});setChallenge(JSON.stringify(value));}catch(e){fail(e)}finally{setBusy(false)}}
  async function request(input=pending??{request_id:crypto.randomUUID(),repository:{owner:owner.trim().toLowerCase(),repository:repository.trim().toLowerCase()}}){if(busy)return;setBusy(true);setPending(input);setError('');try{await scope.request('/credential-broker/github','POST',input);setPending(null);await refresh();}catch(e){fail(e)}finally{setBusy(false)}}
@@ -21,6 +23,7 @@ export function NativeCredentials({accountId,onExpired,back}:{accountId:string;o
  return <main className="admin-scroll settings-page"><button onClick={back}>뒤로</button><h2>신뢰 기기 credential · 실험 기능</h2>
  <p>개인 API token은 신뢰 기기의 볼트 사본에서만 사용합니다. 비서와 모델은 token·볼트 암호를 받지 않습니다. 현재 지원: GitHub 저장소 하나의 메타데이터와 기기에서 연결한 Google 계정의 Gmail INBOX 개수 또는 별도로 연결한 미리보기와 직접 선택한 메일의 일반 텍스트 본문 읽기.</p>
  {!available?<p role="status">이 설치에서는 실험 기능이 꺼져 있습니다.</p>:<>
+ <section className="admin-card"><h3>기기 Gmail을 비서 업무에서 읽기</h3><p>신뢰한 기기에서 select-google-model-read ITEM_UUID GOOGLE_SUB EMAIL로 메일 내용을 현재 비서 모델에 제공하는 읽기를 별도로 연결하세요. 로그아웃 후 맡긴 일·명시한 반복 업무는 select-google-model-background로 따로 연결해야 합니다. 기기가 온라인이고 볼트가 열려 있어야 합니다.</p><p>“native Gmail에서 최근 청구 메일을 읽어 줘”처럼 대화하거나 맡긴 일로 요청하세요. 같은 계정의 검색·본문·지원 PDF/텍스트 첨부 읽기는 매번 다시 허락하지 않습니다. 계정이 여러 개면 원래 업무 카드에서 하나만 선택합니다. INBOX 미리보기·선택한 본문 표시 권한은 모델 읽기로 바뀌지 않습니다. 메일 발송은 별도 최종 내용 허락을 따릅니다.</p><ul>{connections.filter(c=>c.operation.startsWith('google.mail.model_read')).map(c=><li key={`${c.device_id}:${c.binding_id}`}>{c.alias||`기기 Gmail ${c.binding_id.slice(-8)}`} · {c.state}<button disabled={busy} onClick={async()=>{const alias=window.prompt('이 연결에 직접 붙일 별칭',c.alias??'');if(alias===null)return;setBusy(true);try{await scope.request('/connections/alias','PUT',{binding_id:c.binding_id,alias});await refresh()}catch(e){fail(e)}finally{setBusy(false)}}}>별칭 지정</button></li>)}</ul></section>
  <section className="admin-card"><h3>기기 credential로 메일 보내기</h3><p>기기에서 select-google-send ITEM_UUID GOOGLE_SUB EMAIL로 별도의 발송·원래 보낸편지함 확인 권한을 연결하세요. 같은 계정의 로컬 초안과 전체 내용·시각을 메일 화면에서 확인하고 허락해야 실제로 발송합니다. 매번 추가 기기 승인을 요구하지 않습니다. 읽기용 credential과 선택 권한은 자동으로 넓어지지 않습니다.</p><button onClick={()=>window.location.assign('/settings/mail')}>메일 초안·최종 발송 확인 열기</button></section>
  <section className="admin-card"><h3>신뢰 기기 연결</h3><p>직접 빌드한 native companion을 --pair로 시작하고 공개키를 붙여 넣으세요. 기기에서 계정·origin을 확인하고 live 볼트 또는 명시적인 암호화 archive의 API-key 항목과 정확한 저장소 또는 Google 계정을 한 번 선택합니다. 같은 범위의 다음 요청은 자동 재사용합니다.</p>
  <label>기기 공개키<input value={key} onChange={e=>setKey(e.target.value)} autoComplete="off"/></label><button disabled={busy||key.trim().length!==64} onClick={()=>void pair()}>기기 연결 challenge 만들기</button>

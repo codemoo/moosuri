@@ -6,7 +6,7 @@ A self-hosted assistant for individuals, families and friends.
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat with bounded tab-refresh draft recovery and older-conversation recall,
 private knowledge with recorded-time source filters and opt-in fixed Korean word aliases, and memories with bounded date-scoped conversational updates, editable records, bounded
-read-only missions from chat or forms with editable paused one-off criteria and preserved request history, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary and supported visible-history lookups, personal Gmail with bounded PDF/text attachment reads, provider drafts and approved fixed scheduled sends, bounded timed/all-day Calendar actions and follow-up clarification from chat or forms, browser workspaces with optional login-profile recovery within their original lifetime, local reminders with bounded missing-time/content replies, shared [Korean/English civil dates and clocks](docs/conversational-civil-time.md) that preserve the requested week and recurrence,
+missions with bounded read/report/draft/primary-calendar operations from chat or forms, and editable paused one-off criteria before effects are prepared and preserved request history, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary and supported visible-history lookups, personal Gmail with bounded PDF/text attachment reads, provider drafts and approved fixed scheduled sends, bounded timed/all-day Calendar actions and follow-up clarification from chat or forms, browser workspaces with optional login-profile recovery within their original lifetime, local reminders with bounded missing-time/content replies, shared [Korean/English civil dates and clocks](docs/conversational-civil-time.md) that preserve the requested week and recurrence,
 opt-in Web Push, per-schedule notification mute, evidence-bound followup review
 suggestions with a shared topic mute, private images/UTF-8 files/text PDFs, bounded voice dictation through a
 separate OpenAI API connection, one-use PWA text/photo/file/audio sharing, and a separate encrypted vault.
@@ -26,8 +26,7 @@ literal plaintext from its current preview in settings or the original chat.
 A separately selected [native Gmail sender](docs/native-approved-gmail-send.md)
 uses the existing local draft and complete final-preview approval, including fixed
 send times. Its OAuth credential stays on the trusted device; uncertain sends are
-checked without resending. Broker routes remain default-off; general credential
-tools remain unfinished.
+checked without resending. A separately granted [native Gmail model-read route](docs/native-google-model-mail.md) supports bounded search, message/thread and PDF/text attachment reads in the original chat or delegated task, preserving its budget and deadline while waiting. Legacy display-only grants remain excluded. Broker routes remain default-off; general credential tools remain unfinished.
 Separate [signed native packages](docs/component-packages.md) can be prepared,
 verified and downloaded with an independent signing-key pin. Official artifacts
 and signing-key distribution remain unpublished.
@@ -39,6 +38,7 @@ Every mail send needs the user's explicit approval of its final preview, includi
 have conservative read-only Sent checks and are never automatically resent.
 
 Private learned skills can reuse verified two-to-four-step exact calculations and Japan Post latest-summary lookups with fresh inputs. A [source-bound calculation](docs/evidence-calculation.md) also composes one unambiguous saved-source read with exact arithmetic, then re-reads the current source on reuse. These routes can export a structural recipe with new synthetic examples.
+A [compound recipe](docs/compound-learning.md) can also learn source-bound exact calculation → requested private report or local mail draft from two independent owner-adopted results. Reuse reads fresh sources and each new draft still requires final send approval.
 Proven local recipes also work in explicitly created one-off and recurring missions, with fresh inputs, current sources and their original execution budget.
 A [public-page collection](docs/public-page-recipes.md) reads two to four explicit URLs, keeps each observation or failure separate, and learns a reusable page-count recipe from two distinct adopted results. Reuse reads the current targets again; evidence adoption does not certify the quality of a comparison.
 Suggestions can discover an explicitly configured public GitHub skill catalog,
@@ -94,7 +94,7 @@ explicit primary-calendar timed/all-day solo-event creation, date edits and dele
 through the existing typed service. Explicit one-off and recurring read-only missions
 can use the owner's separately verified personal model after logout, including
 delegated Gmail/primary Calendar reads. Media, automatic memory extraction and
-mission writes/browser/vault execution remain pending.
+broad mission writes/browser/vault execution remain pending. Supported [composed actions](docs/compound-actions.md) now prepare local/provider drafts and requested primary solo-event creation/date moves. Explicit [selected browser pages](docs/selected-browser-missions.md) can feed the original task. The separate [local browser foundation](docs/native-local-browser.md) exposes lifecycle/page count only; site login/read adapters and vault autofill remain unavailable.
 An optional [official Claude Code text connection](docs/claude-execution.md) provides
 owner settings, an exact-model probe and saved chat through a separate pinned
 rootless Linux execution profile. Actual official login and production-profile

@@ -260,6 +260,36 @@ async fn workspace_refreshes_navigation_while_original_read_handles_reject_it() 
     server.abort();
 }
 #[tokio::test]
+async fn selected_observation_requires_current_displayed_document_and_consumes_its_frame() {
+    let (mut workspace, state, server) = fixture().await;
+    let shown = workspace.frame().await.unwrap();
+    state.lock().unwrap().loader = "different-document".into();
+    assert!(matches!(
+        workspace.observe_selected(&shown.frame_token).await,
+        Err(BrowserError::StalePage)
+    ));
+    let current = workspace.frame().await.unwrap();
+    let selected = workspace
+        .observe_selected(&current.frame_token)
+        .await
+        .unwrap();
+    assert_eq!(selected.page.url, state.lock().unwrap().url);
+    assert!(matches!(
+        workspace.observe_selected(&current.frame_token).await,
+        Err(BrowserError::StalePage)
+    ));
+    let expired = workspace.frame().await.unwrap();
+    workspace.proof.as_mut().unwrap().captured_at =
+        Instant::now() - FRAME_MAX_AGE - Duration::from_secs(1);
+    assert!(matches!(
+        workspace.observe_selected(&expired.frame_token).await,
+        Err(BrowserError::StalePage)
+    ));
+    assert_eq!(state.lock().unwrap().inputs, 0);
+    workspace.shutdown().await;
+    server.abort();
+}
+#[tokio::test]
 async fn frame_tokens_accept_caret_pixels_but_reject_navigation_geometry_scroll_age_and_replay() {
     let (mut workspace, state, server) = fixture().await;
     let frame = workspace.frame().await.unwrap();

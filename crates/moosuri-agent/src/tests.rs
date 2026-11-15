@@ -521,6 +521,8 @@ mod planner_composition;
 
 #[cfg(feature = "credential-broker-chat")]
 mod credential_chat;
+#[cfg(feature = "credential-broker-chat")]
+mod native_mail;
 mod run_timings;
 
 mod compound_calculation;

@@ -22,6 +22,9 @@ pub struct PrivateCheckpoint {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
 pub enum KnowledgeToolInput {
+    NativeMail {
+        read: moosuri_vault_protocol::broker::MailModelRead,
+    },
     #[serde(rename = "knowledge_search")]
     Search {
         query: KnowledgeQuery,
@@ -75,6 +78,9 @@ pub enum KnowledgeToolInput {
     ConversationRead {
         turn_id: String,
         revision: i64,
+    },
+    MissionAction {
+        request: moosuri_core::MissionActionRequest,
     },
     InvalidArguments,
 }
@@ -278,7 +284,8 @@ fn retry_fences(conn: &Connection, tenant: &str, run: &str, needs_capacity: bool
         && last.is_none_or(|v| clock >= v))
 }
 pub(super) fn guard_execution(conn: &Connection, run: &Run) -> Result<()> {
-    if !crate::calendar::agent::dependencies_current(conn, run)?
+    if !crate::native_task_mail::dependencies_current(conn, run)?
+        || !crate::calendar::agent::dependencies_current(conn, run)?
         || !crate::learned_skills::dependencies_current(conn, run)?
         || !crate::conversation_recall::current(conn, run)?
     {
@@ -328,6 +335,7 @@ pub(super) fn inherit_dependencies(
     run: &str,
     prior: &str,
 ) -> Result<()> {
+    crate::native_task_mail::inherit(conn, tenant, run, prior)?;
     crate::artifacts::external::inherit(conn, tenant, run, prior)?;
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM agent_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mail_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM personal_artifact_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_run_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM learned_skill_uses WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM conversation_recall_dependencies WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM media_run_dependencies WHERE tenant_id=?1 AND run_id=?2)",
@@ -377,6 +385,7 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
     let mut ids = ids;
     loop {
         let before: BTreeSet<_> = ids.iter().cloned().collect();
+        ids = crate::native_task_mail::expand(conn, tenant, ids)?;
         ids = crate::conversation_recall::expand(
             conn,
             tenant,
@@ -552,6 +561,9 @@ pub(crate) fn read_tool(
         return Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable));
     }
     let read = match input {
+        KnowledgeToolInput::MissionAction { request } => {
+            crate::missions::actions::local(conn, run, request)
+        }
         KnowledgeToolInput::ConversationSearch { query, scope } => {
             crate::conversation_recall::search(conn, run, query, *scope)
                 .map(KnowledgeToolResult::ConversationSearch)
@@ -560,7 +572,8 @@ pub(crate) fn read_tool(
             crate::conversation_recall::read(conn, run, turn_id, *revision)
                 .map(KnowledgeToolResult::ConversationTurn)
         }
-        KnowledgeToolInput::CredentialGitHub { .. }
+        KnowledgeToolInput::NativeMail { .. }
+        | KnowledgeToolInput::CredentialGitHub { .. }
         | KnowledgeToolInput::CredentialGoogleInbox {}
         | KnowledgeToolInput::CredentialGooglePreview {} => {
             Ok(KnowledgeToolResult::Error(ToolReadError::Unavailable))
@@ -764,7 +777,7 @@ impl Store {
             crate::connection_waits::poll(&tx, now()?.checked_mul(1000).ok_or(StoreError::Unavailable)?)?;
             let running: i64=tx.query_row("SELECT count(*) FROM chat_runs WHERE state='running'",[],|r|r.get(0))?;
             if running>=2 {return Ok(None)}
-            let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND NOT EXISTS(SELECT 1 FROM mission_connection_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status IN('waiting','ready')) AND NOT EXISTS(SELECT 1 FROM credential_chat_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status='waiting') AND tenant_id NOT IN(SELECT tenant_id FROM chat_runs WHERE state='running') AND (NOT EXISTS(SELECT 1 FROM missions m WHERE m.tenant_id=chat_runs.tenant_id AND m.run_id=chat_runs.id) OR NOT EXISTS(SELECT 1 FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE r.state='running')) ORDER BY admitted_order LIMIT 64")?
+            let queued=tx.prepare("SELECT tenant_id,id FROM chat_runs WHERE state='queued' AND NOT EXISTS(SELECT 1 FROM native_task_mail_reads n WHERE n.tenant_id=chat_runs.tenant_id AND n.run_id=chat_runs.id AND n.status IN('waiting','committed','ready')) AND NOT EXISTS(SELECT 1 FROM mission_connection_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status IN('waiting','ready')) AND NOT EXISTS(SELECT 1 FROM credential_chat_waits w WHERE w.tenant_id=chat_runs.tenant_id AND w.run_id=chat_runs.id AND w.status='waiting') AND tenant_id NOT IN(SELECT tenant_id FROM chat_runs WHERE state='running') AND (NOT EXISTS(SELECT 1 FROM missions m WHERE m.tenant_id=chat_runs.tenant_id AND m.run_id=chat_runs.id) OR NOT EXISTS(SELECT 1 FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE r.state='running')) ORDER BY admitted_order LIMIT 64")?
               .query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
             for (tenant,id) in queued {
                 let run=chat::load_run(&tx,&tenant,&id)?;

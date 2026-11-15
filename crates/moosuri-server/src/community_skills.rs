@@ -13,7 +13,26 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/catalog/refresh", post(catalog_refresh))
         .route("/catalog/{id}/preview", post(catalog_preview))
         .route("/{id}/share-preview", post(share_preview))
+        .route("/{id}/recipe", get(recipe).put(edit_recipe))
         .route("/{id}", post(mutate))
+}
+async fn recipe(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    Ok(Json(s.store.compound_recipe(&user, id).await?).into_response())
+}
+async fn edit_recipe(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::CompoundRecipeEdit>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    Ok(Json(s.store.edit_compound_recipe(&user, id, input).await?).into_response())
 }
 async fn share_preview(
     State(s): State<AppState>,

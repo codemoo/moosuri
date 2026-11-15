@@ -2,12 +2,16 @@
 //! A durable grant is never converted to a session UserContext.
 use super::*;
 mod acceptance;
+pub(crate) mod actions;
 mod reports;
 pub(crate) use acceptance::floor as acceptance_floor;
 pub(crate) mod chat;
 pub(crate) mod connected;
 use crate::agent_execution::{KnowledgeToolInput, KnowledgeToolResult};
 use crate::chat::Run;
+pub use actions::{
+    MissionActionPermit, MissionActionStart, MissionCalendarCredentials, MissionProviderCredentials,
+};
 pub use connected::MissionReadCredentials;
 use moosuri_core::{
     MissionAction, MissionCandidate, MissionCheck, MissionControl, MissionCreate, MissionMode,
@@ -94,7 +98,9 @@ pub(crate) fn authority(c: &Connection, r: &Run) -> Result<()> {
 pub(crate) fn tool_allowed(v: &KnowledgeToolInput) -> bool {
     matches!(
         v,
-        KnowledgeToolInput::Search { .. }
+        KnowledgeToolInput::MissionAction { .. }
+            | KnowledgeToolInput::NativeMail { .. }
+            | KnowledgeToolInput::Search { .. }
             | KnowledgeToolInput::ReadSource { .. }
             | KnowledgeToolInput::ReadMemory { .. }
             | KnowledgeToolInput::SkillRead { .. }
@@ -387,6 +393,11 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
         }
     }
     Ok(MissionView {
+        actions: if invalid {
+            vec![]
+        } else {
+            actions::view(c, t, &raw.10)?
+        },
         compound: if invalid {
             None
         } else {
@@ -396,6 +407,7 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
             None
         } else {
             crate::connection_waits::view(c, t, id)?
+                .or(crate::native_task_mail::view(c, t, &raw.10)?)
         },
         id: raw.0,
         revision: raw.1,
@@ -516,6 +528,7 @@ pub(crate) fn apply_delete(c: &Connection, t: &str, id: &str) -> Result<()> {
         )
         .optional()?;
     if let Some(thread) = thread {
+        crate::browser::selected::withdraw_thread(c, t, &thread)?;
         crate::artifacts::external::delete_thread(c, t, &thread)?;
         c.execute("UPDATE missions SET state='deleted',grant_enabled=0,payload='',steering='[]',plan='[]',candidate=NULL,report='[]',round_text=NULL WHERE tenant_id=?1 AND id=?2",params![t,id])?;
         c.execute(
@@ -681,7 +694,8 @@ impl Store {
     ) -> Result<Option<MissionExecution>> {
         let l = lease.clone();
         self.call(move|db|{if !is_mission(&db.conn,&l.tenant,&l.run)?{return Ok(None)}let r=crate::chat::guard(&db.conn,&db.provider_key,&l)?;let(id,repairs):(String,i64)=db.conn.query_row("SELECT id,repairs FROM missions WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
- let receipts=db.conn.prepare("SELECT step,call_id,input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step>=?3 ORDER BY step,call_id LIMIT 12")?.query_map(params![r.tenant,r.id,acceptance::floor(&db.conn,&r.tenant,&r.id)?],|r|Ok(serde_json::json!({"step":r.get::<_,i64>(0)?,"call_id":r.get::<_,String>(1)?,"input":r.get::<_,Option<String>>(2)?,"result":r.get::<_,Option<String>>(3)?})))?.collect::<std::result::Result<Vec<_>,_>>()?;
+ let rows=db.conn.prepare("SELECT step,call_id,input,result FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND step>=?3 ORDER BY step,call_id LIMIT 12")?.query_map(params![r.tenant,r.id,acceptance::floor(&db.conn,&r.tenant,&r.id)?],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+ let receipts=rows.into_iter().map(|(step,call,input,result)|->Result<serde_json::Value>{Ok(serde_json::json!({"step":step,"call_id":call,"input":input.as_deref().map(parse::<serde_json::Value>).transpose()?,"result":result.as_deref().map(parse::<serde_json::Value>).transpose()?}))}).collect::<Result<Vec<_>>>()?;
  Ok(Some(MissionExecution{view:view(&db.conn,&r.tenant,&id)?,receipts:serde_json::json!(receipts),repairs,pending_round:db.conn.query_row("SELECT round_text FROM missions WHERE tenant_id=?1 AND id=?2",params![r.tenant,id],|r|r.get::<_,Option<String>>(0))?.as_deref().map(parse).transpose()?}))}).await
     }
     pub async fn mission_save_plan(
@@ -698,7 +712,7 @@ impl Store {
         plan: Vec<String>,
     ) -> Result<()> {
         let l = lease.clone();
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}reports::admit(&tx,&r,acceptance_revision)?;tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}reports::admit(&tx,&r,acceptance_revision)?;actions::admit_revision(&tx,&r,acceptance_revision)?;tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=NULL WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
     }
     /// Evidence references are resolved exclusively against this run's committed typed slots.
     pub async fn mission_verify(
@@ -727,6 +741,7 @@ impl Store {
  match raw {Some(raw)=>{let v:KnowledgeToolResult=parse(&raw)?;if matches!(v,KnowledgeToolResult::Error(crate::ToolReadError::OutcomeUnknown)){unknown=true;}
 if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} is a failed tool result",e.step,e.call_id));}else{evidence.push(v)}},None=>report.push(format!("Missing receipt {}:{}",e.step,e.call_id))}
  }
+ let(action_report,action_unknown)=actions::verification(&tx,&r)?;report.extend(action_report);unknown|=action_unknown;
  let mechanical_ready=report.is_empty() && !unknown && input.checks.iter().all(|check|match check {
  MissionCheck::PrivateReport{..}|MissionCheck::UserReview{..}=>true,
  MissionCheck::DecimalEquals{expected}=>candidate.text.contains(expected)&&evidence.iter().any(|v|matches!(v,KnowledgeToolResult::Decimal{exact}|KnowledgeToolResult::DecimalWorkflow{exact,..}|KnowledgeToolResult::EvidenceCalculation{exact,..} if exact==expected)),
@@ -758,7 +773,7 @@ if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} 
     }
 }
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) fn validate_input(input: &MissionCreate) -> Result<()> {
     Uuid::parse_str(&input.request_id).map_err(|_| StoreError::InvalidInput)?;
@@ -854,6 +869,7 @@ pub(crate) fn create_pinned_in(
         params![tenant, run, expiry],
     )?;
     let admitted = crate::chat::load_run(tx, tenant, &run)?;
+    actions::admit(tx, &admitted)?;
     let scope = admitted
         .tool_profile
         .as_ref()
@@ -889,6 +905,7 @@ pub(crate) fn read_profile(
     profile
         .community_metadata
         .retain(|metadata| profile.skills.contains(&metadata.pin));
+    profile.native_mail_scope = None;
     profile.native_mail_model_read = false;
     profile.native_mail_model_background = false;
     profile.credential_github = false;
@@ -979,6 +996,18 @@ pub(crate) fn create_owner_in(
         expiry,
         now()?,
     )?;
+    actions::admit(
+        tx,
+        &crate::chat::load_run(
+            tx,
+            &u.tenant.0,
+            &tx.query_row(
+                "SELECT run_id FROM missions WHERE tenant_id=?1 AND id=?2",
+                params![u.tenant.0, id],
+                |r| r.get::<_, String>(0),
+            )?,
+        )?,
+    )?;
     Ok(id)
 }
 
@@ -1001,7 +1030,7 @@ pub(crate) fn preflight_control_guard(
         params![u.tenant.0,target.id,u.account.id,u.epoch], |row| row.get(0)
     ).optional()?.ok_or(StoreError::Unauthorized)?;
     let dispatched: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",
+        "SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started') OR EXISTS(SELECT 1 FROM native_task_mail_reads WHERE tenant_id=?1 AND run_id=?2 AND status='committed')",
         params![u.tenant.0,run], |row| row.get(0))?;
     if dispatched {
         return Err(StoreError::Conflict);
@@ -1035,7 +1064,7 @@ pub(crate) fn control_owner_in(
         )
         .optional()?
         .ok_or(StoreError::NotFound)?;
-    let dispatched:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='dispatched') OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",params![u.tenant.0,run],|r|r.get(0))?;
+    let dispatched:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='dispatched') OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started') OR EXISTS(SELECT 1 FROM native_task_mail_reads WHERE tenant_id=?1 AND run_id=?2 AND status='committed')",params![u.tenant.0,run],|r|r.get(0))?;
     match &input.action {
         MissionAction::Pause | MissionAction::Cancel => {
             if !matches!(
@@ -1053,6 +1082,8 @@ pub(crate) fn control_owner_in(
                 "cancelled"
             };
             tx.execute("UPDATE missions SET state=?3,uncertain=max(uncertain,?4),revision=revision+1,grant_enabled=CASE WHEN ?3='cancelled' THEN 0 ELSE grant_enabled END WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,state,dispatched])?;
+            let carrier = crate::chat::load_run(tx, &u.tenant.0, &run)?;
+            crate::native_task_mail::cancel(tx, &carrier)?;
             connected::withdraw_private(tx, &u.tenant.0, &run)?;
             tx.execute(
                 "UPDATE chat_runs SET state='cancelled' WHERE tenant_id=?1 AND id=?2",

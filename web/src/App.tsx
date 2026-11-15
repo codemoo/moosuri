@@ -1212,7 +1212,7 @@ function Workspace({
             },
           }));
           navigate("/app");
-        }}/> : nativeCredentials ? <NativeCredentials key={session.user.id} accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>{const id=new URLSearchParams(window.location.search).get("mission_return");navigate(id&&/^[a-f0-9-]{36}$/i.test(id)?`/app/missions#mission-${id}`:"/app")}} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => navigate("/admin/google") : undefined}/> : knowledgeOpen ? (
+        }}/> : nativeCredentials ? <NativeCredentials key={session.user.id} accountId={session.user.id} onExpired={onExpired} back={()=>{const id=new URLSearchParams(window.location.search).get("mission_return");navigate(id&&/^[a-f0-9-]{36}$/i.test(id)?`/app/missions#mission-${id}`:"/app")}}/> : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>{const id=new URLSearchParams(window.location.search).get("mission_return");navigate(id&&/^[a-f0-9-]{36}$/i.test(id)?`/app/missions#mission-${id}`:"/app")}} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => navigate("/admin/google") : undefined}/> : knowledgeOpen ? (
           <KnowledgeView
             accountId={session.user.id}
             mode={memoryPage ? "memory" : "source"}

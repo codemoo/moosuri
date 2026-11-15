@@ -48,7 +48,16 @@ fn scopes(tokens: &TokenSet, initial: bool) -> Result<()> {
     Ok(())
 }
 fn connection(c: &Connection, u: &UserContext, id: &str) -> Result<CalendarConnection> {
-    c.query_row("SELECT id,primary_id,title,time_zone,epoch,credential_revision,status,auth_epoch FROM calendar_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,id],|r|{let epoch:i64=r.get(7)?;Ok(CalendarConnection{id:r.get(0)?,primary_id:r.get(1)?,title:r.get(2)?,time_zone:r.get(3)?,epoch:r.get(4)?,revision:r.get(5)?,status:if epoch!=u.epoch{"needs_reconnect".into()}else{r.get(6)?}})}).optional()?.ok_or(StoreError::NotFound)
+    connection_owned(c, &u.tenant.0, &u.account.id, u.epoch, id)
+}
+pub(crate) fn connection_owned(
+    c: &Connection,
+    tenant: &str,
+    account: &str,
+    epoch: i64,
+    id: &str,
+) -> Result<CalendarConnection> {
+    c.query_row("SELECT id,primary_id,title,time_zone,epoch,credential_revision,status,auth_epoch FROM calendar_connections WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|{let bound_epoch:i64=r.get(7)?;Ok(CalendarConnection{id:r.get(0)?,primary_id:r.get(1)?,title:r.get(2)?,time_zone:r.get(3)?,epoch:r.get(4)?,revision:r.get(5)?,status:if bound_epoch!=epoch{"needs_reconnect".into()}else{r.get(6)?}})}).optional()?.ok_or(StoreError::NotFound)
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StoredTokens {
@@ -80,10 +89,18 @@ pub struct CalendarDispatch {
     pub primary_id: String,
     pub event_id: String,
     pub digest: String,
-    user: UserContext,
+    user: Option<UserContext>,
+    owner: CalendarOwner,
     nonce: Vec<u8>,
     app: GoogleAppPin,
     settlement_revision: i64,
+}
+#[derive(Clone)]
+pub(crate) struct CalendarOwner {
+    pub tenant: String,
+    pub account: String,
+    pub epoch: i64,
+    pub session_digest: Vec<u8>,
 }
 pub enum CalendarAdmission {
     Recorded(CalendarAction),
@@ -103,8 +120,17 @@ type ActionRow = (
     i64,
 );
 fn action(c: &Connection, u: &UserContext, id: &str) -> Result<CalendarAction> {
-    let v:ActionRow=c.query_row("SELECT id,connection_id,state,event_id,before_etag,provider_etag,event,receipt,error,version,auth_epoch FROM calendar_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::NotFound)?;
-    Ok(CalendarAction{id:v.0,connection_id:v.1,state:v.2,event_id:v.3,before_etag:v.4,provider_etag:v.5,event:if v.10==u.epoch && agent::action_private_current(c,&u.tenant.0,id)? && c.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions a JOIN calendar_connections c ON c.tenant_id=a.tenant_id AND c.id=a.connection_id WHERE a.tenant_id=?1 AND a.id=?2 AND c.status='active' AND c.auth_epoch=?3 AND c.epoch=a.connection_epoch)",params![u.tenant.0,id,u.epoch],|r|r.get::<_,bool>(0))?{v.6.as_deref().map(parse).transpose()?}else{None},receipt:v.7,error:v.8,version:v.9})
+    action_owned(c, &u.tenant.0, &u.account.id, u.epoch, id)
+}
+pub(crate) fn action_owned(
+    c: &Connection,
+    tenant: &str,
+    account: &str,
+    epoch: i64,
+    id: &str,
+) -> Result<CalendarAction> {
+    let v:ActionRow=c.query_row("SELECT id,connection_id,state,event_id,before_etag,provider_etag,event,receipt,error,version,auth_epoch FROM calendar_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::NotFound)?;
+    Ok(CalendarAction{id:v.0,connection_id:v.1,state:v.2,event_id:v.3,before_etag:v.4,provider_etag:v.5,event:if v.10==epoch && agent::action_private_current(c,tenant,id)? && c.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions a JOIN calendar_connections c ON c.tenant_id=a.tenant_id AND c.id=a.connection_id WHERE a.tenant_id=?1 AND a.id=?2 AND c.status='active' AND c.auth_epoch=?3 AND c.epoch=a.connection_epoch)",params![tenant,id,epoch],|r|r.get::<_,bool>(0))?{v.6.as_deref().map(parse).transpose()?}else{None},receipt:v.7,error:v.8,version:v.9})
 }
 pub(crate) fn restart(c: &Connection) -> Result<()> {
     c.execute("UPDATE calendar_actions SET state='outcome_unknown',error='server_restarted',version=version+1 WHERE state='dispatch_committed'",[])?;
@@ -275,13 +301,14 @@ impl Store {
         error: Option<String>,
     ) -> Result<CalendarAction> {
         let u = d.user.clone();
+        let owner = d.owner.clone();
         let id = d.change.request_id.clone();
         let nonce = d.nonce.clone();
         let app = d.app.clone();
         let c = d.change.connection_id.clone();
         let epoch = d.change.expected_epoch;
         let d_revision = d.settlement_revision;
-        self.call(move|db|{if !["applied","outcome_unknown","conflict","failed_definite","observed_absent"].contains(&state.as_str())||receipt.len()>4096{return Err(StoreError::InvalidInput)}let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let matches:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions WHERE tenant_id=?1 AND id=?2 AND nonce=?3)",params![u.tenant.0,id,nonce],|r|r.get(0))?;if !matches{return Err(StoreError::Unauthorized)}let eligible=agent::action_private_current(&tx,&u.tenant.0,&id)? && validate(&tx,&u,true,false).is_ok()&&crate::google_setup::guard_app(&tx,&app).is_ok()&&connection(&tx,&u,&c).is_ok_and(|v|v.status=="active"&&v.epoch==epoch&&v.revision==d_revision);let old:String=tx.query_row("SELECT state FROM calendar_actions WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id],|r|r.get(0))?;if matches!(old.as_str(),"dispatch_committed"|"outcome_unknown"){tx.execute("UPDATE calendar_actions SET state=?3,provider_etag=?4,event=?5,receipt=?6,error=?7,version=version+1,payload=CASE WHEN ?8 THEN payload ELSE NULL END WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,state,event.as_ref().map(|e|&e.etag),if eligible{event.as_ref().map(json).transpose()?}else{None},receipt,error,eligible])?;}let result=if eligible{action(&tx,&u,&id)}else{Err(StoreError::Unauthorized)};tx.commit()?;result}).await
+        self.call(move|db|{if !["applied","outcome_unknown","conflict","failed_definite","observed_absent"].contains(&state.as_str())||receipt.len()>4096{return Err(StoreError::InvalidInput)}let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let matches:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions WHERE tenant_id=?1 AND id=?2 AND nonce=?3)",params![owner.tenant,id,nonce],|r|r.get(0))?;if !matches{return Err(StoreError::Unauthorized)}let eligible=agent::action_private_current(&tx,&owner.tenant,&id)? && u.as_ref().map_or_else(|| crate::missions::actions::settlement_current(&tx,&owner.tenant,&owner.account,owner.epoch,&id).unwrap_or(false),|u|validate(&tx,u,true,false).is_ok())&&crate::google_setup::guard_app(&tx,&app).is_ok()&&connection_owned(&tx,&owner.tenant,&owner.account,owner.epoch,&c).is_ok_and(|v|v.status=="active"&&v.epoch==epoch&&v.revision==d_revision);let old:String=tx.query_row("SELECT state FROM calendar_actions WHERE tenant_id=?1 AND id=?2",params![owner.tenant,id],|r|r.get(0))?;if matches!(old.as_str(),"dispatch_committed"|"outcome_unknown"){tx.execute("UPDATE calendar_actions SET state=?3,provider_etag=?4,event=?5,receipt=?6,error=?7,version=version+1,payload=CASE WHEN ?8 THEN payload ELSE NULL END WHERE tenant_id=?1 AND id=?2",params![owner.tenant,id,state,event.as_ref().map(|e|&e.etag),if eligible{event.as_ref().map(json).transpose()?}else{None},receipt,error,eligible])?;}let result=if eligible{action_owned(&tx,&owner.tenant,&owner.account,owner.epoch,&id)}else{Err(StoreError::Unauthorized)};tx.commit()?;result}).await
     }
     pub async fn calendar_reconcile(
         &self,
@@ -290,7 +317,7 @@ impl Store {
         app: GoogleAppPin,
     ) -> Result<CalendarDispatch> {
         let u = u.clone();
-        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;crate::google_setup::guard_app(&db.conn,&app)?;let(payload,digest,event_id,nonce,pin,epoch):(String,String,String,Vec<u8>,String,i64)=db.conn.query_row("SELECT payload,digest,event_id,nonce,app_pin,auth_epoch FROM calendar_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND state='outcome_unknown' AND payload IS NOT NULL",params![u.tenant.0,u.account.id,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::NotFound)?;if epoch!=u.epoch||pin!=json(&app)?{return Err(StoreError::Conflict)}let change:CalendarChange=parse(&payload)?;let c=connection(&db.conn,&u,&change.connection_id)?;if c.status!="active"||c.epoch!=change.expected_epoch{return Err(StoreError::Conflict)}Ok(CalendarDispatch{change,primary_id:c.primary_id,event_id,digest,user:u,nonce,app,settlement_revision:c.revision})}).await
+        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;crate::google_setup::guard_app(&db.conn,&app)?;let(payload,digest,event_id,nonce,pin,epoch):(String,String,String,Vec<u8>,String,i64)=db.conn.query_row("SELECT payload,digest,event_id,nonce,app_pin,auth_epoch FROM calendar_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND state='outcome_unknown' AND payload IS NOT NULL",params![u.tenant.0,u.account.id,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::NotFound)?;if epoch!=u.epoch||pin!=json(&app)?{return Err(StoreError::Conflict)}let change:CalendarChange=parse(&payload)?;let c=connection(&db.conn,&u,&change.connection_id)?;if c.status!="active"||c.epoch!=change.expected_epoch{return Err(StoreError::Conflict)}Ok(CalendarDispatch{change,primary_id:c.primary_id,event_id,digest,owner:CalendarOwner{tenant:u.tenant.0.clone(),account:u.account.id.clone(),epoch:u.epoch,session_digest:u.digest.to_vec()},user:Some(u),nonce,app,settlement_revision:c.revision})}).await
     }
 }
 #[cfg(test)]
@@ -306,6 +333,25 @@ fn admit_change_in(
     prior: Option<CalendarEvent>,
 ) -> Result<CalendarAdmission> {
     let u = validate(c, u, true, false)?;
+    let owner = CalendarOwner {
+        tenant: u.tenant.0.clone(),
+        account: u.account.id.clone(),
+        epoch: u.epoch,
+        session_digest: u.digest.to_vec(),
+    };
+    admit_change_owned(c, owner, Some(u), conn, app, change, primary, prior)
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn admit_change_owned(
+    c: &Connection,
+    owner: CalendarOwner,
+    user: Option<UserContext>,
+    conn: &CalendarConnection,
+    app: &GoogleAppPin,
+    change: CalendarChange,
+    primary: CalendarInfo,
+    prior: Option<CalendarEvent>,
+) -> Result<CalendarAdmission> {
     crate::google_setup::guard_app(c, app)?;
     let payload = json(&change)?;
     Uuid::parse_str(&change.request_id).map_err(|_| StoreError::InvalidInput)?;
@@ -313,7 +359,7 @@ fn admit_change_in(
     if let Some(old) = c
         .query_row(
             "SELECT digest FROM calendar_actions WHERE tenant_id=?1 AND account_id=?2 AND id=?3",
-            params![u.tenant.0, u.account.id, change.request_id],
+            params![owner.tenant, owner.account, change.request_id],
             |r| r.get::<_, String>(0),
         )
         .optional()?
@@ -321,13 +367,21 @@ fn admit_change_in(
         if old != digest {
             return Err(StoreError::Conflict);
         }
-        return Ok(CalendarAdmission::Recorded(action(
+        return Ok(CalendarAdmission::Recorded(action_owned(
             c,
-            &u,
+            &owner.tenant,
+            &owner.account,
+            owner.epoch,
             &change.request_id,
         )?));
     }
-    let current = connection(c, &u, &change.connection_id)?;
+    let current = connection_owned(
+        c,
+        &owner.tenant,
+        &owner.account,
+        owner.epoch,
+        &change.connection_id,
+    )?;
     if change.connection_id != conn.id
         || change.expected_epoch != current.epoch
         || change.expected_revision != current.revision
@@ -341,7 +395,7 @@ fn admit_change_in(
     {
         return Err(StoreError::Conflict);
     }
-    let count:i64=c.query_row("SELECT count(*) FROM calendar_actions WHERE tenant_id=?1 AND state IN('dispatch_committed','outcome_unknown')",[&u.tenant.0],|r|r.get(0))?;
+    let count:i64=c.query_row("SELECT count(*) FROM calendar_actions WHERE tenant_id=?1 AND state IN('dispatch_committed','outcome_unknown')",[&owner.tenant],|r|r.get(0))?;
     if count >= 16 {
         return Err(StoreError::Busy);
     }
@@ -383,13 +437,14 @@ fn admit_change_in(
     };
     moosuri_connectors::calendar::event_id(&event_id).map_err(|_| StoreError::InvalidInput)?;
     let nonce = token_hash(&random()?);
-    c.execute("INSERT INTO calendar_actions(tenant_id,account_id,id,connection_id,connection_epoch,credential_revision,auth_epoch,session_digest,app_pin,payload,digest,kind,event_id,before_etag,state,nonce,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'dispatch_committed',?15,?16)",params![u.tenant.0,u.account.id,change.request_id,current.id,current.epoch,current.revision,u.epoch,u.digest.as_slice(),json(&app)?,payload,digest,kind,event_id,etag,nonce,now()?])?;
+    c.execute("INSERT INTO calendar_actions(tenant_id,account_id,id,connection_id,connection_epoch,credential_revision,auth_epoch,session_digest,app_pin,payload,digest,kind,event_id,before_etag,state,nonce,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'dispatch_committed',?15,?16)",params![owner.tenant,owner.account,change.request_id,current.id,current.epoch,current.revision,owner.epoch,owner.session_digest.as_slice(),json(&app)?,payload,digest,kind,event_id,etag,nonce,now()?])?;
     Ok(CalendarAdmission::Dispatch(CalendarDispatch {
         change,
         primary_id: primary.id,
         event_id,
         digest,
-        user: u,
+        user,
+        owner,
         nonce,
         app: app.clone(),
         settlement_revision: current.revision,

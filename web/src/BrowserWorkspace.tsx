@@ -8,6 +8,7 @@ import type {
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
 import "./browser-workspace.css";
+import { SelectedBrowserMission } from "./SelectedBrowserMission";
 
 type Props = {
   accountId: string;
@@ -756,6 +757,13 @@ function Workspace(props: Props & { threadId: string }) {
             )}
           </div>
           <div className="browser-actions">
+              {controlling && value && token.current && <SelectedBrowserMission
+                key={`${value.id}:${value.revision}`}
+                accountId={props.accountId} threadId={props.threadId}
+                workspaceId={value.id} revision={value.revision} controlToken={token.current} frameToken={frame?.frame_token??""}
+                disabled={busy || !frame || frame.url === "about:blank"}
+                onBusy={setBusy} onExpired={props.onExpired} onChanged={props.onChanged}
+              />}
               {value?.recoverable && <button className="primary" disabled={busy} onClick={() => void mutate("recover")}>로그인 정보 복구 · 직접 확인</button>}
               {resumeUncertain && (
                 <button

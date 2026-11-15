@@ -8,6 +8,42 @@ use moosuri_core::{SkillShareInput, SkillSharePreview};
 use std::collections::BTreeMap;
 
 fn reconstruct(route: &str) -> Result<SkillSharePreview> {
+    if draft::is_route(route) {
+        let recipe = compound::recipe(route).ok_or(StoreError::Corrupt)?;
+        return package(
+            &format!("source-calculation-draft-{}", &hash(route)[..12]),
+            "Read fresh source facts, calculate exactly and prepare a requested local mail draft for human review.",
+            &format!(
+                "1. Require a new owner task explicitly authorizing local mail draft preparation, fresh source query/prefix/scalars and fresh recipients/body. Never copy source/account/recipient/credential bindings or values from this package or history.\n2. Search one unique complete current source, read the actual ID/revision, and execute evidence_calculate with actual read addresses and typed plan {}. Every read/arithmetic/preparation call counts against the existing twelve-tool budget.\n3. Call the admitted mission_prepare_mail operation with the fresh current-owner MailDraftInput and actual completed calculation receipt. Include actual source title, prefix, observed number and exact result in the body. The existing D contract decides current connection/recipient authority and creates a fresh local MailAction.\n4. Keep narrative and recipient review required. Each original action revision/digest needs fresh final human approval. Approval, sending, provider draft saves, arbitrary code and credentials are never recipe nodes. Imported examples, replays and recurring runs do not create proof. The receiving owner needs two fresh independent adopted results.\nSynthetic precondition: separately prepare one complete saved source titled Synthetic worksheet with synthetic_amount: 100. Require all fresh scalar slots and an explicit example recipient such as recipient@example.test in the current owner task. Installation performs no IO, creates no source/action and grants no approval.",
+                encode(&recipe.calculation)?
+            ),
+            vec![
+                "knowledge_search",
+                "knowledge_read_source",
+                "evidence_calculate",
+                "mail_prepare_draft",
+            ],
+            "For a separately prepared Synthetic worksheet, quote synthetic_amount: and supply all new scalar slots; prepare a local draft to the current user's explicit synthetic recipient only when requested. Missing inputs require clarification.",
+            "Use actual fresh source/calculation and original local MailAction revision/digest. Narrative and recipient review remain required; no send approval, private trace or qualification is inherited.",
+        );
+    }
+    if let Some(recipe) = compound::recipe(route) {
+        return package(
+            &format!("source-calculation-report-{}", &hash(route)[..12]),
+            "Read fresh source evidence, calculate exactly, and prepare an explicitly requested private report.",
+            &format!(
+                "1. Require fresh literal source query, numeric prefix and scalar quotes in the current owner request. No remembered source/resource/account/credential bindings or values.\n2. Search exactly one current complete saved source, read its actual ID/revision and bind actual receipts to evidence_calculate using this typed plan: {}. Missing or ambiguous evidence is a failure. All arithmetic leaves count against the existing twelve-tool run limit.\n3. Report actual source title, numeric prefix, observed number and exact result. Only a current owner mission requesting a private report can save the report through the existing report writer. No package installation, imported example or replay creates local qualification proof.\n4. Retain review_required for narrative, comparisons, gaps and conclusions. No approval, send, arbitrary code or credentials are recipe nodes. A receiving account must supply fresh inputs and build its own two independent adopted-output proofs.\nSynthetic fixture precondition: separately prepare one complete saved source titled Synthetic worksheet with text synthetic_amount: 100. Package installation does not create or fetch evidence.",
+                encode(&recipe.calculation)?
+            ),
+            vec![
+                "knowledge_search",
+                "knowledge_read_source",
+                "evidence_calculate",
+            ],
+            "Read Synthetic worksheet using numeric prefix synthetic_amount: and fresh scalar slots from the current request, apply the provided typed plan and save a private report only if explicitly requested. Supply all required scalar slots before execution.",
+            "Require fresh actual source/read/calculation receipts and requested document revision. Missing scalar inputs or source fixtures require clarification, never synthetic fallback values. Narrative remains review_required; no private success/proof is inherited.",
+        );
+    }
     if let Some(count) = pages::count(route) {
         let urls = (0..count)
             .map(|n| format!("https://example.com/synthetic-option-{}", n + 1))

@@ -300,11 +300,11 @@ impl CalendarService {
             .store
             .admit_calendar_change(&b, input, p, prior.as_ref().map(|v| v.event().clone()))
             .await?;
-        self.dispatch(b, admission, prior, cancel).await
+        self.dispatch(b.access, admission, prior, cancel).await
     }
     async fn dispatch(
         &self,
-        b: CalendarBinding,
+        access: SecretString,
         admission: CalendarAdmission,
         prior: Option<Observation>,
         cancel: CancellationToken,
@@ -316,7 +316,7 @@ impl CalendarService {
         // This is the only write invocation. No retry or refresh is performed after commitment.
         let result = self
             .io
-            .mutate(&b.access, &dispatch, prior.as_ref(), &cancel)
+            .mutate(&access, &dispatch, prior.as_ref(), &cancel)
             .await;
         let (state, event, receipt, error) = match result {
             Ok(result) => {
@@ -421,7 +421,7 @@ impl CalendarService {
                 .store
                 .admit_calendar_agent_change(l, &b, p, prior.as_ref().map(|v| v.event().clone()))
                 .await?;
-            self.dispatch(b, admission, prior, cancel).await?;
+            self.dispatch(b.access, admission, prior, cancel).await?;
             Ok::<_, StoreError>(())
         }
         .await;
@@ -443,6 +443,63 @@ impl CalendarService {
             }
             Err(e) => Err(e),
         }
+    }
+    pub(crate) async fn mission_action(
+        &self,
+        permit: &moosuri_store::MissionActionPermit,
+        cancel: &CancellationToken,
+    ) -> Result<moosuri_store::KnowledgeToolResult, StoreError> {
+        let app = self.app().await?;
+        let mut b = self
+            .store
+            .mission_calendar_credentials(permit, app.pin.clone())
+            .await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| StoreError::Unavailable)?
+            .as_secs() as i64;
+        if b.expires_at <= now + 60 {
+            let tokens = self
+                .mail
+                .client()
+                .refresh(&app.client, &b.refresh, cancel)
+                .await
+                .map_err(remote)?;
+            self.store
+                .refresh_mission_calendar(permit, &b, tokens)
+                .await?;
+            b = self
+                .store
+                .mission_calendar_credentials(permit, app.pin)
+                .await?;
+        }
+        let primary = self.io.primary(&b.access, cancel).await.map_err(remote)?;
+        let target = self.store.mission_calendar_target(permit).await?;
+        let prior = if let Some(target) = target {
+            Some(
+                self.io
+                    .event(&b.access, &primary.id, &target.id, cancel)
+                    .await
+                    .map_err(remote)?,
+            )
+        } else {
+            None
+        };
+        let admission = self
+            .store
+            .admit_mission_calendar_change(
+                permit,
+                &b,
+                primary,
+                prior.as_ref().map(|v| v.event().clone()),
+            )
+            .await?;
+        let a = self
+            .dispatch(b.access, admission, prior, cancel.clone())
+            .await?;
+        Ok(moosuri_store::KnowledgeToolResult::External(
+            serde_json::json!({"action_id":a.id,"state":a.state,"event_id":a.event_id,"provider_etag":a.provider_etag,"receipt":a.receipt,"error":a.error}),
+        ))
     }
     pub async fn external(
         &self,

@@ -210,3 +210,46 @@ pub struct EvidenceDecimalReceipt {
     pub search: ToolReceiptReference,
     pub source: ToolReceiptReference,
 }
+
+/// Structural read→exact calculation→requested report recipe. No remembered values,
+/// account/resource bindings, credentials, approval or send operations can occur.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompoundReportRecipe {
+    pub schema_version: u32,
+    pub revision: u32,
+    pub calculation: EvidencePlan,
+}
+impl CompoundReportRecipe {
+    pub fn valid(&self) -> bool {
+        self.schema_version == 1
+            && (1..=1_000_000).contains(&self.revision)
+            && self.calculation.valid()
+            && self.node_count() <= 8
+    }
+    /// Search + source read + each exact arithmetic leaf + requested document.
+    pub fn node_count(&self) -> usize {
+        3 + self.calculation.graph.steps.len()
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompoundReportAdoption {
+    pub artifact_id: String,
+    pub artifact_revision: i64,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompoundRecipeEdit {
+    pub expected_revision: i64,
+    pub calculation: EvidencePlan,
+}
+
+/// Owner adoption of one original local draft result, never send approval.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompoundDraftAdoption {
+    pub action_id: String,
+    pub revision: i64,
+    pub digest: String,
+}

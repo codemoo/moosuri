@@ -30,6 +30,9 @@ enum WorkerRequest {
     },
     WorkspaceBlank,
     WorkspaceObserve,
+    WorkspaceObserveSelected {
+        expected_frame_token: String,
+    },
     WorkspaceFrame,
     WorkspaceInput {
         expected_frame_token: String,
@@ -170,6 +173,7 @@ async fn main() {
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceOpen { url })) => s.open(&url).await.map(|v|json!(v)),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceBlank)) => s.blank().await.map(|_|json!({"blank":true})),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceObserve)) => s.observe().await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceObserveSelected{expected_frame_token})) => s.observe_selected(&expected_frame_token).await.map(|v|json!(v)),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceFrame)) => s.frame().await.map(|v|json!(v)),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceInput { expected_frame_token, input })) => s.input(&expected_frame_token, input).await.map(|_|json!({"accepted":true})),
             _ => Err(BrowserError::Protocol),

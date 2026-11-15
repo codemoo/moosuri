@@ -15,6 +15,8 @@ pub struct SkillPin {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunToolProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_mail_scope: Option<NativeMailRunScope>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub native_mail_model_read: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -165,4 +167,13 @@ pub fn mission_read_domains(text: &str) -> (bool, bool) {
                 .replace("일정한", "")
                 .contains("일정"),
     )
+}
+
+/// Original unresolved native-mail slot. IDs are opaque and never identify a vault item.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeMailRunScope {
+    pub version: u32,
+    pub operation: u32,
+    pub candidate_binding_ids: Vec<String>,
 }

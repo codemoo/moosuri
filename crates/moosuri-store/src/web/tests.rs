@@ -444,6 +444,7 @@ fn browser_requires_v4_and_identical_current_deployment_pin() {
     };
     for version in 1..=4 {
         let profile = RunToolProfile {
+            native_mail_scope: None,
             native_mail_model_read: false,
             native_mail_model_background: false,
             evidence_calculation: false,

@@ -56,7 +56,7 @@ async fn runtime_public_page_collection_learns_then_reads_fresh_foreground_and_e
             let current=mission_context.as_ref().map(|v|v["accepted"]["task"].as_str().unwrap()).unwrap_or_else(||body["messages"].as_array().unwrap().iter().rev().find(|v|v["role"]=="user").unwrap()["content"].as_str().unwrap());
             let label=["A-private","B-private","C-fresh","D-mission"].into_iter().find(|v|current.contains(v)).unwrap();let current_urls=urls(label);
             let prior=if let Some(ctx)=&mission_context {
-                ctx["receipts"].as_array().unwrap().iter().filter_map(|v|v["result"].as_str().and_then(|raw|serde_json::from_str::<Value>(raw).ok())).collect::<Vec<_>>()
+                ctx["receipts"].as_array().unwrap().iter().filter(|v| !v["result"].is_null()).map(|v|v["result"].clone()).collect::<Vec<_>>()
             }else{result_values(&body)};
             if let Some(value)=prior.iter().find(|v|v["value"]["public_pages"].is_object()) {
                 let text=answer(value);

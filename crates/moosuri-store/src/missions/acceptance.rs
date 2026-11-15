@@ -47,6 +47,7 @@ impl Store {
             preflight_control_guard(&tx,&db.provider_key,&u,&moosuri_core::MissionChatTarget{kind:"mission".into(),id:id.clone(),revision:before.revision})?;
             let carrier=crate::chat::load_run(&tx,&u.tenant.0,&run)?;
             if !connected::current(&tx,&carrier)? {return Err(StoreError::Conflict)}
+            actions::require_revisable(&tx,&carrier)?;
             if matches!(before.request.execution_mode,MissionMode::CurrentSession) {crate::chat::authority(&tx,&carrier)?;if carrier.session!=u.digest{return Err(StoreError::Unauthorized)}}
             let mut next=before.request.clone();next.task=input.task;next.constraints=input.constraints;next.checks=input.checks;
             validate_input(&next)?;
@@ -54,7 +55,8 @@ impl Store {
             let text=format!("{}\n{}",next.task,next.constraints);
             let (mail,calendar)=moosuri_core::mission_read_domains(&text);
             let connected=carrier.tool_profile.as_ref().and_then(|p|p.mission_reads.as_ref());
-            if connected::unsupported_effect(&text) || mail && connected.is_none_or(|p|p.mail.is_empty()) || calendar && connected.is_none_or(|p|p.calendar.is_empty()) {return Err(StoreError::Forbidden)}
+            let native=carrier.tool_profile.as_ref().is_some_and(|p|p.native_mail_model_read&&p.native_mail_scope.as_ref().is_some_and(|s|s.version==1&&s.operation==8));
+            if connected::unsupported_effect(&text) || mail && !native && connected.is_none_or(|p|p.mail.is_empty()) || calendar && connected.is_none_or(|p|p.calendar.is_empty()) {return Err(StoreError::Forbidden)}
             let public_web=text.contains("https://") || text.contains("http://") || text.to_lowercase().contains("public web") || text.contains("웹");
             if public_web && carrier.tool_profile.as_ref().and_then(|p|p.web.as_ref()).is_none_or(|p|!p.read) {return Err(StoreError::Forbidden)}
             // A revision cannot turn unavailable execution modes into a read plan.

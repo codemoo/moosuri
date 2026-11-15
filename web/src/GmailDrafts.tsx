@@ -59,7 +59,7 @@ export function GmailDrafts({ connection, action, request, importDraft, fail, di
       }, true)}>이 Gmail 초안 삭제</button>
     </article>}
     {canSave && <>
-      <p>아래 발송 확인에 표시된 로컬 내용으로 Gmail 초안을 저장합니다.</p>
+      <p>아래 발송 확인에 표시된 로컬 내용으로 Gmail 초안을 저장합니다. 같은 확인본을 다시 누르면 이전 저장 결과를 확인하며, 초안을 중복 생성하지 않습니다.</p>
       <button disabled={disabled || busy} onClick={() => void save(false)}>확인본을 Gmail에 새 초안으로 저장</button>
       {draft?.content && <><p>Gmail은 원자적 수정 충돌 검사를 제공하지 않습니다. 다른 곳에서 동시에 편집하지 마세요. 목록에서 읽은 초안을 아래 로컬 확인본으로 덮어씁니다.</p><button disabled={disabled || busy} onClick={() => void save(true)}>선택한 Gmail 초안을 확인본으로 덮어쓰기</button></>}
     </>}

@@ -1,6 +1,7 @@
 //! Fixed Google refresh/identity checks, INBOX counts and separately selected preview.
 //! Only typed numeric counts or bounded untrusted mail fields cross this adapter.
 use crate::*;
+pub mod model_mail;
 use moosuri_vault_core::{ItemFields, ItemKind, SecretText, UnlockedArchive};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -606,6 +607,22 @@ impl GoogleAdapter {
         secret: &str,
         send: bool,
     ) -> Result<(Credential, Token)> {
+        self.authorize_for(identity, secret, send, false).await
+    }
+    async fn authorize_model(
+        &self,
+        identity: &GoogleIdentity,
+        secret: &str,
+    ) -> Result<(Credential, Token)> {
+        self.authorize_for(identity, secret, false, true).await
+    }
+    async fn authorize_for(
+        &self,
+        identity: &GoogleIdentity,
+        secret: &str,
+        send: bool,
+        model: bool,
+    ) -> Result<(Credential, Token)> {
         if !identity.valid() {
             return Err(Error::Policy);
         }
@@ -651,7 +668,11 @@ impl GoogleAdapter {
                 .as_ref()
                 .is_some_and(|s| s.expose() != credential.refresh_token.expose())
         {
-            return Err(Error::Policy);
+            return Err(if model {
+                Error::GoogleScope
+            } else {
+                Error::Policy
+            });
         }
         // A rotated refresh token is never silently discarded or written in plaintext.
         let verified: Identity = Self::response(
@@ -664,7 +685,11 @@ impl GoogleAdapter {
             || verified.sub.expose() != identity.subject
             || verified.email.expose() != identity.email
         {
-            return Err(Error::Policy);
+            return Err(if model {
+                Error::GoogleAccount
+            } else {
+                Error::Policy
+            });
         }
         let profile: Profile = Self::response(
             self.client
@@ -673,7 +698,11 @@ impl GoogleAdapter {
         )
         .await?;
         if profile.email.expose() != verified.email.expose() {
-            return Err(Error::Policy);
+            return Err(if model {
+                Error::GoogleAccount
+            } else {
+                Error::Policy
+            });
         }
         Ok((credential, token))
     }
@@ -766,6 +795,22 @@ impl Engine {
     ) -> Result<Binding> {
         self.archive_google_grant_for(archive, item, identity, expires, 3)
     }
+    pub fn archive_google_model_read_grant(
+        &mut self,
+        archive: &mut UnlockedArchive,
+        item: uuid::Uuid,
+        identity: GoogleIdentity,
+        expires: i64,
+        background: bool,
+    ) -> Result<Binding> {
+        self.archive_google_grant_for(
+            archive,
+            item,
+            identity,
+            expires,
+            if background { 5 } else { 4 },
+        )
+    }
     fn archive_google_grant_for(
         &mut self,
         archive: &mut UnlockedArchive,
@@ -792,6 +837,8 @@ impl Engine {
                 && g.google_preview() == (mode == 1)
                 && g.google_body() == (mode == 2)
                 && g.google_send() == (mode == 3)
+                && g.google_model_read() == (mode >= 4)
+                && g.google_model_background() == (mode == 5)
                 && g.binding.expires_at > current_time().unwrap_or(i64::MAX)
         }) {
             // No retained invocation may cross a credential-version change.
@@ -815,6 +862,18 @@ impl Engine {
             let binding = g.binding.clone();
             self.save()?;
             return Ok(binding);
+        }
+        if mode >= 4 {
+            return self.select(policy::LocalGrant::select_google_model_read(
+                self.device().clone(),
+                item,
+                archive.header().binding.vault_id,
+                identity,
+                epoch,
+                key,
+                expires,
+                mode == 5,
+            )?);
         }
         self.select((if mode == 3 {
             policy::LocalGrant::select_google_send
@@ -845,6 +904,7 @@ impl Engine {
             Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailModelRead { .. }
                 | Operation::GoogleMailSend { .. }
                 | Operation::GoogleMailLookup { .. }
         ) || archive.header().binding.owner_id != self.device().owner.account
@@ -930,10 +990,16 @@ impl Engine {
             Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailModelRead { .. }
                 | Operation::GoogleMailSend { .. }
                 | Operation::GoogleMailLookup { .. }
         ) {
             return Err(Error::Policy);
+        }
+        if matches!(request.operation, Operation::GoogleMailModelRead { .. }) {
+            return self
+                .execute_model_mail_secret(invocation, adapter, secret, item_epoch, key_epoch)
+                .await;
         }
         if matches!(
             request.operation,

@@ -275,3 +275,16 @@ pub(crate) fn read_archive(path: &Path) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+
+/// Native-browser profile ancestors receive the same ownership/ACL checks as
+/// broker state. This grants no server path or remote filesystem operation.
+pub(crate) fn private_directory(path: &Path) -> Result<()> {
+    root(path, false).map(|_| ())
+}
+pub(crate) fn private_write(path: &Path, name: &str, bytes: &[u8]) -> Result<()> {
+    let dir = root(path, false)?;
+    let mut file = open(&dir, name, true)?;
+    io(file.write_all(bytes))?;
+    io(file.sync_all())?;
+    io(dir.sync_all())
+}

@@ -102,3 +102,10 @@ provider/인프라 실패·취소·자료 없음·schema 무효화는 이 실패
 보였다는 이유로 다른 예약을 중단하지 않는다. 다시 켠 뒤 사용자가 예약을 재개해야 한다.
 업무 수행은 새 학습 proof가 아니며 개인 proof와 삭제 tombstone을 GC하지 않는다.
 [예약 재사용 검증](reviews/2026-11-15-mission-recipes.md).
+
+## 채택한 복합 보고서
+
+저장 자료 읽기→source-bound 정확 계산→요청한 비공개 보고서의 별도 qualification 경로와
+카드 편집·새 revision·합성 공유를 추가했다. 일반 미션 완료 제외는 유지하고, 소유자가
+채택한 두 독립 결과만 검사한다. [복합 절차의 범위와 검증](compound-learning.md)을 따른다.
+D의 원래 로컬 초안 revision/digest 채택은 별도 draft allowlist로 지원한다. 각 새 초안의 승인·발송과 provider 저장 효과, browser credential은 학습 node에 포함하지 않는다.

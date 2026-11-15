@@ -1,3 +1,4 @@
+import {CompoundRecipeEditor} from "./CompoundRecipeEditor";
 import { useEffect, useRef, useState } from "react";
 import type { CommunitySkillCard, CommunityCatalogStatus, GitHubSkillLocation } from "../shared/api-types";
 import { useScope } from "./account-scope";
@@ -98,6 +99,18 @@ function Cards({ accountId, onExpired, back, connect, start }: Props) {
       }
     }
   }
+  async function editRecipe(card:CommunitySkillCard,calculation:unknown):Promise<boolean> {
+    if(mutationOwner.current)return false;
+    const owner=Symbol();mutationOwner.current=owner;const generation=++catalogGeneration.current;
+    listController.current?.abort();setBusy(true);setError("");
+    try {
+      await scope.request(`/community-skills/${encodeURIComponent(card.id)}/recipe`,"PUT",{expected_revision:card.revision,calculation});
+      const snapshot=await scope.request<CommunitySkillCard[]>("/community-skills","GET");
+      if(generation!==catalogGeneration.current||mutationOwner.current!==owner)return false;
+      setCards(snapshot);return true;
+    }catch(e){if(generation===catalogGeneration.current)fail(e);return false;}
+    finally{if(mutationOwner.current===owner){mutationOwner.current=null;setBusy(false);}}
+  }
   async function publicCatalog(previewCard?: CommunitySkillCard) {
     if (mutationOwner.current) return;
     const owner=Symbol();mutationOwner.current=owner;const generation=++catalogGeneration.current;
@@ -164,6 +177,7 @@ function Cards({ accountId, onExpired, back, connect, start }: Props) {
           {card.id.startsWith("private:") && ["ready", "candidate", "disabled"].includes(card.readiness) &&
             <button disabled={busy} onClick={() => setShareId(shareId === card.id ? null : card.id)}>절차 공유하기</button>}
           {shareId === card.id && <SkillShare key={`${card.id}:${card.revision}`} accountId={accountId} card={card} close={() => setShareId(null)} onExpired={onExpired} />}
+          {(card.capabilities.includes("compound_report_recipe")||card.capabilities.includes("compound_draft_recipe"))&&<CompoundRecipeEditor key={`${card.id}:${card.revision}`} accountId={accountId} card={card} onExpired={onExpired} edit={calculation=>editRecipe(card,calculation)}/>}
           <details>
             <summary>출처 · 버전 · 필요한 기능</summary>
             {card.id.startsWith("private:") ? <p>나의 실제 작업에서 배운 개인 절차입니다. 제한된 연산 결과 검증이며 전체 업무 성공을 보증하지 않습니다. 공개 원본이나 공유된 학습 이력이 없습니다.</p> : <p>제작자: {card.github ? card.github.repository : "moosuri contributors"} · {card.catalog ? "설정된 공개 catalog" : card.github ? "사용자가 선택한 외부 원본" : "curated 목록"} · {card.catalog && !card.catalog.verified ? "아직 패키지 내용 확인 전" : "호환 형식 확인됨"} · 실제 사용 성공을 보증하지 않습니다.</p>}

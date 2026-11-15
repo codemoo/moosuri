@@ -129,6 +129,25 @@ impl FrozenMail {
     pub fn raw_mime(&self) -> &[u8] {
         &self.raw
     }
+    /// A private provider-draft copy has an operation-specific observation marker.
+    /// The caller must keep the original snapshot for all send approval checks.
+    pub fn draft_copy(&self, operation: uuid::Uuid) -> Result<Self, GmailError> {
+        if operation.is_nil() {
+            return Err(GmailError::InvalidInput);
+        }
+        let mut raw = format!("X-Moosuri-Draft-Operation: {operation}\r\n").into_bytes();
+        raw.extend_from_slice(&self.raw);
+        let digest = snapshot_digest(&raw, self.thread_id.as_deref());
+        Self::restore(raw, digest, self.thread_id.clone())
+    }
+    /// Provider draft readback compares raw MIME only. This never substitutes
+    /// for the approval digest, which also binds the reply-thread identity.
+    pub fn mime_sha256(&self) -> String {
+        Sha256::digest(&*self.raw)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
     pub fn digest(&self) -> [u8; 32] {
         self.digest
     }

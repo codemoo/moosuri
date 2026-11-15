@@ -20,9 +20,15 @@ struct Args {
     origin: String,
     #[arg(long)]
     pair: bool,
+    /// Absolute trusted local PDF parser executable; absent means PDF is unsupported.
+    #[arg(long)]
+    pdf_extractor: Option<PathBuf>,
     /// Exact independent HTTPS vault origin for native live mode.
     #[arg(long)]
     vault_origin: Option<String>,
+    /// Absolute trusted local Chromium executable; enables local-only browser commands.
+    #[arg(long)]
+    local_chromium: Option<PathBuf>,
 }
 fn now() -> i64 {
     std::time::SystemTime::now()
@@ -68,7 +74,15 @@ fn password(label: &str) -> Result<SecretText, Error> {
     let trimmed = secret.trim_end_matches(['\r', '\n']).to_owned();
     SecretText::new(trimmed).map_err(|_| Error::Policy)
 }
+// Unlock state must retire even when local persistence has failed.
+fn lock_local<V>(vault: &mut Option<V>, engine: &mut Engine) -> Result<(), Error> {
+    *vault = None;
+    engine.browser_suspend()
+}
 async fn run() -> Result<(), Error> {
+    if std::env::args().nth(1).as_deref() == Some(moosuri_documents::CHILD_ARGUMENT) {
+        std::process::exit(moosuri_documents::child_main());
+    }
     let args = Args::parse();
     let transport = Transport::new(&args.origin)?;
     let mut input = tokio::io::BufReader::new(tokio::io::stdin()).lines();
@@ -125,6 +139,7 @@ async fn run() -> Result<(), Error> {
     } else {
         Engine::open_local(&args.state_dir)?
     };
+    engine = engine.with_pdf_extractor(args.pdf_extractor);
     if engine.origin() != args.origin {
         return Err(Error::Authentication);
     }
@@ -135,7 +150,7 @@ async fn run() -> Result<(), Error> {
     }
     let mut vault: Option<Vault> = None;
     println!(
-        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | select-google ITEM_UUID GOOGLE_SUB EMAIL | select-google-preview ITEM_UUID GOOGLE_SUB EMAIL | select-google-body ITEM_UUID GOOGLE_SUB EMAIL | select-google-send ITEM_UUID GOOGLE_SUB EMAIL | poll | lock | quit"
+        "Commands: connect-live ACCOUNT_EMAIL | unlock ABSOLUTE_ARCHIVE_PATH (snapshot) | items | select ITEM_UUID OWNER REPO | select-google ITEM_UUID GOOGLE_SUB EMAIL | select-google-preview ITEM_UUID GOOGLE_SUB EMAIL | select-google-body ITEM_UUID GOOGLE_SUB EMAIL | select-google-send ITEM_UUID GOOGLE_SUB EMAIL | select-google-model-read ITEM_UUID GOOGLE_SUB EMAIL | select-google-model-background ITEM_UUID GOOGLE_SUB EMAIL | browser-start | browser-resume | browser-confirm | browser-observe | browser-status | browser-close | poll | lock | quit"
     );
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
     loop {
@@ -162,6 +177,27 @@ async fn run() -> Result<(), Error> {
         let command = parts.next().unwrap_or("");
         let result: Result<(), Error> = async {
             match command {
+                "browser-start" | "browser-resume" => {
+                    if parts.next().is_some() { return Err(Error::Policy); }
+                    let executable=args.local_chromium.as_deref().ok_or(Error::Policy)?;
+                    let observed=engine.browser_start(executable,command=="browser-resume",now()).await?;
+                    println!("{}",serde_json::to_string(&observed).map_err(|_|Error::PrivateState)?);
+                    println!("Local device only. Inspect the new blank window, then browser-confirm. Site login/read adapters and vault autofill are unavailable.");
+                }
+                "browser-confirm" | "browser-observe" => {
+                    if parts.next().is_some() { return Err(Error::Policy); }
+                    let observed=engine.browser_observe(command=="browser-confirm",now()).await?;
+                    println!("{}",serde_json::to_string(&observed).map_err(|_|Error::PrivateState)?);
+                }
+                "browser-status" => {
+                    if parts.next().is_some() { return Err(Error::Policy); }
+                    println!("{}",serde_json::to_string(&engine.browser_status()?).map_err(|_|Error::PrivateState)?);
+                }
+                "browser-close" => {
+                    if parts.next().is_some() { return Err(Error::Policy); }
+                    engine.browser_close(now()).await?;
+                    println!("Local browser closed and its private temporary profile removed.");
+                }
                 "connect-live" => {
                     vault=None;
                     let email=parts.next().ok_or(Error::Policy)?;
@@ -222,18 +258,18 @@ async fn run() -> Result<(), Error> {
                         "Exact repository connected; compatible requests reuse this selection."
                     );
                 }
-                operation @ ("select-google" | "select-google-preview" | "select-google-body" | "select-google-send")=>{
-                    let preview=operation=="select-google-preview"; let body=operation=="select-google-body"; let send=operation=="select-google-send";
+                operation @ ("select-google" | "select-google-preview" | "select-google-body" | "select-google-send" | "select-google-model-read" | "select-google-model-background")=>{
+                    let preview=operation=="select-google-preview"; let body=operation=="select-google-body"; let send=operation=="select-google-send"; let model=operation=="select-google-model-read" || operation=="select-google-model-background"; let background=operation=="select-google-model-background";
                     let id=parts.next().ok_or(Error::Policy)?.parse().map_err(|_|Error::Policy)?;
                     let identity=moosuri_credential_broker::google::GoogleIdentity{subject:parts.next().ok_or(Error::Policy)?.into(),email:parts.next().ok_or(Error::Policy)?.into()};
                     if parts.next().is_some(){return Err(Error::Policy)}
                     transport.sync_retained(&mut engine).await?;
                     let binding=match vault.as_mut().ok_or(Error::Locked)?{
-                        Vault::Archive(v)=>if send {engine.archive_google_send_grant(v,id,identity,now()+30*86400)?} else if body { engine.archive_google_body_grant(v,id,identity,now()+30*86400)? } else if preview {engine.archive_google_preview_grant(v,id,identity,now()+30*86400)?} else {engine.archive_google_grant(v,id,identity,now()+30*86400)?},
-                        Vault::Live(v)=>{if send {engine.live_google_send_grant(v,id,identity,now()+30*86400).await?} else if body { engine.live_google_body_grant(v,id,identity,now()+30*86400).await? } else if preview {engine.live_google_preview_grant(v,id,identity,now()+30*86400).await?} else {engine.live_google_grant(v,id,identity,now()+30*86400).await?}}
+                        Vault::Archive(v)=>if model {engine.archive_google_model_read_grant(v,id,identity,now()+30*86400,background)?} else if send {engine.archive_google_send_grant(v,id,identity,now()+30*86400)?} else if body { engine.archive_google_body_grant(v,id,identity,now()+30*86400)? } else if preview {engine.archive_google_preview_grant(v,id,identity,now()+30*86400)?} else {engine.archive_google_grant(v,id,identity,now()+30*86400)?},
+                        Vault::Live(v)=>{if model {engine.live_google_model_read_grant(v,id,identity,now()+30*86400,background).await?} else if send {engine.live_google_send_grant(v,id,identity,now()+30*86400).await?} else if body { engine.live_google_body_grant(v,id,identity,now()+30*86400).await? } else if preview {engine.live_google_preview_grant(v,id,identity,now()+30*86400).await?} else {engine.live_google_grant(v,id,identity,now()+30*86400).await?}}
                     };
                     transport.register_google(&mut engine,&binding).await?;
-                    println!("Google account selected for {} only; compatible requests reuse this local grant. Provider identity and exact actual selected scopes are checked each time.",if send {"final-approved plaintext mail send and original Sent reconciliation"} else if body {"selected INBOX plaintext body"} else if preview {"bounded INBOX preview"} else {"INBOX counts"});
+                    println!("Google account selected for {} only; compatible requests reuse this local grant. Provider identity and exact actual selected scopes are checked each time.",if model {if background {"model-readable Gmail including explicit background reads while online (content is sent to the configured LLM)"} else {"foreground model-readable Gmail (content is sent to the configured LLM)"}} else if send {"final-approved plaintext mail send and original Sent reconciliation"} else if body {"selected INBOX plaintext body"} else if preview {"bounded INBOX preview"} else {"INBOX counts"});
                 }
                 "poll" => {
                     if vault.is_none() {
@@ -242,7 +278,7 @@ async fn run() -> Result<(), Error> {
                     interval.reset_immediately();
                 }
                 "lock" => {
-                    vault = None;
+                    lock_local(&mut vault, &mut engine)?;
                     println!("Locked. Waiting requests remain on the assistant.");
                 }
                 "quit" => {
@@ -274,5 +310,57 @@ async fn main() {
     if let Err(error) = run().await {
         eprintln!("{error}");
         std::process::exit(1)
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+    #[test]
+    fn local_lock_retires_unlock_before_a_real_journal_write_failure() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        struct Unlocked(Arc<AtomicBool>);
+        impl Drop for Unlocked {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = tmp.path().join("device");
+        let device = Device {
+            owner: moosuri_vault_protocol::Owner {
+                tenant: uuid::Uuid::new_v4(),
+                account: uuid::Uuid::new_v4(),
+                installation: uuid::Uuid::new_v4(),
+                epoch: 1,
+            },
+            id: uuid::Uuid::new_v4(),
+            generation: 1,
+        };
+        let key = SigningKey::generate_pkcs8().unwrap();
+        let mut engine =
+            Engine::enroll(&root, device, "https://assistant.example.test".into(), &key).unwrap();
+        // Force the actual journal-size write boundary; no fake successful save.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("journal"))
+            .unwrap()
+            .set_len(16 * 1024 * 1024)
+            .unwrap();
+        let retired = Arc::new(AtomicBool::new(false));
+        let mut vault = Some(Unlocked(retired.clone()));
+        assert_eq!(
+            lock_local(&mut vault, &mut engine).unwrap_err(),
+            Error::PrivateState
+        );
+        assert!(vault.is_none());
+        assert!(retired.load(Ordering::SeqCst));
+        assert_eq!(
+            lock_local(&mut vault, &mut engine).unwrap_err(),
+            Error::PrivateState
+        );
     }
 }

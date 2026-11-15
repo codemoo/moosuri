@@ -299,6 +299,17 @@ pub(super) fn save(
             {
                 reads.push(top(evidence))
             }
+            KnowledgeToolResult::External(_)
+                if matches!(tool, KnowledgeToolInput::NativeMail { .. })
+                    && crate::native_task_mail::report_receipt(
+                        c,
+                        run,
+                        evidence.step,
+                        &evidence.call_id,
+                    )? =>
+            {
+                reads.push(top(evidence))
+            }
             KnowledgeToolResult::Decimal { .. } | KnowledgeToolResult::DecimalWorkflow { .. } => {
                 calculations.push(top(evidence))
             }

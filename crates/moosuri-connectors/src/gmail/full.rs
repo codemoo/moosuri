@@ -8,7 +8,7 @@ pub const MAX_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_BODY_BYTES: usize = 128 * 1024;
 const MAX_PARTS: usize = 64;
 const MAX_DEPTH: usize = 8;
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttachmentMetadata {
     pub part_id: String,
     pub attachment_id: Option<String>,

@@ -91,6 +91,9 @@ pub struct MissionReceipt {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MissionView {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<MissionLinkedAction>>", optional)]
+    pub actions: Vec<MissionLinkedAction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub compound: Option<MissionCompound>,
@@ -116,6 +119,38 @@ pub struct MissionView {
     pub uncertain: bool,
     #[ts(type = "number")]
     pub expires_at_ms: i64,
+}
+
+/// Narrow proposals; authority comes from the originally accepted owner request.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MissionActionRequest {
+    SaveProviderDraft {
+        intent_quote: String,
+        action_id: String,
+        expected: crate::MailApproval,
+    },
+    PrepareMail {
+        intent_quote: String,
+        input: Box<crate::MailDraftInput>,
+        evidence: Vec<MissionEvidence>,
+    },
+    Calendar {
+        decision: Box<crate::CalendarChatDecision>,
+        evidence: Vec<MissionEvidence>,
+    },
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct MissionLinkedAction {
+    pub kind: String,
+    pub id: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    pub digest: String,
+    pub state: String,
+    pub current: bool,
+    pub url: String,
+    pub provider_receipt: Option<String>,
 }
 
 /// A saved immutable mission template and separately authorized schedule.

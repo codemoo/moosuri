@@ -6,6 +6,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 mod acceptance;
 mod reports;
+mod selected_browser;
 pub(crate) async fn setup() -> (tempfile::TempDir, Store, UserContext) {
     let d = directory();
     let s = Store::open_with_web(
@@ -2076,3 +2077,7 @@ async fn mission_transactional_guard_keeps_current_session_revocation_as_cancell
     .await
     .unwrap();
 }
+
+mod compound_learning;
+
+mod draft_learning;

@@ -184,3 +184,23 @@ it("cancels a waiting mission with its current revision and frees the visible ca
  expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({expected_revision:4,action:{kind:"cancel"}});
  expect(screen.queryByRole("button",{name:"취소"})).not.toBeInTheDocument();
 });
+
+it("keeps final mail review and real Calendar receipts on the original expired card without offering send or inference resume",async()=>{
+ const linked={...mission,state:"partial",actions:[{kind:"mail",id:"exact-mail",revision:1,digest:"a".repeat(64),state:"pending_approval",current:true,url:"/settings/mail#action-exact-mail",provider_receipt:null},{kind:"calendar",id:"exact-event",revision:1,digest:"b".repeat(64),state:"outcome_unknown",current:true,url:"/settings/calendar",provider_receipt:null}]};
+ vi.stubGlobal("fetch",vi.fn(async(url)=>new Response(JSON.stringify(String(url).endsWith("/recurring-missions")?[]:[linked]))));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ expect(await screen.findByRole("link",{name:"메일 최종 확인 열기"})).toHaveAttribute("href","/settings/mail#action-exact-mail");
+ expect(screen.getByText(/초안 저장 · 발송 허락 대기/)).toBeInTheDocument();
+ expect(screen.getByText(/결과 불명 · 자동 재실행 없음/)).toBeInTheDocument();
+ expect(screen.queryByRole("button",{name:/발송|보내기|이어서 진행/})).toBeNull();
+});
+
+it("adopts an exact local draft result for learning without granting send approval",async()=>{
+ const writes:any[]=[];const current={...mission,state:"partial",actions:[{kind:"mail",id:"synthetic-draft",revision:3,digest:"d".repeat(64),state:"pending_approval",current:true,url:"/settings/mail#action-synthetic-draft",provider_receipt:null}]};
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>{if(init?.method==="POST"){writes.push({url:String(url),body:JSON.parse(String(init.body))});return Response.json("private:synthetic-route")}return Response.json(String(url).includes("recurring-missions")?[]:[current])}));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole("button",{name:"검토한 로컬 초안의 수치 결과를 채택해 절차 학습"}));
+ await screen.findByText(/로컬 초안의 원문·수치와 정확한 버전을 검증했어요/);
+ expect(writes).toEqual([{url:"/api/v1/missions/m/adopt-draft",body:{action_id:"synthetic-draft",revision:3,digest:"d".repeat(64)}}]);
+ expect(screen.getByText(/내용·받는 사람 검토와 매번의 발송 허락은 계속 필요해요/)).toBeInTheDocument();
+});

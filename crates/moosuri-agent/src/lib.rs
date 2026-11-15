@@ -16,6 +16,7 @@ mod mail_tools;
 mod memory_intent;
 mod memory_target;
 mod mission_intent;
+mod native_mail_tools;
 mod push;
 mod runner;
 mod schedules;
@@ -410,6 +411,10 @@ async fn supervise(
             && credential_check.elapsed() >= Duration::from_secs(2)
         {
             credential_check = tokio::time::Instant::now();
+            if store.settle_native_task_mail().await.is_ok_and(|n| n > 0) {
+                signals.changed();
+                signals.wake.notify_one();
+            }
             if store.settle_credential_chats().await.is_ok_and(|n| n > 0) {
                 signals.changed();
             }

@@ -21,7 +21,7 @@ fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
 fn profile_enabled(profile: Option<&moosuri_core::RunToolProfile>, resource: &Resource) -> bool {
     profile.is_some_and(|p| match resource {
         Resource::GitHub(_) => p.credential_github,
-        Resource::GoogleBody(_) => false,
+        Resource::GoogleBody(_) | Resource::GoogleModelRead(_) => false,
         Resource::GoogleInbox(g) => match g.google_inbox {
             moosuri_vault_protocol::broker::GoogleInboxVersion::CountsV1 => p.credential_google,
             moosuri_vault_protocol::broker::GoogleInboxVersion::PreviewV1 => {
@@ -34,6 +34,7 @@ fn resource_name(resource: &Resource) -> String {
     match resource {
         Resource::GitHub(r) => format!("{}/{}", r.owner, r.repository),
         Resource::GoogleBody(_) => "INBOX plaintext body".into(),
+        Resource::GoogleModelRead(_) => "model-readable Gmail".into(),
         Resource::GoogleInbox(g) => {
             if g.google_inbox == moosuri_vault_protocol::broker::GoogleInboxVersion::PreviewV1 {
                 "INBOX preview"
@@ -47,13 +48,17 @@ fn resource_name(resource: &Resource) -> String {
 fn service(resource: &Resource) -> &'static str {
     match resource {
         Resource::GitHub(_) => "github",
-        Resource::GoogleInbox(_) | Resource::GoogleBody(_) => "google",
+        Resource::GoogleInbox(_) | Resource::GoogleBody(_) | Resource::GoogleModelRead(_) => {
+            "google"
+        }
     }
 }
 fn service_label(resource: &Resource) -> &'static str {
     match resource {
         Resource::GitHub(_) => "GitHub",
-        Resource::GoogleInbox(_) | Resource::GoogleBody(_) => "Gmail INBOX",
+        Resource::GoogleInbox(_) | Resource::GoogleBody(_) | Resource::GoogleModelRead(_) => {
+            "Gmail INBOX"
+        }
     }
 }
 fn literal_google_preview(text: &str) -> bool {
@@ -243,6 +248,20 @@ pub(crate) fn dispatch_current(
     call: &str,
     nonce: &str,
 ) -> Result<bool> {
+    if let (Ok(run), Ok(call), Ok(nonce)) = (run_id.parse(), call.parse(), nonce.parse())
+        && let Some(current) = crate::native_task_mail::dispatch_current(
+            c,
+            tenant,
+            &moosuri_vault_protocol::broker::Invocation {
+                run,
+                step,
+                call,
+                nonce,
+            },
+        )?
+    {
+        return Ok(current);
+    }
     let wait:Option<(i32,i64,String,String,String,i64)>=c.query_row("SELECT attempt,step,broker_call,invocation_nonce,status,expires_at FROM credential_chat_waits WHERE tenant_id=?1 AND run_id=?2",params![tenant,run_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
     let Some((attempt, pinned_step, pinned_call, pinned_nonce, status, expires)) = wait else {
         return Ok(true);

@@ -175,6 +175,32 @@ impl Transport {
         }
         Ok((requests, revoke))
     }
+    async fn model_mail_payload(&self, engine: &mut Engine, invocation: &Invocation) -> Result<()> {
+        let r = engine
+            .state
+            .entries
+            .iter()
+            .find(|e| &e.request.invocation == invocation)
+            .ok_or(Error::Policy)?
+            .request
+            .clone();
+        if !matches!(r.operation, Operation::GoogleMailModelRead { .. }) {
+            return Ok(());
+        }
+        let Reply::ModelMailPayload { payload } = self
+            .command(
+                engine,
+                Command::ModelMailPayload {
+                    invocation: invocation.clone(),
+                    request_digest: auth::hash(&request_bytes(&r)),
+                },
+            )
+            .await?
+        else {
+            return Err(Error::Authentication);
+        };
+        engine.attach_model_mail_payload(invocation, *payload)
+    }
     async fn mail_payload(&self, engine: &mut Engine, invocation: &Invocation) -> Result<()> {
         let request = engine
             .state
@@ -245,7 +271,20 @@ impl Transport {
             .ok_or(Error::Policy)?;
         let preview = grant.google_preview();
         let refresh = grant.pending_refresh().cloned();
-        let command = if grant.google_send() {
+        let command = if grant.google_model_read() {
+            let background = grant.google_model_background();
+            match &refresh {
+                Some(expected) => Command::RefreshGoogleModelRead {
+                    expected: expected.clone(),
+                    binding: binding.clone(),
+                    background,
+                },
+                None => Command::RegisterGoogleModelRead {
+                    binding: binding.clone(),
+                    background,
+                },
+            }
+        } else if grant.google_send() {
             let email = grant.google().ok_or(Error::Policy)?.email.clone();
             match &refresh {
                 Some(expected) => Command::RefreshGoogleSend {
@@ -326,6 +365,7 @@ impl Transport {
                 Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailModelRead { .. }
                 | Operation::GoogleMailSend { .. }
                 | Operation::GoogleMailLookup { .. } => {
                     engine.execute_live_google(vault, &invocation, google).await
@@ -428,6 +468,7 @@ impl Transport {
             let request_digest = auth::hash(&request_bytes(&request));
             engine.prepare_live_github(vault, request).await?;
             self.mail_payload(engine, &invocation).await?;
+            self.model_mail_payload(engine, &invocation).await?;
             let Reply::Commitment { commitment } = self
                 .command(
                     engine,
@@ -479,6 +520,7 @@ impl Transport {
                 Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailModelRead { .. }
                 | Operation::GoogleMailSend { .. }
                 | Operation::GoogleMailLookup { .. } => {
                     engine.prepare_google(archive, request, current_time()?)?
@@ -489,6 +531,7 @@ impl Transport {
                 _ => return Err(Error::Policy),
             }
             self.mail_payload(engine, &invocation).await?;
+            self.model_mail_payload(engine, &invocation).await?;
             let request = engine
                 .state
                 .entries
@@ -514,6 +557,7 @@ impl Transport {
                 Operation::GoogleInboxRead
                 | Operation::GoogleInboxPreview
                 | Operation::GoogleInboxBody { .. }
+                | Operation::GoogleMailModelRead { .. }
                 | Operation::GoogleMailSend { .. }
                 | Operation::GoogleMailLookup { .. } => {
                     engine.execute_google(archive, &invocation, google).await?

@@ -16,10 +16,13 @@ use std::sync::{
 };
 struct Fixture {
     raw: StdMutex<String>,
+    extra_raw: StdMutex<std::collections::BTreeMap<String, String>>,
+    fail_before_write: AtomicBool,
     writes: AtomicUsize,
     sends: AtomicUsize,
     gets: AtomicUsize,
     block: AtomicBool,
+    lose_write_ack: AtomicBool,
     waiting: tokio::sync::Notify,
     release: tokio::sync::Notify,
 }
@@ -41,17 +44,47 @@ async fn handler(State(s): State<Arc<Fixture>>, r: Request) -> axum::response::R
             s.release.notified().await;
         }
         if path == "/drafts" {
-            serde_json::json!({"drafts":[{"id":"draft1","message":{"id":"msg1","threadId":"thread1"}}]})
+            {
+                let mut drafts = vec![
+                    serde_json::json!({"id":"draft1","message":{"id":"msg1","threadId":"thread1"}}),
+                ];
+                drafts.extend(s.extra_raw.lock().unwrap().keys().map(|id| serde_json::json!({"id":id,"message":{"id":format!("msg-{id}"),"threadId":"thread1"}})));
+                serde_json::json!({"drafts":drafts})
+            }
         } else {
-            serde_json::json!({"id":"draft1","message":{"raw":s.raw.lock().unwrap().clone()}})
+            {
+                let id = path.trim_start_matches("/drafts/");
+                let raw = if id == "draft1" {
+                    s.raw.lock().unwrap().clone()
+                } else {
+                    s.extra_raw.lock().unwrap().get(id).unwrap().clone()
+                };
+                serde_json::json!({"id":id,"message":{"raw":raw}})
+            }
         }
     } else {
         assert!(method == Method::POST || method == Method::PUT);
         let value: serde_json::Value =
             serde_json::from_slice(&to_bytes(r.into_body(), 1000000).await.unwrap()).unwrap();
-        *s.raw.lock().unwrap() = value["message"]["raw"].as_str().unwrap().into();
         s.writes.fetch_add(1, Ordering::SeqCst);
-        serde_json::json!({"id":"draft1","message":{"id":"msg1","threadId":"thread1"}})
+        if s.fail_before_write.load(Ordering::SeqCst) {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        let id = if method == Method::POST {
+            "draft1"
+        } else {
+            path.trim_start_matches("/drafts/")
+        };
+        let raw = value["message"]["raw"].as_str().unwrap().to_string();
+        if id == "draft1" {
+            *s.raw.lock().unwrap() = raw;
+        } else {
+            s.extra_raw.lock().unwrap().insert(id.into(), raw);
+        }
+        if s.lose_write_ack.load(Ordering::SeqCst) {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        serde_json::json!({"id":id,"message":{"id":if id == "draft1" { "msg1".to_string() } else { format!("msg-{id}") },"threadId":"thread1"}})
     };
     axum::Json(value).into_response()
 }
@@ -74,10 +107,13 @@ async fn setup(
 ) {
     let s = Arc::new(Fixture {
         raw: StdMutex::new(String::new()),
+        extra_raw: StdMutex::new(Default::default()),
+        fail_before_write: AtomicBool::new(false),
         writes: AtomicUsize::new(0),
         sends: AtomicUsize::new(0),
         gets: AtomicUsize::new(0),
         block: AtomicBool::new(false),
+        lose_write_ack: AtomicBool::new(false),
         waiting: tokio::sync::Notify::new(),
         release: tokio::sync::Notify::new(),
     });
@@ -370,5 +406,358 @@ async fn provider_update_held_read_cannot_write_a_now_rejected_local_snapshot() 
         "the initial create is the only write; no late PUT"
     );
     assert_eq!(s.sends.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn provider_draft_same_intent_returns_receipt_without_second_post() {
+    let _serial = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, store, user, mail, a, s, server) = setup(true).await;
+    let intent = GmailDraftSave {
+        expected: approval(&a),
+        draft_id: None,
+        expected_provider_digest: None,
+    };
+    let first = mail
+        .save_gmail_draft(
+            &user,
+            a.id.clone(),
+            intent.clone(),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let replay = mail
+        .save_gmail_draft(&user, a.id.clone(), intent, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(first.id, replay.id);
+    assert_eq!(first.message_id, replay.message_id);
+    assert_eq!(s.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(s.sends.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        store.mail_action(&user, a.id).await.unwrap().state,
+        "pending_approval"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn provider_draft_lost_ack_fences_retry_and_edited_intent() {
+    let _serial = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, store, user, mail, a, s, server) = setup(true).await;
+    s.lose_write_ack.store(true, Ordering::SeqCst);
+    let intent = GmailDraftSave {
+        expected: approval(&a),
+        draft_id: None,
+        expected_provider_digest: None,
+    };
+    assert!(
+        mail.save_gmail_draft(
+            &user,
+            a.id.clone(),
+            intent.clone(),
+            &CancellationToken::new()
+        )
+        .await
+        .is_err()
+    );
+    s.lose_write_ack.store(false, Ordering::SeqCst);
+    *s.raw.lock().unwrap() = URL_SAFE_NO_PAD.encode(b"From: sender@example.test\r\nTo: recipient@example.test\r\nSubject: Externally changed\r\nContent-Type: text/plain\r\n\r\nChanged body\r\n");
+    assert!(
+        mail.save_gmail_draft(&user, a.id.clone(), intent, &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    let mut content = a.content.unwrap();
+    content.text = "A changed synthetic draft".into();
+    let changed = store
+        .create_mail_draft(
+            &user,
+            MailDraftInput {
+                connection_id: a.connection_id,
+                content,
+                origin_thread_id: None,
+            },
+            Some((a.id, a.revision)),
+        )
+        .await
+        .unwrap();
+    assert!(
+        mail.save_gmail_draft(
+            &user,
+            changed.id.clone(),
+            GmailDraftSave {
+                expected: approval(&changed),
+                draft_id: None,
+                expected_provider_digest: None
+            },
+            &CancellationToken::new()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(s.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(s.sends.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn provider_draft_lost_ack_reads_back_exact_original_without_posting() {
+    let _serial = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, _store, user, mail, a, s, server) = setup(true).await;
+    let intent = GmailDraftSave {
+        expected: approval(&a),
+        draft_id: None,
+        expected_provider_digest: None,
+    };
+    s.lose_write_ack.store(true, Ordering::SeqCst);
+    assert!(
+        mail.save_gmail_draft(
+            &user,
+            a.id.clone(),
+            intent.clone(),
+            &CancellationToken::new()
+        )
+        .await
+        .is_err()
+    );
+    s.lose_write_ack.store(false, Ordering::SeqCst);
+    let receipt = mail
+        .save_gmail_draft(&user, a.id.clone(), intent, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(receipt.id, "draft1");
+    assert_eq!(s.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(s.sends.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+/// The same local approval may prepare several different provider operations.
+/// A receipt for one must never settle another operation's unknown outcome.
+#[tokio::test]
+async fn provider_draft_earlier_put_cannot_settle_unknown_other_put_or_post() {
+    let _serial = crate::tests::TEST_LOCK.lock().await;
+    for update in [true, false] {
+        let (_dir, _store, user, mail, a, s, server) = setup(true).await;
+        let original = URL_SAFE_NO_PAD.encode(b"From: sender@example.test\r\nTo: recipient@example.test\r\nSubject: Original\r\nContent-Type: text/plain\r\n\r\nOriginal body\r\n");
+        *s.raw.lock().unwrap() = original.clone();
+        s.extra_raw
+            .lock()
+            .unwrap()
+            .insert("draft2".into(), original.clone());
+        let cancel = CancellationToken::new();
+        let first = mail
+            .gmail_draft(&user, &a.connection_id, "draft1", &cancel)
+            .await
+            .unwrap();
+        mail.save_gmail_draft(
+            &user,
+            a.id.clone(),
+            GmailDraftSave {
+                expected: approval(&a),
+                draft_id: Some(first.id),
+                expected_provider_digest: Some(first.digest),
+            },
+            &cancel,
+        )
+        .await
+        .unwrap();
+        let prior_raw = s.raw.lock().unwrap().clone();
+        let second = mail
+            .gmail_draft(&user, &a.connection_id, "draft2", &cancel)
+            .await
+            .unwrap();
+        let intent = GmailDraftSave {
+            expected: approval(&a),
+            draft_id: update.then_some(second.id),
+            expected_provider_digest: update.then_some(second.digest),
+        };
+        s.fail_before_write.store(true, Ordering::SeqCst);
+        assert!(
+            mail.save_gmail_draft(&user, a.id.clone(), intent.clone(), &cancel)
+                .await
+                .is_err()
+        );
+        s.fail_before_write.store(false, Ordering::SeqCst);
+        assert!(
+            mail.save_gmail_draft(&user, a.id.clone(), intent, &cancel)
+                .await
+                .is_err(),
+            "an earlier PUT's raw MIME cannot prove a different PUT or POST completed"
+        );
+        assert_eq!(*s.raw.lock().unwrap(), prior_raw);
+        assert_eq!(s.extra_raw.lock().unwrap()["draft2"], original);
+        assert_eq!(
+            s.writes.load(Ordering::SeqCst),
+            2,
+            "no repeat external write"
+        );
+        assert_eq!(s.sends.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn compound_mission_explicit_provider_save_reconciles_original_post_without_send_authority() {
+    let _serial = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, store, user, mail, a, s, server) = setup(true).await;
+    let provider = store
+        .create_provider(
+            &user,
+            moosuri_store::ProviderChange {
+                name: "Synthetic compound model".into(),
+                config: moosuri_core::ProviderConfig {
+                    kind: moosuri_core::ProviderKind::Compatible,
+                    base_url: Some("http://127.0.0.1:11434/v1".into()),
+                    allowed_ips: vec!["127.0.0.1".into()],
+                    router_providers: vec![],
+                    zero_data_retention: false,
+                },
+                enabled: true,
+                credential: moosuri_store::CredentialChange::Clear,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .record_model_probe(&user, provider.id.clone(), 1, "synthetic".into(), None)
+        .await
+        .unwrap();
+    store
+        .record_tool_probe(&user, provider.id.clone(), 1, "synthetic".into(), None)
+        .await
+        .unwrap();
+    store
+        .set_default_model(
+            &user,
+            Some(moosuri_core::ModelSelection {
+                source: Default::default(),
+                provider_id: provider.id,
+                provider_revision: 1,
+                model: "synthetic".into(),
+                effort: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let task =
+        "Read Gmail and prepare an email draft to recipient@example.test and save Gmail draft";
+    store
+        .create_mission(
+            &user,
+            moosuri_core::MissionCreate {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task: task.into(),
+                constraints: String::new(),
+                checks: vec![moosuri_core::MissionCheck::UserReview {
+                    description: "Review the draft".into(),
+                }],
+                execution_mode: moosuri_core::MissionMode::Durable,
+            },
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    let context = store.agent_context(&claim.lease).await.unwrap();
+    let st = store
+        .begin_agent_step(&claim.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    let mut content = a.content.unwrap();
+    content.bcc.clear();
+    store
+        .commit_agent_step(
+            &st,
+            moosuri_store::PrivateCheckpoint {
+                bytes: br#"{"kind":"mission_receipt_checkpoint"}"#.to_vec(),
+            },
+            vec![moosuri_store::PendingKnowledgeCall {
+                call_id: "prepare".into(),
+                input: moosuri_store::KnowledgeToolInput::MissionAction {
+                    request: moosuri_core::MissionActionRequest::PrepareMail {
+                        intent_quote: task.into(),
+                        input: MailDraftInput {
+                            connection_id: a.connection_id,
+                            origin_thread_id: None,
+                            content,
+                        }
+                        .into(),
+                        evidence: vec![],
+                    },
+                },
+            }],
+        )
+        .await
+        .unwrap();
+    let moosuri_store::KnowledgeToolResult::External(prepared) = store
+        .execute_knowledge_tool(&st, "prepare".into())
+        .await
+        .unwrap()
+    else {
+        panic!("actual local draft required")
+    };
+    let id = prepared["action_id"].as_str().unwrap().to_owned();
+    let original = store.mail_action(&user, id.clone()).await.unwrap();
+    let context = store.agent_context(&claim.lease).await.unwrap();
+    let st = store
+        .begin_agent_step(&claim.lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    store
+        .commit_agent_step(
+            &st,
+            moosuri_store::PrivateCheckpoint {
+                bytes: br#"{"kind":"mission_receipt_checkpoint"}"#.to_vec(),
+            },
+            vec![moosuri_store::PendingKnowledgeCall {
+                call_id: "save-provider".into(),
+                input: moosuri_store::KnowledgeToolInput::MissionAction {
+                    request: moosuri_core::MissionActionRequest::SaveProviderDraft {
+                        intent_quote: task.into(),
+                        action_id: id.clone(),
+                        expected: approval(&original),
+                    },
+                },
+            }],
+        )
+        .await
+        .unwrap();
+    let permit = match store
+        .prepare_mission_action(&st, "save-provider".into())
+        .await
+        .unwrap()
+    {
+        moosuri_store::MissionActionStart::Dispatch(p) => p,
+        _ => panic!("mission provider permit required"),
+    };
+    let cancel = CancellationToken::new();
+    s.lose_write_ack.store(true, Ordering::SeqCst);
+    assert!(
+        mail.save_mission_provider_draft(&permit, &cancel)
+            .await
+            .is_err()
+    );
+    s.lose_write_ack.store(false, Ordering::SeqCst);
+    let receipt = mail
+        .save_mission_provider_draft(&permit, &cancel)
+        .await
+        .unwrap();
+    store
+        .complete_mission_action(&permit, receipt)
+        .await
+        .unwrap();
+    assert_eq!(s.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(s.sends.load(Ordering::SeqCst), 0);
+    assert!(store.next_mail_dispatch().await.unwrap().is_none());
+    let current = store.mail_action(&user, id).await.unwrap();
+    assert_eq!(current.state, "pending_approval");
+    assert_eq!(current.digest, original.digest);
+    assert_eq!(current.revision, original.revision);
+    assert!(
+        store.missions(&user).await.unwrap()[0].actions[0]
+            .provider_receipt
+            .is_some()
+    );
     server.abort();
 }

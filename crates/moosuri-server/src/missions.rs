@@ -18,16 +18,42 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/api/v1/missions", get(list).post(create))
         .route("/api/v1/missions/{id}/control", post(control))
         .route("/api/v1/missions/{id}/connection", post(select_connection))
+        .route(
+            "/api/v1/native-mail/{id}/connection",
+            post(select_native_connection),
+        )
         .route("/api/v1/connections", get(connections))
         .route(
             "/api/v1/connections/alias",
             axum::routing::put(connection_alias),
         )
+        .route("/api/v1/missions/{id}/adopt-report", post(adopt_report))
+        .route("/api/v1/missions/{id}/adopt-draft", post(adopt_draft))
         .route(
             "/api/v1/missions/{id}/acceptance",
             axum::routing::put(revise),
         )
         .route("/api/v1/missions/{id}", axum::routing::delete(remove))
+}
+async fn adopt_draft(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::CompoundDraftAdoption>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    Ok(Json(s.store.adopt_compound_draft(&u, id, input).await?).into_response())
+}
+async fn adopt_report(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::CompoundReportAdoption>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    Ok(Json(s.store.adopt_compound_report(&u, id, input).await?).into_response())
 }
 async fn list(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     let u = current(&s, &headers).await?;
@@ -129,7 +155,19 @@ async fn select_connection(
 ) -> HttpResult {
     let u = current(&s, &headers).await?;
     let _gate = s.delivery.write().await;
-    let out = s.store.select_mission_connection(&u, id, input).await?;
+    let out = if input.slot_id == "native-mail-slot-v1" {
+        s.store
+            .select_native_mail_connection(&u, id.clone(), input)
+            .await?;
+        s.store
+            .missions(&u)
+            .await?
+            .into_iter()
+            .find(|m| m.id == id)
+            .ok_or(StoreError::NotFound)?
+    } else {
+        s.store.select_mission_connection(&u, id, input).await?
+    };
     s.runtime.wake();
     Ok(Json(out).into_response())
 }
@@ -146,4 +184,17 @@ async fn connection_alias(
 async fn connections(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     let u = current(&s, &headers).await?;
     Ok(Json(s.store.scoped_connections(&u).await?).into_response())
+}
+
+async fn select_native_connection(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::MissionConnectionSelection>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    s.store.select_native_mail_connection(&u, id, input).await?;
+    s.runtime.wake();
+    Ok(StatusCode::NO_CONTENT.into_response())
 }

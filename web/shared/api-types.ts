@@ -83,11 +83,19 @@ export type MissionAcceptanceSnapshot = { revision: number, request: MissionCrea
 export type MissionAction = { "kind": "pause" } | { "kind": "resume" } | { "kind": "cancel" } | { "kind": "steer", instruction: string, };
 export type MissionEvidence = { step: number, call_id: string, };
 export type MissionCandidate = { text: string, evidence: Array<MissionEvidence>, };
-export type MissionView = { compound?: MissionCompound, wait?: MissionWaitView, id: string, revision: number, state: string, request: MissionCreate,
+export type MissionView = { actions?: Array<MissionLinkedAction>, compound?: MissionCompound, wait?: MissionWaitView, id: string, revision: number, state: string, request: MissionCreate,
 /**
  * Absent for unchanged/recurring missions; request is the active snapshot.
  */
 acceptance_history?: Array<MissionAcceptanceSnapshot>, steering: Array<string>, plan: Array<string>, completed_steps: number, result: MissionCandidate | null, receipts: Array<MissionReceipt>, report: Array<string>, uncertain: boolean, expires_at_ms: number, };
+export type MissionLinkedAction = { kind: string, id: string, revision: number, digest: string, state: string, current: boolean, url: string, provider_receipt: string | null, };
+export type MissionCompound = { schema_version: number, calculation_required: boolean, acceptance_revision: number, capability_profile_sha256: string, steps: Array<MissionCompoundStep>, output: ArtifactReceipt | null, review_required: boolean, };
+export type MissionCompoundStep = { id: string, purpose: string, capability: string, input_slots: Array<string>, depends_on: Array<string>, receipts: Array<MissionCompoundReceipt>, output: string, checks: Array<string>, state: string, };
+export type MissionCompoundReceipt = { step: number, call_id: string, ordinal: number | null, };
+export type ScopedConnectionDescriptor = { binding_id: string, device_id: string, operation: string, resource: string, schema_version: number, state: string, expires_at_ms: number, alias: string | null, };
+export type MissionWaitView = { request_id: string, slot_id: string, run_id: string, step: number, acceptance_revision: number, cause: string, state: string, expires_at_ms: number, choices: Array<ScopedConnectionDescriptor>, };
+export type MissionConnectionSelection = { request_id: string, wait_request_id: string, expected_revision: number, slot_id: string, binding_id: string, };
+export type ConnectionAlias = { binding_id: string, alias: string, };
 export type MissionReceipt = { label: string, detail: string, };
 export type MissionChatCandidate = { target: MissionChatTarget, title: string, };
 export type MissionChatTarget = { kind: string, id: string, revision: number, };
@@ -141,6 +149,8 @@ export type BrowserControl = { workspace: BrowserWorkspaceView,
  */
 control_token: string, };
 export type BrowserFrame = { workspace_id: string, revision: number, frame_token: string, png_base64: string, width: number, height: number, url: string, };
+export type BrowserMissionSelection = { request_id: string, frame_token: string, workspace_id: string, revision: number, control_token: string, mission_id: string, mission_revision: number, };
+export type BrowserMissionReceipt = { request_id: string, mission_id: string, source_id: string, source_revision: number, url: string, title: string, truncated: boolean, observed_at_ms: number, };
 export type InvitationDelivery = { id: string, account_id: string, state: string, digest: string, expires_at: number, from: string, to: string, subject: string, text: string | null, provider_message_id: string | null, };
 export type InvitationPreviewInput = { request_id: string, account_id: string, expected_revision: number,
 /**
@@ -202,7 +212,7 @@ export type ChatEvidence = { kind: KnowledgeKind, id: string, revision: number, 
 export type WebEvidenceKind = "page" | "search_hit" | "browser_page";
 export type WebEvidence = { url: string, title: string, retrieved_at_unix_ms: number, kind: WebEvidenceKind, truncated: boolean, };
 export type CredentialChatStatus = { service?: string, request_id: string, repository: string, status: string, };
-export type RunView = { timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
+export type RunView = { connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**
  * Fixed application error category, never provider text.
  */
@@ -271,12 +281,3 @@ observed_from?: number | null,
 observed_until?: number | null, cursor: string | null, };
 export type KnowledgeHit = { kind: KnowledgeKind, id: string, revision: number, title: string, snippet: string, subject: string | null, speaker: string | null, valid_from: number | null, valid_until: number | null, };
 export type KnowledgeSearch = { hits: Array<KnowledgeHit>, next_cursor: string | null, truncated: boolean, generation: number, };
-
-export type MissionCompound = { schema_version: number, calculation_required: boolean, acceptance_revision: number, capability_profile_sha256: string, steps: Array<MissionCompoundStep>, output: ArtifactReceipt | null, review_required: boolean, };
-export type MissionCompoundStep = { id: string, purpose: string, capability: string, input_slots: Array<string>, depends_on: Array<string>, receipts: Array<MissionCompoundReceipt>, output: string, checks: Array<string>, state: string, };
-
-export type MissionCompoundReceipt = { step: number, call_id: string, ordinal: number | null, };
-export type ScopedConnectionDescriptor = { binding_id: string, device_id: string, operation: string, resource: string, schema_version: number, state: string, expires_at_ms: number, alias: string | null, };
-export type MissionWaitView = { request_id: string, slot_id: string, run_id: string, step: number, acceptance_revision: number, cause: string, state: string, expires_at_ms: number, choices: Array<ScopedConnectionDescriptor>, };
-export type MissionConnectionSelection = { request_id: string, wait_request_id: string, expected_revision: number, slot_id: string, binding_id: string, };
-export type ConnectionAlias = { binding_id: string, alias: string, };

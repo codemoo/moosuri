@@ -79,7 +79,7 @@ pub(crate) fn persistence_context(c: &Connection, r: &Run) -> Result<bool> {
     )?)
 }
 pub(crate) fn purge(c: &Connection, t: &str, r: &str) -> Result<()> {
-    c.execute("UPDATE calendar_actions SET payload=NULL,event=NULL,state=CASE WHEN state='dispatch_committed' THEN 'outcome_unknown' ELSE state END,version=version+1 WHERE tenant_id=?1 AND id IN(SELECT action_id FROM calendar_agent_action_origins WHERE tenant_id=?1 AND run_id=?2)",params![t,r])?;
+    c.execute("UPDATE calendar_actions SET payload=NULL,event=NULL,state=CASE WHEN state='dispatch_committed' THEN 'outcome_unknown' ELSE state END,version=version+1 WHERE tenant_id=?1 AND id IN(SELECT action_id FROM calendar_agent_action_origins WHERE tenant_id=?1 AND run_id=?2 UNION SELECT action_id FROM mission_action_contracts WHERE tenant_id=?1 AND run_id=?2 AND kind='calendar')",params![t,r])?;
     for table in [
         "calendar_agent_profiles",
         "calendar_agent_observations",
@@ -98,7 +98,7 @@ pub(crate) fn purge(c: &Connection, t: &str, r: &str) -> Result<()> {
 /// read/chat profiles remain usable on Retry, but the current Calendar command
 /// and private effect result are permanently retired independently of run.state.
 pub(crate) fn cancel(c: &Connection, r: &Run) -> Result<()> {
-    let owns_calendar:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM calendar_command_plans WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;
+    let owns_calendar:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM calendar_command_plans WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins WHERE tenant_id=?1 AND run_id=?2) OR EXISTS(SELECT 1 FROM mission_action_contracts WHERE tenant_id=?1 AND run_id=?2 AND kind='calendar' AND payload_digest IS NOT NULL)",params![r.tenant,r.id],|r|r.get(0))?;
     if !owns_calendar {
         return Ok(());
     }
@@ -108,7 +108,7 @@ pub(crate) fn cancel(c: &Connection, r: &Run) -> Result<()> {
     )?;
     // Preserve exact UUID, nonce, state, versioned minimum receipt and linkage.
     // A committed provider call is not undone and must still settle privately.
-    c.execute("UPDATE calendar_actions SET payload=NULL,event=NULL,version=version+1 WHERE tenant_id=?1 AND id IN(SELECT action_id FROM calendar_agent_action_origins WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id])?;
+    c.execute("UPDATE calendar_actions SET payload=NULL,event=NULL,version=version+1 WHERE tenant_id=?1 AND id IN(SELECT action_id FROM calendar_agent_action_origins WHERE tenant_id=?1 AND run_id=?2 UNION SELECT action_id FROM mission_action_contracts WHERE tenant_id=?1 AND run_id=?2 AND kind='calendar')",params![r.tenant,r.id])?;
     c.execute(
         "DELETE FROM calendar_command_plans WHERE tenant_id=?1 AND run_id=?2",
         params![r.tenant, r.id],
@@ -158,6 +158,11 @@ pub(crate) fn invalidate_subscription(
     agent_execution::purge_runs(c, tenant, runs)
 }
 pub(crate) fn action_private_current(c: &Connection, t: &str, id: &str) -> Result<bool> {
+    let mission_current:bool=c.query_row("SELECT NOT EXISTS(SELECT 1 FROM mission_action_contracts WHERE tenant_id=?1 AND action_id=?2 AND kind='calendar') OR EXISTS(SELECT 1 FROM mission_action_contracts l JOIN missions m ON m.tenant_id=l.tenant_id AND m.run_id=l.run_id JOIN agent_execution e ON e.tenant_id=m.tenant_id AND e.run_id=m.run_id WHERE l.tenant_id=?1 AND l.action_id=?2 AND l.kind='calendar' AND e.invalidated=0 AND m.state NOT IN('deleted','quarantined','cancelled'))",params![t,id],|r|r.get(0))?;
+    if !mission_current {
+        return Ok(false);
+    }
+
     let current: bool = c.query_row("SELECT NOT EXISTS(SELECT 1 FROM calendar_agent_action_origins WHERE tenant_id=?1 AND action_id=?2) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins o JOIN calendar_agent_profiles p ON p.tenant_id=o.tenant_id AND p.run_id=o.run_id JOIN chat_runs r ON r.tenant_id=p.tenant_id AND r.id=p.run_id JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE o.tenant_id=?1 AND o.action_id=?2 AND o.withdrawn=0 AND e.invalidated=0 AND r.state IN('running','completed'))",params![t,id],|r|r.get(0))?;
     if !current {
         return Ok(false);
@@ -269,7 +274,7 @@ fn exact(text: &str, q: &Option<String>, max: usize, required: bool) -> Result<(
         _ => Err(StoreError::InvalidInput),
     }
 }
-fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
+pub(crate) fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
     if d.domain != "calendar"
         || !matches!(d.decision.as_str(), "command" | "clarify" | "unsupported")
         || json(d)?.len() > 16384
@@ -365,7 +370,7 @@ fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
     }
     Ok(())
 }
-fn selected<'a>(
+pub(crate) fn selected<'a>(
     p: &'a CalendarRunProfile,
     d: &CalendarChatDecision,
 ) -> Result<&'a CalendarAgentPin> {
@@ -553,7 +558,7 @@ fn command_range(
     }
     range(p, d)
 }
-fn fields(
+pub(crate) fn fields(
     p: &CalendarRunProfile,
     d: &CalendarChatDecision,
     prior: Option<&CalendarEvent>,
@@ -773,7 +778,11 @@ fn all_day_fields(
     moosuri_connectors::calendar::validate_fields(&f).map_err(|_| StoreError::InvalidInput)?;
     Ok(f)
 }
-fn event_in_range(e: &CalendarEvent, q: &CalendarRange, p: &CalendarRunProfile) -> Result<bool> {
+pub(crate) fn event_in_range(
+    e: &CalendarEvent,
+    q: &CalendarRange,
+    p: &CalendarRunProfile,
+) -> Result<bool> {
     let start =
         chrono::DateTime::parse_from_rfc3339(&q.start).map_err(|_| StoreError::InvalidInput)?;
     let end = chrono::DateTime::parse_from_rfc3339(&q.end).map_err(|_| StoreError::InvalidInput)?;

@@ -18,6 +18,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/api/v1/missions", get(list).post(create))
         .route("/api/v1/missions/{id}/control", post(control))
         .route("/api/v1/missions/{id}/connection", post(select_connection))
+        .route("/api/v1/missions/{id}/input", post(reply_input))
         .route(
             "/api/v1/native-mail/{id}/connection",
             post(select_native_connection),
@@ -197,4 +198,17 @@ async fn select_native_connection(
     s.store.select_native_mail_connection(&u, id, input).await?;
     s.runtime.wake();
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn reply_input(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::MissionInputReply>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    let out = s.store.reply_mission_input(&u, id, input).await?;
+    s.runtime.wake();
+    Ok(Json(out).into_response())
 }

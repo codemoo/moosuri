@@ -43,7 +43,7 @@ commit 뒤에는 provider IO를 한 번만 수행하고, 재시작/응답 유실
 
 현재 범위는 server-managed 읽기·기존 도메인 작업 연결이다. native Calendar, 참석자 초대,
 삭제·범용 수정·반복 Calendar 쓰기·미래 생성 메일 자동 발송은 지원하지 않는다. native sender의
-지원 범위를 server-managed reply 기능과 혼합하지 않는다. 불명확한 값을 질문하는 결과는
-미션의 실제 미완료 상태로 남으며, B의 typed input-wait 통합 수락은 별도 확인이 필요하다.
+지원 범위를 server-managed reply 기능과 혼합하지 않는다. 빠진 수신인·날짜·시각·길이는 [원래 카드의 typed 값 질문](mission-input-continuation.md)에서
+답한 뒤 같은 업무를 이어갈 수 있다. 반복 작업·일정 대상 충돌·자유 답변은 지원하지 않는다.
 
 새 검사는 synthetic Store와 loopback fixture만 쓴다. 공개/운영/실계정 수락을 대신하지 않는다.

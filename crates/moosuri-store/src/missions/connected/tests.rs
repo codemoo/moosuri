@@ -1469,3 +1469,5 @@ async fn compound_prepared_action_blocks_acceptance_reinterpretation_and_keeps_o
     .await
     .unwrap();
 }
+
+mod input_waits;

@@ -58,7 +58,7 @@ pub(crate) fn requested(text: &str) -> (bool, bool) {
 
 /// An imperative must own a Calendar object in its own clause. Other output
 /// verbs (create a report/draft) never supply Calendar execution authority.
-fn calendar_operation(text: &str) -> Option<&'static str> {
+pub(super) fn calendar_operation(text: &str) -> Option<&'static str> {
     let lower = text.to_lowercase();
     let mut operations = Vec::new();
     for clause in lower
@@ -240,6 +240,17 @@ fn mail(c: &Connection, r: &Run, request: &MissionActionRequest) -> Result<Knowl
     if intent_quote.is_empty() || !source.contains(intent_quote) || !requested(intent_quote).0 {
         return Err(StoreError::Forbidden);
     }
+    let owner_values = super::inputs::values(c, r)?;
+    if let Some(to) = owner_values
+        .iter()
+        .find(|w| w.field == moosuri_core::MissionInputField::MailTo)
+        .and_then(|w| w.value.as_ref())
+        && (input.content.to != vec![to.clone()]
+            || !input.content.cc.is_empty()
+            || !input.content.bcc.is_empty())
+    {
+        return Err(StoreError::InvalidInput);
+    }
     let observations = evidence(c, r, refs)?;
     let pin = r
         .tool_profile
@@ -269,7 +280,15 @@ fn mail(c: &Connection, r: &Run, request: &MissionActionRequest) -> Result<Knowl
         .chain(&input.content.cc)
         .chain(&input.content.bcc)
     {
-        if source.contains(address) {
+        if source.contains(address)
+            || input.content.to.len() == 1
+                && input.content.cc.is_empty()
+                && input.content.bcc.is_empty()
+                && owner_values.iter().any(|w| {
+                    w.field == moosuri_core::MissionInputField::MailTo
+                        && w.value.as_ref() == Some(address)
+                })
+        {
             continue;
         }
         let senders = observations
@@ -521,11 +540,69 @@ fn calendar_context(
         return Err(StoreError::Forbidden);
     }
     let observations = evidence(c, r, refs)?;
-    // Source text supplies quoted values, never the operation intent above.
-    let mut values = owner_text;
+    // Source text and typed answers supply values, never operation authority.
+    let mut base = owner_text;
     for observation in &observations {
-        values.push('\n');
-        values.push_str(&json(observation)?);
+        base.push('\n');
+        base.push_str(&json(observation)?);
+    }
+    let answers = super::inputs::values(c, r)?;
+    for answer in &answers {
+        use moosuri_core::MissionInputField as F;
+        let Some(v) = answer.value.as_deref() else {
+            continue;
+        };
+        let valid = match answer.field {
+            F::MailTo => true,
+            F::CalendarDate => {
+                if proposed == Some("create") {
+                    decision.date.as_deref() == Some(v) && decision.date_quote.as_deref() == Some(v)
+                } else {
+                    decision.move_date.as_deref() == Some(v)
+                        && decision.move_date_quote.as_deref() == Some(v)
+                }
+            }
+            F::CalendarStart => {
+                decision.start.as_deref() == Some(v) && decision.start_quote.as_deref() == Some(v)
+            }
+            F::CalendarDuration => {
+                decision.duration_quote.as_deref() == Some(v)
+                    && decision
+                        .duration_minutes
+                        .map(|n| format!("{n} minutes"))
+                        .as_deref()
+                        == Some(v)
+            }
+        };
+        if !valid {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    // An answer for date/start/duration cannot be borrowed as title, target,
+    // account, all-day mode, end time, or any other effect parameter.
+    for quote in [
+        &decision.connection_quote,
+        &decision.title_quote,
+        &decision.target_quote,
+        &decision.all_day_quote,
+        &decision.last_date_quote,
+        &decision.end_quote,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !base.contains(quote) {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    let mut values = base;
+    for answer in answers {
+        if answer.field != moosuri_core::MissionInputField::MailTo
+            && let Some(v) = answer.value
+        {
+            values.push('\n');
+            values.push_str(&v);
+        }
     }
     crate::calendar::agent::validate_decision(&values, decision)?;
     let p = crate::calendar::agent::profile(c, &r.tenant, &r.id)?.ok_or(StoreError::Forbidden)?;

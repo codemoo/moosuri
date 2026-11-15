@@ -3,6 +3,7 @@
 use super::*;
 mod acceptance;
 pub(crate) mod actions;
+pub(crate) mod inputs;
 mod reports;
 pub(crate) use acceptance::floor as acceptance_floor;
 pub(crate) mod chat;
@@ -403,6 +404,28 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
         } else {
             reports::view(c, t, &raw.10)?
         },
+        input_wait: if invalid {
+            None
+        } else {
+            inputs::view(c, t, id)?.into_iter().find(|w| {
+                matches!(
+                    w.state.as_str(),
+                    "waiting" | "ready" | "expired" | "cancelled"
+                )
+            })
+        },
+        inputs: if invalid {
+            vec![]
+        } else {
+            inputs::view(c, t, id)?
+                .into_iter()
+                .filter(|w| {
+                    w.state == "resumed"
+                        && acceptance::revision(c, t, &raw.10)
+                            .is_ok_and(|revision| w.acceptance_revision == revision)
+                })
+                .collect()
+        },
         wait: if invalid {
             None
         } else {
@@ -549,6 +572,10 @@ pub(crate) fn apply_delete(c: &Connection, t: &str, id: &str) -> Result<()> {
         )?;
         c.execute(
             "DELETE FROM mission_connection_selections WHERE tenant_id=?1 AND mission_id=?2",
+            params![t, id],
+        )?;
+        c.execute(
+            "DELETE FROM mission_input_replies WHERE tenant_id=?1 AND mission_id=?2",
             params![t, id],
         )?;
         crate::connection_waits::poll(c, clock()?)?;

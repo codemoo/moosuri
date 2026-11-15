@@ -674,13 +674,31 @@ async fn compound_model(
                     "tool_calls",
                 )
             }
+            3 if !task.contains("recipient@example.test")
+                && context["owner_inputs"].as_array().unwrap().is_empty() =>
+            {
+                (
+                    json!({"role":"assistant","content":json!({"input_request":{"field":"mail_to","question":"회신 초안을 받을 이메일 주소를 알려 주세요."}}).to_string()}),
+                    "stop",
+                )
+            }
             3 => {
+                if !task.contains("recipient@example.test") {
+                    assert_eq!(
+                        context["owner_inputs"][0]["value"],
+                        "recipient@example.test"
+                    );
+                }
                 let mail=definition("mission_prepare_mail")["function"]["parameters"]["properties"]["input"]["properties"]["connection_id"]["enum"][0].clone();
                 (
                     json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"prepare".into(),"mission_prepare_mail",json!({"intent_quote":task,"input":{"connection_id":mail,"origin_thread_id":null,"content":{"from":"owner@example.test","to":["recipient@example.test"],"cc":[],"bcc":[],"subject":"Synthetic compound draft","text":"Owned mail body","reply":null}},"evidence":[reference("read")]})),knowledge::tool_call(1,"calendar".into(),"mission_calendar_action",json!({"decision":compound_decision(task),"evidence":[reference("list")]}))]}),
                     "tool_calls",
                 )
             }
+            5 if !task.contains("recipient@example.test") => (
+                json!({"role":"assistant","content":json!({"text":"Prepared the original draft and Calendar event with the owner recipient. Final mail approval is still required.","evidence":[reference("read"),reference("prepare"),reference("calendar")]}).to_string()}),
+                "stop",
+            ),
             5 => {
                 let p = result("prepare");
                 assert_eq!(
@@ -816,6 +834,114 @@ async fn compound_actions_runtime_reads_prepares_gmail_and_creates_calendar_with
     assert_eq!(script.calls.load(Ordering::SeqCst), 6);
     assert!(s.next_mail_dispatch().await.unwrap().is_none());
     runtime.shutdown().await;
+    model_server.abort();
+    io_server.abort();
+}
+
+#[tokio::test]
+async fn mission_input_runtime_reads_once_waits_without_polling_and_continues_same_run() {
+    let _guard = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let script = Arc::new(Model {
+        calls: AtomicUsize::new(0),
+    });
+    let app = Router::new()
+        .route("/v1/chat/completions", post(compound_model))
+        .with_state(script.clone());
+    let model_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let io = Arc::new(CompoundIo {
+        read: Arc::new(Io {
+            reads: AtomicUsize::new(0),
+            searches: AtomicUsize::new(0),
+            writes: AtomicUsize::new(0),
+            hold: AtomicU8::new(0),
+            started: tokio::sync::Notify::new(),
+            release: Semaphore::new(0),
+        }),
+        drafts: AtomicUsize::new(0),
+        calendars: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    });
+    let app = Router::new().fallback(compound_io).with_state(io.clone());
+    let io_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_dir, s, u, _) = knowledge::tool_configured(&base).await;
+    connections(&s, &u, "owner").await;
+    let task = "Read Gmail account owner@example.test and Calendar, prepare an email draft and create primary Calendar event named Synthetic on 2027-04-12 at 09:00 for 30 minutes";
+    let m = s
+        .create_mission(
+            &u,
+            MissionCreate {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task: task.into(),
+                constraints: String::new(),
+                checks: vec![MissionCheck::UserReview {
+                    description: "Review the exact draft".into(),
+                }],
+                execution_mode: MissionMode::Durable,
+            },
+        )
+        .await
+        .unwrap();
+    let engine = runtime(s.clone(), address);
+    engine.wake();
+    let wait = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let view = s
+                .missions(&u)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|v| v.id == m.id)
+                .unwrap();
+            if view.state == "waiting" {
+                break view;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(script.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(wait.completed_steps, 3);
+    assert!(wait.actions.is_empty());
+    // The original engine can be stopped and restarted while the owner answers.
+    engine.shutdown().await;
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+    assert_eq!(script.calls.load(Ordering::SeqCst), 4);
+    let answer = moosuri_core::MissionInputReply {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        wait_request_id: wait.input_wait.as_ref().unwrap().request_id.clone(),
+        expected_revision: wait.revision,
+        value: "recipient@example.test".into(),
+    };
+    let queued = s
+        .reply_mission_input(&u, m.id.clone(), answer.clone())
+        .await
+        .unwrap();
+    assert_eq!(queued.state, "queued");
+    assert_eq!(queued.id, m.id);
+    assert_eq!(queued.request.request_id, m.request.request_id);
+    s.reply_mission_input(&u, m.id.clone(), answer)
+        .await
+        .unwrap();
+    let resumed = runtime(s.clone(), address);
+    resumed.wake();
+    let done = finished(&s, &u, &m.id).await;
+    assert_eq!(done.state, "partial", "{:?}", done.report);
+    assert_eq!(done.actions.len(), 2);
+    assert_eq!(done.inputs.len(), 1);
+    assert_eq!(io.read.searches.load(Ordering::SeqCst), 1);
+    assert_eq!(io.read.reads.load(Ordering::SeqCst), 5);
+    assert_eq!(io.calendars.load(Ordering::SeqCst), 1);
+    assert_eq!(io.drafts.load(Ordering::SeqCst), 0);
+    assert_eq!(io.sends.load(Ordering::SeqCst), 0);
+    assert_eq!(script.calls.load(Ordering::SeqCst), 6);
+    assert!(s.next_mail_dispatch().await.unwrap().is_none());
+    resumed.shutdown().await;
     model_server.abort();
     io_server.abort();
 }

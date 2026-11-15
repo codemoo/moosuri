@@ -89,8 +89,50 @@ pub struct MissionReceipt {
     pub label: String,
     pub detail: String,
 }
+/// Values for already admitted one-off actions; never new operation authority.
+#[derive(Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MissionInputField {
+    MailTo,
+    CalendarDate,
+    CalendarStart,
+    CalendarDuration,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MissionInputRequest {
+    pub field: MissionInputField,
+    pub question: String,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct MissionInputWait {
+    pub request_id: String,
+    pub field: MissionInputField,
+    pub question: String,
+    pub state: String,
+    pub value: Option<String>,
+    #[ts(type = "number")]
+    pub acceptance_revision: i64,
+    #[ts(type = "number")]
+    pub expires_at_ms: i64,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MissionInputReply {
+    pub request_id: String,
+    pub wait_request_id: String,
+    #[ts(type = "number")]
+    pub expected_revision: i64,
+    pub value: String,
+}
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MissionView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_wait: Option<MissionInputWait>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<MissionInputWait>>", optional)]
+    pub inputs: Vec<MissionInputWait>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<MissionLinkedAction>>", optional)]
     pub actions: Vec<MissionLinkedAction>,

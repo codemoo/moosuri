@@ -596,6 +596,11 @@ fn migrate(conn: &Connection, captured: i64) -> Result<()> {
             "../../../../migrations/assistant/0068_native_mail_settlement_cursor.sql"
         ))?;
     }
+    if captured < 69 {
+        conn.execute_batch(include_str!(
+            "../../../../migrations/assistant/0069_mission_input_waits.sql"
+        ))?;
+    }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
         return Err(Error::UnsupportedInstallation);
@@ -688,7 +693,7 @@ fn quarantine(
         ],
     )?;
     crate::browser::selected::quarantine_restore(&tx).map_err(|_| Error::Unavailable)?;
-    tx.execute_batch("DELETE FROM mission_connection_waits;DELETE FROM mission_connection_selections;DELETE FROM mission_connection_slots;")?;
+    tx.execute_batch("DELETE FROM mission_input_replies;DELETE FROM mission_input_waits;DELETE FROM mission_connection_waits;DELETE FROM mission_connection_selections;DELETE FROM mission_connection_slots;")?;
     tx.execute_batch("UPDATE missions SET grant_enabled=0,state=CASE WHEN state IN('queued','planning','executing','verifying','paused','waiting') THEN 'quarantined' ELSE state END; DELETE FROM calendar_oauth_sessions; UPDATE calendar_connections SET status='needs_reconnect',credential=NULL,epoch=epoch+1,credential_revision=credential_revision+1; UPDATE calendar_actions SET state=CASE WHEN state IN('dispatch_committed','outcome_unknown') THEN 'quarantined' ELSE state END,payload=NULL,event=NULL; DELETE FROM sessions; DELETE FROM agent_run_leases; UPDATE agent_execution SET invalidated=1; UPDATE agent_steps SET checkpoint=NULL,completion_digest=NULL,state=CASE WHEN state='dispatched' THEN 'unknown' ELSE state END; UPDATE agent_tool_slots SET input=NULL; DELETE FROM memory_command_plans; DELETE FROM memory_target_plans; DELETE FROM memory_command_slots WHERE state='prepared'; UPDATE chat_runs SET state=CASE WHEN state='running' THEN 'outcome_unknown' ELSE 'cancelled' END,error='interrupted',version=version+1 WHERE state IN('queued','running');
     UPDATE mail_provider_saves SET state='quarantined',receipt=NULL WHERE state IN('started','outcome_unknown');
     UPDATE mail_reconciliations SET quarantined=1,lease_nonce=NULL,lease_until=NULL,next_due=NULL,status='restore_quarantined';

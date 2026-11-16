@@ -55,8 +55,23 @@ source-lock inventory also includes other workspace/build dependencies; its earl
 whole-workspace notice gaps are not retroactively marked complete. Source/new-history
 and package text secret scans passed; large binary contents are outside the text scanner.
 
-The independent review and meaningful source contracts are complete. Actual public
-bootstrap download/setup acceptance is recorded separately after publication.
+The published GitHub release has seven uploaded assets. All four archive sizes and
+GitHub-reported SHA256 digests match the committed bootstrap pins. The release tag
+targets publication commit `eb16c57ea06020de472a0fab6c94b5d72adc948a`.
+
+The actual public `main/install.sh` one-line command then passed in an isolated
+macOS ARM64 home with a synthetic account. It downloaded the published archive,
+verified the pinned checksum and bundle signature, accepted Korean arrow/number
+choices, created the CLI launcher and appended one PATH block. A blank password
+created a temporary credential only on the controlling TTY, absent from captured
+stdout/stderr. The installed foreground launcher served readiness204 and the embedded
+app; login required a password change, protected administration returned403 before
+that change and200 afterward. Graceful shutdown succeeded. Interactive uninstall
+removed the launcher and retained every private data file with unchanged hashes.
+The first removal harness omitted the required controlling TTY and safely refused;
+the corrected interactive check used the same installation, without rerunning accepted
+download/login checks. Real service managers were replaced by unavailable fixtures,
+so this verifies foreground fallback, not host launchd/systemd deployment.
 
 No live paid-model calls, real OAuth login, system daemon deployment, physical ARM
 or WSL2 host acceptance is claimed by the synthetic PTY checks. Optional model

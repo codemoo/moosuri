@@ -13,6 +13,8 @@ Mac·Linux x64/ARM64의 [서명된 설치 미리보기 v0.1.0-dev.2](https://git
 한 줄 bootstrap을 공개했다. Mac ARM64·Linux x64 실행과 Linux ARM64 QEMU 실행을 확인했다.
 Intel Mac은 교차 빌드이며 실제 Intel·WSL2·물리 ARM 및 사용자 서비스 실운영 수락은 남는다.
 Linux/WSL2는 glibc2.34 이상이 필요하다. [설치 검증 기록](reviews/2026-11-17-guided-installation.md).
+실제 공개 명령의 다운로드·한국어 방향키 설치·임시 암호 강제 변경·웹/API 접속·정상 종료·
+데이터 해시를 보존한 제거를 격리된 Mac ARM64 환경에서 확인했다.
 
 현재는 [기능별 안정화](testing.md#기능별-안정화)에 집중한다.
 [메일 답장 감시](mail-reply-watches.md)를 추가했다. 완료된 Gmail 읽기/발송 영수증에서

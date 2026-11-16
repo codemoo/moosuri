@@ -8,4 +8,4 @@
 - [x] Verify rejection of changed bundles, unsafe origins, unrelated paths and service collisions.
 - [x] Complete independent review and platform-specific build/runtime evidence; disclose actual Intel/WSL2/physical ARM and operating service-manager limits.
 - [x] Publish source, installation instructions and bounded acceptance; keep CI disabled.
-- [ ] Exercise the public one-line bootstrap in an isolated home through synthetic login and temporary-password enforcement.
+- [x] Exercise the public one-line bootstrap in an isolated home through synthetic login and temporary-password enforcement; verify foreground shutdown and data-preserving removal.

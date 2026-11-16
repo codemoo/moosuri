@@ -48,7 +48,7 @@ fn view(c: &Connection, u: &UserContext, id: &str) -> Result<RecurringMissionVie
     })
 }
 // Fence only unfinished children. Committed historical results and accounting stay historical.
-fn fence_children(c: &Connection, t: &str, id: &str) -> Result<()> {
+pub(crate) fn fence_children(c: &Connection, t: &str, id: &str) -> Result<()> {
     let runs=c.prepare("SELECT m.run_id FROM missions m JOIN recurring_mission_occurrences o ON o.tenant_id=m.tenant_id AND o.mission_id=m.id WHERE o.tenant_id=?1 AND o.schedule_id=?2 AND m.state IN('queued','planning','executing','verifying','paused','waiting')")?.query_map(params![t,id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for run in runs {
         crate::missions::connected::withdraw_private(c, t, &run)?;
@@ -95,7 +95,7 @@ impl Store {
         user: &UserContext,
     ) -> Result<Vec<RecurringMissionView>> {
         let user = user.clone();
-        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let ids=db.conn.prepare("SELECT x.schedule_id FROM recurring_missions x JOIN reminder_schedules s ON s.tenant_id=x.tenant_id AND s.id=x.schedule_id WHERE x.tenant_id=?1 AND x.account_id=?2 AND s.state!='revoked' ORDER BY s.created_at DESC,x.schedule_id LIMIT 64")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;ids.iter().map(|id|view(&db.conn,&u,id)).collect()}).await
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let ids=db.conn.prepare("SELECT x.schedule_id FROM recurring_missions x JOIN reminder_schedules s ON s.tenant_id=x.tenant_id AND s.id=x.schedule_id WHERE x.tenant_id=?1 AND x.account_id=?2 AND s.state!='revoked' AND NOT EXISTS(SELECT 1 FROM task_monitors m WHERE m.tenant_id=x.tenant_id AND m.schedule_id=x.schedule_id) ORDER BY s.created_at DESC,x.schedule_id LIMIT 64")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;ids.iter().map(|id|view(&db.conn,&u,id)).collect()}).await
     }
     pub async fn control_recurring_mission(
         &self,
@@ -173,6 +173,10 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
         if !valid {
             continue;
         }
+        if !crate::task_monitors::ready(c, &t, &schedule, time)? {
+            c.execute("UPDATE reminder_occurrences SET state='skipped',reason='monitor_no_new_evidence',updated_at=?3 WHERE tenant_id=?1 AND id=?2",params![t,occurrence,time])?;
+            continue;
+        }
         let expiry = at
             .checked_add(86400)
             .ok_or(StoreError::InvalidInput)?
@@ -214,6 +218,7 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
         }
         let mut input: MissionCreate = decode(&template)?;
         input.request_id = occurrence.clone();
+        crate::task_monitors::prepare(c, &t, &schedule, &mut input)?;
         let model = skills::admission_model(c, &t, &model)?;
         // A zero digest is a non-session marker; durable authority never uses chat session auth.
         let id = crate::missions::create_pinned_in(
@@ -227,6 +232,7 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
             expiry.checked_mul(1000).ok_or(StoreError::InvalidInput)?,
             time,
         )?;
+        crate::task_monitors::admitted(c, &t, &schedule, &id, time)?;
         c.execute("INSERT INTO recurring_mission_occurrences(tenant_id,occurrence_id,schedule_id,schedule_revision,mission_id,scheduled_for) VALUES(?1,?2,?3,?4,?5,?6)",params![t,occurrence,schedule,revision,id,at])?;
         c.execute("UPDATE reminder_occurrences SET state='delivered',reason='mission_admitted',updated_at=?3 WHERE tenant_id=?1 AND id=?2",params![t,occurrence,time])?;
         c.execute("UPDATE reminder_clock SET claim_order=claim_order+1 WHERE singleton=1 AND claim_order<9223372036854775807",[])?;
@@ -289,7 +295,10 @@ fn publish_results(c: &Connection, time: i64) -> Result<()> {
     let rows=c.prepare("SELECT o.tenant_id,o.occurrence_id,o.schedule_id,o.mission_id,o.scheduled_for,o.schedule_revision,m.account_id,m.state,m.auth_epoch,x.changes_only FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN recurring_missions x ON x.tenant_id=o.tenant_id AND x.schedule_id=o.schedule_id WHERE o.publication_state='pending' AND m.state NOT IN('queued','planning','executing','verifying','paused','waiting') ORDER BY o.scheduled_for,o.occurrence_id LIMIT 32")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,i64>(8)?,r.get::<_,bool>(9)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for (t, occurrence, schedule, mission, at, revision, account, state, epoch, changes) in rows {
         let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM reminder_schedules s JOIN accounts a ON a.tenant_id=s.tenant_id AND a.id=s.account_id WHERE s.tenant_id=?1 AND s.id=?2 AND s.revision=?3 AND s.auth_epoch=?4 AND s.state='active' AND a.auth_epoch=?4 AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (s.valid_until IS NULL OR s.valid_until>?5))",params![t,schedule,revision,epoch,time],|r|r.get(0))?;
-        if !valid || state == "deleted" {
+        if !valid
+            || state == "deleted"
+            || !crate::task_monitors::publication_current(c, &t, &schedule, &mission, time)?
+        {
             c.execute("UPDATE recurring_mission_occurrences SET publication_state='fenced' WHERE tenant_id=?1 AND occurrence_id=?2",params![t,occurrence])?;
             continue;
         }

@@ -7,5 +7,5 @@
   UUID replay and cancellation of the same reminder with zero inference.
 - [x] Run affected Store schedule-chat checks including negative continuity
   boundaries and record exact results.
-- [ ] Parent integration: independent review, fresh real-model recheck, pinned
+- [x] Parent integration: independent review, fresh real-model recheck, pinned
   OpenSpec validation and final combined source publication.

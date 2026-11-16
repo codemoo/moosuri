@@ -1,0 +1,12 @@
+.task-monitors { margin: 16px 0; font-size: 13px; line-height: 1.6; }
+.task-monitors > h3 { font-size: 14px; font-weight: 500; }
+.task-monitors > article { padding: 16px 18px; margin: 10px 0; border: 1px solid var(--line); border-radius: 14px; background: #fafbf7; }
+.task-monitors article > p { margin: 8px 0; }
+.task-monitors form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.task-monitors label { display: flex; align-items: center; gap: 8px; }
+.task-monitors label:has(input[type="checkbox"]), .task-monitors form > p { flex-basis: 100%; }
+.task-monitors details { color: var(--muted); margin: 10px 0; }
+.task-monitors details p { margin-bottom: 0; }
+.task-monitors ul { padding-left: 20px; }
+.task-monitors select, .task-monitors input:not([type="checkbox"]) { max-width: 100%; }
+.task-monitors > button { font-size: 12px; }

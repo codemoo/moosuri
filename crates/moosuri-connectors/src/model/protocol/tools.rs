@@ -82,6 +82,64 @@ fn dialect(p: Protocol) -> &'static str {
     }
 }
 impl Continuation {
+    /// Append current-owner guidance only after every pending tool result. Source
+    /// content cannot call this API; provider output cannot emit these user items.
+    pub fn append_user_instructions(
+        &mut self,
+        results: &[ToolResult],
+        instructions: &[String],
+    ) -> Result<(), ProtocolError> {
+        if instructions.is_empty() || instructions.len() > 8 || results.len() != self.pending.len()
+        {
+            return Err(ProtocolError::Protocol);
+        }
+        let mut seen = BTreeSet::new();
+        for result in results {
+            valid_id(&result.call_id)?;
+            if result_wire_output(result).len() > MAX_ARGUMENTS
+                || !self.pending.iter().any(|(id, _)| id == &result.call_id)
+                || !seen.insert(&result.call_id)
+            {
+                return Err(ProtocolError::Protocol);
+            }
+        }
+        let mut history = self.history.clone();
+        match self.protocol {
+            Protocol::Responses => {
+                for r in results {
+                    history.push(json!({"type":"function_call_output","call_id":r.call_id,"output":result_wire_output(r)}));
+                }
+            }
+            Protocol::AnthropicMessages => {
+                if !results.is_empty() {
+                    history.push(json!({"role":"user","content":results.iter().map(|r|json!({"type":"tool_result","tool_use_id":r.call_id,"content":r.output,"is_error":r.is_error})).collect::<Vec<_>>()}));
+                }
+            }
+            _ => {
+                for r in results {
+                    history.push(json!({"role":"tool","tool_call_id":r.call_id,"content":result_wire_output(r)}));
+                }
+            }
+        }
+        for text in instructions {
+            if text.trim().is_empty() || text.len() > 2000 {
+                return Err(ProtocolError::LimitExceeded);
+            }
+            history.push(match self.protocol {
+                Protocol::Responses => json!({"type":"message","role":"user","content":[{"type":"input_text","text":text}]}),
+                Protocol::AnthropicMessages => json!({"role":"user","content":[{"type":"text","text":text}]}),
+                _ => json!({"role":"user","content":text}),
+            });
+        }
+        validate_history(self.protocol, &history, &[])?;
+        for item in &history {
+            validate_dialect_item(self.protocol, self.dialect, item)?;
+        }
+        bounded_json(&json!(history), MAX_CAPSULE)?;
+        self.history = history;
+        self.pending.clear();
+        Ok(())
+    }
     pub fn to_private_checkpoint(&self) -> Result<Vec<u8>, ProtocolError> {
         let bytes=serde_json::to_vec(&json!({"v":1,"protocol":if self.dialect == ResponsesDialect::ChatGptPlan { "chatgpt_plan" } else { dialect(self.protocol) },"model":self.model,"effort":self.effort,"history":self.history,"pending":self.pending})).map_err(|_|ProtocolError::Protocol)?;
         if bytes.len() > MAX_CAPSULE {
@@ -704,6 +762,9 @@ fn validate_dialect_item(
 }
 fn validate_history_item(protocol: Protocol, v: &Value) -> Result<(), ProtocolError> {
     bounded_json(v, MAX_CAPSULE)?;
+    if owner_instruction_item(protocol, v)? {
+        return Ok(());
+    }
     let keys = |allowed: &[&str]| -> Result<(), ProtocolError> {
         if v.as_object()
             .is_none_or(|m| m.keys().any(|k| !allowed.contains(&k.as_str())))
@@ -852,6 +913,87 @@ fn validate_history_item(protocol: Protocol, v: &Value) -> Result<(), ProtocolEr
     }
     Ok(())
 }
+fn owner_instruction_item(protocol: Protocol, v: &Value) -> Result<bool, ProtocolError> {
+    if v["role"] != "user" {
+        return Ok(false);
+    }
+    let text = match protocol {
+        Protocol::Responses => {
+            only_keys(v, &["type", "role", "content"])?;
+            if v["type"] != "message" {
+                return Err(ProtocolError::Protocol);
+            }
+            let parts = v["content"].as_array().ok_or(ProtocolError::Protocol)?;
+            if parts.len() != 1 || parts[0]["type"] != "input_text" {
+                return Err(ProtocolError::Protocol);
+            }
+            only_keys(&parts[0], &["type", "text"])?;
+            required_text(&parts[0], "text")?
+        }
+        Protocol::AnthropicMessages => {
+            let parts = v["content"].as_array().ok_or(ProtocolError::Protocol)?;
+            if parts.iter().any(|p| p["type"] == "tool_result") {
+                return Ok(false);
+            }
+            only_keys(v, &["role", "content"])?;
+            if parts.len() != 1 || parts[0]["type"] != "text" {
+                return Err(ProtocolError::Protocol);
+            }
+            only_keys(&parts[0], &["type", "text"])?;
+            required_text(&parts[0], "text")?
+        }
+        _ => {
+            only_keys(v, &["role", "content"])?;
+            required_text(v, "content")?
+        }
+    };
+    if text.trim().is_empty() || text.len() > 2000 {
+        return Err(ProtocolError::LimitExceeded);
+    }
+    Ok(true)
+}
+fn validate_output_item(
+    protocol: Protocol,
+    dialect: ResponsesDialect,
+    v: &Value,
+) -> Result<(), ProtocolError> {
+    if v["role"] == "user" {
+        return Err(ProtocolError::Protocol);
+    }
+    validate_dialect_item(protocol, dialect, v)
+}
+#[cfg(test)]
+mod live_instruction_tests {
+    use super::*;
+    #[test]
+    fn live_instruction_user_roles_roundtrip_after_results_but_provider_cannot_forge_them() {
+        for protocol in [
+            Protocol::Responses,
+            Protocol::ChatCompletions,
+            Protocol::AnthropicMessages,
+        ] {
+            let mut continuation = Continuation {
+                protocol,
+                dialect: ResponsesDialect::Api,
+                model: "synthetic".into(),
+                effort: None,
+                history: vec![],
+                pending: vec![],
+            };
+            continuation
+                .append_user_instructions(&[], &["Keep exact current-owner guidance".into()])
+                .unwrap();
+            let bytes = continuation.to_private_checkpoint().unwrap();
+            let restored =
+                Continuation::from_private_checkpoint(&bytes, protocol, "synthetic", None).unwrap();
+            assert!(owner_instruction_item(protocol, &restored.history[0]).unwrap());
+            assert!(
+                validate_output_item(protocol, ResponsesDialect::Api, &restored.history[0])
+                    .is_err()
+            );
+        }
+    }
+}
 fn validate_reasoning(v: &Value) -> Result<(), ProtocolError> {
     let a = v.as_array().ok_or(ProtocolError::Protocol)?;
     if a.len() > MAX_ITEMS {
@@ -956,7 +1098,7 @@ impl RoundState {
                 d.require_started()?;
                 let item = object(v, "item")?;
                 let idx = index(v, "output_index")?;
-                validate_dialect_item(self.protocol, self.dialect, item)?;
+                validate_output_item(self.protocol, self.dialect, item)?;
                 if self.items.contains_key(&idx)
                     || self.items.values().any(|x| x["id"] == item["id"])
                 {
@@ -998,7 +1140,7 @@ impl RoundState {
             "response.output_item.done" => {
                 let item = object(v, "item")?;
                 let idx = index(v, "output_index")?;
-                validate_dialect_item(self.protocol, self.dialect, item)?;
+                validate_output_item(self.protocol, self.dialect, item)?;
                 if self.closed.contains(&idx) {
                     return Err(ProtocolError::Protocol);
                 }
@@ -1051,7 +1193,7 @@ impl RoundState {
                     if old != next {
                         return Err(ProtocolError::Protocol);
                     }
-                    validate_dialect_item(self.protocol, self.dialect, item)?;
+                    validate_output_item(self.protocol, self.dialect, item)?;
                     if item["type"] == "function_call" {
                         shadow["response"]["output"][idx] = tool_placeholder(item);
                     }
@@ -1418,6 +1560,12 @@ fn validate_history(
     let mut seen = BTreeSet::new();
     let mut unresolved = BTreeMap::new();
     for item in history {
+        if owner_instruction_item(protocol, item)? {
+            if !unresolved.is_empty() {
+                return Err(ProtocolError::Protocol);
+            }
+            continue;
+        }
         let mut calls = Vec::new();
         let mut results = Vec::new();
         match protocol {

@@ -75,6 +75,7 @@ pub(crate) fn authority(c: &Connection, r: &Run) -> Result<()> {
         return Err(error);
     }
     crate::recurring_missions::authority(c, r)?;
+    crate::task_monitors::authority(c, r)?;
     if !connected::current(c, r)? {
         connected::withdraw_private(c, &r.tenant, &r.id)?;
         return Err(StoreError::Conflict);
@@ -153,11 +154,35 @@ pub(crate) fn carrier_transition(c: &Connection, r: &Run, s: RunState) -> Result
     }
     Ok(())
 }
+pub(crate) fn supports_live_instructions(c: &Connection, r: &Run) -> Result<bool> {
+    if !is_mission(c, &r.tenant, &r.id)? {
+        return Ok(false);
+    }
+    let input = acceptance::current(c, &r.tenant, &r.id)?;
+    let text = format!("{}\n{}", input.task, input.constraints);
+    let effects = actions::requested(&text);
+    Ok(!effects.0
+        && !effects.1
+        && reports::requested(&input).is_none()
+        && !actions::provider_requested(&text)
+        && !r.tool_profile.as_ref().is_some_and(|p| {
+            p.native_mail_model_read
+                || p.credential_github
+                || p.credential_gitea
+                || p.credential_google
+                || p.credential_google_preview
+        }))
+}
 // A stable mission continuation is not a fresh model attempt. The legacy chat
 // attempt column is capped at32; at that boundary retire the old lease inside
 // this transaction and let claim mint a fresh nonce. Step accounting receipts
 // remain immutable and cannot authorize execution. Ordinary chat is unaffected.
 fn requeue_stable(c: &Connection, tenant: &str, run: &str) -> Result<()> {
+    let old_attempt: i32 = c.query_row(
+        "SELECT attempt FROM chat_runs WHERE tenant_id=?1 AND id=?2",
+        params![tenant, run],
+        |r| r.get(0),
+    )?;
     let eligible: bool = c.query_row(
         "SELECT EXISTS(SELECT 1 FROM missions m JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE m.tenant_id=?1 AND m.run_id=?2 AND m.grant_enabled=1 AND m.uncertain=0 AND m.state IN('paused','queued','planning','executing','verifying') AND r.state IN('queued','running','cancelled')) AND NOT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) AND NOT EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started') AND NOT EXISTS(SELECT 1 FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND step=0)",
         params![tenant, run],
@@ -177,6 +202,7 @@ fn requeue_stable(c: &Connection, tenant: &str, run: &str) -> Result<()> {
     {
         return Err(StoreError::Conflict);
     }
+    c.execute("UPDATE run_instructions SET execution_attempt=min(?3+1,32) WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3 AND state IN('received','applied')",params![tenant,run,old_attempt])?;
     Ok(())
 }
 pub(crate) fn restart(c: &Connection) -> Result<()> {
@@ -432,6 +458,14 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
         } else {
             crate::connection_waits::view(c, t, id)?
                 .or(crate::native_task_mail::view(c, t, &raw.10)?)
+        },
+        instruction_target: crate::run_instructions::target(
+            c,
+            &crate::chat::load_run(c, t, &raw.10)?,
+        )?,
+        instructions: {
+            let r = crate::run_instructions::receipts(c, &crate::chat::load_run(c, t, &raw.10)?)?;
+            (!r.is_empty()).then_some(r)
         },
         id: raw.0,
         revision: raw.1,
@@ -763,7 +797,8 @@ impl Store {
         // A local plan may share the first completed execution round. Preserve
         // that round for tool/final recovery; only legacy narrative plans are
         // consumed here. Admission and acceptance guards stay step-bound.
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}reports::admit(&tx,&r,acceptance_revision)?;actions::admit_revision(&tx,&r,acceptance_revision)?;tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=CASE WHEN json_extract(round_text,'$.planning')=0 THEN round_text ELSE NULL END WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};acceptance::check(&tx,&r,l.step,acceptance_revision)?;if crate::run_instructions::pending(&tx,&r)? {tx.commit()?;return Ok(())}
+        if plan.is_empty()||plan.len()>5||plan.iter().any(|s|s.trim().is_empty()||s.len()>300){return Err(StoreError::InvalidInput)}reports::admit(&tx,&r,acceptance_revision)?;actions::admit_revision(&tx,&r,acceptance_revision)?;tx.execute("UPDATE missions SET plan=?3,state='executing',round_text=CASE WHEN json_extract(round_text,'$.planning')=0 THEN round_text ELSE NULL END WHERE tenant_id=?1 AND run_id=?2 AND plan='[]'",params![r.tenant,r.id,json(&plan)?])?;tx.commit()?;Ok(())}).await
     }
     /// Evidence references are resolved exclusively against this run's committed typed slots.
     pub async fn mission_verify(
@@ -783,6 +818,7 @@ impl Store {
         self.call(move|db|{
  let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&l){Ok(run)=>run,Err(error)=>{tx.commit()?;return Err(error)}};
  acceptance::check(&tx,&r,l.step,acceptance_revision)?;
+ if crate::run_instructions::pending(&tx,&r)? { tx.commit()?; return Ok(false); }
  if candidate.text.trim().is_empty()||candidate.text.len()>24000||candidate.evidence.len()>12{return Err(StoreError::InvalidInput)}
  let(id,repairs):(String,i64)=tx.query_row("SELECT id,repairs FROM missions WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|r|Ok((r.get(0)?,r.get(1)?)))?;let input=acceptance::current(&tx,&r.tenant,&r.id)?;
  let mut evidence=Vec::new();let mut report=Vec::new();let mut unknown=false;
@@ -821,6 +857,7 @@ if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} 
  let state=if unknown{"unknown"}else if achieved{"achieved"}else if passed>0 || (!evidence.is_empty() && input.checks.iter().any(|c|matches!(c,MissionCheck::UserReview{..}))){"partial"}else if evidence.is_empty(){"missing_evidence"}else{"failed"};
  tx.execute("UPDATE missions SET candidate=?3,report=?4,state=?5,round_text=NULL,repairs=repairs+?6,uncertain=max(uncertain,?7) WHERE tenant_id=?1 AND id=?2",params![r.tenant,id,json(&candidate)?,json(&report)?,if terminal{state}else{"executing"},if terminal{0}else{1},unknown])?;
  if terminal{tx.execute("UPDATE chat_runs SET state=?3 WHERE tenant_id=?1 AND id=?2",params![r.tenant,r.id,if achieved{"completed"}else{"incomplete"}])?;crate::connection_waits::poll(&tx,clock()?)?;}
+ if achieved {crate::task_monitors::propose(&tx,&r,&id,&candidate)?;}
  tx.commit()?;Ok(terminal)
  }).await
     }
@@ -1137,6 +1174,7 @@ pub(crate) fn control_owner_in(
             };
             tx.execute("UPDATE missions SET state=?3,uncertain=max(uncertain,?4),revision=revision+1,grant_enabled=CASE WHEN ?3='cancelled' THEN 0 ELSE grant_enabled END WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,id,state,dispatched])?;
             let carrier = crate::chat::load_run(tx, &u.tenant.0, &run)?;
+            crate::run_instructions::close(tx, &carrier, "mission_stopped")?;
             crate::native_task_mail::cancel(tx, &carrier)?;
             connected::withdraw_private(tx, &u.tenant.0, &run)?;
             tx.execute(

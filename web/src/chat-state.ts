@@ -1,3 +1,4 @@
+import { validInstructionReceipt } from "./run-instructions";
 import type {
   AssistantMessage,
   ChatEvent,
@@ -62,6 +63,9 @@ export function validRun(value: unknown): value is RunView {
     id(value.id) &&
     id(value.request_id) &&
     id(value.thread_id) &&
+    (value.supports_instructions === undefined || typeof value.supports_instructions === "boolean") &&
+    (value.instructions === undefined || (Array.isArray(value.instructions) && value.instructions.length <= 8 && value.instructions.every(validInstructionReceipt))) &&
+    (value.instruction_target === undefined || (object(value.instruction_target) && id(value.instruction_target.run_id) && id(value.instruction_target.thread_id) && integer(value.instruction_target.attempt, 1) && typeof value.instruction_target.supports_instructions === "boolean")) &&
     integer(value.attempt, 1) &&
     integer(value.version) &&
     states.has(String(value.state)) &&

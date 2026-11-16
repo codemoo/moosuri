@@ -77,6 +77,10 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
         "이어서 설명해 줘",
         "방금 말한 두 가지를 한 문장으로 이어서 설명해 줘.",
         "앞서 말한 내용을 짧게 이어서 설명해 주세요.",
+        "산책이 몸과 기분에 도움이 되는 이유를 알려줘.",
+        "이 성분에 대해 설명해 줘.",
+        "수업 시간에 집중하는 방법을 설명해 줘.",
+        "업무 시간에 쉬는 방법을 알려줘.",
     ] {
         let before = count.load(Ordering::SeqCst);
         s.submit_turn(
@@ -102,7 +106,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     .await
     .unwrap();
     wait(&s, &u, &thread).await;
-    assert_eq!(count.load(Ordering::SeqCst), 6);
+    assert_eq!(count.load(Ordering::SeqCst), 10);
     // A polite foreground request after a real saved-task receipt still needs
     // only its answer call, and must not create or control another mission.
     s.submit_turn(
@@ -116,7 +120,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     let ordinary = wait(&s, &u, &thread).await;
     assert_eq!(ordinary.run.state, moosuri_core::RunState::Completed);
     assert!(ordinary.run.mission_receipt.is_none());
-    assert_eq!(count.load(Ordering::SeqCst), 7);
+    assert_eq!(count.load(Ordering::SeqCst), 11);
     assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
     s.submit_turn(
         &u,
@@ -128,7 +132,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     .unwrap();
     let clarified = wait(&s, &u, &thread).await;
     assert_eq!(clarified.run.mission_receipt.unwrap().state, "clarify");
-    assert_eq!(count.load(Ordering::SeqCst), 8);
+    assert_eq!(count.load(Ordering::SeqCst), 12);
     assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
     runtime.shutdown().await;
     upstream.abort();
@@ -172,6 +176,10 @@ fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_c
         "내 아침 뉴스 업무 쉬게 해 줘",
         "두 시간 에 한 번씩 공개 교통 소식을 확인해 주세요",
         "십 분마다 공개 경보를 읽어 주세요",
+        "2시간에 1번 공개 뉴스를 확인해 줘",
+        "십 분에 한 번 공개 경보를 읽어 주세요",
+        "20분에 한 번 공지를 확인해 줘",
+        "스물한 분에 한 번 공지를 확인해 줘",
         "Please put the public bulletin digest on hold for now",
         "날마다 정오에 공개 자료를 조사해 줘",
         "한 시간 간격으로 공개 소식을 정리해 주세요",
@@ -205,6 +213,10 @@ fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_c
         "이어서 설명해 줘",
         "방금 말한 두 가지를 한 문장으로 이어서 설명해 줘.",
         "앞서 말한 내용을 짧게 이어서 설명해 주세요.",
+        "산책이 몸과 기분에 도움이 되는 이유를 알려줘.",
+        "이 성분에 대해 설명해 줘.",
+        "수업 시간에 집중하는 방법을 설명해 줘.",
+        "업무 시간에 쉬는 방법을 알려줘.",
     ] {
         assert!(!crate::mission_intent::candidate(text, false), "{text}");
     }

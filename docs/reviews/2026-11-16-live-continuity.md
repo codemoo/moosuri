@@ -50,8 +50,12 @@ mission-chat Runtime7, personal mission Runtime4 and mission Runtime10.
 Clippy with warnings denied and the credential-broker feature, the embedded-web
 CLI build, the31affected frontend tests and the React/worker production build
 also passed. These checks cover the changed paths; unrelated suites were not
-repeated. A Linux test source transfer was blocked by automatic approval review
-before execution; this record does not count that attempt as Linux validation.
+repeated. A Linux test source transfer was initially blocked by automatic approval
+review before execution. After public publication, the repository's public status,
+exact published source and existing pinned destination host key were verified.
+The approved retry ran in the existing nonroot, network-disabled Linux test
+container: all four affected Rust suites, Clippy and CLI build passed, with source
+hashes verified. This used public source and synthetic tests, not production data.
 No new browser/device throughput measurement is claimed for attachment uploads.
 
 ## Limits

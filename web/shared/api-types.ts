@@ -88,7 +88,7 @@ export type MissionInputCandidate = { id: string, revision: string, step: number
 export type MissionInputRequest = { candidates?: Array<MissionInputCandidate>, field: MissionInputField, question: string, };
 export type MissionInputWait = { candidates?: Array<MissionInputCandidate>, request_id: string, field: MissionInputField, question: string, state: string, value: string | null, acceptance_revision: number, expires_at_ms: number, };
 export type MissionInputReply = { request_id: string, wait_request_id: string, expected_revision: number, value: string, };
-export type MissionView = { input_wait?: MissionInputWait, inputs?: Array<MissionInputWait>, actions?: Array<MissionLinkedAction>, compound?: MissionCompound, wait?: MissionWaitView, id: string, revision: number, state: string, request: MissionCreate,
+export type MissionView = { instruction_target?: RunInstructionTarget, instructions?: Array<RunInstructionReceipt>, input_wait?: MissionInputWait, inputs?: Array<MissionInputWait>, actions?: Array<MissionLinkedAction>, compound?: MissionCompound, wait?: MissionWaitView, id: string, revision: number, state: string, request: MissionCreate,
 /**
  * Absent for unchanged/recurring missions; request is the active snapshot.
  */
@@ -217,7 +217,10 @@ export type ChatEvidence = { kind: KnowledgeKind, id: string, revision: number, 
 export type WebEvidenceKind = "page" | "search_hit" | "browser_page";
 export type WebEvidence = { url: string, title: string, retrieved_at_unix_ms: number, kind: WebEvidenceKind, truncated: boolean, };
 export type CredentialChatStatus = { service?: string, request_id: string, repository: string, status: string, };
-export type RunView = { connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
+export type RunInstructionRequest = { request_id: string, expected_attempt: number, text: string, };
+export type RunInstructionReceipt = { request_id: string, run_id: string, thread_id: string, attempt: number, sequence: number, text: string, state: string, reason: string | null, };
+export type RunInstructionTarget = { run_id: string, thread_id: string, attempt: number, supports_instructions: boolean, };
+export type RunView = { supports_instructions?: boolean, instruction_target?: RunInstructionTarget, instructions?: Array<RunInstructionReceipt>, connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**
  * Fixed application error category, never provider text.
  */
@@ -234,6 +237,14 @@ export type ChatEvents = { events: Array<ChatEvent>, reset: boolean, cursor: num
 export type UsageSummary = { timings?: RunTimingAggregate, dispatched_calls: number, unreported_calls: number, reported_input_tokens: number, reported_output_tokens: number, reported_cache_read_tokens: number, reported_cache_write_tokens: number, };
 export type AccountUsage = { account_id: string, name: string, email: string, usage: UsageSummary, };
 export type AccountUsageResponse = { accounts: Array<AccountUsage>, };
+export type TaskMonitorScope = { "kind": "exact_sources", source_ids: Array<string>, connection_pins: Array<TaskMonitorConnection>, } | { "kind": "connected_thread", connection_id: string, config_revision: number, credential_epoch: number, thread_id: string, };
+export type TaskMonitorConnection = { id: string, config_revision: number, credential_epoch: number, };
+export type TaskMonitorSource = { id: string, title: string, revision: number, };
+export type TaskMonitorObservation = { ordinal: number, mission_id: string, state: string, created_at: number, resolved_at: number | null, note: string | null, };
+export type TaskMonitorView = { id: string, parent_mission_id: string, revision: number, state: string, sources: Array<TaskMonitorSource>, scope: TaskMonitorScope, linked_mission_ids: Array<string>, check_template: string, cadence_seconds: number | null, expires_at: number | null, reusable: boolean, reason: string | null, policy_id: string | null, existing_monitor_id: string | null, observations: Array<TaskMonitorObservation>, last_checked_at: number | null, };
+export type TaskMonitorAccept = { request_id: string, expected_revision: number, cadence_seconds: number, expires_at: number, reuse: boolean, read: boolean, check: boolean, notify: boolean, };
+export type TaskMonitorControl = { expected_revision: number, revoke_policy: boolean, };
+export type TaskMonitorResolve = { note: string, };
 export type SourceConnectionKind = "custom_http" | "gmail" | "slack";
 export type CreateSourceConnection = { name: string, kind: SourceConnectionKind, scope: string, remote_account: string, mail_connection_id: string | null, sync_enabled: boolean, poll_interval_seconds: number, };
 export type SourceConnection = { id: string, collection_id: string, name: string, kind: SourceConnectionKind, adapter_version: string, scope: string, remote_account: string, mail_connection_id: string | null, config_revision: number, credential_epoch: number, state: string, sync_enabled: boolean, poll_interval_seconds: number, local_sequence: number, last_heartbeat_at: number | null, last_commit_at: number | null, last_completed_at: number | null, next_due_at: number, error: string | null, credential_present: boolean, };

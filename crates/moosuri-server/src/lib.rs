@@ -22,6 +22,7 @@ mod schedules;
 mod share_origin;
 mod source_connections;
 mod subscriptions;
+mod task_monitors;
 pub mod vault;
 use axum::{
     Json, Router,
@@ -497,6 +498,11 @@ pub fn router_with_runtime(
         .route("/api/v1/threads/{id}/events", get(chat::events))
         .route("/api/v1/runs/{id}/cancel", post(chat::cancel))
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
+        .route("/api/v1/runs/{id}/instructions", post(chat::instruction))
+        .route(
+            "/api/v1/runs/{id}/instructions/{request}",
+            get(chat::instruction_receipt),
+        )
         .nest("/api/v1/community-skills", community_skills::routes())
         .nest("/api/v1/artifacts", artifacts::routes())
         .nest("/api/v1/knowledge", knowledge::routes())

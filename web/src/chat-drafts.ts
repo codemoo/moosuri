@@ -1,3 +1,4 @@
+import type { InstructionMemory, InstructionTarget } from "./run-instructions";
 /** Tab-session plaintext recovery, never an authentication capability or send queue.
  * Storage is touched only after server authentication. No localStorage/cache/media bodies. */
 import type { SessionView } from "../shared/api-types";
@@ -85,6 +86,28 @@ function pending(v: unknown): PendingSend | null {
         return null;
     return out;
 }
+function instructionTarget(v: unknown): InstructionTarget | null {
+    return object(v) && exact(v, ["run_id", "thread_id", "attempt"]) && uuid(v.run_id) && uuid(v.thread_id) && revision(v.attempt)
+        ? { run_id: v.run_id, thread_id: v.thread_id, attempt: v.attempt } : null;
+}
+function instruction(v: unknown): InstructionMemory | null {
+    if (!object(v) || !exact(v, ["mode", "draft", "target", "pending"]) || !text(v.draft) ||
+        !(v.mode === undefined || v.mode === "instructions" || v.mode === "next")) return null;
+    const out: InstructionMemory = { draft: v.draft, ...(v.mode ? { mode: v.mode } : {}) };
+    if (v.target !== undefined) {
+        const target = instructionTarget(v.target); if (!target) return null; out.target = target;
+    }
+    if (v.pending !== undefined) {
+        const pending = v.pending;
+        if (!object(pending) || !exact(pending, ["run_id", "thread_id", "attempt", "request_id", "text", "status"]) ||
+            !uuid(pending.request_id) || typeof pending.text !== "string" || !pending.text.trim() || bytes(pending.text) > 2000 ||
+            !["sending", "uncertain"].includes(String(pending.status))) return null;
+        const target = instructionTarget({ run_id: pending.run_id, thread_id: pending.thread_id, attempt: pending.attempt });
+        if (!target) return null;
+        out.pending = { ...target, request_id: pending.request_id, text: pending.text, status: "uncertain" };
+    }
+    return out;
+}
 function storage(): DraftStorage | null { try {
     return window.sessionStorage;
 }
@@ -112,23 +135,36 @@ export class ChatDraftSession {
             if (bytes(raw) > CHAT_DRAFT_MAX_BYTES)
                 throw new Error();
             const v: unknown = JSON.parse(raw), now = this.clock();
-            if (!object(v) || !exact(v, ["version", "account", "scope", "saved_at", "selected", "slots", "thread_creation"]) || v.version !== 1 || v.account !== this.account || v.scope !== this.scope ||
+            if (!object(v) || !exact(v, ["version", "account", "scope", "saved_at", "selected", "slots", "thread_creation", "mission_instructions"]) || v.version !== 1 || v.account !== this.account || v.scope !== this.scope ||
                 typeof v.saved_at !== "number" || !Number.isSafeInteger(v.saved_at) || v.saved_at < 0 || v.saved_at > now || now - v.saved_at >= CHAT_DRAFT_TTL ||
                 !(v.selected === null || slot(v.selected)) || !Array.isArray(v.slots) || v.slots.length > CHAT_DRAFT_MAX_SLOTS)
                 throw new Error();
             const out = empty(), seen = new Set<string>(), allowed = new Set(["new", ...threads]);
             for (const row of v.slots) {
-                if (!object(row) || !exact(row, ["id", "draft", "pending"]) || !slot(row.id) || seen.has(row.id) || (row.draft !== undefined && !text(row.draft)))
+                if (!object(row) || !exact(row, ["id", "draft", "pending", "instruction"]) || !slot(row.id) || seen.has(row.id) || (row.draft !== undefined && !text(row.draft)))
                     throw new Error();
                 seen.add(row.id);
                 if (!allowed.has(row.id))
                     continue;
                 if (row.draft)
                     out.memory.drafts[row.id] = row.draft;
+                if (row.instruction !== undefined) {
+                    const value = instruction(row.instruction);
+                    if (value) out.memory.instructions = { ...out.memory.instructions, [row.id]: value };
+                }
                 if (row.pending !== undefined) {
                     const p = pending(row.pending);
                     if (p)
                         out.memory.pending[row.id] = p;
+                }
+            }
+            if (v.mission_instructions !== undefined) {
+                if (!Array.isArray(v.mission_instructions) || v.mission_instructions.length + v.slots.length > CHAT_DRAFT_MAX_SLOTS) throw new Error();
+                const seen = new Set<string>();
+                for (const row of v.mission_instructions) {
+                    if (!object(row) || !exact(row, ["id", "value"]) || !uuid(row.id) || seen.has(row.id)) throw new Error();
+                    seen.add(row.id); const value = instruction(row.value);
+                    if (value) out.memory.missionInstructions = { ...out.memory.missionInstructions, [row.id]: value };
                 }
             }
             const threadCreation = creation(v.thread_creation);
@@ -147,14 +183,16 @@ export class ChatDraftSession {
             return;
         try {
             const allowed = new Set(["new", ...threads]);
-            const ids = [...new Set([...(selected ? [selected] : []), ...Object.keys(memory.pending), ...Object.keys(memory.drafts)])].filter(id => slot(id) && allowed.has(id));
+            const ids = [...new Set([...(selected ? [selected] : []), ...Object.keys(memory.pending), ...Object.keys(memory.instructions ?? {}), ...Object.keys(memory.drafts)])].filter(id => slot(id) && allowed.has(id));
             const rows: Array<{
                 id: string;
                 draft?: string;
                 pending?: PendingSend;
+                instruction?: InstructionMemory;
             }> = [];
             const threadCreation = creation(memory.threadCreation);
-            const envelope = () => JSON.stringify({ ...(threadCreation ? { thread_creation: threadCreation } : {}), version: 1, account: this.account, scope: this.scope, saved_at: this.clock(), selected: selected && threads.includes(selected) ? selected : null, slots: rows });
+            const missionRows: Array<{id:string;value:InstructionMemory}> = [];
+            const envelope = () => JSON.stringify({ ...(missionRows.length ? {mission_instructions:missionRows} : {}), ...(threadCreation ? { thread_creation: threadCreation } : {}), version: 1, account: this.account, scope: this.scope, saved_at: this.clock(), selected: selected && threads.includes(selected) ? selected : null, slots: rows });
             for (const id of ids) {
                 if (rows.length >= CHAT_DRAFT_MAX_SLOTS)
                     break;
@@ -162,6 +200,7 @@ export class ChatDraftSession {
                     id: string;
                     draft?: string;
                     pending?: PendingSend;
+                    instruction?: InstructionMemory;
                 } = { id };
                 const draft = memory.drafts[id];
                 if (text(draft) && draft)
@@ -175,13 +214,20 @@ export class ChatDraftSession {
                     if (restored)
                         row.pending = restored;
                 }
-                if (!row.draft && !row.pending)
+                const entry = instruction(memory.instructions?.[id]);
+                if (entry) row.instruction = entry;
+                if (!row.draft && !row.pending && !row.instruction)
                     continue;
                 rows.push(row);
                 if (bytes(envelope()) > CHAT_DRAFT_MAX_BYTES)
                     rows.pop();
             }
-            if (!rows.length && !selected && !threadCreation)
+            for (const [id, raw] of Object.entries(memory.missionInstructions ?? {})) {
+                if (rows.length + missionRows.length >= CHAT_DRAFT_MAX_SLOTS) break;
+                const value = instruction(raw); if (!uuid(id) || !value) continue;
+                missionRows.push({id,value}); if (bytes(envelope()) > CHAT_DRAFT_MAX_BYTES) missionRows.pop();
+            }
+            if (!rows.length && !selected && !threadCreation && !missionRows.length)
                 remove(this.store);
             else
                 this.store.setItem(CHAT_DRAFT_KEY, envelope());

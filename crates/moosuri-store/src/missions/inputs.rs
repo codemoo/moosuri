@@ -181,6 +181,7 @@ impl Store {
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let r=match crate::agent_execution::guard_step(&tx,&db.provider_key,&lease){Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
+            if crate::run_instructions::pending(&tx,&r)? {return Err(StoreError::Conflict)}
             if revision!=acceptance::revision(&tx,&r.tenant,&r.id)? || input.question.trim().is_empty() || input.question.chars().count()>500 || input.question.chars().any(|c|c.is_control() && c!='\n') {return Err(StoreError::InvalidInput)}
             let (id,mission_revision,expiry):(String,i64,i64)=tx.query_row("SELECT id,revision,expires_ms FROM missions WHERE tenant_id=?1 AND run_id=?2 AND state IN('planning','executing','verifying') AND uncertain=0",params![r.tenant,r.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::Conflict)?;
             let recurring:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM recurring_mission_occurrences WHERE tenant_id=?1 AND mission_id=?2)",params![r.tenant,id],|r|r.get(0))?;
@@ -271,6 +272,9 @@ fn suppress_notice(c: &Connection, t: &str, request: &str) -> Result<()> {
 /// Dynamic guard used for inbox, dispatch and passive push display. An answered,
 /// revoked, expired or cancelled question can never be displayed as actionable.
 pub(crate) fn notice_current(c: &Connection, t: &str, notification: &str) -> Result<bool> {
+    if !crate::task_monitors::notice_current(c, t, notification)? {
+        return Ok(false);
+    }
     let row:Option<(String,String,i64)>=c.query_row("SELECT i.mission_id,i.run_id,i.expires_ms FROM mission_input_waits i JOIN missions m ON m.tenant_id=i.tenant_id AND m.id=i.mission_id WHERE i.tenant_id=?1 AND i.notification_id=?2 AND i.status='waiting' AND m.state='waiting' AND m.revision=i.mission_revision AND m.grant_enabled=1 AND m.uncertain=0",params![t,notification],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let Some((id, run, expiry)) = row else {
         return Ok(!c.query_row("SELECT EXISTS(SELECT 1 FROM local_notifications WHERE tenant_id=?1 AND id=?2 AND occurrence_id IS NULL)",params![t,notification],|r|r.get::<_,bool>(0))?);

@@ -331,6 +331,7 @@ export function useMediaUploads(accountId: string, slot: string) {
       add(files, false, target, true); return true;
     },
     readySelections,
+    selectionKey: visible.map(item => item.selection).join("|"),
     ready,
     sent,
     select,

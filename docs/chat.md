@@ -190,3 +190,28 @@ keeps an owner-scoped creation receipt: matching original title/UUID resolves th
 same thread, changed title conflicts and deleted threads cannot be recreated by
 replay. Old clients that omit the key keep their existing behavior. Other
 mutation/probe/upload timing is unchanged. See the [foreground recovery checks](reviews/2026-11-15-chat-mutation-recovery.md).
+
+## 진행 중인 작업에 추가 지시
+
+서버가 추가 지시를 지원한다고 표시한 진행 중 작업에서는 주 입력창이 **진행 중인 작업에 추가**와
+**다음 메시지 준비** 모드를 제공한다. 두 초안은 별도로 유지되며 추가 지시가 새 대화 턴을 만들지 않는다.
+지원 여부가 늦게 확인되어도 이미 쓰는 다음 메시지 초안을 다른 모드로 옮기지 않는다. 작업이 끝나고
+추가 지시 초안·접수 확인 중 요청이 없으면 원래 다음 메시지 입력으로 돌아간다.
+
+추가 지시는 UTF-8 2,000바이트의 글만 받는다. 선택한 첨부가 있으면 다음 메시지에 남기고 글만
+보낸다는 선택을 표시하며, 첨부를 삭제하거나 몰래 제외하여 보내지 않는다. 음성 변환과 공유받기로
+넣은 글·파일은 다음 메시지용 입력에 남는다. 추가 지시 접수와 다음 초안·업로드는 독립적이다.
+
+실제 영수증에 따라 **접수됨 · 아직 반영 전**, **반영됨**, **미반영 종료**를 원래 대화 턴 또는 업무
+카드에 표시한다. 접수는 반영 완료가 아니며 별도 모델 응답을 꾸며 표시하지 않는다. 연결 오류나
+새로고침 뒤에는 같은 요청 UUID의 상태만 조회한다. 영수증이 없을 때 같은 글·작업·시도 번호로
+직접 다시 접수할 수 있으며 자동 POST는 하지 않는다. 종료와 접수가 겹쳐 거절되면 추가 지시 글을
+보존하고 새 작업으로 바꾸지 않는다. 다음 작업에 비어 있지 않은 이전 지시를 자동 적용하지 않는다.
+
+원래 일회성 업무가 별도 실행으로 이어진 경우 서버가 반환한 실제 실행 대상에 추가한다. 업무 카드도
+명시적인 지원 표시가 있을 때만 이 경로를 연다. 원래 허용한 도구·계정·실행 한도·종료 시각과
+메일 최종 발송 확인을 늘리는 기능이 아니다. 입력 복구는 기존의 정확한 계정·로그인 세션,
+최대 16개 슬롯·128KiB·8시간의 평문 tab-session 범위를 공유한다.
+
+[프런트엔드 검증](reviews/2026-11-16-live-instruction-ui.md)과
+[실행/영수증 계약](../openspec/changes/live-run-instructions/proposal.md)을 참고한다.

@@ -51,3 +51,23 @@ it("retains immutable creation and original message beside its next draft, dropp
         expect(lease.load([]).memory.drafts.new).toBe("Next draft");
     }
 });
+
+it("recovers instruction and mission UUID payloads only as uncertain beside separate normal drafts", () => {
+    const { s, map } = store();
+    const recovery = new ChatDraftRecovery(() => s);
+    const lease = recovery.confirm(session())!;
+    const targetRun = { run_id: attachment, thread_id: target, attempt: 3 };
+    const value = { mode: "instructions" as const, draft: "Later instruction draft", target: targetRun, pending: { ...targetRun, request_id: id, text: "Also compare a synthetic alternative", status: "sending" as const } };
+    lease.save({ drafts: { thread: "Independent next message" }, pending: {}, instructions: { thread: value }, missionInstructions: { [target]: value } }, "thread", ["thread"]);
+    const restored = lease.load(["thread"]);
+    expect(restored.memory.drafts.thread).toBe("Independent next message");
+    expect(restored.memory.instructions?.thread).toEqual({ ...value, pending: { ...value.pending, status: "uncertain" } });
+    expect(restored.memory.missionInstructions?.[target]).toEqual(restored.memory.instructions?.thread);
+    const encoded = JSON.parse(map.get(CHAT_DRAFT_KEY)!);
+    encoded.slots[0].instruction.pending.authority = "invented";
+    map.set(CHAT_DRAFT_KEY, JSON.stringify(encoded));
+    expect(lease.load(["thread"]).memory.instructions?.thread).toBeUndefined();
+    expect(lease.load(["thread"]).memory.drafts.thread).toBe("Independent next message");
+    recovery.confirm(session("alice", "b".repeat(64)));
+    expect(map.has(CHAT_DRAFT_KEY)).toBe(false);
+});

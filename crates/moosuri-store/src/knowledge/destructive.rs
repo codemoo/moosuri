@@ -26,6 +26,7 @@ pub(crate) fn forget(conn: &Connection, tenant: &str, object: &str) -> Result<()
     remove_index(conn, tenant, "memory", object)
 }
 fn delete_source(conn: &Connection, tenant: &str, object: &str) -> Result<()> {
+    crate::task_monitors::withdraw_source(conn, tenant, object)?;
     crate::automatic_memory::withdraw_source(conn, tenant, object)?;
     let (deleted, revision): (bool, i64) = conn
         .query_row(

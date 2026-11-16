@@ -1,3 +1,4 @@
+import { emptyInstructions } from "./run-instructions";
 import {InvitationEmail} from "./InvitationEmail";
 import { useWorkspaceViewport } from "./workspace-viewport";
 import { fenceIncomingShares } from "./share-state";
@@ -839,7 +840,7 @@ function Workspace({
           }else setSelected(result.threads[0]?.id??null);
         }else {
           const allowed=new Set(["new",...threadIds.current]);
-          setChatMemory(current=>({...current,drafts:Object.fromEntries(Object.entries(current.drafts).filter(([id])=>allowed.has(id))),pending:Object.fromEntries(Object.entries(current.pending).filter(([id])=>allowed.has(id)))}));
+          setChatMemory(current=>({...current,drafts:Object.fromEntries(Object.entries(current.drafts).filter(([id])=>allowed.has(id))),pending:Object.fromEntries(Object.entries(current.pending).filter(([id])=>allowed.has(id))),...(current.instructions?{instructions:Object.fromEntries(Object.entries(current.instructions).filter(([id])=>allowed.has(id)))}:{})}));
           setSelected(current=>result.threads.some(t=>t.id===current)?current:current===null&&(chatMemoryRef.current.drafts.new||chatMemoryRef.current.pending.new||chatMemoryRef.current.threadCreation)?null:result.threads[0]?.id??null);
         }
         persist();
@@ -935,7 +936,8 @@ function Workspace({
       const pending = { ...current.pending };
       delete drafts[id];
       delete pending[id];
-      return { ...current, drafts, pending };
+      const instructions = { ...current.instructions }; delete instructions[id];
+      return { ...current, drafts, pending, ...(current.instructions ? {instructions} : {}) };
     });
   }
   function threadMissing(id: string, selectNext = false) {
@@ -1263,7 +1265,7 @@ function Workspace({
           </nav>
         )}
         <DeferredPage key={path} back={() => navigate("/app")}>
-        {missionsPage ? <Missions accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")}/> : schedulesPage ? <Schedules accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} openMission={id=>navigate(`/app/missions#mission-${id}`)} openArtifact={id=>navigate(`/app/artifacts/${id}`)}/> : artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
+        {missionsPage ? <Missions accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} instructionDrafts={chatMemory.missionInstructions} onInstruction={(id,change)=>setChatMemory(current=>({...current,missionInstructions:{...current.missionInstructions,[id]:change(current.missionInstructions?.[id]??emptyInstructions())}}))}/> : schedulesPage ? <Schedules accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} openMission={id=>navigate(`/app/missions#mission-${id}`)} openArtifact={id=>navigate(`/app/artifacts/${id}`)}/> : artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
         ) : calendarPage ? <Calendar accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} setup={allowedAdmin?()=>navigate("/admin/google"):undefined}/> : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
           setSelected(null);
@@ -1330,6 +1332,9 @@ function Workspace({
             name={session.user.name}
             threadId={selected}
             memory={chatMemory}
+            onInstructions={(slot, change) => setChatMemory(current => slot !== "new" && !threadIds.current.includes(slot) ? current : ({
+              ...current, instructions: { ...current.instructions, [slot]: change(current.instructions?.[slot] ?? emptyInstructions()) },
+            }))}
             onDraft={(slot, text) =>
               setChatMemory((current) => slot !== "new" && !threadIds.current.includes(slot) ? current : ({
                 ...current,

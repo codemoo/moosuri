@@ -15,6 +15,7 @@ pub(super) fn routes() -> Router<AppState> {
             "/api/v1/recurring-missions/{id}/control",
             post(recurring_control),
         )
+        .merge(crate::task_monitors::routes())
         .route("/api/v1/missions", get(list).post(create))
         .route("/api/v1/missions/{id}/control", post(control))
         .route("/api/v1/missions/{id}/connection", post(select_connection))

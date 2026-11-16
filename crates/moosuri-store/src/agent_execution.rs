@@ -860,7 +860,16 @@ impl Store {
         lease: &RunLease,
         expected_checkpoint_seq: i64,
     ) -> Result<StepLease> {
-        self.begin_planner_step(lease, expected_checkpoint_seq, false)
+        self.begin_planner_step(lease, expected_checkpoint_seq, false, 0)
+            .await
+    }
+    pub async fn begin_instructed_agent_step(
+        &self,
+        lease: &RunLease,
+        expected_checkpoint_seq: i64,
+        through: i64,
+    ) -> Result<StepLease> {
+        self.begin_planner_step(lease, expected_checkpoint_seq, false, through)
             .await
     }
     /// Admit exactly one current-request mission/Calendar classifier. The durable
@@ -870,7 +879,7 @@ impl Store {
         lease: &RunLease,
         expected_checkpoint_seq: i64,
     ) -> Result<StepLease> {
-        self.begin_planner_step(lease, expected_checkpoint_seq, true)
+        self.begin_planner_step(lease, expected_checkpoint_seq, true, 0)
             .await
     }
     async fn begin_planner_step(
@@ -878,6 +887,7 @@ impl Store {
         lease: &RunLease,
         expected_checkpoint_seq: i64,
         mission_chat: bool,
+        instruction_sequence: i64,
     ) -> Result<StepLease> {
         let lease = lease.clone();
         self.call(move|db|{
@@ -899,6 +909,7 @@ impl Store {
             tx.execute("INSERT INTO agent_steps(tenant_id,run_id,step,attempt,nonce,state) VALUES(?1,?2,?3,?4,?5,'dispatched')",params![run.tenant,run.id,step,run.attempt,n.as_slice()])?;
             tx.execute("INSERT INTO model_call_receipts(tenant_id,account_id,run_id,attempt,step,nonce,usage,dispatched_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![run.tenant,run.account,run.id,run.attempt,step,n.as_slice(),encoded(&RunUsage::default())?,now()?])?;
             crate::run_timings::dispatch(&tx,&run,step)?;
+            crate::run_instructions::assign(&tx,&run,step,instruction_sequence)?;
             if mission_chat {record_planner_step(&tx,&run,&lease,step,&n,"mission_chat")?;}
             tx.commit()?;Ok(StepLease{run:lease,step,nonce:n})
         }).await
@@ -917,11 +928,13 @@ impl Store {
             let digest: [u8;32]=Sha256::digest(encoded(&(&checkpoint.bytes,&calls))?.as_bytes()).into();
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
+            if calls.iter().any(|call| !crate::task_monitors::tool_allowed(&tx,&run,&call.input).unwrap_or(false)) { return Err(StoreError::Forbidden); }
             if !calls.is_empty() && memory_commands::has_target_plan(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
             let (state,old):(String,Option<Vec<u8>>)=tx.query_row("SELECT state,completion_digest FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if state=="completed" {
                 if old.as_deref()!=Some(digest.as_slice()){return Err(StoreError::Conflict)}
             }else{
+                crate::task_monitors::call_budget(&tx,&run,&calls)?;
                 let used: i64=tx.query_row("SELECT tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
                 if used+calls.iter().map(|c|crate::learned_skills::cost(&c.input)).sum::<i64>()>12{return Err(StoreError::BudgetExhausted)}
                 crate::missions::record_round(&tx,&run,lease.step,&checkpoint.bytes)?;
@@ -1035,12 +1048,26 @@ impl Store {
         state: RunState,
         error: Option<RunFailure>,
     ) -> Result<()> {
+        if self.try_finish_agent_run(lease, state, error).await? {
+            Ok(())
+        } else {
+            Err(StoreError::Conflict)
+        }
+    }
+    /// False means a late accepted instruction requires another safe round.
+    pub async fn try_finish_agent_run(
+        &self,
+        lease: &StepLease,
+        state: RunState,
+        error: Option<RunFailure>,
+    ) -> Result<bool> {
         let lease = lease.clone();
         self.call(move|db|{
             if state.active() || (state==RunState::OutcomeUnknown && !matches!(error,Some(RunFailure::Interrupted|RunFailure::TimedOut|RunFailure::ProtocolFailed|RunFailure::ConnectionFailed))) {return Err(StoreError::InvalidInput)}
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
             if state==RunState::Completed {
+                if crate::run_instructions::pending(&tx,&run)? {tx.commit()?;return Ok(false)}
                 if memory_commands::has_slot(&tx,&run.tenant,&run.id)? || memory_commands::has_target_plan(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
                 let complete: bool=tx.query_row("SELECT state='completed' AND NOT EXISTS(SELECT 1 FROM agent_tool_slots t WHERE t.tenant_id=agent_steps.tenant_id AND t.run_id=agent_steps.run_id AND t.step=agent_steps.step) FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get(0))?;
                 if !complete {return Err(StoreError::Conflict)}
@@ -1048,7 +1075,7 @@ impl Store {
             if state!=RunState::Completed {tx.execute("UPDATE agent_steps SET state='unknown' WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='dispatched'",params![run.tenant,run.id,lease.step])?;}
             chat::transition(&tx,&run,state,error)?;
             if state==RunState::Completed {crate::learned_skills::finalize(&tx,&run)?;}
-            tx.commit()?;Ok(())
+            tx.commit()?;Ok(true)
         }).await
     }
     pub async fn update_agent_step_usage(&self, lease: &StepLease, usage: RunUsage) -> Result<()> {

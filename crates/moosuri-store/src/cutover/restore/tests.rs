@@ -11,6 +11,14 @@ fn private() -> tempfile::TempDir {
         .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
         .unwrap()
 }
+// Construct real pre-continuity schemas from the current synthetic fixture.
+// Production migrations must still reject duplicate or corrupt schema objects.
+fn remove_continuity_tables(conn: &Connection) {
+    conn.execute_batch(
+        "DROP TABLE task_monitor_links;DROP TABLE task_monitor_observations;         DROP TABLE task_monitors;DROP TABLE task_monitor_policies;         DROP INDEX task_monitor_thread_members;         DROP TABLE run_instructions;DROP TABLE run_instruction_channels;",
+    )
+    .unwrap();
+}
 struct Fixture {
     _temp: tempfile::TempDir,
     data: PathBuf,
@@ -747,6 +755,7 @@ async fn supported_predecessor_migrates_offline_and_repeated_restore_keeps_journ
         .write_all(&items[1].1)
         .unwrap();
     let conn = Connection::open(&db).unwrap();
+    remove_continuity_tables(&conn);
     conn.execute_batch("DROP TABLE thread_creation_receipts;DROP TABLE native_mail_settlement_cursor;DROP TABLE compound_draft_adoptions;DROP TABLE mission_browser_selections;DROP TABLE mission_action_contracts;DROP TABLE compound_report_adoptions;DROP TABLE native_mail_context_dependencies;DROP TRIGGER native_task_mail_delete;DROP TABLE native_task_mail_selections;DROP TABLE native_task_mail_reads;DROP TABLE native_task_mail_bindings;DROP TABLE mail_provider_saves;DROP TABLE credential_model_mail_payloads;DROP TABLE credential_model_mail_grants;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE agent_planner_steps;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media;DROP TABLE media_run_dependencies;DROP TABLE media_objects;DROP TABLE provider_vision_probes;DROP TRIGGER installation_restores_no_update;DROP TRIGGER installation_restores_no_delete;DROP TABLE installation_restores;DROP TRIGGER installation_cutover_monotonic;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;").unwrap();
     conn.execute(
         "UPDATE installation_cutover SET seal=?1",
@@ -819,7 +828,8 @@ async fn schema29_and30_restore_upgrades_current_and_quarantines_legacy_lookup_a
             .write_all(&items[1].1)
             .unwrap();
         let conn = Connection::open(&db).unwrap();
-        conn.execute_batch("DROP TABLE native_mail_settlement_cursor;DROP TABLE compound_draft_adoptions;DROP TABLE mission_browser_selections;DROP TABLE mission_action_contracts;DROP TABLE compound_report_adoptions;DROP TABLE native_mail_context_dependencies;DROP TRIGGER native_task_mail_delete;DROP TABLE native_task_mail_selections;DROP TABLE native_task_mail_reads;DROP TABLE native_task_mail_bindings;DROP TABLE mail_provider_saves;DROP TABLE credential_model_mail_payloads;DROP TABLE credential_model_mail_grants;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE agent_planner_steps;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
+        remove_continuity_tables(&conn);
+        conn.execute_batch("DROP TABLE thread_creation_receipts;DROP TABLE native_mail_settlement_cursor;DROP TABLE compound_draft_adoptions;DROP TABLE mission_browser_selections;DROP TABLE mission_action_contracts;DROP TABLE compound_report_adoptions;DROP TABLE native_mail_context_dependencies;DROP TRIGGER native_task_mail_delete;DROP TABLE native_task_mail_selections;DROP TABLE native_task_mail_reads;DROP TABLE native_task_mail_bindings;DROP TABLE mail_provider_saves;DROP TABLE credential_model_mail_payloads;DROP TABLE credential_model_mail_grants;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE agent_planner_steps;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
             .unwrap();
         conn.execute_batch("ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;").unwrap();
         if captured == 29 {
@@ -1152,7 +1162,8 @@ async fn native_mail_schema55_checkpoint_upgrades_to_current_without_reviving_au
         .write_all(&items[1].1)
         .unwrap();
     let conn = Connection::open(&path).unwrap();
-    conn.execute_batch("DROP TABLE native_mail_settlement_cursor;DROP TABLE compound_draft_adoptions;DROP TABLE mission_browser_selections;DROP TABLE mission_action_contracts;DROP TABLE compound_report_adoptions;DROP TABLE native_mail_context_dependencies;DROP TRIGGER native_task_mail_delete;DROP TABLE native_task_mail_selections;DROP TABLE native_task_mail_reads;DROP TABLE native_task_mail_bindings;DROP TABLE mail_provider_saves;DROP TABLE credential_model_mail_payloads;DROP TABLE credential_model_mail_grants;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TRIGGER installation_cutover_monotonic;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=55;").unwrap();
+    remove_continuity_tables(&conn);
+    conn.execute_batch("DROP TABLE agent_planner_steps;DROP TABLE native_mail_settlement_cursor;DROP TABLE compound_draft_adoptions;DROP TABLE mission_browser_selections;DROP TABLE mission_action_contracts;DROP TABLE compound_report_adoptions;DROP TABLE native_mail_context_dependencies;DROP TRIGGER native_task_mail_delete;DROP TABLE native_task_mail_selections;DROP TABLE native_task_mail_reads;DROP TABLE native_task_mail_bindings;DROP TABLE mail_provider_saves;DROP TABLE credential_model_mail_payloads;DROP TABLE credential_model_mail_grants;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TRIGGER installation_cutover_monotonic;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=55;").unwrap();
     conn.execute(
         "UPDATE installation_cutover SET seal=?1",
         [String::from_utf8(encode(&manifest.seal, 16384).unwrap()).unwrap()],
@@ -1182,6 +1193,7 @@ async fn mission_input_schema68_restore_migration_creates_empty_wait_authority()
     let store = Store::open(&path).unwrap();
     drop(store);
     let conn = Connection::open(path.join("assistant.sqlite")).unwrap();
+    remove_continuity_tables(&conn);
     conn.execute_batch(
         "DROP TABLE mission_input_replies;DROP TABLE mission_input_waits;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=68;",
     )
@@ -1208,6 +1220,7 @@ async fn thread_creation_schema70_restore_migration_preserves_owner_foreign_key(
     let store = Store::open(&path).unwrap();
     drop(store);
     let conn = Connection::open(path.join("assistant.sqlite")).unwrap();
+    remove_continuity_tables(&conn);
     conn.execute_batch(
         "PRAGMA foreign_keys=ON;DROP TABLE thread_creation_receipts;PRAGMA user_version=70;",
     )
@@ -1216,7 +1229,7 @@ async fn thread_creation_schema70_restore_migration_preserves_owner_foreign_key(
     assert_eq!(
         conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
-        71
+        crate::schema_version()
     );
     assert_eq!(
         conn.query_row("SELECT count(*) FROM thread_creation_receipts", [], |r| r
@@ -1227,4 +1240,54 @@ async fn thread_creation_schema70_restore_migration_preserves_owner_foreign_key(
         0
     );
     assert!(conn.execute("INSERT INTO thread_creation_receipts VALUES('absent-tenant','absent-owner','absent-request',NULL)", []).is_err());
+}
+
+#[tokio::test]
+async fn continuity_schema71_restore_migration_creates_empty_scoped_authority() {
+    let _guard = TEST_LOCK.lock().await;
+    let temp = private();
+    let path = temp.path().join("source");
+    drop(Store::open(&path).unwrap());
+    let conn = Connection::open(path.join("assistant.sqlite")).unwrap();
+    remove_continuity_tables(&conn);
+    conn.execute_batch("PRAGMA foreign_keys=ON;PRAGMA user_version=71;")
+        .unwrap();
+    migrate(&conn, 71).unwrap();
+    assert_eq!(
+        conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        crate::schema_version()
+    );
+    for table in [
+        "run_instruction_channels",
+        "run_instructions",
+        "task_monitor_policies",
+        "task_monitors",
+        "task_monitor_observations",
+        "task_monitor_links",
+    ] {
+        assert_eq!(
+            conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert!(conn.query_row(&format!("SELECT count(*) FROM pragma_foreign_key_list('{table}') WHERE on_delete='CASCADE'"), [], |r| r.get::<_, i64>(0)).unwrap() > 0);
+    }
+    assert!(
+        conn.execute(
+            "INSERT INTO run_instruction_channels VALUES('absent-tenant','absent-run',1)",
+            []
+        )
+        .is_err()
+    );
+    assert!(
+        conn.prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_none()
+    );
 }

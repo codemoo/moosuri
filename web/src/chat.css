@@ -533,3 +533,12 @@
 .chat-evidence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; }
 .chat-evidence > span { font-size: 12px; color: var(--muted); }
 .chat-evidence button { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.instruction-modes { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0; }
+.instruction-modes button { font-size: 12px; padding: 7px 10px; border: 1px solid #c8d2be; border-radius: 8px; background: #f8f9f4; color: #44513b; }
+.instruction-modes button[aria-pressed="true"] { background: #dfe9d3; border-color: #829773; }
+.instruction-media-choice { display: flex; align-items: start; gap: 8px; font-size: 12px; line-height: 1.5; padding: 8px 0; }
+.instruction-receipts { margin: 8px 0 12px auto; padding: 8px 12px; list-style: none; max-width: 90%; background: #edf3e8; border-radius: 8px; font-size: 12px; }
+.instruction-receipts li + li { margin-top: 8px; border-top: 1px solid #d4dfcc; padding-top: 6px; }
+.instruction-receipts [role="status"] { color: #526746; font-size: 11px; }
+.instruction-receipts p { margin: 3px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.instruction-recovery { font-size: 12px; }

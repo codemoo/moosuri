@@ -1,3 +1,6 @@
+import { TaskMonitors } from "./TaskMonitors";
+import { InstructionReceipts, useRunInstructions } from "./RunInstructions";
+import type { InstructionMemory } from "./run-instructions";
 import {NativeMailBodies} from './NativeMailBodies';
 import {NativeMailWait} from './NativeMailWait';
 import {VoiceComposer,type VoiceComposerHandle} from "./VoiceComposer";
@@ -70,6 +73,8 @@ export type PendingThreadCreation = {
 };
 export type ChatMemory = {
   threadCreation?: PendingThreadCreation;
+  instructions?: Record<string, InstructionMemory>;
+  missionInstructions?: Record<string, InstructionMemory>;
   drafts: Record<string, string>;
   pending: Record<string, PendingSend>;
 };
@@ -80,6 +85,7 @@ type Props = {
   threadId: string | null;
   memory: ChatMemory;
   onDraft: (slot: string, text: string) => void;
+  onInstructions?: (slot: string, change: (current: InstructionMemory) => InstructionMemory) => void;
   onPending: (
     slot: string,
     value: PendingSend | null,
@@ -221,6 +227,19 @@ export function ChatPanel(props: Props) {
   const receiptWaiters = useRef<Array<{
     thread: string; request: string; owner: object; finish: (confirmed: boolean) => void;
   }>>([]);
+  const instructions = useRunInstructions({ accountId, threadId, turns, state: memory.instructions?.[slot], ready: !loading && historyReady,
+    update: props.onInstructions ? change => props.onInstructions?.(slot, change) : undefined, onExpired: props.onExpired });
+  const [keepMedia, setKeepMedia] = useState(false);
+  useEffect(() => setKeepMedia(false), [accountId, threadId, media.selectionKey]);
+  const instructionMode = instructions.mode === "instructions";
+  const composerText = instructionMode ? instructions.text : draft;
+  const composerBytes = new TextEncoder().encode(composerText).byteLength;
+  const composerLimit = instructionMode ? 2000 : 8192;
+  function submitComposer() {
+    if (instructionMode) {
+      if (instructions.canSubmit && (!media.selectionKey || keepMedia)) void instructions.submit();
+    } else void send();
+  }
   function finishReceipts(thread: string, request?: string, confirmed = false, owner?: object) {
     for (const waiter of [...receiptWaiters.current])
       if (waiter.thread === thread && (!request || waiter.request === request) && (!owner || waiter.owner === owner))
@@ -669,7 +688,7 @@ export function ChatPanel(props: Props) {
       element.style.height = "auto";
       element.style.height = `${Math.min(180, Math.max(48, element.scrollHeight))}px`;
     }
-  }, [draft]);
+  }, [composerText]);
 
   useLayoutEffect(() => {
     const element = scroll.current;
@@ -905,7 +924,11 @@ export function ChatPanel(props: Props) {
     };
     if(value.mission_context?.target)missionCommand.current={request:value.request_id,target:value.mission_context.target};
     callbacks.current.onPending(originalSlot, value, resubmit?.request_id);
-    if (!resubmit) callbacks.current.onDraft(originalSlot, "");
+    if (!resubmit) {
+      callbacks.current.onDraft(originalSlot, "");
+      if (callbacks.current.memory.instructions?.[originalSlot]) callbacks.current.onInstructions?.(originalSlot, current =>
+        current.draft || current.pending ? current : { ...current, mode: undefined, target: undefined });
+    }
     let thread = currentThread.current;
     if (!thread) {
       const guard = new AbortController();
@@ -1102,6 +1125,7 @@ export function ChatPanel(props: Props) {
                 <p>{turn.user_text}</p>
                 {turn.attachments&&<div className="chat-attachments">{turn.attachments.map(item=><PrivateImage key={item.id} accountId={accountId} media={item}/>)}</div>}
               </div>
+              <InstructionReceipts receipts={instructions.receipts.filter(receipt => receipt.run_id === turn.run.id || receipt.run_id === turn.run.instruction_target?.run_id || turn.run.instructions?.some(value => value.request_id === receipt.request_id))}/>
               <div className="assistant-reply">
                 {turn.assistant
                   .filter((message) => message.text)
@@ -1207,6 +1231,7 @@ export function ChatPanel(props: Props) {
               </p>
             </article>
           )}
+          {turns.some(turn => turn.run.mission_receipt?.target?.kind === "one_off") && <TaskMonitors accountId={accountId} missionIds={turns.flatMap(turn => turn.run.mission_receipt?.target?.kind === "one_off" ? [turn.run.mission_receipt.target.id] : [])} onExpired={props.onExpired}/>}
         </div>
       </div>
       {unseen && (
@@ -1249,7 +1274,7 @@ export function ChatPanel(props: Props) {
         </div>
       )}
       <footer className="chat-composer-area">
-        <VoiceComposer ref={voice} accountId={accountId} slot={slot} onExpired={props.onExpired} onInsert={(origin,text)=>{flushRef.current();const current=callbacks.current.memory.drafts[origin]??"";const next=current?`${current}\n${text}`:text;if(new TextEncoder().encode(next).byteLength>8192)return false;callbacks.current.onDraft(origin,next);requestAnimationFrame(()=>{if(origin===(currentThread.current??"new"))textarea.current?.focus();});return true;}}/>
+        <VoiceComposer ref={voice} accountId={accountId} slot={slot} onExpired={props.onExpired} onInsert={(origin,text)=>{flushRef.current();const current=callbacks.current.memory.drafts[origin]??"";const next=current?`${current}\n${text}`:text;if(new TextEncoder().encode(next).byteLength>8192)return false;callbacks.current.onDraft(origin,next);if(origin===slot)instructions.chooseMode("next");requestAnimationFrame(()=>{if(origin===(currentThread.current??"new"))textarea.current?.focus();});return true;}}/>
         <IncomingShare accountId={accountId} sessionScope={props.shareScope ?? null} slot={slot} moveSlot={shareSlotMove}
           draft={() => callbacks.current.memory.drafts[slot] ?? ""}
           canInsertFiles={(original, files) => {
@@ -1264,7 +1289,7 @@ export function ChatPanel(props: Props) {
             if(!media.canAddShared(attachments,original)||(audio&&!voice.current?.canImport()))return false;
             if(audio&&!voice.current?.importAudio(sharedFile(audio),original))return false;
             if(!media.addShared(attachments,original))return false;
-            callbacks.current.onDraft(original, text);requestAnimationFrame(()=>{if(original===(currentThread.current??"new"))textarea.current?.focus();});return true;
+            callbacks.current.onDraft(original, text);if(original===slot)instructions.chooseMode("next");requestAnimationFrame(()=>{if(original===(currentThread.current??"new"))textarea.current?.focus();});return true;
           }}/>
         {media.view}
         <MediaLibraryView accountId={accountId} onSelect={media.select}/>
@@ -1276,23 +1301,28 @@ export function ChatPanel(props: Props) {
             </button>
           </p>
         )}
+        {instructions.controls}
+        {instructionMode && !!media.selectionKey && <label className="instruction-media-choice"><input type="checkbox" checked={keepMedia} onChange={event => setKeepMedia(event.target.checked)}/>첨부는 다음 메시지에 남기고 글만 추가 지시로 보내기</label>}
         <form
           className="chat-composer"
           onSubmit={(event: FormEvent) => {
             event.preventDefault();
-            void send();
+            submitComposer();
           }}
         >
           <label className="sr-only" htmlFor="chat-message">
-            메시지
+            {instructionMode ? "작업에 추가 지시" : "메시지"}
           </label>
           <textarea
             id="chat-message"
             ref={textarea}
             rows={2}
-            value={draft}
-            placeholder="메시지를 입력하세요…"
-            onChange={(event) => props.onDraft(slot, event.target.value)}
+            value={composerText}
+            placeholder={instructionMode ? "진행 중인 작업에 추가할 내용을 적으세요…" : "메시지를 입력하세요…"}
+            onChange={(event) => {
+              if (instructionMode) instructions.setText(event.target.value);
+              else { if (hasActive) instructions.chooseMode("next"); props.onDraft(slot, event.target.value); }
+            }}
             onCompositionStart={() => {
               composing.current = true;
             }}
@@ -1308,14 +1338,14 @@ export function ChatPanel(props: Props) {
                 event.nativeEvent.keyCode !== 229
               ) {
                 event.preventDefault();
-                if (canSend) void send();
+                if (instructionMode ? instructions.canSubmit && (!media.selectionKey || keepMedia) : canSend) submitComposer();
               }
             }}
-            aria-describedby={bytes > 8192 ? "chat-composer-help" : undefined}
+            aria-describedby={composerBytes > composerLimit ? "chat-composer-help" : undefined}
           />
           <div className="chat-composer-bottom">
             <span>
-              {hasActive
+              {instructionMode ? "같은 작업에 글만 추가합니다 · 접수와 반영은 별도로 표시됩니다" : hasActive
                 ? "응답 중에도 다음 초안을 작성할 수 있습니다"
                 : modelLoading
                   ? "모델 확인 중…"
@@ -1326,16 +1356,16 @@ export function ChatPanel(props: Props) {
             <button
               className="primary"
               type="submit"
-              aria-label="메시지 전송"
-              disabled={!canSend}
+              aria-label={instructionMode ? "작업에 추가 지시 전송" : "메시지 전송"}
+              disabled={instructionMode ? !instructions.canSubmit || (!!media.selectionKey && !keepMedia) : !canSend}
             >
               ↑
             </button>
           </div>
         </form>
-        {bytes > 8192 && (
+        {composerBytes > composerLimit && (
           <p id="chat-composer-help" className="composer-help input-limit">
-            메시지는 UTF-8 기준 8,192바이트까지 전송할 수 있습니다.
+            {instructionMode ? "추가 지시는 UTF-8 기준 2,000바이트까지 전송할 수 있습니다." : "메시지는 UTF-8 기준 8,192바이트까지 전송할 수 있습니다."}
           </p>
         )}
       </footer>

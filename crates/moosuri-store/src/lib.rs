@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod push;
 pub mod recovery_budget;
+mod run_instructions;
 mod run_timings;
 pub use run_timings::{TimingMark, timing_mark};
 
@@ -49,6 +50,7 @@ mod learned_skills;
 pub mod media;
 mod memory_commands;
 pub mod private_files;
+mod task_monitors;
 mod thread_creation;
 pub use agent_execution::{
     AgentClaim, AgentContext, AgentStepStatus, AgentToolSlot, KnowledgeToolInput,
@@ -235,7 +237,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 71;
+const CURRENT_SCHEMA_VERSION: i64 = 73;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -875,6 +877,20 @@ impl Store {
             conn.execute_batch(concat!(
                 "BEGIN IMMEDIATE;",
                 include_str!("../../../migrations/assistant/0071_thread_creation_receipts.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 72 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0072_run_instructions.sql"),
+                "COMMIT;"
+            ))?;
+        }
+        if version < 73 {
+            conn.execute_batch(concat!(
+                "BEGIN IMMEDIATE;",
+                include_str!("../../../migrations/assistant/0073_task_monitors.sql"),
                 "COMMIT;"
             ))?;
         }

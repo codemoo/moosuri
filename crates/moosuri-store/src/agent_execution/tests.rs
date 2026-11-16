@@ -2,6 +2,298 @@ use super::*;
 use crate::tests::{TEST_LOCK, admin, directory, member};
 use moosuri_core::*;
 
+#[tokio::test]
+async fn live_instructions_idempotency_authority_limits_final_race_history_and_delete() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let provider = store
+        .list_providers(&user)
+        .await
+        .unwrap()
+        .providers
+        .remove(0);
+    store
+        .record_tool_probe(
+            &user,
+            provider.id,
+            provider.revision,
+            "synthetic".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    let thread = store
+        .create_thread(&user, "Synthetic instruction boundary".into())
+        .await
+        .unwrap();
+    let claim = claimed(&store, &user, &thread.id).await;
+    store.enable_run_instructions(&claim.lease).await.unwrap();
+    let first_step = store
+        .begin_agent_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    let input = RunInstructionRequest {
+        request_id: Uuid::new_v4().to_string(),
+        expected_attempt: 1,
+        text: "  Preserve this exact additional guidance  ".into(),
+    };
+    let received = store
+        .submit_run_instruction(&user, claim.lease.run_id().into(), input.clone())
+        .await
+        .unwrap();
+    assert_eq!(received.state, "received");
+    assert_eq!(received.text, input.text);
+    let replay = store
+        .submit_run_instruction(&user, claim.lease.run_id().into(), input.clone())
+        .await
+        .unwrap();
+    assert_eq!(replay.sequence, received.sequence);
+    let mut mismatch = input.clone();
+    mismatch.text.push('x');
+    assert!(matches!(
+        store
+            .submit_run_instruction(&user, claim.lease.run_id().into(), mismatch)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let other = member(&store, &user, "instruction-other@example.test")
+        .await
+        .user;
+    assert!(matches!(
+        store
+            .submit_run_instruction(&other, claim.lease.run_id().into(), input.clone())
+            .await,
+        Err(StoreError::NotFound)
+    ));
+    let login = store
+        .login("admin@example.test".into(), crate::tests::PASSWORD.into())
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .submit_run_instruction(&login.user, claim.lease.run_id().into(), input.clone())
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    let mut invalid = input.clone();
+    invalid.request_id = Uuid::new_v4().to_string();
+    invalid.expected_attempt = 2;
+    assert!(matches!(
+        store
+            .submit_run_instruction(&user, claim.lease.run_id().into(), invalid)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let mut invalid = input.clone();
+    invalid.request_id = Uuid::new_v4().to_string();
+    invalid.text = "한".repeat(667);
+    assert!(matches!(
+        store
+            .submit_run_instruction(&user, claim.lease.run_id().into(), invalid)
+            .await,
+        Err(StoreError::InvalidInput)
+    ));
+    for n in 2..=8 {
+        store
+            .submit_run_instruction(
+                &user,
+                claim.lease.run_id().into(),
+                RunInstructionRequest {
+                    request_id: Uuid::new_v4().to_string(),
+                    expected_attempt: 1,
+                    text: format!("Guidance {n}"),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert!(matches!(
+        store
+            .submit_run_instruction(
+                &user,
+                claim.lease.run_id().into(),
+                RunInstructionRequest {
+                    request_id: Uuid::new_v4().to_string(),
+                    expected_attempt: 1,
+                    text: "Ninth guidance".into()
+                }
+            )
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let context = store
+        .commit_agent_step(&first_step, capsule("old final"), vec![])
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .try_finish_agent_run(&first_step, RunState::Completed, None)
+            .await
+            .unwrap()
+    );
+    let next = store
+        .begin_instructed_agent_step(&claim.lease, context.checkpoint_seq, 8)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .run_instruction(&user, claim.lease.run_id().into(), input.request_id.clone())
+            .await
+            .unwrap()
+            .state,
+        "received"
+    );
+    store
+        .commit_agent_step(&next, capsule("new final"), vec![])
+        .await
+        .unwrap();
+    store.apply_step_instructions(&next).await.unwrap();
+    store
+        .append_agent_output(&next, patch("New actual answer"))
+        .await
+        .unwrap();
+    assert!(
+        store
+            .try_finish_agent_run(&next, RunState::Completed, None)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        store
+            .submit_run_instruction(&user, claim.lease.run_id().into(), input.clone())
+            .await
+            .unwrap()
+            .state,
+        "applied"
+    );
+    assert!(matches!(
+        store
+            .submit_run_instruction(
+                &user,
+                claim.lease.run_id().into(),
+                RunInstructionRequest {
+                    request_id: Uuid::new_v4().to_string(),
+                    expected_attempt: 1,
+                    text: "After terminal".into()
+                }
+            )
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    store
+        .submit_turn(
+            &user,
+            thread.id.clone(),
+            Uuid::new_v4().to_string(),
+            "Continue this topic".into(),
+        )
+        .await
+        .unwrap();
+    let second = store.claim_agent_run().await.unwrap().unwrap();
+    let history = second
+        .messages
+        .iter()
+        .map(|m| m.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(history.matches(&input.text).count(), 1);
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        2
+    );
+    store.delete_thread(&user, thread.id).await.unwrap();
+    assert!(matches!(
+        store
+            .run_instruction(&user, claim.lease.run_id().into(), input.request_id)
+            .await,
+        Err(StoreError::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn live_instructions_terminal_refusal_and_restore_close_received_without_application() {
+    let _guard = TEST_LOCK.lock().await;
+    for restore in [false, true] {
+        let dir = directory();
+        let store = Store::open(dir.path()).unwrap();
+        let user = configured(&store).await;
+        let provider = store
+            .list_providers(&user)
+            .await
+            .unwrap()
+            .providers
+            .remove(0);
+        store
+            .record_tool_probe(
+                &user,
+                provider.id,
+                provider.revision,
+                "synthetic".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        let thread = store
+            .create_thread(&user, "Synthetic closure".into())
+            .await
+            .unwrap();
+        let claim = claimed(&store, &user, &thread.id).await;
+        store.enable_run_instructions(&claim.lease).await.unwrap();
+        let input = RunInstructionRequest {
+            request_id: Uuid::new_v4().to_string(),
+            expected_attempt: 1,
+            text: "Unapplied correction".into(),
+        };
+        store
+            .submit_run_instruction(&user, claim.lease.run_id().into(), input.clone())
+            .await
+            .unwrap();
+        if restore {
+            store
+                .call(|db| crate::run_instructions::quarantine(&db.conn))
+                .await
+                .unwrap();
+        } else {
+            store
+                .finish_agent_execution(&claim.lease, RunState::Refused, None)
+                .await
+                .unwrap();
+        }
+        let receipt = store
+            .run_instruction(&user, claim.lease.run_id().into(), input.request_id)
+            .await
+            .unwrap();
+        assert_eq!(receipt.state, "closed");
+        assert_eq!(
+            receipt.reason.as_deref(),
+            Some(if restore {
+                "restore_quarantine"
+            } else {
+                "run_finished"
+            })
+        );
+        store
+            .call(|db| {
+                assert!(
+                    db.conn
+                        .query_row("PRAGMA foreign_key_check", [], |_| Ok(()))
+                        .optional()?
+                        .is_none()
+                );
+                assert_eq!(
+                    db.conn
+                        .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
+                    crate::CURRENT_SCHEMA_VERSION
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+}
+
 async fn configured(store: &Store) -> UserContext {
     let user = admin(store).await.user;
     let p = store
@@ -40,6 +332,135 @@ async fn configured(store: &Store) -> UserContext {
         .await
         .unwrap();
     user
+}
+#[tokio::test]
+async fn live_instruction_durable_current_owner_relogin_epoch_and_read_only_report_fences() {
+    let _guard = TEST_LOCK.lock().await;
+    for case in ["durable", "current_session", "report"] {
+        let dir = directory();
+        let store = Store::open(dir.path()).unwrap();
+        let user = configured(&store).await;
+        let provider = store
+            .list_providers(&user)
+            .await
+            .unwrap()
+            .providers
+            .remove(0);
+        store
+            .record_tool_probe(
+                &user,
+                provider.id,
+                provider.revision,
+                "synthetic".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        let mut checks = vec![MissionCheck::DecimalEquals {
+            expected: "5".into(),
+        }];
+        if case == "report" {
+            checks.push(MissionCheck::PrivateReport {
+                title: "Synthetic report".into(),
+            });
+        }
+        let mission = store
+            .create_mission(
+                &user,
+                MissionCreate {
+                    request_id: Uuid::new_v4().to_string(),
+                    task: "Compute 2 plus 3".into(),
+                    constraints: String::new(),
+                    checks,
+                    execution_mode: if case == "current_session" {
+                        MissionMode::CurrentSession
+                    } else {
+                        MissionMode::Durable
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let target = mission.instruction_target.unwrap();
+        let input = RunInstructionRequest {
+            request_id: Uuid::new_v4().to_string(),
+            expected_attempt: target.attempt,
+            text: "Preserve current owner guidance".into(),
+        };
+        if case == "report" {
+            assert!(!target.supports_instructions);
+            assert!(matches!(
+                store
+                    .submit_run_instruction(&user, target.run_id, input)
+                    .await,
+                Err(StoreError::Conflict)
+            ));
+            continue;
+        }
+        assert!(target.supports_instructions);
+        let current = store
+            .login("admin@example.test".into(), crate::tests::PASSWORD.into())
+            .await
+            .unwrap()
+            .user;
+        if case == "durable" {
+            store.logout(&user).await.unwrap();
+            let receipt = store
+                .submit_run_instruction(&current, target.run_id.clone(), input.clone())
+                .await
+                .unwrap();
+            let replay = store
+                .submit_run_instruction(&current, target.run_id.clone(), input.clone())
+                .await
+                .unwrap();
+            assert_eq!(receipt.sequence, replay.sequence);
+            assert_eq!(replay.state, "received");
+            let digest = current.digest;
+            let id = target.run_id.clone();
+            store
+                .call(move |db| {
+                    let saved: Vec<u8> = db.conn.query_row(
+                        "SELECT session_digest FROM run_instructions WHERE run_id=?1",
+                        [id],
+                        |r| r.get(0),
+                    )?;
+                    assert_eq!(saved, digest);
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        } else {
+            assert!(matches!(
+                store
+                    .submit_run_instruction(&current, target.run_id.clone(), input.clone())
+                    .await,
+                Err(StoreError::Unauthorized)
+            ));
+            store
+                .submit_run_instruction(&user, target.run_id.clone(), input.clone())
+                .await
+                .unwrap();
+        }
+        let changed = store
+            .change_password(&current, "Changed-durable-owner-password-2026".into())
+            .await
+            .unwrap()
+            .user;
+        assert!(matches!(
+            store
+                .submit_run_instruction(&changed, target.run_id, input)
+                .await,
+            Err(StoreError::Unauthorized)
+        ));
+        assert_eq!(
+            store
+                .usage_summary(&changed)
+                .await
+                .unwrap()
+                .dispatched_calls,
+            0
+        );
+    }
 }
 fn capsule(text: &str) -> PrivateCheckpoint {
     PrivateCheckpoint {

@@ -1,0 +1,7 @@
+- [x] Schema73 policies, monitor links, durable observations and owner API.
+- [x] Verified receipt proposal, pinned thread/exact source scope, consent and bounded reuse/coalescing.
+- [x] Local material-change gate, changed-only review and no unchanged failure retry.
+- [x] Withdrawal/epoch/expiry checks, read-only tool admission and publication fence.
+- [x] Local observation acknowledgement and owner correction.
+- [x] Standalone owner-facing React panel and focused tests.
+- [x] Parent integration of real migration72, UI mounts, independent review and live acceptance.

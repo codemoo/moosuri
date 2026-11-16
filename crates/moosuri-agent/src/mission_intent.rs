@@ -118,12 +118,42 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
             || ["summarize", "research", "delegate"]
                 .iter()
                 .any(|v| words.contains(v)));
+    // Duration particles also occur in ordinary nouns such as 기분에/성분에.
+    // Route quantified periods; the semantic planner still validates the request.
+    let per_duration = ["시간", "분"].iter().any(|unit| {
+        low.match_indices(unit).any(|(at, _)| {
+            let quantity = low[..at]
+                .trim_end()
+                .rsplit(|c: char| !c.is_alphanumeric())
+                .next()
+                .unwrap_or("");
+            let numeric = !quantity.is_empty() && quantity.bytes().all(|c| c.is_ascii_digit());
+            let units = [
+                "", "한", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉",
+            ];
+            let native = units[1..].contains(&quantity)
+                || [
+                    "열", "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔",
+                ]
+                .iter()
+                .any(|tens| {
+                    quantity
+                        .strip_prefix(tens)
+                        .is_some_and(|rest| units.contains(&rest))
+                })
+                || quantity == "스무";
+            let korean = native
+                || !quantity.is_empty()
+                    && quantity
+                        .chars()
+                        .all(|c| "일이삼사오육칠팔구십백천만".contains(c));
+            (numeric || korean) && low[at + unit.len()..].trim_start().starts_with('에')
+        })
+    });
     let interval = [
         "시간마다",
         "분마다",
         "초마다",
-        "시간에",
-        "분에",
         "시간간격",
         "분간격",
         "시간당",
@@ -131,7 +161,8 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
         "하루에",
     ]
     .iter()
-    .any(|v| compact.contains(v));
+    .any(|v| compact.contains(v))
+        || per_duration;
     // Elapsed one-off requests need the same isolated interpretation as civil
     // clocks and recurring requests. This only routes cost; it grants no action.
     let elapsed = ["분뒤", "분후", "시간뒤", "시간후", "초뒤", "초후"]

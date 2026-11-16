@@ -62,6 +62,15 @@ pub struct ChatEvidence {
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct RunView {
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub supports_instructions: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instruction_target: Option<RunInstructionTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instructions: Option<Vec<RunInstructionReceipt>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub connection_wait: Option<crate::MissionWaitView>,
@@ -103,6 +112,34 @@ pub struct RunView {
     pub can_cancel: bool,
     #[ts(type = "number")]
     pub created_at: i64,
+}
+
+/// Explicit guidance for the current attempt; never an effect approval.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct RunInstructionRequest {
+    pub request_id: String,
+    pub expected_attempt: i32,
+    pub text: String,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct RunInstructionReceipt {
+    pub request_id: String,
+    pub run_id: String,
+    pub thread_id: String,
+    pub attempt: i32,
+    #[ts(type = "number")]
+    pub sequence: i64,
+    pub text: String,
+    pub state: String,
+    pub reason: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct RunInstructionTarget {
+    pub run_id: String,
+    pub thread_id: String,
+    pub attempt: i32,
+    pub supports_instructions: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, TS)]

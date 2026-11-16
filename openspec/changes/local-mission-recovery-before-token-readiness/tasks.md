@@ -6,5 +6,5 @@
   current binding/session negatives and original dispatch accounting.
 - [x] Run focused personal recovery and existing affected mission runtime checks;
   record exact results and parent integration limits.
-- [ ] Parent integration: independent review, combined checks, pinned OpenSpec
+- [x] Parent integration: independent review, combined checks, pinned OpenSpec
   validation and publication of the final combined source.

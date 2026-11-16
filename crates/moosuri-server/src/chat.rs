@@ -109,6 +109,33 @@ pub(super) async fn usage(State(state): State<AppState>, headers: HeaderMap) -> 
     let user = current(&state, &headers).await?;
     Ok(Json(state.store.usage_summary(&user).await?).into_response())
 }
+pub(super) async fn instruction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<moosuri_core::RunInstructionRequest>,
+) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    if state.runtime.is_stopping() {
+        return Err(StoreError::Unavailable.into());
+    }
+    let receipt = state.store.submit_run_instruction(&user, id, input).await?;
+    state.runtime.wake();
+    let status = if receipt.state == "received" {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(receipt)).into_response())
+}
+pub(super) async fn instruction_receipt(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, request)): Path<(String, String)>,
+) -> HttpResult {
+    let user = current(&state, &headers).await?;
+    Ok(Json(state.store.run_instruction(&user, id, request).await?).into_response())
+}
 pub(super) async fn account_usage(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
     let user = current(&state, &headers).await?;
     Ok(Json(state.store.account_usage(&user).await?).into_response())

@@ -295,6 +295,9 @@ fn notification(
     account: &str,
     id: &str,
 ) -> Result<LocalNotification> {
+    if !crate::missions::inputs::notice_current(conn, tenant, id)? {
+        return Err(StoreError::NotFound);
+    }
     let source = topics::for_notification(conn, tenant, account, id)?;
     let suggestion = suggestions::for_notification(conn, tenant, account, id)?;
     let followup = followups::for_notification(conn, tenant, account, id)?;
@@ -777,4 +780,39 @@ pub(crate) fn mission_input_notice(
     let muted = topics::muted(c, t, account, &source)?;
     c.execute("INSERT INTO local_notifications(tenant_id,id,account_id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,quiet_revision,source_suppressed,push_suppressed) VALUES(?1,?2,?3,?4,NULL,'맡긴 일에 답변이 필요해요','원래 업무 카드에서 필요한 정보를 확인하고 이어서 진행하세요.',?5,?5,0,?6,?7,?8,?8)",params![t,id,account,source,time,time::quiet(&settings,time)?,settings.revision,muted])?;
     Ok(())
+}
+
+/// Internal sidecar for an explicit monitor policy; never creates session authority.
+pub(crate) fn create_monitor_schedule(
+    c: &Connection,
+    t: &str,
+    a: &str,
+    epoch: i64,
+    seconds: u32,
+    end: i64,
+    at: i64,
+) -> Result<String> {
+    let input = ScheduleDraft {
+        title: "완료한 일의 자료 변화 확인".into(),
+        message: "허용한 저장 자료의 변화만 확인".into(),
+        rule: ScheduleRule::Interval {
+            anchor: at,
+            seconds,
+        },
+        valid_until: Some(end),
+    };
+    draft(&input, at)?;
+    let count: i64 = c.query_row("SELECT count(*) FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state!='revoked'", params![t,a], |r|r.get(0))?;
+    if count >= 64 {
+        return Err(StoreError::BudgetExhausted);
+    }
+    let slot = time::after(&input.rule, at)?.ok_or(StoreError::InvalidInput)?;
+    let id = Uuid::new_v4().to_string();
+    let digest: [u8; 32] = Sha256::digest(encode(&input)?.as_bytes()).into();
+    c.execute("INSERT INTO reminder_schedules VALUES(?1,?2,?3,?2,?4,1,?5,'active',NULL,?6,?7,?8,?9,?10,?11,?12,?13,?13)",params![t,id,a,digest.as_slice(),epoch,input.title,input.message,encode(&input.rule)?,end,time::TZDB,encode(&slot)?,slot.due,at])?;
+    c.execute(
+        "INSERT OR IGNORE INTO reminder_owners VALUES(?1,?2,0)",
+        params![t, a],
+    )?;
+    Ok(id)
 }

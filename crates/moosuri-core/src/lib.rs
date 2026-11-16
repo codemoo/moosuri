@@ -282,6 +282,9 @@ pub fn typescript_contract() -> String {
         WebEvidenceKind::decl(),
         WebEvidence::decl(),
         CredentialChatStatus::decl(),
+        RunInstructionRequest::decl(),
+        RunInstructionReceipt::decl(),
+        RunInstructionTarget::decl(),
         RunView::decl(),
         ChatTurn::decl(),
         ChatPage::decl(),
@@ -291,6 +294,14 @@ pub fn typescript_contract() -> String {
         UsageSummary::decl(),
         AccountUsage::decl(),
         AccountUsageResponse::decl(),
+        TaskMonitorScope::decl(),
+        TaskMonitorConnection::decl(),
+        TaskMonitorSource::decl(),
+        TaskMonitorObservation::decl(),
+        TaskMonitorView::decl(),
+        TaskMonitorAccept::decl(),
+        TaskMonitorControl::decl(),
+        TaskMonitorResolve::decl(),
         SourceConnectionKind::decl(),
         CreateSourceConnection::decl(),
         SourceConnection::decl(),
@@ -337,3 +348,6 @@ pub fn typescript_contract() -> String {
         .join("\n")
         + "\n"
 }
+
+mod task_monitors;
+pub use task_monitors::*;

@@ -247,7 +247,15 @@ fn is_latest(conn: &Connection, run: &Run) -> Result<bool> {
     Ok(!conn.query_row("SELECT EXISTS(SELECT 1 FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND sequence>?3)",params![run.tenant,run.thread,run.sequence],|r|r.get::<_,bool>(0))?)
 }
 pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
+    let instruction_target = crate::run_instructions::target(conn, run)?;
+    let instructions = crate::run_instructions::displayed(conn, run)?;
     Ok(RunView {
+        supports_instructions: instruction_target
+            .as_ref()
+            .map(|t| t.supports_instructions)
+            .unwrap_or(crate::run_instructions::supports(conn, run)?),
+        instruction_target,
+        instructions: (!instructions.is_empty()).then_some(instructions),
         timings: crate::run_timings::view(conn, run)?,
         id: run.id.clone(),
         request_id: run.request.clone(),
@@ -338,6 +346,9 @@ pub(super) fn transition(
     state: RunState,
     error: Option<RunFailure>,
 ) -> Result<()> {
+    if state == RunState::Completed && crate::run_instructions::pending(conn, run)? {
+        return Err(StoreError::Conflict);
+    }
     crate::run_timings::terminal(conn, run, state)?;
     conn.execute(
         "UPDATE chat_runs SET state=?1,error=?2,version=version+1 WHERE tenant_id=?3 AND id=?4",
@@ -349,6 +360,11 @@ pub(super) fn transition(
         ],
     )?;
     if !state.active() {
+        crate::run_instructions::close(
+            conn,
+            run,
+            error.map(RunFailure::code).unwrap_or("run_finished"),
+        )?;
         crate::native_task_mail::cancel(conn, run)?;
         crate::credential_chat::cancel(conn, run)?;
     }
@@ -666,7 +682,19 @@ pub(super) fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage
         if output.is_empty() {
             continue;
         }
-        let turn_bytes = prior.user_text.len() + output.iter().map(|m| m.text.len()).sum::<usize>();
+        let mut user_text = prior.user_text;
+        for instruction in prior
+            .run
+            .instructions
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|i| i.state == "applied")
+        {
+            user_text.push_str("\nAdditional owner guidance applied during this prior task: ");
+            user_text.push_str(&instruction.text);
+        }
+        let turn_bytes = user_text.len() + output.iter().map(|m| m.text.len()).sum::<usize>();
         if output.iter().any(|m| m.text.len() > 64 * 1024) {
             // Keep a contiguous suffix. Skipping a recent correction and then
             // restoring older statements would create misleading history.
@@ -679,7 +707,7 @@ pub(super) fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage
         }
         let mut messages = vec![ContextMessage {
             role: ContextRole::User,
-            text: prior.user_text,
+            text: user_text,
             phase: None,
         }];
         messages.extend(output.into_iter().map(|m| ContextMessage {

@@ -150,6 +150,12 @@ pub struct MissionInputReply {
 pub struct MissionView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub instruction_target: Option<crate::RunInstructionTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instructions: Option<Vec<crate::RunInstructionReceipt>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub input_wait: Option<MissionInputWait>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<MissionInputWait>>", optional)]

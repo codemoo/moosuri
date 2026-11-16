@@ -1108,6 +1108,25 @@ pub(crate) async fn execute_with_calendar(
     definitions.extend(crate::artifact_tools::definitions(
         artifact_profile.as_ref(),
     ));
+    let can_steer = model.function_tools
+        && !media_context
+        && !native_resume
+        && !artifact_write
+        && !tool_profile.as_ref().is_some_and(|p| {
+            p.native_mail_model_read
+                || p.credential_github
+                || p.credential_gitea
+                || p.credential_google
+                || p.credential_google_preview
+                || !p.mail_connections.is_empty()
+                || p.web.as_ref().is_some_and(|w| w.browser_pin.is_some())
+        });
+    if can_steer && store.enable_run_instructions(&lease).await.is_err() {
+        return;
+    }
+    if can_steer {
+        signals.changed();
+    }
     let mut continuation: Option<Continuation> = None;
     let mut results = Vec::<ToolResult>::new();
     let mut total_bytes = 0;
@@ -1199,6 +1218,37 @@ pub(crate) async fn execute_with_calendar(
         };
     }
     for _ in 0..6 {
+        let guidance = match store.pending_run_instructions(&lease).await {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let through = guidance.last().map_or(0, |i| i.sequence);
+        if !guidance.is_empty() {
+            let text = guidance.iter().map(|i| i.text.clone()).collect::<Vec<_>>();
+            if let Some(saved) = continuation.as_mut() {
+                if saved.append_user_instructions(&results, &text).is_err() {
+                    finish(
+                        &store,
+                        &lease,
+                        None,
+                        RunState::Incomplete,
+                        Some(RunFailure::ContextLimit),
+                        &signals,
+                    )
+                    .await;
+                    return;
+                }
+                results.clear();
+            } else {
+                request
+                    .messages
+                    .extend(text.into_iter().map(|text| TextMessage {
+                        role: TextRole::User,
+                        text,
+                        phase: None,
+                    }));
+            }
+        }
         let tool_request = ToolRequest {
             text: &request,
             tools: &definitions,
@@ -1252,7 +1302,10 @@ pub(crate) async fn execute_with_calendar(
         }
         // Dispatch admission is the actor transaction's linearization point. A
         // failed/unknown acknowledgement never authorizes a provider request.
-        let step = match store.begin_agent_step(&lease, context.checkpoint_seq).await {
+        let step = match store
+            .begin_instructed_agent_step(&lease, context.checkpoint_seq, through)
+            .await
+        {
             Ok(step) => step,
             Err(error) => {
                 let (state, error) = store_failure(&error);
@@ -1350,6 +1403,16 @@ pub(crate) async fn execute_with_calendar(
             }
         };
         signals.changed();
+        if (outcome == FinishOutcome::Completed
+            && observed.pending.has_answer()
+            && calls.is_empty())
+            || (outcome == FinishOutcome::ContinuationRequired && !calls.is_empty())
+        {
+            if store.apply_step_instructions(&step).await.is_err() {
+                return;
+            }
+            signals.changed();
+        }
         if artifact_profile.as_ref().is_some_and(|p| p.write) && calls.is_empty() {
             let _=store.append_agent_output(&step,vec![OutputPatch::Append{item:"artifact-not-saved".into(),text:"기록을 저장하지 못했습니다. 저장 영수증이 없으므로 완료로 표시하지 않습니다. 문서 편집기에서 내용을 확인할 수 있습니다.".into(),phase:Some(MessagePhase::FinalAnswer),refusal:false}]).await;
             finish(
@@ -1375,8 +1438,37 @@ pub(crate) async fn execute_with_calendar(
                 FinishOutcome::Refused => (RunState::Refused, None),
                 _ => (RunState::Failed, Some(RunFailure::ProtocolFailed)),
             };
-            finish(&store, &lease, Some(&step), state, error, &signals).await;
-            return;
+            if state == RunState::Completed {
+                match store.try_finish_agent_run(&step, state, error).await {
+                    Ok(true) => {
+                        signals.changed();
+                        return;
+                    }
+                    Ok(false) => {
+                        let Some(round) = observed.round else {
+                            finish(
+                                &store,
+                                &lease,
+                                Some(&step),
+                                RunState::Incomplete,
+                                Some(RunFailure::ContinuationUnsupported),
+                                &signals,
+                            )
+                            .await;
+                            return;
+                        };
+                        continuation = Some(round.continuation);
+                        results.clear();
+                        let _ = store.supersede_step_output(&step).await;
+                        signals.changed();
+                        continue;
+                    }
+                    Err(_) => return,
+                }
+            } else {
+                finish(&store, &lease, Some(&step), state, error, &signals).await;
+                return;
+            }
         }
         let Some(saved) = context.checkpoint.as_ref() else {
             finish(

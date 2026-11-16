@@ -130,6 +130,68 @@ async fn commit(s: &Store, l: &RunLease, d: MissionChatDecision) -> crate::StepL
     step
 }
 #[tokio::test]
+async fn live_instruction_original_admission_maps_only_its_actual_mission_carrier() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user) = setup().await;
+    let text = "Compute synthetic sum 2 plus 3";
+    let (thread, lease) = source(&store, &user, text, None).await;
+    commit(&store, &lease, decision(text, false)).await;
+    assert_eq!(store.apply_mission_chat(&lease).await.unwrap(), Some(true));
+    let admission = store
+        .conversation(&user, thread.clone(), None)
+        .await
+        .unwrap()
+        .turns
+        .remove(0);
+    assert_eq!(admission.run.state, RunState::Completed);
+    let target = admission.run.instruction_target.unwrap();
+    assert!(target.supports_instructions);
+    assert_ne!(target.run_id, admission.run.id);
+    let mission = store.missions(&user).await.unwrap().remove(0);
+    assert_eq!(mission.instruction_target.unwrap().run_id, target.run_id);
+    let request = RunInstructionRequest {
+        request_id: Uuid::new_v4().to_string(),
+        expected_attempt: target.attempt,
+        text: "Preserve exact synthetic constraints".into(),
+    };
+    store
+        .submit_run_instruction(&user, target.run_id.clone(), request.clone())
+        .await
+        .unwrap();
+    let refreshed = store
+        .conversation(&user, thread.clone(), None)
+        .await
+        .unwrap()
+        .turns
+        .remove(0);
+    assert!(refreshed.run.supports_instructions);
+    assert_eq!(refreshed.run.instructions.unwrap()[0].text, request.text);
+    store
+        .control_mission(
+            &user,
+            mission.id,
+            MissionControl {
+                request_id: Uuid::new_v4().to_string(),
+                expected_revision: mission.revision,
+                action: MissionAction::Cancel,
+            },
+        )
+        .await
+        .unwrap();
+    let closed = store
+        .run_instruction(&user, target.run_id, request.request_id)
+        .await
+        .unwrap();
+    assert_eq!(closed.state, "closed");
+    let refreshed = store
+        .conversation(&user, thread, None)
+        .await
+        .unwrap()
+        .turns
+        .remove(0);
+    assert!(!refreshed.run.supports_instructions);
+}
+#[tokio::test]
 async fn semantic_plan_receipt_and_real_mission_are_atomic_and_exact_retry_never_reclassifies() {
     let _g = TEST_LOCK.lock().await;
     let (_dir, s, u) = setup().await;

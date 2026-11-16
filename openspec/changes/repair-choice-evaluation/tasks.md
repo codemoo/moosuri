@@ -11,4 +11,4 @@
 - [x] Add targeted missing-live-settlement negative control and document prior restart/global-cancellation weakness.
 - [x] Corrected native evaluator library11/11, including complete fresh HTTP/SQLite cases and required mutation controls; focused agent shutdown1/1 after repairing the first manual-constructor compile failure; integrated driver remains separate.
 - [x] Integrated driver15/15 and62/62validation, scoped lint/CLI build, and clean independent frozen re-review.
-- [ ] Public commit/push and exact-source Linux acceptance.
+- [x] Public commit/push and exact-source Linux acceptance.

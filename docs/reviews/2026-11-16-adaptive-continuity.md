@@ -141,6 +141,23 @@ was clean. All five live-tested production artifact-path files remain byte-ident
 in the final integration; later changes are the separately checked timezone and
 read-only activity-observer paths.
 
+## Public-source Linux acceptance
+
+Implementation commit `7fe58a9281e19fd77daa6e00b32be2e121ce4d31` is public and the canonical
+checkout was fast-forwarded cleanly. The exact published source plus scanned web
+assets ran in the existing pinned Linux container with read-only source/root,
+network disabled and no production mounts. All11phases passed: quoted routing,
+artifact flow, Calendar, timezone continuation, pending-field grammar, legacy
+Calendar display, reminder chat, monitor lifecycle, evaluator library, scoped
+all-target lint and CLI/evaluator build. Source hashes stayed unchanged.
+
+Source archive SHA-256:
+`7f65c86aaa12695c0b561205b74a04aecfb0a924a77c51be24ac77fd488ebe02`.
+The Linux evaluator library includes the complete fresh15-flow runner and62
+required validation controls. Format, plan metadata, strict OpenSpec and both
+changed-source/new-commit secret scans passed before publication. CI remains off.
+This acceptance adds no production deployment or broad provider/semantic claim.
+
 ## Bounds
 
 This is not a broad unseen quality score. Public scripted workflows check specified

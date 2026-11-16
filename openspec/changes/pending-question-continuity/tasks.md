@@ -5,4 +5,4 @@
 - [x] Preserve an established missing timezone despite complete typed clocks; author Calendar and local-mission ambiguous-answer/reopen/IANA-correction outcomes.
 - [x] Complete focused native regressions and scoped lint; record the initial reproduced failure and corrected same-case outcome.
 - [x] Complete independent frozen review and root-owned integrated native validation.
-- [ ] Complete public commit/push and exact-source Linux acceptance.
+- [x] Complete public commit/push and exact-source Linux acceptance.

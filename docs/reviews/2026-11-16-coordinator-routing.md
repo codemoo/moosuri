@@ -92,7 +92,6 @@ with `--no-deps`, the native-mail feature, and CLI/evaluator builds also passed.
 Independent frozen reviews covered shared planning, connection reuse, native
 capability routing, document authority and lifecycle event propagation.
 
-Public commit and exact-public-source Linux acceptance follow this checkpoint.
 These checks do not establish live model understanding, real Google/device
 acceptance or production deployment. The connection fixture proves reuse, not a
 production latency or token-saving percentage.
@@ -101,3 +100,21 @@ The broader Store mission scan had123 passing and10 failing tests. All10 failure
 also occurred on unchanged baseline production: seven old-schema downgrade/reopen
 fixtures and three unsupported-effect admission fixtures. They remain documented
 baseline failures; this repair does not claim a passing complete repository suite.
+
+## Public-source Linux acceptance
+
+Implementation commit `90b370036f2867b51e52acf21326f0872f961b79` is public and the canonical
+checkout was fast-forwarded cleanly. The exact published source and scanned web
+assets ran in the existing pinned Linux container with read-only source/root,
+network disabled and no production mounts. All12 phases passed: domain routing,
+artifact targets, mission and memory classifiers, personal missions, per-round
+subscription authority, live instructions, original-chat task handoff, native
+mail, evaluator library, scoped all-target Clippy and CLI/evaluator builds.
+Source hashes stayed unchanged. The evaluator library includes the complete
+15-flow runner and62 independent validation controls.
+
+Source archive SHA-256: `ce24fe6490989458856cda13a07e1d2cc4453176e8261aec72664560678bf8e6`.
+Format, planning metadata, strict OpenSpec and changed-source/new-commit secret
+scans passed before publication. Automatic CI remains disabled. This acceptance
+adds no production deployment or broad real-model quality claim; the separately
+reproduced baseline fixture failures above remain open.

@@ -112,7 +112,31 @@ the affirmative wait control, and verify exactly one model call, zero tool slots
 zero broker jobs/commitments and empty authenticated polling. No production gate
 was relaxed to pass them; the original failure logs are preserved privately.
 
-Public commit and exact-public-source Linux acceptance follow this checkpoint.
 No production deployment, real provider/device acceptance or broad model-quality
 result is claimed. The new mixed round proves preserved receipts and no repeated
 search/read in those workflows, not a general latency or token-saving percentage.
+
+## Public-source Linux acceptance
+
+Implementation commit `17676a908388e5b0ae245a8b413c2e0a22ebd8e3` is public and the canonical
+checkout was fast-forwarded cleanly. Its exact source plus the newly built and
+scanned web assets passed all7 grouped Linux phases in the pinned container:
+mission/continuation/schema outcomes, broker discovery and native wait boundaries,
+feature-on/off guidance and native/source outcomes, evaluator
+library, scoped all-target Clippy and CLI/evaluator builds. Source and root were
+read-only, network disabled and no production paths mounted. Source hashes
+remained unchanged.
+
+| Linux test scope | Result |
+| --- | --- |
+| `mission-continuity` | 142 passed |
+| `broker-discovery` | 21 passed |
+| `native-source-guidance` | 11 passed |
+| `guidance-default` | 1 passed |
+| `evaluator` | 10 passed |
+
+The evaluator library includes the fresh15-flow runner and62 independent controls.
+Source archive SHA-256: `862b2a2d164f6393c83d08cb1fe5b7d30bd2957ceb8493f954083410c0b0033e`.
+Format, planning metadata, strict OpenSpec and source/new-commit secret scans
+passed before publication. Automatic CI remains off. No live model/provider
+acceptance or production deployment is implied.

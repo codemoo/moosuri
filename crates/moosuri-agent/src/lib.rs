@@ -400,6 +400,8 @@ async fn supervise(
     let mut schedule_worker = tokio::spawn(schedules::worker(store.clone(), signals.clone()));
     let mut push_worker = tokio::spawn(push::worker(store.clone(), signals.clone()));
     let mut mail_worker = tokio::spawn(mail.clone().worker(signals.stop.clone()));
+    let mut reply_watch_worker =
+        tokio::spawn(mail.clone().reply_watch_worker(signals.stop.clone()));
     let mut source_worker = tokio::spawn(
         source_connections::Service::new(store.clone(), mail.clone(), signals.clone()).worker(),
     );
@@ -434,6 +436,11 @@ async fn supervise(
             if store.settle_credential_chats().await.is_ok_and(|n| n > 0) {
                 signals.changed();
             }
+        }
+        if reply_watch_worker.is_finished() {
+            let _ = (&mut reply_watch_worker).await;
+            reply_watch_worker =
+                tokio::spawn(mail.clone().reply_watch_worker(signals.stop.clone()));
         }
         if push_worker.is_finished() {
             let _ = (&mut push_worker).await;
@@ -498,6 +505,13 @@ async fn supervise(
         while tasks.join_next().await.is_some() {}
         // Uncommitted attempts remain dispatched and recover as unknown, never
         // queued. Do not wait unboundedly on a failed store during shutdown.
+    }
+    if tokio::time::timeout(MAIL_DRAIN, &mut reply_watch_worker)
+        .await
+        .is_err()
+    {
+        reply_watch_worker.abort();
+        let _ = reply_watch_worker.await;
     }
     if tokio::time::timeout(MAIL_DRAIN, &mut mail_worker)
         .await

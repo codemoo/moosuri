@@ -16,6 +16,16 @@ fn source(conn: &Connection, tenant: &str, account: &str, id: &str) -> Result<No
         |r| r.get(0),
     )?;
     let followup = super::followups::is_followup(conn, tenant, &id)?;
+    let watch:Option<(String,i64,bool)>=conn.query_row("SELECT w.title,coalesce(p.revision,0),coalesce(p.muted,0) FROM mail_reply_watches w LEFT JOIN notification_source_preferences p ON p.tenant_id=w.tenant_id AND p.account_id=w.account_id AND p.schedule_id=w.id WHERE w.tenant_id=?1 AND w.account_id=?2 AND w.id=?3",params![tenant,account,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    if let Some((title, revision, muted)) = watch {
+        return Ok(NotificationSource {
+            id,
+            title,
+            kind: "mail_reply_watch".into(),
+            revision,
+            muted,
+        });
+    }
     let mission:Option<(String,i64,bool)>=conn.query_row("SELECT m.id,coalesce(p.revision,0),coalesce(p.muted,0) FROM missions m LEFT JOIN notification_source_preferences p ON p.tenant_id=m.tenant_id AND p.account_id=m.account_id AND p.schedule_id=m.id WHERE m.tenant_id=?1 AND m.account_id=?2 AND m.id=?3",params![tenant,account,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     if let Some((id, revision, muted)) = mission {
         return Ok(NotificationSource {

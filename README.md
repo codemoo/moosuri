@@ -12,6 +12,7 @@ accounts, durable chat with bounded tab-refresh draft recovery and older-convers
 [live instructions](docs/chat.md) during supported read-only runs and
 [task-linked follow-up](docs/task-monitors.md) with scoped reusable permission and
 change-gated model calls,
+[exact Gmail next-reply watches](docs/mail-reply-watches.md) with metadata-only unchanged checks and literal new-reply previews,
 private knowledge with recorded-time source filters and opt-in fixed Korean word aliases, and memories with bounded date-scoped conversational updates, editable records, bounded
 missions with bounded read/report/draft/primary-calendar operations from chat or forms, and editable paused one-off criteria before effects are prepared and preserved request history, explicitly delegated recurring Gmail/Calendar briefings, saved followup date notifications, Japan Post latest-summary and supported visible-history lookups, personal Gmail with bounded PDF/text attachment reads, provider drafts and approved fixed scheduled sends, bounded timed/all-day Calendar actions and follow-up clarification from chat or forms, browser workspaces with optional login-profile recovery within their original lifetime, local reminders with bounded missing-time/content replies, shared [Korean/English civil dates and clocks](docs/conversational-civil-time.md) that preserve the requested week and recurrence,
 opt-in Web Push, per-schedule notification mute, evidence-bound followup review

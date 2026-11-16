@@ -162,6 +162,9 @@ pub struct LocalNotification {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mission_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thread_id: Option<String>,
     pub id: String,
     pub schedule_id: String,
     pub occurrence_id: String,

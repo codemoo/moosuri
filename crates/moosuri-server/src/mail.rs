@@ -38,6 +38,11 @@ pub(super) struct Read {
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/connections", get(connections))
+        .route(
+            "/reply-watches",
+            get(reply_watches).post(create_reply_watch),
+        )
+        .route("/reply-watches/{id}/stop", post(stop_reply_watch))
         .route("/connections/{id}", delete(disconnect))
         .route("/oauth/start", post(start))
         .route("/oauth/compose", post(start_compose))
@@ -506,4 +511,39 @@ async fn schedule_preview(
 ) -> HttpResult {
     let u = current(&s, &headers).await?;
     Ok(Json(s.store.preview_mail_schedule(&u, input).await?).into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplyWatchQuery {
+    thread_id: Option<String>,
+}
+async fn reply_watches(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ReplyWatchQuery>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    Ok(Json(s.store.mail_reply_watches(&u, query.thread_id).await?).into_response())
+}
+async fn create_reply_watch(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<moosuri_core::MailReplyWatchCreate>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    let out = s.store.create_mail_reply_watch(&u, input).await?;
+    s.runtime.wake();
+    Ok(Json(out).into_response())
+}
+async fn stop_reply_watch(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> HttpResult {
+    let u = current(&s, &headers).await?;
+    let _gate = s.delivery.write().await;
+    Ok(Json(s.store.stop_mail_reply_watch(&u, id).await?).into_response())
 }

@@ -1145,13 +1145,19 @@ fn submit_turn_context_in(
             ],
         )?;
     }
-    crate::schedules::chat::finish(
-        tx,
-        &user,
-        &run,
-        context.as_ref(),
-        target.is_some() || mission.is_some(),
-    )?;
+    let watched = target.is_none()
+        && mission.is_none()
+        && context.as_ref().and_then(|c| c.target.as_ref()).is_none()
+        && crate::mail::reply_watches::finish_chat(tx, &user, &run)?;
+    if !watched {
+        crate::schedules::chat::finish(
+            tx,
+            &user,
+            &run,
+            context.as_ref(),
+            target.is_some() || mission.is_some(),
+        )?;
+    }
     let current = load_run(tx, &run.tenant, &run.id)?;
     if current.state == RunState::Queued
         && target.is_none()

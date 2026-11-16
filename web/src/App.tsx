@@ -834,7 +834,11 @@ function Workspace({
         if(!recoveryReady.current) {
           const recovered=draftSession?.load(threadIds.current);
           recoveryReady.current=true;
-          if(recovered?.restored) {
+          const linkedThread=new URLSearchParams(window.location.search).get("thread");
+          if(linkedThread && threadIds.current.includes(linkedThread)) {
+            if(recovered?.restored)setChatMemory(recovered.memory);
+            setSelected(linkedThread);
+          }else if(recovered?.restored) {
             setChatMemory(recovered.memory);
             setSelected(recovered.selected??(recovered.memory.drafts.new||recovered.memory.pending.new||recovered.memory.threadCreation?null:result.threads[0]?.id??null));
           }else setSelected(result.threads[0]?.id??null);

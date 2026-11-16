@@ -1,0 +1,17 @@
+.mail-reply-watches { display: grid; gap: .75rem; max-width: 46rem; margin: 1rem auto; width: 100%; }
+.reply-watch, .reply-watch-start { border: 1px solid var(--border, #d8d8d8); border-radius: 1rem; padding: 1rem; overflow-wrap: anywhere; }
+.reply-watch h3 { font-size: 1rem; margin: .4rem 0; }
+.reply-watch p { margin: .5rem 0; }
+.reply-watch-state { font-size: .9rem; font-weight: 600; }
+.reply-watch-meta, .reply-watch-target small { color: var(--muted, #757575); font-size: .85rem; }
+.reply-watch details, .reply-watch-start summary { margin: .7rem 0; }
+.reply-watch button { margin-top: .7rem; }
+.reply-watch a { display: block; margin-top: .75rem; }
+.reply-preview { margin-top: 1rem; border-top: 1px solid var(--border, #d8d8d8); padding-top: .5rem; }
+.reply-preview pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow-y: auto; overscroll-behavior: contain; }
+.reply-watch-options { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0; }
+.reply-watch-options label { display: grid; gap: .3rem; }
+.reply-watch-target { display: flex; gap: .75rem; align-items: center; justify-content: space-between; padding: .6rem 0; }
+.reply-watch-target span { min-width: 0; }
+.reply-watch-target small { display: block; }
+.reply-watch-target button { flex-shrink: 0; }

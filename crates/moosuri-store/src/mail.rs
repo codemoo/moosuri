@@ -10,9 +10,11 @@ mod external;
 pub(crate) mod native;
 pub(crate) mod provider_saves;
 mod reconcile;
+pub(crate) mod reply_watches;
 mod workflows;
 pub use provider_saves::{ProviderDraftPermit, ProviderDraftSave};
 pub use reconcile::{MailReconcileCredentials, MailReconcilePermit};
+pub use reply_watches::{MailReplyCredentials, MailReplyLease};
 
 pub use external::{ExternalToolPermit, ExternalToolStart};
 

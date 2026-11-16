@@ -572,3 +572,6 @@ mod synthetic_fixture_boundary_tests {
         }
     }
 }
+
+mod thread_index;
+pub use thread_index::{MailMessageIndex, MailThreadIndex};

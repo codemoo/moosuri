@@ -275,9 +275,6 @@ fn suppress_notice(c: &Connection, t: &str, request: &str) -> Result<()> {
 /// Dynamic guard used for inbox, dispatch and passive push display. An answered,
 /// revoked, expired or cancelled question can never be displayed as actionable.
 pub(crate) fn notice_current(c: &Connection, t: &str, notification: &str) -> Result<bool> {
-    if !crate::task_monitors::notice_current(c, t, notification)? {
-        return Ok(false);
-    }
     let row:Option<(String,String,i64)>=c.query_row("SELECT i.mission_id,i.run_id,i.expires_ms FROM mission_input_waits i JOIN missions m ON m.tenant_id=i.tenant_id AND m.id=i.mission_id WHERE i.tenant_id=?1 AND i.notification_id=?2 AND i.status='waiting' AND m.state='waiting' AND m.revision=i.mission_revision AND m.grant_enabled=1 AND m.uncertain=0",params![t,notification],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let Some((id, run, expiry)) = row else {
         return Ok(!c.query_row("SELECT EXISTS(SELECT 1 FROM local_notifications WHERE tenant_id=?1 AND id=?2 AND occurrence_id IS NULL)",params![t,notification],|r|r.get::<_,bool>(0))?);

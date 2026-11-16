@@ -17,3 +17,10 @@ API: authenticated GET `/api/v1/task-monitors`, POST `/{id}/accept`, `/{id}/stop
 Schema73 follows the real live-guidance migration72 in ordinary startup and encrypted restore. Restore pauses schedules and advances owner epochs; old monitoring permission cannot restart automatically. Already-published notice suppression preserves its immutable original source flag.
 
 See [combined native, browser and real-model acceptance](reviews/2026-11-16-live-guidance-monitors.md).
+
+## 원격 메일 답장
+
+이 문서의 저장 자료 감시와 별도로 [Gmail 다음 답장 감시](mail-reply-watches.md)를
+지원한다. 원래 채팅의 실제 읽기/발송 영수증에서 한 Gmail 대화를 선택하며, 수집기를
+새로 만들거나 기존 수집 범위를 넓히지 않는다. 원격 메일은 메타데이터 확인 후 새 본문만
+가져오고 실제 미리보기를 전달한다. 저장 자료 변경의 모델 검토와 구분한다.

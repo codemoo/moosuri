@@ -295,7 +295,7 @@ fn notification(
     account: &str,
     id: &str,
 ) -> Result<LocalNotification> {
-    if !crate::missions::inputs::notice_current(conn, tenant, id)? {
+    if !notice_current(conn, tenant, id)? {
         return Err(StoreError::NotFound);
     }
     let source = topics::for_notification(conn, tenant, account, id)?;
@@ -303,7 +303,8 @@ fn notification(
     let followup = followups::for_notification(conn, tenant, account, id)?;
     let mission_id: Option<String>=conn.query_row("SELECT m.id FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id JOIN reminder_schedules s ON s.tenant_id=o.tenant_id AND s.id=o.schedule_id JOIN accounts a ON a.tenant_id=m.tenant_id AND a.id=m.account_id WHERE o.tenant_id=?1 AND o.notification_id=?2 AND m.account_id=?3 AND m.state NOT IN('deleted','quarantined') AND s.state IN('active','completed') AND s.revision=o.schedule_revision AND s.auth_epoch=m.auth_epoch AND a.auth_epoch=m.auth_epoch AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?4) AND (s.valid_until IS NULL OR s.valid_until>?4)",params![tenant,id,account,now()?],|r|r.get(0)).optional()?;
     let mission_id = mission_id.or(conn.query_row("SELECT i.mission_id FROM mission_input_waits i JOIN missions m ON m.tenant_id=i.tenant_id AND m.id=i.mission_id WHERE i.tenant_id=?1 AND i.notification_id=?2 AND m.account_id=?3 AND i.status='waiting' AND m.state='waiting'",params![tenant,id,account],|r|r.get(0)).optional()?);
-    conn.query_row("SELECT id,schedule_id,coalesce(occurrence_id,''),title,message,scheduled_for,delivered_at,delayed,quiet,is_read,dismissed FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(LocalNotification{suggestion:suggestion.clone(),followup:followup.clone(),source:source.clone(),mission_id:mission_id.clone(),id:r.get(0)?,schedule_id:r.get(1)?,occurrence_id:r.get(2)?,title:r.get(3)?,message:r.get(4)?,scheduled_for:r.get(5)?,delivered_at:r.get(6)?,delayed:r.get(7)?,quiet:r.get(8)?,read:r.get(9)?,dismissed:r.get(10)?})).optional()?.ok_or(StoreError::NotFound)
+    let thread_id=conn.query_row("SELECT thread_id FROM mail_reply_watches WHERE tenant_id=?1 AND account_id=?2 AND notification_id=?3",params![tenant,account,id],|r|r.get::<_,String>(0)).optional()?;
+    conn.query_row("SELECT id,schedule_id,coalesce(occurrence_id,''),title,message,scheduled_for,delivered_at,delayed,quiet,is_read,dismissed FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![tenant,account,id],|r|Ok(LocalNotification{thread_id:thread_id.clone(),suggestion:suggestion.clone(),followup:followup.clone(),source:source.clone(),mission_id:mission_id.clone(),id:r.get(0)?,schedule_id:r.get(1)?,occurrence_id:r.get(2)?,title:r.get(3)?,message:r.get(4)?,scheduled_for:r.get(5)?,delivered_at:r.get(6)?,delayed:r.get(7)?,quiet:r.get(8)?,read:r.get(9)?,dismissed:r.get(10)?})).optional()?.ok_or(StoreError::NotFound)
 }
 
 fn finish(conn: &Connection, lease: &ReminderLease, now: i64) -> Result<LocalNotification> {
@@ -512,7 +513,7 @@ impl Store {
         dismissed: bool,
     ) -> Result<NotificationPage> {
         let user = user.clone();
-        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let cursor=before.as_deref().map(|v|{if v.len()>80{return Err(StoreError::InvalidInput)}let(t,id)=v.split_once(':').ok_or(StoreError::InvalidInput)?;uuid(id)?;Ok::<_,StoreError>((t.parse::<i64>().map_err(|_|StoreError::InvalidInput)?,id.to_owned()))}).transpose()?;let ids=db.conn.prepare("SELECT id,delivered_at FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND source_suppressed=0 AND (?3 OR dismissed=0) AND (?4 IS NULL OR delivered_at<?4 OR(delivered_at=?4 AND id<?5)) ORDER BY delivered_at DESC,id DESC LIMIT 101")?.query_map(params![u.tenant.0,u.account.id,dismissed,cursor.as_ref().map(|c|c.0),cursor.as_ref().map(|c|c.1.as_str())],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;let next_cursor=if ids.len()>100{let(id,time)=&ids[99];Some(format!("{time}:{id}"))}else{None};let items=ids.iter().take(100).filter_map(|(id,_)|match crate::missions::inputs::notice_current(&db.conn,&u.tenant.0,id) {Ok(true)=>Some(notification(&db.conn,&u.tenant.0,&u.account.id,id)),Ok(false)=>None,Err(e)=>Some(Err(e))}).collect::<Result<Vec<_>>>()?;Ok(NotificationPage{items,next_cursor})}).await
+        self.call(move|db|{let u=validate(&db.conn,&user,true,false)?;let cursor=before.as_deref().map(|v|{if v.len()>80{return Err(StoreError::InvalidInput)}let(t,id)=v.split_once(':').ok_or(StoreError::InvalidInput)?;uuid(id)?;Ok::<_,StoreError>((t.parse::<i64>().map_err(|_|StoreError::InvalidInput)?,id.to_owned()))}).transpose()?;let ids=db.conn.prepare("SELECT id,delivered_at FROM local_notifications WHERE tenant_id=?1 AND account_id=?2 AND source_suppressed=0 AND (?3 OR dismissed=0) AND (?4 IS NULL OR delivered_at<?4 OR(delivered_at=?4 AND id<?5)) ORDER BY delivered_at DESC,id DESC LIMIT 101")?.query_map(params![u.tenant.0,u.account.id,dismissed,cursor.as_ref().map(|c|c.0),cursor.as_ref().map(|c|c.1.as_str())],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;let next_cursor=if ids.len()>100{let(id,time)=&ids[99];Some(format!("{time}:{id}"))}else{None};let items=ids.iter().take(100).filter_map(|(id,_)|match notice_current(&db.conn,&u.tenant.0,id) {Ok(true)=>Some(notification(&db.conn,&u.tenant.0,&u.account.id,id)),Ok(false)=>None,Err(e)=>Some(Err(e))}).collect::<Result<Vec<_>>>()?;Ok(NotificationPage{items,next_cursor})}).await
     }
     pub async fn mark_notification(
         &self,
@@ -774,12 +775,43 @@ pub(crate) fn mission_input_notice(
     mission: &str,
     id: &str,
 ) -> Result<()> {
+    let source:String=c.query_row("SELECT schedule_id FROM recurring_mission_occurrences WHERE tenant_id=?1 AND mission_id=?2",params![t,mission],|r|r.get(0)).optional()?.unwrap_or_else(||mission.to_owned());
+    direct_notice(
+        c,
+        t,
+        account,
+        &source,
+        id,
+        "맡긴 일에 답변이 필요해요",
+        "원래 업무 카드에서 필요한 정보를 확인하고 이어서 진행하세요.",
+    )
+}
+
+/// Shared inbox/quiet/mute delivery for durable events without reminder occurrences.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn direct_notice(
+    c: &Connection,
+    t: &str,
+    account: &str,
+    source: &str,
+    id: &str,
+    title: &str,
+    message: &str,
+) -> Result<()> {
     let time = now()?;
     let settings = quiet_settings(c, t, account)?;
-    let source:String=c.query_row("SELECT schedule_id FROM recurring_mission_occurrences WHERE tenant_id=?1 AND mission_id=?2",params![t,mission],|r|r.get(0)).optional()?.unwrap_or_else(||mission.to_owned());
-    let muted = topics::muted(c, t, account, &source)?;
-    c.execute("INSERT INTO local_notifications(tenant_id,id,account_id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,quiet_revision,source_suppressed,push_suppressed) VALUES(?1,?2,?3,?4,NULL,'맡긴 일에 답변이 필요해요','원래 업무 카드에서 필요한 정보를 확인하고 이어서 진행하세요.',?5,?5,0,?6,?7,?8,?8)",params![t,id,account,source,time,time::quiet(&settings,time)?,settings.revision,muted])?;
+    let muted = topics::muted(c, t, account, source)?;
+    c.execute("INSERT INTO local_notifications(tenant_id,id,account_id,schedule_id,occurrence_id,title,message,scheduled_for,delivered_at,delayed,quiet,quiet_revision,source_suppressed,push_suppressed) VALUES(?1,?2,?3,?4,NULL,?5,?6,?7,?7,0,?8,?9,?10,?10)",params![t,id,account,source,title,message,time,time::quiet(&settings,time)?,settings.revision,muted])?;
     Ok(())
+}
+
+/// Shared live-authority check for inbox, push dispatch and passive display.
+pub(crate) fn notice_current(c: &Connection, t: &str, id: &str) -> Result<bool> {
+    if let Some(current) = crate::mail::reply_watches::notice_current(c, t, id)? {
+        return Ok(current);
+    }
+    Ok(crate::task_monitors::notice_current(c, t, id)?
+        && crate::missions::inputs::notice_current(c, t, id)?)
 }
 
 /// Internal sidecar for an explicit monitor policy; never creates session authority.

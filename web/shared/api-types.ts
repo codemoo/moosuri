@@ -34,7 +34,7 @@ export type LocalNotification = { suggestion?: ProactiveSuggestion, followup?: F
 /**
  * Resolved from current owned mission state, never copied result text.
  */
-mission_id?: string, id: string, schedule_id: string, occurrence_id: string, title: string, message: string, scheduled_for: number, delivered_at: number, delayed: boolean, quiet: boolean, read: boolean, dismissed: boolean, };
+mission_id?: string, thread_id?: string, id: string, schedule_id: string, occurrence_id: string, title: string, message: string, scheduled_for: number, delivered_at: number, delayed: boolean, quiet: boolean, read: boolean, dismissed: boolean, };
 export type ProactiveSuggestion = { topic: string, artifact_id: string, };
 export type NotificationPage = { items: Array<LocalNotification>, next_cursor: string | null, };
 export type CalendarConnection = { id: string, primary_id: string, title: string, time_zone: string, epoch: number, revision: number, status: string, };

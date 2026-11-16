@@ -15,7 +15,7 @@ fn private() -> tempfile::TempDir {
 // Production migrations must still reject duplicate or corrupt schema objects.
 fn remove_continuity_tables(conn: &Connection) {
     conn.execute_batch(
-        "DROP TABLE task_monitor_links;DROP TABLE task_monitor_observations;         DROP TABLE task_monitors;DROP TABLE task_monitor_policies;         DROP INDEX task_monitor_thread_members;         DROP TABLE run_instructions;DROP TABLE run_instruction_channels;",
+        "DROP TABLE mail_reply_watch_requests;DROP TABLE mail_reply_watches;DROP TABLE task_monitor_links;DROP TABLE task_monitor_observations;         DROP TABLE task_monitors;DROP TABLE task_monitor_policies;         DROP INDEX task_monitor_thread_members;         DROP TABLE run_instructions;DROP TABLE run_instruction_channels;",
     )
     .unwrap();
 }
@@ -1265,6 +1265,8 @@ async fn continuity_schema71_restore_migration_creates_empty_scoped_authority() 
         "task_monitors",
         "task_monitor_observations",
         "task_monitor_links",
+        "mail_reply_watches",
+        "mail_reply_watch_requests",
     ] {
         assert_eq!(
             conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r

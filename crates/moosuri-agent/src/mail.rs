@@ -16,6 +16,7 @@ mod attachments;
 mod drafts;
 mod projection;
 mod reconcile;
+mod reply_watches;
 type MailLocks = Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>;
 #[derive(Clone)]
 pub struct MailService {

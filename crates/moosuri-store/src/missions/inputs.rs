@@ -217,8 +217,7 @@ impl Store {
             if exhausted{return Err(StoreError::BudgetExhausted)}
             let already:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mission_input_waits WHERE tenant_id=?1 AND run_id=?2 AND acceptance_revision=?3 AND field=?4)",params![r.tenant,r.id,revision,field],|r|r.get(0))?;
             if already{return Err(StoreError::Conflict)}
-            let waiting:i64=tx.query_row("SELECT count(*) FROM missions WHERE tenant_id=?1 AND account_id=?2 AND state='waiting'",params![r.tenant,r.account],|r|r.get(0))?;
-            if waiting>=2{return Err(StoreError::Busy)}
+            if !capacity::waiting_available(&tx,&r.tenant,&r.account)?{return Err(StoreError::Busy)}
             let deadline:Option<i64>=tx.query_row("SELECT deadline_ms FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|r|r.get(0))?;let expiry=expiry.min(deadline.unwrap_or(expiry));
             if expiry<=clock()? {return Err(StoreError::BudgetExhausted)}
             let request_id=Uuid::new_v4().to_string();

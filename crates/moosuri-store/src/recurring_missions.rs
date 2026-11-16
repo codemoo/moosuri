@@ -214,7 +214,7 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
             .map_err(|_| StoreError::Corrupt)?
             .as_ref()
             .is_some_and(crate::connection_waits::unresolved);
-        let busy = !crate::connection_waits::capacity(c, &t, &account, pending)?;
+        let busy = !crate::missions::capacity::new_mission_available(c, &t, &account, pending)?;
         if busy {
             continue;
         }

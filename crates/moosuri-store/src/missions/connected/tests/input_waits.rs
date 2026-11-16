@@ -26,6 +26,103 @@ async fn counts(s: &Store, run: &str) -> (i64, i64, i64, i64, i64, String) {
     s.call(move|db|Ok(db.conn.query_row("SELECT e.remote_calls,e.tool_calls,m.repairs,e.deadline_ms,m.expires_ms,json_extract(r.model,'$.agent_profile') FROM agent_execution e JOIN missions m ON m.tenant_id=e.tenant_id AND m.run_id=e.run_id JOIN chat_runs r ON r.tenant_id=e.tenant_id AND r.id=e.run_id WHERE e.run_id=?1",[run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?)).await.unwrap()
 }
 #[tokio::test]
+async fn full_mission_capacity_blocks_new_work_but_preserves_existing_wait_and_resume() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_d, s, u) = crate::missions::tests::setup().await;
+    let task = s
+        .create_mission(
+            &u,
+            input(MissionMode::Durable, "Review the synthetic comparison"),
+        )
+        .await
+        .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let st = step(&s, &claim.lease, vec![]).await;
+    let run = claim.lease.run_id().to_owned();
+    let before = counts(&s, &run).await;
+    let mut others = vec![];
+    for index in 0..15 {
+        let owner = member(&s, &u, &format!("capacity-{index}@example.test"))
+            .await
+            .user;
+        let work = s
+            .create_mission(
+                &owner,
+                input(MissionMode::Durable, "Review another synthetic comparison"),
+            )
+            .await
+            .unwrap();
+        others.push((owner, work));
+    }
+    let extra = member(&s, &u, "capacity-extra@example.test").await.user;
+    let extra_request = input(MissionMode::Durable, "Review a new synthetic comparison");
+    assert!(matches!(
+        s.create_mission(&extra, extra_request.clone()).await,
+        Err(StoreError::Busy)
+    ));
+
+    // Existing work changes its slot; it does not consume another global place.
+    s.mission_wait_for_input(&st, 1, ask(MissionInputField::Context))
+        .await
+        .unwrap();
+    let waiting = s.missions(&u).await.unwrap().remove(0);
+    assert_eq!(waiting.state, "waiting");
+    assert!(s.check_run(&claim.lease).await.is_err());
+    let answer = reply(
+        &waiting,
+        "Compare the current evidence and state any uncertainty",
+    );
+    let resumed = s
+        .reply_mission_input(&u, task.id.clone(), answer.clone())
+        .await
+        .unwrap();
+    assert_eq!(resumed.state, "queued");
+    assert_eq!(resumed.id, task.id);
+    assert_eq!(counts(&s, &run).await, before);
+    assert_eq!(
+        s.reply_mission_input(&u, task.id.clone(), answer)
+            .await
+            .unwrap()
+            .id,
+        task.id
+    );
+    let paused = s
+        .control_mission(
+            &u,
+            task.id.clone(),
+            control(resumed.revision, MissionAction::Pause),
+        )
+        .await
+        .unwrap();
+    let resumed = s
+        .control_mission(
+            &u,
+            task.id.clone(),
+            control(paused.revision, MissionAction::Resume),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resumed.state, "queued");
+    assert_eq!(counts(&s, &run).await, before);
+    assert!(matches!(
+        s.create_mission(&extra, extra_request.clone()).await,
+        Err(StoreError::Busy)
+    ));
+
+    // A terminal result releases exactly the global place needed by new work.
+    let (owner, work) = others.pop().unwrap();
+    s.control_mission(
+        &owner,
+        work.id,
+        control(work.revision, MissionAction::Cancel),
+    )
+    .await
+    .unwrap();
+    let admitted = s.create_mission(&extra, extra_request).await.unwrap();
+    assert_eq!(admitted.state, "queued");
+    assert_eq!(s.missions(&u).await.unwrap().remove(0).state, "queued");
+}
+#[tokio::test]
 async fn mission_input_reply_releases_capacity_preserves_work_and_one_draft_after_lost_ack() {
     let _guard = TEST_LOCK.lock().await;
     let (_d, s, u) = crate::missions::tests::setup().await;

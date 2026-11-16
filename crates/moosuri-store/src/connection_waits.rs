@@ -1,5 +1,6 @@
 //! Writer-owned connection admission and event driven continuation. No inference polling.
 use super::*;
+use crate::missions::capacity;
 use moosuri_core::{
     MissionConnectionSelection, MissionMailPin, MissionWaitView, ScopedConnectionDescriptor,
 };
@@ -52,14 +53,6 @@ pub(crate) fn mail_id(r: &crate::chat::Run, id: &str) -> Option<String> {
             .find(|p| p.connection.id == id)
             .map(|p| p.connection.id.clone())
     }
-}
-pub(crate) fn capacity(c: &Connection, t: &str, a: &str, waiting: bool) -> Result<bool> {
-    let global:i64=c.query_row("SELECT count(*) FROM missions WHERE state IN('queued','planning','executing','verifying','paused','waiting')",[],|r|r.get(0))?;
-    let owner:i64=c.query_row(if waiting {"SELECT count(*) FROM missions WHERE tenant_id=?1 AND account_id=?2 AND state='waiting'"}else{"SELECT count(*) FROM missions WHERE tenant_id=?1 AND account_id=?2 AND state IN('queued','planning','executing','verifying','paused')"},params![t,a],|r|r.get(0))?;
-    Ok(global < 16 && owner < if waiting { 2 } else { 1 })
-}
-fn runnable_free(c: &Connection, t: &str, a: &str, except: &str) -> Result<bool> {
-    Ok(!c.query_row("SELECT EXISTS(SELECT 1 FROM missions WHERE tenant_id=?1 AND account_id=?2 AND id!=?3 AND state IN('queued','planning','executing','verifying','paused'))",params![t,a,except],|r|r.get::<_,bool>(0))?)
 }
 fn pins(c: &Connection, t: &str, a: &str, app: Option<i64>) -> Result<Vec<MissionMailPin>> {
     let revision: Option<i64> = c
@@ -235,13 +228,13 @@ pub(crate) fn poll(c: &Connection, time: i64) -> Result<()> {
     let rows=c.prepare("SELECT w.tenant_id,w.mission_id,w.run_id,w.status,m.account_id,w.request_id,0 AS native,r.admitted_order FROM mission_connection_waits w JOIN missions m ON m.tenant_id=w.tenant_id AND m.id=w.mission_id JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE w.status IN('waiting','ready') AND m.state='waiting' UNION ALL SELECT n.tenant_id,m.id,n.run_id,'ready',m.account_id,n.request_id,1,r.admitted_order FROM native_task_mail_reads n JOIN missions m ON m.tenant_id=n.tenant_id AND m.run_id=n.run_id JOIN chat_runs r ON r.tenant_id=n.tenant_id AND r.id=n.run_id WHERE n.status='ready' AND m.state='waiting' UNION ALL SELECT i.tenant_id,m.id,i.run_id,'ready',m.account_id,i.request_id,2,r.admitted_order FROM mission_input_waits i JOIN missions m ON m.tenant_id=i.tenant_id AND m.id=i.mission_id JOIN chat_runs r ON r.tenant_id=i.tenant_id AND r.id=i.run_id WHERE i.status='ready' AND m.state='waiting' ORDER BY admitted_order LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,i64>(6)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     for (t, id, run, status, account, wait_id, native) in rows {
         if native == 2 {
-            if runnable_free(c, &t, &account, &id)? {
+            if capacity::runnable_available(c, &t, &account, Some(&id))? {
                 crate::missions::inputs::promote(c, &t, &id, &run, &wait_id)?;
             }
             continue;
         }
         if native == 1 {
-            if runnable_free(c, &t, &account, &id)? {
+            if capacity::runnable_available(c, &t, &account, Some(&id))? {
                 crate::native_task_mail::promote(c, &t, &run, &wait_id)?;
             }
             continue;
@@ -255,7 +248,7 @@ pub(crate) fn poll(c: &Connection, time: i64) -> Result<()> {
             }
         }
         let ready:bool=c.query_row("SELECT status='ready' FROM mission_connection_waits WHERE tenant_id=?1 AND mission_id=?2 AND request_id=?3",params![t,id,wait_id],|r|r.get(0))?;
-        if ready && runnable_free(c, &t, &account, &id)? {
+        if ready && capacity::runnable_available(c, &t, &account, Some(&id))? {
             let r = crate::chat::load_run(c, &t, &run)?;
             // A revoked filled binding never falls back to another account.
             if !crate::missions::connected::current(c, &r)? {
@@ -307,7 +300,7 @@ impl Store {
             if input.acceptance_revision!=acceptance {return Err(StoreError::Conflict)}
             let unstable:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started') OR EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND result IS NULL) OR EXISTS(SELECT 1 FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND step=0)",params![r.tenant,r.id],|r|r.get(0))?;
             if unstable {return Err(StoreError::Conflict)}
-            let waiting:i64=tx.query_row("SELECT count(*) FROM missions WHERE tenant_id=?1 AND account_id=?2 AND state='waiting'",params![r.tenant,r.account],|r|r.get(0))?;if waiting>=2{return Err(StoreError::Busy)}
+            if !capacity::waiting_available(&tx,&r.tenant,&r.account)?{return Err(StoreError::Busy)}
             let (slot_expiry,selection):(i64,Option<String>)=tx.query_row("SELECT expires_ms,selection FROM mission_connection_slots WHERE tenant_id=?1 AND run_id=?2 AND slot_id=?3 AND operation='gmail.read' AND resource='mailbox' AND schema_version=1",params![r.tenant,r.id,input.slot_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::Forbidden)?;
             if selection.is_none(){return Err(StoreError::Forbidden)}
             let deadline:Option<i64>=tx.query_row("SELECT deadline_ms FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id],|r|r.get(0))?;

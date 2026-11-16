@@ -3,6 +3,7 @@
 use super::*;
 mod acceptance;
 pub(crate) mod actions;
+pub(crate) mod capacity;
 pub(crate) mod inputs;
 mod reports;
 pub(crate) use acceptance::floor as acceptance_floor;
@@ -1041,7 +1042,7 @@ pub(crate) fn create_owner_in(
         &input,
         read_profile(tx, &u.tenant.0, &u.account.id, profile)?,
     )?;
-    if !crate::connection_waits::capacity(
+    if !capacity::new_mission_available(
         tx,
         &u.tenant.0,
         &u.account.id,
@@ -1168,8 +1169,7 @@ pub(crate) fn control_owner_in(
             {
                 return Err(StoreError::Conflict);
             }
-            let other:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM missions WHERE tenant_id=?1 AND account_id=?2 AND id!=?3 AND state IN('queued','planning','executing','verifying','paused'))",params![u.tenant.0,u.account.id,id],|r|r.get(0))?;
-            if other {
+            if !capacity::runnable_available(tx, &u.tenant.0, &u.account.id, Some(id))? {
                 return Err(StoreError::Busy);
             }
             let carrier = crate::chat::load_run(tx, &u.tenant.0, &run)?;

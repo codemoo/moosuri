@@ -648,7 +648,7 @@ impl Store {
             if crate::mailbox_intent::requested(&r.text)?.is_some() {return Err(StoreError::Forbidden)}
             let bg=background(&tx,&r)?;let body=MailModelRequest{version:1,background:bg,read};if !body.valid(){return Err(StoreError::InvalidInput)}
             let unstable:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state IN('dispatched','unknown')) OR EXISTS(SELECT 1 FROM external_tool_dispatches WHERE tenant_id=?1 AND run_id=?2 AND state='started')",params![r.tenant,r.id],|r|r.get(0))?;if unstable{return Err(StoreError::Conflict)}
-            if crate::missions::is_mission(&tx,&r.tenant,&r.id)? {let n:i64=tx.query_row("SELECT count(*) FROM missions WHERE tenant_id=?1 AND account_id=?2 AND state='waiting'",params![r.tenant,r.account],|r|r.get(0))?;if n>=2{return Err(StoreError::Busy)}}
+            if crate::missions::is_mission(&tx,&r.tenant,&r.id)? && !crate::missions::capacity::waiting_available(&tx,&r.tenant,&r.account)? {return Err(StoreError::Busy)}
             let old:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM native_task_mail_reads WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND call_id=?4)",params![r.tenant,r.id,l.step,call],|r|r.get(0))?;
             if !old {
                 // Every pending native call in the round needs budget before yielding;

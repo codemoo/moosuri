@@ -31,9 +31,7 @@ and cancellation. Existing stream/guidance and mission recovery tests cover Runt
 integration. The new injected failures occur at the actual Store boundary, not
 during a full first provider stream or a physical power loss.
 
-Native results, independent frozen review and public-source Linux acceptance are
-recorded below when complete. No live model or production deployment is included.
-CI remains off.
+No live model or production deployment is included. CI remains off.
 
 ## Native acceptance and independent review
 
@@ -51,3 +49,19 @@ error forwarding, lease guards, atomic event writes, mission verification and
 unknown-acknowledgment behavior were checked. Tests compare complete conversation
 projections rather than directly counting event rows; event rollback additionally
 follows from the reviewed shared transaction ownership.
+
+## Public-source Linux acceptance — 2026-11-17
+
+Implementation `403bcb3e4b6953ae846ac1796ce25353f81e09f2` was published and the canonical checkout
+fast-forwarded cleanly. All six Linux phases passed: 12 Store contracts, 26 agent
+contracts, four Claude contracts, scoped agent/Store all-target Clippy, product
+CLI/evaluator builds and the full 15-world/62-control synthetic evaluator. The
+evaluator source digest matches the native run; these repeated checks are not
+independent model quality or latency samples.
+
+The pinned Rust 1.89 container used read-only source/root, disabled network and no
+production mounts. Only the synthetic Claude phase allowed its fixture launcher
+to execute from temporary storage. Source hashes remained unchanged.
+Source archive SHA-256:
+`21c41a148d8b1f61b583ce4000d3e70affeae941a92fd00e102cc9610257b105`.
+Format, plan/link, strict OpenSpec and source/new-commit secret checks passed.

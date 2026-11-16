@@ -3,9 +3,10 @@
 A self-hosted assistant for individuals, families and friends.
 
 **Early development preview. Start with [current support and remaining work](docs/status.md).**
-Current work focuses on [feature stability](docs/testing.md#기능별-안정화): bounded
-chat, memory, task, skill, schedule and monitor regressions, with live-model,
-provider and device acceptance tracked separately.
+Current work focuses on [feature stability](docs/testing.md#기능별-안정화): consolidate
+duplicated execution responsibilities, retire replaced paths and verify chat,
+memory, task, skill, schedule and monitor behavior. Live-model, provider and device
+acceptance remain separately tracked.
 Rust backend/agent/CLI + React/TypeScript web + SQLite. The preview includes isolated
 accounts, durable chat with bounded tab-refresh draft recovery and older-conversation recall,
 [live instructions](docs/chat.md) during supported read-only runs and

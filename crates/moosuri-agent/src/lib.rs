@@ -22,6 +22,7 @@ mod push;
 mod runner;
 mod schedules;
 mod source_connections;
+mod store_retry;
 pub mod subscriptions;
 mod web;
 mod web_tools;

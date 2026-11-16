@@ -414,16 +414,11 @@ impl MailService {
             Err(_) => (None, false),
         };
         // Retry only local receipt persistence, never the network send.
-        for _ in 0..5 {
-            match self
-                .store
+        let _ = crate::store_retry::local(|| {
+            self.store
                 .finish_mail_dispatch(&dispatch, receipt.clone(), definite)
-                .await
-            {
-                Err(StoreError::Busy) => tokio::time::sleep(Duration::from_millis(20)).await,
-                _ => break,
-            }
-        }
+        })
+        .await;
     }
 }
 fn map(error: GmailError) -> StoreError {

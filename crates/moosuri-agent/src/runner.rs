@@ -1,4 +1,5 @@
 use crate::knowledge_tools::{self, Invocation};
+use crate::store_retry::{authority as retry_authority, local as retry_local};
 use crate::{Signals, model_client};
 use moosuri_connectors::model::protocol::tools::{
     Continuation, ToolCapabilities, ToolRequest, ToolResult, ToolRound, encode_tool_request,
@@ -202,54 +203,27 @@ fn copy_patches(patches: &[OutputPatch]) -> Vec<OutputPatch> {
         })
         .collect()
 }
-async fn retry_authority<F, Fut>(mut check: F) -> Result<(), StoreError>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<(), StoreError>>,
-{
-    for retry in 0..5 {
-        match check().await {
-            Err(StoreError::Busy | StoreError::Unavailable) if retry < 4 => {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            result => return result,
-        }
-    }
-    unreachable!()
-}
 async fn write_usage(checkpoint: &Checkpoint<'_>, usage: &RunUsage) -> Result<(), StoreError> {
-    for retry in 0..5 {
-        match checkpoint
+    retry_local(|| {
+        checkpoint
             .store
             .update_agent_step_usage(checkpoint.lease, usage.clone())
-            .await
-        {
-            Err(StoreError::Busy) if retry < 4 => {
-                tokio::time::sleep(Duration::from_millis(20)).await
-            }
-            result => return result,
-        }
-    }
-    unreachable!()
+    })
+    .await
 }
 async fn write_output(
     checkpoint: &Checkpoint<'_>,
     patches: &[OutputPatch],
     marks: &[(String, moosuri_store::TimingMark)],
 ) -> Result<(), StoreError> {
-    for retry in 0..5 {
-        match checkpoint
-            .store
-            .append_agent_output_timed(checkpoint.lease, copy_patches(patches), marks.to_vec())
-            .await
-        {
-            Err(StoreError::Busy) if retry < 4 => {
-                tokio::time::sleep(Duration::from_millis(20)).await
-            }
-            result => return result,
-        }
-    }
-    unreachable!()
+    retry_local(|| {
+        checkpoint.store.append_agent_output_timed(
+            checkpoint.lease,
+            copy_patches(patches),
+            marks.to_vec(),
+        )
+    })
+    .await
 }
 async fn flush(checkpoint: &Checkpoint<'_>, pending: &mut Pending) -> Result<(), RunFailure> {
     let signals = checkpoint.signals;
@@ -466,33 +440,15 @@ async fn finish(
     error: Option<RunFailure>,
     signals: &Signals,
 ) {
-    for retry in 0..5 {
+    let _ = retry_local(|| async {
         let result = match step {
             Some(step) => store.finish_agent_run(step, state, error).await,
             None => store.finish_agent_execution(lease, state, error).await,
         };
         signals.changed();
-        if matches!(result, Err(StoreError::Busy)) && retry < 4 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        } else {
-            break;
-        }
-    }
-}
-async fn retry_local<T, F, Fut>(mut operation: F) -> Result<T, StoreError>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T, StoreError>>,
-{
-    for retry in 0..5 {
-        match operation().await {
-            Err(StoreError::Busy) if retry < 4 => {
-                tokio::time::sleep(Duration::from_millis(20)).await
-            }
-            result => return result,
-        }
-    }
-    unreachable!()
+        result
+    })
+    .await;
 }
 fn typed_input(
     call: &moosuri_connectors::model::protocol::tools::CompletedToolCall,
@@ -2008,38 +1964,6 @@ async fn execute_claude_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
-    async fn transient_store_pressure_recovers_without_revoking_authority() {
-        let mut attempts = 0;
-        let result = retry_authority(|| {
-            attempts += 1;
-            std::future::ready(if attempts < 3 {
-                Err(StoreError::Busy)
-            } else {
-                Ok(())
-            })
-        })
-        .await;
-        assert!(result.is_ok());
-        assert_eq!(attempts, 3);
-        attempts = 0;
-        let result = retry_authority(|| {
-            attempts += 1;
-            std::future::ready(Err(StoreError::Unavailable))
-        })
-        .await;
-        assert!(matches!(result, Err(StoreError::Unavailable)));
-        assert!(!fenced(&result.unwrap_err()));
-        assert_eq!(attempts, 5);
-        attempts = 0;
-        let result = retry_authority(|| {
-            attempts += 1;
-            std::future::ready(Err(StoreError::Unauthorized))
-        })
-        .await;
-        assert!(fenced(&result.unwrap_err()));
-        assert_eq!(attempts, 1);
-    }
     fn history() -> Vec<ContextMessage> {
         vec![
             ContextMessage {

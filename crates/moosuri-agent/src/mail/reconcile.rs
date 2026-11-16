@@ -28,16 +28,9 @@ impl MailService {
         // Only the local save may retry. A future lookup is a separately leased
         // read attempt; neither path can construct a send carrier.
         let result = result.ok();
-        for _ in 0..5 {
-            let observation = result.clone();
-            match self.store.finish_mail_reconciliation(&p, observation).await {
-                Err(StoreError::Busy) => {
-                    // Never replay network IO while retrying a local receipt.
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                _ => break,
-            }
-        }
+        let _ =
+            crate::store_retry::local(|| self.store.finish_mail_reconciliation(&p, result.clone()))
+                .await;
         self.signals.changed();
     }
     async fn lookup_unknown(

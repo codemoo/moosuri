@@ -14,3 +14,5 @@
 - [x] Parent integration: frozen independent backend review, UI/schema73 merge,
   server/full lint/build, fresh held real-model travel/browser check, pinned
   OpenSpec validation and final publication.
+
+- [x] Verify exact published source on isolated Linux, record final acceptance and keep automatic CI disabled.

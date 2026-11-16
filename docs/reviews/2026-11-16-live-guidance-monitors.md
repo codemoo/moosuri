@@ -85,8 +85,8 @@ The discovered noun/duration false-positive itself was repaired in the product.
 - Actual current encrypted restore and predecessor19,29/30,55,68,70,71 migration
   checks passed. Old synthetic predecessor fixtures now remove genuinely later
   schema objects; production migration validation was not weakened.
-- Affected mission routing suite7/7 across the initial passing6 plus corrected
-  delayed-fixture recheck. Four ordinary phrases each take one answer dispatch and
+- Affected mission routing suite7/7 on final Linux source; native routing
+  acceptance and the corrected delayed-fixture recheck also passed. Four ordinary phrases each take one answer dispatch and
   preserve existing schedules; genuine numeral periods retain the classifier.
 - Integrated frontend checks passed after correcting Missions test routing for the
   new monitor inventory endpoint; TaskMonitors/Missions23/23. Live-instruction UI
@@ -95,8 +95,13 @@ The discovered noun/duration false-positive itself was repaired in the product.
   store/agent/server passed. Whole dependency lint also encountered pre-existing
   credential-broker formatting/argument-count warnings; those are outside this
   change. Existing ts-rs serde-attribute diagnostic warnings remain.
-- Public-source Linux verification follows publication; this record does not
-  imply production deployment or broad provider/device acceptance.
+- Published source `c4fc81f9d2c97fb76dd89bb9eb34e7e1c307f41b` passed the same
+  instruction5, monitor4, held Runtime1, routing7, connector1, current encrypted
+  restore1 and schema71 migration1 checks on Linux x86_64 (20 tests). Strict scoped
+  Clippy and CLI build passed too. Source hashes were verified before/after the
+  isolated non-root, network-disabled container run. GitHub Actions remain off.
+  This is development acceptance, not production deployment or broad provider/
+  device certification.
 
 Read-only live guidance excludes typed Mail/Calendar/native credential/report-write
 paths; they retain their existing domain continuation and approval flows. Monitoring

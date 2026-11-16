@@ -5,3 +5,5 @@
 - [x] Local observation acknowledgement and owner correction.
 - [x] Standalone owner-facing React panel and focused tests.
 - [x] Parent integration of real migration72, UI mounts, independent review and live acceptance.
+
+- [x] Verify exact published source on isolated Linux, record final acceptance and keep automatic CI disabled.

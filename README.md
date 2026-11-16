@@ -113,6 +113,11 @@ and lifecycle checks do not establish live account eligibility. Real device/prov
 
 [CONTRIBUTING](CONTRIBUTING.md) · [OpenSpec](openspec/README.md) · [architecture](docs/architecture.md) ·
 [testing](docs/testing.md) · [synthetic outcome runner](docs/agent-evaluation.md) · [source audit](docs/audit.md) · [public release](docs/public-release.md).
+The [coordinator and tool handoff review](docs/reviews/2026-11-16-coordinator-routing.md)
+records shared domain-planner dispatch, existing-document target agreement,
+delegated native Gmail tool discovery, original-chat task state updates and
+authorized mission connection reuse. Synthetic runtime outcomes establish these
+bounded behaviors; they do not measure production latency or broad model quality.
 The [continuity and harness review](docs/reviews/2026-11-16-adaptive-continuity.md)
 records quoted-title routing, receipt-bound recent-document editing, ambiguous
 question/timezone correction, and monitor-result lifetime repairs. The unchanged

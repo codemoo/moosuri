@@ -111,11 +111,14 @@ async fn native_mail_runtime_current_chat_and_background_mission_continue_from_s
     let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{let seen=seen.clone();async move{
         seen.fetch_add(1,Ordering::SeqCst);let all=body.to_string();assert!(!all.contains("SYNTHETIC-NATIVE-SECRET"));
         let user=body["messages"].as_array().unwrap().iter().rev().find(|m|m["role"]=="user").unwrap()["content"].as_str().unwrap();let context=serde_json::from_str::<Value>(user).ok();let mission=context.as_ref().is_some_and(|v|v.get("accepted").is_some());
-        let planning=mission&&context.as_ref().unwrap()["plan"].as_array().unwrap().is_empty();
+        // Every original and resumed inference keeps the same admitted read catalog.
+        for name in ["native_mail_search", "native_mail_message", "native_mail_thread", "native_mail_attachment"] {
+            assert!(body["tools"].as_array().unwrap().iter().any(|t|t["function"]["name"]==name), "missing {name}");
+        }
         let has_result=all.contains("Synthetic amount 42");
-        let (delta,reason)=if planning{(json!({"role":"assistant","content":"{\"steps\":[\"Read native Gmail\",\"Summarize actual receipt\"]}"}),"stop")}else if has_result{
+        let (delta,reason)=if has_result{
             let text=if mission{json!({"text":"Synthetic amount 42 from the authenticated native read","evidence":[{"step":1,"call_id":"native-real-call"}]}).to_string()}else{"Synthetic amount 42 from the authenticated native read".into()};(json!({"role":"assistant","content":text}),"stop")
-        }else{assert!(body["tools"].as_array().unwrap().iter().any(|t|t["function"]["name"]=="native_mail_search"));(json!({"role":"assistant","tool_calls":[tool_call(0,"native-real-call".into(),"native_mail_search",json!({"query":"newer_than:7d","cursor":null}))]}),"tool_calls")};
+        }else{(json!({"role":"assistant","tool_calls":[tool_call(0,"native-real-call".into(),"native_mail_search",json!({"query":"newer_than:7d","cursor":null}))]}),"tool_calls")};
         let data=frame(json!({"id":"native-model-step","model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":reason}],"usage":{"prompt_tokens":5,"completion_tokens":2}}))+"data: [DONE]\n\n";Response::builder().header("content-type","text/event-stream").body(Body::from(data)).unwrap()
     }}));
     let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

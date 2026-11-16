@@ -90,7 +90,19 @@ assistant DB 하나 안에 설치 설정·계정·사용자별 내용·usage를 
 
 한 step은 `PrepareModel → ModelResult → PlanToolCalls → ToolResults → Publish/Continue`다. 다음 IO 전에 의도를 저장하고 실제 call ID에 결과/영수증을 묶는다. 성공 checkpoint와 최종 발행 사이에 죽으면 저장된 결과로 마무리한다. 완료 도구를 다시 실행하지 않는다. 원문 의존 관계·tenant·attempt·취소·정정·삭제·task acceptance를 모든 commit에서 확인한다.
 
-Rig의 serializable sans-IO AgentRun은 후보 내부 driver다. 이미 내구성 API가 있으므로 기능이 없다고 단정하지 않는다. P0에서 pending tool 재개·중복 ID·취소·완료 발행 gap·삭제·외부 영수증을 시험한다. 앱의 journal·권한·예산·receipt를 보존하지 못하면 작은 자체 driver를 쓴다. 외부 API 호출이 있는 loop 전체를 임의 재실행하지 않는다. LangGraph checkpoint blob을 역직렬화해 새 엔진에서 실행하지 않는다.
+현재 실행기는 자체 Rust Runtime이다. 조율 단계가 현재 요청과 저장된 실행 상태에 맞춰
+기억·문서·미션/Calendar의 분류기와 도구 집합을 고른다. 각 도메인은 의도 해석과
+결과 계약을 유지하고, `moosuri-agent/src/runner/planning.rs`가 연결 준비·요청 크기 검사·
+단계 접수·스트리밍·로컬 checkpoint 저장을 공유한다. 일반 단계와 미션 분류 단계의
+Store 접수 경로는 구분한다. 모델이 낸 계획은 권한이 아니며 실제 실행과 저장은
+typed 도구와 Store가 검증한다. 외부 호출의 응답이 불확실할 때 모델/도구 loop를
+다시 실행하지 않고, 동일한 로컬 checkpoint 저장만 기존 제한 안에서 재시도한다.
+LangGraph checkpoint blob을 역직렬화해 실행하지 않는다.
+
+채팅에서 맡긴 일의 완료·대기·재개·취소·한도 변경은 같은 writer transaction에서
+원래 대화의 추가 지침 대상을 갱신한다. 마지막으로 저장한 대상과 다를 때만 이벤트를
+발행하고, SSE 조회는 상태를 변경하지 않는다. 구현과 검증 범위는
+[조율·도구 연결 검토](reviews/2026-11-16-coordinator-routing.md)에 기록한다.
 
 독립 읽기는 bounded concurrency, 같은 객체 쓰기는 revision/CAS다. LLM turns·tool calls·bytes·time·token·retry 각각 상한을 둔다. Tokio cancel은 외부 취소 증거가 아니다. HTTP pool은 `Arc<Client>`로 안전하게 재사용하며 각 요청의 종료가 다른 요청의 transport를 닫지 않는다. metadata-only latency를 queue/context/model/tool/first-final-body/total로 나눠 측정한다.
 

@@ -71,7 +71,15 @@ async fn response(State(s): State<Arc<Script>>, axum::Json(input): axum::Json<Va
         let edit =
             text.contains("수정") || mode == 9 && (text.contains("바꿔") || text.contains("추가"));
         let mut decision = json!({"decision":"command","action":if edit{"edit"}else{"create"},"kind":"document","intent_quote":text,"target_quote":null});
-        if mode == 9 && edit {
+        if mode == 10 && edit {
+            decision["target_quote"] = if text.starts_with('\'') {
+                json!(text.split('\'').nth(1).unwrap())
+            } else if text.starts_with("그 문서") {
+                json!("그 문서")
+            } else {
+                Value::Null
+            };
+        } else if mode == 9 && edit {
             decision["target_quote"] = json!(if text.contains("방금 만든 문서") {
                 "방금 만든 문서"
             } else {
@@ -94,6 +102,34 @@ async fn response(State(s): State<Arc<Script>>, axum::Json(input): axum::Json<Va
             _ => (),
         }
         vec![call(0, "artifact_intent", decision)]
+    } else if mode == 10 {
+        let names = input["tools"].as_array().unwrap();
+        if names
+            .iter()
+            .any(|d| d["function"]["name"] == "mission_chat_decision")
+        {
+            vec![call(
+                0,
+                "mission_chat_decision",
+                json!({"decision":"no_command","action":null,"target_kind":null,"intent_quote":null,"task_quote":null,"constraints_quote":null,"time_quote":null,"target_quote":null,"instruction_quote":null,"time":null,"clarification":null}),
+            )]
+        } else if names
+            .iter()
+            .any(|d| d["function"]["name"] == "memory_command_decision")
+        {
+            vec![call(
+                0,
+                "memory_command_decision",
+                json!({"decision":"no_command","clarification":null,"action":null,"intent_quote":null,"fact_quote":null,"subject":null,"target_quote":null}),
+            )]
+        } else if names
+            .iter()
+            .any(|d| d["function"]["name"] == "artifact_write")
+        {
+            followup::model_calls(&input, &prior)
+        } else {
+            vec![]
+        }
     } else if mode == 9 {
         followup::model_calls(&input, &prior)
     } else if mode == 4 {
@@ -182,7 +218,7 @@ async fn response(State(s): State<Arc<Script>>, axum::Json(input): axum::Json<Va
     );
     let tail = format!(
         "data: {}\n\ndata: [DONE]\n\n",
-        json!({"id":format!("artifact-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{"tool_calls":calls},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}})
+        json!({"id":format!("artifact-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":if calls.is_empty(){json!({"content":"Synthetic ordinary answer; no save receipt."})}else{json!({"tool_calls":calls})},"finish_reason":if calls.is_empty(){"stop"}else{"tool_calls"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}})
     );
     let stream = futures_util::stream::unfold(
         (0, s, head, tail),
@@ -664,5 +700,7 @@ async fn malformed_artifact_intent_never_reaches_store_write_or_another_model_ro
     }
 }
 
+#[path = "tests/edit_routing.rs"]
+mod edit_routing;
 #[path = "tests/followup.rs"]
 mod followup;

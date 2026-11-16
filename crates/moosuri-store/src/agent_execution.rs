@@ -501,6 +501,7 @@ pub(super) fn purge_runs(conn: &Connection, tenant: &str, ids: Vec<String>) -> R
                 run: chat::view(conn, &run)?,
             },
         )?;
+        crate::run_instructions::publish_target_changes(conn, tenant, &id)?;
     }
     Ok(())
 }
@@ -936,6 +937,7 @@ impl Store {
             tx.execute("INSERT INTO model_call_receipts(tenant_id,account_id,run_id,attempt,step,nonce,usage,dispatched_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![run.tenant,run.account,run.id,run.attempt,step,n.as_slice(),encoded(&RunUsage::default())?,now()?])?;
             crate::run_timings::dispatch(&tx,&run,step)?;
             crate::run_instructions::assign(&tx,&run,step,instruction_sequence)?;
+            crate::run_instructions::publish_target_changes(&tx,&run.tenant,&run.id)?;
             if mission_chat {record_planner_step(&tx,&run,&lease,step,&n,"mission_chat")?;}
             tx.commit()?;Ok(StepLease{run:lease,step,nonce:n})
         }).await

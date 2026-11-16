@@ -341,6 +341,12 @@ pub struct MissionCompoundStep {
 pub fn compound_report_candidate(text: &str) -> bool {
     let low = text.to_lowercase();
     let operations = outside_quoted_literals(&low);
+    // Reading before an explicit edit is still one existing-record mutation.
+    // Keep its isolated artifact planner reachable instead of sealing a
+    // read-only profile for the new-report route. Quoted names/bodies are data.
+    if existing_record_edit_request(&operations) {
+        return false;
+    }
     // "saved document" / "저장된 문서" describes input, not a request
     // to save new output. Keep separate active save occurrences eligible.
     let english_output = low
@@ -375,6 +381,50 @@ pub fn compound_report_candidate(text: &str) -> bool {
         ]
         .iter()
         .any(|v| operations.contains(v))
+}
+
+fn existing_record_edit_request(operations: &str) -> bool {
+    let words = operations
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    let english = words.iter().enumerate().any(|(at, word)| {
+        matches!(
+            *word,
+            "edit" | "revise" | "update" | "rename" | "append" | "correct"
+        ) && (at == 0
+            || matches!(words[at - 1], "and" | "then" | "please" | "to")
+            || words.get(at + 1).is_some_and(|next| {
+                matches!(
+                    *next,
+                    "it" | "its" | "this" | "that" | "the" | "my" | "our" | "existing"
+                )
+            }))
+    });
+    let compact = operations.split_whitespace().collect::<String>();
+    english
+        || [
+            "수정해",
+            "수정하",
+            "고쳐",
+            "고치",
+            "바꿔",
+            "바꾸",
+            "변경해",
+            "변경하",
+            "추가해",
+            "추가하",
+            "덧붙여",
+        ]
+        .iter()
+        .any(|verb| {
+            compact.match_indices(verb).any(|(at, _)| {
+                // Completed input modifiers such as 수정해 둔 describe a source.
+                !["둔", "놓은"]
+                    .iter()
+                    .any(|suffix| compact[at + verb.len()..].starts_with(suffix))
+            })
+        })
 }
 
 /// Routing cues inside a quoted title/body are data. Unmatched quotes stay
@@ -546,6 +596,29 @@ mod compound_report_tests {
             "저장된 문서를 읽고 비교 보고서로 저장해 줘.",
             "작성한 보고서를 비교하고 새 보고서를 작성해 줘.",
             "Read the saved document and save a comparison report.",
+        ] {
+            assert!(compound_report_candidate(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn existing_record_edit_requests_stay_in_the_document_domain() {
+        for text in [
+            "'주간 보고서' 문서를 읽고 내용을 수정해서 저장해 줘.",
+            "그 문서를 확인하고 제목을 바꿔서 저장해 줘.",
+            "Read the 'Weekly' report, revise it and save the document.",
+            "Read the document and update its title, then save it.",
+        ] {
+            assert!(!compound_report_candidate(text), "{text}");
+        }
+        for text in [
+            "자료를 읽고 '수정하고 저장' 보고서를 새로 작성해 줘.",
+            "수정한 문서를 읽고 새 비교 보고서를 작성해 줘.",
+            "Read the revised document and create a comparison report.",
+            "Read the source and create a report named 'Edit and update'.",
+            "Read the release notes and create a software update report.",
+            "Calculate the fee and save a document named 'Append'.",
+            "Calculate the correct total and save a report.",
         ] {
             assert!(compound_report_candidate(text), "{text}");
         }

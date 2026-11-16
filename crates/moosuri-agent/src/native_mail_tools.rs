@@ -44,3 +44,58 @@ pub(super) fn parse(name: &str, args: &str) -> Option<MailModelRead> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moosuri_core::{ReadToolPolicy, ToolCapability, tool_capability, tool_policy_allows};
+
+    #[test]
+    fn native_catalog_retains_mission_reads_without_enabling_instruction_surfaces() {
+        let mut profile: RunToolProfile = serde_json::from_value(json!({
+            "version": 5,
+            "skills": [],
+            "native_mail_model_read": true,
+            "native_mail_model_background": true,
+            "native_mail_scope": {
+                "version": 1,
+                "operation": 8,
+                "candidate_binding_ids": []
+            }
+        }))
+        .unwrap();
+        let catalog = definitions(Some(&profile));
+        if !cfg!(feature = "credential-broker-chat") {
+            assert!(catalog.is_empty(), "the default-off feature remains closed");
+            return;
+        }
+        assert_eq!(
+            catalog.len(),
+            4,
+            "the granted native read catalog is present"
+        );
+        for tool in catalog {
+            assert_eq!(
+                tool_capability(&tool.name),
+                Some(ToolCapability::NativeMailRead),
+                "{} must agree with typed native-read admission",
+                tool.name
+            );
+            assert!(tool_policy_allows(&tool.name, ReadToolPolicy::Mission));
+            for policy in [
+                ReadToolPolicy::LiveInstructions,
+                ReadToolPolicy::TaskMonitor,
+            ] {
+                assert!(!tool_policy_allows(&tool.name, policy));
+            }
+        }
+        profile.native_mail_model_read = false;
+        assert!(definitions(Some(&profile)).is_empty());
+        profile.native_mail_model_read = true;
+        profile.native_mail_scope.as_mut().unwrap().operation = 1;
+        assert!(definitions(Some(&profile)).is_empty());
+        profile.native_mail_scope = None;
+        assert!(definitions(Some(&profile)).is_empty());
+        assert!(definitions(None).is_empty());
+    }
+}

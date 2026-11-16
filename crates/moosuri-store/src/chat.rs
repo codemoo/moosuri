@@ -376,7 +376,8 @@ pub(super) fn transition(
         ChatChange::State {
             run: view(conn, &current)?,
         },
-    )
+    )?;
+    crate::run_instructions::publish_target_changes(conn, &run.tenant, &run.id)
 }
 pub(super) fn authority(conn: &Connection, run: &Run) -> Result<UserContext> {
     let user = load_context(conn, run.session, false)?;

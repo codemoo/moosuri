@@ -47,10 +47,13 @@ fn explicitly_quoted_name(text: &str, quote: &str) -> bool {
     // A title literally named “그 문서” is distinct from an unquoted reference.
     // Repeated uses may mix payload and target; do not guess which span the
     // classifier meant without a valid current receipt or composer selection.
-    text.match_indices(quote).count() == 1
-        && [('\'', '\''), ('"', '"'), ('‘', '’'), ('“', '”')]
-            .iter()
-            .any(|(open, close)| text.contains(&format!("{open}{quote}{close}")))
+    text.match_indices(quote).count() == 1 && contains_quoted_name(text, quote)
+}
+
+fn contains_quoted_name(text: &str, quote: &str) -> bool {
+    [('\'', '\''), ('"', '"'), ('‘', '’'), ('“', '”')]
+        .iter()
+        .any(|(open, close)| text.contains(&format!("{open}{quote}{close}")))
 }
 
 fn previous_target(
@@ -99,6 +102,19 @@ fn target(
         return Ok(None);
     }
     if let Some(selected) = selected {
+        if let Some(quote) = intent.target_quote.as_deref() {
+            if quote.trim().is_empty() || quote.len() > 128 || !run.text.contains(quote) {
+                return Err(StoreError::InvalidInput);
+            }
+            // An explicit selection resolves an unquoted deictic reference,
+            // but never overrides a different literal current-user title, even
+            // when the same quoted phrase also occurs in the requested body.
+            let deictic =
+                previous_reference(quote, intent.kind) && !contains_quoted_name(&run.text, quote);
+            if !deictic && version(c, &run.tenant, &selected.id, None)?.artifact.title != quote {
+                return Err(StoreError::Conflict);
+            }
+        }
         return Ok(Some(selected.clone()));
     }
     let quote = intent

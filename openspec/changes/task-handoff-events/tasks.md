@@ -1,0 +1,5 @@
+- [x] Trace the missing original-thread event at task lifecycle boundaries.
+- [x] Implement one scoped changed-target publisher and existing lifecycle hooks.
+- [x] Author synthetic durable-event regressions for completion, wait/resume, cancel, capacity and deletion.
+- [x] Verify baseline failure, fixed outcomes and scoped lint; record actual evidence.
+- [x] Independently review ownership, visibility, retention and event cursors before integration.

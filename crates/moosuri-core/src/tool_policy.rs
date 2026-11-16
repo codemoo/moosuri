@@ -136,6 +136,10 @@ pub fn tool_capability(name: &str) -> Option<ToolCapability> {
         "mail_search" | "mail_read" | "mail_thread" | "mail_attachment" | "mail_attachments" => {
             MailRead
         }
+        "native_mail_search"
+        | "native_mail_message"
+        | "native_mail_thread"
+        | "native_mail_attachment" => NativeMailRead,
         "calendar_list_events" | "calendar_read_event" => CalendarRead,
         "conversation_search" | "conversation_read" => ConversationRead,
         "artifact_search" | "artifact_read" | "followup_briefing" => ArtifactRead,

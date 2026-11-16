@@ -391,9 +391,18 @@ async fn personal_missions_runtime_direct_and_natural_recurring_keep_owner_proof
     s.expire_subscription_fixture(&u, l.binding_id.clone(), l.revision)
         .await
         .unwrap();
+    f.state.model_peers.lock().unwrap().clear();
     let rt = runtime(s.clone(), service.clone(), None);
     assert_eq!(finished(&s, &u, &one.id).await.state, "achieved");
     assert_eq!(f.state.models.load(Ordering::SeqCst), 3);
+    {
+        let peers = f.state.model_peers.lock().unwrap();
+        assert_eq!(peers.len(), 3);
+        assert!(
+            peers.iter().all(|peer| *peer == peers[0]),
+            "mission rounds must reuse their current authorized transport"
+        );
+    }
     assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 3);
     assert!(f.state.refreshes.load(Ordering::SeqCst) >= 1);
     let t = s

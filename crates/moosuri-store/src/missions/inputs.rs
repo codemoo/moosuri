@@ -136,6 +136,7 @@ pub(crate) fn expire(c: &Connection, time: i64) -> Result<()> {
         )?;
         c.execute("UPDATE missions SET state='partial',grant_enabled=0,report='[\"Original input wait expired or authority changed. Review saved results or create a new task.\"]' WHERE tenant_id=?1 AND id=?2 AND state='waiting'",params![t,id])?;
         c.execute("UPDATE chat_runs SET state='incomplete',error='budget_exhausted',version=version+1 WHERE tenant_id=?1 AND id=?2 AND state='queued'",params![t,run])?;
+        crate::run_instructions::publish_target_changes(c, &t, &run)?;
     }
     Ok(())
 }
@@ -160,6 +161,7 @@ pub(crate) fn promote(c: &Connection, t: &str, id: &str, run: &str, request: &st
         c.execute("UPDATE mission_input_waits SET status='cancelled' WHERE tenant_id=?1 AND request_id=?2",params![t,request])?;
         c.execute("UPDATE missions SET state='partial',grant_enabled=0 WHERE tenant_id=?1 AND id=?2 AND state='queued'",params![t,id])?;
         c.execute("UPDATE chat_runs SET state='incomplete',error='interrupted' WHERE tenant_id=?1 AND id=?2 AND state='queued'",params![t,run])?;
+        crate::run_instructions::publish_target_changes(c, t, run)?;
         return Ok(());
     }
     c.execute(
@@ -168,6 +170,7 @@ pub(crate) fn promote(c: &Connection, t: &str, id: &str, run: &str, request: &st
     )?;
     requeue_stable(c, t, run)?;
     c.execute("UPDATE mission_input_waits SET status='resumed' WHERE tenant_id=?1 AND request_id=?2 AND status='ready'",params![t,request])?;
+    crate::run_instructions::publish_target_changes(c, t, run)?;
     Ok(())
 }
 impl Store {
@@ -225,6 +228,7 @@ impl Store {
             tx.execute("UPDATE missions SET state='waiting',round_text=NULL WHERE tenant_id=?1 AND id=?2",params![r.tenant,id])?;
             tx.execute("UPDATE chat_runs SET state='queued' WHERE tenant_id=?1 AND id=?2",params![r.tenant,r.id])?;
             tx.execute("DELETE FROM agent_run_leases WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id])?;
+            crate::run_instructions::publish_target_changes(&tx,&r.tenant,&r.id)?;
             tx.commit()?;Ok(())
         }).await
     }

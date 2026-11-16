@@ -1,0 +1,5 @@
+- [x] Inspect coordinator/domain planner boundaries and duplicated transport.
+- [x] Extract shared isolated dispatch and local checkpoint mechanics.
+- [x] Reproduce personal mission transport churn, then preserve authorized reuse in the same actual three-request mission fixture.
+- [x] Validate actual classification/mutation/failure outcomes and independent review.
+- [ ] Publish implementation, verify exact source on Linux, and update status.

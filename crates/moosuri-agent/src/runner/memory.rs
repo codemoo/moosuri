@@ -7,55 +7,7 @@ use moosuri_store::{
     AgentContext, MemoryCommandPreparation, MemoryTargetCandidates, PreparedMemoryCommand,
 };
 
-pub(super) struct PlanningSession<'a> {
-    pub store: &'a Store,
-    pub lease: &'a RunLease,
-    pub client: &'a ModelClient,
-    pub request: &'a TextRequest,
-    pub signals: &'a Signals,
-    pub protocol: Protocol,
-    pub capabilities: &'a TextCapabilities,
-    pub subscription: Option<(
-        &'a crate::subscriptions::SubscriptionService,
-        &'a moosuri_store::SubscriptionRef,
-    )>,
-}
-impl PlanningSession<'_> {
-    /// Refresh only before durable planner admission; never replay inference.
-    pub(super) async fn ready_client(&self) -> Result<Option<ModelClient>, StoreError> {
-        let client = match self.subscription {
-            Some((service, reference)) => Some(
-                service
-                    .client_for_round(
-                        moosuri_store::SubscriptionAuthority::Run(self.lease.clone()),
-                        reference.clone(),
-                        self.client,
-                    )
-                    .await?,
-            ),
-            None => None,
-        };
-        // Do not drop a dispatched rotating refresh on shutdown. Complete its
-        // durable outcome above, then stop before admitting another inference.
-        if self.signals.stopping().is_cancelled() {
-            return Err(StoreError::Unavailable);
-        }
-        Ok(client)
-    }
-}
-
-async fn failed(session: &PlanningSession<'_>, step: Option<&StepLease>, error: StoreError) {
-    let (state, reason) = store_failure(&error);
-    finish(
-        session.store,
-        session.lease,
-        step,
-        state,
-        Some(reason),
-        session.signals,
-    )
-    .await;
-}
+use super::planning::{Admission, PlanningSession};
 
 async fn apply(session: &PlanningSession<'_>, prepared: PreparedMemoryCommand) {
     apply_local(session.store, session.lease, session.signals, prepared).await;
@@ -129,7 +81,7 @@ pub(super) async fn run(
         }
         Ok(None) => (),
         Err(error) => {
-            failed(session, None, error).await;
+            session.failed(None, error).await;
             return None;
         }
     }
@@ -198,7 +150,7 @@ pub(super) async fn run(
                     )
                     .await
                 }
-                Err(error) => failed(session, Some(&step), error).await,
+                Err(error) => session.failed(Some(&step), error).await,
             }
             None
         }
@@ -212,7 +164,7 @@ pub(super) async fn run(
             {
                 Ok(prepared) => prepared,
                 Err(error) => {
-                    failed(session, Some(&step), error).await;
+                    session.failed(Some(&step), error).await;
                     return None;
                 }
             };
@@ -265,7 +217,7 @@ async fn select_target(
     .await
     {
         Ok(prepared) => apply(session, prepared).await,
-        Err(error) => failed(session, Some(&step), error).await,
+        Err(error) => session.failed(Some(&step), error).await,
     }
 }
 
@@ -275,87 +227,9 @@ async fn planning_round(
     request: &TextRequest,
     definitions: &[moosuri_connectors::model::protocol::tools::FunctionDefinition],
 ) -> Option<(ToolRound, AgentContext, StepLease)> {
-    let tools = ToolRequest {
-        text: request,
-        tools: definitions,
-        continuation: None,
-        results: &[],
-    };
-    let ready = match session.ready_client().await {
-        Ok(client) => client,
-        Err(error) => {
-            failed(session, None, error).await;
-            return None;
-        }
-    };
-    let client = ready.as_ref().unwrap_or(session.client);
-    if preflight_tools(client, session.protocol, &tools, session.capabilities).is_err() {
-        finish(
-            session.store,
-            session.lease,
-            None,
-            RunState::Incomplete,
-            Some(RunFailure::ContextLimit),
-            session.signals,
-        )
-        .await;
-        return None;
-    }
-    // No retry after an ambiguous dispatch acknowledgement.
-    let step = match session
-        .store
-        .begin_agent_step(session.lease, context.checkpoint_seq)
-        .await
-    {
-        Ok(step) => step,
-        Err(error) => {
-            failed(session, None, error).await;
-            return None;
-        }
-    };
-    let checkpoint = Checkpoint {
-        store: session.store,
-        lease: &step,
-        signals: session.signals,
-        expected_model: &request.model,
-    };
-    let observed = match stream_round(
-        client,
-        request,
-        Some(&tools),
-        &checkpoint,
-        session.lease,
-        0,
-        false,
-    )
-    .await
-    {
-        Ok(observed) => observed,
-        Err((state, error)) => {
-            finish(
-                session.store,
-                session.lease,
-                Some(&step),
-                state,
-                Some(error),
-                session.signals,
-            )
-            .await;
-            return None;
-        }
-    };
-    let Some(round) = observed.round else {
-        finish(
-            session.store,
-            session.lease,
-            Some(&step),
-            RunState::Failed,
-            Some(RunFailure::ProtocolFailed),
-            session.signals,
-        )
-        .await;
-        return None;
-    };
+    let (round, step) = session
+        .dispatch(context, request, definitions, Admission::LocalIntent)
+        .await?;
     let Ok(bytes) = round.continuation.to_private_checkpoint() else {
         finish(
             session.store,
@@ -368,22 +242,6 @@ async fn planning_round(
         .await;
         return None;
     };
-    let next = match retry_local(|| {
-        session.store.commit_agent_step(
-            &step,
-            PrivateCheckpoint {
-                bytes: bytes.clone(),
-            },
-            vec![],
-        )
-    })
-    .await
-    {
-        Ok(next) => next,
-        Err(error) => {
-            failed(session, Some(&step), error).await;
-            return None;
-        }
-    };
+    let next = session.commit(&step, bytes).await?;
     Some((round, next, step))
 }

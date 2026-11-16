@@ -75,6 +75,54 @@ fn publish(c: &Connection, r: &Run) -> Result<()> {
     }
     Ok(())
 }
+/// Lifecycle writers refresh only the original conversations linked to this
+/// carrier. Receipt publication is separate: no outstanding receipt is needed
+/// for a task to stop (or start) accepting instructions.
+///
+/// Compare with the last durable projection, rather than today's pre-mutation
+/// eligibility: expiry may already have elapsed. A missing retained projection
+/// gets one replacement; subsequent unchanged hooks do not advance the cursor.
+/// The caller owns the writer transaction. SSE reads remain read-only.
+pub(crate) fn publish_target_changes(c: &Connection, tenant: &str, carrier: &str) -> Result<()> {
+    let origins = c.prepare("SELECT r.id FROM mission_chat_commands p JOIN missions m ON m.tenant_id=p.tenant_id AND m.id=json_extract(p.receipt,'$.target.id') JOIN chat_runs r ON r.tenant_id=p.tenant_id AND r.id=p.run_id AND r.account_id=m.account_id WHERE m.tenant_id=?1 AND m.run_id=?2 AND json_extract(p.receipt,'$.target.kind')='one_off' AND json_extract(p.receipt,'$.action')='create_now'")?
+        .query_map(params![tenant, carrier], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for id in origins {
+        let origin = chat::load_run(c, tenant, &id)?;
+        let current = serde_json::to_value(target(c, &origin)?).map_err(|_| StoreError::Corrupt)?;
+        let previous: Option<String> = c.query_row(
+            "SELECT change FROM chat_events WHERE tenant_id=?1 AND thread_id=?2 AND (json_extract(change,'$.run.id')=?3 OR json_extract(change,'$.turn.run.id')=?3) ORDER BY sequence DESC LIMIT 1",
+            params![tenant, origin.thread, id], |row| row.get(0),
+        ).optional()?;
+        if let Some(previous) = previous {
+            let previous: serde_json::Value =
+                serde_json::from_str(&previous).map_err(|_| StoreError::Corrupt)?;
+            let run = previous
+                .get("run")
+                .or_else(|| previous.get("turn")?.get("run"));
+            if run
+                .and_then(|run| run.get("instruction_target"))
+                .unwrap_or(&serde_json::Value::Null)
+                == &current
+            {
+                continue;
+            }
+        }
+        c.execute(
+            "UPDATE chat_runs SET version=version+1 WHERE tenant_id=?1 AND id=?2",
+            params![tenant, id],
+        )?;
+        let origin = chat::load_run(c, tenant, &id)?;
+        chat::emit(
+            c,
+            &origin,
+            ChatChange::State {
+                run: chat::view(c, &origin)?,
+            },
+        )?;
+    }
+    Ok(())
+}
 /// The channel remains read-only after all guidance is applied and even after
 /// its eight-receipt cap; eligibility at this instant is not an execution grant.
 pub(crate) fn read_only_channel(c: &Connection, r: &Run) -> Result<bool> {
@@ -316,3 +364,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod handoff_tests;

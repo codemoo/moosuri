@@ -177,13 +177,16 @@ pub(crate) fn restart(c: &Connection) -> Result<()> {
     let stable = c.prepare("SELECT r.tenant_id,r.id FROM chat_runs r JOIN missions m ON m.tenant_id=r.tenant_id AND m.run_id=r.id WHERE r.state='running' AND m.state IN('planning','executing','verifying') AND m.grant_enabled=1 AND m.uncertain=0")?
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    for (tenant, run) in stable {
-        requeue_stable(c, &tenant, &run)?;
+    for (tenant, run) in &stable {
+        requeue_stable(c, tenant, run)?;
     }
     c.execute(
         "UPDATE missions SET state='queued' WHERE state IN('planning','executing','verifying') AND EXISTS(SELECT 1 FROM chat_runs r WHERE r.tenant_id=missions.tenant_id AND r.id=missions.run_id AND r.state='queued')",
         [],
     )?;
+    for (tenant, run) in stable {
+        crate::run_instructions::publish_target_changes(c, &tenant, &run)?;
+    }
     Ok(())
 }
 /// Expire only unfinished missions within the caller's writer transaction.
@@ -229,6 +232,7 @@ fn expire_scoped(
         };
         c.execute("UPDATE missions SET state=?3,uncertain=max(uncertain,?4),grant_enabled=0,report=?5 WHERE tenant_id=?1 AND id=?2",params![tenant,id,if uncertain{"unknown"}else{"partial"},uncertain,json(&vec![report])?])?;
         c.execute("UPDATE chat_runs SET state=?3,error='budget_exhausted',version=version+1 WHERE tenant_id=?1 AND id=?2",params![tenant,run,if uncertain{"outcome_unknown"}else{"incomplete"}])?;
+        crate::run_instructions::publish_target_changes(c, &tenant, &run)?;
     }
     Ok(count)
 }
@@ -572,6 +576,11 @@ pub(crate) fn apply_delete(c: &Connection, t: &str, id: &str) -> Result<()> {
         )
         .optional()?;
     if let Some(thread) = thread {
+        let carrier: String = c.query_row(
+            "SELECT run_id FROM missions WHERE tenant_id=?1 AND id=?2",
+            params![t, id],
+            |row| row.get(0),
+        )?;
         crate::browser::selected::withdraw_thread(c, t, &thread)?;
         crate::artifacts::external::delete_thread(c, t, &thread)?;
         c.execute("UPDATE missions SET state='deleted',grant_enabled=0,payload='',steering='[]',plan='[]',candidate=NULL,report='[]',round_text=NULL WHERE tenant_id=?1 AND id=?2",params![t,id])?;
@@ -600,6 +609,7 @@ pub(crate) fn apply_delete(c: &Connection, t: &str, id: &str) -> Result<()> {
             params![t, id],
         )?;
         crate::connection_waits::poll(c, clock()?)?;
+        crate::run_instructions::publish_target_changes(c, t, &carrier)?;
     }
     Ok(())
 }
@@ -620,6 +630,7 @@ impl Store {
             let state=if unsupported {"unsupported"}else if stop {"failed"}else{"executing"};
             tx.execute("UPDATE missions SET repairs=min(2,repairs+?3),state=?4,report=?5,round_text=NULL WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,if unsupported{0}else{1},state,json(&vec![report])?])?;
             if stop {tx.execute("UPDATE chat_runs SET state='failed' WHERE tenant_id=?1 AND id=?2",params![run.tenant,run.id])?;}
+            crate::run_instructions::publish_target_changes(&tx,&run.tenant,&run.id)?;
             tx.commit()?;
             Ok(stop)
         }).await
@@ -824,6 +835,7 @@ if matches!(v,KnowledgeToolResult::Error(_)){report.push(format!("Receipt {}:{} 
  tx.execute("UPDATE missions SET candidate=?3,report=?4,state=?5,round_text=NULL,repairs=repairs+?6,uncertain=max(uncertain,?7) WHERE tenant_id=?1 AND id=?2",params![r.tenant,id,json(&candidate)?,json(&report)?,if terminal{state}else{"executing"},if terminal{0}else{1},unknown])?;
  if terminal{tx.execute("UPDATE chat_runs SET state=?3 WHERE tenant_id=?1 AND id=?2",params![r.tenant,r.id,if achieved{"completed"}else{"incomplete"}])?;crate::connection_waits::poll(&tx,clock()?)?;}
  if achieved {crate::task_monitors::propose(&tx,&r,&id,&candidate)?;}
+ crate::run_instructions::publish_target_changes(&tx,&r.tenant,&r.id)?;
  tx.commit()?;Ok(terminal)
  }).await
     }
@@ -1200,6 +1212,7 @@ pub(crate) fn control_owner_in(
         }
     }
     crate::connection_waits::poll(tx, clock()?)?;
+    crate::run_instructions::publish_target_changes(tx, &u.tenant.0, &run)?;
     let result = view(tx, &u.tenant.0, id)?;
     tx.execute(
         "INSERT INTO mission_revisions VALUES(?1,?2,?3,?4,?5)",

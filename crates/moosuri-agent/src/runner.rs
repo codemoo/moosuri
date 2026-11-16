@@ -23,6 +23,7 @@ mod artifact_intent;
 mod memory;
 mod mission;
 mod mission_chat;
+mod planning;
 
 const MAX_OUTPUT: usize = 256 * 1024;
 const MAX_PATCH: usize = 8 * 1024;
@@ -995,7 +996,7 @@ pub(crate) async fn execute_with_calendar(
             .await;
             return;
         };
-        let planning = memory::PlanningSession {
+        let planning = planning::PlanningSession {
             store: &store,
             lease: &lease,
             client: &client,

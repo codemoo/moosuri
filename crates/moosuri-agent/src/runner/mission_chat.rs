@@ -1,17 +1,5 @@
-use super::memory::PlanningSession;
+use super::planning::{Admission, PlanningSession};
 use super::*;
-async fn failed(session: &PlanningSession<'_>, step: Option<&StepLease>, error: StoreError) {
-    let (state, reason) = store_failure(&error);
-    finish(
-        session.store,
-        session.lease,
-        step,
-        state,
-        Some(reason),
-        session.signals,
-    )
-    .await;
-}
 pub(super) async fn run(
     session: &PlanningSession<'_>,
     context: AgentContext,
@@ -22,7 +10,7 @@ pub(super) async fn run(
         Ok(Some(v)) => v,
         Ok(None) => return Some(context),
         Err(e) => {
-            failed(session, None, e).await;
+            session.failed(None, e).await;
             return None;
         }
     };
@@ -37,7 +25,7 @@ pub(super) async fn run(
     };
     if !candidate {
         if let Err(error) = session.store.skip_mission_chat(session.lease).await {
-            failed(session, None, error).await;
+            session.failed(None, error).await;
             return None;
         }
         return Some(context);
@@ -72,7 +60,7 @@ pub(super) async fn run(
         }
         Ok(false) => {}
         Err(e) => {
-            failed(session, None, e).await;
+            session.failed(None, e).await;
             return None;
         }
     }
@@ -85,11 +73,11 @@ pub(super) async fn run(
             None
         }
         Ok(None) => {
-            failed(session, None, StoreError::Conflict).await;
+            session.failed(None, StoreError::Conflict).await;
             None
         }
         Err(e) => {
-            failed(session, None, e).await;
+            session.failed(None, e).await;
             None
         }
     }
@@ -100,87 +88,9 @@ async fn planning_round(
     request: &TextRequest,
     definitions: &[moosuri_connectors::model::protocol::tools::FunctionDefinition],
 ) -> Option<(ToolRound, AgentContext, StepLease)> {
-    let tools = ToolRequest {
-        text: request,
-        tools: definitions,
-        continuation: None,
-        results: &[],
-    };
-    let ready = match session.ready_client().await {
-        Ok(client) => client,
-        Err(e) => {
-            failed(session, None, e).await;
-            return None;
-        }
-    };
-    let client = ready.as_ref().unwrap_or(session.client);
-    if preflight_tools(client, session.protocol, &tools, session.capabilities).is_err() {
-        finish(
-            session.store,
-            session.lease,
-            None,
-            RunState::Incomplete,
-            Some(RunFailure::ContextLimit),
-            session.signals,
-        )
-        .await;
-        return None;
-    }
-    // No retry after an ambiguous dispatch acknowledgement.
-    let step = match session
-        .store
-        .begin_mission_chat_step(session.lease, context.checkpoint_seq)
-        .await
-    {
-        Ok(step) => step,
-        Err(error) => {
-            failed(session, None, error).await;
-            return None;
-        }
-    };
-    let checkpoint = Checkpoint {
-        store: session.store,
-        lease: &step,
-        signals: session.signals,
-        expected_model: &request.model,
-    };
-    let observed = match stream_round(
-        client,
-        request,
-        Some(&tools),
-        &checkpoint,
-        session.lease,
-        0,
-        false,
-    )
-    .await
-    {
-        Ok(observed) => observed,
-        Err((state, error)) => {
-            finish(
-                session.store,
-                session.lease,
-                Some(&step),
-                state,
-                Some(error),
-                session.signals,
-            )
-            .await;
-            return None;
-        }
-    };
-    let Some(round) = observed.round else {
-        finish(
-            session.store,
-            session.lease,
-            Some(&step),
-            RunState::Failed,
-            Some(RunFailure::ProtocolFailed),
-            session.signals,
-        )
-        .await;
-        return None;
-    };
+    let (round, step) = session
+        .dispatch(context, request, definitions, Admission::MissionChat)
+        .await?;
     let Some(decision) = crate::mission_intent::parse(&round) else {
         finish(
             session.store,
@@ -196,22 +106,6 @@ async fn planning_round(
     let bytes = serde_json::json!({"kind":"mission_chat_decision","decision":decision})
         .to_string()
         .into_bytes();
-    let next = match retry_local(|| {
-        session.store.commit_agent_step(
-            &step,
-            PrivateCheckpoint {
-                bytes: bytes.clone(),
-            },
-            vec![],
-        )
-    })
-    .await
-    {
-        Ok(next) => next,
-        Err(error) => {
-            failed(session, Some(&step), error).await;
-            return None;
-        }
-    };
+    let next = session.commit(&step, bytes).await?;
     Some((round, next, step))
 }

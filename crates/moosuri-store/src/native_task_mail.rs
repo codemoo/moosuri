@@ -31,7 +31,8 @@ fn publish(c: &Connection, t: &str, run: &str) -> Result<()> {
         moosuri_core::ChatChange::State {
             run: crate::chat::view(c, &r)?,
         },
-    )
+    )?;
+    crate::run_instructions::publish_target_changes(c, t, run)
 }
 struct Grant {
     device: Device,

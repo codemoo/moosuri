@@ -230,6 +230,7 @@ pub(crate) fn poll(c: &Connection, time: i64) -> Result<()> {
         c.execute("UPDATE mission_connection_waits SET status=?3 WHERE tenant_id=?1 AND mission_id=?2 AND request_id=?4 AND status IN('waiting','ready')",params![t,id,if expired{"expired"}else{"cancelled"},wait_id])?;
         c.execute("UPDATE missions SET state='partial',grant_enabled=0,report='[\"Original connection wait expired or authority changed. Review saved results or create a new task.\"]' WHERE tenant_id=?1 AND id=?2 AND state='waiting'",params![t,id])?;
         c.execute("UPDATE chat_runs SET state='incomplete',error='budget_exhausted',version=version+1 WHERE tenant_id=?1 AND id=?2 AND state='queued'",params![t,run])?;
+        crate::run_instructions::publish_target_changes(c, &t, &run)?;
     }
     let rows=c.prepare("SELECT w.tenant_id,w.mission_id,w.run_id,w.status,m.account_id,w.request_id,0 AS native,r.admitted_order FROM mission_connection_waits w JOIN missions m ON m.tenant_id=w.tenant_id AND m.id=w.mission_id JOIN chat_runs r ON r.tenant_id=m.tenant_id AND r.id=m.run_id WHERE w.status IN('waiting','ready') AND m.state='waiting' UNION ALL SELECT n.tenant_id,m.id,n.run_id,'ready',m.account_id,n.request_id,1,r.admitted_order FROM native_task_mail_reads n JOIN missions m ON m.tenant_id=n.tenant_id AND m.run_id=n.run_id JOIN chat_runs r ON r.tenant_id=n.tenant_id AND r.id=n.run_id WHERE n.status='ready' AND m.state='waiting' UNION ALL SELECT i.tenant_id,m.id,i.run_id,'ready',m.account_id,i.request_id,2,r.admitted_order FROM mission_input_waits i JOIN missions m ON m.tenant_id=i.tenant_id AND m.id=i.mission_id JOIN chat_runs r ON r.tenant_id=i.tenant_id AND r.id=i.run_id WHERE i.status='ready' AND m.state='waiting' ORDER BY admitted_order LIMIT 64")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,i64>(6)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     for (t, id, run, status, account, wait_id, native) in rows {
@@ -260,6 +261,7 @@ pub(crate) fn poll(c: &Connection, time: i64) -> Result<()> {
             if !crate::missions::connected::current(c, &r)? {
                 c.execute("UPDATE mission_connection_waits SET status='cancelled' WHERE tenant_id=?1 AND mission_id=?2 AND request_id=?3",params![t,id,wait_id])?;
                 c.execute("UPDATE missions SET state='partial',grant_enabled=0,report='[\"Selected connection was withdrawn. Create a new task.\"]' WHERE tenant_id=?1 AND id=?2",params![t,id])?;
+                crate::run_instructions::publish_target_changes(c, &t, &run)?;
                 continue;
             }
             c.execute(
@@ -270,6 +272,7 @@ pub(crate) fn poll(c: &Connection, time: i64) -> Result<()> {
             c.execute("UPDATE missions SET state='queued' WHERE tenant_id=?1 AND id=?2 AND state='waiting'",params![t,id])?;
             c.execute("UPDATE mission_connection_waits SET status='resumed' WHERE tenant_id=?1 AND mission_id=?2 AND request_id=?3 AND status='ready'",params![t,id,wait_id])?;
             crate::missions::connected::admit_run(c, &r)?;
+            crate::run_instructions::publish_target_changes(c, &t, &run)?;
         }
     }
     Ok(())
@@ -315,6 +318,7 @@ impl Store {
             tx.execute("UPDATE missions SET state='waiting' WHERE tenant_id=?1 AND id=?2",params![r.tenant,id])?;
             tx.execute("UPDATE chat_runs SET state='queued' WHERE tenant_id=?1 AND id=?2",params![r.tenant,r.id])?;
             tx.execute("DELETE FROM agent_run_leases WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id])?;
+            crate::run_instructions::publish_target_changes(&tx,&r.tenant,&r.id)?;
             // The execution deadline, accounting and checkpoint rows are deliberately untouched.
             let out=view(&tx,&r.tenant,&id)?.ok_or(StoreError::Corrupt)?;
             poll(&tx,now()?.checked_mul(1000).ok_or(StoreError::Unavailable)?)?;

@@ -229,9 +229,10 @@ pub(super) async fn execute(
         // lease before each new inference; this never retries a dispatched call.
         if let Some(reference) = binding.subscription.clone() {
             client = match subscriptions
-                .client(
+                .client_for_round(
                     moosuri_store::SubscriptionAuthority::Run(lease.clone()),
                     reference,
+                    &client,
                 )
                 .await
             {

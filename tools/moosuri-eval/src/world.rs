@@ -14,6 +14,9 @@ pub enum Kind {
     TransitiveForget,
     CancelMission,
     LearnedWorkflow,
+    EverydayGuidance,
+    EverydayClarification,
+    EverydayReminder,
 }
 #[derive(Clone, Copy, Serialize)]
 pub struct Case {
@@ -22,6 +25,21 @@ pub struct Case {
     pub kind: Kind,
 }
 pub const CASES: &[Case] = &[
+    Case {
+        id: "everyday-quote-inflight-guidance",
+        family_id: "everyday-continuity",
+        kind: Kind::EverydayGuidance,
+    },
+    Case {
+        id: "everyday-quote-owner-clarification",
+        family_id: "everyday-continuity",
+        kind: Kind::EverydayClarification,
+    },
+    Case {
+        id: "everyday-reminder-receipt-change-cancel",
+        family_id: "everyday-continuity",
+        kind: Kind::EverydayReminder,
+    },
     Case {
         id: "chat-memory-correct-reopen",
         family_id: "chat-memory-lifecycle",

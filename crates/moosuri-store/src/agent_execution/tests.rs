@@ -3,6 +3,190 @@ use crate::tests::{TEST_LOCK, admin, directory, member};
 use moosuri_core::*;
 
 #[tokio::test]
+async fn live_read_policy_rejects_effects_before_guidance_and_after_applied_receipt_cap() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let provider = store
+        .list_providers(&user)
+        .await
+        .unwrap()
+        .providers
+        .remove(0);
+    store
+        .record_tool_probe(
+            &user,
+            provider.id,
+            provider.revision,
+            "synthetic".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    let thread = store
+        .create_thread(&user, "Synthetic read policy".into())
+        .await
+        .unwrap();
+    let claim = claimed(&store, &user, &thread.id).await;
+    let pin = claim.tool_profile.as_ref().unwrap().skills[0].clone();
+    store.enable_run_instructions(&claim.lease).await.unwrap();
+    let forbidden = vec![
+        KnowledgeToolInput::Artifact {
+            request: ArtifactToolRequest::Write {
+                title: "Unrequested".into(),
+                body: "Synthetic body".into(),
+                payload: ArtifactPayload::Document,
+                anchor: None,
+            },
+        },
+        KnowledgeToolInput::MissionAction {
+            request: MissionActionRequest::SaveProviderDraft {
+                intent_quote: "Synthetic effect".into(),
+                action_id: Uuid::new_v4().to_string(),
+                expected: MailApproval {
+                    revision: 1,
+                    digest: "a".repeat(64),
+                },
+            },
+        },
+        KnowledgeToolInput::External {
+            request: ExternalToolRequest::Web(WebToolRequest::BrowserOpen {
+                url: "https://example.test/".into(),
+            }),
+        },
+        KnowledgeToolInput::CredentialGooglePreview {},
+        KnowledgeToolInput::External {
+            request: ExternalToolRequest::Mail(MailToolRequest::Draft {
+                input: MailDraftInput {
+                    connection_id: "synthetic-account".into(),
+                    origin_thread_id: None,
+                    content: MailDraftContent {
+                        from: "owner@example.test".into(),
+                        to: vec!["recipient@example.test".into()],
+                        cc: vec![],
+                        bcc: vec![],
+                        subject: "Unrequested draft".into(),
+                        text: "Synthetic body".into(),
+                        reply: None,
+                    },
+                },
+            }),
+        },
+    ];
+    let mut sequence = claim.context.checkpoint_seq;
+    for through in [0, 1, 8] {
+        let from = if through == 8 { 2 } else { 1 };
+        for n in from..=through {
+            store
+                .submit_run_instruction(
+                    &user,
+                    claim.lease.run_id().into(),
+                    RunInstructionRequest {
+                        request_id: Uuid::new_v4().to_string(),
+                        expected_attempt: 1,
+                        text: format!("Synthetic constraint {n}"),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let step = store
+            .begin_instructed_agent_step(&claim.lease, sequence, through)
+            .await
+            .unwrap();
+        for input in &forbidden {
+            assert!(matches!(
+                store
+                    .commit_agent_step(
+                        &step,
+                        capsule("rejected"),
+                        vec![PendingKnowledgeCall {
+                            call_id: "unoffered-effect".into(),
+                            input: input.clone(),
+                        }]
+                    )
+                    .await,
+                Err(StoreError::Forbidden)
+            ));
+        }
+        let context = store
+            .commit_agent_step(
+                &step,
+                capsule("admitted reads"),
+                vec![
+                    PendingKnowledgeCall {
+                        call_id: "recipe-guidance".into(),
+                        input: KnowledgeToolInput::SkillRead { pin: pin.clone() },
+                    },
+                    PendingKnowledgeCall {
+                        call_id: "calculation".into(),
+                        input: KnowledgeToolInput::DecimalCalculate {
+                            calculation: DecimalCalculation {
+                                operation: DecimalOperation::Sum,
+                                operands: vec!["2".into(), "3".into()],
+                            },
+                        },
+                    },
+                    PendingKnowledgeCall {
+                        call_id: "repair".into(),
+                        input: KnowledgeToolInput::InvalidArguments,
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(
+            !context
+                .calls
+                .iter()
+                .any(|call| call.call_id == "unoffered-effect")
+        );
+        assert!(matches!(
+            store
+                .execute_knowledge_tool(&step, "recipe-guidance".into())
+                .await
+                .unwrap(),
+            KnowledgeToolResult::Skill(_)
+        ));
+        assert!(
+            matches!(store.execute_knowledge_tool(&step, "calculation".into()).await.unwrap(), KnowledgeToolResult::Decimal { exact } if exact == "5")
+        );
+        assert!(matches!(
+            store
+                .execute_knowledge_tool(&step, "repair".into())
+                .await
+                .unwrap(),
+            KnowledgeToolResult::Error(ToolReadError::InvalidInput)
+        ));
+        store.apply_step_instructions(&step).await.unwrap();
+        sequence = store
+            .agent_context(&claim.lease)
+            .await
+            .unwrap()
+            .checkpoint_seq;
+    }
+    // Applied receipts and an exhausted submission cap do not relax admission.
+    let step = store
+        .begin_agent_step(&claim.lease, sequence)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .commit_agent_step(
+                &step,
+                capsule("still rejected"),
+                vec![PendingKnowledgeCall {
+                    call_id: "after-cap".into(),
+                    input: forbidden[0].clone(),
+                }]
+            )
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+}
+
+#[tokio::test]
 async fn live_instructions_idempotency_authority_limits_final_race_history_and_delete() {
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();

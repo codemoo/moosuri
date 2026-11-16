@@ -1,0 +1,7 @@
+- [x] Add shared closed built-in capability/policy contract and typed mapping.
+- [x] Replace mission/live/monitor exposure and Store policy lists; retain contextual guards.
+- [x] Add regressions for mission exposure drift and durable live-channel effect rejection.
+- [x] Terminalize rejected mission admission/execution through existing failure mapping.
+- [x] Run focused synthetic core/Store/agent checks and relevant existing lifecycle/monitor tests.
+- [x] Share fresh/replay failure settlement and cover the independently found replay omission.
+- [x] Independently review effect boundaries and reconcile integration evidence.

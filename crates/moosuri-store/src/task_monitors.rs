@@ -391,6 +391,10 @@ pub(crate) fn tool_allowed(
 ) -> Result<bool> {
     let monitor:Option<String>=c.query_row("SELECT o.monitor_id FROM task_monitor_observations o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id WHERE o.tenant_id=?1 AND m.run_id=?2",params![r.tenant,r.id],|v|v.get(0)).optional()?;
     let Some(id) = monitor else { return Ok(true) };
+    let capability = input.capability();
+    if !capability.allowed(moosuri_core::ReadToolPolicy::TaskMonitor) {
+        return Ok(false);
+    }
     Ok(match input {
         crate::KnowledgeToolInput::ReadSource {
             id: source,
@@ -410,9 +414,9 @@ pub(crate) fn tool_allowed(
             request.checks.iter().any(|check|matches!(check,MissionCheck::SourceQuote{id,revision:r,..} if id==source && r==revision))
                 && current_members(c,&r.tenant,&id)?.iter().any(|m|m.id==*source && m.revision==*revision)
         }
-        crate::KnowledgeToolInput::DecimalCalculate { .. }
-        | crate::KnowledgeToolInput::DecimalWorkflow { .. } => true,
-        _ => false,
+        // Every source read must pass the exact typed membership/range guard
+        // above; a future source-shaped input cannot use this calculation arm.
+        _ => capability == moosuri_core::ToolCapability::Calculation,
     })
 }
 pub(crate) fn call_budget(

@@ -2,6 +2,152 @@
 use super::*;
 use moosuri_core::{MissionCheck, MissionCreate, MissionMode};
 #[tokio::test]
+async fn mission_resumed_committed_local_error_finishes_partial_without_inference() {
+    use moosuri_store::{KnowledgeToolInput, PendingKnowledgeCall, PrivateCheckpoint};
+    let _guard = TEST_LOCK.lock().await;
+    // Only synthetic Store setup; no model endpoint is contacted by this replay.
+    let (dir, store, user, _) = knowledge::tool_configured("http://127.0.0.1:9/v1").await;
+    let mission = store
+        .create_mission(
+            &user,
+            MissionCreate {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task: "Compute 2 plus 3".into(),
+                constraints: String::new(),
+                checks: vec![MissionCheck::DecimalEquals {
+                    expected: "5".into(),
+                }],
+                execution_mode: MissionMode::Durable,
+            },
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    let run_id = claim.lease.run_id().to_owned();
+    let step = store
+        .begin_agent_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    store.commit_agent_step(&step, PrivateCheckpoint {
+        bytes: json!({"kind":"mission_round","terminal":"completed","acceptance_revision":1,"planning":false,"text":""}).to_string().into_bytes(),
+    }, vec![PendingKnowledgeCall {
+        call_id: "committed-local-sum".into(), input: KnowledgeToolInput::DecimalCalculate {
+            calculation: moosuri_core::DecimalCalculation { operation: moosuri_core::DecimalOperation::Sum, operands: vec!["2".into(), "3".into()] },
+        },
+    }]).await.unwrap();
+    store
+        .mission_save_plan(&step, vec!["Compute the accepted sum".into()])
+        .await
+        .unwrap();
+    assert!(
+        store.agent_context(&claim.lease).await.unwrap().calls[0]
+            .result
+            .is_none()
+    );
+    drop(store);
+    // Inject a late local Store budget failure into the stopped synthetic DB.
+    // No production fixture hook or runtime dependency is needed for this case.
+    let conn = rusqlite::Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+    assert_eq!(
+        conn.execute(
+            "UPDATE agent_execution SET tool_calls=12 WHERE run_id=?1",
+            [&run_id]
+        )
+        .unwrap(),
+        1
+    );
+    drop(conn);
+    let store = Store::open(dir.path()).unwrap();
+    let runtime = Runtime::start(store.clone());
+    runtime.wake();
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let view = store.missions(&user).await.unwrap().remove(0);
+            if !["queued", "planning", "executing", "verifying"].contains(&view.state.as_str()) {
+                break view;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("failed replay must settle without restart or inference");
+    assert_eq!(result.id, mission.id);
+    assert_eq!(result.state, "partial");
+    assert!(result.result.is_none());
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        1
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn mission_rejected_tool_round_finishes_partial_without_restart_or_extra_inference() {
+    let _guard = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = count.clone();
+    let app = Router::new().route("/v1/chat/completions", post(move |axum::Json(_body): axum::Json<Value>| {
+        let seen = seen.clone();
+        async move {
+            let n = seen.fetch_add(1, Ordering::SeqCst);
+            assert!(n < 2, "rejected round must not dispatch again");
+            // Each round is individually valid. The second exceeds the original
+            // run's twelve-call budget, which only Store can authoritatively check.
+            let calls = (0..7).map(|i| knowledge::tool_call(i, format!("sum-{n}-{i}"), "decimal_calculate",
+                json!({"operation":"sum","operands":["2","3"]}))).collect::<Vec<_>>();
+            let data = frame(json!({"id":format!("budget-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":calls},"finish_reason":null}]}))
+                + &frame(json!({"id":format!("budget-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}})) + "data: [DONE]\n\n";
+            Response::builder().header("content-type", "text/event-stream").body(Body::from(data)).unwrap()
+        }
+    }));
+    let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_dir, store, user, _) = knowledge::tool_configured(&base).await;
+    let mission = store
+        .create_mission(
+            &user,
+            MissionCreate {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task: "Compute 2 plus 3".into(),
+                constraints: String::new(),
+                checks: vec![MissionCheck::DecimalEquals {
+                    expected: "5".into(),
+                }],
+                execution_mode: MissionMode::Durable,
+            },
+        )
+        .await
+        .unwrap();
+    let runtime = Runtime::start(store.clone());
+    runtime.wake();
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let view = store.missions(&user).await.unwrap().remove(0);
+            if !["queued", "planning", "executing", "verifying"].contains(&view.state.as_str()) {
+                break view;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("rejected Store admission must settle the current mission");
+    assert_eq!(result.id, mission.id);
+    assert_eq!(result.state, "partial");
+    assert!(
+        result.result.is_none(),
+        "budget rejection is not a verified result"
+    );
+    assert_eq!(count.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        2
+    );
+    runtime.shutdown().await;
+    upstream.abort();
+}
+
+#[tokio::test]
 async fn mission_acceptance_runtime_replans_and_repairs_under_spent_original_budget() {
     revised_mission_runtime(false).await;
 }

@@ -188,9 +188,11 @@ pub(crate) fn open_or_migrate(
     let journal = if migrate {
         let journal = Journal::initialize(&dir.join(FILE_NAME), &id, seq, head)?;
         let tx = conn.unchecked_transaction()?;
-        tx.execute_batch(include_str!(
-            "../../../migrations/assistant/0015_destructive_intents.sql"
-        ))?;
+        tx.execute_batch(
+            crate::schema::migration(COVERAGE_SCHEMA)
+                .ok_or(StoreError::Corrupt)?
+                .sql,
+        )?;
         tx.execute(
             "INSERT INTO destructive_journal_meta VALUES(1,?1,?2,?3,0,?4)",
             params![

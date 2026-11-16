@@ -277,6 +277,10 @@ pub struct MissionChatReceipt {
     pub next_local_slot: Option<String>,
     pub candidates: Vec<MissionChatCandidate>,
 }
+/// Shared model-schema and Store admission vocabulary, never model-written prose.
+pub const MISSION_CHAT_CLARIFICATIONS: &[&str] =
+    &["time", "target", "task", "ambiguous", "unsupported"];
+
 /// A bounded semantic proposal. Quotes establish origin, not semantic authorization.
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]

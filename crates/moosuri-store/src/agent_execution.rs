@@ -91,6 +91,32 @@ pub enum KnowledgeToolInput {
     },
     InvalidArguments,
 }
+impl KnowledgeToolInput {
+    /// Shared static classification only. Execution still validates current
+    /// account/profile, route, exact evidence and original effect authority.
+    pub(crate) fn capability(&self) -> moosuri_core::ToolCapability {
+        use moosuri_core::ToolCapability as C;
+        match self {
+            Self::Search { .. } | Self::ReadMemory { .. } => C::SavedRead,
+            Self::ReadSource { .. } => C::SourceRead,
+            Self::SkillRead { .. } => C::SkillRead,
+            Self::DecimalCalculate { .. } | Self::DecimalWorkflow { .. } => C::Calculation,
+            Self::EvidenceCalculate { .. } | Self::SourceCalculate { .. } => C::SourceCalculation,
+            Self::CollectPages { .. } => C::PageCollection,
+            Self::LearnedSkill { .. } => C::LearnedRecipe,
+            Self::External { request } => request.capability(),
+            Self::Artifact { request } => request.capability(),
+            Self::ConversationSearch { .. } | Self::ConversationRead { .. } => C::ConversationRead,
+            Self::NativeMail { .. } => C::NativeMailRead,
+            Self::CredentialGoogleInbox {}
+            | Self::CredentialGooglePreview {}
+            | Self::CredentialGitea { .. }
+            | Self::CredentialGitHub { .. } => C::NativeCredential,
+            Self::MissionAction { .. } => C::MissionEffect,
+            Self::InvalidArguments => C::InvalidArguments,
+        }
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PendingKnowledgeCall {
@@ -929,6 +955,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
             if calls.iter().any(|call| !crate::task_monitors::tool_allowed(&tx,&run,&call.input).unwrap_or(false)) { return Err(StoreError::Forbidden); }
+            if crate::run_instructions::read_only_channel(&tx,&run)? && calls.iter().any(|call| !call.input.capability().allowed(moosuri_core::ReadToolPolicy::LiveInstructions)) { return Err(StoreError::Forbidden); }
             if !calls.is_empty() && memory_commands::has_target_plan(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
             let (state,old):(String,Option<Vec<u8>>)=tx.query_row("SELECT state,completion_digest FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if state=="completed" {

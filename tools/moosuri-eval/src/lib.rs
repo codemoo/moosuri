@@ -1,5 +1,6 @@
 //! Synthetic-only public regression harness, never a live/quality benchmark.
 pub mod baseline;
+pub mod everyday;
 mod grader;
 mod model;
 mod observe;
@@ -37,6 +38,7 @@ pub struct Row {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub request_digests: Vec<String>,
+    pub stages: Vec<runner::Stage>,
 }
 #[derive(Serialize, Default)]
 pub struct Counts {
@@ -74,6 +76,9 @@ fn elapsed(t: Instant) -> u64 {
 }
 fn script(kind: Kind) -> model::Script {
     match kind {
+        Kind::EverydayGuidance => model::Script::EverydayGuidance,
+        Kind::EverydayClarification => model::Script::EverydayClarification,
+        Kind::EverydayReminder => model::Script::Chat,
         Kind::Memory => model::Script::Memory,
         Kind::ChatMemory | Kind::TransitiveForget => model::Script::ChatMemory,
         Kind::CancelMission => model::Script::CancelMission,
@@ -88,7 +93,10 @@ fn script(kind: Kind) -> model::Script {
 fn pending(case: Case) -> Row {
     let completion_eligible = matches!(
         case.kind,
-        Kind::Memory
+        Kind::EverydayGuidance
+            | Kind::EverydayClarification
+            | Kind::EverydayReminder
+            | Kind::Memory
             | Kind::Calculation
             | Kind::SkilledCalculation
             | Kind::Mission
@@ -117,6 +125,7 @@ fn pending(case: Case) -> Row {
         input_tokens: None,
         output_tokens: None,
         request_digests: vec![],
+        stages: runner::stage_plan(case.kind),
     }
 }
 fn aggregate(rows: &[Row]) -> Counts {
@@ -145,6 +154,9 @@ fn grade(case: Case, out: &runner::Execution) -> Vec<grader::Check> {
         return vec![grader::check("observation_present", false)];
     };
     match case.kind {
+        Kind::EverydayGuidance | Kind::EverydayClarification | Kind::EverydayReminder => {
+            grader::everyday(case.kind, out)
+        }
         Kind::Memory => grader::memory(out),
         Kind::ChatMemory | Kind::TransitiveForget | Kind::CancelMission | Kind::LearnedWorkflow => {
             grader::outcome(case.kind, out)
@@ -260,6 +272,12 @@ pub async fn run() -> Report {
                 ) {
                     validation.extend(grader::outcome_mutations(case.kind, &out));
                 }
+                if matches!(
+                    case.kind,
+                    Kind::EverydayGuidance | Kind::EverydayClarification | Kind::EverydayReminder
+                ) {
+                    validation.extend(grader::everyday_mutations(case.kind, &out));
+                }
                 row.timings = out.timings;
             }
             Ok(Err(e)) => row.error = Some(e),
@@ -268,6 +286,14 @@ pub async fn run() -> Report {
         // Dispatch observations survive workflow errors. Tokens remain unknown
         // unless a complete SQLite observation was obtained, never inferred from
         // the scripted provider's nominal usage.
+        if !world.stages().is_empty() {
+            row.stages = world.stages();
+        }
+        if row.stages.iter().any(|stage| stage.status != "pass") && row.status == "pass" {
+            row.status = "fail";
+            row.error = Some("stage_contract_failed");
+            row.task_success = row.completion_eligible.then_some(false);
+        }
         row.server_timings = world.server_timings();
         let ledger = world.provider.ledger();
         row.provider_calls = ledger.len();
@@ -324,6 +350,14 @@ pub async fn run() -> Report {
     ));
     let counts = aggregate(&rows);
     let required_validations = [
+        "everyday_guidance_missing_receipt_rejected",
+        "everyday_guidance_repeated_tool_rejected",
+        "everyday_clarification_lost_work_rejected",
+        "everyday_clarification_false_achievement_rejected",
+        "everyday_reminder_wrong_target_rejected",
+        "everyday_reminder_duplicate_replay_rejected",
+        "everyday_reminder_wrong_time_rejected",
+        "everyday_reminder_missing_tombstone_rejected",
         "positive_control",
         "negative_total_rejected",
         "unicode_negative_total_rejected",
@@ -357,10 +391,10 @@ pub async fn run() -> Report {
             .iter()
             .all(|name| validation.iter().any(|c| c.name == *name));
     let success = counts.pass == counts.planned && validation_pass;
-    let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs")),"outcome_script_sha256":digest(include_bytes!("model/outcomes.rs")),"outcome_workflow_sha256":digest(include_bytes!("runner/outcomes.rs"))});
+    let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs")),"outcome_script_sha256":digest(include_bytes!("model/outcomes.rs")),"outcome_workflow_sha256":digest(include_bytes!("runner/outcomes.rs")),"everyday":everyday::FIXTURES,"everyday_workflow_sha256":digest(include_bytes!("runner/everyday.rs")),"everyday_script_sha256":digest(include_bytes!("model/everyday.rs"))});
     let observed_latency_ms = latencies(&rows);
     Report {
-        format_version: 2,
+        format_version: 3,
         evidence_class: "public_synthetic_contract_regression",
         source_sha256: env!("MOOSURI_EVAL_SOURCE_SHA256"),
         fixture_sha256: digest(&serde_json::to_vec(&fixture).unwrap()),
@@ -369,6 +403,7 @@ pub async fn run() -> Report {
             &[
                 include_bytes!("grader.rs").as_slice(),
                 include_bytes!("grader/outcomes.rs").as_slice(),
+                include_bytes!("grader/everyday.rs").as_slice(),
             ]
             .concat(),
         ),
@@ -472,15 +507,30 @@ mod tests {
                 .map(|c| &c.name)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(report.counts.task_success, 7);
+        for row in &report.rows {
+            for stage in &row.stages {
+                assert_eq!(stage.status, "pass", "{} / {}", row.case_id, stage.name);
+                assert!(
+                    stage
+                        .model_calls
+                        .is_some_and(|calls| calls <= stage.model_limit)
+                );
+                assert!(
+                    stage
+                        .tool_calls
+                        .is_some_and(|calls| calls <= stage.tool_limit)
+                );
+            }
+        }
+        assert_eq!(report.counts.task_success, 10);
         assert_eq!(report.counts.mission_success, 1);
         assert_eq!(report.counts.handling_success, 2);
         let server = &report.observed_latency_ms["server"];
-        assert_eq!(server["run_samples"], 25);
+        assert_eq!(server["run_samples"], 30);
         for stage in server["stages"].as_object().unwrap().values() {
             assert_eq!(
                 stage["observed_samples"].as_u64().unwrap() + stage["missing"].as_u64().unwrap(),
-                25
+                30
             );
         }
         assert!(report.success);

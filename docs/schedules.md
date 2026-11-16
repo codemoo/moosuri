@@ -279,3 +279,17 @@ withdrawals retire pending occurrences, redact/dismiss old inbox text, and latch
 Push suppression in the same transaction. Source mute persists across the record's
 later dates and revisions. Sealed restore keeps receipts while quarantining
 execution; the owner must save a current record again to arm future dates.
+
+## Relative follow-up changes
+
+After creating a one-off reminder, “방금 그 알림을 30분 늦춰줘” or “delay that reminder by 30 minutes”
+changes its saved time. “그 알림을 한 시간 앞당겨 줘” advances it.
+“방금 그 알림은 취소해 줘” cancels the same current receipt. These operations use
+no model calls. Exact request replay, including after restart, returns the original
+receipt and does not shift twice. The original user/session/thread/revision target
+checks and explicit title/sole-owned selection semantics remain in force.
+
+Seconds, minutes, hours, days and weeks are elapsed duration components, bounded
+to366days. A recurring rule or past/out-of-validity destination needs an exact
+replacement time; the system does not guess whether to move only one occurrence.
+Quoted, conditional, negated or ambiguous commands do not authorize changes.

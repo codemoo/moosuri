@@ -24,7 +24,14 @@ fn semantic(text: &str, mode: &str) -> MissionChatDecision {
         d.task_quote = None;
         d.time_quote = None;
         d.time = None;
-        d.clarification = (mode != "no_command").then(|| "time".into());
+        d.clarification = (mode != "no_command").then(|| {
+            if mode == "unsupported" {
+                "unsupported"
+            } else {
+                "time"
+            }
+            .into()
+        });
     }
     d
 }
@@ -41,7 +48,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{let count=counted.clone();let requests=recorded.clone();async move{
         let n=count.fetch_add(1,Ordering::SeqCst);requests.lock().await.push(body.clone());
         let functions=body.get("tools").and_then(|v|v.as_array());let intent=functions.is_some_and(|v|v.iter().any(|d|d["function"]["name"]=="mission_chat_decision"));
-        let(delta,reason)=if intent{assert_eq!(body["messages"].as_array().unwrap().len(),2);let text=body["messages"][1]["content"].as_str().unwrap();let mode=if text.contains("Monday"){"clarify"}else if text.contains("explain") || text.contains("답변") || text.contains("설명") || text=="한국어 인사말 세 가지 부탁해."{"no_command"}else{"command"};(json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("decision-{n}"),"mission_chat_decision",serde_json::to_value(semantic(text,mode)).unwrap())]}),"tool_calls")}else{(json!({"role":"assistant","content":"Synthetic ordinary answer"}),"stop")};
+        let(delta,reason)=if intent{assert_eq!(body["messages"].as_array().unwrap().len(),2);let text=body["messages"][1]["content"].as_str().unwrap();let mode=if text.contains("택시"){"unsupported"}else if text.contains("Monday"){"clarify"}else if text.contains("explain") || text.contains("답변") || text.contains("설명") || text=="한국어 인사말 세 가지 부탁해."{"no_command"}else{"command"};(json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("decision-{n}"),"mission_chat_decision",serde_json::to_value(semantic(text,mode)).unwrap())]}),"tool_calls")}else{(json!({"role":"assistant","content":"Synthetic ordinary answer"}),"stop")};
         let content=frame(json!({"id":format!("semantic-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}))+&frame(json!({"id":format!("semantic-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";Response::builder().header("content-type","text/event-stream").body(Body::from(content)).unwrap()
     }}));
     let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -134,6 +141,50 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     assert_eq!(clarified.run.mission_receipt.unwrap().state, "clarify");
     assert_eq!(count.load(Ordering::SeqCst), 12);
     assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        "내일 오전 8시에 택시를 자동으로 예약해 줘.".into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let unsupported = wait(&s, &u, &thread).await;
+    assert_eq!(unsupported.run.state, moosuri_core::RunState::Completed);
+    assert!(unsupported.run.error.is_none());
+    assert_eq!(
+        unsupported.run.mission_receipt.unwrap().state,
+        "unsupported"
+    );
+    assert!(unsupported.assistant.iter().any(|m| !m.text.is_empty()));
+    assert_eq!(count.load(Ordering::SeqCst), 13);
+    assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
+    assert!(s.missions(&u).await.unwrap().is_empty());
+    assert!(
+        s.schedules(&u)
+            .await
+            .unwrap()
+            .iter()
+            .all(|v| v.title != "택시")
+    );
+    let requests = requests.lock().await;
+    let schema = requests.last().unwrap()["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["function"]["name"] == "mission_chat_decision")
+        .unwrap();
+    let codes = schema["function"]["parameters"]["properties"]["clarification"]["enum"]
+        .as_array()
+        .unwrap();
+    assert!(codes.contains(&json!("unsupported")));
+    assert!(codes.contains(&Value::Null));
+    assert!(!codes.contains(&json!("택시 자동 예약은 지원되지 않습니다.")));
     runtime.shutdown().await;
     upstream.abort();
 }

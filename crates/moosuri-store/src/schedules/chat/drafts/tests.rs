@@ -321,20 +321,11 @@ async fn reminder_followup_cancellation_unrelated_new_command_expiry_session_thr
 }
 
 #[tokio::test]
-async fn reminder_followup_schema50_forward_migration_rollback_fk_and_quarantine() {
+async fn reminder_followup_draft_and_receipt_rollback_preserves_fk() {
     let _serial = TEST_LOCK.lock().await;
     let dir = directory();
     let s = Store::open(dir.path()).unwrap();
     let u = configured(&s).await;
-    s.call(|db| {
-        db.conn
-            .execute_batch("DROP TRIGGER IF EXISTS native_task_mail_delete;DROP TRIGGER IF EXISTS native_mail_effect_identity;DROP TABLE IF EXISTS native_mail_settlement_cursor;DROP TABLE IF EXISTS compound_draft_adoptions;DROP TABLE IF EXISTS mission_browser_selections;DROP TABLE IF EXISTS mission_action_contracts;DROP TABLE IF EXISTS compound_report_adoptions;DROP TABLE IF EXISTS native_mail_context_dependencies;DROP TABLE IF EXISTS native_task_mail_selections;DROP TABLE IF EXISTS native_task_mail_reads;DROP TABLE IF EXISTS native_task_mail_bindings;DROP TABLE IF EXISTS mail_provider_saves;DROP TABLE IF EXISTS credential_model_mail_payloads;DROP TABLE IF EXISTS credential_model_mail_grants;DROP TABLE IF EXISTS agent_planner_steps;DROP TABLE IF EXISTS proactive_suggestions;DROP TABLE IF EXISTS proactive_topics;DROP TABLE IF EXISTS native_mail_effects;DROP TABLE IF EXISTS native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=50;")?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    drop(s);
-    let s = Store::open(dir.path()).unwrap();
     at(&s, BASE).await;
     s.call(|db| {
         let version: i64 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

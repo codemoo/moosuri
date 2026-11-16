@@ -164,12 +164,10 @@ fn validate(text: &str, d: &MissionChatDecision) -> Result<()> {
         if d.decision == "no_command" && d.clarification.is_some() {
             return Err(StoreError::InvalidInput);
         }
-        if d.clarification.as_ref().is_some_and(|v| {
-            !matches!(
-                v.as_str(),
-                "time" | "target" | "task" | "ambiguous" | "unsupported"
-            )
-        }) {
+        if d.clarification
+            .as_ref()
+            .is_some_and(|v| !moosuri_core::MISSION_CHAT_CLARIFICATIONS.contains(&v.as_str()))
+        {
             return Err(StoreError::InvalidInput);
         }
         return Ok(());
@@ -865,7 +863,7 @@ impl Store {
             let mut receipt=new_receipt(&r,&d);
             let mut message="언제 실행할지와 어떤 일을 맡길지 구체적으로 말씀해 주세요. / Please include the task and its execution time.".to_owned();
             if d.decision=="clarify" {message=match d.clarification.as_deref(){Some("time")=>"몇 시에 실행할까요? 오전/오후와 시간대를 포함해 자연스럽게 다시 말씀해 주세요. / What execution time should I use? Include AM/PM and timezone if needed.",Some("task")=>"어떤 일을 맡길까요? 수행할 내용을 말씀해 주세요. / What task should I take on?",Some("ambiguous")=>"지금 적용할 한 가지 요청을 말씀해 주세요. / Please state one current task or control request.",_=>"어느 업무에 적용할까요? / Which task do you mean?"}.into();}
-            if d.decision=="unsupported"{message="요청하신 외부 발송·브라우저·볼트 쓰기는 이 업무 예약에서 지원하지 않아요. 읽기 업무의 결과는 맡긴 일 기록과 소식함에 남길 수 있어요. / External delivery or writes are not supported by delegated tasks.".into();receipt.state="unsupported".into();}
+            if d.decision=="unsupported"{message="요청한 작업은 현재 자동 실행을 지원하지 않아 저장하거나 예약하지 않았어요. 해당 시각에 직접 처리할 수 있도록 개인 알림을 설정할 수 있어요. / This action cannot be automated; no task was saved or scheduled.".into();receipt.state="unsupported".into();}
             else if d.decision=="command" {
                 let action=d.action.as_deref().ok_or(StoreError::InvalidInput)?;
                 tx.execute_batch("SAVEPOINT mission_chat_apply")?;

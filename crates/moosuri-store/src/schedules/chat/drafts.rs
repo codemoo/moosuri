@@ -20,6 +20,7 @@ fn command(d: Draft) -> Decision {
     Decision::Command(Parsed {
         action: Action::Create,
         rule: d.rule,
+        shift_seconds: None,
         message: d.message,
         target: None,
     })

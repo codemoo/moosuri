@@ -1,5 +1,6 @@
 //! Bounded protocol fixture. Receives actual agent requests; never receives gold.
 use crate::{EvalResult, digest, world};
+mod everyday;
 mod outcomes;
 use axum::{
     Router,
@@ -15,6 +16,8 @@ use tokio::{net::TcpListener, task::JoinHandle};
 
 #[derive(Clone, Copy)]
 pub enum Script {
+    EverydayGuidance,
+    EverydayClarification,
     PairedMemory,
     PairedCalculation,
     Memory,
@@ -144,6 +147,18 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
     if matches!(model.script, Script::ChatMemory | Script::LearnedWorkflow) {
         return outcomes::next(model, input);
     }
+    if matches!(
+        model.script,
+        Script::EverydayGuidance | Script::EverydayClarification
+    ) {
+        return everyday::next(model, input);
+    }
+    // This cancellation fixture intentionally holds the first no-tool planning
+    // response, even when the runtime already supplies a durable default plan.
+    // It tests a late no-effect response, not tool execution before cancellation.
+    if matches!(model.script, Script::CancelMission) {
+        return Ok((vec![], Some(json!({"steps":["Read the saved quote","Calculate its total","Verify the saved evidence"]}).to_string())));
+    }
     let results = tool_results(input)?;
     let names = input["tools"]
         .as_array()
@@ -205,8 +220,11 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
                 .cloned()
                 .ok_or("fixture_mission_messages")?;
             for receipt in receipts {
-                let result = receipt["result"].as_str().ok_or("fixture_mission_result")?;
-                messages.push(json!({"role":"tool","content":result}));
+                let result = &receipt["result"];
+                if !result.is_object() {
+                    return Err("fixture_mission_result");
+                }
+                messages.push(json!({"role":"tool","content":result.to_string()}));
             }
             proxy["messages"] = json!(messages);
             let calculation = Model {
@@ -217,9 +235,8 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
             let (calls, answer) = next(&calculation, &proxy)?;
             let final_answer = answer.map(|mut text| {
                 for receipt in receipts {
-                    if let Some(raw) = receipt["result"].as_str()
-                        && let Ok(result) = serde_json::from_str::<Value>(raw)
-                        && result["kind"] == "source"
+                    let result = &receipt["result"];
+                    if result["kind"] == "source"
                         && let Some(source) = result["value"]["text"].as_str()
                     {
                         text.push(' ');
@@ -234,7 +251,10 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
             });
             Ok((calls, final_answer))
         }
-        Script::ChatMemory | Script::LearnedWorkflow => unreachable!(),
+        Script::EverydayGuidance
+        | Script::EverydayClarification
+        | Script::ChatMemory
+        | Script::LearnedWorkflow => unreachable!(),
         Script::Chat | Script::Truncated => Ok((vec![], Some("Synthetic response body.".into()))),
         Script::Memory | Script::PairedMemory => {
             if let Some(memory) = results.iter().find(|r| r["kind"] == "memory") {
@@ -351,7 +371,11 @@ async fn round(State(model): State<Model>, axum::Json(input): axum::Json<Value>)
                 .as_str()
                 .is_some_and(|s| s.lines().any(|line| line.starts_with("private:"))),
         });
-    if matches!(model.script, Script::CancelMission) {
+    if matches!(model.script, Script::CancelMission)
+        || (matches!(model.script, Script::EverydayGuidance)
+            && calls.is_empty()
+            && model.ledger.lock().unwrap_or_else(|e| e.into_inner()).len() == 4)
+    {
         let permit = model.barrier.acquire().await.unwrap();
         permit.forget();
     }

@@ -156,6 +156,22 @@ pub(crate) fn finish(
                 )?
             } else if let Some(s) = current {
                 if command.action == Action::Edit {
+                    let rule = if let Some(seconds) = command.shift_seconds {
+                        let ScheduleRule::Once { at } = s.view.rule else {
+                            return confirmation(conn, run, "반복 알림은 바꿀 시각이나 반복 주기를 정확히 알려주세요. 이번 회차만 미룰지 전체 반복 시각을 바꿀지 임의로 정하지 않습니다.".into(), None).map(|()| true);
+                        };
+                        let shifted = at.checked_add(seconds).filter(|at| {
+                            *at > now
+                                && time::instant(*at).is_ok()
+                                && s.view.valid_until.is_none_or(|until| *at <= until)
+                        });
+                        let Some(at) = shifted else {
+                            return confirmation(conn, run, "바꿀 시각이 이미 지났거나 알림의 유효 기간을 벗어납니다. 앞으로 알려드릴 날짜와 시각을 지정해 주세요.".into(), None).map(|()| true);
+                        };
+                        ScheduleRule::Once { at }
+                    } else {
+                        command.rule.unwrap_or(s.view.rule)
+                    };
                     edit_in(
                         conn,
                         user,
@@ -165,7 +181,7 @@ pub(crate) fn finish(
                             draft: ScheduleDraft {
                                 title: s.view.title,
                                 message: command.message.unwrap_or(s.view.message),
-                                rule: command.rule.unwrap_or(s.view.rule),
+                                rule,
                                 valid_until: s.view.valid_until,
                             },
                         },

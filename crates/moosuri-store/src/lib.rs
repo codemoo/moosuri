@@ -22,6 +22,7 @@ pub use missions::{
 };
 pub mod credential_broker;
 mod schedules;
+mod schema;
 pub mod vault_authority;
 pub use schedules::ReminderLease;
 mod calendar;
@@ -237,7 +238,7 @@ struct LoginAccount {
     suspended: bool,
 }
 static KDF_LIMIT: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
-const CURRENT_SCHEMA_VERSION: i64 = 73;
+const CURRENT_SCHEMA_VERSION: i64 = schema::CURRENT_VERSION;
 /// Public compatibility metadata; opening state still requires normal admission.
 pub fn schema_version() -> i64 {
     CURRENT_SCHEMA_VERSION
@@ -335,6 +336,26 @@ async fn verify_password(password: Zeroizing<String>, hash: String) -> Result<bo
     .await
     .map_err(|_| StoreError::Unavailable)?
 }
+/// Startup commits each schema separately. Schema15 is owned by the durable
+/// destructive-journal handoff; restore instead migrates inside quarantine's tx.
+fn migrate_startup(
+    conn: &Connection,
+    pending: &[schema::Migration],
+    range: std::ops::RangeInclusive<i64>,
+) -> Result<()> {
+    for migration in pending.iter().filter(|m| range.contains(&m.version)) {
+        match migration.version {
+            15 => return Err(StoreError::Corrupt),
+            // Rebuilding notification tables requires FK off before BEGIN.
+            70 => conn.execute_batch(&format!(
+                "PRAGMA foreign_keys=OFF;BEGIN IMMEDIATE;{}COMMIT;PRAGMA foreign_keys=ON;",
+                migration.sql
+            ))?,
+            _ => conn.execute_batch(&format!("BEGIN IMMEDIATE;{}COMMIT;", migration.sql))?,
+        }
+    }
+    Ok(())
+}
 impl Store {
     /// Opens a private local data directory and holds its exclusive writer lock until all clones drop.
     pub fn open(path: &Path) -> Result<Self> {
@@ -375,26 +396,8 @@ impl Store {
         conn.busy_timeout(std::time::Duration::from_secs(2))?;
         conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;")?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version == 0 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0001_accounts_threads.sql")
-            ))?;
-        } else if !(1..=CURRENT_SCHEMA_VERSION).contains(&version) {
-            return Err(StoreError::Corrupt);
-        }
-        if version < 2 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0002_providers.sql")
-            ))?;
-        }
-        if version < 3 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0003_chat.sql")
-            ))?;
-        }
+        let pending = schema::after(version, 0).map_err(|_| StoreError::Corrupt)?;
+        migrate_startup(&conn, pending, 1..=3)?;
         let knowledge_journal_path = dir.join("knowledge-invalidations.journal");
         // A restored database cannot establish that a missing destructive journal is empty.
         // Only the first migration into this feature may create its journal.
@@ -412,488 +415,19 @@ impl Store {
         // Make the empty journal and its directory entry durable before committing
         // schema4, whose future opens require this file. A crash before the schema
         // commit leaves schema3 plus an empty journal and can safely retry migration.
-        if version < 4 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0004_knowledge.sql")
-            ))?;
-        }
-        if version < 5 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0005_agent_execution.sql")
-            ))?;
-        }
-        if version < 6 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0006_memory_commands.sql")
-            ))?;
-        }
-        if version < 7 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0007_gmail.sql")
-            ))?;
-        }
-        if version < 8 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0008_browser_workspaces.sql")
-            ))?;
-        }
-        if version < 9 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0009_source_connections.sql")
-            ))?;
-        }
-        if version < 10 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0010_google_setup.sql")
-            ))?;
-        }
-        if version < 11 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0011_community_skills.sql")
-            ))?;
-        }
-        if version < 12 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0012_memory_target_resolution.sql")
-            ))?;
-        }
-        if version < 13 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0013_stopped_backup_exports.sql")
-            ))?;
-        }
-        if version < 14 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0014_automatic_memory.sql")
-            ))?;
-        }
+        migrate_startup(&conn, pending, 4..=14)?;
         let destructive_journal = destructive_intents::open_or_migrate(
             &conn,
             &dir,
             &mut knowledge_journal,
             version < 15,
         )?;
-        if version < 16 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0016_personal_artifacts.sql")
-            ))?;
-        }
-        if version < 17 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0017_schedules.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 18 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0018_account_management.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 19 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0019_sealed_cutover.sql")
-            ))?;
-        }
-        if version < 20 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0020_restore.sql")
-            ))?;
-        }
-        if version < 21 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0021_media.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 22 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0022_schedule_chat.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 23 {
-            conn.execute_batch(&format!(
-                "BEGIN IMMEDIATE; {} COMMIT;",
-                include_str!("../../../migrations/assistant/0023_web_push.sql")
-            ))?;
-        }
-        if version < 24 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0024_vault_authority.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 25 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0025_missions.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 26 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0026_calendar.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 27 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0027_private_files.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 28 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0028_recurring_missions.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 29 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0029_mission_chat.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 30 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0030_calendar_conversation.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 31 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0031_mail_reconciliation.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 32 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0032_personal_chatgpt.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 33 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0033_bounded_audio.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 34 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0034_chatgpt_vm_handoff.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 35 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0035_community_catalog_cache.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 36 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0036_personal_chatgpt_tools.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 37 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0037_credential_broker.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 38 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0038_learned_skills.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 39 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0039_notification_topics.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 40 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0040_mail_workflows.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 41 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0041_account_deletion.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 42 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0042_request_continuations.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 43 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0043_invitation_delivery.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 44 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0044_native_credential_adapter.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 45 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0045_credential_chat.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 46 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0046_followup_notifications.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 47 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0047_conversation_recall.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 48 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0048_source_start_recovery.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 49 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0049_recovery_forward_budget.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 50 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0050_personal_claude_code.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 51 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0051_reminder_chat_drafts.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 52 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0052_mission_acceptances.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 53 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0053_browser_recovery.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 54 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0054_external_report_documents.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 55 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0055_learned_page_collections.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 56 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0056_native_mail_send.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 57 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0057_proactive_suggestions.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 58 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0058_planner_step_identity.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 59 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0059_compound_reports.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 60 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0060_connection_waits.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 61 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0061_native_model_mail.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 62 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0062_provider_draft_receipts.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 63 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0063_native_task_mail.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 64 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0064_compound_learning.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 65 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0065_mission_actions.sql"),
-                "COMMIT;"
-            ))?;
-        }
+        migrate_startup(&conn, pending, 16..=65)?;
         conn.execute(
             "UPDATE mail_provider_saves SET state='outcome_unknown' WHERE state='started'",
             [],
         )?;
-        if version < 66 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0066_selected_browser_missions.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 67 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0067_compound_draft_learning.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 68 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!(
-                    "../../../migrations/assistant/0068_native_mail_settlement_cursor.sql"
-                ),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 69 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0069_mission_input_waits.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 70 {
-            // Rebuild the notification table to support an action-needed event
-            // without inventing a reminder occurrence or schedule.
-            conn.execute_batch(concat!(
-                "PRAGMA foreign_keys=OFF;BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0070_flexible_mission_inputs.sql"),
-                "COMMIT;PRAGMA foreign_keys=ON;"
-            ))?;
-        }
-        if version < 71 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0071_thread_creation_receipts.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 72 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0072_run_instructions.sql"),
-                "COMMIT;"
-            ))?;
-        }
-        if version < 73 {
-            conn.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../../../migrations/assistant/0073_task_monitors.sql"),
-                "COMMIT;"
-            ))?;
-        }
+        migrate_startup(&conn, pending, 66..=CURRENT_SCHEMA_VERSION)?;
         invitations::restart(&conn)?;
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         audio::restart(&conn)?;

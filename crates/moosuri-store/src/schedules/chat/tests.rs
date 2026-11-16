@@ -1,4 +1,5 @@
 use super::*;
+mod relative;
 use crate::tests::{TEST_LOCK, admin, directory, member};
 use moosuri_core::{ModelSelection, ProviderConfig, ProviderKind};
 fn ts(s: &str) -> i64 {

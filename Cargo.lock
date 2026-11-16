@@ -2147,6 +2147,7 @@ dependencies = [
  "moosuri-store",
  "moosuri-vault-protocol",
  "ring",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

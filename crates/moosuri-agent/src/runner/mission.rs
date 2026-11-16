@@ -44,21 +44,8 @@ fn mission_definitions(
     let mut tools = knowledge_tools::definitions(profile)
         .into_iter()
         .filter(|d| {
-            (!d.name.starts_with("mail_")
+            moosuri_core::tool_capability(&d.name) != Some(moosuri_core::ToolCapability::MailRead)
                 || connected.is_some_and(|p| !p.mail.is_empty())
-                    && matches!(
-                        d.name.as_str(),
-                        "mail_search"
-                            | "mail_read"
-                            | "mail_thread"
-                            | "mail_attachment"
-                            | "mail_attachments"
-                    ))
-                && !d.name.starts_with("browser_")
-                && !d.name.starts_with("artifact_")
-                && !d.name.starts_with("conversation_")
-                && d.name != "parcel_track"
-                && d.name != "github_repository_metadata"
         })
         .collect::<Vec<_>>();
     if let Some(p) = connected.filter(|p| !p.calendar.is_empty()) {
@@ -68,13 +55,12 @@ fn mission_definitions(
             timezone: None,
             connections: p.calendar.clone(),
         };
-        tools.extend(
-            crate::calendar_tools::definitions(Some(&cp))
-                .into_iter()
-                .filter(|d| d.name != "calendar_action_status"),
-        );
+        tools.extend(crate::calendar_tools::definitions(Some(&cp)));
     }
     tools.extend(action_definitions(profile));
+    tools.retain(|d| {
+        moosuri_core::tool_policy_allows(&d.name, moosuri_core::ReadToolPolicy::Mission)
+    });
     tools
 }
 fn action_definitions(
@@ -133,6 +119,25 @@ async fn wait_for_input(
             .is_ok(),
     )
 }
+// A committed local slot can fail during fresh execution or restart replay.
+// Both paths must settle through the same existing Store failure mapping.
+async fn settle_tool_result(
+    store: &Store,
+    lease: &RunLease,
+    step: &moosuri_store::StepLease,
+    result: Result<KnowledgeToolResult, StoreError>,
+    signals: &Signals,
+) -> Option<KnowledgeToolResult> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            let (state, error) = store_failure(&error);
+            finish(store, lease, Some(step), state, Some(error), signals).await;
+            None
+        }
+    }
+}
+
 pub(super) async fn execute(
     store: Store,
     claimed: AgentClaim,
@@ -244,10 +249,11 @@ pub(super) async fn execute(
                     }
                 }
             }
-            match execute_tool(&store, &step, &call, &mail, &web, signals.stopping()).await {
-                Ok(KnowledgeToolResult::Error(_)) => replay_failed = true,
-                Ok(_) => {}
-                Err(_) => return,
+            let result = execute_tool(&store, &step, &call, &mail, &web, signals.stopping()).await;
+            match settle_tool_result(&store, &lease, &step, result, &signals).await {
+                Some(KnowledgeToolResult::Error(_)) => replay_failed = true,
+                Some(_) => {}
+                None => return,
             }
         }
     }
@@ -456,20 +462,15 @@ pub(super) async fn execute(
             || execution.view.instructions.is_some()
         {
             definitions.retain(|d| {
-                !matches!(
-                    d.name.as_str(),
-                    "mission_prepare_mail"
-                        | "mission_save_provider_draft"
-                        | "mission_calendar_action"
+                moosuri_core::tool_policy_allows(
+                    &d.name,
+                    moosuri_core::ReadToolPolicy::LiveInstructions,
                 )
             });
         }
         match store.task_monitor_run(&lease).await {
             Ok(true) => definitions.retain(|d| {
-                matches!(
-                    d.name.as_str(),
-                    "knowledge_read_source" | "decimal_calculate" | "decimal_workflow"
-                )
+                moosuri_core::tool_policy_allows(&d.name, moosuri_core::ReadToolPolicy::TaskMonitor)
             }),
             Ok(false) => (),
             Err(_) => return,
@@ -584,7 +585,7 @@ pub(super) async fn execute(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        if store
+        if let Err(error) = store
             .commit_agent_step(
                 &step,
                 PrivateCheckpoint {
@@ -593,8 +594,9 @@ pub(super) async fn execute(
                 calls.clone(),
             )
             .await
-            .is_err()
         {
+            let (state, error) = store_failure(&error);
+            finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
             return;
         }
         signals.changed();
@@ -650,10 +652,12 @@ pub(super) async fn execute(
                         }
                     }
                 }
-                match execute_tool(&store, &step, &call, &mail, &web, signals.stopping()).await {
-                    Ok(KnowledgeToolResult::Error(_)) => failed = true,
-                    Ok(_) => {}
-                    Err(_) => return,
+                let result =
+                    execute_tool(&store, &step, &call, &mail, &web, signals.stopping()).await;
+                match settle_tool_result(&store, &lease, &step, result, &signals).await {
+                    Some(KnowledgeToolResult::Error(_)) => failed = true,
+                    Some(_) => {}
+                    None => return,
                 }
             }
             if failed && !matches!(store.mission_tool_failure(&step).await, Ok(false)) {
@@ -759,11 +763,41 @@ mod tests {
                 .iter()
                 .any(|d| d.name == "learned_skill_execute")
         );
+        let mut profile = profile;
+        profile.version = 5;
+        profile.credential_gitea = true;
+        profile.credential_google = true;
+        profile.credential_google_preview = true;
+        profile.conversation_recall = true;
+        profile.web = Some(moosuri_core::WebToolProfile {
+            read: true,
+            search: true,
+            browser_pin: Some("synthetic-browser".into()),
+        });
+        profile.skills.push(moosuri_core::SkillPin {
+            id: "parcel-tracking".into(),
+            revision: "1.1.0".into(),
+            digest: "b".repeat(64),
+        });
+        assert!(
+            knowledge_tools::definitions(Some(&profile))
+                .iter()
+                .any(|d| d.name == "parcel_history")
+        );
         let mission = mission_definitions(Some(&profile));
         assert!(mission.iter().any(|d| d.name == "learned_skill_execute"));
         assert!(!mission.iter().any(|d| matches!(
             d.name.as_str(),
-            "parcel_track" | "artifact_write" | "mail_draft"
+            "parcel_track"
+                | "parcel_history"
+                | "artifact_write"
+                | "mail_prepare_draft"
+                | "gitea_repository_issues"
+                | "google_inbox_counts"
+                | "google_inbox_preview"
+                | "conversation_read"
+                | "browser_read"
+                | "browser_open"
         )));
         assert!(mission.iter().any(|d| d.name == "decimal_calculate"));
         assert!(mission.iter().any(|d| d.name == "knowledge_read_source"));

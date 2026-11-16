@@ -1,5 +1,6 @@
 use super::*;
 use chrono::{Days, NaiveDate, NaiveTime};
+mod relative;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Action {
     Create,
@@ -16,6 +17,8 @@ pub(super) enum Target {
 pub(super) struct Parsed {
     pub action: Action,
     pub rule: Option<ScheduleRule>,
+    // Resolved against the current owned receipt only, never against the wall clock.
+    pub shift_seconds: Option<i64>,
     pub message: Option<String>,
     pub target: Option<Target>,
 }
@@ -50,6 +53,7 @@ pub(super) fn parse(text: &str, timezone: Option<&str>, now: i64, selected: bool
             (Ok((r, tail)), Some(body)) if tail.trim().is_empty() => Decision::Command(Parsed {
                 action: Action::Create,
                 rule: Some(r),
+                shift_seconds: None,
                 message: Some(body),
                 target: None,
             }),
@@ -105,6 +109,7 @@ pub(super) fn parse(text: &str, timezone: Option<&str>, now: i64, selected: bool
                     Some(body) => Decision::Command(Parsed {
                         action: Action::Create,
                         rule: Some(r),
+                        shift_seconds: None,
                         message: Some(body),
                         target: None,
                     }),
@@ -115,6 +120,9 @@ pub(super) fn parse(text: &str, timezone: Option<&str>, now: i64, selected: bool
             }
             _ => Decision::Clarify(TIME),
         };
+    }
+    if let Some(d) = relative::parse(command, selected) {
+        return d;
     }
     if let Some(d) = english_control(raw, &raw.to_ascii_lowercase(), timezone, now, selected) {
         return d;
@@ -141,6 +149,7 @@ fn parsed_control(
         action,
         target: Some(target),
         rule,
+        shift_seconds: None,
         message,
     })
 }
@@ -189,7 +198,9 @@ fn title(value: &str) -> Option<Target> {
 fn en_target(value: &str) -> Option<Target> {
     let value = value.trim();
     let lower = value.to_ascii_lowercase();
-    if matches!(lower.as_str(), "reminder" | "the reminder") {
+    if matches!(lower.as_str(), "that reminder" | "the previous reminder") {
+        Some(Target::Previous)
+    } else if matches!(lower.as_str(), "reminder" | "the reminder") {
         Some(Target::Generic)
     } else if let Some(name) = lower.strip_suffix(" reminder") {
         title(&value[..name.len()])
@@ -199,19 +210,14 @@ fn en_target(value: &str) -> Option<Target> {
 }
 fn ko_target(value: &str, selected: bool) -> Option<Target> {
     let value = value.trim();
-    if matches!(
-        value,
-        "그 알림" | "그 알림을" | "방금 그 알림" | "방금 그 알림을"
-    ) {
+    let value = value.strip_suffix(['을', '은']).unwrap_or(value);
+    if matches!(value, "그 알림" | "방금 그 알림") {
         return Some(Target::Previous);
     }
-    if matches!(value, "알림" | "알림을") || selected && value.is_empty() {
+    if value == "알림" || selected && value.is_empty() {
         return Some(Target::Generic);
     }
-    value
-        .strip_suffix(" 알림을")
-        .or_else(|| value.strip_suffix(" 알림"))
-        .and_then(title)
+    value.strip_suffix(" 알림").and_then(title)
 }
 fn english_control(
     raw: &str,

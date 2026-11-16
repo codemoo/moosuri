@@ -98,42 +98,8 @@ pub(crate) fn authority(c: &Connection, r: &Run) -> Result<()> {
     Ok(())
 }
 pub(crate) fn tool_allowed(v: &KnowledgeToolInput) -> bool {
-    matches!(
-        v,
-        KnowledgeToolInput::MissionAction { .. }
-            | KnowledgeToolInput::NativeMail { .. }
-            | KnowledgeToolInput::Search { .. }
-            | KnowledgeToolInput::ReadSource { .. }
-            | KnowledgeToolInput::ReadMemory { .. }
-            | KnowledgeToolInput::SkillRead { .. }
-            | KnowledgeToolInput::DecimalCalculate { .. }
-            | KnowledgeToolInput::EvidenceCalculate { .. }
-            | KnowledgeToolInput::SourceCalculate { .. }
-            | KnowledgeToolInput::DecimalWorkflow { .. }
-            | KnowledgeToolInput::LearnedSkill { .. }
-            | KnowledgeToolInput::CollectPages { .. }
-            | KnowledgeToolInput::External {
-                request: moosuri_core::ExternalToolRequest::Mail(
-                    moosuri_core::MailToolRequest::Search { .. }
-                        | moosuri_core::MailToolRequest::Read { .. }
-                        | moosuri_core::MailToolRequest::Thread { .. }
-                        | moosuri_core::MailToolRequest::Attachment { .. }
-                        | moosuri_core::MailToolRequest::Attachments { .. }
-                )
-            }
-            | KnowledgeToolInput::External {
-                request: moosuri_core::ExternalToolRequest::Calendar(
-                    moosuri_core::CalendarReadRequest::List { .. }
-                        | moosuri_core::CalendarReadRequest::Read { .. }
-                )
-            }
-            | KnowledgeToolInput::External {
-                request: moosuri_core::ExternalToolRequest::Web(
-                    moosuri_core::WebToolRequest::Read { .. }
-                        | moosuri_core::WebToolRequest::Search { .. }
-                )
-            }
-    )
+    v.capability()
+        .allowed(moosuri_core::ReadToolPolicy::Mission)
 }
 pub(crate) fn carrier_transition(c: &Connection, r: &Run, s: RunState) -> Result<()> {
     let state = match s {

@@ -5,7 +5,9 @@ use crate::{
 };
 use serde::Serialize;
 use serde_json::Value;
+mod everyday;
 mod outcomes;
+pub use everyday::{grade as everyday, mutations as everyday_mutations};
 pub use outcomes::{outcome, outcome_mutations};
 
 #[derive(Clone, Serialize)]

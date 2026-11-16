@@ -1291,3 +1291,38 @@ async fn continuity_schema71_restore_migration_creates_empty_scoped_authority() 
             .is_none()
     );
 }
+
+#[test]
+fn registry_restore_sql_upgrades_every_supported_predecessor_in_its_caller_transaction() {
+    use crate::schema::tests::{predecessor, shape, sql_files};
+    let files = sql_files();
+    let expected = shape(&predecessor(&files, crate::schema_version()));
+    for captured in SCHEMA..=crate::schema_version() {
+        let mut conn = predecessor(&files, captured);
+        // Same pre-BEGIN FK policy as quarantine; do not use startup's runner.
+        if captured >= 70 {
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        }
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        migrate(&tx, captured).unwrap();
+        assert!(!tx.is_autocommit());
+        assert_eq!(shape(&tx), expected, "restore predecessor {captured}");
+        tx.rollback().unwrap();
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            captured
+        );
+    }
+    for captured in [SCHEMA - 1, crate::schema_version() + 1] {
+        let conn = predecessor(&files, SCHEMA);
+        let before = shape(&conn);
+        assert!(matches!(
+            migrate(&conn, captured),
+            Err(Error::UnsupportedInstallation)
+        ));
+        assert_eq!(shape(&conn), before);
+    }
+}

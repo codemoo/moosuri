@@ -75,6 +75,17 @@ fn publish(c: &Connection, r: &Run) -> Result<()> {
     }
     Ok(())
 }
+/// The channel remains read-only after all guidance is applied and even after
+/// its eight-receipt cap; eligibility at this instant is not an execution grant.
+pub(crate) fn read_only_channel(c: &Connection, r: &Run) -> Result<bool> {
+    if crate::missions::supports_live_instructions(c, r)? {
+        return Ok(true);
+    }
+    Ok(c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM run_instruction_channels WHERE tenant_id=?1 AND run_id=?2 AND attempt=?3) OR EXISTS(SELECT 1 FROM run_instructions WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3)",
+        params![r.tenant,r.id,r.attempt], |row| row.get(0),
+    )?)
+}
 pub(crate) fn pending(c: &Connection, r: &Run) -> Result<bool> {
     Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM run_instructions WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3 AND state='received')", params![r.tenant,r.id,r.attempt],|row|row.get(0))?)
 }
@@ -179,7 +190,21 @@ impl Store {
                     return Err(e);
                 }
             };
+            let mission = crate::missions::is_mission(&tx, &run.tenant, &run.id)?;
+            let unsupported_profile = run.tool_profile.as_ref().is_some_and(|p| {
+                p.native_mail_model_read
+                    || p.credential_github
+                    || p.credential_gitea
+                    || p.credential_google
+                    || p.credential_google_preview
+                    || !p.mail_connections.is_empty()
+                    || p.web.as_ref().is_some_and(|w| w.browser_pin.is_some())
+            });
             if !run.model.function_tools
+                || (mission && !crate::missions::supports_live_instructions(&tx, &run)?)
+                || (!mission && unsupported_profile)
+                || crate::artifacts::agent::profile(&tx, &run.tenant, &run.id)?
+                    .is_some_and(|p| p.write)
                 || crate::credential_chat::has(&tx, &run.tenant, &run.id)?
                 || crate::native_task_mail::has(&tx, &run.tenant, &run.id)?
             {

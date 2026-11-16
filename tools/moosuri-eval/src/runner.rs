@@ -19,7 +19,9 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
+mod everyday;
 mod outcomes;
+pub use everyday::{Stage, plan as stage_plan};
 
 const PASSWORD: &str = "Synthetic-evaluation-passphrase-2026";
 const EMAIL: &str = "owner@evaluation.invalid";
@@ -57,6 +59,7 @@ pub struct World {
     pub provider: Provider,
     dir: tempfile::TempDir,
     server_timings: std::sync::Mutex<Vec<Option<moosuri_core::RunTimings>>>,
+    stages: std::sync::Mutex<Vec<Stage>>,
 }
 fn ms(t: Instant) -> u64 {
     t.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
@@ -217,6 +220,7 @@ impl World {
             provider,
             dir,
             server_timings: std::sync::Mutex::new(vec![]),
+            stages: std::sync::Mutex::new(vec![]),
         })
     }
     fn store(&self) -> &Store {
@@ -331,6 +335,29 @@ impl World {
             let replay = self.checked("POST", &path, body, 201).await?;
             same_run = replay["run"]["id"] == run_id;
         }
+        self.observe_turn(
+            &thread,
+            run_id,
+            ledger_offset,
+            started,
+            admission_ms,
+            timing_index,
+            same_run,
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn observe_turn(
+        &self,
+        thread: &str,
+        run_id: &str,
+        ledger_offset: usize,
+        started: Instant,
+        admission_ms: u64,
+        timing_index: usize,
+        same_run: bool,
+    ) -> EvalResult<(Observation, TurnTiming, bool)> {
+        let path = format!("/api/v1/threads/{thread}/messages");
         let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
         loop {
             let page = self.checked("GET", &path, Value::Null, 200).await?;
@@ -494,6 +521,9 @@ impl World {
             outcome: Value::Null,
         };
         match case.kind {
+            Kind::EverydayGuidance | Kind::EverydayClarification | Kind::EverydayReminder => {
+                self.execute_everyday(case.kind, &mut out).await?;
+            }
             Kind::ChatMemory
             | Kind::TransitiveForget
             | Kind::CancelMission

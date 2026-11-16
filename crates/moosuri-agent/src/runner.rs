@@ -1112,6 +1112,12 @@ pub(crate) async fn execute_with_calendar(
         && !media_context
         && !native_resume
         && !artifact_write
+        && definitions.iter().all(|d| {
+            moosuri_core::tool_policy_allows(
+                &d.name,
+                moosuri_core::ReadToolPolicy::LiveInstructions,
+            )
+        })
         && !tool_profile.as_ref().is_some_and(|p| {
             p.native_mail_model_read
                 || p.credential_github

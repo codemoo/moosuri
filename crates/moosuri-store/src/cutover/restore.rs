@@ -5,9 +5,10 @@ use rusqlite::{OptionalExtension, params};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use zeroize::Zeroizing;
 
+// Historical replay requires the restore-lineage tables introduced at20.
+const RESTORE_SCHEMA: i64 = 20;
 const STAGE_PREFIX: &str = ".moosuri-restore-stage-";
 const PLAIN_LIMIT: u64 = backup::DB_LIMIT + 3 * backup::JOURNAL_LIMIT + 128 * 1024;
-const RESTORE_SCHEMA: i64 = 20;
 #[derive(Clone, Serialize)]
 pub struct EnrollmentAccount {
     pub account_id: String,
@@ -351,275 +352,12 @@ fn verify_snapshot(
     Ok((auth, knowledge, destructive))
 }
 fn migrate(conn: &Connection, captured: i64) -> Result<()> {
-    if captured < RESTORE_SCHEMA {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0020_restore.sql"
-        ))?;
-    }
-    if captured < 21 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0021_media.sql"
-        ))?;
-    }
-    if captured < 22 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0022_schedule_chat.sql"
-        ))?;
-    }
-    if captured < 23 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0023_web_push.sql"
-        ))?;
-    }
-    if captured < 24 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0024_vault_authority.sql"
-        ))?;
-    }
-    if captured < 25 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0025_missions.sql"
-        ))?;
-    }
-    if captured < 26 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0026_calendar.sql"
-        ))?;
-    }
-    if captured < 27 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0027_private_files.sql"
-        ))?;
-    }
-    if captured < 28 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0028_recurring_missions.sql"
-        ))?;
-    }
-    if captured < 29 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0029_mission_chat.sql"
-        ))?;
-    }
-    if captured < 30 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0030_calendar_conversation.sql"
-        ))?;
-    }
-    if captured < 31 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0031_mail_reconciliation.sql"
-        ))?;
-    }
-    if captured < 32 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0032_personal_chatgpt.sql"
-        ))?;
-    }
-    if captured < 33 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0033_bounded_audio.sql"
-        ))?;
-    }
-    if captured < 34 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0034_chatgpt_vm_handoff.sql"
-        ))?;
-    }
-    if captured < 35 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0035_community_catalog_cache.sql"
-        ))?;
-    }
-    if captured < 36 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0036_personal_chatgpt_tools.sql"
-        ))?;
-    }
-    if captured < 37 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0037_credential_broker.sql"
-        ))?;
-    }
-    if captured < 38 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0038_learned_skills.sql"
-        ))?;
-    }
-    if captured < 39 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0039_notification_topics.sql"
-        ))?;
-    }
-    if captured < 40 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0040_mail_workflows.sql"
-        ))?;
-    }
-    if captured < 41 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0041_account_deletion.sql"
-        ))?;
-    }
-    if captured < 42 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0042_request_continuations.sql"
-        ))?;
-    }
-    if captured < 43 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0043_invitation_delivery.sql"
-        ))?;
-    }
-    if captured < 44 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0044_native_credential_adapter.sql"
-        ))?;
-    }
-    if captured < 45 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0045_credential_chat.sql"
-        ))?;
-    }
-    if captured < 46 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0046_followup_notifications.sql"
-        ))?;
-    }
-    if captured < 47 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0047_conversation_recall.sql"
-        ))?;
-    }
-    if captured < 48 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0048_source_start_recovery.sql"
-        ))?;
-    }
-    if captured < 49 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0049_recovery_forward_budget.sql"
-        ))?;
-    }
-    if captured < 50 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0050_personal_claude_code.sql"
-        ))?;
-    }
-    if captured < 51 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0051_reminder_chat_drafts.sql"
-        ))?;
-    }
-    if captured < 52 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0052_mission_acceptances.sql"
-        ))?;
-    }
-    if captured < 53 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0053_browser_recovery.sql"
-        ))?;
-    }
-    if captured < 54 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0054_external_report_documents.sql"
-        ))?;
-    }
-    if captured < 55 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0055_learned_page_collections.sql"
-        ))?;
-    }
-    if captured < 56 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0056_native_mail_send.sql"
-        ))?;
-    }
-    if captured < 57 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0057_proactive_suggestions.sql"
-        ))?;
-    }
-    if captured < 58 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0058_planner_step_identity.sql"
-        ))?;
-    }
-    if captured < 59 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0059_compound_reports.sql"
-        ))?;
-    }
-    if captured < 60 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0060_connection_waits.sql"
-        ))?;
-    }
-    if captured < 61 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0061_native_model_mail.sql"
-        ))?;
-    }
-    if captured < 62 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0062_provider_draft_receipts.sql"
-        ))?;
-    }
-    if captured < 63 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0063_native_task_mail.sql"
-        ))?;
-    }
-    if captured < 64 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0064_compound_learning.sql"
-        ))?;
-    }
-    if captured < 65 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0065_mission_actions.sql"
-        ))?;
-    }
-    if captured < 66 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0066_selected_browser_missions.sql"
-        ))?;
-    }
-    if captured < 67 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0067_compound_draft_learning.sql"
-        ))?;
-    }
-    if captured < 68 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0068_native_mail_settlement_cursor.sql"
-        ))?;
-    }
-    if captured < 69 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0069_mission_input_waits.sql"
-        ))?;
-    }
-    if captured < 70 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0070_flexible_mission_inputs.sql"
-        ))?;
-    }
-    if captured < 71 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0071_thread_creation_receipts.sql"
-        ))?;
-    }
-    if captured < 72 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0072_run_instructions.sql"
-        ))?;
-    }
-    if captured < 73 {
-        conn.execute_batch(include_str!(
-            "../../../../migrations/assistant/0073_task_monitors.sql"
-        ))?;
+    // Restore accepts sealed schema19+ only and executes inside quarantine's
+    // existing transaction, with its own FK and validation contract.
+    let pending =
+        crate::schema::after(captured, SCHEMA).map_err(|_| Error::UnsupportedInstallation)?;
+    for migration in pending {
+        conn.execute_batch(migration.sql)?;
     }
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current != crate::CURRENT_SCHEMA_VERSION {
@@ -789,7 +527,9 @@ fn quarantine(
     )?;
     // Only this verified private destination may reset its copied singleton.
     tx.execute_batch("DROP TRIGGER installation_cutover_monotonic; DROP TRIGGER installation_cutover_no_delete; UPDATE installation_cutover SET phase='active',seal=NULL,checkpoint=NULL WHERE singleton=1;")?;
-    let migration = include_str!("../../../../migrations/assistant/0019_sealed_cutover.sql");
+    let migration = crate::schema::migration(SCHEMA)
+        .ok_or(Error::UnsupportedInstallation)?
+        .sql;
     let triggers = migration
         .split("CREATE TRIGGER")
         .skip(1)

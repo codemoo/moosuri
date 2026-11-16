@@ -2,7 +2,28 @@ use std::{fs::OpenOptions, io::Write, path::Path, process::ExitCode};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
+    let feature = if args.first().is_some_and(|arg| arg == "--feature") {
+        let Some(name) = args.get(1) else {
+            eprintln!("feature_required");
+            return ExitCode::from(2);
+        };
+        let Ok(feature) = name.parse::<moosuri_eval::Feature>() else {
+            eprintln!("unknown_feature");
+            return ExitCode::from(2);
+        };
+        args.drain(..2);
+        if !matches!(args.as_slice(), [] | [_, _])
+            || args.first().is_some_and(|flag| flag != "--report")
+        {
+            eprintln!("feature_only_supports_report");
+            return ExitCode::from(2);
+        }
+        Some(feature)
+    } else {
+        None
+    };
+
     if let [
         command,
         source_flag,
@@ -71,7 +92,7 @@ async fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "Usage: moosuri-eval [baseline-pin --source /absolute/legacy-root] [--report /absolute/new-report.json]"
+                "Usage: moosuri-eval [--feature chat|memory|tasks|skills|schedules|monitors] [--report /absolute/new-report.json]; baseline-pin --source /absolute/legacy-root [--report /absolute/new-report.json]"
             );
             return ExitCode::from(2);
         }
@@ -107,7 +128,7 @@ async fn main() -> ExitCode {
         let report = moosuri_eval::baseline::preflight(Path::new(source));
         (report.success, serde_json::to_vec_pretty(&report).unwrap())
     } else {
-        let report = moosuri_eval::run().await;
+        let report = moosuri_eval::run_feature(feature).await;
         (report.success, serde_json::to_vec_pretty(&report).unwrap())
     };
     bytes.push(b'\n');

@@ -1,7 +1,13 @@
 //! Synthetic-only public regression harness, never a live/quality benchmark.
 pub mod baseline;
 pub mod everyday;
+pub mod features;
 pub mod followup;
+pub use features::Feature;
+// Real-world tests share the process-wide Store KDF admission limit. Keep
+// independent fixtures from rejecting each other's synthetic account setup.
+#[cfg(test)]
+static WORLD_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 mod grader;
 mod model;
 mod observe;
@@ -20,6 +26,7 @@ pub fn digest(bytes: &[u8]) -> String {
 }
 #[derive(Serialize)]
 pub struct Row {
+    pub feature: Feature,
     pub case_id: String,
     pub family_id: String,
     pub status: &'static str,
@@ -60,6 +67,8 @@ pub struct Counts {
 #[derive(Serialize)]
 pub struct Report {
     pub format_version: u32,
+    pub selection: features::Selection,
+    pub features: Vec<features::FeatureResult>,
     pub evidence_class: &'static str,
     pub source_sha256: &'static str,
     pub fixture_sha256: String,
@@ -111,6 +120,7 @@ fn pending(case: Case) -> Row {
             | Kind::LearnedWorkflow
     );
     Row {
+        feature: features::feature(case.kind),
         case_id: case.id.into(),
         family_id: case.family_id.into(),
         status: "not_run",
@@ -138,7 +148,8 @@ fn pending(case: Case) -> Row {
         synthetic_clock: None,
     }
 }
-fn aggregate(rows: &[Row]) -> Counts {
+fn aggregate<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Counts {
+    let rows = rows.into_iter().collect::<Vec<_>>();
     Counts {
         planned: rows.len(),
         executed: rows.iter().filter(|r| r.status != "not_run").count(),
@@ -224,9 +235,17 @@ fn grade(case: Case, out: &runner::Execution) -> Vec<grader::Check> {
 /// All endpoint/world/budget choices are compiled in. No account, endpoint,
 /// arbitrary database, fixture path or model credential can be supplied.
 pub async fn run() -> Report {
+    run_feature(None).await
+}
+
+/// Select only a compiled feature suite; exclusions remain explicit in the report.
+pub async fn run_feature(selection: Option<Feature>) -> Report {
     let mut rows = vec![];
     let mut validation = vec![];
-    for &case in world::CASES {
+    for &case in world::CASES
+        .iter()
+        .filter(|c| features::selected(c, selection))
+    {
         let mut row = pending(case);
         let setup = Instant::now();
         let setup_result = tokio::time::timeout(
@@ -339,34 +358,37 @@ pub async fn run() -> Report {
     }
     // Actual skill-read-only execution is an apparatus negative control, not a
     // successful task or an extra primary world in the product denominator.
-    let negative = tokio::time::timeout(Duration::from_secs(40), async {
-        let mut world = runner::World::setup(model::Script::SkillOnly).await?;
-        let case = Case {
-            id: "skill-read-only-control",
-            family_id: "grader-negative",
-            kind: Kind::SkilledCalculation,
-        };
-        let execution = tokio::time::timeout(Duration::from_secs(15), world.execute(case)).await;
-        world.shutdown().await;
-        let out = execution.map_err(|_| "negative_timeout")??;
-        let o = out.observations.last().ok_or("negative_observation")?;
-        let actual_skill_read = o.slots.iter().any(|s| s.input["tool"] == "skill_read");
-        Ok::<_, &'static str>(
-            actual_skill_read
-                && o.state == "completed"
-                && !grader::all(&grader::calculation(
-                    o,
-                    &out.account,
-                    out.source.as_deref().unwrap_or("missing"),
-                    true,
-                )),
-        )
-    })
-    .await;
-    validation.push(grader::check(
-        "actual_skill_read_only_claim_rejected",
-        matches!(negative, Ok(Ok(true))),
-    ));
+    if selection.is_none_or(|value| value == Feature::Skills) {
+        let negative = tokio::time::timeout(Duration::from_secs(40), async {
+            let mut world = runner::World::setup(model::Script::SkillOnly).await?;
+            let case = Case {
+                id: "skill-read-only-control",
+                family_id: "grader-negative",
+                kind: Kind::SkilledCalculation,
+            };
+            let execution =
+                tokio::time::timeout(Duration::from_secs(15), world.execute(case)).await;
+            world.shutdown().await;
+            let out = execution.map_err(|_| "negative_timeout")??;
+            let o = out.observations.last().ok_or("negative_observation")?;
+            let actual_skill_read = o.slots.iter().any(|s| s.input["tool"] == "skill_read");
+            Ok::<_, &'static str>(
+                actual_skill_read
+                    && o.state == "completed"
+                    && !grader::all(&grader::calculation(
+                        o,
+                        &out.account,
+                        out.source.as_deref().unwrap_or("missing"),
+                        true,
+                    )),
+            )
+        })
+        .await;
+        validation.push(grader::check(
+            "actual_skill_read_only_claim_rejected",
+            matches!(negative, Ok(Ok(true))),
+        ));
+    }
     // A setup error must remain planned/not-run and completion-eligible; this
     // structural check prevents apparatus failures silently improving the score.
     let denominator = aggregate(&setup_failure_controls());
@@ -380,76 +402,30 @@ pub async fn run() -> Report {
             && denominator.handling_eligible == 1,
     ));
     let counts = aggregate(&rows);
-    let required_validations = [
-        "repair_choice_positive_control",
-        "repair_choice_missing_live_settlement_rejected",
-        "repair_choice_accepted_ambiguous_answer_rejected",
-        "repair_choice_replaced_wait_rejected",
-        "repair_choice_forged_candidate_rejected",
-        "repair_choice_repeated_read_rejected",
-        "repair_choice_duplicate_reply_rejected",
-        "repair_choice_late_result_rejected",
-        "repair_choice_visible_notice_rejected",
-        "followup_positive_control",
-        "followup_duplicate_child_rejected",
-        "followup_wrong_source_scope_rejected",
-        "followup_missing_changed_read_rejected",
-        "followup_visible_stopped_notice_rejected",
-        "followup_revived_policy_rejected",
-        "followup_wrong_visible_mission_link_rejected",
-        "followup_wrong_visible_schedule_link_rejected",
-        "followup_wrong_visible_occurrence_link_rejected",
-        "followup_contradictory_paid_status_rejected",
-        "followup_negated_approval_rejected",
-        "everyday_guidance_missing_receipt_rejected",
-        "everyday_guidance_repeated_tool_rejected",
-        "everyday_clarification_lost_work_rejected",
-        "everyday_clarification_false_achievement_rejected",
-        "everyday_reminder_wrong_target_rejected",
-        "everyday_reminder_duplicate_replay_rejected",
-        "everyday_reminder_wrong_time_rejected",
-        "everyday_reminder_missing_tombstone_rejected",
-        "positive_control",
-        "negative_total_rejected",
-        "unicode_negative_total_rejected",
-        "mission_positive_control",
-        "candidate_missing_source_receipt_rejected",
-        "candidate_missing_calculation_receipt_rejected",
-        "candidate_missing_required_quote_rejected",
-        "false_success_claim_rejected",
-        "missing_tool_receipt_rejected",
-        "wrong_tool_receipt_rejected",
-        "duplicate_reused_receipt_rejected",
-        "other_owner_evidence_rejected",
-        "unread_other_owner_candidate_rejected",
-        "finalization_interruption_rejected",
-        "actual_skill_read_only_claim_rejected",
-        "setup_failure_retained_in_denominator",
-        "chat_correction_wrong_identity_rejected",
-        "forget_transitive_checkpoint_residue_rejected",
-        "cancel_late_success_rejected",
-        "learned_duplicate_proof_rejected",
-        "learned_missing_nested_receipts_rejected",
-        "learned_withdrawn_output_residue_rejected",
-        "chat_success_without_command_receipt_rejected",
-        "forget_unrelated_answer_loss_rejected",
-        "cancel_false_certain_outcome_rejected",
-        "learned_foreign_proof_rejected",
-        "learned_stale_nested_arguments_rejected",
-    ];
-    let validation_pass = grader::all(&validation)
-        && required_validations
+    let validation_pass = features::validations_pass(selection, &validation);
+    let features = features::summarize(selection, &rows, validation_pass);
+    let success = counts.pass == counts.planned
+        && validation_pass
+        && rows
             .iter()
-            .all(|name| validation.iter().any(|c| c.name == *name));
-    let success = counts.pass == counts.planned && validation_pass;
+            .all(|r| selection.is_none_or(|chosen| r.feature == chosen))
+        && features
+            .iter()
+            .filter(|f| f.status != "not_selected")
+            .all(|f| f.status == "pass");
+    let selection = features::selection(selection);
+    let mut profile: serde_json::Value = serde_json::from_str(world::PROFILE).unwrap();
+    profile["selection"] = serde_json::to_value(&selection).unwrap();
     let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs")),"outcome_script_sha256":digest(include_bytes!("model/outcomes.rs")),"outcome_workflow_sha256":digest(include_bytes!("runner/outcomes.rs")),"everyday":everyday::FIXTURES,"repair_choice":repair_choice::FIXTURE,"repair_choice_workflow_sha256":digest(include_bytes!("runner/repair_choice.rs")),"repair_choice_script_sha256":digest(include_bytes!("model/repair_choice.rs")),"repair_choice_observer_sha256":digest(include_bytes!("observe/repair_choice.rs")),"followup":followup::FIXTURE,"followup_workflow_sha256":digest(include_bytes!("runner/followup.rs")),"followup_script_sha256":digest(include_bytes!("model/followup.rs")),"everyday_workflow_sha256":digest(include_bytes!("runner/everyday.rs")),"everyday_script_sha256":digest(include_bytes!("model/everyday.rs"))});
     let observed_latency_ms = latencies(&rows);
     Report {
-        format_version: 3,
+        format_version: 4,
+        selection,
+        features,
         evidence_class: "public_synthetic_contract_regression",
         source_sha256: env!("MOOSURI_EVAL_SOURCE_SHA256"),
         fixture_sha256: digest(&serde_json::to_vec(&fixture).unwrap()),
-        profile_sha256: digest(world::PROFILE.as_bytes()),
+        profile_sha256: digest(&serde_json::to_vec(&profile).unwrap()),
         grader_sha256: digest(
             &[
                 include_bytes!("grader.rs").as_slice(),
@@ -460,7 +436,7 @@ pub async fn run() -> Report {
             ]
             .concat(),
         ),
-        profile: serde_json::from_str(world::PROFILE).unwrap(),
+        profile,
         rows,
         counts,
         observed_latency_ms,
@@ -535,6 +511,7 @@ mod tests {
     }
     #[tokio::test]
     async fn fresh_sqlite_http_worlds_and_independent_mutants() {
+        let _guard = WORLD_TEST_LOCK.lock().await;
         let report = run().await;
         for row in &report.rows {
             assert_eq!(
@@ -575,6 +552,19 @@ mod tests {
                 );
             }
         }
+        assert!(report.selection.full_suite);
+        assert_eq!(report.selection.selected_case_ids.len(), 15);
+        assert!(report.selection.excluded_case_ids.is_empty());
+        assert_eq!(report.features.len(), features::FEATURES.len());
+        assert!(report.features.iter().all(|f| f.status == "pass"));
+        assert_eq!(
+            report
+                .features
+                .iter()
+                .map(|f| f.counts.planned)
+                .sum::<usize>(),
+            15
+        );
         assert_eq!(report.counts.task_success, 11);
         assert_eq!(report.counts.mission_success, 1);
         assert_eq!(report.counts.handling_success, 3);

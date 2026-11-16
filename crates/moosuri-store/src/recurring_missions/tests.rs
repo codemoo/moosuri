@@ -1557,3 +1557,134 @@ async fn recurring_flexible_clarification_is_current_occurrence_only_and_cancell
     );
     assert!(s.claim_agent_run().await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn recurring_wait_keeps_one_child_and_latest_queue_without_blocking_other_schedules() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, u) = setup().await;
+    let at = now().unwrap() + 60;
+    let recurring = s.create_recurring_mission(&u, input(at)).await.unwrap();
+    assert_eq!(due(&s, at).await, 1);
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let ctx = s.agent_context(&claim.lease).await.unwrap();
+    let step = s
+        .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &step,
+        PrivateCheckpoint {
+            bytes: br#"{"v":1}"#.to_vec(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    s.mission_wait_for_input(
+        &step,
+        1,
+        MissionInputRequest {
+            field: MissionInputField::Context,
+            question: "Which criterion applies to this occurrence?".into(),
+            candidates: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let first = s.missions(&u).await.unwrap().remove(0);
+    assert_eq!(first.state, "waiting");
+
+    // Waiting releases the owner's runnable slot, but this reservation already
+    // has its one unfinished child. Later ticks retain only its latest queue.
+    assert_eq!(due(&s, at + 60).await, 0);
+    assert_eq!(s.missions(&u).await.unwrap().len(), 1);
+    assert_eq!(due(&s, at + 120).await, 0);
+    let mut other = input(at + 150);
+    other.schedule.rule = ScheduleRule::Once { at: at + 150 };
+    let other = s.create_recurring_mission(&u, other).await.unwrap();
+    // The blocked queue is older than the unrelated due slot. Filtering only
+    // after owner ranking would hide this other reservation indefinitely.
+    assert_eq!(due(&s, at + 150).await, 1);
+    let views = s.recurring_missions(&u).await.unwrap();
+    let waiting = views
+        .iter()
+        .find(|v| v.schedule.id == recurring.schedule.id)
+        .unwrap();
+    assert_eq!(waiting.recent.len(), 1);
+    assert_eq!(waiting.recent[0].state, "waiting");
+    let queued = waiting
+        .history
+        .occurrences
+        .iter()
+        .filter(|o| o.state == "queued")
+        .collect::<Vec<_>>();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].scheduled_for, Some(at + 120));
+    assert!(waiting.history.occurrences.iter().any(|o| {
+        o.scheduled_for == Some(at + 60)
+            && o.state == "skipped"
+            && o.reason.as_deref() == Some("latest_coalesced")
+    }));
+    let other = views
+        .iter()
+        .find(|v| v.schedule.id == other.schedule.id)
+        .unwrap();
+    assert_eq!(other.recent.len(), 1);
+    assert_eq!(other.recent[0].scheduled_for, at + 150);
+    assert_eq!(other.recent[0].state, "queued");
+    exact(&s, "unrelated-schedule").await;
+    assert_eq!(s.poll_recurring_missions_at(at + 150).await.unwrap(), 0);
+
+    // Cancelling the original child opens this reservation for the one latest
+    // queued occurrence, with its original due-based deadline and no replay.
+    s.control_mission(
+        &u,
+        first.id,
+        MissionControl {
+            request_id: Uuid::new_v4().to_string(),
+            expected_revision: first.revision,
+            action: MissionAction::Cancel,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(s.poll_recurring_missions_at(at + 150).await.unwrap(), 1);
+    assert_eq!(s.poll_recurring_missions_at(at + 150).await.unwrap(), 0);
+    let current = s
+        .missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.state == "queued")
+        .unwrap();
+    assert_eq!(current.expires_at_ms, (at + 120 + 86400) * 1000);
+    assert!(current.input_wait.is_none());
+    let view = s
+        .recurring_missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.schedule.id == recurring.schedule.id)
+        .unwrap();
+    assert_eq!(view.recent.len(), 2);
+    assert_eq!(view.recent[0].scheduled_for, at + 120);
+    assert_eq!(view.recent[0].mission_id, current.id);
+    assert!(!view.history.occurrences.iter().any(|o| o.state == "queued"));
+    exact(&s, "latest-after-cancellation").await;
+    assert_eq!(s.poll_recurring_missions_at(at + 150).await.unwrap(), 0);
+
+    // A normal achieved child likewise permits the next future occurrence.
+    assert_eq!(due(&s, at + 180).await, 1);
+    exact(&s, "next-after-achievement").await;
+    assert_eq!(s.poll_recurring_missions_at(at + 180).await.unwrap(), 0);
+    let view = s
+        .recurring_missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.schedule.id == recurring.schedule.id)
+        .unwrap();
+    assert_eq!(view.recent.len(), 3);
+    assert_eq!(view.recent[0].scheduled_for, at + 180);
+    assert_eq!(view.recent[0].state, "achieved");
+}

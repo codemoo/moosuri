@@ -7,6 +7,7 @@ LLM 의미 이해 성적, 독립 holdout, 32세계 pilot, 이전 비서와의 �
 
 ```sh
 cargo run --locked -p moosuri-eval -- --report /absolute/new-report.json
+cargo run --locked -p moosuri-eval -- --feature memory --report /absolute/new-memory.json
 cargo test --locked -p moosuri-eval
 ```
 
@@ -16,6 +17,24 @@ cargo test --locked -p moosuri-eval
 회귀 실행은 endpoint/model/credential/기존 DB/사용자 fixture 경로를 받지 않는다.
 아래 별도 `baseline-pin` 명령은 과거 소스의 허용 목록만 읽으며 에이전트를 실행하지 않는다.
 CI는 사용자 지시로 계속 꺼져 있으며 이 명령은 로컬 검증이다.
+
+## 기능 선택과 형식 4
+
+선택 인자는 맨 앞의 `--feature chat|memory|tasks|skills|schedules|monitors`다.
+뒤에는 선택적으로 `--report /absolute/new.json`만 둘 수 있으며 `baseline-pin`이나
+`paired-*`와 결합하지 않는다. 생략하면 기존 15세계와 필수 대조군을 모두 실행한다.
+대화 3·기억 3·업무 4·스킬 3·예약 1·모니터링 1세계로 나누며 같은 사례를 중복 집계하지
+않는다. 이 분류는 검증 범위 구분이고 제품 runtime의 routing 변경이 아니다.
+
+`format_version: 4`는 행의 `feature`, `selection`의 선택/제외 사례 ID와 `full_suite`,
+기능별 `features` 집계를 추가한다. 선택 내용도 profile digest에 포함된다. 미선택은
+`not_selected`, 누락·실패·미실행 사례는 `fail`, 사례가 모두 통과해도 필요한 판정기
+대조군이 없거나 실패하면 `unverified`다. 준비 실패를 분모에 남기는 공통 검사와
+해당 기능의 필수 대조군은 선택 실행에서도 유지한다. 미선택 기능의 대조군을 생략한
+결과를 전체 통과로 해석하지 않는다. 기존 completion/mission/handling 분모는 유지한다.
+
+보고서의 `pass`는 고정 합성 세계의 계약 통과다. 실제 모델 이해력·provider·브라우저·
+기기·장기 부하 수락과는 구분하며 [기능별 안정화 표](testing.md#기능별-안정화)를 따른다.
 
 ## 공개 세계와 판정
 

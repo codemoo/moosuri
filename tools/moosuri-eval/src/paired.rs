@@ -220,6 +220,7 @@ mod tests {
     #[tokio::test]
     async fn paired_admitted_failure_is_executed_not_not_run() {
         use super::*;
+        let _guard = crate::WORLD_TEST_LOCK.lock().await;
         let admitted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let observed = rust_subject::execute(false, admitted.clone()).await;
         assert!(observed.is_ok());

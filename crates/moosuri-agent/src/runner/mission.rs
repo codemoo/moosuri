@@ -421,16 +421,8 @@ pub(super) async fn execute(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let mut committed = match store
-            .commit_agent_step(
-                &step,
-                PrivateCheckpoint {
-                    bytes:serde_json::json!({"kind":"mission_round","terminal":terminal,"acceptance_revision":acceptance_revision(&execution.view),"planning":false,"text":observed.pending.private_text}).to_string().into_bytes(),
-                },
-                calls.clone(),
-            )
-            .await
-        {
+        let bytes = serde_json::json!({"kind":"mission_round","terminal":terminal,"acceptance_revision":acceptance_revision(&execution.view),"planning":false,"text":observed.pending.private_text}).to_string().into_bytes();
+        let mut committed = match commit_round(&store, &step, &bytes, &calls).await {
             Ok(context) => context,
             Err(error) => {
                 let (state, error) = store_failure(&error);

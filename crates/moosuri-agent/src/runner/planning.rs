@@ -142,17 +142,7 @@ impl PlanningSession<'_> {
 
     /// Retry only the same local checkpoint after a transient Store failure.
     pub async fn commit(&self, step: &StepLease, bytes: Vec<u8>) -> Option<AgentContext> {
-        match retry_local(|| {
-            self.store.commit_agent_step(
-                step,
-                PrivateCheckpoint {
-                    bytes: bytes.clone(),
-                },
-                vec![],
-            )
-        })
-        .await
-        {
+        match commit_round(self.store, step, &bytes, &[]).await {
             Ok(context) => Some(context),
             Err(error) => {
                 self.failed(Some(step), error).await;

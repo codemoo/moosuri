@@ -211,6 +211,26 @@ async fn write_usage(checkpoint: &Checkpoint<'_>, usage: &RunUsage) -> Result<()
     })
     .await
 }
+/// Persist an already received response and its admitted tool slots. Only local
+/// Busy is retried; dispatch, tool execution and terminal decisions stay outside.
+/// Every attempt uses the same lease/bytes/calls and rechecks Store authority.
+pub(crate) async fn commit_round(
+    store: &Store,
+    step: &StepLease,
+    bytes: &[u8],
+    calls: &[PendingKnowledgeCall],
+) -> Result<AgentContext, StoreError> {
+    retry_local(|| {
+        store.commit_agent_step(
+            step,
+            PrivateCheckpoint {
+                bytes: bytes.to_vec(),
+            },
+            calls.to_vec(),
+        )
+    })
+    .await
+}
 async fn write_output(
     checkpoint: &Checkpoint<'_>,
     patches: &[OutputPatch],
@@ -1348,17 +1368,7 @@ pub(crate) async fn execute_with_calendar(
                 }
             },
         };
-        context = match retry_local(|| {
-            store.commit_agent_step(
-                &step,
-                PrivateCheckpoint {
-                    bytes: bytes.clone(),
-                },
-                calls.clone(),
-            )
-        })
-        .await
-        {
+        context = match commit_round(&store, &step, &bytes, &calls).await {
             Ok(value) => value,
             Err(error) => {
                 let (state, error) = store_failure(&error);
@@ -1892,17 +1902,9 @@ async fn execute_claude_text(
     .await;
     match observed {
         Ok(o) if o.pending.terminal == Some(FinishOutcome::Completed) && o.pending.has_answer() => {
-            if retry_local(|| {
-                store.commit_agent_step(
-                    &step,
-                    PrivateCheckpoint {
-                        bytes: br#"{"v":1,"kind":"text_terminal"}"#.to_vec(),
-                    },
-                    vec![],
-                )
-            })
-            .await
-            .is_ok()
+            if commit_round(store, &step, br#"{"v":1,"kind":"text_terminal"}"#, &[])
+                .await
+                .is_ok()
             {
                 finish(
                     store,

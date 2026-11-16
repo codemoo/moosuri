@@ -519,6 +519,7 @@ mod connected_missions;
 mod mission_chat;
 mod missions;
 mod planner_composition;
+mod round_checkpoints;
 mod run_instructions;
 
 #[cfg(feature = "credential-broker-chat")]

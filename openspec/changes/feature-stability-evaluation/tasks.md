@@ -5,6 +5,6 @@
 - [x] Reproduce overlapping recurring children and fix admission before owner ranking.
 - [x] Record feature contracts and separate model/provider/device acceptance gaps.
 - [x] Complete meaningful native checks and independent frozen reviews.
-- [ ] Publish the implementation and verify its exact source on Linux.
+- [x] Publish the implementation and verify its exact source on Linux.
 
 Evidence: [feature stability](../../../docs/reviews/2026-11-16-feature-stability.md).

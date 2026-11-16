@@ -66,5 +66,22 @@ rejected without changing its contents. Evaluator build and source formatting pa
 Evaluated source SHA-256:
 `5ff9267de7e4dbb7a26fead2fa79e445108d6c8ae083159b07ae27f52e481303`.
 
-Exact-public-source Linux results follow publication. No live model/provider/device
-run or production deployment is included. Automatic CI stays disabled.
+No live model/provider/device run or production deployment is included. Automatic
+CI stays disabled.
+
+## Public-source Linux acceptance
+
+Implementation commit `255f318806095140634a9cf769b3b3d3b65f7119` is public and the canonical
+checkout was fast-forwarded cleanly. All six grouped Linux phases passed: recurring
+Store tests (19), evaluator library tests (13), scoped all-target Clippy, product
+CLI/evaluator builds, full evaluator CLI (15 worlds/62 controls), and memory-only
+CLI (3 worlds/7 controls with 12 explicit exclusions). The evaluator source digest
+matches the native run. The native-only fourteenth library test checks a macOS
+legacy capsule and is compile-time excluded on Linux. These are contract checks,
+not independent quality samples.
+
+The pinned Rust 1.89 container had read-only source/root, disabled network and no
+production paths mounted. Source hashes remained unchanged. Source archive SHA-256:
+`78fc8a19ed19bcc39b2480944e3549dd3498489c51fc99904984f6b76306d113`.
+Formatting, planning links, strict OpenSpec and source/new-commit secret scans
+passed before publication. Automatic CI remains off.

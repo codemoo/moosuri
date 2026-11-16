@@ -161,7 +161,7 @@ async fn compound_report_restarts_pending_final_and_lost_ack_without_duplicate_t
         .begin_agent_step(&c.lease, ctx.checkpoint_seq)
         .await
         .unwrap();
-    s.commit_agent_step(&final_step,PrivateCheckpoint{bytes:serde_json::json!({"kind":"mission_round","planning":false,"text":serde_json::to_string(&candidate).unwrap()}).to_string().into_bytes()},vec![]).await.unwrap();
+    s.commit_agent_step(&final_step,PrivateCheckpoint{bytes:serde_json::json!({"kind":"mission_round","terminal":"completed","planning":false,"text":serde_json::to_string(&candidate).unwrap()}).to_string().into_bytes()},vec![]).await.unwrap();
     let calls = s.usage_summary(&u).await.unwrap().dispatched_calls;
     drop(c);
     drop(s);

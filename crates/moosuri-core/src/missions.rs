@@ -376,9 +376,89 @@ pub struct MissionCompoundReceipt {
     pub ordinal: Option<u8>,
 }
 
+/// Narrow latency routing only: complete generic answer/explanation follow-ups.
+/// Unknown wording or named task titles must retain ordinary task interpretation.
+pub fn ordinary_answer_continuation(text: &str) -> bool {
+    let compact: String = text
+        .chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '.' | '!' | '?' | '，' | '。'))
+        .collect();
+    [
+        "답변",
+        "답변을",
+        "설명",
+        "설명을",
+        "대답",
+        "대답을",
+        "이야기",
+        "이야기를",
+    ]
+    .iter()
+    .any(|object| {
+        ["", "앞선", "이전", "앞의", "이전의", "두번째"]
+            .iter()
+            .any(|prefix| {
+                ["이어줘", "이어주세요", "계속해줘", "계속해주세요"]
+                    .iter()
+                    .any(|verb| compact == format!("{prefix}{object}{verb}"))
+            })
+    }) || [
+        "이어서설명해줘",
+        "이어서설명해주세요",
+        "계속설명해줘",
+        "계속설명해주세요",
+    ]
+    .contains(&compact.as_str())
+        || ["방금말한", "앞서말한", "앞에서말한", "앞서설명한"]
+            .iter()
+            .filter_map(|prefix| compact.strip_prefix(prefix))
+            .any(|rest| {
+                ["내용을", "두가지를", "두개를", "세가지를"]
+                    .iter()
+                    .filter_map(|object| rest.strip_prefix(object))
+                    .any(|rest| {
+                        ["", "한문장으로", "짧게", "간단히"]
+                            .iter()
+                            .filter_map(|style| rest.strip_prefix(style))
+                            .any(|rest| {
+                                [
+                                    "이어서설명해줘",
+                                    "이어서설명해주세요",
+                                    "이어설명해줘",
+                                    "이어설명해주세요",
+                                ]
+                                .contains(&rest)
+                            })
+                    })
+            })
+}
+
 #[cfg(test)]
 mod compound_report_tests {
-    use super::compound_report_candidate;
+    use super::{compound_report_candidate, ordinary_answer_continuation};
+
+    #[test]
+    fn ordinary_answer_continuation_only_matches_complete_generic_followups() {
+        for text in [
+            "두 번째 답변을 이어줘",
+            "이어서 설명해 주세요.",
+            "방금 말한 두 가지를 한 문장으로 이어서 설명해 줘.",
+            "앞서 말한 내용을 짧게 이어서 설명해 주세요.",
+            "앞에서 말한 세 가지를 간단히 이어 설명해 줘",
+        ] {
+            assert!(ordinary_answer_continuation(text), "{text}");
+        }
+        for text in [
+            "고객 답변 조사 이어줘",
+            "Coastal digest 이어줘",
+            "그 업무 이어줘",
+            "계속해 줘",
+            "방금 말한 두 가지 업무를 이어서 설명해 줘",
+            "앞서 말한 내용을 짧게 이어서 설명하고 내일 업무로 맡아 줘",
+        ] {
+            assert!(!ordinary_answer_continuation(text), "{text}");
+        }
+    }
 
     #[test]
     fn existing_document_modifiers_do_not_request_a_new_report_but_explicit_output_still_routes() {

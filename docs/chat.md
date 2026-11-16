@@ -26,6 +26,13 @@ answers remain readable with their status and are not reused as successful histo
 Reported model identity must exactly match the selected ID. Unknown alias mappings
 are not guessed. Commentary/answer phase is preserved when supplied by the provider.
 
+The model context includes a trusted reference for the original user message:
+its stored UTC timestamp, canonical timezone, local RFC3339 timestamp and local
+date. Relative dates use this reference, including retries across midnight or DST
+changes. Older clients without a timezone use an explicit UTC fallback; this does
+not claim to know the owner's local timezone or grant any write authority. The
+reference survives tool/media instruction changes and history trimming.
+
 ## Bounds
 
 One active run per thread and one dispatched call per account; at most two calls

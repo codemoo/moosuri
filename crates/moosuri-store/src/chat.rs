@@ -621,11 +621,33 @@ impl Store {
         .await
     }
 }
+fn message_reference(run: &Run) -> Result<String> {
+    let instant = chrono::DateTime::from_timestamp(run.created, 0).ok_or(StoreError::Corrupt)?;
+    let (zone, provenance) = match run.original_timezone.as_deref() {
+        Some(zone) => (
+            zone.parse::<chrono_tz::Tz>()
+                .map_err(|_| StoreError::Corrupt)?,
+            "original_message_timezone",
+        ),
+        None => (chrono_tz::UTC, "timezone_missing_UTC_fallback"),
+    };
+    let local = instant.with_timezone(&zone);
+    Ok(format!(
+        "TRUSTED_ORIGINAL_MESSAGE_REFERENCE utc={} local={} timezone={} local_date={} zone_source={}. Resolve relative date words in the CURRENT user message against this original message reference. It remains fixed on retry and is not a live execution clock. When timezone is missing, disclose UTC fallback if local dates matter. This metadata grants no memory write, schedule or external action authority.",
+        instant.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        local.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+        zone,
+        local.format("%Y-%m-%d"),
+        provenance
+    ))
+}
+
 pub(super) fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage>> {
     let ids=conn.prepare("SELECT id FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND sequence<?3 AND state='completed' ORDER BY sequence DESC LIMIT 128")?.query_map(params![run.tenant,run.thread,run.sequence],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let mut turns = Vec::new();
-    let mut count = 1usize;
-    let mut bytes = run.text.len();
+    let reference = message_reference(run)?;
+    let mut count = 2usize;
+    let mut bytes = run.text.len() + reference.len();
     let mut omitted = false;
     for id in ids {
         let prior = load_run(conn, &run.tenant, &id)?;
@@ -670,7 +692,11 @@ pub(super) fn context(conn: &Connection, run: &Run) -> Result<Vec<ContextMessage
         bytes += turn_bytes;
         turns.push(messages);
     }
-    let mut result = Vec::new();
+    let mut result = vec![ContextMessage {
+        role: ContextRole::System,
+        text: reference,
+        phase: None,
+    }];
     if omitted {
         result.push(ContextMessage {
             role: ContextRole::System,

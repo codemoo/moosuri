@@ -110,6 +110,9 @@ and lifecycle checks do not establish live account eligibility. Real device/prov
 
 [CONTRIBUTING](CONTRIBUTING.md) · [OpenSpec](openspec/README.md) · [architecture](docs/architecture.md) ·
 [testing](docs/testing.md) · [synthetic outcome runner](docs/agent-evaluation.md) · [source audit](docs/audit.md) · [public release](docs/public-release.md).
+The [main assistant defect review](docs/reviews/2026-11-16-assistant-main.md)
+records corrected memory/date context, source arithmetic, mission terminal/restart
+handling and browser retry/deletion behavior, with unchanged-request live evidence.
 A [fresh synthetic real-model evaluation](docs/reviews/2026-11-15-live-agent-wave4.md)
 records memory/report/draft routing fixes and unchanged-input rechecks, including
 the then-remaining bound-receipt recovery and compound-learning failures.

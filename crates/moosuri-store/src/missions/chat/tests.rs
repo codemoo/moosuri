@@ -483,12 +483,37 @@ async fn missing_name_cannot_select_the_only_other_owned_task() {
         "paused"
     );
 }
+// Synthetic downgrade fixtures must remove later schema objects before replaying
+// their older migration boundary. Production migrations remain unchanged.
+fn remove_post60_fixture_tables(conn: &Connection) {
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS native_task_mail_delete;
+         DROP TABLE IF EXISTS thread_creation_receipts;
+         DROP TABLE IF EXISTS mission_input_replies;
+         DROP TABLE IF EXISTS mission_input_waits;
+         DROP TABLE IF EXISTS native_mail_settlement_cursor;
+         DROP TABLE IF EXISTS compound_draft_adoptions;
+         DROP TABLE IF EXISTS mission_browser_selections;
+         DROP TABLE IF EXISTS mission_action_contracts;
+         DROP TABLE IF EXISTS compound_report_adoptions;
+         DROP TABLE IF EXISTS native_mail_context_dependencies;
+         DROP TABLE IF EXISTS native_task_mail_selections;
+         DROP TABLE IF EXISTS native_task_mail_reads;
+         DROP TABLE IF EXISTS native_task_mail_bindings;
+         DROP TABLE IF EXISTS mail_provider_saves;
+         DROP TABLE IF EXISTS credential_model_mail_payloads;
+         DROP TABLE IF EXISTS credential_model_mail_grants;",
+    )
+    .unwrap();
+}
+
 #[tokio::test]
 async fn mission_chat_schema29_rolls_back_late_failure_without_recreating_prior_authority() {
     let _g = TEST_LOCK.lock().await;
     let d = crate::tests::directory();
     drop(Store::open(d.path()).unwrap());
     let c = Connection::open(d.path().join("assistant.sqlite")).unwrap();
+    remove_post60_fixture_tables(&c);
     c.execute_batch("DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE agent_planner_steps;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;CREATE TABLE mission_chat_commands(conflict INTEGER);DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=28;").unwrap();
     drop(c);
     assert!(Store::open(d.path()).is_err());
@@ -1953,6 +1978,7 @@ async fn completed_untyped_history_is_not_backfilled_as_fresh_mission_authority(
     let id = l.run_id().to_owned();
     drop(s);
     let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+    remove_post60_fixture_tables(&c);
     c.execute_batch("DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE agent_planner_steps;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=57;")
         .unwrap();
     drop(c);
@@ -1961,7 +1987,7 @@ async fn completed_untyped_history_is_not_backfilled_as_fresh_mission_authority(
         assert_eq!(
             db.conn
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-            58
+            crate::CURRENT_SCHEMA_VERSION
         );
         assert_eq!(
             db.conn

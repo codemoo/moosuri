@@ -375,7 +375,7 @@ describe("account and session boundaries", () => {
       }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not reach moosuri",
+      "삭제 접수를 확인하지 못했습니다",
     );
     expect(
       screen.getByRole("button", { name: `Delete ${thread.title}` }),
@@ -916,4 +916,65 @@ it("opens an authorized action-needed mission push only for the active account a
   await screen.findByRole("heading",{name:"맡긴 일",level:2});expect(window.location.hash).toBe(`#mission-${id}`);
   fireEvent.click(screen.getByRole("button",{name:"← 대화로"}));expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("Keep the unsent original draft");
  }finally{if(old)Object.defineProperty(navigator,"serviceWorker",old);else Reflect.deleteProperty(navigator,"serviceWorker")}
+});
+
+it("a hung thread deletion settles through inventory without replay and releases its blocking dialog", async () => {
+  const user = userEvent.setup();
+  let deleted = false;
+  const calls = server((path, init) => {
+    if (path === "/threads") return response({ threads: deleted ? [] : [thread] });
+    if (init.method === "DELETE") { deleted = true; return new Promise<Response>(() => {}); }
+    return response({}, 204);
+  });
+  render(<StrictMode><App /></StrictMode>);
+  await screen.findByRole("button", { name: thread.title });
+  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete conversation" }));
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
+    const deletes = calls.filter(call => call.init.method === "DELETE");
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].init.signal?.aborted).toBe(true);
+  } finally { vi.useRealTimers(); }
+});
+
+it.each(["present", "inventory stalled"])("unknown deletion with target %s unlocks the dialog without claiming success or replaying DELETE", async mode => {
+  const user = userEvent.setup();
+  const deletion = deferred<Response>();
+  const inventory = deferred<Response>();
+  let deleting = false;
+  const calls = server((path, init) => {
+    if (path === "/threads") return deleting && mode === "inventory stalled" ? inventory.promise : response({ threads: [thread] });
+    if (init.method === "DELETE") { deleting = true; return deletion.promise; }
+    return response({}, 204);
+  });
+  render(<StrictMode><App /></StrictMode>);
+  await screen.findByRole("button", { name: thread.title });
+  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete conversation" }));
+      await vi.advanceTimersByTimeAsync(mode === "present" ? 30000 : 60000);
+    });
+    expect(screen.getByRole("button", { name: "Keep conversation" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: thread.title })).toBeInTheDocument();
+    expect(screen.getByText(mode === "present" ? /삭제 접수를 확인하지 못했습니다/ : /삭제 결과와 대화 목록을 확인하지 못했습니다/)).toBeInTheDocument();
+    expect(calls.filter(call => call.init.method === "DELETE")).toHaveLength(1);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Keep conversation" })); });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const cancel = vi.fn();
+    await act(async () => { deletion.resolve(new Response(new ReadableStream({ cancel }))); });
+    expect(cancel).toHaveBeenCalledOnce();
+    if (mode === "inventory stalled") {
+      const cancelInventory = vi.fn();
+      await act(async () => { inventory.resolve(new Response(new ReadableStream({ cancel: cancelInventory }))); });
+      expect(cancelInventory).toHaveBeenCalledOnce();
+    }
+  } finally { vi.useRealTimers(); }
 });

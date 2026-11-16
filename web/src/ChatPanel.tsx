@@ -199,6 +199,7 @@ export function ChatPanel(props: Props) {
   const [modelError, setModelError] = useState("");
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const actionLock = useRef(false);
+  const actionPending = useRef<{ run: string; attempt: number; kind: "cancel" | "retry"; controller: AbortController } | null>(null);
   const posts = useRef(new Map<string, AbortController>());
   const scroll = useRef<HTMLDivElement>(null);
   const scrollContent = useRef<HTMLDivElement>(null);
@@ -267,8 +268,22 @@ export function ChatPanel(props: Props) {
     if(value?.request_id===requestId) posts.current.get(thread)?.abort();
     finishReceipts(thread, requestId, true);
   }
+  function settleAction(known: ChatTurn[]) {
+    const pending = actionPending.current;
+    if (!pending) return;
+    const run = known.find(turn => turn.run.id === pending.run)?.run;
+    if (!run || !(run.attempt > pending.attempt ||
+        (pending.kind === "cancel" && run.attempt === pending.attempt && !active(run)))) return;
+    // A canonical higher retry attempt or a settled/superseded cancel target
+    // releases its redundant HTTP wait. Its finally cannot unlock a newer action.
+    actionPending.current = null;
+    actionLock.current = false;
+    setActionBusy(null);
+    pending.controller.abort();
+  }
   function settle(page: ChatPage) {
     for (const turn of page.turns) accepted(page.thread_id,turn.run.request_id,turn);
+    settleAction(page.turns);
   }
   function resolveWaiters(thread: string, page: ChatPage | null) {
     for (const waiter of waiters.current.filter(
@@ -413,6 +428,7 @@ export function ChatPanel(props: Props) {
       const result = applyEvents(turnsRef.current, events, thread);
       turnsRef.current = result.turns;
       setTurns(result.turns);
+      settleAction(result.turns);
       if (!nearBottom.current) setUnseen(true);
       for (const event of events) {
         if (event.change.kind === "turn")
@@ -864,6 +880,7 @@ export function ChatPanel(props: Props) {
       resubmit?.text ?? callbacks.current.memory.drafts[originalSlot] ?? "";
     if (
       posts.current.has(originalSlot) ||
+      actionLock.current ||
       !text.trim() ||
       new TextEncoder().encode(text).byteLength > 8192 ||
       (!resubmit &&
@@ -928,12 +945,20 @@ export function ChatPanel(props: Props) {
     )?.run;
     if (
       actionLock.current ||
+      posts.current.has(run.thread_id) ||
+      pendingRef.current[run.thread_id] ||
+      loading ||
+      !historyReady ||
+      currentThread.current !== run.thread_id ||
       !current ||
       current.attempt !== run.attempt ||
+      (kind === "retry" && (turnsRef.current.at(-1)?.run.id !== run.id || turnsRef.current.some(turn => active(turn.run)))) ||
       !(kind === "cancel" ? current.can_cancel : current.can_retry)
     )
       return;
     actionLock.current = true;
+    const owner = { run: run.id, attempt: run.attempt, kind, controller: new AbortController() };
+    actionPending.current = owner;
     const epoch = historyEpoch.current;
     setActionBusy(run.id);
     setError("");
@@ -942,9 +967,10 @@ export function ChatPanel(props: Props) {
         `/runs/${encodeURIComponent(run.id)}/${kind}`,
         "POST",
         { expected_attempt: run.attempt },
-        undefined,
+        owner.controller.signal,
         { timeoutMs: 30000 },
       );
+      if (actionPending.current !== owner) return;
       if (
         !validTurn(result) ||
         result.run.id !== run.id ||
@@ -967,8 +993,11 @@ export function ChatPanel(props: Props) {
         void refreshSnapshot();
       }
     } finally {
-      actionLock.current = false;
-      setActionBusy(null);
+      if (actionPending.current === owner) {
+        actionPending.current = null;
+        actionLock.current = false;
+        setActionBusy(null);
+      }
     }
   }
   const bytes = new TextEncoder().encode(draft).byteLength;
@@ -980,6 +1009,7 @@ export function ChatPanel(props: Props) {
     !modelLoading &&
     !loading &&
     historyReady &&
+    actionBusy === null &&
     !hasActive &&
     !pending;
   const optimistic =
@@ -1111,16 +1141,16 @@ export function ChatPanel(props: Props) {
                   {turn.run.can_cancel && (
                     <button
                       className="text-button"
-                      disabled={actionBusy !== null}
+                      disabled={actionBusy !== null || !!pending || loading || !historyReady}
                       onClick={() => action(turn.run, "cancel")}
                     >
                       {actionBusy === turn.run.id ? "처리 중…" : "응답 중지"}
                     </button>
                   )}
-                  {turn.run.can_retry && (
+                  {turn.run.can_retry && turn === turns.at(-1) && !hasActive && (
                     <button
                       className="text-button"
-                      disabled={actionBusy !== null}
+                      disabled={actionBusy !== null || !!pending || loading || !historyReady}
                       onClick={() => action(turn.run, "retry")}
                     >
                       {actionBusy === turn.run.id
@@ -1207,6 +1237,7 @@ export function ChatPanel(props: Props) {
             className="secondary"
             disabled={
               loading ||
+              actionBusy !== null ||
               hasActive ||
               !model?.effective ||
               posts.current.has(slot)

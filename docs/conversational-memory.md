@@ -34,6 +34,12 @@ Protocol/parser tests alone are not an intent-accuracy benchmark. Cue routing is
 limited to supported Korean/English wording and messages up to8192 UTF-8 bytes.
 
 Correction and forgetting require one unique current match within the account.
+The two explicit Korean read-only forms “내 … 기억에서 찾아 알려줘” and
+“내 … 기억하고 있어? 없으면 모른다고 해 줘” use ordinary memory read tools
+without a separate mutation-classifier request. Quoted, mixed or unrecognized
+forms keep the conservative classifier route; a write cue in the target takes
+precedence. This shortcut grants no write authority.
+
 The planner preserves a literal target phrase, including meaningful category,
 person, negation and scope wording. A unique substring match against the fact or
 subject keeps the single-planning-call path. Multiple literal matches require
@@ -48,8 +54,9 @@ Saved instructions and role claims are untrusted candidate data. No shortest-tok
 or synonym reduction is used. This supports broader wording such as “홍차 취향”
 without requiring that phrase to appear in “나는 홍차를 좋아해”.
 
-Enumeration is bounded to64 effective-version rows and32KiB of candidate data;
-expired rows count toward the scan bound. Incomplete coverage asks for a narrower
+Enumeration is bounded to64 currently effective, unexpired candidate rows and32KiB
+of candidate data. Expired rows are filtered before the candidate limit; expiry
+never revives an older superseded assertion. Incomplete coverage asks for a narrower
 request instead of selecting from a partial list. Any knowledge-generation or full
 candidate-snapshot change before selection or commit prevents mutation. A still
 eligible command returns clarification; an already revoked or purged run retains

@@ -19,6 +19,62 @@ fn fresh_input(query: &str, scalar: &str) -> KnowledgeToolInput {
 }
 
 #[tokio::test]
+async fn source_field_label_separators_preserve_exact_numeric_evidence() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = enabled(&s).await;
+    for (index, field, valid) in [
+        (0, "재료 단가: 13.75", true),
+        (1, "재료 단가 ：\t13.75", true),
+        (2, "재료 단가 = 13.75", true),
+        (3, "재료 단가 13.75", true),
+        (4, "재료 단가:: 13.75", false),
+        (5, "재료 단가:\n13.75", false),
+        (6, "재료 단가: 약 13.75", false),
+        (7, "재료 단가: 13.75e2", false),
+        (8, "재료 단가: 13.75\n재료 단가: 9", false),
+        (9, "재료 단가: 13.75+9", false),
+    ] {
+        let query = format!("FieldCase{index}");
+        let source_text = format!("{query}\n{field}\n통화: USD");
+        source(&s, &u, &source_text).await;
+        let request = format!("{query}에서 재료 단가를 읽고 4를 곱해줘.");
+        let run = start(&s, &u, &request).await;
+        let mut input = fresh_input(&query, "4");
+        if let KnowledgeToolInput::SourceCalculate { calculation } = &mut input {
+            calculation.parameters.prefix = "재료 단가".into();
+        }
+        let (_, result) = execute(&s, &run, "fresh", input).await;
+        if valid {
+            let KnowledgeToolResult::EvidenceCalculation {
+                exact, evidence, ..
+            } = result
+            else {
+                panic!("field {index} should bind exact source evidence");
+            };
+            assert_eq!(exact, "55");
+            assert_eq!(evidence.literal, "13.75");
+            assert_eq!(
+                &source_text[evidence.start_byte as usize..evidence.end_byte as usize],
+                "13.75"
+            );
+            assert_eq!(evidence.search.ordinal, Some(0));
+            assert_eq!(evidence.source.ordinal, Some(1));
+        } else {
+            assert!(
+                matches!(
+                    result,
+                    KnowledgeToolResult::Error(ToolReadError::EvidenceFieldInvalid)
+                ),
+                "field {index}"
+            );
+        }
+        stop(&s, &run).await;
+    }
+}
+
+#[tokio::test]
 async fn fresh_source_calculation_repeated_selector_retry_cost_and_owner_isolation() {
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();

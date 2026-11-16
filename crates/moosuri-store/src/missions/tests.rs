@@ -1068,7 +1068,7 @@ async fn mission_completed_typed_plan_and_final_proposal_recover_without_new_mod
     s.commit_agent_step(
         &st,
         PrivateCheckpoint {
-            bytes: serde_json::json!({"kind":"mission_round","planning":true,"text":text})
+            bytes: serde_json::json!({"kind":"mission_round","terminal":"completed","planning":true,"text":text})
                 .to_string()
                 .into_bytes(),
         },
@@ -1129,7 +1129,7 @@ async fn mission_completed_typed_plan_and_final_proposal_recover_without_new_mod
             call_id: "sum".into(),
         }],
     };
-    s.commit_agent_step(&final_step,PrivateCheckpoint{bytes:serde_json::json!({"kind":"mission_round","planning":false,"text":serde_json::to_string(&candidate).unwrap()}).to_string().into_bytes()},vec![]).await.unwrap();
+    s.commit_agent_step(&final_step,PrivateCheckpoint{bytes:serde_json::json!({"kind":"mission_round","terminal":"completed","planning":false,"text":serde_json::to_string(&candidate).unwrap()}).to_string().into_bytes()},vec![]).await.unwrap();
     drop(c);
     drop(s);
     let s = Store::open_with_web(
@@ -1212,7 +1212,7 @@ async fn recover_final_at_capacity(
             call_id: "sum0".into(),
         }],
     };
-    s.commit_agent_step(&final_step, PrivateCheckpoint { bytes: serde_json::json!({"kind":"mission_round","planning":false,"text":serde_json::to_string(&candidate).unwrap()}).to_string().into_bytes() }, if leave_pending_tool { vec![calc()] } else { vec![] }).await.unwrap();
+    s.commit_agent_step(&final_step, PrivateCheckpoint { bytes: serde_json::json!({"kind":"mission_round","terminal":"completed","planning":false,"text":serde_json::to_string(&candidate).unwrap()}).to_string().into_bytes() }, if leave_pending_tool { vec![calc()] } else { vec![] }).await.unwrap();
     let usage = s.usage_summary(&u).await.unwrap().dispatched_calls;
     let old_lease = c.lease.clone();
     let run_id = c.lease.run_id().to_owned();
@@ -1976,7 +1976,7 @@ async fn mission_acknowledged_final_proposal_expiry_commits_safe_partial_without
             call_id: "sum".into(),
         }],
     };
-    s.commit_agent_step(&final_step,PrivateCheckpoint{bytes:serde_json::to_vec(&serde_json::json!({"kind":"mission_round","planning":false,"text":serde_json::to_string(&candidate).unwrap()})).unwrap()},vec![]).await.unwrap();
+    s.commit_agent_step(&final_step,PrivateCheckpoint{bytes:serde_json::to_vec(&serde_json::json!({"kind":"mission_round","terminal":"completed","planning":false,"text":serde_json::to_string(&candidate).unwrap()})).unwrap()},vec![]).await.unwrap();
     s.call(|db| {
         db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
         Ok(())

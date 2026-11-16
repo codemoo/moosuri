@@ -194,6 +194,25 @@ pub(super) async fn execute(
         Ok(Some(v)) => v,
         _ => return,
     };
+    // Older capsules acknowledged JSON without checking the provider outcome.
+    // Never interpret their proposal or replay an unfinished tool after upgrade.
+    if execution
+        .pending_round
+        .as_ref()
+        .is_some_and(|p| !p.terminal_verified())
+        || execution.pending_round.is_none() && context.calls.iter().any(|s| s.result.is_none())
+    {
+        finish(
+            &store,
+            &lease,
+            None,
+            RunState::OutcomeUnknown,
+            Some(RunFailure::ProtocolFailed),
+            &signals,
+        )
+        .await;
+        return;
+    }
     if execution.view.plan.is_empty()
         && let Some(pending) = execution.pending_round.as_ref().filter(|p| !p.planning)
     {
@@ -437,6 +456,49 @@ pub(super) async fn execute(
                 return;
             }
         };
+        // Transport success only proves a clean response, not completed work.
+        // Limited/refused text may still be valid JSON; it must not become a
+        // final candidate, saved report or owner-input wait on this run/restart.
+        let terminal = match observed.round.as_ref().map(|round| round.outcome) {
+            Some(FinishOutcome::Completed) => "completed",
+            Some(FinishOutcome::ContinuationRequired) => "continuation_required",
+            Some(FinishOutcome::Incomplete) => {
+                finish(
+                    &store,
+                    &lease,
+                    Some(&step),
+                    RunState::Incomplete,
+                    Some(RunFailure::OutputLimit),
+                    &signals,
+                )
+                .await;
+                return;
+            }
+            Some(FinishOutcome::Refused) => {
+                finish(
+                    &store,
+                    &lease,
+                    Some(&step),
+                    RunState::Refused,
+                    None,
+                    &signals,
+                )
+                .await;
+                return;
+            }
+            None => {
+                finish(
+                    &store,
+                    &lease,
+                    Some(&step),
+                    RunState::Failed,
+                    Some(RunFailure::ProtocolFailed),
+                    &signals,
+                )
+                .await;
+                return;
+            }
+        };
         let calls = observed
             .round
             .as_ref()
@@ -454,7 +516,7 @@ pub(super) async fn execute(
             .commit_agent_step(
                 &step,
                 PrivateCheckpoint {
-                    bytes:serde_json::json!({"kind":"mission_round","acceptance_revision":acceptance_revision(&execution.view),"planning":false,"text":observed.pending.private_text}).to_string().into_bytes(),
+                    bytes:serde_json::json!({"kind":"mission_round","terminal":terminal,"acceptance_revision":acceptance_revision(&execution.view),"planning":false,"text":observed.pending.private_text}).to_string().into_bytes(),
                 },
                 calls.clone(),
             )

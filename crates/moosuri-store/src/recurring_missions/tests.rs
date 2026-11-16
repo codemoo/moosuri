@@ -1061,7 +1061,7 @@ async fn recurring_acknowledged_verify_expiry_commits_before_poll_and_notifies_r
         text: "Acknowledged but unverified synthetic proposal".into(),
         evidence: vec![],
     };
-    s.commit_agent_step(&step,PrivateCheckpoint{bytes:serde_json::to_vec(&serde_json::json!({"kind":"mission_round","planning":false,"text":serde_json::to_string(&candidate).unwrap()})).unwrap()},vec![]).await.unwrap();
+    s.commit_agent_step(&step,PrivateCheckpoint{bytes:serde_json::to_vec(&serde_json::json!({"kind":"mission_round","terminal":"completed","planning":false,"text":serde_json::to_string(&candidate).unwrap()})).unwrap()},vec![]).await.unwrap();
     s.call(|db| {
         db.conn.execute("UPDATE missions SET expires_ms=1", [])?;
         Ok(())

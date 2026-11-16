@@ -106,7 +106,10 @@ fn capsule(lease: &RunLease, plan: &Plan) -> Result<MemoryTargetCandidates> {
 /// Enumerate the whole current account scope, never a keyword-selected subset.
 /// None means coverage is incomplete; callers must clarify without selection.
 fn enumerate(conn: &Connection, tenant: &str, time: i64) -> Result<Option<Vec<Candidate>>> {
-    let rows=conn.prepare("SELECT m.id,m.revision,v.revision,v.draft FROM knowledge_memories m JOIN knowledge_memory_versions v ON v.tenant_id=m.tenant_id AND v.memory_id=m.id AND v.revision=(SELECT max(t.revision) FROM knowledge_memory_timeline t WHERE t.tenant_id=m.tenant_id AND t.memory_id=m.id AND (t.valid_from IS NULL OR t.valid_from<=?2)) WHERE m.tenant_id=?1 AND m.status!='forgotten' AND v.status='active' ORDER BY m.id LIMIT 65")?
+    // Apply eligibility before the coverage limit: stored expired assertions
+    // cannot consume the bounded CURRENT candidate set. Select the newest begun
+    // version first, so expiry never falls back to an older assertion.
+    let rows=conn.prepare("SELECT m.id,m.revision,v.revision,v.draft FROM knowledge_memories m JOIN knowledge_memory_versions v ON v.tenant_id=m.tenant_id AND v.memory_id=m.id AND v.revision=(SELECT max(t.revision) FROM knowledge_memory_timeline t WHERE t.tenant_id=m.tenant_id AND t.memory_id=m.id AND (t.valid_from IS NULL OR t.valid_from<=?2)) WHERE m.tenant_id=?1 AND m.status!='forgotten' AND v.status='active' AND (json_extract(v.draft,'$.valid_until') IS NULL OR json_extract(v.draft,'$.valid_until')>?2) ORDER BY m.id LIMIT 65")?
         .query_map(params![tenant,time],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,String>(3)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
     if rows.len() > CANDIDATE_LIMIT {
         return Ok(None);

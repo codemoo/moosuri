@@ -1047,3 +1047,68 @@ async fn retry_generation_reset_cannot_reexpose_a_stale_pending_target_snapshot(
         1
     );
 }
+
+#[tokio::test]
+async fn expired_population_does_not_block_current_semantic_correction_or_revive_old_versions() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let time = now().unwrap();
+    // More stored expired versions than the selector's active candidate budget.
+    // Each has an earlier undated version: expiry must never revive that text.
+    for i in 0..65 {
+        let old = store
+            .create_memory(
+                &user,
+                Uuid::new_v4().to_string(),
+                draft(&format!("Old assertion {i}")),
+            )
+            .await
+            .unwrap();
+        let mut expired = draft(&format!("Expired assertion {i}"));
+        expired.valid_from = Some(time - 3600);
+        expired.valid_until = Some(time - 1);
+        store
+            .correct_memory(&user, old.id, 1, Uuid::new_v4().to_string(), expired)
+            .await
+            .unwrap();
+    }
+    let target = store
+        .create_memory(
+            &user,
+            Uuid::new_v4().to_string(),
+            draft("I live in Lisbon."),
+        )
+        .await
+        .unwrap();
+    let text = "Correct my residence to I live in Porto.";
+    let intent = MemoryCommandIntent {
+        action: MemoryCommandAction::Correct,
+        intent_quote: "Correct".into(),
+        target_quote: Some("my residence".into()),
+        fact_quote: Some("I live in Porto.".into()),
+        subject: Some("Residence".into()),
+    };
+    let (_, claim, step) = planning(&store, &user, text).await;
+    let set = candidates(
+        store
+            .prepare_memory_command_resolution(&step, intent)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(set.candidates().len(), 1);
+    assert_eq!(set.candidates()[0].text, "I live in Lisbon.");
+    let step = selection_step(&store, &claim.lease).await;
+    let command = store
+        .select_memory_target(&step, &set, MemoryTargetChoice::Select(0))
+        .await
+        .unwrap();
+    assert_eq!(
+        applied_id(&store.execute_memory_command(&command).await.unwrap()),
+        target.id
+    );
+    let current = store.memory(&user, target.id, None).await.unwrap();
+    assert_eq!(current.revision, 2);
+    assert_eq!(current.draft.text, "I live in Porto.");
+}

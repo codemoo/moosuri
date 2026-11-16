@@ -183,7 +183,7 @@ async fn revised_mission_runtime(restart_after_revised_plan: bool) {
         }
         assert!(finished);
         s.commit_agent_step(&step, PrivateCheckpoint {
-            bytes: json!({"kind":"mission_round","acceptance_revision":2,"planning":true,"text":text}).to_string().into_bytes(),
+            bytes: json!({"kind":"mission_round","terminal":"completed","acceptance_revision":2,"planning":true,"text":text}).to_string().into_bytes(),
         }, vec![]).await.unwrap();
         let execution = s.mission_execution(&claim.lease).await.unwrap().unwrap();
         let pending = execution.pending_round.unwrap();
@@ -642,7 +642,7 @@ async fn first_tool_round_recovery(save_plan_before_restart: bool) {
         &step,
         PrivateCheckpoint {
             bytes:
-                json!({"kind":"mission_round","acceptance_revision":1,"planning":false,"text":""})
+                json!({"kind":"mission_round","terminal":"completed","acceptance_revision":1,"planning":false,"text":""})
                     .to_string()
                     .into_bytes(),
         },
@@ -756,7 +756,7 @@ async fn mission_final_candidate_survives_local_plan_save_and_reopen_without_inf
             call_id: "saved-sum".into(),
         }],
     };
-    s.commit_agent_step(&step, PrivateCheckpoint { bytes: json!({"kind":"mission_round","acceptance_revision":1,"planning":false,"text":serde_json::to_string(&candidate).unwrap()}).to_string().into_bytes() }, vec![]).await.unwrap();
+    s.commit_agent_step(&step, PrivateCheckpoint { bytes: json!({"kind":"mission_round","terminal":"completed","acceptance_revision":1,"planning":false,"text":serde_json::to_string(&candidate).unwrap()}).to_string().into_bytes() }, vec![]).await.unwrap();
     s.mission_save_plan(
         &step,
         vec![
@@ -795,3 +795,6 @@ async fn mission_final_candidate_survives_local_plan_save_and_reopen_without_inf
     assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 2);
     rt.shutdown().await;
 }
+
+#[path = "missions/terminal.rs"]
+mod terminal;

@@ -41,7 +41,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{let count=counted.clone();let requests=recorded.clone();async move{
         let n=count.fetch_add(1,Ordering::SeqCst);requests.lock().await.push(body.clone());
         let functions=body.get("tools").and_then(|v|v.as_array());let intent=functions.is_some_and(|v|v.iter().any(|d|d["function"]["name"]=="mission_chat_decision"));
-        let(delta,reason)=if intent{assert_eq!(body["messages"].as_array().unwrap().len(),2);let text=body["messages"][1]["content"].as_str().unwrap();let mode=if text.contains("Monday"){"clarify"}else if text.contains("explain") || text=="한국어 인사말 세 가지 부탁해."{"no_command"}else{"command"};(json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("decision-{n}"),"mission_chat_decision",serde_json::to_value(semantic(text,mode)).unwrap())]}),"tool_calls")}else{(json!({"role":"assistant","content":"Synthetic ordinary answer"}),"stop")};
+        let(delta,reason)=if intent{assert_eq!(body["messages"].as_array().unwrap().len(),2);let text=body["messages"][1]["content"].as_str().unwrap();let mode=if text.contains("Monday"){"clarify"}else if text.contains("explain") || text.contains("답변") || text.contains("설명") || text=="한국어 인사말 세 가지 부탁해."{"no_command"}else{"command"};(json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,format!("decision-{n}"),"mission_chat_decision",serde_json::to_value(semantic(text,mode)).unwrap())]}),"tool_calls")}else{(json!({"role":"assistant","content":"Synthetic ordinary answer"}),"stop")};
         let content=frame(json!({"id":format!("semantic-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}))+&frame(json!({"id":format!("semantic-{n}"),"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5}}))+"data: [DONE]\n\n";Response::builder().header("content-type","text/event-stream").body(Body::from(content)).unwrap()
     }}));
     let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -72,6 +72,27 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     assert_eq!(result.run.mission_receipt.unwrap().state, "active");
     assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
     assert_eq!(count.load(Ordering::SeqCst), 1);
+    for text in [
+        "두 번째 답변을 이어줘",
+        "이어서 설명해 줘",
+        "방금 말한 두 가지를 한 문장으로 이어서 설명해 줘.",
+        "앞서 말한 내용을 짧게 이어서 설명해 주세요.",
+    ] {
+        let before = count.load(Ordering::SeqCst);
+        s.submit_turn(
+            &u,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            text.into(),
+        )
+        .await
+        .unwrap();
+        let ordinary = wait(&s, &u, &thread).await;
+        assert_eq!(ordinary.run.state, moosuri_core::RunState::Completed);
+        assert!(ordinary.run.mission_receipt.is_none());
+        assert_eq!(count.load(Ordering::SeqCst), before + 1, "{text}");
+        assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
+    }
     s.submit_turn(
         &u,
         thread.clone(),
@@ -81,7 +102,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     .await
     .unwrap();
     wait(&s, &u, &thread).await;
-    assert_eq!(count.load(Ordering::SeqCst), 2);
+    assert_eq!(count.load(Ordering::SeqCst), 6);
     // A polite foreground request after a real saved-task receipt still needs
     // only its answer call, and must not create or control another mission.
     s.submit_turn(
@@ -95,7 +116,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     let ordinary = wait(&s, &u, &thread).await;
     assert_eq!(ordinary.run.state, moosuri_core::RunState::Completed);
     assert!(ordinary.run.mission_receipt.is_none());
-    assert_eq!(count.load(Ordering::SeqCst), 3);
+    assert_eq!(count.load(Ordering::SeqCst), 7);
     assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
     s.submit_turn(
         &u,
@@ -107,7 +128,7 @@ async fn natural_request_isolated_classifier_saves_actual_template_and_ordinary_
     .unwrap();
     let clarified = wait(&s, &u, &thread).await;
     assert_eq!(clarified.run.mission_receipt.unwrap().state, "clarify");
-    assert_eq!(count.load(Ordering::SeqCst), 4);
+    assert_eq!(count.load(Ordering::SeqCst), 8);
     assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
     runtime.shutdown().await;
     upstream.abort();
@@ -161,6 +182,14 @@ fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_c
         "Start the public notice monitor running again",
         "공개 기사 비교 작업을 맡기려고 해요",
         "메일에 매일 조사하라는데 설명해 줘",
+        "그 업무 이어줘",
+        "공개 뉴스 비교 작업을 계속해 줘",
+        "그 일 이어서 해 줘",
+        "Coastal digest 이어줘",
+        "고객 답변 조사 이어줘",
+        "방금 말한 두 가지 업무를 이어서 설명해 줘",
+        "앞서 말한 내용을 짧게 이어서 설명하고 내일 업무로 맡아 줘",
+        "계속해 줘",
     ] {
         assert!(crate::mission_intent::candidate(text, false), "{text}")
     }
@@ -172,9 +201,22 @@ fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_c
     for text in [
         "아침 운동에 대한 기억만 지워 줘.",
         "아침 운동은 산책이야. 기억해 줘.",
+        "두 번째 답변을 이어줘",
+        "이어서 설명해 줘",
+        "방금 말한 두 가지를 한 문장으로 이어서 설명해 줘.",
+        "앞서 말한 내용을 짧게 이어서 설명해 주세요.",
     ] {
         assert!(!crate::mission_intent::candidate(text, false), "{text}");
     }
+    assert!(crate::mission_intent::candidate(
+        "그 답변 업무 이어줘",
+        false
+    ));
+    assert!(crate::mission_intent::candidate("답변을 이어줘", true));
+    assert!(crate::mission_intent::candidate(
+        "내일 답변을 이어서 작성해 줘",
+        false
+    ));
 }
 
 // A scripted decision exercises routing/storage only, not real-model language quality.

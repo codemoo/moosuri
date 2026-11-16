@@ -459,15 +459,27 @@ pub(crate) fn view(c: &Connection, t: &str, id: &str) -> Result<MissionView> {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MissionPendingRound {
+    #[serde(default)]
+    pub terminal: Option<String>,
     #[serde(default = "initial_acceptance")]
     pub acceptance_revision: i64,
     pub step: i64,
     pub planning: bool,
     pub text: String,
 }
+impl MissionPendingRound {
+    pub fn terminal_verified(&self) -> bool {
+        matches!(
+            self.terminal.as_deref(),
+            Some("completed" | "continuation_required")
+        )
+    }
+}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MissionRoundInput {
+    #[serde(default)]
+    terminal: Option<String>,
     #[serde(default = "initial_acceptance")]
     acceptance_revision: i64,
     kind: String,
@@ -488,11 +500,18 @@ pub(crate) fn record_round(c: &Connection, run: &Run, step: i64, bytes: &[u8]) -
     }
     let proposal: MissionRoundInput =
         serde_json::from_value(value).map_err(|_| StoreError::InvalidInput)?;
-    if proposal.kind != "mission_round" || proposal.text.len() > 24000 {
+    if proposal.kind != "mission_round"
+        || proposal.text.len() > 24000
+        || proposal
+            .terminal
+            .as_deref()
+            .is_some_and(|v| !matches!(v, "completed" | "continuation_required"))
+    {
         return Err(StoreError::InvalidInput);
     }
     acceptance::check(c, run, step, proposal.acceptance_revision)?;
     let record = MissionPendingRound {
+        terminal: proposal.terminal,
         acceptance_revision: proposal.acceptance_revision,
         step,
         planning: proposal.planning,
@@ -516,7 +535,8 @@ pub(crate) fn local_final_recovery(c: &Connection, tenant: &str, run: &str) -> R
         return Ok(false);
     };
     let pending: MissionPendingRound = parse(&raw)?;
-    if pending.planning
+    if pending.terminal.as_deref() != Some("completed")
+        || pending.planning
         || pending.step < acceptance::floor(c, tenant, run)?
         || pending.acceptance_revision != acceptance::revision(c, tenant, run)?
     {

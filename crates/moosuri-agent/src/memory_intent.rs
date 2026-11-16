@@ -63,6 +63,55 @@ impl std::error::Error for PlanError {}
 /// permission. Other languages and indirect wording are not comprehensively covered;
 /// users can use explicit 기억해/remember forms for this initial route.
 pub(super) fn has_memory_cue(current_text: &str) -> bool {
+    if explicit_memory_lookup(current_text) {
+        return false;
+    }
+    memory_or_mutation_cue(current_text)
+}
+
+/// Only complete literal read forms bypass the separate mutation classifier.
+/// Unknown, quoted or mixed wording still takes the conservative existing route.
+fn explicit_memory_lookup(text: &str) -> bool {
+    if text.len() > CURRENT_TEXT_LIMIT
+        || text.contains(['\n', '\r', '"', '\'', '“', '”', '‘', '’', ';'])
+    {
+        return false;
+    }
+    let compact: String = text
+        .trim()
+        .trim_end_matches(['.', '。'])
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let target = [
+        "기억에서찾아알려줘",
+        "기억에서찾아서알려줘",
+        "기억하고있어?없으면모른다고해줘",
+    ]
+    .iter()
+    .find_map(|suffix| compact.strip_suffix(suffix));
+    let Some(target) = target else { return false };
+    // Require a bounded noun-target form rather than inferring read-only intent
+    // from the absence of known action keywords. Mixed/unknown clauses retain
+    // classification even when a verb is absent from our mutation cue list.
+    let noun = target
+        .strip_suffix("얼마나되는지")
+        .and_then(|subject| subject.strip_suffix(['이', '가']))
+        .or_else(|| target.strip_suffix(['을', '를']));
+    let Some(noun) = noun else { return false };
+    ["내", "제", "나의", "저의"]
+        .iter()
+        .any(|prefix| noun.starts_with(prefix))
+        && noun.chars().count() > 2
+        && noun.chars().all(|c| matches!(c, '가'..='힣' | '0'..='9'))
+        // Conservative clause/predicate markers, not a verb vocabulary. Some
+        // ordinary nouns also contain them; those simply keep the classifier.
+        && !["을", "를", "하", "해", "고", "며", "면", "뒤", "후", "줘", "및", "또", "먼저", "다음", "대신", "거나"]
+            .iter().any(|marker| noun.contains(marker))
+        && !memory_or_mutation_cue(noun)
+}
+
+fn memory_or_mutation_cue(current_text: &str) -> bool {
     if current_text.is_empty() || current_text.len() > CURRENT_TEXT_LIMIT {
         return false;
     }
@@ -466,6 +515,43 @@ mod tests {
             "나는 홍차를 좋아해",
         ] {
             assert!(!has_memory_cue(text), "ordinary input fixture: {text}");
+        }
+    }
+    #[test]
+    fn explicit_current_memory_lookup_skips_mutation_classifier_but_mixed_requests_do_not() {
+        for text in [
+            "내 회의 전 준비 시간이 얼마나 되는지 기억에서 찾아 알려줘.",
+            "내 회의 전 준비 시간을 기억하고 있어? 없으면 모른다고 해 줘.",
+            "제 거주지를 기억에서 찾아서 알려줘.",
+        ] {
+            assert!(
+                !has_memory_cue(text),
+                "read-only lookup must use normal tools: {text}"
+            );
+        }
+        for text in [
+            "내 주소를 서울로 변경하고 기억에서 찾아 알려줘.",
+            "내 주소를 서울로 변경하고 기억하고 있어? 없으면 모른다고 해 줘.",
+            "내 주소 서울로 변경 후 내 주소를 기억에서 찾아 알려줘.",
+            "내 주소 서울로 등록한 다음 내 주소를 기억에서 찾아 알려줘.",
+            "내 주소를 바꿔서 새 주소를 기억에서 찾아 알려줘.",
+            "내 주소 서울로 정정해 내 주소를 기억에서 찾아 알려줘.",
+            "내 주소를 기억에서 찾아 알려주고 서울로 변경해 줘.",
+            "내 주소를 수정하고 기억에서 찾아 알려줘.",
+            "내 취향을 지워 주고 기억에서 찾아 알려줘.",
+            "내 취향을 기억해 줘 그리고 기억에서 찾아 알려줘.",
+            "내 새 주소를 저장해 줘. 기억에서 찾아 알려줘.",
+            "내 취향을 잊어 줘. 기억하고 있어? 없으면 모른다고 해 줘.",
+            "'내 회의 시간을 기억에서 찾아 알려줘'를 기억해 줘.",
+            "내 주소를 기억에서 찾아 알려줘. 그리고 수정해 줘.",
+            "내 주소를 기억해 줘",
+            "내 주소를 기억하고 있어?",
+            "기억에서 찾아 알려줘",
+        ] {
+            assert!(
+                has_memory_cue(text),
+                "ambiguous/mixed/mutation must retain classification: {text}"
+            );
         }
     }
     #[test]

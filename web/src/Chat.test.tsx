@@ -1204,9 +1204,9 @@ it("does not restore old output from a retry response that arrives after a knowl
 
 it("replaces cached older evidence after a missed reset and fences an old retry acknowledgement", async () => {
   const user = userEvent.setup();
-  const latest = { ...turn({ state: "completed", can_cancel: false }), sequence: 2 };
+  const latest = { ...turn({ state: "failed", can_cancel: false, can_retry: true }), sequence: 2 };
   const old = turn({ id: "old-run", request_id: "old-request", state: "failed",
-    can_cancel: false, can_retry: true,
+    can_cancel: false, can_retry: false,
     evidence: [{ kind: "source", id: "source-a", revision: 1, title: "오프라인 중 삭제한 원문" }] }, "이전 질문");
   old.assistant = [{ id: "old-answer", text: "오프라인 중 철회된 답변", phase: null, refusal: false }];
   const ack = deferred<Response>();
@@ -1228,8 +1228,8 @@ it("replaces cached older evidence after a missed reset and fences an old retry 
   await waitFor(() => expect(screen.queryByText("오프라인 중 철회된 답변")).not.toBeInTheDocument());
   await act(async () => { fresh.resolve(response({ ...test.state.page, cursor: 9, next_before: 2 })); });
   await waitFor(() => expect(test.streams.at(-1)?.path).toContain("after=9"));
-  await act(async () => { ack.resolve(response({ ...old,
-    run: { ...old.run, state: "running", attempt: 2, version: 3 } })); });
+  await act(async () => { ack.resolve(response({ ...latest, assistant: old.assistant,
+    run: { ...latest.run, state: "running", attempt: 2, version: 3 } })); });
   expect(screen.queryByText("오프라인 중 철회된 답변")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "오프라인 중 삭제한 원문 ↗" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("메시지")).toHaveValue("유지할 초안");
@@ -1738,4 +1738,191 @@ it("creation recovery preserves both drafts when its admitted thread was selecte
     expect(creationCalls).toHaveLength(3);
     expect(creationCalls.every(call => JSON.stringify(call.body) === JSON.stringify(creationCalls[0].body))).toBe(true);
   } finally { vi.useRealTimers(); }
+});
+
+it.each(["retry", "send"] as const)("holds the per-thread mutation fence when %s starts before the other operation", async first => {
+  const user = userEvent.setup();
+  const held = deferred<Response>();
+  const initial = turn({ state: "failed", can_retry: true, can_cancel: false });
+  const test = fixture({ turns: [initial], action: () => held.promise, post: () => held.promise });
+  open();
+  await ready(test.streams);
+  await user.type(screen.getByLabelText("메시지"), "Keep this next question");
+  await user.click(screen.getByRole("button", { name: first === "retry" ? "같은 설정으로 다시 시도" : "메시지 전송" }));
+  if (first === "retry") {
+    expect(screen.getByRole("button", { name: "메시지 전송" })).toBeDisabled();
+    fireEvent.submit(screen.getByLabelText("메시지").closest("form")!);
+    expect(postCalls(test.calls)).toHaveLength(0);
+    expect(screen.getByLabelText("메시지")).toHaveValue("Keep this next question");
+  } else {
+    expect(screen.getByRole("button", { name: "같은 설정으로 다시 시도" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "같은 설정으로 다시 시도" }));
+    expect(test.calls.filter(call => call.path.endsWith("/retry"))).toHaveLength(0);
+    expect(postCalls(test.calls)).toHaveLength(1);
+  }
+});
+
+it("retires a previous failed-turn retry control when SSE admits a later turn", async () => {
+  const initial = turn({ state: "failed", can_retry: true, can_cancel: false });
+  const test = fixture({ turns: [initial], cursor: 1 });
+  open();
+  await ready(test.streams);
+  expect(screen.getByRole("button", { name: "같은 설정으로 다시 시도" })).toBeEnabled();
+  const latest = { ...turn({ id: "later-run", request_id: "later-request", state: "completed", can_cancel: false, can_retry: false }, "Later question"), sequence: 2 };
+  await act(async () => {
+    test.emit({ sequence: 2, change: { kind: "turn", turn: latest } });
+    await new Promise(resolve => setTimeout(resolve, 40));
+  });
+  expect(screen.queryByRole("button", { name: "같은 설정으로 다시 시도" })).not.toBeInTheDocument();
+});
+
+it("a canonical retry attempt releases its lost HTTP receipt so that attempt can be cancelled immediately", async () => {
+  const user = userEvent.setup();
+  const held = deferred<Response>();
+  const initial = turn({ state: "failed", can_retry: true, can_cancel: false });
+  const retried = { ...initial, run: { ...initial.run, state: "running" as const, attempt: 2, version: 2, can_retry: false, can_cancel: true } };
+  const cancelled = { ...retried, run: { ...retried.run, state: "cancelled" as const, version: 3, can_cancel: false } };
+  const test = fixture({ turns: [initial], cursor: 1, action: call => call.path.endsWith("/retry") ? held.promise : response(cancelled) });
+  open();
+  await ready(test.streams);
+  await user.click(screen.getByRole("button", { name: "같은 설정으로 다시 시도" }));
+  await act(async () => {
+    test.emit({ sequence: 2, change: { kind: "turn", turn: retried } });
+    await new Promise(resolve => setTimeout(resolve, 40));
+  });
+  expect(screen.getByRole("button", { name: "응답 중지" })).toBeEnabled();
+  expect(test.calls.find(call => call.path.endsWith("/retry"))!.init.signal?.aborted).toBe(true);
+  await user.click(screen.getByRole("button", { name: "응답 중지" }));
+  await screen.findByText("중지됨");
+  expect(test.calls.find(call => call.path.endsWith("/cancel"))!.body).toEqual({ expected_attempt: 2 });
+  await act(async () => { held.resolve(response(retried)); });
+  expect(screen.getByText("중지됨")).toBeInTheDocument();
+  expect(test.calls.filter(call => call.path.endsWith("/retry"))).toHaveLength(1);
+  expect(test.calls.filter(call => call.path.endsWith("/cancel"))).toHaveLength(1);
+});
+
+it("deletion preserves refreshed inventory and fences an older inventory response", async () => {
+  const user = userEvent.setup();
+  const deletion = deferred<Response>();
+  const inventory = deferred<Response>();
+  const other = { ...thread, id: "thread-b", title: "Other conversation" };
+  const newest = { ...thread, id: "thread-c", title: "Newly refreshed conversation" };
+  const initial = turn({ state: "running" });
+  let holdInventory = false;
+  const test = fixture({ turns: [initial], threads: [thread, other], cursor: 1, extra: call => {
+    if (call.path === `/threads/${thread.id}` && call.method === "DELETE") return deletion.promise;
+    if (call.path === "/threads" && call.method === "GET" && holdInventory) return inventory.promise;
+    if (call.path === `/threads/${other.id}/messages`) return response({ thread_id: other.id, cursor: 0, turns: [], next_before: null });
+  }});
+  open();
+  await ready(test.streams);
+  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  await user.click(screen.getByRole("button", { name: "Delete conversation" }));
+  test.state.threads = [thread, other, newest];
+  await act(async () => {
+    test.emit({ sequence: 2, change: { kind: "state", run: { ...initial.run, state: "completed", version: 2, can_cancel: false } } });
+    await new Promise(resolve => setTimeout(resolve, 40));
+  });
+  await screen.findByRole("button", { name: newest.title });
+  holdInventory = true;
+  await act(async () => {
+    test.emit({ sequence: 3, change: { kind: "state", run: { ...initial.run, state: "completed", version: 3, can_cancel: false } } });
+    await new Promise(resolve => setTimeout(resolve, 40));
+  });
+  const stale = test.calls.filter(call => call.path === "/threads" && call.method === "GET").at(-1)!;
+  await act(async () => { deletion.resolve(response(null, 204)); });
+  expect(screen.getByRole("button", { name: newest.title })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: other.title })).toBeInTheDocument();
+  expect(stale.init.signal?.aborted).toBe(true);
+  const cancel = vi.fn();
+  await act(async () => { inventory.resolve(new Response(new ReadableStream({ cancel }))); });
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: newest.title })).toBeInTheDocument();
+});
+
+it("a rejected background admission cannot restore a deleted conversation's draft", async () => {
+  const user = userEvent.setup();
+  const creation = deferred<Response>();
+  const admission = deferred<Response>();
+  const other = { ...thread, id: "thread-b", title: "Other conversation" };
+  const test = fixture({ threads: [other], post: () => admission.promise, extra: call => {
+    if (call.path === "/threads" && call.method === "POST") return creation.promise;
+    if (call.path === `/threads/${other.id}/messages`) return response({ thread_id: other.id, cursor: 0, turns: [], next_before: null });
+  }});
+  test.state.session = { ...account, chat_draft_scope: "a".repeat(64) };
+  sessionStorage.setItem("moosuri.chat-drafts.v1", JSON.stringify({ version: 1, account: account.user.id, scope: "a".repeat(64), saved_at: Date.now(), selected: null, slots: [{ id: "new", draft: "Private text from removed background conversation" }] }));
+  open();
+  await screen.findByText("Hello, Alice.");
+  await waitFor(() => expect(screen.getByRole("button", { name: "메시지 전송" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "메시지 전송" }));
+  await user.click(screen.getByRole("button", { name: other.title }));
+  test.state.threads = [thread, other];
+  await act(async () => { creation.resolve(response(thread, 201)); });
+  await waitFor(() => expect(postCalls(test.calls)).toHaveLength(1));
+  await user.type(screen.getByLabelText("메시지"), "Other conversation draft remains");
+  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  await user.click(screen.getByRole("button", { name: "Delete conversation" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  await act(async () => { admission.resolve(response({ code: "conflict" }, 409)); });
+  expect(screen.getByLabelText("메시지")).toHaveValue("Other conversation draft remains");
+  expect(sessionStorage.getItem("moosuri.chat-drafts.v1")).not.toContain("Private text from removed background conversation");
+  expect(screen.queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
+});
+
+it("canonical cancellation releases a lost HTTP receipt before the next explicit message", async () => {
+  const user = userEvent.setup();
+  const held = deferred<Response>();
+  const initial = turn({ state: "running", version: 1 });
+  const test = fixture({ turns: [initial], cursor: 1, action: () => held.promise });
+  open();
+  await ready(test.streams);
+  await user.type(screen.getByLabelText("메시지"), "Next after confirmed stop");
+  await user.click(screen.getByRole("button", { name: "응답 중지" }));
+  expect(screen.getByRole("button", { name: "메시지 전송" })).toBeDisabled();
+  await act(async () => {
+    test.emit({ sequence: 2, change: { kind: "state", run: { ...initial.run, state: "cancelled", version: 2, can_cancel: false } } });
+    await new Promise(resolve => setTimeout(resolve, 40));
+  });
+  expect(screen.getByRole("button", { name: "메시지 전송" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "메시지 전송" }));
+  expect(postCalls(test.calls)).toHaveLength(1);
+  expect(postCalls(test.calls)[0].body?.text).toBe("Next after confirmed stop");
+  const cancel = vi.fn();
+  await act(async () => { held.resolve(new Response(new ReadableStream({ cancel }))); });
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(postCalls(test.calls)).toHaveLength(1);
+  expect(test.calls.filter(call => call.path.endsWith("/cancel"))).toHaveLength(1);
+});
+
+it("authoritative thread absence releases its held DELETE without unlocking a newer deletion", async () => {
+  const user = userEvent.setup();
+  const first = deferred<Response>();
+  const second = deferred<Response>();
+  const other = { ...thread, id: "thread-b", title: "Other conversation" };
+  const test = fixture({ threads: [thread, other], extra: call => {
+    if (call.method === "DELETE") return call.path === `/threads/${thread.id}` ? first.promise : second.promise;
+  }});
+  open();
+  await ready(test.streams);
+  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  await user.click(screen.getByRole("button", { name: "Delete conversation" }));
+  const original = test.calls.find(call => call.method === "DELETE")!;
+  await act(async () => {
+    test.streams.at(-1)!.controller.enqueue(new TextEncoder().encode('event: closed\ndata: {"code":"not_found"}\n\n'));
+  });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: `Delete ${other.title}` })).toBeEnabled();
+  expect(original.init.signal?.aborted).toBe(true);
+  await user.click(screen.getByRole("button", { name: `Delete ${other.title}` }));
+  await user.click(screen.getByRole("button", { name: "Delete conversation" }));
+  expect(test.calls.filter(call => call.method === "DELETE")).toHaveLength(2);
+  const cancel = vi.fn();
+  await act(async () => { first.resolve(new Response(new ReadableStream({ cancel }))); });
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(screen.getByRole("dialog")).toHaveTextContent(other.title);
+  expect(screen.getByRole("button", { name: "Deleting…" })).toBeDisabled();
+  await act(async () => { second.resolve(response(null, 204)); });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(test.calls.filter(call => call.method === "DELETE")).toHaveLength(2);
 });

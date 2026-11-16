@@ -41,8 +41,11 @@ fresh route creates child search/read receipts0/1 in the same transaction as its
 result; arithmetic receipts follow them. The model cannot supply child addresses
 or substitute a remembered source amount. It rechecks current search uniqueness and identity/revision,
 compares the complete current document with the read result, and requires exactly
-one occurrence of the user's fresh prefix. After only ASCII space/tab following
-that prefix, it parses one whitespace-delimited plain signed decimal. The server
+one occurrence of the user's fresh field label. ASCII space/tab and one optional
+colon (`:` or `：`) or equals sign (`=`) may separate it from one
+whitespace-delimited plain signed decimal. A prefix already ending in a separator
+does not admit an additional separator. Newlines, repeated separators and words
+between the label and number are rejected. The server
 derives the literal value and its actual source byte range. Exponents, currency
 symbols, thousands separators, expressions and missing/ambiguous fields are not
 converted. The existing six-fractional-place, size and checked arithmetic bounds

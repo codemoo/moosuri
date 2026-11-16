@@ -779,6 +779,7 @@ function Workspace({
   const [drawer, setDrawer] = useState(false);
   const [deleting, setDeleting] = useState<ThreadSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const deletePending = useRef<{ id: string; controller: AbortController } | null>(null);
   const historyOpener = useRef<HTMLButtonElement>(null);
   const pageHeading = useRef<HTMLHeadingElement>(null);
   const [navigationFocus, setNavigationFocus] = useState(0);
@@ -937,33 +938,60 @@ function Workspace({
       return { ...current, drafts, pending };
     });
   }
-  function threadMissing(id: string) {
-    threadIds.current=threadIds.current.filter(current=>current!==id);
-    setThreads((current) => current.filter((thread) => thread.id !== id));
-    setSelected((current) => (current === id ? null : current));
+  function threadMissing(id: string, selectNext = false) {
+    const pending = deletePending.current;
+    if (pending?.id === id) {
+      deletePending.current = null;
+      setDeleteBusy(false);
+      pending.controller.abort();
+    }
+    // Fence an inventory snapshot started before this confirmed removal.
+    listController.current?.abort();
+    setLoading(false);
+    threadIds.current = threadIds.current.filter(current => current !== id);
+    setThreads(current => current.filter(thread => thread.id !== id));
+    setSelected(current => current === id ? selectNext ? threadIds.current[0] ?? null : null : current);
     removeMemory(id);
+    setDeleting(current => current?.id === id ? null : current);
   }
   async function removeThread() {
-    if (!deleting) return;
+    if (!deleting || deletePending.current) return;
+    const target = deleting;
+    const owner = { id: target.id, controller: new AbortController() };
+    deletePending.current = owner;
     setDeleteBusy(true);
     setError("");
-    try {
-      await scope.request(
-        `/threads/${encodeURIComponent(deleting.id)}`,
-        "DELETE",
-        {},
-      );
-      const remaining = threads.filter((t) => t.id !== deleting.id);
-      threadIds.current=remaining.map(t=>t.id);
-      setThreads(remaining);
-      if (selected === deleting.id) setSelected(remaining[0]?.id ?? null);
-      removeMemory(deleting.id);
-      setDeleting(null);
+    function confirmed() {
+      threadMissing(target.id, true);
       setNavigationFocus(value => value + 1);
-    } catch (e) {
-      fail(e);
+    }
+    try {
+      await scope.request(`/threads/${encodeURIComponent(target.id)}`, "DELETE", {}, owner.controller.signal, { timeoutMs: 30000 });
+      if (deletePending.current !== owner) return;
+      confirmed();
+    } catch (error) {
+      if (deletePending.current !== owner || isAborted(error)) return;
+      if (error instanceof ApiFailure && error.status === 401) { fail(error); return; }
+      if (error instanceof ApiFailure && error.status === 404) { confirmed(); return; }
+      // A missing DELETE receipt may already be committed. Check only inventory;
+      // never infer definite failure or replay the write automatically.
+      try {
+        const inventory = await scope.request<ThreadsResponse>("/threads", "GET", undefined, owner.controller.signal);
+        if (deletePending.current !== owner) return;
+        if (!inventory.threads.some(thread => thread.id === target.id)) confirmed();
+        else setError("삭제 접수를 확인하지 못했습니다. 대화는 목록에 남아 있습니다. 자동으로 다시 삭제하지 않습니다.");
+      } catch (reconcileError) {
+        if (!isAborted(reconcileError)) {
+          fail(reconcileError);
+          if (!(reconcileError instanceof ApiFailure && reconcileError.status === 401))
+            setError("삭제 결과와 대화 목록을 확인하지 못했습니다. 자동으로 다시 삭제하지 않습니다. 잠시 뒤 기록을 확인해 주세요.");
+        }
+      }
     } finally {
-      setDeleteBusy(false);
+      if (deletePending.current === owner) {
+        deletePending.current = null;
+        setDeleteBusy(false);
+      }
     }
   }
   const current = threads.find((t) => t.id === selected);
@@ -1028,6 +1056,7 @@ function Workspace({
               </button>
               <button
                 className="thread-delete"
+                disabled={deleteBusy}
                 aria-label={`Delete ${thread.title}`}
                 onClick={(event) => {
                   deleteOpener.current = event.currentTarget;
@@ -1302,13 +1331,14 @@ function Workspace({
             threadId={selected}
             memory={chatMemory}
             onDraft={(slot, text) =>
-              setChatMemory((current) => ({
+              setChatMemory((current) => slot !== "new" && !threadIds.current.includes(slot) ? current : ({
                 ...current,
                 drafts: { ...current.drafts, [slot]: text },
               }))
             }
             onPending={(slot, value, expected) =>
               setChatMemory((current) => {
+                if (value && slot !== "new" && !threadIds.current.includes(slot)) return current;
                 if (expected && current.pending[slot]?.request_id !== expected)
                   return current;
                 const pending = { ...current.pending };
@@ -1318,7 +1348,7 @@ function Workspace({
               })
             }
             onRestoreDraft={(slot, text) =>
-              setChatMemory((current) => ({
+              setChatMemory((current) => slot !== "new" && !threadIds.current.includes(slot) ? current : ({
                 ...current,
                 drafts: {
                   ...current.drafts,

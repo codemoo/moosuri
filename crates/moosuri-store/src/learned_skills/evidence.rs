@@ -319,7 +319,16 @@ fn resolve(
     }
     let after = found[0] + prefix.len();
     let tail = &source.text[after..];
-    let start = after + tail.len() - tail.trim_start_matches([' ', '\t']).len();
+    let mut value = tail.trim_start_matches([' ', '\t']);
+    // A user identifies the literal field label, not its serialization syntax.
+    // Permit one explicit label separator, never a newline, unit, expression,
+    // repeated separator or a semantic search for some later number.
+    if !prefix.ends_with([':', '：', '='])
+        && let Some(next) = value.strip_prefix([':', '：', '='])
+    {
+        value = next.trim_start_matches([' ', '\t']);
+    }
+    let start = after + tail.len() - value.len();
     let end = start
         + source.text[start..]
             .find(char::is_whitespace)

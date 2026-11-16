@@ -99,6 +99,10 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
         ]
         .iter()
         .any(|word| words.contains(word));
+    // Share exact generic follow-up routing with stored receipt inference;
+    // unknown wording, named tasks and selected targets keep their existing path.
+    let continuation_control = ["계속해", "이어"].iter().any(|verb| compact.contains(verb))
+        && !moosuri_core::ordinary_answer_continuation(text);
     let weekday_clock = [
         "monday",
         "tuesday",
@@ -168,6 +172,7 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
         || civil
         || weekday_clock
         || reactivation
+        || continuation_control
         || interval
         || elapsed
         || morning
@@ -199,7 +204,6 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
             "맡겨",
             "맡기",
             "맡길",
-            "계속해",
             "창 닫",
             "창을 닫",
             "중단",
@@ -207,7 +211,6 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
             "멈추",
             "쉬게",
             "재개",
-            "이어",
             "예약",
             "every ",
             "each ",

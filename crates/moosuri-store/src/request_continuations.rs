@@ -64,6 +64,9 @@ fn same_calendar(c: &Connection, old: &Run, r: &Run) -> Result<bool> {
     })
 }
 fn task_control_candidate(text: &str) -> bool {
+    if moosuri_core::ordinary_answer_continuation(text) {
+        return false;
+    }
     let low = text.to_lowercase();
     [
         "pause",

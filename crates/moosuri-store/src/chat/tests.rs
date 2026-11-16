@@ -178,7 +178,7 @@ async fn retry_cancel_delete_fence_text_but_keep_one_receipt_per_dispatch() {
         Err(StoreError::Conflict)
     ));
     let second = store.claim_run().await.unwrap().unwrap();
-    assert_eq!(second.messages.len(), 1);
+    assert_eq!(second.messages.len(), 2);
     store
         .cancel_run(&user, original.run.id.clone(), 2)
         .await
@@ -733,4 +733,96 @@ async fn schema_two_migrates_in_place_and_restricted_sessions_never_admit_text()
         })
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn original_message_reference_anchors_local_midnight_dst_fallback_and_retry() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let (user, _) = configured(&store).await;
+    for (utc, zone, expected) in [
+        (
+            "2026-11-15T15:30:00Z",
+            Some("Asia/Seoul"),
+            "local=2026-11-16T00:30:00+09:00 timezone=Asia/Seoul local_date=2026-11-16",
+        ),
+        (
+            "2026-11-01T05:30:00Z",
+            Some("America/New_York"),
+            "local=2026-11-01T01:30:00-04:00 timezone=America/New_York local_date=2026-11-01",
+        ),
+        (
+            "2026-11-01T06:30:00Z",
+            Some("America/New_York"),
+            "local=2026-11-01T01:30:00-05:00 timezone=America/New_York local_date=2026-11-01",
+        ),
+        (
+            "2026-11-15T23:30:00Z",
+            None,
+            "local=2026-11-15T23:30:00+00:00 timezone=UTC local_date=2026-11-15",
+        ),
+    ] {
+        let thread = store
+            .create_thread(&user, "Date reference".into())
+            .await
+            .unwrap();
+        let turn = store
+            .submit_turn_with_schedule_context(
+                &user,
+                thread.id,
+                Uuid::new_v4().to_string(),
+                "오늘 날짜를 알려줘".into(),
+                None,
+                zone.map(|timezone| moosuri_core::ScheduleChatContext {
+                    timezone: timezone.into(),
+                    target: None,
+                }),
+            )
+            .await
+            .unwrap();
+        let timestamp = chrono::DateTime::parse_from_rfc3339(utc)
+            .unwrap()
+            .timestamp();
+        let id = turn.run.id.clone();
+        store
+            .call(move |db| {
+                db.conn.execute(
+                    "UPDATE chat_runs SET created_at=?1 WHERE id=?2",
+                    params![timestamp, id],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let claim = store.claim_run().await.unwrap().unwrap();
+        let reference = &claim.messages[0];
+        assert!(reference.role == ContextRole::System);
+        assert!(
+            reference.text.contains(&format!("utc={utc}")),
+            "{}",
+            reference.text
+        );
+        assert!(reference.text.contains(expected), "{}", reference.text);
+        assert_eq!(
+            reference.text.contains("timezone_missing_UTC_fallback"),
+            zone.is_none()
+        );
+        assert!(claim.messages.last().unwrap().text == "오늘 날짜를 알려줘");
+        let anchor = reference.text.clone();
+        store
+            .finish_run(&claim.lease, RunState::Failed, None)
+            .await
+            .unwrap();
+        store.retry_run(&user, turn.run.id, 1).await.unwrap();
+        let retried = store.claim_run().await.unwrap().unwrap();
+        assert_eq!(
+            retried.messages[0].text, anchor,
+            "retry must preserve original date"
+        );
+        store
+            .finish_run(&retried.lease, RunState::Failed, None)
+            .await
+            .unwrap();
+    }
 }

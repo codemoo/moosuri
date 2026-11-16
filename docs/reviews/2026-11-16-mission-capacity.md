@@ -43,6 +43,19 @@ waits and explicit resume; connection/device promotion retains separate existing
 coverage and the same shared runnable predicate. This is consolidation with
 behavior preserved, not a newly reproduced production defect.
 
-Baseline, native execution, independent review and exact-public-source Linux
-acceptance are recorded below when complete. No live model, real provider/device
-operation or production deployment is included. CI remains off.
+No live model, real provider/device operation or production deployment is included.
+CI remains off.
+
+## Public-source Linux acceptance
+
+Implementation `6a77c35c484b3066335fc8ba7eca6e73b5d31740` was published and the canonical checkout
+fast-forwarded cleanly. All four grouped Linux phases passed: 18 focused Store
+checks with the credential-broker feature enabled, scoped all-target Clippy,
+product CLI/evaluator builds and the full 15-world/62-control synthetic evaluator.
+The evaluator source digest matches the native run. These repeated contracts are
+not independent model quality or performance samples.
+
+The pinned Rust 1.89 container used read-only source/root, disabled network and no
+production mounts. Source hashes remained unchanged. Source archive SHA-256:
+`4f446ef763e5c6754ac04b6fe5b92ae0e49597712f4d02e546c79c49e0960d7a`.
+Format, plan/link, strict OpenSpec and source/new-commit secret checks passed.

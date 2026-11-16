@@ -944,3 +944,6 @@ async fn mission_final_candidate_survives_local_plan_save_and_reopen_without_inf
 
 #[path = "missions/terminal.rs"]
 mod terminal;
+
+#[path = "missions/rounds.rs"]
+mod rounds;

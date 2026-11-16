@@ -69,11 +69,23 @@ async fn response(State(s): State<Arc<Script>>, axum::Json(input): axum::Json<Va
         assert!(!input.to_string().contains("INJECTED SOURCE INSTRUCTION"));
         let text = input["messages"][1]["content"].as_str().unwrap();
         let edit = text.contains("수정");
-        vec![call(
-            0,
-            "artifact_intent",
-            json!({"decision":"command","action":if edit{"edit"}else{"create"},"kind":"document","intent_quote":text,"target_quote":null}),
-        )]
+        let mut decision = json!({"decision":"command","action":if edit{"edit"}else{"create"},"kind":"document","intent_quote":text,"target_quote":null});
+        match mode {
+            5 => {
+                decision.as_object_mut().unwrap().remove("target_quote");
+            }
+            6 => {
+                decision["decision"] = json!("no_command");
+            }
+            7 => {
+                decision["decision"] = json!("please clarify the document");
+            }
+            8 => {
+                decision["action"] = json!("rename");
+            }
+            _ => (),
+        }
+        vec![call(0, "artifact_intent", decision)]
     } else if mode == 4 {
         let names = input["tools"]
             .as_array()
@@ -293,7 +305,7 @@ async fn grounded_report_then_pinned_revision_is_saved_and_confirmed_from_real_r
             &u,
             t.clone(),
             uuid::Uuid::new_v4().to_string(),
-            "두 견적을 비교하고 보고서로 저장해 줘".into(),
+            "견적 자료를 문서로 저장해 줘".into(),
         )
         .await
         .unwrap();
@@ -383,7 +395,7 @@ async fn untrusted_source_cannot_add_write_tool_and_withdrawal_blocks_held_repor
         let text = if mode == 1 {
             "견적 자료를 찾아 설명해 줘"
         } else {
-            "두 견적을 비교하고 보고서로 저장해 줘"
+            "견적 자료를 문서로 저장해 줘"
         };
         store
             .submit_turn(&u, t.clone(), uuid::Uuid::new_v4().to_string(), text.into())
@@ -570,7 +582,7 @@ async fn runtime_external_read_to_durable_report_uses_actual_receipt_and_termina
             &u,
             t.clone(),
             uuid::Uuid::new_v4().to_string(),
-            "공개 자료를 읽고 보고서 문서로 저장해 줘".into(),
+            "https://example.test/report 공개 자료를 문서로 저장해 줘".into(),
         )
         .await
         .unwrap();
@@ -602,4 +614,42 @@ async fn runtime_external_read_to_durable_report_uses_actual_receipt_and_termina
         1
     );
     assert!(store.claim_agent_run().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn malformed_artifact_intent_never_reaches_store_write_or_another_model_round() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    for mode in 5..=8 {
+        let server = server().await;
+        server.state.mode.store(mode, Ordering::SeqCst);
+        let (_dir, store, user, thread) = setup(&server.base).await;
+        let runtime = Runtime::start(store.clone());
+        store
+            .submit_turn(
+                &user,
+                thread.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                "문서로 합성 보고서를 저장해 줘".into(),
+            )
+            .await
+            .unwrap();
+        runtime.wake();
+        let turn = wait(&store, &user, &thread).await;
+        assert_eq!(turn.run.state, RunState::Failed, "mode {mode}");
+        assert!(turn.run.artifact_receipts.is_none());
+        assert!(
+            store
+                .artifacts(&user, None, None)
+                .await
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        assert_eq!(server.state.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            store.usage_summary(&user).await.unwrap().dispatched_calls,
+            1
+        );
+        runtime.shutdown().await;
+    }
 }

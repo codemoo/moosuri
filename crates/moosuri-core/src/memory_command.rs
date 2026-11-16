@@ -10,6 +10,42 @@ pub enum MemoryCommandAction {
     Forget,
 }
 
+/// Closed classifier tags shared by current-user memory and artifact planners.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntentDecision {
+    NoCommand,
+    Clarify,
+    Command,
+}
+impl IntentDecision {
+    pub const ALL: [Self; 3] = [Self::NoCommand, Self::Clarify, Self::Command];
+}
+impl MemoryCommandAction {
+    pub const ALL: [Self; 3] = [Self::Remember, Self::Correct, Self::Forget];
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryIntentClarification {
+    Ambiguous,
+    Temporal,
+    Unsupported,
+}
+impl MemoryIntentClarification {
+    pub const ALL: [Self; 3] = [Self::Ambiguous, Self::Temporal, Self::Unsupported];
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Ambiguous => {
+                "어떤 내용을 기억하거나, 어느 기억을 수정·삭제할지 구체적으로 말씀해 주세요."
+            }
+            Self::Temporal => MEMORY_TEMPORAL_GUIDANCE,
+            Self::Unsupported => {
+                "이번 기능은 한 가지 사실의 기억·정정·망각을 지원해요. 변경할 내용을 하나씩 구체적으로 말씀해 주세요."
+            }
+        }
+    }
+}
+
 // Literal private user text must never be formatted by diagnostic Debug output.
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]

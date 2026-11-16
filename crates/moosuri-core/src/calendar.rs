@@ -139,7 +139,44 @@ pub enum CalendarReadRequest {
     Read { observation_ref: String },
     Status { action_id: String },
 }
-/// One isolated current-message proposal. Nullable fields must stay absent for noncommands.
+/// Shared current-model vocabulary. Stored DTO decoding stays backward compatible.
+pub const CALENDAR_CHAT_DECISIONS: &[&str] = &["command", "clarify", "unsupported"];
+pub const CALENDAR_CHAT_OPERATIONS: &[&str] = &["create", "update", "delete"];
+pub const CALENDAR_CHAT_CLARIFICATIONS: &[&str] = &[
+    "time",
+    "date",
+    "duration",
+    "target",
+    "account",
+    "ambiguous",
+    "unsupported",
+];
+pub const CALENDAR_CHAT_FIELDS: &[&str] = &[
+    "domain",
+    "decision",
+    "operation",
+    "connection_quote",
+    "intent_quote",
+    "title_quote",
+    "target_quote",
+    "date_quote",
+    "date",
+    "move_date_quote",
+    "move_date",
+    "all_day_quote",
+    "last_date_quote",
+    "last_date",
+    "start_quote",
+    "start",
+    "end_quote",
+    "end",
+    "duration_quote",
+    "duration_minutes",
+    "clarification",
+];
+
+/// One isolated current-message proposal. Current-model keys are explicit;
+/// nullable values retain decision/partial-draft semantics and legacy decoding.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarChatDecision {
@@ -171,6 +208,23 @@ pub struct CalendarChatDecision {
     pub duration_quote: Option<String>,
     pub duration_minutes: Option<u32>,
     pub clarification: Option<String>,
+}
+impl CalendarChatDecision {
+    /// New proposals must use machine codes. This does not validate authority,
+    /// quotes or civil values and is not applied to already stored replay data.
+    pub fn known_model_codes(&self) -> bool {
+        self.domain == "calendar"
+            && CALENDAR_CHAT_DECISIONS.contains(&self.decision.as_str())
+            && (self.decision != "clarify" || self.clarification.is_some())
+            && self
+                .operation
+                .as_deref()
+                .is_none_or(|v| CALENDAR_CHAT_OPERATIONS.contains(&v))
+            && self
+                .clarification
+                .as_deref()
+                .is_none_or(|v| CALENDAR_CHAT_CLARIFICATIONS.contains(&v))
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(untagged)]

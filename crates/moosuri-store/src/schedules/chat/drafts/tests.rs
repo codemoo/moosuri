@@ -91,6 +91,140 @@ async fn thread(s: &Store, u: &UserContext) -> String {
 fn receipt(t: &ChatTurn) -> &ScheduleChatReceipt {
     &t.run.schedule_receipts.as_ref().unwrap()[0]
 }
+#[test]
+fn literal_activity_labels_and_cancel_replies_reject_new_commands() {
+    for label in [
+        "우산 챙기기",
+        "반품 접수하기",
+        "충전기 챙기기",
+        "약 타오기",
+        "택배 찾기",
+        "산책 가기",
+        "라면 끓이기",
+        "물 2병 챙기기",
+    ] {
+        assert_eq!(body_answer(label).as_deref(), Some(label));
+    }
+    for cancel in [
+        "취소해 줘.",
+        "취소해 주세요",
+        "됐어, 취소해 줘.",
+        "아니야, 취소",
+        "괜찮아",
+        "cancel reminder!",
+    ] {
+        assert!(cancelled(cancel), "{cancel}");
+    }
+    for text in [
+        "취소하지 마",
+        "취소해 줘?",
+        "만약 비가 오면 취소해 줘",
+        "‘취소해 줘’",
+        "물 알림 취소해 줘",
+        "cancel all reminders",
+        "아니요, 기존 알림 삭제해 줘",
+    ] {
+        assert!(!cancelled(text), "{text}");
+    }
+    for text in [
+        "내일 우산 챙기기",
+        "우산은 내일 오후 8시에 챙기기",
+        "약 8시에 먹기",
+        "서류 2027-03-02에 챙기기",
+        "그 알림을 취소해 줘",
+        "문서 읽고 요약해 줘",
+        "번역해 줘 우산 챙기기",
+        "만약 비가 오면 우산 챙기기",
+        "비 오면 우산 챙기기",
+        "\"우산 챙기기\"",
+        "산책 가기?",
+    ] {
+        assert!(body_answer(text).is_none(), "{text}");
+    }
+    assert_eq!(
+        body_answer("내용: 내일 우산 챙기기").as_deref(),
+        Some("내일 우산 챙기기")
+    );
+}
+
+#[tokio::test]
+async fn household_draft_reply_reopen_and_cancel_preserve_saved_reminders_without_inference() {
+    let _serial = TEST_LOCK.lock().await;
+    let dir = directory();
+    let s = Store::open(dir.path()).unwrap();
+    let u = configured(&s).await;
+    at(&s, BASE).await;
+    let t = thread(&s, &u).await;
+    let question = turn(&s, &u, &t, "내일 오전 7시에 알려줘.").await;
+    assert!(question.run.schedule_receipts.is_none());
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    at(&s, BASE + 120).await;
+    let id = Uuid::new_v4().to_string();
+    let done = send(&s, &u, &t, &id, "우산 챙기기", "America/New_York")
+        .await
+        .unwrap();
+    assert_eq!(done.run.state, RunState::Completed);
+    let saved = s.schedules(&u).await.unwrap().remove(0);
+    assert_eq!(saved.id, receipt(&done).id);
+    assert_eq!(saved.message, "우산 챙기기");
+    assert_eq!(
+        saved.rule,
+        parser::rule("내일 오전 7시", Some("Asia/Seoul"), BASE)
+            .unwrap()
+            .0
+    );
+    let replay = send(&s, &u, &t, &id, "우산 챙기기", "America/New_York")
+        .await
+        .unwrap();
+    assert_eq!(replay.run.id, done.run.id);
+    let pending = thread(&s, &u).await;
+    turn(&s, &u, &pending, "내일 오전 8시에 알려줘.").await;
+    let request = Uuid::new_v4().to_string();
+    let cancel = send(&s, &u, &pending, &request, "됐어, 취소해 줘.", "Asia/Seoul")
+        .await
+        .unwrap();
+    assert_eq!(cancel.run.state, RunState::Completed);
+    assert!(cancel.run.schedule_receipts.is_none());
+    assert!(
+        cancel
+            .assistant
+            .iter()
+            .any(|m| m.text.contains("초안을 취소"))
+    );
+    let replay = send(&s, &u, &pending, &request, "됐어, 취소해 줘.", "Asia/Seoul")
+        .await
+        .unwrap();
+    assert_eq!(replay.run.id, cancel.run.id);
+    let conflicting = thread(&s, &u).await;
+    turn(&s, &u, &conflicting, "내일 오전 7시에 알려줘.").await;
+    ignored(&s, &u, &conflicting, "우산은 내일 오후 8시에 챙기기").await;
+    s.call(|db| {
+        assert_eq!(
+            db.conn.query_row(
+                "SELECT count(*) FROM schedule_chat_drafts WHERE pending=1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?,
+            0
+        );
+        assert_eq!(
+            db.conn
+                .query_row("SELECT count(*) FROM model_call_receipts", [], |r| r
+                    .get::<_, i64>(0))?,
+            0
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(s.schedules(&u).await.unwrap()).unwrap(),
+        serde_json::to_value(vec![saved]).unwrap()
+    );
+    assert!(s.claim_agent_run().await.unwrap().is_none());
+    assert!(s.claim_run().await.unwrap().is_none());
+}
 #[tokio::test]
 async fn reminder_followup_reopen_exact_retry_anchors_answer_time_and_preserves_source_zone() {
     let _serial = TEST_LOCK.lock().await;

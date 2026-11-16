@@ -1,6 +1,8 @@
 //! Shared stage accounting and HTTP continuity drivers. No oracle imports.
 use super::*;
 use crate::everyday as fixture;
+use std::collections::BTreeSet;
+type ToolSlots = BTreeSet<(String, i64, String)>;
 
 #[derive(Clone, Serialize)]
 pub struct Stage {
@@ -13,10 +15,19 @@ pub struct Stage {
     pub elapsed_ms: Option<u64>,
     pub postconditions: Vec<(String, bool)>,
     #[serde(skip)]
-    active: Option<(usize, usize, Instant)>,
+    active: Option<(usize, ToolSlots, Instant)>,
 }
 pub fn plan(kind: Kind) -> Vec<Stage> {
     let stages: &[(&str, usize, usize)] = match kind {
+        Kind::FollowupMonitor => &[
+            ("read_status_and_propose", 2, 1),
+            ("accept_and_exact_replay", 0, 0),
+            ("unchanged_no_inference", 0, 0),
+            ("changed_source_one_child", 2, 1),
+            ("unchanged_no_duplicate", 0, 0),
+            ("owner_stop_and_replay", 0, 0),
+            ("stopped_reopen", 0, 0),
+        ],
         Kind::EverydayGuidance => &[
             ("read_and_calculate", 4, 3),
             ("instruction_ack_and_exact_replay", 0, 0),
@@ -53,10 +64,10 @@ pub fn plan(kind: Kind) -> Vec<Stage> {
         })
         .collect()
 }
-struct Mark {
+pub(super) struct Mark {
     index: usize,
     model: usize,
-    tools: usize,
+    tools: ToolSlots,
     at: Instant,
 }
 impl World {
@@ -67,28 +78,30 @@ impl World {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         let model = self.provider.ledger().len();
-        let tools = self.tool_count().ok();
+        let tools = self.tool_slots().ok();
         for stage in &mut stages {
-            if let Some((start_model, start_tools, start)) = stage.active {
-                stage.model_calls = model.checked_sub(start_model);
-                stage.tool_calls = tools.and_then(|n| n.checked_sub(start_tools));
-                stage.elapsed_ms = Some(ms(start));
+            if let Some((start_model, start_tools, start)) = &stage.active {
+                stage.model_calls = model.checked_sub(*start_model);
+                stage.tool_calls = tools
+                    .as_ref()
+                    .map(|now| now.difference(start_tools).count());
+                stage.elapsed_ms = Some(ms(*start));
             }
         }
         stages
     }
-    fn tool_count(&self) -> EvalResult<usize> {
-        observe::open(self.dir.path())?
-            .query_row("SELECT count(*) FROM agent_tool_slots", [], |r| {
-                r.get::<_, i64>(0)
-            })
-            .map_err(|_| "stage_tool_count")?
-            .try_into()
-            .map_err(|_| "stage_tool_count")
+    fn tool_slots(&self) -> EvalResult<ToolSlots> {
+        let conn = observe::open(self.dir.path())?;
+        conn.prepare("SELECT run_id,step,call_id FROM agent_tool_slots")
+            .map_err(|_| "stage_tool_slots")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|_| "stage_tool_slots")?
+            .collect::<Result<ToolSlots, _>>()
+            .map_err(|_| "stage_tool_slots")
     }
-    fn begin_stage(&self, name: &str) -> EvalResult<Mark> {
+    pub(super) fn begin_stage(&self, name: &str) -> EvalResult<Mark> {
         let model = self.provider.ledger().len();
-        let tools = self.tool_count()?;
+        let tools = self.tool_slots()?;
         let mut stages = self.stages.lock().unwrap_or_else(|e| e.into_inner());
         let index = stages
             .iter()
@@ -97,7 +110,7 @@ impl World {
         // If execution errors before finish, this remains failed, and subsequent
         // planned stages remain not_run. No successful denominator shrinkage.
         stages[index].status = "fail";
-        stages[index].active = Some((model, tools, Instant::now()));
+        stages[index].active = Some((model, tools.clone(), Instant::now()));
         Ok(Mark {
             index,
             model,
@@ -105,17 +118,17 @@ impl World {
             at: Instant::now(),
         })
     }
-    fn end_stage(&self, mark: Mark, checks: &[(&str, bool)]) -> EvalResult<()> {
+    pub(super) fn end_stage(&self, mark: Mark, checks: &[(&str, bool)]) -> EvalResult<()> {
         let model = self
             .provider
             .ledger()
             .len()
             .checked_sub(mark.model)
             .ok_or("stage_model_counter")?;
-        let tools = self
-            .tool_count()?
-            .checked_sub(mark.tools)
-            .ok_or("stage_tool_counter")?;
+        // Rows may be withdrawn while a new source revision is ingested.
+        // Count newly observed identities rather than subtracting total row
+        // counts, which would hide a child's real tool when parent rows vanish.
+        let tools = self.tool_slots()?.difference(&mark.tools).count();
         let mut stages = self.stages.lock().unwrap_or_else(|e| e.into_inner());
         let stage = &mut stages[mark.index];
         stage.active = None;
@@ -149,7 +162,7 @@ impl World {
         .await
         .map_err(|_| "everyday_dispatch_timeout")
     }
-    async fn mission_view(&self, id: &str) -> EvalResult<Value> {
+    pub(super) async fn mission_view(&self, id: &str) -> EvalResult<Value> {
         self.checked("GET", "/api/v1/missions", Value::Null, 200)
             .await?
             .as_array()
@@ -157,7 +170,7 @@ impl World {
             .cloned()
             .ok_or("everyday_mission_view")
     }
-    async fn mission_settled(&self, id: &str) -> EvalResult<Value> {
+    pub(super) async fn mission_settled(&self, id: &str) -> EvalResult<Value> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
         loop {
             let m = self.mission_view(id).await?;
@@ -173,7 +186,7 @@ impl World {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
-    fn mission_snapshot(&self, id: &str) -> EvalResult<Observation> {
+    pub(super) fn mission_snapshot(&self, id: &str) -> EvalResult<Observation> {
         let run: String = observe::open(self.dir.path())?
             .query_row("SELECT run_id FROM missions WHERE id=?1", [id], |r| {
                 r.get(0)

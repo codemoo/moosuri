@@ -8,6 +8,9 @@ pub enum ArtifactKind {
     Goal,
     Followup,
 }
+impl ArtifactKind {
+    pub const ALL: [Self; 3] = [Self::Document, Self::Goal, Self::Followup];
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactStatus {
@@ -206,6 +209,11 @@ pub struct ArtifactRunProfile {
     pub write: bool,
     pub kind: Option<ArtifactKind>,
 }
+/// Shared classifier schema and Store admission action vocabulary.
+pub const ARTIFACT_INTENT_ACTIONS: &[&str] = &["create", "edit"];
+pub const ARTIFACT_INTENT_FIELDS: &[&str] =
+    &["decision", "action", "kind", "intent_quote", "target_quote"];
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactIntent {

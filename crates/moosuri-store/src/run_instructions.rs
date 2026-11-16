@@ -234,6 +234,23 @@ impl Store {
             tx.commit()?;Ok(result)
         }).await
     }
+    /// Whether this exact step still owns unapplied current-attempt guidance.
+    pub async fn step_has_run_instructions(&self, lease: &StepLease) -> Result<bool> {
+        let lease = lease.clone();
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let run = match crate::agent_execution::guard_step(&tx, &db.provider_key, &lease) {
+                Ok(run) => run,
+                Err(error) => { tx.commit()?; return Err(error); }
+            };
+            let received = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM run_instructions WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3 AND dispatch_step=?4 AND state='received')",
+                params![run.tenant, run.id, run.attempt, lease.step()], |row| row.get(0),
+            )?;
+            tx.commit()?;
+            Ok(received)
+        }).await
+    }
     pub async fn apply_step_instructions(&self, lease: &StepLease) -> Result<()> {
         let lease = lease.clone();
         self.call(move|db| {

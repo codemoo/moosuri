@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 mod everyday;
+mod followup;
 mod outcomes;
 pub use everyday::{Stage, plan as stage_plan};
 
@@ -521,6 +522,7 @@ impl World {
             outcome: Value::Null,
         };
         match case.kind {
+            Kind::FollowupMonitor => self.execute_followup(&mut out).await?,
             Kind::EverydayGuidance | Kind::EverydayClarification | Kind::EverydayReminder => {
                 self.execute_everyday(case.kind, &mut out).await?;
             }

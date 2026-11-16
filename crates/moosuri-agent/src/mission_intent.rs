@@ -338,8 +338,7 @@ pub(super) fn parse(round: &ToolRound) -> Option<CurrentChatDecision> {
         return None;
     }
     if round.calls[0].name() == "calendar_chat_decision" {
-        return serde_json::from_str(round.calls[0].arguments())
-            .ok()
+        return crate::calendar_intent::parse(round.calls[0].arguments())
             .map(CurrentChatDecision::Calendar);
     }
     let mut raw: serde_json::Value = serde_json::from_str(round.calls[0].arguments()).ok()?;

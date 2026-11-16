@@ -1,6 +1,7 @@
 //! Counted typed IO + actual durable chat ledger. No live model/Google calls.
 use super::*;
 use moosuri_store::{CredentialChange, PrivateCheckpoint, ProviderChange, RunLease};
+use serde_json::{Value, json};
 async fn configure(s: &Store, u: &UserContext) {
     configure_at(s, u, "http://127.0.0.1:11434/v1").await;
 }
@@ -884,7 +885,7 @@ async fn runtime_artifact_no_command_then_calendar_uses_second_completed_classif
         .create_thread(&u, "Synthetic planner composition".into())
         .await
         .unwrap();
-    let text = format!("저장된 문서를 읽기 전에 {TEXT}");
+    let text = format!("문서 저장 기능과 별개로 {TEXT}");
     service
         .store
         .submit_turn_with_schedule_context(
@@ -951,4 +952,158 @@ async fn runtime_artifact_no_command_then_calendar_uses_second_completed_classif
             .is_empty()
     );
     upstream.abort();
+}
+
+#[tokio::test]
+async fn calendar_model_reason_contract_keeps_the_same_pending_action_until_duration_is_supplied() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let (_dir, service, user, _connection, io) = fixture().await;
+    let store = &service.store;
+    configure(store, &user).await;
+    let initial = "Create Synthetic meeting on 2026-12-01 from 10:00";
+    let thread = store
+        .create_thread(&user, "Synthetic intent contract".into())
+        .await
+        .unwrap()
+        .id;
+    store
+        .submit_turn_with_schedule_context(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            initial.into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    let step = store
+        .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    let mut partial = decision(initial);
+    partial.decision = "clarify".into();
+    partial.end = None;
+    partial.end_quote = None;
+    partial.clarification = Some("duration".into());
+    let raw = serde_json::to_value(&partial).unwrap();
+    let checkpoint = |decision: Value| PrivateCheckpoint {
+        bytes: json!({"kind":"mission_chat_decision","decision":decision})
+            .to_string()
+            .into_bytes(),
+    };
+    // These were schema-valid strings but could never become an answerable
+    // continuation. Both the current-model parser and Store must reject them.
+    for reason in ["When should it end?", "duration ", ""] {
+        let mut bad = raw.clone();
+        bad["clarification"] = json!(reason);
+        assert!(crate::calendar_intent::parse(&bad.to_string()).is_none());
+        assert!(matches!(
+            store
+                .commit_agent_step(&step, checkpoint(bad), vec![])
+                .await,
+            Err(StoreError::InvalidInput)
+        ));
+    }
+    let mut missing_reason = raw.clone();
+    missing_reason["clarification"] = Value::Null;
+    assert!(crate::calendar_intent::parse(&missing_reason.to_string()).is_none());
+    assert!(matches!(
+        store
+            .commit_agent_step(&step, checkpoint(missing_reason), vec![])
+            .await,
+        Err(StoreError::InvalidInput)
+    ));
+    for key in moosuri_core::CALENDAR_CHAT_FIELDS {
+        let mut bad = raw.clone();
+        bad.as_object_mut().unwrap().remove(*key);
+        assert!(
+            crate::calendar_intent::parse(&bad.to_string()).is_none(),
+            "missing {key}"
+        );
+        assert!(
+            matches!(
+                store
+                    .commit_agent_step(&step, checkpoint(bad), vec![])
+                    .await,
+                Err(StoreError::InvalidInput)
+            ),
+            "missing {key}"
+        );
+    }
+    assert!(store.calendar_actions(&user).await.unwrap().is_empty());
+    let parsed = crate::calendar_intent::parse(&raw.to_string()).unwrap();
+    store
+        .commit_agent_step(
+            &step,
+            checkpoint(serde_json::to_value(parsed).unwrap()),
+            vec![],
+        )
+        .await
+        .unwrap();
+    store
+        .finish_calendar_chat(&claim.lease, Some("clarify".into()))
+        .await
+        .unwrap();
+    assert_eq!(io.write_count(), 0);
+
+    let answer = "45 minutes";
+    store
+        .submit_turn_with_schedule_context(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            answer.into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    let planning = store
+        .mission_chat_planning(&claim.lease)
+        .await
+        .unwrap()
+        .unwrap();
+    let continuation = planning.continuation.unwrap();
+    assert_eq!(continuation.initiating_request, initial);
+    assert_eq!(continuation.answers, [answer]);
+    assert_eq!(continuation.missing_field, "duration");
+    let CurrentChatDecision::Calendar(draft) = continuation.draft else {
+        panic!("same Calendar draft required")
+    };
+    assert_eq!(draft.intent_quote, partial.intent_quote);
+    assert_eq!(draft.start, partial.start);
+    assert_eq!(draft.title_quote, partial.title_quote);
+    let mut complete = partial;
+    complete.decision = "command".into();
+    complete.clarification = None;
+    complete.duration_quote = Some(answer.into());
+    complete.duration_minutes = Some(45);
+    let parsed = crate::calendar_intent::parse(&serde_json::to_string(&complete).unwrap()).unwrap();
+    let step = store
+        .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    store
+        .commit_agent_step(
+            &step,
+            checkpoint(serde_json::to_value(parsed).unwrap()),
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert!(service.chat(&claim.lease).await.unwrap());
+    assert_eq!(io.write_count(), 1);
+    let actions = store.calendar_actions(&user).await.unwrap();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].state, "applied");
+    assert!(store.mail_actions(&user).await.unwrap().is_empty());
 }

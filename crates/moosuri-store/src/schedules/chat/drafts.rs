@@ -1,6 +1,8 @@
 //! Only the immediately preceding explicit creation draft can consume a literal answer.
 use super::*;
 use parser::{Action, Decision, Parsed};
+mod replies;
+use replies::{body_answer, cancelled};
 const EXHAUSTED: &str = "답변 횟수가 끝나 초안을 닫았습니다. 새 요청에 시간과 알림 내용을 함께 적어 주세요. 저장한 알림은 없습니다.";
 const WHEN: &str = "언제 알려드릴까요? 다음 답변에 ‘내일 오전 9시’ 또는 ‘in 10 minutes’처럼 시간을 적어 주세요. 취소하려면 ‘취소’라고 하세요.";
 const BODY: &str = "어떤 문구로 알려드릴까요? ‘물 마시기’, ‘stretch’처럼 짧은 문구를 적거나 ‘내용: ...’로 정확한 알림 내용을 알려주세요. 취소하려면 ‘취소’라고 하세요.";
@@ -44,20 +46,6 @@ fn prompt(d: &Draft) -> Decision {
     } else {
         WHEN
     })
-}
-fn cancelled(s: &str) -> bool {
-    matches!(
-        s.to_ascii_lowercase().as_str(),
-        "취소"
-            | "취소해줘"
-            | "그만"
-            | "아니요"
-            | "cancel"
-            | "cancel reminder"
-            | "never mind"
-            | "nevermind"
-            | "stop"
-    )
 }
 fn time_candidate(s: &str) -> bool {
     let s = s.to_ascii_lowercase();
@@ -211,78 +199,6 @@ fn initial(text: &str, timezone: Option<&str>, now: i64) -> Option<Draft> {
         return None;
     }
     Some(d)
-}
-/// Bare answers have a small literal phrase grammar. Longer/general text requires
-/// an explicit content label; new commands/questions/meta prose cannot become an old payload.
-fn body_answer(text: &str) -> Option<String> {
-    let text = text.trim();
-    if let Some(body) = text
-        .strip_prefix("내용: ")
-        .or_else(|| text.strip_prefix("내용은 "))
-        .or_else(|| text.strip_prefix("message: "))
-        .or_else(|| text.strip_prefix("text: "))
-    {
-        return parser::message(body);
-    }
-    let lower = text.to_ascii_lowercase();
-    if [
-        "translate",
-        "summarize",
-        "explain",
-        "quote",
-        "example",
-        "retrieved",
-        "document",
-        "email says",
-        "번역",
-        "요약",
-        "설명",
-        "인용",
-        "예시",
-        "문서",
-        "메일",
-        "검색",
-        "조사",
-        "보내",
-        "발송",
-    ]
-    .iter()
-    .any(|frame| lower.starts_with(frame))
-    {
-        return None;
-    }
-    if text.len() > 160
-        || text
-            .chars()
-            .any(|c| matches!(c, '?' | '\n' | '\r' | '"' | '\'' | '`' | ';' | ':' | '!'))
-    {
-        return None;
-    }
-    let en = matches!(
-        lower.as_str(),
-        "stretch" | "drink water" | "take medicine" | "walk" | "water plants"
-    ) || ["review ", "finish ", "practice "].iter().any(|p| {
-        lower.strip_prefix(p).is_some_and(|v| {
-            !v.is_empty()
-                && v.split_whitespace().count() <= 6
-                && v.chars()
-                    .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-'))
-        })
-    });
-    let ko = [
-        "마시기",
-        "먹기",
-        "스트레칭",
-        "확인하기",
-        "연습하기",
-        "물 주기",
-    ]
-    .iter()
-    .any(|v| text.ends_with(v))
-        && !text.contains(['.', '?'])
-        && text.split_whitespace().count() <= 6
-        && !text.contains("알려");
-    (en || ko).then(|| text.to_owned())
 }
 fn answer_time(d: &Draft, text: &str, now: i64) -> Option<ScheduleRule> {
     let text = text.trim().trim_end_matches(['.', '!']);

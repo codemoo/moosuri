@@ -39,7 +39,9 @@ An independently recognized complete reminder command uses its own current field
 and takes precedence; an incomplete new explicit creation starts a fresh draft.
 A selected artifact/mission/reminder target cannot fill the old creation draft.
 Exact cancellation replies `취소`, `취소해줘`, `그만`, `아니요`, `cancel`,
-`cancel reminder`, `never mind`, `nevermind`, or `stop` discard it. With an eligible
+`cancel reminder`, `never mind`, `nevermind`, or `stop` discard it. Korean
+spacing/polite forms such as `취소해 주세요` and complete short replies such as
+`됐어, 취소해 줘` also close only the pending draft without inference. With an eligible
 draft, cancellation (also with a final period/exclamation mark) closes that draft
 before existing saved-reminder deletion is considered; saved reminders stay intact. Questions,
 translation/meta wrappers and new unrelated requests are not silently treated as
@@ -83,7 +85,9 @@ control-character policy). Literal payload is saved and never executed, includin
 quoted/meta/negative words inside that explicit content. A small bare-answer
 language supports `stretch`, `drink water`, `take medicine`, `walk`, `water plants`,
 short `review …`, `finish …`, `practice …` phrases, or short Korean phrases ending
-in 마시기/먹기/스트레칭/확인하기/연습하기/물 주기. Bare answers are capped at160bytes
+in the nominal 기 form (e.g. 우산 챙기기, 반품 접수하기, 약 타오기), or 스트레칭.
+These contain at most six alphanumeric words, spaces or hyphens; time phrases,
+new command clauses and conditionals still do not fill a literal activity. Bare answers are capped at160bytes
 and bounded word count and exclude question/quote/command punctuation. Outer
 translation, summary, explanation, quotation, source, search and send prefixes
 are excluded before the bare suffix grammar; explicitly labelled content stays
@@ -106,7 +110,7 @@ semantics remain unchanged.
 
 Focused actual Store checks cover reopen plus exact retry and clock/zone freezing;
 missing content and partial AM/PM/day preservation; cancellation/unrelated/new
-command, session/thread/owner/TTL and restore fences; schema50→51 roundtrip,
+command, session/thread/owner/TTL and restore fences; the shared SQL-prefix migration sweep,
 transaction rollback at question and final receipt, and deletion/FK integrity.
 The existing current/inherited image integration is extended to incomplete requests
 and their time answers. Evidence is recorded in the

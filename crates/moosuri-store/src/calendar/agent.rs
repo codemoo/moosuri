@@ -276,7 +276,7 @@ fn exact(text: &str, q: &Option<String>, max: usize, required: bool) -> Result<(
 }
 pub(crate) fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<()> {
     if d.domain != "calendar"
-        || !matches!(d.decision.as_str(), "command" | "clarify" | "unsupported")
+        || !CALENDAR_CHAT_DECISIONS.contains(&d.decision.as_str())
         || json(d)?.len() > 16384
     {
         return Err(StoreError::InvalidInput);
@@ -319,7 +319,10 @@ pub(crate) fn validate_decision(text: &str, d: &CalendarChatDecision) -> Result<
         }
         return Ok(());
     }
-    if !matches!(d.operation.as_deref(), Some("create" | "update" | "delete"))
+    if !d
+        .operation
+        .as_deref()
+        .is_some_and(|v| CALENDAR_CHAT_OPERATIONS.contains(&v))
         || d.decision == "command" && d.clarification.is_some()
     {
         return Err(StoreError::InvalidInput);
@@ -808,8 +811,21 @@ pub(crate) fn record(
     source_step: i64,
     raw: serde_json::Value,
 ) -> Result<()> {
+    if !raw.as_object().is_some_and(|v| {
+        v.len() == CALENDAR_CHAT_FIELDS.len()
+            && CALENDAR_CHAT_FIELDS
+                .iter()
+                .all(|field| v.contains_key(*field))
+    }) {
+        return Err(StoreError::InvalidInput);
+    }
     let d: CalendarChatDecision =
         serde_json::from_value(raw).map_err(|_| StoreError::InvalidInput)?;
+    // New proposals use the same finite codes as the model schema. Legacy
+    // persisted decisions still use the existing replay validation below.
+    if !d.known_model_codes() {
+        return Err(StoreError::InvalidInput);
+    }
     let source = crate::request_continuations::text(c, r)?;
     validate_decision(&source, &d)?;
     let continuation = crate::request_continuations::context(c, r)?;
@@ -1251,6 +1267,18 @@ impl Store {
 #[cfg(test)]
 mod civil_tests {
     use super::*;
+    #[test]
+    fn legacy_persisted_clarification_keeps_replay_compatibility_without_new_admission() {
+        let mut decision = proposal("2026-12-01", "2026-12-01");
+        decision.decision = "clarify".into();
+        decision.operation = None;
+        decision.date = None;
+        decision.date_quote = None;
+        decision.clarification = Some("Legacy freeform explanation".into());
+        assert!(validate_decision("Synthetic legacy request", &decision).is_ok());
+        assert!(!decision.known_model_codes());
+        assert_eq!(clarification_message(&decision), message("clarify"));
+    }
     fn proposal(date: &str, q: &str) -> CalendarChatDecision {
         CalendarChatDecision {
             domain: "calendar".into(),

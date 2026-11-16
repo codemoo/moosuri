@@ -1,6 +1,7 @@
 //! Synthetic-only public regression harness, never a live/quality benchmark.
 pub mod baseline;
 pub mod everyday;
+pub mod followup;
 mod grader;
 mod model;
 mod observe;
@@ -39,6 +40,7 @@ pub struct Row {
     pub output_tokens: Option<u64>,
     pub request_digests: Vec<String>,
     pub stages: Vec<runner::Stage>,
+    pub synthetic_clock: Option<serde_json::Value>,
 }
 #[derive(Serialize, Default)]
 pub struct Counts {
@@ -76,6 +78,7 @@ fn elapsed(t: Instant) -> u64 {
 }
 fn script(kind: Kind) -> model::Script {
     match kind {
+        Kind::FollowupMonitor => model::Script::FollowupMonitor,
         Kind::EverydayGuidance => model::Script::EverydayGuidance,
         Kind::EverydayClarification => model::Script::EverydayClarification,
         Kind::EverydayReminder => model::Script::Chat,
@@ -93,7 +96,8 @@ fn script(kind: Kind) -> model::Script {
 fn pending(case: Case) -> Row {
     let completion_eligible = matches!(
         case.kind,
-        Kind::EverydayGuidance
+        Kind::FollowupMonitor
+            | Kind::EverydayGuidance
             | Kind::EverydayClarification
             | Kind::EverydayReminder
             | Kind::Memory
@@ -126,6 +130,7 @@ fn pending(case: Case) -> Row {
         output_tokens: None,
         request_digests: vec![],
         stages: runner::stage_plan(case.kind),
+        synthetic_clock: None,
     }
 }
 fn aggregate(rows: &[Row]) -> Counts {
@@ -154,6 +159,7 @@ fn grade(case: Case, out: &runner::Execution) -> Vec<grader::Check> {
         return vec![grader::check("observation_present", false)];
     };
     match case.kind {
+        Kind::FollowupMonitor => grader::followup(out),
         Kind::EverydayGuidance | Kind::EverydayClarification | Kind::EverydayReminder => {
             grader::everyday(case.kind, out)
         }
@@ -229,6 +235,7 @@ pub async fn run() -> Report {
         row.workflow_ms = Some(elapsed(started));
         match executed {
             Ok(Ok(out)) => {
+                row.synthetic_clock = out.outcome.get("clock").cloned();
                 row.checks = grade(case, &out);
                 let passed = grader::all(&row.checks);
                 row.run_failures = out
@@ -277,6 +284,9 @@ pub async fn run() -> Report {
                     Kind::EverydayGuidance | Kind::EverydayClarification | Kind::EverydayReminder
                 ) {
                     validation.extend(grader::everyday_mutations(case.kind, &out));
+                }
+                if matches!(case.kind, Kind::FollowupMonitor) {
+                    validation.extend(grader::followup_mutations(&out));
                 }
                 row.timings = out.timings;
             }
@@ -350,6 +360,17 @@ pub async fn run() -> Report {
     ));
     let counts = aggregate(&rows);
     let required_validations = [
+        "followup_positive_control",
+        "followup_duplicate_child_rejected",
+        "followup_wrong_source_scope_rejected",
+        "followup_missing_changed_read_rejected",
+        "followup_visible_stopped_notice_rejected",
+        "followup_revived_policy_rejected",
+        "followup_wrong_visible_mission_link_rejected",
+        "followup_wrong_visible_schedule_link_rejected",
+        "followup_wrong_visible_occurrence_link_rejected",
+        "followup_contradictory_paid_status_rejected",
+        "followup_negated_approval_rejected",
         "everyday_guidance_missing_receipt_rejected",
         "everyday_guidance_repeated_tool_rejected",
         "everyday_clarification_lost_work_rejected",
@@ -391,7 +412,7 @@ pub async fn run() -> Report {
             .iter()
             .all(|name| validation.iter().any(|c| c.name == *name));
     let success = counts.pass == counts.planned && validation_pass;
-    let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs")),"outcome_script_sha256":digest(include_bytes!("model/outcomes.rs")),"outcome_workflow_sha256":digest(include_bytes!("runner/outcomes.rs")),"everyday":everyday::FIXTURES,"everyday_workflow_sha256":digest(include_bytes!("runner/everyday.rs")),"everyday_script_sha256":digest(include_bytes!("model/everyday.rs"))});
+    let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs")),"outcome_script_sha256":digest(include_bytes!("model/outcomes.rs")),"outcome_workflow_sha256":digest(include_bytes!("runner/outcomes.rs")),"everyday":everyday::FIXTURES,"followup":followup::FIXTURE,"followup_workflow_sha256":digest(include_bytes!("runner/followup.rs")),"followup_script_sha256":digest(include_bytes!("model/followup.rs")),"everyday_workflow_sha256":digest(include_bytes!("runner/everyday.rs")),"everyday_script_sha256":digest(include_bytes!("model/everyday.rs"))});
     let observed_latency_ms = latencies(&rows);
     Report {
         format_version: 3,
@@ -404,6 +425,7 @@ pub async fn run() -> Report {
                 include_bytes!("grader.rs").as_slice(),
                 include_bytes!("grader/outcomes.rs").as_slice(),
                 include_bytes!("grader/everyday.rs").as_slice(),
+                include_bytes!("grader/followup.rs").as_slice(),
             ]
             .concat(),
         ),
@@ -522,15 +544,15 @@ mod tests {
                 );
             }
         }
-        assert_eq!(report.counts.task_success, 10);
+        assert_eq!(report.counts.task_success, 11);
         assert_eq!(report.counts.mission_success, 1);
         assert_eq!(report.counts.handling_success, 2);
         let server = &report.observed_latency_ms["server"];
-        assert_eq!(server["run_samples"], 30);
+        assert_eq!(server["run_samples"], 32);
         for stage in server["stages"].as_object().unwrap().values() {
             assert_eq!(
                 stage["observed_samples"].as_u64().unwrap() + stage["missing"].as_u64().unwrap(),
-                30
+                32
             );
         }
         assert!(report.success);

@@ -10,6 +10,7 @@ pub mod claude_execution;
 mod conversation_tools;
 pub mod credential_broker;
 mod credential_chat;
+mod intent_contract;
 mod knowledge_tools;
 pub mod mail;
 mod mail_tools;

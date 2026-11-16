@@ -1,0 +1,5 @@
+- [x] Inspect fresh/recovered lifecycle divergence and preserve intentional fences.
+- [x] Share committed-round handling and add exact guarded step guidance read.
+- [x] Author focused fresh/reopen validation and receipt-assignment regressions.
+- [x] Run focused synthetic lifecycle, guidance, input/effect and scoped lint checks; record actual overlapping filters.
+- [x] Freeze and independently review the implementation before integration/publication.

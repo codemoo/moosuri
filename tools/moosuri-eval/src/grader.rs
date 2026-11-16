@@ -6,6 +6,8 @@ use crate::{
 use serde::Serialize;
 use serde_json::Value;
 mod everyday;
+mod followup;
+pub use followup::{grade as followup, mutations as followup_mutations};
 mod outcomes;
 pub use everyday::{grade as everyday, mutations as everyday_mutations};
 pub use outcomes::{outcome, outcome_mutations};

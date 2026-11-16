@@ -5,10 +5,7 @@ use moosuri_connectors::model::protocol::{
     FinishOutcome, TextMessage, TextRequest, TextRole,
     tools::{FunctionDefinition, ToolRound},
 };
-use moosuri_core::{
-    MEMORY_TEMPORAL_GUIDANCE, MemoryCommandAction, MemoryCommandIntent, MemoryTemporal,
-    memory_temporal,
-};
+use moosuri_core::{MemoryCommandAction, MemoryCommandIntent, MemoryTemporal, memory_temporal};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -22,26 +19,7 @@ pub(super) enum Decision {
     Clarify(Clarification),
     Command(MemoryCommandIntent),
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum Clarification {
-    Ambiguous,
-    Temporal,
-    Unsupported,
-}
-impl Clarification {
-    pub(super) fn message(self) -> &'static str {
-        match self {
-            Self::Ambiguous => {
-                "어떤 내용을 기억하거나, 어느 기억을 수정·삭제할지 구체적으로 말씀해 주세요."
-            }
-            Self::Temporal => MEMORY_TEMPORAL_GUIDANCE,
-            Self::Unsupported => {
-                "이번 기능은 한 가지 사실의 기억·정정·망각을 지원해요. 변경할 내용을 하나씩 구체적으로 말씀해 주세요."
-            }
-        }
-    }
-}
+pub(super) use moosuri_core::MemoryIntentClarification as Clarification;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PlanError {
     InvalidInput,
@@ -228,9 +206,9 @@ fn nullable(description: &str) -> Value {
 }
 pub(super) fn definitions() -> Vec<FunctionDefinition> {
     let properties = json!({
-        "decision":{"type":"string","enum":["no_command","clarify","command"]},
-        "clarification":{"type":["string","null"],"enum":["ambiguous","temporal","unsupported",null]},
-        "action":{"type":["string","null"],"enum":["remember","correct","forget",null]},
+        "decision":{"type":"string","enum":moosuri_core::IntentDecision::ALL},
+        "clarification":crate::intent_contract::nullable_enum(Clarification::ALL),
+        "action":crate::intent_contract::nullable_enum(MemoryCommandAction::ALL),
         "intent_quote":nullable("Exact current-message request substring; at most512 UTF-8bytes. Null for noncommands."),
         "fact_quote":nullable("Exact literal fact substring from the current message; at most4096 UTF-8bytes. No paraphrase."),
         "subject":nullable("Short subject label, at most200 UTF-8bytes; no additional facts."),
@@ -248,13 +226,7 @@ pub(super) fn definitions() -> Vec<FunctionDefinition> {
         parameters: json!({"type":"object","properties":properties,"required":required,"additionalProperties":false}),
     }]
 }
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Tag {
-    NoCommand,
-    Clarify,
-    Command,
-}
+use moosuri_core::IntentDecision as Tag;
 // Deliberately no Debug: these fields contain private literal user text.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -306,8 +278,7 @@ pub(super) fn parse_completed(
         "subject",
         "target_quote",
     ];
-    let fields = value.as_object().ok_or(PlanError::InvalidDecision)?;
-    if fields.len() != FIELDS.len() || FIELDS.iter().any(|field| !fields.contains_key(*field)) {
+    if !crate::intent_contract::exact_fields(&value, &FIELDS) {
         return Err(PlanError::InvalidDecision);
     }
     // Parse the ORIGINAL JSON as well: serde must reject duplicate fields instead

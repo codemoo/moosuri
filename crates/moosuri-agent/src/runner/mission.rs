@@ -3,6 +3,8 @@
 //! provider continuation bytes are deliberately not used to resume missions.
 use super::*;
 use moosuri_core::{MissionCandidate, MissionView};
+mod round;
+use round::{RoundHandler, RoundOutcome};
 fn acceptance_revision(view: &MissionView) -> i64 {
     view.acceptance_history
         .as_ref()
@@ -105,39 +107,6 @@ fn action_definitions(
 struct InputResponse {
     input_request: moosuri_core::MissionInputRequest,
 }
-async fn wait_for_input(
-    store: &Store,
-    step: &moosuri_store::StepLease,
-    revision: i64,
-    text: &str,
-) -> Option<bool> {
-    let input = serde_json::from_str::<InputResponse>(text).ok()?;
-    Some(
-        store
-            .mission_wait_for_input(step, revision, input.input_request)
-            .await
-            .is_ok(),
-    )
-}
-// A committed local slot can fail during fresh execution or restart replay.
-// Both paths must settle through the same existing Store failure mapping.
-async fn settle_tool_result(
-    store: &Store,
-    lease: &RunLease,
-    step: &moosuri_store::StepLease,
-    result: Result<KnowledgeToolResult, StoreError>,
-    signals: &Signals,
-) -> Option<KnowledgeToolResult> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            let (state, error) = store_failure(&error);
-            finish(store, lease, Some(step), state, Some(error), signals).await;
-            None
-        }
-    }
-}
-
 pub(super) async fn execute(
     store: Store,
     claimed: AgentClaim,
@@ -182,158 +151,24 @@ pub(super) async fn execute(
         .await;
         return;
     }
+    let rounds = RoundHandler {
+        store: &store,
+        lease: &lease,
+        signals: &signals,
+        mail: &mail,
+        web: &web,
+    };
     if let Some(pending) = execution.pending_round.as_ref() {
         let step = match store.mission_step_lease(&lease, pending.step).await {
-            Ok(v) => v,
+            Ok(step) => step,
             Err(_) => return,
         };
-        if (!context.calls.is_empty()
-            || pending.planning
-            || serde_json::from_str::<MissionCandidate>(&pending.text).is_ok()
-            || serde_json::from_str::<InputResponse>(&pending.text).is_ok())
-            && store.apply_step_instructions(&step).await.is_err()
-        {
-            return;
-        }
-    }
-    if execution.view.plan.is_empty()
-        && let Some(pending) = execution.pending_round.as_ref().filter(|p| !p.planning)
-    {
-        let step = match store.mission_step_lease(&lease, pending.step).await {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        if store
-            .mission_save_plan_at(
-                &step,
-                pending.acceptance_revision,
-                initial_plan(&execution.view),
-            )
-            .await
-            .is_err()
-        {
-            return;
-        }
-    }
-    // Pending local slots from a stable checkpoint replay saved results. Started
-    // public HTTP slots are quarantined by restart/control and cannot arrive here.
-    let mut replay_failed = context
-        .calls
-        .iter()
-        .any(|s| matches!(s.result, Some(KnowledgeToolResult::Error(_))));
-    for slot in &context.calls {
-        if slot.result.is_none() {
-            // The lease for the completed step is obtained only from the guarded Store.
-            let step = match store.mission_step_lease(&lease, slot.step).await {
-                Ok(v) => v,
-                Err(_) => return,
-            };
-            let call = PendingKnowledgeCall {
-                call_id: slot.call_id.clone(),
-                input: slot.input.clone(),
-            };
-            if matches!(&call.input, KnowledgeToolInput::NativeMail { .. }) {
-                match store
-                    .wait_for_native_mail_tool(&step, call.call_id.clone())
-                    .await
-                {
-                    Ok(true) => {
-                        signals.changed();
-                        return;
-                    }
-                    Ok(false) => {}
-                    Err(error) => {
-                        let (state, error) = store_failure(&error);
-                        finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
-                        return;
-                    }
-                }
-            }
-            let result = execute_tool(&store, &step, &call, &mail, &web, signals.stopping()).await;
-            match settle_tool_result(&store, &lease, &step, result, &signals).await {
-                Some(KnowledgeToolResult::Error(_)) => replay_failed = true,
-                Some(_) => {}
-                None => return,
-            }
-        }
-    }
-    // A completed proposal was persisted atomically with its model receipt. A
-    // restart consumes that typed response before spending another model call.
-    let pending = match store.mission_execution(&lease).await {
-        Ok(Some(v)) => v.pending_round,
-        _ => return,
-    };
-    if let Some(pending) = pending {
-        let step = match store.mission_step_lease(&lease, pending.step).await {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        if pending.planning {
-            let plan = serde_json::from_str::<serde_json::Value>(&pending.text)
-                .ok()
-                .and_then(|v| serde_json::from_value::<Vec<String>>(v.get("steps")?.clone()).ok());
-            let Some(plan) = plan else {
-                finish(
-                    &store,
-                    &lease,
-                    Some(&step),
-                    RunState::Failed,
-                    Some(RunFailure::ProtocolFailed),
-                    &signals,
-                )
-                .await;
-                return;
-            };
-            if store
-                .mission_save_plan_at(&step, pending.acceptance_revision, plan)
-                .await
-                .is_err()
-            {
-                return;
-            }
-        } else if context.calls.is_empty()
-            && matches!(store.pending_run_instructions(&lease).await,Ok(v) if v.is_empty())
-        {
-            if let Some(ok) =
-                wait_for_input(&store, &step, pending.acceptance_revision, &pending.text).await
-            {
-                if !ok {
-                    finish(
-                        &store,
-                        &lease,
-                        Some(&step),
-                        RunState::Incomplete,
-                        Some(RunFailure::ProtocolFailed),
-                        &signals,
-                    )
-                    .await;
-                }
-                signals.changed();
-                return;
-            }
-            let candidate = serde_json::from_str::<MissionCandidate>(&pending.text).unwrap_or(
-                MissionCandidate {
-                    text: "The model did not return a verifiable result.".into(),
-                    evidence: vec![],
-                },
-            );
-            match store
-                .mission_verify_at(&step, pending.acceptance_revision, candidate)
-                .await
-            {
-                Ok(true) => {
-                    signals.changed();
-                    return;
-                }
-                Ok(false) => {}
-                Err(_) => return,
-            }
-        } else if replay_failed {
-            if !matches!(store.mission_tool_failure(&step).await, Ok(false)) {
-                signals.changed();
-                return;
-            }
-        } else if store.mission_clear_round(&step).await.is_err() {
+        if matches!(
+            rounds
+                .handle(&step, pending, &execution.view, &context.calls)
+                .await,
+            RoundOutcome::Stop
+        ) {
             return;
         }
     }
@@ -585,7 +420,7 @@ pub(super) async fn execute(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        if let Err(error) = store
+        let mut committed = match store
             .commit_agent_step(
                 &step,
                 PrivateCheckpoint {
@@ -595,129 +430,33 @@ pub(super) async fn execute(
             )
             .await
         {
-            let (state, error) = store_failure(&error);
-            finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
-            return;
-        }
+            Ok(context) => context,
+            Err(error) => {
+                let (state, error) = store_failure(&error);
+                finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
+                return;
+            }
+        };
         signals.changed();
-        if through > 0
-            && calls.is_empty()
-            && serde_json::from_str::<MissionCandidate>(&observed.pending.private_text).is_err()
-            && serde_json::from_str::<InputResponse>(&observed.pending.private_text).is_err()
-        {
-            finish(
-                &store,
-                &lease,
-                Some(&step),
-                RunState::Failed,
-                Some(RunFailure::ProtocolFailed),
-                &signals,
-            )
-            .await;
+        // Keep the provider's admitted call order for a fresh round. Recovery
+        // reuses the Store's existing saved-slot order and saved results.
+        committed
+            .calls
+            .sort_by_key(|slot| calls.iter().position(|call| call.call_id == slot.call_id));
+        let pending = moosuri_store::MissionPendingRound {
+            terminal: Some(terminal.into()),
+            acceptance_revision: acceptance_revision(&execution.view),
+            step: step.step(),
+            planning: false,
+            text: observed.pending.private_text,
+        };
+        if matches!(
+            rounds
+                .handle(&step, &pending, &execution.view, &committed.calls)
+                .await,
+            RoundOutcome::Stop
+        ) {
             return;
-        }
-        if store.apply_step_instructions(&step).await.is_err() {
-            return;
-        }
-        signals.changed();
-        if execution.view.plan.is_empty()
-            && store
-                .mission_save_plan_at(
-                    &step,
-                    acceptance_revision(&execution.view),
-                    initial_plan(&execution.view),
-                )
-                .await
-                .is_err()
-        {
-            return;
-        }
-        if !calls.is_empty() {
-            let mut failed = false;
-            for call in calls {
-                if matches!(&call.input, KnowledgeToolInput::NativeMail { .. }) {
-                    match store
-                        .wait_for_native_mail_tool(&step, call.call_id.clone())
-                        .await
-                    {
-                        Ok(true) => {
-                            signals.changed();
-                            return;
-                        }
-                        Ok(false) => {}
-                        Err(error) => {
-                            let (state, error) = store_failure(&error);
-                            finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
-                            return;
-                        }
-                    }
-                }
-                let result =
-                    execute_tool(&store, &step, &call, &mail, &web, signals.stopping()).await;
-                match settle_tool_result(&store, &lease, &step, result, &signals).await {
-                    Some(KnowledgeToolResult::Error(_)) => failed = true,
-                    Some(_) => {}
-                    None => return,
-                }
-            }
-            if failed && !matches!(store.mission_tool_failure(&step).await, Ok(false)) {
-                signals.changed();
-                return;
-            }
-            if !failed && store.mission_clear_round(&step).await.is_err() {
-                return;
-            }
-            signals.changed();
-            continue;
-        }
-        if !matches!(store.pending_run_instructions(&lease).await,Ok(v) if v.is_empty()) {
-            if store.mission_clear_round(&step).await.is_err() {
-                return;
-            }
-            continue;
-        }
-        if let Some(ok) = wait_for_input(
-            &store,
-            &step,
-            acceptance_revision(&execution.view),
-            &observed.pending.private_text,
-        )
-        .await
-        {
-            if !ok {
-                if matches!(store.pending_run_instructions(&lease).await,Ok(v) if !v.is_empty()) {
-                    continue;
-                }
-                finish(
-                    &store,
-                    &lease,
-                    Some(&step),
-                    RunState::Incomplete,
-                    Some(RunFailure::ProtocolFailed),
-                    &signals,
-                )
-                .await;
-            }
-            signals.changed();
-            return;
-        }
-        let candidate = serde_json::from_str::<MissionCandidate>(&observed.pending.private_text)
-            .unwrap_or(MissionCandidate {
-                text: "The model did not return a verifiable result.".into(),
-                evidence: vec![],
-            });
-        match store
-            .mission_verify_at(&step, acceptance_revision(&execution.view), candidate)
-            .await
-        {
-            Ok(true) => {
-                signals.changed();
-                return;
-            }
-            Ok(false) => {
-                signals.changed();
-            }
-            Err(_) => return,
         }
     }
     finish(

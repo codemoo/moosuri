@@ -1,6 +1,7 @@
 //! Bounded protocol fixture. Receives actual agent requests; never receives gold.
 use crate::{EvalResult, digest, world};
 mod everyday;
+mod followup;
 mod outcomes;
 use axum::{
     Router,
@@ -16,6 +17,7 @@ use tokio::{net::TcpListener, task::JoinHandle};
 
 #[derive(Clone, Copy)]
 pub enum Script {
+    FollowupMonitor,
     EverydayGuidance,
     EverydayClarification,
     PairedMemory,
@@ -144,6 +146,9 @@ fn skill(input: &Value) -> EvalResult<IssuedCall> {
     ))
 }
 fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<String>)> {
+    if matches!(model.script, Script::FollowupMonitor) {
+        return followup::next(input);
+    }
     if matches!(model.script, Script::ChatMemory | Script::LearnedWorkflow) {
         return outcomes::next(model, input);
     }
@@ -251,7 +256,8 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
             });
             Ok((calls, final_answer))
         }
-        Script::EverydayGuidance
+        Script::FollowupMonitor
+        | Script::EverydayGuidance
         | Script::EverydayClarification
         | Script::ChatMemory
         | Script::LearnedWorkflow => unreachable!(),

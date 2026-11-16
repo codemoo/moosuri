@@ -1,5 +1,6 @@
 //! Evaluator-only, read-only SQLite observations. Never passed to the agent.
 use crate::{EvalResult, model::Dispatch};
+pub mod followup;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;

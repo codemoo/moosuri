@@ -17,6 +17,7 @@ pub enum Kind {
     EverydayGuidance,
     EverydayClarification,
     EverydayReminder,
+    FollowupMonitor,
 }
 #[derive(Clone, Copy, Serialize)]
 pub struct Case {
@@ -25,6 +26,11 @@ pub struct Case {
     pub kind: Kind,
 }
 pub const CASES: &[Case] = &[
+    Case {
+        id: "everyday-return-status-followup-stop",
+        family_id: "saved-source-followup",
+        kind: Kind::FollowupMonitor,
+    },
     Case {
         id: "everyday-quote-inflight-guidance",
         family_id: "everyday-continuity",

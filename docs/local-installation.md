@@ -3,8 +3,11 @@
 The Rust installer accepts a **local signed directory bundle** and an explicitly
 pinned Ed25519 public key. The separate [HTTPS download command](signed-download.md)
 fetches an explicitly chosen version with the same independent pin before installation.
-Official signed artifacts, clean Linux x86_64/arm64 acceptance and
-stable P10 release remain separate gates. The server runs with its React assets
+The [guided installer preview](install.md) publishes signed Mac/Linux x64/ARM64
+archives and the project preview key. Its Linux x64 runtime and ARM64 QEMU evidence
+are recorded in the [acceptance review](reviews/2026-11-17-guided-installation.md);
+physical-device acceptance and stable P10 release remain separate gates.
+The server runs with its React assets
 embedded; Node/Python are not runtime dependencies. The separate vault and optional
 broker are not installed by this command.
 
@@ -216,7 +219,9 @@ own key, OpenSSL's `pkeyutl -sign -rawin -inkey PRIVATE_KEY -in manifest.json
 -out manifest.ed25519` is one packaging option. Export/verify its raw32-byte public
 key through an independent channel and encode it as64hex characters in the private
 pin file. Never place a signing private key in the bundle, source or server data.
-These instructions do not establish an official project release key.
+These instructions describe operator-owned keys. The project preview key is
+published in [install/release-public-key.txt](../install/release-public-key.txt);
+obtaining it from the same GitHub channel as the bundle is not independent trust.
 
 Format1 permits exactly one binary basename, `moosuri`; assets are embedded in it.
 The signed JSON records product, native target, SemVer, monotonically increasing

@@ -36,8 +36,8 @@ uses the existing local draft and complete final-preview approval, including fix
 send times. Its OAuth credential stays on the trusted device; uncertain sends are
 checked without resending. A separately granted [native Gmail model-read route](docs/native-google-model-mail.md) supports bounded search, message/thread and PDF/text attachment reads in the original chat or delegated task, preserving its budget and deadline while waiting. Legacy display-only grants remain excluded. Broker routes remain default-off; general credential tools remain unfinished.
 Separate [signed native packages](docs/component-packages.md) can be prepared,
-verified and downloaded with an independent signing-key pin. Official artifacts
-and signing-key distribution remain unpublished.
+verified and downloaded with an independent signing-key pin. These optional component
+artifacts and their signing-key distribution remain unpublished.
 An explicit [legacy v1 encrypted-file import](docs/vault-v1-migration.md) locally
 authenticates the old export before re-encrypting selected items for the current vault.
 Account deletion clears active private data and delivers durable deletion to the separate vault.
@@ -64,12 +64,21 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 
 ## Start
 
-- [Guided installation / 한국어·영어 설치](docs/install.md): macOS, Linux and Windows WSL2; arrow/number menus, optional model setup and user-service lifecycle. Preview package publication is tracked in current status.
+In a macOS/Linux terminal or inside Windows WSL2:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/codemoo/moosuri/main/install.sh | bash
+```
+
+Choose English or 한국어, then follow the arrow/number menus. No Rust, Node, Python,
+Docker or database server is needed. Linux/WSL2 requires glibc 2.34+.
+
+- [Guided installation / 한국어·영어 설치](docs/install.md): administrator, optional API/local model setup, user-service lifecycle and troubleshooting. Signed Mac/Linux x64/ARM64 packages are available in the [installer preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.2); actual platform acceptance is recorded in the release notes.
 
 - [Development quickstart](docs/development.md): build, init, shared API/local model settings and run the embedded web app. LLM configuration can be skipped while setting up accounts.
 - [Linux ARM64 development](docs/linux-arm64.md): cross-build and direct emulation evidence; native hardware and official release acceptance remain open.
 - [Signed HTTPS download](docs/signed-download.md): fetch an explicit versioned bundle with an independent signing pin; verify before any install.
-- [Local signed installation](docs/local-installation.md): install an explicitly trusted native bundle, update a stopped installation from supported schema47 through the current version, recover interrupted activation and remove runtime files while retaining data. Official release bundles are not yet published.
+- [Local signed installation](docs/local-installation.md): install an explicitly trusted native bundle, update a stopped installation from supported schema47 through the current version, recover interrupted activation and remove runtime files while retaining data. The installer preview is available; stable-release acceptance remains open.
 - [Current status](docs/status.md): implemented bounds, evidence and next work. Optional vault/broker packages are still required v1 deliverables; the full product is not complete.
 - [Requirements](docs/requirements.md) · [feature contracts](docs/features.md) · [rewrite plan](docs/plan.md) · [migration order](docs/migration.md).
 

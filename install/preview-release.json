@@ -1,0 +1,47 @@
+{
+  "format": 1,
+  "channel": "preview",
+  "version": "0.1.0-dev.2",
+  "source_commit": "c899c3b566108ab416e364912d3a24b52fbfe5b6",
+  "public_key": "71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e",
+  "packages": {
+    "aarch64-apple-darwin": {
+      "file": "moosuri-0.1.0-dev.2-aarch64-apple-darwin.tar.gz",
+      "sha256": "8923d958f98861b3d79726ddba148aae0f9dabb416f49745bbe5d88eda67ad28",
+      "bytes": 20472875,
+      "binary_sha256": "5d3f38ad12f90b043679c9350bb9d0aa58620b07b6a4dfa817b18518fa299f9c",
+      "manifest_sha256": "6f0099e63153c9db8b933d621a10aec9d52d3eab002a7b00a83bd24f4d61c32d"
+    },
+    "x86_64-apple-darwin": {
+      "file": "moosuri-0.1.0-dev.2-x86_64-apple-darwin.tar.gz",
+      "sha256": "db0ce496c666f5a70101870221cd42b50c52325182e0cf73808ae16213dfb71a",
+      "bytes": 21354037,
+      "binary_sha256": "ceb4c17d1f54585564eb8baa2c03d37effa5742cb1bdcbab9f9d1f07cfd59999",
+      "manifest_sha256": "8bcfcf52f44bad2f748176d16762f88c621f36785e21e1b208f43c330912ea21"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "file": "moosuri-0.1.0-dev.2-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "49362fee41ec698fd292f6fa99a4ac1fc0ae6c0b7e70e7ef034f87da88a5b6f6",
+      "bytes": 19968711,
+      "binary_sha256": "30e9cf8e10a9c4a178769303c9e87efc0956c43463a976b08eaad2fe1c0f44f8",
+      "manifest_sha256": "a691391d994b5f2b08c7f3c729d355381a9261c7f501e3d026b9afb67190acca"
+    },
+    "aarch64-unknown-linux-gnu": {
+      "file": "moosuri-0.1.0-dev.2-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "03113a992f0d6dbd21dfc1395709bc406c23a8fd00caba947171759fbd61d859",
+      "bytes": 18999875,
+      "binary_sha256": "67c5eda42cc006d7093feb59a8d9f313a1e3e02795a6387c786a65334f6a9bf6",
+      "manifest_sha256": "3e0b31ba8f1f0119ead527bcdcb0024dcec8a7dfac209f1775eae06905cc79c4"
+    }
+  },
+  "runtime": "Rust + embedded React + SQLite",
+  "linux_glibc_minimum": "2.34",
+  "ci_enabled": false,
+  "acceptance": {
+    "macos_arm64": "native CLI/PTY acceptance and release probe",
+    "macos_x64": "cross-built; execution unavailable without Intel/Rosetta",
+    "linux_x64": "native isolated container init/login/shutdown",
+    "linux_arm64": "QEMU init/login/shutdown; physical hardware unverified",
+    "wsl2": "Linux target selection implemented; real WSL2 host unverified"
+  }
+}

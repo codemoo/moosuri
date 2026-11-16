@@ -65,6 +65,16 @@ a numbered choice and Enter. Use `--plain` for simple numbered menus and
 
 ## Platforms / 지원 환경
 
+The published [v0.1.0-dev.2 preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.2)
+contains all four archives, checksums, public signing pin and build evidence.
+Use Bash, `curl`, `tar` and either `sha256sum` or `shasum`; these are already present
+on most supported installations. Linux requires **glibc 2.34+** (for example,
+Ubuntu 22.04+ or Debian 12+). The bootstrap checks this before downloading.
+
+설치 파일은 위 릴리스에서 받습니다. Linux는 **glibc 2.34 이상**이 필요합니다.
+최소 설치 Ubuntu에 `curl`이 없다면 먼저 `sudo apt update && sudo apt install curl`로
+준비한 뒤, 무수리 설치 명령은 일반 사용자로 실행하세요.
+
 | Environment | Package | Notes |
 | --- | --- | --- |
 | macOS Apple Silicon | `aarch64-apple-darwin` | User launchd or foreground |

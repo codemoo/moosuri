@@ -9,7 +9,10 @@ GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 
 [한국어·영어 설치 마법사](install.md)를 구현했다. 방향키/번호 선택, 최초 관리자,
 선택적 API/local 모델 확인, 로컬 접속, 사용자 launchd/systemd 및 foreground 실행을
 기존 서명 설치에 연결했다. 합성 PTY의 양 언어 설치·재실행과 독립 검토를 통과했다.
-네 플랫폼 미리보기 패키지와 한 줄 bootstrap 공개를 준비 중이다. [설치 검증 기록](reviews/2026-11-17-guided-installation.md).
+Mac·Linux x64/ARM64의 [서명된 설치 미리보기 v0.1.0-dev.2](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.2)와
+한 줄 bootstrap을 공개했다. Mac ARM64·Linux x64 실행과 Linux ARM64 QEMU 실행을 확인했다.
+Intel Mac은 교차 빌드이며 실제 Intel·WSL2·물리 ARM 및 사용자 서비스 실운영 수락은 남는다.
+Linux/WSL2는 glibc2.34 이상이 필요하다. [설치 검증 기록](reviews/2026-11-17-guided-installation.md).
 
 현재는 [기능별 안정화](testing.md#기능별-안정화)에 집중한다.
 [메일 답장 감시](mail-reply-watches.md)를 추가했다. 완료된 Gmail 읽기/발송 영수증에서
@@ -202,7 +205,7 @@ D의 요청한 로컬/Gmail 초안·기본 개인 일정 작업, E의 근거 계
 
 | 영역 | 구현한 범위 | 남은 경계와 사용·증거 |
 | --- | --- | --- |
-| 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/schema47부터 현재까지 stopped update/데이터 보존 제거도 구현했다. 공식 release·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
+| 설치·계정 | Rust CLI/API·내장 React·SQLite single writer, 최초 admin, 로컬 초대·임시 암호/강제 변경, 세션 유지·철회, 계정 정지/재개·역할·암호 재발급 | 전체 계정 삭제·개인 자료 정리·볼트 삭제 outbox/ACK를 구현했다. 최종 승인 후 gws 초대 메일·로컬 서명 bundle 설치/schema47부터 현재까지 stopped update/데이터 보존 제거도 구현했다. 서명된 한 줄 설치 preview를 공개했다. 안정판·실계정 수락은 남음. [개발](development.md)·[계정](account-management.md)·[검증](reviews/2026-11-13-account-management.md) |
 | 모델·대화 | 공유 OpenAI/Anthropic API·OpenRouter·compatible/local 설정, 실제 text/tools/image 연결 확인, model/effort pin, 사용량·실제 실행 단계 시간/누락 집계, 저장 채팅·SSE·취소·재시도·초안 복구·격리, 오래된/다른 소유 대화의 제한 검색·읽기, 개인 ChatGPT 로그인·sealed session·text/tool proof·선택·native Linux 전달·foreground 도구·기억/자료·제한된 Calendar 변경·명시적 일회/반복 읽기 미션 | 개인 Claude 공식 CLI의 설정·text probe·선택·저장 대화도 구현했다. Claude 실제 rootless Linux/공식 로그인과 media/background·실계정 및 종합 실모델 품질 검증은 미완료. 모델 이름으로 capability를 추정하지 않는다. [모델](provider-settings.md)·[전송](model-transport.md)·[plan protocol 검증](reviews/2026-11-14-chatgpt-plan-protocol.md)·[대화](chat.md) |
 | 기억·자료 | 사용자별 원문/근거·기록 시각별 검색·선택적 고정 한국어 별칭, 직접 기억·정정·망각·대화의 제한된 절대 날짜 적용, opt-in literal 자료 추출·예산·망각 억제, 문서/목표/요청 편집·내보내기·지원 외부 읽기의 보고서 저장 | 넓은 대상 해석·추출 정확도·장기 문맥/시간 사실의 독립 평가와 자동화 전체 완료는 아니다. [지식](knowledge.md)·[기억](conversational-memory.md)·[추출](automatic-memory.md)·[문서](artifacts.md) |
 | 도구·스킬 | 검증된 bounded tool loop, 내장 절차·정확한 소수 계산, 개인 curated/public GitHub pin·update/rollback/disable/remove, 로컬 작성/check·정적 catalog 생성·설정한 공개 목록의 발견/원본 확인 | 정확 계산·저장 자료 조회·일본우편 최근 요약의 개인 학습/두 입력 proof·새 입력 재사용은 구현. 알려진 절차의 합성 공유 파일 내보내기도 구현. 실제 사용한 스킬의 예약 정지/복구와 참조 없는 공개 snapshot 정리를 구현했다. 2–4단계 정확 계산과 유일한 저장 자료의 숫자를 읽는 근거 계산의 구조 학습·새 입력 재사용·합성 export도 구현했다. 공개 URL2~4개의 실제 수집·두 사례 학습·새 대상/명시한 미션 재사용·합성 export도 구현. 근거 계산→비공개 보고서/로컬 초안의 두 실제 채택 결과 학습·새 입력 재실행·합성 공유를 추가했다. 일반 외부 workflow 학습·전체 이력 보존/정리 정책은 남음. 공개 목록은 운영자가 설정하며 자동 설치하지 않는다. [업무](task-skills.md)·[community](community-skills.md)·[검증](reviews/2026-11-14-community-catalog-runtime.md) |
@@ -274,7 +277,7 @@ D의 요청한 로컬/Gmail 초안·기본 개인 일정 작업, E의 근거 계
 | P7 첨부·모바일 | 이미지/파일/PDF 텍스트·녹음·글/링크/파일/음성 공유 | 모바일/접근성·실기기 |
 | P8 독립 볼트 | 암호문 서비스·클라이언트·CSV/TOTP·현재 복구·운영 중 snapshot/시점·명시적 최신 journal 복구·주기적 SSH journal receiver·구 v1 파일 이전·실험적 native GitHub/Google INBOX 개수·미리보기/선택 본문·별도 모델 읽기 grant의 검색/thread/첨부·원래 실행 대기/재개·승인된 Gmail 발송·기기 브라우저 세션 | 일반 credential·Gitea 외 사이트 로그인/읽기·임의 쓰기 도구·실제 옛 파일 수락·실제 off-host/무손실 최신 복구 |
 | P9 이전·전환 | 정규화한 private bundle의 새 계정·원문/기억/문서 이력 이전·대조/격리 보고·합성 복구 | 실제 operator export·운영 대조·drain/cutover/rollback 실증 |
-| P10 출시 | 개발 프리뷰·공개 문서·key-pinned HTTPS 다운로드·로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory·서명된 binary/source/compiler/inventory 연결·ARM64 교차 빌드/직접 에뮬레이션 | 공식 서명 배포·물리 ARM/설치 경로·독립 빌드 증명/license·품질/기기/출시 gate |
+| P10 출시 | 개발 프리뷰·공개 문서·Mac/Linux 네 플랫폼 서명 설치 preview·양 언어 한 줄 설치·key-pinned HTTPS 다운로드·로컬 서명 설치/schema47부터 현재까지 update/제거·CycloneDX source-lock inventory·서명된 출처·ARM64 QEMU 실행 | 별도 vault/companion 배포·물리 ARM/Intel/WSL2·실제 서비스 수락·독립 빌드 증명/전체 license·품질/기기/안정판 gate |
 
 수락한 Calendar 단위는 P6으로, broker 기반 단위는 P8으로 추적한다.
 P0 합성 결과 실행기·독립 판정기와 두 세계 비교 adapter를 구현했다. 기존 비서의 실제 비교 실행은
@@ -321,7 +324,7 @@ CI는 사용자 지시에 따라 계속 비활성이다.
    명시적 요청 화면 및 원래 채팅의 대기/완료는 구현했다. 현재 live vault 조회·같은 범위의 credential 교체와 native Google INBOX 개수·별도 미리보기·선택한 일반 텍스트 본문 조회도 구현했다. 별도 연결의 최종 승인된 즉시/고정 예약 Gmail 발송·같은 기기에서의 불명 결과 확인을 구현했다. 별도 모델 읽기 grant의 Gmail 검색/thread/PDF·텍스트 읽기를 같은 대화·위임 업무에 연결했다. 일반 credential·Gitea 외 사이트 로그인/읽기·임의 쓰기 도구는 남는다.
    운영 중 암호화 snapshot/시점 복구도 구현했다. 명시적으로 고정한 이후 journal을 합치는 복구도 구현했다. 구 v1 암호화 파일의 로컬 이전을 구현했다. 주기적 SSH journal publisher/receiver도 구현했다. 실제 off-host 배치·무손실 최신 기록·실제 옛 파일 수락·서명 배포는 남는다. 계정 삭제 outbox는 구현·통합 검증했다.
 6. **P9/P10 이전·출시**: 정규화 private importer/대조와 schema23 relation adapter를 구현했다. 실제 operator export·제한 cutover·rollback,
-   수락한 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처 연결과 별도 볼트/companion 패키지 전달을 공식 artifact·물리 ARM/설치 경로·독립 빌드 증명/완전한 license 검토로 확장하고(Rust·웹 고지 수집기와 별도 출처 보충은 구현),
+   공개한 Mac/Linux 네 플랫폼 설치 preview와 Linux x86_64 로컬 서명 설치/schema47부터 현재까지 update/제거·source-lock SBOM·서명된 출처를 별도 볼트/companion 공식 패키지·물리 ARM/Intel/WSL2/서비스 수락·독립 빌드 증명/전체 license 검토로 확장하고(Rust·웹 고지 수집기와 별도 출처 보충은 구현),
    깨끗한 host와 실제 기기/계정·독립 holdout/성능 gate를 완료한다.
    기존 운영은 검증된 전환 없이 변경하지 않는다.
 

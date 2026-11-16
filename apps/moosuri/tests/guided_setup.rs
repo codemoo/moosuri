@@ -35,7 +35,7 @@ impl Pty {
                     &mut slave,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
-                    &mut ws,
+                    std::ptr::addr_of_mut!(ws),
                 )
             },
             0

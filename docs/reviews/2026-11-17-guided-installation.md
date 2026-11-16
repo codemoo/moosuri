@@ -32,9 +32,31 @@ attempts are retained locally and are not counted as accepted tests.
 
 ## Release/platform acceptance
 
-Platform builds, pinned release publication, bootstrap download verification and
-runtime evidence will be recorded here once completed. The source implementation
-does not by itself establish those outcomes.
+The [v0.1.0-dev.2 installer preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.2)
+publishes four checksum-pinned archives with Ed25519-signed manifests, binary/SBOM
+provenance, both project licenses and third-party notices. Runtime source is
+`c899c3b566108ab416e364912d3a24b52fbfe5b6`; a subsequent Linux portability correction
+only changes the PTY test's raw pointer. Bootstrap pins and documentation follow
+in the publication commit. These are packager claims, not independent builder attestations.
+
+| Platform | Evidence |
+| --- | --- |
+| macOS ARM64 | Native release build/probe, bilingual real-binary PTY setup/rerun and scoped CLI Clippy |
+| macOS Intel | Cross-built release; execution unavailable on this host without Intel/Rosetta |
+| Linux x64 | Release build, installation contracts and bilingual PTYs, scoped Clippy; actual release init/readiness/embedded app/login/graceful shutdown/doctor in an isolated container |
+| Linux ARM64 | Release cross-build; the same release runtime checks under explicit QEMU, without claiming physical ARM acceptance |
+| Windows WSL2 | Linux target detection and documentation; actual WSL2 host remains unverified |
+
+Both Linux binaries require glibc2.34 or newer; bootstrap rejects older/musl systems
+before download. Mac dynamic dependencies are system libraries/frameworks only.
+Selected release notices cover the four-target normal-dependency union of356 Rust
+packages, React/ReactDOM/Scheduler and Rust1.89 standard-library licenses. The
+source-lock inventory also includes other workspace/build dependencies; its earlier
+whole-workspace notice gaps are not retroactively marked complete. Source/new-history
+and package text secret scans passed; large binary contents are outside the text scanner.
+
+The independent review and meaningful source contracts are complete. Actual public
+bootstrap download/setup acceptance is recorded separately after publication.
 
 No live paid-model calls, real OAuth login, system daemon deployment, physical ARM
 or WSL2 host acceptance is claimed by the synthetic PTY checks. Optional model

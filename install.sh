@@ -34,17 +34,21 @@ HELP
       if ! getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
         printf '%s\n' 'Use a glibc Linux distribution (Ubuntu/Debian/Fedora). Alpine/musl is not supported.' 'glibc 기반 Linux를 사용하세요. Alpine/musl은 지원하지 않습니다.' >&2; return 1
       fi
+      local libc_version
+      libc_version=$(getconf GNU_LIBC_VERSION); libc_version=${libc_version##* }
+      if [[ "$libc_version" =~ ^([0-9]+)\.([0-9]+) ]] && (( 10#${BASH_REMATCH[1]} > 2 || (10#${BASH_REMATCH[1]} == 2 && 10#${BASH_REMATCH[2]} >= 34) )); then :
+      else printf '%s\n' 'glibc 2.34+ is required (for example Ubuntu 22.04+). / glibc 2.34 이상이 필요합니다.' >&2; return 1; fi
       case "$machine" in aarch64|arm64) target=aarch64-unknown-linux-gnu;; x86_64|amd64) target=x86_64-unknown-linux-gnu;; *) target=unsupported;; esac;;
     *) target=unsupported;;
   esac
   # BEGIN GENERATED RELEASE PINS (updated only with a verified preview publication)
   version=0.1.0-dev.2
-  release_key=UNPUBLISHED
+  release_key=71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e # public Ed25519 pin; gitleaks:allow
   case "$target" in
-    aarch64-apple-darwin) archive_sha=UNPUBLISHED;;
-    x86_64-apple-darwin) archive_sha=UNPUBLISHED;;
-    x86_64-unknown-linux-gnu) archive_sha=UNPUBLISHED;;
-    aarch64-unknown-linux-gnu) archive_sha=UNPUBLISHED;;
+    aarch64-apple-darwin) archive_sha=8923d958f98861b3d79726ddba148aae0f9dabb416f49745bbe5d88eda67ad28;;
+    x86_64-apple-darwin) archive_sha=db0ce496c666f5a70101870221cd42b50c52325182e0cf73808ae16213dfb71a;;
+    x86_64-unknown-linux-gnu) archive_sha=49362fee41ec698fd292f6fa99a4ac1fc0ae6c0b7e70e7ef034f87da88a5b6f6;;
+    aarch64-unknown-linux-gnu) archive_sha=03113a992f0d6dbd21dfc1395709bc406c23a8fd00caba947171759fbd61d859;;
     *) printf '%s\n' "Unsupported platform / 지원하지 않는 환경: $platform $machine" >&2; return 1;;
   esac
   # END GENERATED RELEASE PINS

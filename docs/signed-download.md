@@ -2,7 +2,10 @@
 
 The Rust CLI can fetch a bundle from an operator-chosen **versioned HTTPS directory**.
 You provide the existing independent Ed25519 public-key pin and a new local destination.
-This does not establish an official release mirror/key or complete the stable P10 gate.
+For the published project preview on GitHub Releases, use the [guided bootstrap](install.md),
+which downloads a pinned archive and handles HTTPS artifact redirects. This Rust
+directory downloader deliberately still rejects redirects and needs a directly serving
+mirror; it does not complete the stable P10 gate.
 The downloaded executable is never run by download or verify. Installation, initialization,
 service configuration and startup remain explicit [local installer](local-installation.md) steps.
 

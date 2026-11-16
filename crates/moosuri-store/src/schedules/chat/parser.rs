@@ -10,6 +10,7 @@ pub(super) enum Action {
 }
 pub(super) enum Target {
     Generic,
+    Previous,
     Title(String),
 }
 pub(super) struct Parsed {
@@ -198,6 +199,12 @@ fn en_target(value: &str) -> Option<Target> {
 }
 fn ko_target(value: &str, selected: bool) -> Option<Target> {
     let value = value.trim();
+    if matches!(
+        value,
+        "그 알림" | "그 알림을" | "방금 그 알림" | "방금 그 알림을"
+    ) {
+        return Some(Target::Previous);
+    }
     if matches!(value, "알림" | "알림을") || selected && value.is_empty() {
         return Some(Target::Generic);
     }
@@ -287,7 +294,15 @@ fn korean_control(raw: &str, timezone: Option<&str>, now: i64, selected: bool) -
         }
     }
     // Exact terminal change markers separate the authority shell from message.
-    for suffix in ["바꿔줘", "바꿔 줘", "변경해줘"] {
+    for suffix in [
+        "바꿔줘",
+        "바꿔 줘",
+        "변경해줘",
+        "옮겨줘",
+        "옮겨 줘",
+        "옮겨주세요",
+        "옮겨 주세요",
+    ] {
         if let Some(inner) = raw.strip_suffix(suffix) {
             if let Some((head, body)) = inner.split_once(" 내용을 ") {
                 let body = body.trim();

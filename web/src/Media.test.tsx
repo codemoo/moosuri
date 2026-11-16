@@ -260,3 +260,23 @@ it("mixed shared files use the existing account upload queue and reserve capacit
   expect(screen.getByText("note.txt")).toBeInTheDocument();
   expect(prepareImage).toHaveBeenCalledTimes(1);
 });
+
+it("a held first image upload does not block preparing and sending a second ready image", async () => {
+  let prepared!: (blob: Blob) => void;
+  vi.mocked(prepareImage).mockImplementationOnce(() => new Promise(resolve => { prepared = resolve; }));
+  render(<Harness />);
+  fireEvent.change(screen.getByLabelText("이미지 첨부"), { target: { files: [new File(["first"], "first.jpg"), new File(["second"], "second.jpg")] } });
+  await waitFor(() => expect(prepareImage).toHaveBeenCalledTimes(1));
+  expect(Upload.jobs).toHaveLength(0);
+  await act(async () => prepared(new Blob(["first prepared"], { type: "image/jpeg" })));
+  await waitFor(() => expect(Upload.jobs).toHaveLength(2));
+  expect(prepareImage).toHaveBeenCalledTimes(2);
+  await act(async () => Upload.jobs[1].finish());
+  expect(screen.getByText("Send text: 1 images")).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("text"), { target: { value: "Use the ready image only" } });
+  fireEvent.click(screen.getByText("Send text: 1 images"));
+  expect(screen.getByText("업로드 0%")).toBeInTheDocument();
+  expect(screen.getByLabelText("text")).toHaveValue("Use the ready image only");
+  await act(async () => Upload.jobs[0].finish());
+  expect(screen.getByText("Send text: 1 images")).toBeEnabled();
+});

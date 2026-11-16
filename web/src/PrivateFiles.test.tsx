@@ -65,3 +65,17 @@ it("deleting a pending library recovery aborts transport and rejects its late co
  let deleted=false;vi.mocked(fetch).mockImplementation((_url,init)=>{if(init?.method==="DELETE"){deleted=true;return Promise.resolve(new Response(null,{status:204}));}return Promise.resolve(new Response(JSON.stringify({items:deleted?[]:[{...file,filename:"original.txt",state:"retry_required"}],used_bytes:0,quota_bytes:67108864}),{headers:{"content-type":"application/json"}}));});
  render(<MediaLibraryView accountId="account-a" onSelect={vi.fn()}/>);fireEvent.click(screen.getByText("새로고침"));fireEvent.change(await screen.findByLabelText("원본 다시 선택: original.txt"),{target:{files:[new File(["Synthetic original"],"original.txt")]}});await waitFor(()=>expect(Upload.jobs).toHaveLength(1));const abort=vi.spyOn(Upload.jobs[0],"abort");fireEvent.click(screen.getByText("파일 삭제"));await screen.findByText("보관한 첨부가 없습니다.");expect(abort).toHaveBeenCalled();await act(async()=>Upload.jobs[0].finish());expect(screen.queryByRole("button",{name:"대화에 첨부"})).not.toBeInTheDocument();
 });
+
+it("a ready library refresh cannot be replaced by a slower pre-upload inventory", async () => {
+ let finish!:(value:Response)=>void;
+ let calls=0;
+ vi.mocked(fetch).mockImplementation(()=>++calls===1?new Promise(resolve=>{finish=resolve;}):Promise.resolve(new Response(JSON.stringify({items:[file],used_bytes:34,quota_bytes:67108864}))));
+ render(<MediaLibraryView accountId="account-a" onSelect={vi.fn()}/>);
+ fireEvent.click(screen.getByRole("button",{name:"새로고침"}));
+ fireEvent.click(screen.getByRole("button",{name:"새로고침"}));
+ await screen.findByRole("button",{name:"대화에 첨부"});
+ expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+ await act(async()=>finish(new Response(JSON.stringify({items:[{...file,state:"retry_required"}],used_bytes:0,quota_bytes:67108864}))));
+ expect(screen.getByRole("button",{name:"대화에 첨부"})).toBeInTheDocument();
+ expect(screen.queryByText("완료되지 않은 업로드 · 원본을 다시 선택하세요")).not.toBeInTheDocument();
+});

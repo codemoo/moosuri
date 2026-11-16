@@ -229,7 +229,9 @@ export function useMediaUploads(accountId: string, slot: string) {
           item.blob = blob;
           if (!isDocument) item.url = scope.localUrl(blob);
           update(item.selection, { blob, url: item.url });
-          await upload(item);
+          // Serialize bitmap decoding/resizing, not the independent network
+          // receipts. A held upload must not strand later selected images.
+          void upload(item);
         } catch (e) {
           if (!item.controller.signal.aborted)
             update(item.selection, {
@@ -421,6 +423,7 @@ export function MediaLibraryView({
   const retries = useRef(new Map<string, AbortController>());
   const [retryProgress, setRetryProgress] = useState<Record<string, number>>({});
   const generation = useRef(0);
+  const refreshRequest = useRef<AbortController | null>(null);
   const downloads = useRef(
     new Map<AbortController, { id: string; url?: string; timer?: ReturnType<typeof setTimeout> }>(),
   );
@@ -446,6 +449,8 @@ export function MediaLibraryView({
     window.addEventListener("moosuri-media-deleted", deleted);
     return () => {
       generation.current++;
+      refreshRequest.current?.abort();
+      refreshRequest.current = null;
       window.removeEventListener("moosuri-media-deleted", deleted);
       for (const controller of downloads.current.keys()) stop(controller);
       for (const controller of retries.current.values()) controller.abort();
@@ -453,12 +458,20 @@ export function MediaLibraryView({
     };
   }, [scope]);
   async function refresh() {
+    refreshRequest.current?.abort();
+    const controller = new AbortController();
+    refreshRequest.current = controller;
+    const before = generation.current;
+    const current = () => refreshRequest.current === controller && !controller.signal.aborted && before === generation.current;
     try {
-      const result = await scope.request<MediaLibrary>("/media");
+      const result = await scope.request<MediaLibrary>("/media", "GET", undefined, controller.signal);
+      if (!current()) return;
       setData({ ...result, items: result.items.filter((item) => !deletedIds.current.has(item.id)) });
       setError("");
     } catch (e) {
-      if (!isAborted(e)) setError("보관함을 불러오지 못했습니다.");
+      if (current() && !isAborted(e)) setError("보관함을 불러오지 못했습니다.");
+    } finally {
+      if (refreshRequest.current === controller) refreshRequest.current = null;
     }
   }
   async function remove(id: string) {

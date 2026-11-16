@@ -266,6 +266,115 @@ async fn send(
         .unwrap()
 }
 #[tokio::test]
+async fn previous_receipt_fences_thread_session_revision_and_recency() {
+    let _guard = TEST_LOCK.lock().await;
+    for boundary in [
+        "thread",
+        "session",
+        "epoch",
+        "revision",
+        "intervening",
+        "expired",
+    ] {
+        let dir = directory();
+        let store = Store::open(dir.path()).unwrap();
+        let mut user = configured(&store).await;
+        let mut thread = store
+            .create_thread(&user, "Synthetic receipt boundary".into())
+            .await
+            .unwrap()
+            .id;
+        let first = send(
+            &store,
+            &user,
+            &thread,
+            "내일 오후 3시에 합성 자료 검토하라고 알려줘.",
+            None,
+        )
+        .await;
+        let receipt = first.run.schedule_receipts.unwrap().remove(0);
+        match boundary {
+            "thread" => {
+                thread = store
+                    .create_thread(&user, "Other synthetic thread".into())
+                    .await
+                    .unwrap()
+                    .id
+            }
+            "session" => {
+                user = store
+                    .login("admin@example.test".into(), crate::tests::PASSWORD.into())
+                    .await
+                    .unwrap()
+                    .user
+            }
+            "epoch" => {
+                user = store
+                    .change_password(&user, "Changed-synthetic-password-2026".into())
+                    .await
+                    .unwrap()
+                    .user
+            }
+            "revision" => {
+                store
+                    .control_schedule(
+                        &user,
+                        receipt.id.clone(),
+                        ScheduleControl {
+                            expected_revision: receipt.revision,
+                            action: "pause".into(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+            "intervening" => {
+                store
+                    .submit_turn(
+                        &user,
+                        thread.clone(),
+                        Uuid::new_v4().to_string(),
+                        "ordinary synthetic question".into(),
+                    )
+                    .await
+                    .unwrap();
+                let run = store.claim_run().await.unwrap().unwrap();
+                store
+                    .finish_run(&run.lease, RunState::Completed, None)
+                    .await
+                    .unwrap();
+            }
+            "expired" => {
+                let run = first.run.id;
+                store
+                    .call(move |db| {
+                        db.conn.execute(
+                            "UPDATE chat_runs SET created_at=?1 WHERE id=?2",
+                            params![clock()? - 1801, run],
+                        )?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = store.schedules(&user).await.unwrap();
+        // A sole owned reminder is deliberately present: deictic controls must
+        // still require their own immediate, current receipt instead of using it.
+        assert_eq!(before.len(), 1);
+        let rejected = send(&store, &user, &thread, "방금 그 알림 취소해 줘.", None).await;
+        assert_eq!(rejected.run.state, RunState::Completed, "{boundary}");
+        assert!(rejected.run.schedule_receipts.is_none(), "{boundary}");
+        assert_eq!(
+            serde_json::to_value(store.schedules(&user).await.unwrap()).unwrap(),
+            serde_json::to_value(before).unwrap(),
+            "{boundary}"
+        );
+        assert!(store.claim_run().await.unwrap().is_none(), "{boundary}");
+    }
+}
+#[tokio::test]
 async fn atomic_receipts_retry_restart_and_no_model_claim() {
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();

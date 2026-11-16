@@ -631,3 +631,145 @@ async fn conversational_civil_time_runtime_missing_clock_reopen_preserves_origin
     drop(runtime);
     server.abort();
 }
+
+#[tokio::test]
+async fn reminder_receipt_followup_moves_and_revokes_same_reminder_without_task_inference() {
+    use moosuri_core::{ScheduleCreate, ScheduleDraft, ScheduleRule};
+    let _guard = TEST_LOCK.lock().await;
+    for reference in ["그 알림", "방금 그 알림"] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                seen.fetch_add(1, Ordering::SeqCst);
+                async {
+                    (
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        "synthetic unexpected inference",
+                    )
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (_dir, store, user, thread) = knowledge::tool_configured(&base).await;
+        let unrelated = store
+            .create_schedule(
+                &user,
+                ScheduleCreate {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    draft: ScheduleDraft {
+                        title: "Unrelated existing reminder".into(),
+                        message: "Keep this reminder".into(),
+                        rule: ScheduleRule::Daily {
+                            time: "11:00".into(),
+                            timezone: "Asia/Seoul".into(),
+                        },
+                        valid_until: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let context = Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        });
+        let runtime = Runtime::start(store.clone());
+        let first = store
+            .submit_turn_with_schedule_context(
+                &user,
+                thread.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                "내일 오후 3시에 클로버 시안 검토하라고 알려줘.".into(),
+                None,
+                context.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.run.state, RunState::Completed);
+        let original = first.run.schedule_receipts.unwrap().remove(0);
+        let request = uuid::Uuid::new_v4().to_string();
+        let prompt = format!("{reference}을 내일 오후 4시로 옮겨줘.");
+        let moved = store
+            .submit_turn_with_schedule_context(
+                &user,
+                thread.clone(),
+                request.clone(),
+                prompt.clone(),
+                None,
+                context.clone(),
+            )
+            .await
+            .unwrap();
+        let done = wait(&store, &user, &thread).await;
+        assert_eq!(done.run.id, moved.run.id);
+        assert_eq!(done.run.state, RunState::Completed, "{:?}", done.run.error);
+        assert!(done.run.mission_receipt.is_none());
+        let edited = done.run.schedule_receipts.unwrap().remove(0);
+        assert_eq!(edited.id, original.id);
+        assert_eq!(edited.revision, original.revision + 1);
+        assert_eq!(edited.action, "edit");
+        let schedules = store.schedules(&user).await.unwrap();
+        assert_eq!(schedules.len(), 2);
+        let current = schedules.iter().find(|s| s.id == original.id).unwrap();
+        let at = current.next_fire_at.unwrap();
+        let hour = chrono_hour_seoul(at);
+        assert_eq!(hour, "16:00");
+        let replay = store
+            .submit_turn_with_schedule_context(
+                &user,
+                thread.clone(),
+                request,
+                prompt,
+                None,
+                context.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.run.id, moved.run.id);
+        assert_eq!(
+            store
+                .schedules(&user)
+                .await
+                .unwrap()
+                .iter()
+                .find(|s| s.id == original.id)
+                .unwrap()
+                .revision,
+            edited.revision
+        );
+        let cancelled = store
+            .submit_turn_with_schedule_context(
+                &user,
+                thread.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                format!("{reference} 취소해 줘."),
+                None,
+                context,
+            )
+            .await
+            .unwrap();
+        assert_eq!(cancelled.run.state, RunState::Completed);
+        let revoked = cancelled.run.schedule_receipts.unwrap().remove(0);
+        assert_eq!(revoked.id, original.id);
+        assert_eq!(revoked.action, "revoke");
+        assert_eq!(revoked.state, "revoked");
+        let remaining = store.schedules(&user).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, unrelated.id);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(store.missions(&user).await.unwrap().is_empty());
+        assert!(store.recurring_missions(&user).await.unwrap().is_empty());
+        runtime.shutdown().await;
+        server.abort();
+    }
+}
+
+fn chrono_hour_seoul(at: i64) -> String {
+    // Schedule view's UTC timestamp: Seoul is UTC+09 with no DST.
+    let seconds = (at + 9 * 3600).rem_euclid(86400);
+    format!("{:02}:{:02}", seconds / 3600, seconds % 3600 / 60)
+}

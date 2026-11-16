@@ -747,3 +747,160 @@ async fn personal_missions_runtime_cancel_revoke_and_restart_never_reenter_unkno
         rt.shutdown().await;
     }
 }
+
+#[tokio::test]
+async fn personal_acknowledged_final_recovers_without_token_refresh_but_keeps_current_authority() {
+    use moosuri_connectors::model::protocol::tools::{ToolCapabilities, ToolRequest};
+    use moosuri_connectors::model::protocol::{
+        FinishOutcome, ModelEvent, TextMessage, TextRequest, TextRole,
+    };
+    use moosuri_store::{KnowledgeToolInput, PendingKnowledgeCall, PrivateCheckpoint};
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    for boundary in ["discovery_unavailable", "disconnected", "logout"] {
+        let (dir, store, user, fixture, service, login) = setup().await;
+        let mission = store
+            .create_mission(
+                &user,
+                request(
+                    "Calculate 0.1 plus 0.2",
+                    if boundary == "logout" {
+                        MissionMode::CurrentSession
+                    } else {
+                        MissionMode::Durable
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+        let claim = store.claim_agent_run().await.unwrap().unwrap();
+        let first = store
+            .begin_agent_step(&claim.lease, claim.context.checkpoint_seq)
+            .await
+            .unwrap();
+        let result = {
+            store
+                .commit_agent_step(
+                    &first,
+                    PrivateCheckpoint {
+                        bytes: b"{}".to_vec(),
+                    },
+                    vec![PendingKnowledgeCall {
+                        call_id: "exact".into(),
+                        input: KnowledgeToolInput::DecimalCalculate {
+                            calculation: DecimalCalculation {
+                                operation: DecimalOperation::Sum,
+                                operands: vec!["0.1".into(), "0.2".into()],
+                            },
+                        },
+                    }],
+                )
+                .await
+                .unwrap();
+            store
+                .execute_knowledge_tool(&first, "exact".into())
+                .await
+                .unwrap()
+        };
+        store
+            .mission_save_plan(&first, vec!["Calculate and verify".into()])
+            .await
+            .unwrap();
+        let context = store.agent_context(&claim.lease).await.unwrap();
+        let final_step = store
+            .begin_agent_step(&claim.lease, context.checkpoint_seq)
+            .await
+            .unwrap();
+        let client = service
+            .client(
+                moosuri_store::SubscriptionAuthority::Run(claim.lease.clone()),
+                claim.binding.subscription.clone().unwrap(),
+            )
+            .await
+            .unwrap();
+        let request = TextRequest {
+            model: claim.binding.model.clone(), effort: claim.binding.effort.clone(), max_output_tokens: 4096,
+            messages: vec![TextMessage { role: TextRole::System, text: "Verify the original task from its actual receipt".into(), phase: None },
+                TextMessage { role: TextRole::User, text: json!({"original":mission.request,"plan":["Calculate and verify"],"receipts":[{"step":1,"call_id":"exact","result":result}]}).to_string(), phase: None }],
+        };
+        let definitions = crate::knowledge_tools::definitions(claim.tool_profile.as_ref());
+        let tools = ToolRequest {
+            text: &request,
+            tools: &definitions,
+            continuation: None,
+            results: &[],
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        let round = client
+            .stream_tool_round(
+                &tools,
+                &ToolCapabilities {
+                    function_tools: true,
+                },
+                &tx,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(round.outcome, FinishOutcome::Completed);
+        let mut text = String::new();
+        while let Ok(event) = rx.try_recv() {
+            if let ModelEvent::TextDelta { text: delta, .. } = event {
+                text.push_str(&delta);
+            }
+        }
+        assert!(text.contains("0.3"));
+        store.commit_agent_step(&final_step, PrivateCheckpoint { bytes: json!({"kind":"mission_round","terminal":"completed","planning":false,"text":text}).to_string().into_bytes() }, vec![]).await.unwrap();
+        store
+            .expire_subscription_fixture(&user, login.binding_id.clone(), login.revision)
+            .await
+            .unwrap();
+        fixture.state.discovery_status.store(503, Ordering::SeqCst);
+        if boundary == "disconnected" {
+            service
+                .disconnect(&user, login.binding_id, login.revision)
+                .await
+                .unwrap();
+        }
+        if boundary == "logout" {
+            store.logout(&user).await.unwrap();
+        }
+        let before_models = fixture.state.models.load(Ordering::SeqCst);
+        let before_refreshes = fixture.state.refreshes.load(Ordering::SeqCst);
+        drop(client);
+        drop(claim);
+        drop(service);
+        drop(store);
+        let store = Store::open(dir.path()).unwrap();
+        let observer = if boundary == "logout" {
+            store
+                .login("owner@example.test".into(), PASSWORD.into())
+                .await
+                .unwrap()
+                .user
+        } else {
+            user
+        };
+        let runtime = runtime(store.clone(), super::service(store.clone(), &fixture), None);
+        let done = finished(&store, &observer, &mission.id).await;
+        if boundary == "discovery_unavailable" {
+            assert_eq!(done.state, "achieved", "{:?}", done.report);
+            assert!(done.result.unwrap().text.contains("0.3"));
+        } else {
+            assert_ne!(done.state, "achieved", "{boundary}");
+        }
+        assert_eq!(fixture.state.models.load(Ordering::SeqCst), before_models);
+        assert_eq!(
+            fixture.state.refreshes.load(Ordering::SeqCst),
+            before_refreshes
+        );
+        assert_eq!(
+            store
+                .usage_summary(&observer)
+                .await
+                .unwrap()
+                .dispatched_calls,
+            2
+        );
+        runtime.shutdown().await;
+    }
+}

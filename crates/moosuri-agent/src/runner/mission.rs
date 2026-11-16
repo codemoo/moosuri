@@ -149,42 +149,6 @@ pub(super) async fn execute(
         calendar_profile,
         ..
     } = claimed;
-    let wire = protocol(binding.config.kind);
-    let capabilities = TextCapabilities {
-        efforts: binding.effort.iter().cloned().collect(),
-    };
-    let credential = binding
-        .credential
-        .take()
-        .map(|v| Secret::new(v.to_string()))
-        .transpose();
-    let built = if let Some(reference) = binding.subscription.clone() {
-        subscriptions
-            .client(
-                moosuri_store::SubscriptionAuthority::Run(lease.clone()),
-                reference,
-            )
-            .await
-            .map_err(|_| TransportError::InvalidConfiguration)
-    } else {
-        credential.and_then(|credential| {
-            model_client(
-                &binding.config,
-                credential,
-                TextCapabilities {
-                    efforts: capabilities.efforts.clone(),
-                },
-            )
-        })
-    };
-    let mut client = match built {
-        Ok(v) => v,
-        Err(e) => {
-            let (s, e) = transport_failure(e);
-            finish(&store, &lease, None, s, Some(e), &signals).await;
-            return;
-        }
-    };
     // A first execution round can be acknowledged before its local display
     // stages are saved. Admit the current report/actions with that real completed
     // step BEFORE replaying any of its tool slots. Unknown/incomplete dispatches
@@ -351,6 +315,45 @@ pub(super) async fn execute(
             return;
         }
     }
+    // An acknowledged final proposal needs guarded local verification only.
+    // Resolve remote token readiness only if unfinished work needs inference;
+    // an OAuth outage must not discard already completed task work.
+    let wire = protocol(binding.config.kind);
+    let capabilities = TextCapabilities {
+        efforts: binding.effort.iter().cloned().collect(),
+    };
+    let credential = binding
+        .credential
+        .take()
+        .map(|v| Secret::new(v.to_string()))
+        .transpose();
+    let built = if let Some(reference) = binding.subscription.clone() {
+        subscriptions
+            .client(
+                moosuri_store::SubscriptionAuthority::Run(lease.clone()),
+                reference,
+            )
+            .await
+            .map_err(|_| TransportError::InvalidConfiguration)
+    } else {
+        credential.and_then(|credential| {
+            model_client(
+                &binding.config,
+                credential,
+                TextCapabilities {
+                    efforts: capabilities.efforts.clone(),
+                },
+            )
+        })
+    };
+    let mut client = match built {
+        Ok(v) => v,
+        Err(e) => {
+            let (s, e) = transport_failure(e);
+            finish(&store, &lease, None, s, Some(e), &signals).await;
+            return;
+        }
+    };
     for _ in 0..6 {
         let execution = match store.mission_execution(&lease).await {
             Ok(Some(v)) => v,

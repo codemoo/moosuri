@@ -16,6 +16,7 @@ const MISSION: &str = "현재 예약은 정해진 문구를 개인 소식함에 
 fn target(
     conn: &Connection,
     user: &UserContext,
+    run: &Run,
     hint: &parser::Target,
     selected: Option<&ScheduleTarget>,
 ) -> Result<Option<Schedule>> {
@@ -25,10 +26,28 @@ fn target(
             return Err(StoreError::Conflict);
         }
         return Ok(match hint {
-            parser::Target::Generic => Some(s),
+            parser::Target::Generic | parser::Target::Previous => Some(s),
             parser::Target::Title(title) if title == &s.view.title => Some(s),
             _ => None,
         });
+    }
+    if matches!(hint, parser::Target::Previous) {
+        // A deictic control names the original immediately preceding receipt,
+        // never a global most-recent or sole reminder. Identity/revision is data;
+        // the explicit current control and owned() remain the action authority.
+        let prior: Option<String> = conn.query_row(
+            "SELECT c.receipt FROM chat_runs p JOIN schedule_chat_commands c ON c.tenant_id=p.tenant_id AND c.run_id=p.id WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.thread_id=?3 AND p.sequence=?4 AND p.state='completed' AND p.session_digest=?5 AND p.auth_epoch=?6 AND p.created_at>=?7",
+            params![run.tenant,run.account,run.thread,run.sequence-1,run.session.as_slice(),run.epoch,clock()?-1800],
+            |r| r.get(0),
+        ).optional()?;
+        let Some(prior) = prior else { return Ok(None) };
+        let receipt: ScheduleChatReceipt = decode(&prior)?;
+        let s = match owned(conn, user, &receipt.id) {
+            Ok(s) => s,
+            Err(StoreError::NotFound | StoreError::Conflict) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        return Ok((s.view.revision == receipt.revision && s.view.state != "revoked").then_some(s));
     }
     let ids=conn.prepare("SELECT id FROM reminder_schedules WHERE tenant_id=?1 AND account_id=?2 AND state<>'revoked' AND NOT EXISTS(SELECT 1 FROM followup_reminders f WHERE f.tenant_id=reminder_schedules.tenant_id AND f.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM proactive_suggestions p WHERE p.tenant_id=reminder_schedules.tenant_id AND p.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM proactive_topics p WHERE p.tenant_id=reminder_schedules.tenant_id AND p.schedule_id=reminder_schedules.id) AND NOT EXISTS(SELECT 1 FROM recurring_missions x WHERE x.tenant_id=reminder_schedules.tenant_id AND x.schedule_id=reminder_schedules.id) ORDER BY id LIMIT 65")?.query_map(params![user.tenant.0,user.account.id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     if ids.len() > 64 {
@@ -44,6 +63,7 @@ fn target(
         .filter(|s| match hint {
             parser::Target::Generic => count == 1,
             parser::Target::Title(title) => title == &s.view.title,
+            parser::Target::Previous => false,
         })
         .collect::<Vec<_>>();
     Ok(if matching.len() == 1 {
@@ -97,12 +117,16 @@ pub(crate) fn finish(
                 Action::Resume => "resume",
                 Action::Revoke => "revoke",
             };
-            let current = if command.action == Action::Create {
+            let current = if command.action == Action::Create
+                || independent_target
+                    && matches!(command.target.as_ref(), Some(parser::Target::Previous))
+            {
                 None
             } else {
                 target(
                     conn,
                     user,
+                    run,
                     command.target.as_ref().ok_or(StoreError::Corrupt)?,
                     selected,
                 )?

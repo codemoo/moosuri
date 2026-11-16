@@ -1,6 +1,7 @@
 //! Signed bundles and stopped forward-schema activation. No service mutation.
 mod component;
 mod download;
+pub mod setup;
 use clap::{Subcommand, ValueEnum};
 use fs2::FileExt;
 use ring::signature;
@@ -24,6 +25,7 @@ const BINARY_CAP: u64 = 256 * 1024 * 1024;
 #[derive(Clone, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Network {
+    Local,
     Https,
     Tailscale,
 }
@@ -822,15 +824,26 @@ fn templates(prefix: &Path, i: &Installation) -> Result<BTreeMap<String, String>
     let prefix = prefix.to_str().ok_or("installation_utf8_path_required")?;
     let manager = manager.to_str().ok_or("installation_utf8_path_required")?;
     let proxy_arguments = match i.network {
+        Network::Local => " --dev",
         Network::Https => " --trusted-proxy 127.0.0.1",
         Network::Tailscale => "",
     };
+    let bind_arguments = if matches!(i.network, Network::Local) {
+        let port = url::Url::parse(&i.origin)
+            .map_err(error)?
+            .port_or_known_default()
+            .ok_or("installation_local_port_required")?;
+        format!(" --bind 127.0.0.1:{port}")
+    } else {
+        String::new()
+    };
     let service = format!(
-        "[Unit]\nDescription=moosuri private assistant preview\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={} installation run --prefix {} -- serve --origin {}{}\nRestart=on-failure\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=moosuri private assistant preview\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={} installation run --prefix {} -- serve --origin {}{}{}\nRestart=on-failure\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n",
         unit(manager),
         unit(prefix),
         unit(&i.origin),
-        proxy_arguments
+        proxy_arguments,
+        bind_arguments
     );
     let host = url::Url::parse(&i.origin)
         .map_err(error)?
@@ -934,7 +947,11 @@ pub fn run(command: &Command) -> Result<()> {
                 return Err("installation_control_character_refused".into());
             }
             let u = url::Url::parse(origin).map_err(error)?;
-            if u.scheme() != "https"
+            let local = matches!(network, Network::Local);
+            if moosuri_server::ServerConfig::new(origin, local).is_err()
+                || (local
+                    && (u.scheme() != "http" || u.port_or_known_default().is_none_or(|p| p < 1024)))
+                || (!local && u.scheme() != "https")
                 || u.username() != ""
                 || u.password().is_some()
                 || u.query().is_some()
@@ -942,7 +959,7 @@ pub fn run(command: &Command) -> Result<()> {
                 || u.path() != "/"
                 || u.host_str().is_none()
             {
-                return Err("installation_exact_https_origin_required".into());
+                return Err("installation_origin_network_mismatch".into());
             }
             new_dir(prefix)?;
             create(&prefix.join("installation.lock"), b"", false)?;
@@ -1116,6 +1133,7 @@ pub fn run(command: &Command) -> Result<()> {
             );
         }
         Command::Run { prefix, args } => {
+            setup::check_start_allowed(prefix)?;
             let _lock = lock(prefix, false)?;
             let i = installation(prefix)?;
             no_pending(prefix)?;
@@ -1266,6 +1284,7 @@ pub fn guard_managed_executable() -> Result<Option<File>> {
     };
     let l = lock(&prefix, false)?;
     no_pending(&prefix)?;
+    setup::check_start_allowed(&prefix)?;
     let _ = installation(&prefix)?;
     Ok(Some(l))
 }

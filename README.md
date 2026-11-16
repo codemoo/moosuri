@@ -64,6 +64,8 @@ GitHub Actions/automatic CI remain disabled; contributors run relevant checks lo
 
 ## Start
 
+- [Guided installation / 한국어·영어 설치](docs/install.md): macOS, Linux and Windows WSL2; arrow/number menus, optional model setup and user-service lifecycle. Preview package publication is tracked in current status.
+
 - [Development quickstart](docs/development.md): build, init, shared API/local model settings and run the embedded web app. LLM configuration can be skipped while setting up accounts.
 - [Linux ARM64 development](docs/linux-arm64.md): cross-build and direct emulation evidence; native hardware and official release acceptance remain open.
 - [Signed HTTPS download](docs/signed-download.md): fetch an explicit versioned bundle with an independent signing pin; verify before any install.

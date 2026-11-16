@@ -20,7 +20,7 @@
 *.log
 *.trace
 .DS_Store
-**/node_modules/
+**/node_modules
 **/playwright-report/
 **/test-results/
 /web/dist/

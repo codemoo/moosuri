@@ -6,6 +6,11 @@
 [codemoo/moosuri](https://github.com/codemoo/moosuri)이며 안정판·운영 전환은 아직 아니다.
 GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 작업 단위별로 수행한다.
 
+[한국어·영어 설치 마법사](install.md)를 구현했다. 방향키/번호 선택, 최초 관리자,
+선택적 API/local 모델 확인, 로컬 접속, 사용자 launchd/systemd 및 foreground 실행을
+기존 서명 설치에 연결했다. 합성 PTY의 양 언어 설치·재실행과 독립 검토를 통과했다.
+네 플랫폼 미리보기 패키지와 한 줄 bootstrap 공개를 준비 중이다. [설치 검증 기록](reviews/2026-11-17-guided-installation.md).
+
 현재는 [기능별 안정화](testing.md#기능별-안정화)에 집중한다.
 [메일 답장 감시](mail-reply-watches.md)를 추가했다. 완료된 Gmail 읽기/발송 영수증에서
 해당 대화만 확인하고, 새 수신 메일이 없으면 모델·본문 조회 없이 넘어간다. 새 답장은

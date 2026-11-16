@@ -1,16 +1,21 @@
 # 설치·관리자·사용자 흐름
 
-목표는 **설치 한 번, 웹 설정 몇 단계**다. 아래 통합 초기 마법사는 목표 명세다. 현재 `init`/`serve`, 계정·로그인·로컬 초대, 웹 모델 설정과 Google 설치 설정을 사용할 수 있다. [개발 실행 안내](development.md)를 따른다. `/admin/google`의 [Google 마법사](mail.md)는 콜백 복사·웹 클라이언트 JSON 등록·본인 연결 확인을 제공한다. 각 회원의 Google 동의와 메일함은 분리되며 선택한 시스템 발신자의 초대 이메일은 아래 별도 최종 확인 흐름을 제공한다. [로컬 서명 bundle 설치/관리](local-installation.md)는 명시적 key pin과 지원 schema47부터 현재까지의 stopped update를 제공한다. 공식 release package·통합 웹 bootstrap과 전체 설치 수락은 아직 미완료다.
+[한 줄 설치와 한국어·영어 CLI 안내](install.md)를 먼저 읽는다. Rust `setup`은 접속 방식,
+관리자, 선택적 API/local 모델 연결, 사용자 서비스와 대시보드 진입을 묶는다. 아래에는
+이 흐름과 함께 기존 웹/운영 설정의 전체 계약을 보존한다. API 키는 숨김 입력이며
+임시 암호는 첫 로그인에서 변경해야 한다. ChatGPT 구독은 인증한 웹 모델 설정,
+Claude 구독·Google·초대 발신자·암호화 백업은 문서에 명시한 별도 설정을 따른다.
+패키지 공개와 실제 플랫폼 수락 범위는 [현재 상태](status.md)·[검증 기록](reviews/2026-11-17-guided-installation.md)을 따른다.
 
 ## 설치 방식
 
-첫 지원은 Linux x86_64/arm64의 단일 Rust binary + 내장 React 정적 파일이다. SQLite는 함께 동작하므로 PostgreSQL·Redis를 설치하지 않는다. 서명/checksum을 확인한 release를 받아 `moosuri init` 후 `moosuri serve`로 시작한다. OCI image와 최소 Compose 예제는 같은 설정·private volume을 사용한다. container 없이도 동작해야 한다.
+macOS Apple Silicon/Intel 및 Linux x86_64/arm64(WSL2 포함)의 단일 Rust binary + 내장 React 정적 파일을 제공하는 구조다. SQLite는 함께 동작하므로 PostgreSQL·Redis를 설치하지 않는다. 서명/checksum을 확인한 release를 받아 `moosuri init` 후 `moosuri serve`로 시작한다. OCI image와 최소 Compose 예제는 같은 설정·private volume을 사용한다. container 없이도 동작해야 한다.
 
 기본 `data_dir`는 OS private data 위치이며 소스·Dropbox·공유 네트워크 파일시스템 바깥이다. owner-only directory/file, WAL/SHM·journal·backup 경로를 함께 준비한다. 설치기는 binary checksum·쓰기 권한·여유 공간·SQLite version·origin·port·시간대만 필요한 만큼 검사한다. 외부 모델/Google 미연결 상태도 오류 없이 관리 화면에 진입할 수 있다.
 
 ## 초기 마법사
 
-1. **접속 방식:** Tailscale 또는 일반 HTTPS self-host를 선택한다. localhost 개발은 별도 선택이다.
+1. **접속 방식:** 로컬 컴퓨터의 loopback HTTP가 기본이며, Tailscale 또는 일반 HTTPS self-host도 선택한다. 외부 주소는 설치자가 준비한다.
 2. **최초 관리자:** 이름·이메일·비밀번호를 입력한다. 비밀번호 생략 시 충분한 난수의 임시 비밀번호를1회 보여준다. DB에는 Argon2id 해시만 저장하고 `must_change_password=true`다. 설치 중 비밀번호 입력은 terminal echo/log·URL·shell history에 남기지 않는다. 임시 비밀번호의1회 표시는 인증된 setup UI 또는 controlling TTY로만 전달하며 stdout/stderr·로그 수집 출력에 섞지 않는다. TTY 없는 설치는 권한을 제한한 입력 파일/FD로 비밀번호를 제공하고 자동 생성 비밀을 로그에 출력하지 않는다.
 3. **LLM 연결:** OpenAI API, Anthropic API, OpenRouter, local/compatible endpoint, 지원되는 ChatGPT plan 연결, Claude 공식 개인 실행 연결을 고른다. [providers](providers.md)의 지원 제한을 그대로 표시한다. 나중에 설정할 수도 있다.
 4. **기본 모델·effort:** 실제 연결에서 읽은 model catalog와 probe 결과로 선택한다. 이전 사용자의 private 이전은 기존 Terra/high 선택을 보존하고, 새 설치에서 없는 모델을 강제로 지정하지 않는다. effort 미지원은 숨기거나 설명한다.

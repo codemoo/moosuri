@@ -47,6 +47,18 @@ enum RecoveryRole {
 // One startup value, never a collection or hot-path allocation. Keep clap's flat CLI.
 #[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Guided installation (English / 한국어), or resume an existing setup.
+    Setup(installation::setup::Options),
+    /// Start your installed assistant; --foreground runs in this terminal.
+    Start(installation::setup::Start),
+    /// Stop only the installed assistant's user service.
+    Stop(installation::setup::Location),
+    /// Show installation and service readiness.
+    Status(installation::setup::Location),
+    /// Open your installed assistant in the browser.
+    Open(installation::setup::Location),
+    /// Remove managed runtime and service; always preserve private data.
+    Uninstall(installation::setup::Location),
     /// Import an explicitly selected private normalized export into a NEW staging data root.
     ImportPrivate(import_private::Command),
     /// Import a complete private PostgreSQL schema23 relation snapshot into a NEW root.
@@ -313,6 +325,16 @@ fn main() {
     }
 }
 async fn run(cli: Cli) -> Result<(), String> {
+    use installation::setup;
+    match &cli.command {
+        Command::Setup(options) => return setup::run(options, cli.data_dir.as_deref()).await,
+        Command::Start(options) => return setup::start(options).await,
+        Command::Stop(location) => return setup::stop(location),
+        Command::Status(location) => return setup::status(location).await,
+        Command::Open(location) => return setup::open(location),
+        Command::Uninstall(location) => return setup::uninstall(location),
+        _ => (),
+    }
     if let Command::InternalClaudeRun {
         mode,
         model,
@@ -442,7 +464,13 @@ async fn run(cli: Cli) -> Result<(), String> {
                 "Historical usage remains unknown. This allowance limits new inference request count and validated STT input duration; it is not a token or financial ceiling. Unknown outcomes consume allowance without refund."
             );
         }
-        Command::Installation { .. } => {
+        Command::Setup(_)
+        | Command::Start(_)
+        | Command::Stop(_)
+        | Command::Status(_)
+        | Command::Open(_)
+        | Command::Uninstall(_)
+        | Command::Installation { .. } => {
             unreachable!("installation runs without ordinary data admission")
         }
         Command::InternalPdfText => unreachable!("PDF extraction does not open installation state"),

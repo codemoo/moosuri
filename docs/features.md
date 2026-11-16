@@ -6,7 +6,7 @@
 
 | ID | 기능·구분 | 원본 근거 | 새 목표·단계 | 통과해야 할 동작 |
 | --- | --- | --- | --- | --- |
-| F01 | 새 설치·진단·설정 · 기본 | `config.py`, `cli.py`, `deploy/linux/` | CLI/server · P0/P2/P10 | 개발자 계정 없이 init, 로그/일반 출력에 secret0·setup UI/TTY 일회 전달, origin/data-dir 설정, 연결 없는 시작, doctor 고정 오류 |
+| F01 | 새 설치·진단·설정 · 기본 | `config.py`, `cli.py`, `deploy/linux/` | CLI/server · P0/P2/P10 | [한국어/영어 한 줄 설치](install.md), macOS/Linux/WSL2·방향키/번호 선택·사용자 서비스/foreground·재실행 보존, 개발자 계정 없이 init, 로그/일반 출력에 secret0·setup UI/TTY 일회 전달, origin/data-dir 설정, 연결 없는 시작, doctor 고정 오류 |
 | F02 | 로그인 유지·기기 세션 · 기본 | `api.py`, `models.py`, `020_session_continuity.sql`, web auth/push tests | server/web · P2 | HttpOnly/SameSite/Origin, 기본30일·활동 갱신, 실제401만 잠금, logout/relogin 응답 순서, 모든 기기 폐기 |
 | F03 | 채팅 생성·목록·삭제 · 기본 | `thread_lifecycle.py`, `store.py`, `thread-delete.spec.ts` | store/web · P2 | 현재/이전/마지막 대화 삭제, pending upload·실행 fence, 오래된 페이지/SSE로 재등장하지 않음; 저장 기억/문서/예약은 별도 |
 | F04 | 대화 연속성·오래된 문맥 · 기본 | `context.py`, `workspace_tools.py`, `test_memory_context_adoption.py` | agent/web · P2/P3 | 마지막 대화 복귀, 이전 페이지 scroll anchor, 같은 대화 지시어·100턴 전/다른 대화 검색, 새 질문과 구분 |

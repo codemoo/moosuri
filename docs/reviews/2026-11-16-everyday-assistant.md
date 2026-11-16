@@ -92,7 +92,33 @@ and relative-target/replay boundaries. The resumed error-settlement finding was
 fixed and independently rechecked. A targeted real reopen test proves partial
 status and no new inference after a committed-slot local budget failure.
 
-Publication gates and Linux checks use the exact public source in an isolated
-rootless container; their final result is recorded below once complete. Scripted
+Publication format/plan/OpenSpec/source+history secret gates passed. Linux
+acceptance below uses the exact public source in an isolated rootless container. Scripted
 contract regressions and exposed live development requests are not a blind
 holdout, production quality score or commercial reliability guarantee.
+
+## Published-source Linux acceptance
+
+Public implementation commit: `5348757f88e3ac4823ff4dcf7af9c3182f518f99`.
+The uploaded source/asset archive was SHA256 `1b98434cf15ddbb4108f172222fa2584266822abf46676e180284b7c98151963`.
+Source hashes matched before and after execution. Known SSH host verification,
+rootless read-only container, network disabled, vendored dependencies and synthetic
+temporary DBs were used. There was no production deployment.
+
+| Phase | Selected passing tests | Outcome |
+| --- | ---: | --- |
+| reminders | 24 | pass |
+| registry | 4 | pass |
+| journal | 1 | pass |
+| restore | 1 | pass |
+| policy | 2 | pass |
+| live-policy | 1 | pass |
+| missions | 16 | pass |
+| chat | 1 | pass |
+| evaluator | 10 | pass |
+| lint | — | pass |
+| cli | — | pass |
+
+These are scoped platform regressions, not additional independent model-quality
+samples. CI remains disabled. The public main branch and canonical local checkout
+are synchronized; this follow-up changes verification documentation only.

@@ -5,7 +5,17 @@ use moosuri_core::{MissionCheck, MissionCreate, MissionMode, RunInstructionReque
 #[tokio::test]
 async fn held_stream_live_guidance_continues_same_run_preserves_tool_and_closes_invalid_results() {
     let _guard = TEST_LOCK.lock().await;
-    for scenario in ["final", "tool", "refused", "malformed", "mission"] {
+    for scenario in [
+        "final",
+        "tool",
+        "refused",
+        "malformed",
+        "mission",
+        "native-rejected",
+    ] {
+        if scenario == "native-rejected" && !cfg!(feature = "credential-broker-chat") {
+            continue;
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let calls = Arc::new(AtomicUsize::new(0));
@@ -19,8 +29,11 @@ async fn held_stream_live_guidance_continues_same_run_preserves_tool_and_closes_
         let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{
             let seen=seen.clone();let gate=gate.clone();let records=recorded.clone();async move {
                 let n=seen.fetch_add(1,Ordering::SeqCst);records.lock().await.push(body.clone());assert!(n<4);
+                assert!(body["tools"].as_array().unwrap().iter().all(|tool| !matches!(moosuri_core::tool_capability(tool["function"]["name"].as_str().unwrap()), Some(moosuri_core::ToolCapability::NativeCredential | moosuri_core::ToolCapability::NativeMailRead))), "ordinary continuation must not discover native tools");
                 let (delta,reason)=if has_tool && n==0 {
                     (json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"original-sum".into(),"decimal_calculate",json!({"operation":"sum","operands":["2","3"]}))]}),"tool_calls")
+                } else if n>held && scenario=="native-rejected" {
+                    (json!({"role":"assistant","tool_calls":[knowledge::tool_call(0,"injected-native".into(),"native_mail_search",json!({"query":"in:inbox","cursor":null}))]}),"tool_calls")
                 } else if n>held && scenario=="refused" {(json!({"role":"assistant","refusal":"Cannot apply synthetic guidance"}),"content_filter")}
                 else {
                     let text=if scenario=="mission" {json!({"text":if n==held{"Exact result 5"}else{"Revised exact result 5"},"evidence":[{"step":1,"call_id":"original-sum"}]}).to_string()}
@@ -28,7 +41,7 @@ async fn held_stream_live_guidance_continues_same_run_preserves_tool_and_closes_
                     (json!({"role":"assistant","content":text}),"stop")
                 };
                 if n>held {
-                    assert!(body["messages"].as_array().unwrap().iter().any(|m|m["role"]=="user" && m["content"]=="Use the revised constraint exactly."));
+                    assert!(body["messages"].as_array().unwrap().iter().any(|m|m["role"]=="user" && m["content"]==if scenario=="native-rejected" {"Read native Gmail inbox now."} else {"Use the revised constraint exactly."}));
                     if has_tool {
                         if scenario=="mission" {assert_eq!(body["messages"][1]["content"].as_str().unwrap().matches("original-sum").count(),1);}
                         else {assert_eq!(body["messages"].as_array().unwrap().iter().filter(|m|m["role"]=="tool").count(),1);}
@@ -101,7 +114,12 @@ async fn held_stream_live_guidance_continues_same_run_preserves_tool_and_closes_
         let request = RunInstructionRequest {
             request_id: uuid::Uuid::new_v4().to_string(),
             expected_attempt: 1,
-            text: "Use the revised constraint exactly.".into(),
+            text: if scenario == "native-rejected" {
+                "Read native Gmail inbox now."
+            } else {
+                "Use the revised constraint exactly."
+            }
+            .into(),
         };
         let ack = store
             .submit_run_instruction(&user, run_id.clone(), request.clone())
@@ -154,7 +172,7 @@ async fn held_stream_live_guidance_continues_same_run_preserves_tool_and_closes_
             .unwrap();
         assert_eq!(receipt.run_id, run_id);
         assert_eq!(receipt.attempt, 1);
-        if matches!(scenario, "refused" | "malformed") {
+        if matches!(scenario, "refused" | "malformed" | "native-rejected") {
             assert_ne!(done.as_ref().unwrap().run.state, RunState::Completed);
             assert_eq!(receipt.state, "closed", "{scenario}");
         } else {
@@ -182,6 +200,18 @@ async fn held_stream_live_guidance_continues_same_run_preserves_tool_and_closes_
             store.usage_summary(&user).await.unwrap().dispatched_calls,
             (held + 2) as i64
         );
+        if scenario == "native-rejected" {
+            let conn = rusqlite::Connection::open_with_flags(
+                _dir.path().join("assistant.sqlite"),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .unwrap();
+            let jobs: i64 = conn.query_row("SELECT (SELECT count(*) FROM credential_broker_jobs) + (SELECT count(*) FROM native_task_mail_reads) + (SELECT count(*) FROM credential_broker_commitments)", [], |row| row.get(0)).unwrap();
+            assert_eq!(
+                jobs, 0,
+                "later guidance cannot acquire native work or dispatch"
+            );
+        }
         runtime.shutdown().await;
         server.abort();
     }

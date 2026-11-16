@@ -1,0 +1,5 @@
+- [x] Trace instruction-attempt loss at stable connection promotion.
+- [x] Author unchanged pending/applied guidance regressions through real Store methods.
+- [x] Reproduce both failures against baseline and pass with shared requeue admission.
+- [x] Verify existing connection waits/control boundaries and scoped lint.
+- [x] Obtain independent boundary review before integration/publication.

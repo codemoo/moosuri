@@ -75,3 +75,59 @@ it("an empty instruction composer returns to the normal draft after terminal and
 it("typing a normal next draft pins that mode when instruction support appears asynchronously",async()=>{
  const initial=turn();initial.run.supports_instructions=false;const t=fixture(c=>c.path.endsWith("/messages")?response({thread_id:"thread-a",cursor:1,turns:[initial],next_before:null}):undefined);render(<Harness/>);await screen.findByLabelText("메시지");await waitFor(()=>expect(screen.queryByText("대화 기록을 불러오는 중…")).not.toBeInTheDocument());fireEvent.change(screen.getByLabelText("메시지"),{target:{value:"Next draft typed while work starts"}});await act(async()=>{t.emit({...turn(),run:{...turn().run,version:2}});await new Promise(r=>setTimeout(r,40));});expect(screen.getByLabelText("메시지")).toHaveValue("Next draft typed while work starts");expect(screen.queryByLabelText("작업에 추가 지시")).not.toBeInTheDocument();expect(writes(t)).toHaveLength(0);
 });
+
+function resumedMission(attempt: number, runId = "run-thread-a"): MissionView {
+ return {id:"mission-a",revision:1,state:"executing",request:{request_id:"original-mission",task:"Compare synthetic travel options",constraints:"",checks:[],execution_mode:"durable"},steering:[],plan:[],completed_steps:0,result:null,receipts:[],report:[],uncertain:false,expires_at_ms:2000000000000,instruction_target:{run_id:runId,thread_id:"thread-a",attempt,supports_instructions:true},instructions:[]};
+}
+function ResumedMissionHarness({mission}:{mission:MissionView}) {
+ const [value,setValue]=useState<InstructionMemory>(emptyInstructions);
+ return <MissionInstructions accountId="owner" mission={mission} state={value} update={setValue} onExpired={vi.fn()}/>;
+}
+it("an unsent mission instruction follows the same resumed carrier only when explicitly sent",async()=>{
+ const t=fixture();const view=render(<ResumedMissionHarness mission={resumedMission(1)}/>);
+ fireEvent.click(screen.getByText("진행 중인 일에 추가 지시"));
+ fireEvent.change(screen.getByLabelText("업무에 추가 지시"),{target:{value:"Keep the baggage fee in the comparison"}});
+ view.rerender(<ResumedMissionHarness mission={resumedMission(2)}/>);
+ expect(screen.getByLabelText("업무에 추가 지시")).toHaveValue("Keep the baggage fee in the comparison");
+ expect(writes(t)).toHaveLength(0);
+ expect(screen.getByRole("button",{name:"같은 업무에 추가 지시 보내기"})).toBeEnabled();
+ view.rerender(<ResumedMissionHarness mission={resumedMission(1)}/>);
+ expect(screen.getByRole("button",{name:"같은 업무에 추가 지시 보내기"})).toBeDisabled();
+ view.rerender(<ResumedMissionHarness mission={resumedMission(2)}/>);
+ fireEvent.click(screen.getByRole("button",{name:"같은 업무에 추가 지시 보내기"}));
+ await screen.findByText("추가 지시 접수됨 · 아직 반영 전");
+ expect(writes(t)).toHaveLength(1);
+ expect(writes(t)[0].body).toMatchObject({expected_attempt:2,text:"Keep the baggage fee in the comparison"});
+});
+it("resume preserves an uncertain instruction's original identity while a later draft uses the current attempt",async()=>{
+ let count=0;const t=fixture(c=>c.path.endsWith("/instructions")&&c.init.method==="POST"&&++count===1?Promise.reject(new TypeError("lost receipt")):undefined);
+ const view=render(<ResumedMissionHarness mission={resumedMission(1)}/>);
+ fireEvent.click(screen.getByText("진행 중인 일에 추가 지시"));
+ fireEvent.change(screen.getByLabelText("업무에 추가 지시"),{target:{value:"Original pending instruction"}});
+ fireEvent.click(screen.getByRole("button",{name:"같은 업무에 추가 지시 보내기"}));
+ await screen.findByRole("button",{name:"같은 추가 지시 다시 접수"});
+ fireEvent.change(screen.getByLabelText("업무에 추가 지시"),{target:{value:"Separate unsent comparison criterion"}});
+ view.rerender(<ResumedMissionHarness mission={resumedMission(2)}/>);
+ expect(writes(t)).toHaveLength(1);
+ fireEvent.click(screen.getByRole("button",{name:"같은 추가 지시 다시 접수"}));
+ await screen.findByText("추가 지시 접수됨 · 아직 반영 전");
+ expect(writes(t)[1].body).toEqual(writes(t)[0].body);
+ expect(writes(t)[1].body.expected_attempt).toBe(1);
+ expect(screen.getByLabelText("업무에 추가 지시")).toHaveValue("Separate unsent comparison criterion");
+ expect(screen.getByRole("button",{name:"같은 업무에 추가 지시 보내기"})).toBeEnabled();
+ fireEvent.click(screen.getByRole("button",{name:"같은 업무에 추가 지시 보내기"}));
+ await waitFor(()=>expect(writes(t)).toHaveLength(3));
+ expect(writes(t)[2].body).toMatchObject({expected_attempt:2,text:"Separate unsent comparison criterion"});
+ expect(writes(t)[2].body.request_id).not.toBe(writes(t)[0].body.request_id);
+});
+it("a draft never moves to a different mission carrier or an older attempt",()=>{
+ const t=fixture();const view=render(<ResumedMissionHarness mission={resumedMission(2)}/>);
+ fireEvent.click(screen.getByText("진행 중인 일에 추가 지시"));
+ fireEvent.change(screen.getByLabelText("업무에 추가 지시"),{target:{value:"Criterion for the original carrier"}});
+ for(const mission of [resumedMission(3,"different-run"),resumedMission(1)]) {
+  view.rerender(<ResumedMissionHarness mission={mission}/>);
+  expect(screen.getByLabelText("업무에 추가 지시")).toHaveValue("Criterion for the original carrier");
+  expect(screen.getByRole("button",{name:"같은 업무에 추가 지시 보내기"})).toBeDisabled();
+ }
+ expect(writes(t)).toHaveLength(0);
+});

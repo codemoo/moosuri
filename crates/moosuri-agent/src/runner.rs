@@ -1178,10 +1178,11 @@ pub(crate) async fn execute_with_calendar(
                     Err(_) => return,
                 }
             };
-            let output = match serde_json::to_string(&value) {
-                Ok(v) => v,
-                Err(_) => return,
-            };
+            let output =
+                match tool_result_output(&value, tool_profile.as_ref(), &step, &call.call_id) {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
             results.push(ToolResult {
                 call_id: call.call_id,
                 output,
@@ -1603,27 +1604,22 @@ pub(crate) async fn execute_with_calendar(
                 signals.changed();
                 return;
             }
-            let output = match serde_json::to_value(&value).and_then(|mut output| {
-                if tool_profile.as_ref().is_some_and(|p|p.evidence_calculation)
-                    && matches!(value,KnowledgeToolResult::Search(_)|KnowledgeToolResult::Source(_)) {
-                    output["receipt"]=serde_json::json!({"step":step.step(),"call_id":call.call_id,"ordinal":null});
-                }
-                serde_json::to_string(&output)
-            }) {
-                Ok(output) => output,
-                Err(_) => {
-                    finish(
-                        &store,
-                        &lease,
-                        Some(&step),
-                        RunState::Failed,
-                        Some(RunFailure::ProtocolFailed),
-                        &signals,
-                    )
-                    .await;
-                    return;
-                }
-            };
+            let output =
+                match tool_result_output(&value, tool_profile.as_ref(), &step, &call.call_id) {
+                    Ok(output) => output,
+                    Err(_) => {
+                        finish(
+                            &store,
+                            &lease,
+                            Some(&step),
+                            RunState::Failed,
+                            Some(RunFailure::ProtocolFailed),
+                            &signals,
+                        )
+                        .await;
+                        return;
+                    }
+                };
             results.push(ToolResult {
                 call_id: call.call_id.clone(),
                 output,
@@ -1648,6 +1644,26 @@ pub(crate) async fn execute_with_calendar(
         &signals,
     )
     .await;
+}
+
+/// Fresh and reclaimed rounds expose the same original stored receipt address.
+fn tool_result_output(
+    value: &KnowledgeToolResult,
+    profile: Option<&moosuri_core::RunToolProfile>,
+    step: &StepLease,
+    call_id: &str,
+) -> Result<String, serde_json::Error> {
+    let mut output = serde_json::to_value(value)?;
+    if profile.is_some_and(|p| p.evidence_calculation)
+        && matches!(
+            value,
+            KnowledgeToolResult::Search(_) | KnowledgeToolResult::Source(_)
+        )
+    {
+        output["receipt"] =
+            serde_json::json!({"step":step.step(),"call_id":call_id,"ordinal":null});
+    }
+    serde_json::to_string(&output)
 }
 
 async fn execute_tool(

@@ -258,3 +258,175 @@ async fn native_mail_runtime_current_chat_and_background_mission_continue_from_s
     runtime.shutdown().await;
     upstream.abort();
 }
+
+#[tokio::test]
+async fn native_mixed_source_results_keep_receipts_for_bound_calculation_without_rereads() {
+    let _lock = TEST_LOCK.lock().await;
+    // Both already-saved local results and reads deferred until native reclaim
+    // must carry the original tool-slot address into the next actual inference.
+    for native_first in [false, true] {
+        let requests = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+        let seen = requests.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |axum::Json(body): axum::Json<Value>| {
+                let seen = seen.clone();
+                async move {
+                    let round = {
+                        let mut requests = seen.lock().await;
+                        requests.push(body.clone());
+                        requests.len()
+                    };
+                    let prior = super::knowledge::result_values(&body);
+                    let mut calls = vec![];
+                    let mut answer = None;
+                    match round {
+                        1 => {
+                            calls.push(tool_call(0, "saved-search".into(), "knowledge_search", json!({"kind":"source","text":"NativeMixedLookup","collection_id":null,"subject":null,"speaker":null,"valid_at":null,"cursor":null})));
+                        }
+                        2 => {
+                            let search = prior.iter().find(|v| v["kind"] == "search").unwrap();
+                            assert_eq!(search["receipt"]["call_id"], "saved-search");
+                            assert!(search["receipt"]["step"].is_u64(), "resumed search needs its actual receipt address");
+                            assert_eq!(search["value"]["hits"].as_array().unwrap().len(), 1);
+                            let hit = &search["value"]["hits"][0];
+                            calls.push(tool_call(0, "saved-source".into(), "knowledge_read_source", json!({"id":hit["id"],"revision":hit["revision"],"start_byte":0,"max_bytes":4096})));
+                        }
+                        3 => {
+                            let search = prior.iter().find(|v| v["kind"] == "search").unwrap();
+                            let source = prior.iter().find(|v| v["kind"] == "source").unwrap();
+                            assert_eq!(source["receipt"]["call_id"], "saved-source");
+                            assert!(source["receipt"]["step"].is_u64(), "resumed source needs its actual receipt address");
+                            // Consume only addresses actually returned by the two
+                            // resumed model requests; no inferred dispatch numbers.
+                            calls.push(tool_call(0, "bound".into(), "evidence_calculate", json!({
+                                "plan":{"origins":["source","current","current"],"graph":{"input_count":3,"steps":[{"operation":"product","operands":[{"kind":"input","index":0},{"kind":"input","index":1}]},{"operation":"sum","operands":[{"kind":"result","index":0},{"kind":"input","index":2}]}]}},
+                                "binding":{"search":search["receipt"],"source":source["receipt"],"query":"NativeMixedLookup","prefix":"mixed_price:","scalars":["4","0.60"]}
+                            })));
+                        }
+                        4 => {
+                            let calculated = prior.iter().find(|v| v["kind"] == "evidence_calculation").expect("returned addresses must resolve to actual saved receipts");
+                            assert_eq!(calculated["value"]["exact"], "10");
+                            assert_eq!(calculated["value"]["evidence"]["literal"], "2.35");
+                            assert_eq!(calculated["value"]["evidence"]["source"]["call_id"], "saved-source");
+                            assert!(body.to_string().contains("Synthetic amount 42"));
+                            answer = Some("Native observations retained; exact saved-source total 10.");
+                        }
+                        _ => panic!("no repeated searches or extra repair inference is needed"),
+                    }
+                    if round <= 2 {
+                        let native = tool_call(1, format!("native-{round}"), "native_mail_search", json!({"query":if round == 1{"newer_than:7d subject:invoice"}else{"newer_than:7d subject:receipt"},"cursor":null}));
+                        if native_first {
+                            calls.insert(0, native);
+                        } else {
+                            calls.push(native);
+                        }
+                        for (index, call) in calls.iter_mut().enumerate() {
+                            call["index"] = json!(index);
+                        }
+                    }
+                    let done = answer.is_some();
+                    let data = frame(json!({"id":"native-mixed-source","model":"fixture-model","choices":[{"index":0,"delta":if let Some(text)=answer{json!({"role":"assistant","content":text})}else{json!({"role":"assistant","tool_calls":calls})},"finish_reason":if done{"stop"}else{"tool_calls"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}})) + "data: [DONE]\n\n";
+                    Response::builder().header("content-type", "text/event-stream").body(Body::from(data)).unwrap()
+                }
+            }),
+        );
+        let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (_dir, store, user, thread) = tool_configured(&base).await;
+        super::knowledge::seed(
+            &store,
+            &user,
+            "Synthetic mixed source",
+            vec!["NativeMixedLookup mixed_price: 2.35".into()],
+        )
+        .await;
+        let k = SigningKey::from_pkcs8(&SigningKey::generate_pkcs8().unwrap()).unwrap();
+        let pair = store
+            .broker_pair_challenge(
+                &user,
+                "https://assistant.example.test".into(),
+                k.public_key(),
+            )
+            .await
+            .unwrap();
+        let device = store
+            .broker_pair(PairProof {
+                challenge: pair.nonce,
+                signature: k.sign(&pairing_bytes(&pair).unwrap()),
+            })
+            .await
+            .unwrap();
+        let grant = LocalGrant::select_google_model_read(
+            device.clone(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            GoogleIdentity {
+                subject: "mixed-native-sub".into(),
+                email: "mixed-native@example.test".into(),
+            },
+            1,
+            1,
+            clock() + 600,
+            true,
+        )
+        .unwrap();
+        command(
+            &store,
+            &device,
+            &k,
+            Command::RegisterGoogleModelRead {
+                binding: grant.binding.clone(),
+                background: true,
+            },
+        )
+        .await;
+        let first = store.submit_turn(&user, thread.clone(), Uuid::new_v4().to_string(), "Read native Gmail invoices and receipts. 자료 NativeMixedLookup; 숫자 앞 문구 mixed_price:; 수량 4; 수수료 0.60. Calculate source number times quantity plus fee.".into()).await.unwrap();
+        let runtime = Runtime::start(store.clone());
+        for expected_round in 1..=2 {
+            let waiting = wait_for(&store, &user, &thread, |turn| {
+                turn.run.connection_wait.is_some()
+                    && requests
+                        .try_lock()
+                        .is_ok_and(|seen| seen.len() == expected_round)
+            })
+            .await;
+            assert_eq!(waiting.run.id, first.run.id);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert_eq!(
+                requests.lock().await.len(),
+                expected_round,
+                "waiting must not poll the model"
+            );
+            deliver(&store, &device, &k, &first.run.id).await;
+            runtime.wake();
+        }
+        let done = wait_for(&store, &user, &thread, |turn| !turn.run.state.active()).await;
+        assert_eq!(done.run.state, RunState::Completed, "{:?}", done.run.error);
+        assert_eq!(done.run.id, first.run.id);
+        assert!(text(&done).contains("exact saved-source total 10"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 4);
+        let mut searches = 0;
+        let mut source_reads = 0;
+        // Each outgoing continuation includes earlier assistant calls. The last
+        // request is therefore the complete call ledger, not a sum of repeats.
+        for message in requests.last().unwrap()["messages"].as_array().unwrap() {
+            if let Some(calls) = message["tool_calls"].as_array() {
+                for call in calls {
+                    searches += usize::from(call["function"]["name"] == "knowledge_search");
+                    source_reads +=
+                        usize::from(call["function"]["name"] == "knowledge_read_source");
+                }
+            }
+        }
+        assert_eq!((searches, source_reads), (1, 1));
+        assert_eq!(
+            store.usage_summary(&user).await.unwrap().dispatched_calls,
+            4
+        );
+        runtime.shutdown().await;
+        upstream.abort();
+    }
+}

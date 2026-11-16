@@ -104,6 +104,11 @@ LangGraph checkpoint blob을 역직렬화해 실행하지 않는다.
 발행하고, SSE 조회는 상태를 변경하지 않는다. 구현과 검증 범위는
 [조율·도구 연결 검토](reviews/2026-11-16-coordinator-routing.md)에 기록한다.
 
+안정된 업무 재개는 공통 처리로 접수·반영된 지침과 원래 호출/시간 한도를 이어간다.
+최초 실행과 기기 대기 후 재개의 도구 결과도 같은 직렬화를 사용해 실제 저장 단계와
+호출의 근거 주소를 보존한다. [재개 연속성 검토](reviews/2026-11-16-continuation-integrity.md)는
+이 계약과, 접수된 요청의 식별자를 유지하면서 미전송 초안을 이어 쓰는 UI 동작을 기록한다.
+
 독립 읽기는 bounded concurrency, 같은 객체 쓰기는 revision/CAS다. LLM turns·tool calls·bytes·time·token·retry 각각 상한을 둔다. Tokio cancel은 외부 취소 증거가 아니다. HTTP pool은 `Arc<Client>`로 안전하게 재사용하며 각 요청의 종료가 다른 요청의 transport를 닫지 않는다. metadata-only latency를 queue/context/model/tool/first-final-body/total로 나눠 측정한다.
 
 ## 외부 작업과 권한

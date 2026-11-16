@@ -268,8 +268,8 @@ pub(crate) fn poll(c: &Connection, time: i64) -> Result<()> {
                 "DELETE FROM agent_run_leases WHERE tenant_id=?1 AND run_id=?2",
                 params![t, run],
             )?;
-            c.execute("UPDATE chat_runs SET state='queued',attempt=min(attempt+1,32) WHERE tenant_id=?1 AND id=?2",params![t,run])?;
             c.execute("UPDATE missions SET state='queued' WHERE tenant_id=?1 AND id=?2 AND state='waiting'",params![t,id])?;
+            crate::missions::requeue_stable(c, &t, &run)?;
             c.execute("UPDATE mission_connection_waits SET status='resumed' WHERE tenant_id=?1 AND mission_id=?2 AND request_id=?3 AND status='ready'",params![t,id,wait_id])?;
             crate::missions::connected::admit_run(c, &r)?;
             crate::run_instructions::publish_target_changes(c, &t, &run)?;

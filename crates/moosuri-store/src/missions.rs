@@ -143,7 +143,7 @@ pub(crate) fn supports_live_instructions(c: &Connection, r: &Run) -> Result<bool
 // attempt column is capped at32; at that boundary retire the old lease inside
 // this transaction and let claim mint a fresh nonce. Step accounting receipts
 // remain immutable and cannot authorize execution. Ordinary chat is unaffected.
-fn requeue_stable(c: &Connection, tenant: &str, run: &str) -> Result<()> {
+pub(crate) fn requeue_stable(c: &Connection, tenant: &str, run: &str) -> Result<()> {
     let old_attempt: i32 = c.query_row(
         "SELECT attempt FROM chat_runs WHERE tenant_id=?1 AND id=?2",
         params![tenant, run],

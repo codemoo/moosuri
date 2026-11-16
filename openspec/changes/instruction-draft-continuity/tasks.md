@@ -1,0 +1,5 @@
+- [x] Reproduce disabled unsent draft and later-draft submission after the same task resumes.
+- [x] Follow only a newer matching carrier for unsent drafts; preserve submitted identities.
+- [x] Pass interactive composer, conversation/draft continuity and event-state tests.
+- [x] Complete independent boundary review, web build and integrated acceptance.
+- [ ] Publish implementation and exact-source Linux acceptance.

@@ -36,6 +36,104 @@ pub(crate) fn predecessor(files: &[(i64, String)], captured: i64) -> Connection 
     conn
 }
 
+/// Rebuild synthetic historical fixtures from the registered SQL prefix. Copy
+/// only columns that existed at that boundary, excluding all later objects.
+/// Callers keep the real Store journal/keys and exercise normal reopen afterward.
+pub(crate) fn replace_with_predecessor(source: &mut Connection, captured: i64) {
+    after(captured, 0).unwrap();
+    let files = MIGRATIONS
+        .iter()
+        .map(|migration| (migration.version, migration.sql.to_owned()))
+        .collect::<Vec<_>>();
+    let historical = predecessor(&files, captured);
+    let tables = historical
+        .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    let triggers = historical
+        .prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' ORDER BY name")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+    // Copy a snapshot rather than replaying historical mutation side effects.
+    for (name, _) in &triggers {
+        historical
+            .execute_batch(&format!("DROP TRIGGER {}", quote(name)))
+            .unwrap();
+    }
+    for table in &tables {
+        let columns = historical
+            .prepare(&format!("PRAGMA table_info({})", quote(table)))
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        let source_columns = source
+            .prepare(&format!("PRAGMA table_info({})", quote(table)))
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(
+            columns.iter().all(|column| source_columns.contains(column)),
+            "historical {table} columns must exist in the synthetic source"
+        );
+        let names = columns
+            .iter()
+            .map(|name| quote(name))
+            .collect::<Vec<_>>()
+            .join(",");
+        let rows = source
+            .prepare(&format!("SELECT {names} FROM {}", quote(table)))
+            .unwrap()
+            .query_map([], |row| {
+                (0..columns.len())
+                    .map(|at| row.get::<_, rusqlite::types::Value>(at))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        historical
+            .execute_batch(&format!("DELETE FROM {}", quote(table)))
+            .unwrap();
+        let placeholders = vec!["?"; columns.len()].join(",");
+        let mut insert = historical
+            .prepare(&format!(
+                "INSERT INTO {} ({names}) VALUES ({placeholders})",
+                quote(table)
+            ))
+            .unwrap();
+        for row in rows {
+            insert.execute(rusqlite::params_from_iter(row)).unwrap();
+        }
+    }
+    for (_, sql) in &triggers {
+        historical.execute_batch(sql).unwrap();
+    }
+    assert!(
+        !historical
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap()
+    );
+    rusqlite::backup::Backup::new(&historical, source)
+        .unwrap()
+        .run_to_completion(128, std::time::Duration::from_millis(1), None)
+        .unwrap();
+}
+
 pub(crate) fn shape(conn: &Connection) -> Vec<(String, String, String, Option<String>)> {
     conn.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name")
         .unwrap()

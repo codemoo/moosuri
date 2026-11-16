@@ -1115,7 +1115,7 @@ fn submit_turn_context_in(
         }
     }
     let order = next_order(tx)?;
-    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { original_timezone: context.as_ref().map(|c| c.timezone.clone()), mission_commands_enabled: choice.source == moosuri_core::ModelSource::PersonalChatGpt && choice.function_tools, agent_profile: choice.function_tools.then(||crate::web::admitted_profile(tx,&user,web_profile)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
+    tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'queued',1,?12,?13)",params![user.tenant.0,id,user.account.id,thread_id,request_id,payload.as_slice(),sequence,text,json(&StoredRunChoice { original_timezone: context.as_ref().map(|c| c.timezone.clone()), mission_commands_enabled: choice.source == moosuri_core::ModelSource::PersonalChatGpt && choice.function_tools, agent_profile: choice.function_tools.then(||crate::web::admitted_chat_profile(tx,&user,web_profile,&text)).transpose()?, model: choice })?,user.digest.as_slice(),user.epoch,now()?,order])?;
     crate::run_timings::admit(tx, &user.tenant.0, &id, 1)?;
     for (ordinal, media) in attachments.iter().enumerate() {
         tx.execute(

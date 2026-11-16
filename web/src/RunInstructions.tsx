@@ -24,7 +24,13 @@ export function useRunInstructions(props: Props) {
   const supplied = props.explicitTarget?.supports_instructions === true ? props.explicitTarget : supported ? supported.instruction_target ?? { run_id: supported.id, thread_id: supported.thread_id, attempt: supported.attempt } : undefined;
   const liveTarget = supplied ? { run_id: supplied.run_id, thread_id: supplied.thread_id, attempt: supplied.attempt } : undefined;
   const hasDraft = !!state.draft || !!state.pending;
-  const target = hasDraft ? state.target ?? liveTarget : liveTarget;
+  const pinnedTarget = hasDraft ? state.target ?? liveTarget : liveTarget;
+  // An unsent draft can follow its same resumed carrier. Sending is still an
+  // explicit new request; an uncertain POST keeps its original attempt/UUID.
+  // Never move text to a different task or rewind it on a stale snapshot.
+  const target = !state.pending && liveTarget && pinnedTarget &&
+    liveTarget.run_id === pinnedTarget.run_id && liveTarget.thread_id === pinnedTarget.thread_id &&
+    liveTarget.attempt > pinnedTarget.attempt ? liveTarget : pinnedTarget;
   const mode = state.mode === "next" ? "next" : liveTarget || hasDraft ? "instructions" : "next";
   const eligible = !!liveTarget && !!target && target.run_id === liveTarget.run_id && target.thread_id === liveTarget.thread_id && target.attempt === liveTarget.attempt;
   const canonical = [...props.turns.flatMap(turn => turn.run.instructions ?? []), ...(props.receipts ?? [])].filter(validInstructionReceipt);
@@ -39,6 +45,11 @@ export function useRunInstructions(props: Props) {
     return () => { owner.active = false; };
   }, [owner]);
   function update(change: (value: InstructionMemory) => InstructionMemory) { callbacks.current.update?.(change); }
+  useEffect(() => {
+    if (!state.draft || state.pending || !target || target === pinnedTarget) return;
+    update(current => current.pending || !current.draft || current.target !== pinnedTarget
+      ? current : { ...current, target });
+  }, [props.state?.draft, props.state?.pending, props.state?.target, liveTarget?.run_id, liveTarget?.thread_id, liveTarget?.attempt]);
   function accept(receipt: RunInstructionReceipt, pending?: PendingInstruction) {
     if (!owner.active) return;
     setLocal(current => ({ owner, values: [...(current.owner === owner ? current.values : []).filter(value => value.request_id !== receipt.request_id), receipt].slice(-8) }));

@@ -118,6 +118,9 @@ records shared domain-planner dispatch, existing-document target agreement,
 delegated native Gmail tool discovery, original-chat task state updates and
 authorized mission connection reuse. Synthetic runtime outcomes establish these
 bounded behaviors; they do not measure production latency or broad model quality.
+The [continuation follow-up](docs/reviews/2026-11-16-continuation-integrity.md)
+preserves unsent guidance drafts, stored instructions and saved-source receipt
+addresses across supported resumes, and consolidates historical mission fixtures.
 The [continuity and harness review](docs/reviews/2026-11-16-adaptive-continuity.md)
 records quoted-title routing, receipt-bound recent-document editing, ambiguous
 question/timezone correction, and monitor-result lifetime repairs. The unchanged

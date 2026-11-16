@@ -90,6 +90,34 @@ async fn begin(s: &Store, l: &RunLease, calls: Vec<PendingKnowledgeCall>) -> Ste
     s.commit_agent_step(&st, checkpoint(), calls).await.unwrap();
     st
 }
+pub(crate) async fn rejected_proposal(
+    s: &Store,
+    lease: &RunLease,
+    calls: Vec<PendingKnowledgeCall>,
+) {
+    let context = s.agent_context(lease).await.unwrap();
+    let step = s
+        .begin_agent_step(lease, context.checkpoint_seq)
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.commit_agent_step(&step, checkpoint(), calls).await,
+        Err(StoreError::Forbidden)
+    ));
+    let context = s.agent_context(lease).await.unwrap();
+    assert!(
+        context.calls.is_empty(),
+        "rejected effects must not create a tool slot"
+    );
+    let run = lease.run_id().to_owned();
+    s.call(move |db| {
+        let state: (i64, i64, i64, i64) = db.conn.query_row(
+            "SELECT e.remote_calls,e.tool_calls,m.repairs,(SELECT count(*) FROM external_tool_dispatches WHERE tenant_id=e.tenant_id AND run_id=e.run_id) FROM agent_execution e JOIN missions m ON m.tenant_id=e.tenant_id AND m.run_id=e.run_id WHERE e.run_id=?1", [run],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
+        assert_eq!(state, (1,0,0,0), "one model proposal, no tool execution, external dispatch or repair round");
+        Ok(())
+    }).await.unwrap();
+}
 fn ctl(rev: i64, action: MissionAction) -> MissionControl {
     MissionControl {
         request_id: Uuid::new_v4().to_string(),
@@ -1025,14 +1053,14 @@ async fn mission_cancel_before_external_dispatch_prevents_any_commit_or_stale_re
     .unwrap();
 }
 #[tokio::test]
-async fn mission_excluded_tool_is_truthfully_unsupported_without_a_repair_loop() {
+async fn mission_excluded_tool_is_rejected_before_dispatch_without_a_repair_loop() {
     let _guard = TEST_LOCK.lock().await;
     let (_d, s, u) = setup().await;
     s.create_mission(&u, input(MissionMode::Durable))
         .await
         .unwrap();
     let c = s.claim_agent_run().await.unwrap().unwrap();
-    let st = begin(
+    rejected_proposal(
         &s,
         &c.lease,
         vec![PendingKnowledgeCall {
@@ -1045,14 +1073,6 @@ async fn mission_excluded_tool_is_truthfully_unsupported_without_a_repair_loop()
         }],
     )
     .await;
-    assert!(matches!(
-        s.prepare_external_tool(&st, "browser".into())
-            .await
-            .unwrap(),
-        crate::ExternalToolStart::Complete(KnowledgeToolResult::Error(_))
-    ));
-    assert!(s.mission_tool_failure(&st).await.unwrap());
-    assert_eq!(s.missions(&u).await.unwrap()[0].state, "unsupported");
     assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 1);
 }
 #[tokio::test]
@@ -1502,10 +1522,11 @@ async fn migration25_rolls_back_late_failure_and_preserves_prior_authority_table
     let _guard = crate::tests::TEST_LOCK.lock().await;
     let dir = crate::tests::directory();
     drop(Store::open(dir.path()).unwrap());
-    let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    // Remove newer child tables/triggers before rebuilding the historical
-    // layout, matching the current sealed-restore predecessor fixture.
-    conn.execute_batch("DROP TABLE native_mail_settlement_cursor;DROP TABLE compound_draft_adoptions;DROP TABLE mission_browser_selections;DROP TABLE mission_action_contracts;DROP TABLE compound_report_adoptions;DROP TABLE native_mail_context_dependencies;DROP TRIGGER native_task_mail_delete;DROP TABLE native_task_mail_selections;DROP TABLE native_task_mail_reads;DROP TABLE native_task_mail_bindings;DROP TABLE mail_provider_saves;DROP TABLE credential_model_mail_payloads;DROP TABLE credential_model_mail_grants;DROP TABLE agent_planner_steps;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;ALTER TABLE media_objects DROP COLUMN filename;ALTER TABLE media_objects DROP COLUMN media_type;ALTER TABLE media_objects DROP COLUMN extracted_text;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal; CREATE TABLE mission_controls(conflict INTEGER); DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=24;").unwrap();
+    let mut conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+
+    crate::schema::tests::replace_with_predecessor(&mut conn, 24);
+    conn.execute_batch("CREATE TABLE mission_controls(conflict INTEGER)")
+        .unwrap();
     drop(conn);
     assert!(Store::open(dir.path()).is_err());
     let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

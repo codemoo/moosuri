@@ -65,8 +65,9 @@ async fn credential_chat_wait_restart_receipt_reuse_and_cancel_late_never_redisp
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let app=Router::new().route("/v1/chat/completions",post(move|axum::Json(body):axum::Json<Value>|{let seen=seen.clone();async move{
   seen.fetch_add(1,Ordering::SeqCst);assert!(!body.to_string().contains("SYNTHETIC-TOKEN-CANARY"));
-  assert!(body["tools"].as_array().unwrap().iter().any(|t|t["function"]["name"]=="github_repository_metadata"));
+  let has_github=body["tools"].as_array().unwrap().iter().any(|t|t["function"]["name"]=="github_repository_metadata");
   let current=body["messages"].as_array().unwrap().iter().rev().find(|m|m["role"]=="user").unwrap()["content"].as_str().unwrap();
+  assert_eq!(has_github,current!="ordinary independent question");
   if current=="ordinary independent question" {let data=frame(json!({"id":"ordinary","model":"fixture-model","choices":[{"index":0,"delta":{"content":"Synthetic independent answer"},"finish_reason":"stop"}]}))+"data: [DONE]\n\n";return Response::builder().header("content-type","text/event-stream").body(Body::from(data)).unwrap()}
   let args=json!({"owner":"synthetic-owner","repository":"synthetic-repo"});
   let data=frame(json!({"id":"credential-plan","model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[tool_call(0,"original-model-call".into(),"github_repository_metadata",args)]},"finish_reason":null}]}))+&frame(json!({"id":"credential-plan","model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":2}}))+"data: [DONE]\n\n";
@@ -92,6 +93,7 @@ async fn credential_chat_wait_restart_receipt_reuse_and_cancel_late_never_redisp
     })
     .await;
     assert_eq!(waiting.run.id, first.run.id);
+    assert!(!waiting.run.supports_instructions);
     assert!(waiting.run.can_cancel);
     assert!(!waiting.run.can_retry);
     assert!(
@@ -693,7 +695,7 @@ async fn google_negative_chat(preview: bool) {
         }+"data: [DONE]\n\n";Response::builder().header("content-type","text/event-stream").body(Body::from(data)).unwrap()
     }));
     let provider = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let (_dir, store, user, thread) = tool_configured(&base).await;
+    let (dir, store, user, thread) = tool_configured(&base).await;
     let key = SigningKey::from_pkcs8(&SigningKey::generate_pkcs8().unwrap()).unwrap();
     let pair = store
         .broker_pair_challenge(
@@ -770,9 +772,23 @@ async fn google_negative_chat(preview: bool) {
             .unwrap();
         runtime.wake();
         let done = wait_for(&store, &user, &thread, |t| {
-            t.run.id == turn.run.id && t.run.state == RunState::Completed
+            t.run.id == turn.run.id && !t.run.state.active()
         })
         .await;
+        assert_eq!(done.run.state, RunState::Incomplete);
+        assert_eq!(done.run.error.as_deref(), Some("continuation_unsupported"));
+        // The model ignored the offered catalog. Reject its unavailable tool
+        // before a slot, broker job or credential dispatch can be stored.
+        let conn = rusqlite::Connection::open_with_flags(
+            dir.path().join("assistant.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let work: (i64, i64, i64) = conn.query_row(
+            "SELECT remote_calls,tool_calls,(SELECT count(*) FROM agent_tool_slots WHERE run_id=?1)+(SELECT count(*) FROM credential_broker_jobs)+(SELECT count(*) FROM credential_broker_commitments) FROM agent_execution WHERE run_id=?1",
+            [&turn.run.id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        ).unwrap();
+        assert_eq!(work, (1, 0, 0));
         assert!(done.run.credential.is_none());
         assert!(store.google_inbox_jobs(&user).await.unwrap().is_empty());
         assert!(store.google_preview_jobs(&user).await.unwrap().is_empty());

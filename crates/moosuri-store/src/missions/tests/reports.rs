@@ -656,8 +656,7 @@ async fn compound_report_schema58_upgrade_preserves_legacy_mission_without_write
     let admitted = store.create_mission(&user, legacy).await.unwrap();
     store
         .call(|db| {
-            db.conn
-                .execute_batch("DROP TABLE native_mail_settlement_cursor;DROP TABLE compound_draft_adoptions;DROP TABLE mission_browser_selections;DROP TABLE mission_action_contracts;DROP TABLE compound_report_adoptions;DROP TABLE native_mail_context_dependencies;DROP TRIGGER native_task_mail_delete;DROP TABLE native_task_mail_selections;DROP TABLE native_task_mail_reads;DROP TABLE native_task_mail_bindings;DROP TABLE mail_provider_saves;DROP TABLE credential_model_mail_payloads;DROP TABLE credential_model_mail_grants;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=58;")?;
+            crate::schema::tests::replace_with_predecessor(&mut db.conn, 58);
             Ok(())
         })
         .await

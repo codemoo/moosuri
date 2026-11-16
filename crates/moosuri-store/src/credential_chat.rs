@@ -7,6 +7,17 @@ use moosuri_vault_protocol::broker::{
     GitHubRepository, Outcome, Projection, Resource, SignedReceipt,
 };
 const PREVIEW_OUTPUT_RESERVE: i64 = 8 * 1024;
+/// Catalog narrowing only; actual jobs still validate the original request,
+/// exact resource, owner and binding. Every supported repository request has a
+/// slash, including canonical URLs and Korean suffixes. Keep that conservative
+/// bound instead of adding a second repository command grammar.
+pub(crate) fn admit_discovery(text: &str, profile: &mut moosuri_core::RunToolProfile) {
+    let enabled = cfg!(feature = "credential-broker-chat");
+    profile.credential_github = enabled && text.contains('/');
+    profile.credential_gitea = enabled && text.contains('/');
+    profile.credential_google = enabled && literal_google(text);
+    profile.credential_google_preview = enabled && literal_google_preview(text);
+}
 /// Durable display boundary, independent of current feature/profile flags. The
 /// resource recognizes R0 history; the item marker also protects newer records.
 pub(crate) fn display_only_preview(c: &Connection, tenant: &str, run: &str) -> Result<bool> {
@@ -607,6 +618,83 @@ mod session_tests {
         .unwrap();
         b
     }
+    #[tokio::test]
+    async fn fresh_chat_discovery_keeps_native_routes_and_plain_guidance() {
+        let _serial = TEST_LOCK.lock().await;
+        let dir = directory();
+        let store = Store::open(dir.path()).unwrap();
+        let user = configured(&store).await;
+        // No connected/unlocked device is required to discover a requested route.
+        for (text, expected) in [
+            (
+                "Explain a synthetic result.",
+                [false, false, false, false, false],
+            ),
+            (
+                "GitHub owner/repo metadata",
+                [true, true, false, false, false],
+            ),
+            (
+                "https://github.com/owner/repo 상태",
+                [true, true, false, false, false],
+            ),
+            (
+                "Gitea owner/repo의 이슈 수 읽어 줘",
+                [true, true, false, false, false],
+            ),
+            (
+                "Please check my Gmail inbox unread count.",
+                [false, false, true, false, true],
+            ),
+            (
+                "내 Gmail 받은편지함 미리보기 보여줘",
+                [false, false, false, true, true],
+            ),
+            (
+                "Read native Gmail recent invoice",
+                [false, false, false, false, true],
+            ),
+        ] {
+            let thread = store
+                .create_thread(&user, "Synthetic discovery".into())
+                .await
+                .unwrap();
+            let turn = store
+                .submit_turn(&user, thread.id, Uuid::new_v4().to_string(), text.into())
+                .await
+                .unwrap();
+            let claim = store.claim_agent_run().await.unwrap().unwrap();
+            assert_eq!(claim.lease.run_id(), turn.run.id);
+            let p = claim.tool_profile.unwrap();
+            assert_eq!(
+                [
+                    p.credential_github,
+                    p.credential_gitea,
+                    p.credential_google,
+                    p.credential_google_preview,
+                    p.native_mail_model_read
+                ],
+                expected,
+                "{text}"
+            );
+            if p.native_mail_model_read {
+                assert!(
+                    p.native_mail_scope
+                        .unwrap()
+                        .candidate_binding_ids
+                        .is_empty()
+                );
+            }
+            let support = store.enable_run_instructions(&claim.lease).await;
+            if expected.iter().any(|flag| *flag) {
+                assert!(matches!(support, Err(StoreError::Conflict)), "{text}");
+            } else {
+                support.unwrap();
+            }
+            store.cancel_run(&user, turn.run.id, 1).await.unwrap();
+        }
+    }
+
     async fn command(s: &Store, d: &Device, k: &SigningKey, command: Command) -> Result<Reply> {
         let challenge = s.broker_auth_challenge(d.id).await?;
         s.broker_command(SignedCommand {

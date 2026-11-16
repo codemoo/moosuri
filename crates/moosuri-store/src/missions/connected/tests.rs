@@ -1189,7 +1189,7 @@ async fn compound_source_words_and_old_missions_cannot_mint_action_rights() {
         .await
         .unwrap();
     let claim = s.claim_agent_run().await.unwrap().unwrap();
-    let st = step(
+    crate::missions::tests::rejected_proposal(
         &s,
         &claim.lease,
         vec![action_call(
@@ -1198,12 +1198,6 @@ async fn compound_source_words_and_old_missions_cannot_mint_action_rights() {
         )],
     )
     .await;
-    assert!(matches!(
-        s.execute_knowledge_tool(&st, "unrequested".into())
-            .await
-            .unwrap(),
-        KnowledgeToolResult::Error(_)
-    ));
     assert!(s.mail_actions(&u).await.unwrap().is_empty());
 }
 
@@ -1356,18 +1350,22 @@ async fn compound_calendar_other_output_verbs_never_authorize_event_creation() {
             .await
             .unwrap();
         let claim = s.claim_agent_run().await.unwrap().unwrap();
-        let st = step(
-            &s,
-            &claim.lease,
-            vec![action_call("unrequested-create", calendar_proposal(task))],
-        )
-        .await;
-        assert!(matches!(
-            s.prepare_mission_action(&st, "unrequested-create".into())
-                .await
-                .unwrap(),
-            crate::MissionActionStart::Complete(KnowledgeToolResult::Error(_))
-        ));
+        let proposal = action_call("unrequested-create", calendar_proposal(task));
+        if !crate::missions::actions::requested(task).0
+            && !crate::missions::actions::requested(task).1
+        {
+            // Read-only missions reject an effect proposal before a slot exists.
+            crate::missions::tests::rejected_proposal(&s, &claim.lease, vec![proposal]).await;
+        } else {
+            // A different admitted effect still cannot authorize Calendar create.
+            let st = step(&s, &claim.lease, vec![proposal]).await;
+            assert!(matches!(
+                s.prepare_mission_action(&st, "unrequested-create".into())
+                    .await
+                    .unwrap(),
+                crate::MissionActionStart::Complete(KnowledgeToolResult::Error(_))
+            ));
+        }
         assert!(
             s.calendar_actions(&u).await.unwrap().is_empty(),
             "other output verbs cannot dispatch a Calendar POST"
@@ -1471,3 +1469,5 @@ async fn compound_prepared_action_blocks_acceptance_reinterpretation_and_keeps_o
 }
 
 mod input_waits;
+
+mod guidance;

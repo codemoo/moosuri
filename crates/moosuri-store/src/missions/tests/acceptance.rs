@@ -256,11 +256,8 @@ async fn mission_acceptance_revision_replans_fences_old_work_preserves_budget_an
 async fn mission_acceptance_schema51_and_current_owner_scope_guards() {
     let _lock = TEST_LOCK.lock().await;
     let (d, s, u) = setup().await;
-    // Remove newer child tables/triggers before rebuilding the historical
-    // layout, matching the current sealed-restore predecessor fixture.
     s.call(|db| {
-        db.conn
-            .execute_batch("DROP TABLE native_mail_settlement_cursor;DROP TABLE compound_draft_adoptions;DROP TABLE mission_browser_selections;DROP TABLE mission_action_contracts;DROP TABLE compound_report_adoptions;DROP TABLE native_mail_context_dependencies;DROP TRIGGER native_task_mail_delete;DROP TABLE native_task_mail_selections;DROP TABLE native_task_mail_reads;DROP TABLE native_task_mail_bindings;DROP TABLE mail_provider_saves;DROP TABLE credential_model_mail_payloads;DROP TABLE credential_model_mail_grants;DROP TABLE agent_planner_steps;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=51;")?;
+        crate::schema::tests::replace_with_predecessor(&mut db.conn, 51);
         Ok(())
     })
     .await

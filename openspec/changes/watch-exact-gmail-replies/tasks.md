@@ -8,5 +8,5 @@
 ## Verify and publish
 - [x] Complete focused native, web, notification and migration regression checks.
 - [x] Resolve the frozen independent boundary review.
-- [ ] Publish implementation and verify the exact public source on isolated Linux.
-- [ ] Record accepted evidence and synchronize the canonical checkout; keep CI disabled.
+- [x] Publish implementation and verify the exact public source on isolated Linux.
+- [x] Record accepted evidence and synchronize the canonical checkout; keep CI disabled.

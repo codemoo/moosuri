@@ -131,3 +131,11 @@ it("a draft never moves to a different mission carrier or an older attempt",()=>
  }
  expect(writes(t)).toHaveLength(0);
 });
+
+it("refreshes reply watches on task completion without extra reads for same-state stream revisions",async()=>{
+ const t=fixture(c=>c.path.startsWith("/mail/reply-watches")?response({targets:[],watches:[]}):undefined);render(<Harness/>);await ready();await act(async()=>{await new Promise(r=>setTimeout(r,40))});
+ const reads=()=>t.calls.filter(c=>c.path.startsWith("/mail/reply-watches")).length;const before=reads();expect(before).toBeGreaterThan(0);
+ const send=(sequence:number,state:"running"|"completed")=>{const current=turn();const run={...current.run,version:sequence,state,can_cancel:state==="running",supports_instructions:state==="running"};t.streams.at(-1)!.enqueue(new TextEncoder().encode(`event: change\nid: ${sequence}\ndata: ${JSON.stringify({sequence,change:{kind:"state",run}})}\n\n`))};
+ await act(async()=>{for(let version=2;version<=5;version++){send(version,"running");await new Promise(r=>setTimeout(r,20))}});expect(reads()).toBe(before);
+ await act(async()=>{send(6,"completed");await new Promise(r=>setTimeout(r,40))});await waitFor(()=>expect(reads()).toBe(before+1));
+});

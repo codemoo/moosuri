@@ -1232,7 +1232,7 @@ export function ChatPanel(props: Props) {
               </p>
             </article>
           )}
-          {threadId && <div id="mail-replies"><MailReplyWatches accountId={accountId} threadId={threadId} refreshKey={turns.map(t=>`${t.run.id}:${t.run.version}`).join(",")} onExpired={props.onExpired}/></div>}
+          {threadId && <div id="mail-replies"><MailReplyWatches accountId={accountId} threadId={threadId} refreshKey={turns.map(t=>`${t.run.id}:${t.run.state}`).join(",")} onExpired={props.onExpired}/></div>}
           {turns.some(turn => turn.run.mission_receipt?.target?.kind === "one_off") && <TaskMonitors accountId={accountId} missionIds={turns.flatMap(turn => turn.run.mission_receipt?.target?.kind === "one_off" ? [turn.run.mission_receipt.target.id] : [])} onExpired={props.onExpired}/>}
         </div>
       </div>

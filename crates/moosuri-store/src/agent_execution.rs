@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub(crate) mod arithmetic;
+mod completion;
 pub(crate) mod skills;
 
 const CHECKPOINT_LIMIT: usize = 256 * 1024;
@@ -1052,60 +1053,6 @@ impl Store {
             Ok(())
         })
         .await
-    }
-    /// Settle a supervisor failure before the first step or between steps.
-    /// Successful completion requires finish_agent_run and a completed no-call step.
-    pub async fn finish_agent_execution(
-        &self,
-        lease: &RunLease,
-        state: RunState,
-        error: Option<RunFailure>,
-    ) -> Result<()> {
-        let lease = lease.clone();
-        self.call(move|db|{
-            if state.active() || state==RunState::Completed || (state==RunState::OutcomeUnknown && !matches!(error,Some(RunFailure::Interrupted|RunFailure::TimedOut|RunFailure::ProtocolFailed|RunFailure::ConnectionFailed))) {return Err(StoreError::InvalidInput)}
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let run=match chat::guard(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
-            if !is_agent(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
-            tx.execute("UPDATE agent_steps SET state='unknown' WHERE tenant_id=?1 AND run_id=?2 AND state='dispatched'",params![run.tenant,run.id])?;
-            chat::transition(&tx,&run,state,error)?;tx.commit()?;Ok(())
-        }).await
-    }
-    pub async fn finish_agent_run(
-        &self,
-        lease: &StepLease,
-        state: RunState,
-        error: Option<RunFailure>,
-    ) -> Result<()> {
-        if self.try_finish_agent_run(lease, state, error).await? {
-            Ok(())
-        } else {
-            Err(StoreError::Conflict)
-        }
-    }
-    /// False means a late accepted instruction requires another safe round.
-    pub async fn try_finish_agent_run(
-        &self,
-        lease: &StepLease,
-        state: RunState,
-        error: Option<RunFailure>,
-    ) -> Result<bool> {
-        let lease = lease.clone();
-        self.call(move|db|{
-            if state.active() || (state==RunState::OutcomeUnknown && !matches!(error,Some(RunFailure::Interrupted|RunFailure::TimedOut|RunFailure::ProtocolFailed|RunFailure::ConnectionFailed))) {return Err(StoreError::InvalidInput)}
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let run=match guard_step(&tx,&db.provider_key,&lease){Ok(v)=>v,Err(e)=>{tx.commit()?;return Err(e)}};
-            if state==RunState::Completed {
-                if crate::run_instructions::pending(&tx,&run)? {tx.commit()?;return Ok(false)}
-                if memory_commands::has_slot(&tx,&run.tenant,&run.id)? || memory_commands::has_target_plan(&tx,&run.tenant,&run.id)? {return Err(StoreError::Conflict)}
-                let complete: bool=tx.query_row("SELECT state='completed' AND NOT EXISTS(SELECT 1 FROM agent_tool_slots t WHERE t.tenant_id=agent_steps.tenant_id AND t.run_id=agent_steps.run_id AND t.step=agent_steps.step) FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step],|r|r.get(0))?;
-                if !complete {return Err(StoreError::Conflict)}
-            }
-            if state!=RunState::Completed {tx.execute("UPDATE agent_steps SET state='unknown' WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='dispatched'",params![run.tenant,run.id,lease.step])?;}
-            chat::transition(&tx,&run,state,error)?;
-            if state==RunState::Completed {crate::learned_skills::finalize(&tx,&run)?;}
-            tx.commit()?;Ok(true)
-        }).await
     }
     pub async fn update_agent_step_usage(&self, lease: &StepLease, usage: RunUsage) -> Result<()> {
         let lease = lease.clone();

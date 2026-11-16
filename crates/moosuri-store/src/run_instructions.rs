@@ -141,6 +141,36 @@ pub(crate) fn assign(c: &Connection, r: &Run, step: i64, through: i64) -> Result
     c.execute("UPDATE run_instructions SET dispatch_step=?4 WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3 AND sequence<=?5 AND state='received' AND dispatch_step IS NULL",params![r.tenant,r.id,r.attempt,step,through])?;
     Ok(())
 }
+/// Caller owns the writer transaction and has guarded this completed step.
+pub(crate) fn apply_to_step(c: &Connection, r: &Run, step: i64) -> Result<()> {
+    if c.execute("UPDATE run_instructions SET state='applied' WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3 AND dispatch_step=?4 AND state='received'", params![r.tenant, r.id, r.attempt, step])? > 0 {
+        publish(c, r)?;
+    }
+    Ok(())
+}
+/// Caller owns the same transaction as the current answer's disposition.
+pub(crate) fn supersede_output(c: &Connection, r: &Run, step: i64) -> Result<()> {
+    let items = c
+        .prepare("SELECT item FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item LIKE ?3")?
+        .query_map(params![r.tenant, r.id, format!("step-{step}-%")], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if !items.is_empty() {
+        chat::apply_patches(
+            c,
+            r,
+            items
+                .into_iter()
+                .map(|item| OutputPatch::Phase {
+                    item,
+                    phase: Some(moosuri_core::MessagePhase::Commentary),
+                })
+                .collect(),
+        )?;
+    }
+    Ok(())
+}
 pub(crate) fn close(c: &Connection, r: &Run, reason: &str) -> Result<()> {
     if c.execute("UPDATE run_instructions SET state='closed',reason=?4 WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3 AND state='received'",params![r.tenant,r.id,r.attempt,reason])? > 0 { publish(c,r)?; }
     Ok(())
@@ -162,16 +192,6 @@ impl Store {
             let eligible=tx.prepare("SELECT sequence FROM run_instructions WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3 AND state='applied'")?.query_map(params![run.tenant,run.id,run.attempt],|row|row.get::<_,i64>(0))?.collect::<std::result::Result<std::collections::BTreeSet<_>,_>>()?;
             let result=receipts(&tx,&run)?.into_iter().filter(|r|eligible.contains(&r.sequence)).collect();
             tx.commit()?;Ok(result)
-        }).await
-    }
-    pub async fn supersede_step_output(&self, lease: &StepLease) -> Result<()> {
-        let lease = lease.clone();
-        self.call(move|db| {
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let run=match crate::agent_execution::guard_step(&tx,&db.provider_key,&lease) {Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
-            let items=tx.prepare("SELECT item FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item LIKE ?3")?.query_map(params![run.tenant,run.id,format!("step-{}-%",lease.step())],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
-            if !items.is_empty() {chat::apply_patches(&tx,&run,items.into_iter().map(|item|OutputPatch::Phase{item,phase:Some(moosuri_core::MessagePhase::Commentary)}).collect())?;}
-            tx.commit()?;Ok(())
         }).await
     }
     pub async fn submit_run_instruction(
@@ -306,7 +326,7 @@ impl Store {
             let run=match crate::agent_execution::guard_step(&tx,&db.provider_key,&lease) {Ok(r)=>r,Err(e)=>{tx.commit()?;return Err(e)}};
             let completed:bool=tx.query_row("SELECT state='completed' FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3",params![run.tenant,run.id,lease.step()],|r|r.get(0))?;
             if !completed {return Err(StoreError::Conflict)}
-            if tx.execute("UPDATE run_instructions SET state='applied' WHERE tenant_id=?1 AND run_id=?2 AND execution_attempt=?3 AND dispatch_step=?4 AND state='received'",params![run.tenant,run.id,run.attempt,lease.step()])?>0 {publish(&tx,&run)?;}
+            apply_to_step(&tx, &run, lease.step())?;
             tx.commit()?;Ok(())
         }).await
     }

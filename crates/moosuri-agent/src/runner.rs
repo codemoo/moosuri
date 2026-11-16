@@ -1377,12 +1377,10 @@ pub(crate) async fn execute_with_calendar(
             }
         };
         signals.changed();
-        if (outcome == FinishOutcome::Completed
-            && observed.pending.has_answer()
-            && calls.is_empty())
-            || (outcome == FinishOutcome::ContinuationRequired && !calls.is_empty())
-        {
-            if store.apply_step_instructions(&step).await.is_err() {
+        if outcome == FinishOutcome::ContinuationRequired && !calls.is_empty() {
+            if let Err(error) = retry_local(|| store.apply_step_instructions(&step)).await {
+                let (state, error) = store_failure(&error);
+                finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
                 return;
             }
             signals.changed();
@@ -1413,7 +1411,7 @@ pub(crate) async fn execute_with_calendar(
                 _ => (RunState::Failed, Some(RunFailure::ProtocolFailed)),
             };
             if state == RunState::Completed {
-                match store.try_finish_agent_run(&step, state, error).await {
+                match retry_local(|| store.settle_agent_answer(&step)).await {
                     Ok(true) => {
                         signals.changed();
                         return;
@@ -1433,11 +1431,14 @@ pub(crate) async fn execute_with_calendar(
                         };
                         continuation = Some(round.continuation);
                         results.clear();
-                        let _ = store.supersede_step_output(&step).await;
                         signals.changed();
                         continue;
                     }
-                    Err(_) => return,
+                    Err(error) => {
+                        let (state, error) = store_failure(&error);
+                        finish(&store, &lease, Some(&step), state, Some(error), &signals).await;
+                        return;
+                    }
                 }
             } else {
                 finish(&store, &lease, Some(&step), state, error, &signals).await;

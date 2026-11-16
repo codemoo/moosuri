@@ -87,7 +87,10 @@ impl RoundHandler<'_> {
             return self.protocol(step, RunState::Failed).await;
         }
         if self
-            .local(step, self.store.apply_step_instructions(step).await)
+            .local(
+                step,
+                retry_local(|| self.store.apply_step_instructions(step)).await,
+            )
             .await
             .is_none()
         {

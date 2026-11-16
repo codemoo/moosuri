@@ -41,6 +41,20 @@ issue: error policies, bounds, original payload/lease reuse, external IO exclusi
 and signal ordering remain intact. This is behavior-preserving consolidation,
 not a claim that seven new product defects were found or fixed.
 
-Native execution, independent frozen review and exact-public-source Linux results
-are recorded below when complete. Automatic CI remains disabled. No live model,
-real mail send or production deployment is part of this unit.
+Automatic CI remains disabled. No live model, real mail send or production
+deployment is part of this unit.
+
+## Public-source Linux acceptance
+
+Implementation `24e47b427ddf899231e701a84cf111a95306cb64` was published and the canonical checkout
+fast-forwarded cleanly. All four grouped Linux phases passed: 15 focused agent
+checks with the credential-broker feature enabled, scoped all-target Clippy,
+product CLI/evaluator builds and the full 15-world/62-control synthetic evaluator.
+The additional feature-enabled checks cover live guidance and native mail.
+The evaluator source digest matches the native run. No additional quality samples
+or provider/device performance claims are inferred.
+
+The pinned Rust 1.89 container used read-only source/root, disabled network and no
+production mounts. Source hashes remained unchanged. Source archive SHA-256:
+`448c0040aafa98c3188bae3c6029106d63598055b3462a4de5c1c0a727fa5c2e`.
+Format, plan/link, strict OpenSpec and source/new-commit secret checks passed.

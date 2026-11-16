@@ -31,9 +31,8 @@ cannot revive the task. The first admitted response is supplied at the checkpoin
 boundary; the follow-up uses the actual Runtime and loopback HTTP model adapter.
 This does not simulate an entire provider stream under sustained DB load.
 
-Native results, frozen review and exact-public-source Linux acceptance are
-recorded below when complete. No live model, real provider/device operation or
-production deployment is included. CI remains off.
+No live model, real provider/device operation or production deployment is included.
+CI remains off.
 
 ## Native acceptance and independent review
 
@@ -50,3 +49,19 @@ completed-step digest guards, lease/acceptance checks and the Busy/Unavailable
 distinction. SQLite-level lock/COMMIT Busy and real lost acknowledgments are not
 newly fault-injected; existing Store semantics and retry-policy contracts remain
 the evidence for those boundaries.
+
+## Public-source Linux acceptance
+
+Implementation `459df98d340756d38fcd96d3d55ebc873dfcee79` was published and the canonical checkout
+fast-forwarded cleanly. All five grouped Linux phases passed: 28 execution contracts,
+four Claude contracts, scoped all-target agent Clippy, product CLI/evaluator builds
+and the full 15-world/62-control synthetic evaluator. The evaluator source digest
+matches the native run. These repeated contracts are not independent model quality
+or performance samples.
+
+The pinned Rust 1.89 container used read-only source/root, disabled network and no
+production mounts. Only the synthetic Claude fixture phase allowed its generated
+launcher to execute from temporary storage. Source hashes remained unchanged.
+Source archive SHA-256:
+`d459f3ea4b0a617ad4a86177c2a6b7ea56ac9d27669c980347eb7c7db70cda43`.
+Format, plan/link, strict OpenSpec and source/new-commit secret checks passed.

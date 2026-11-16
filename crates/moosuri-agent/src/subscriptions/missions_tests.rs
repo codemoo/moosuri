@@ -271,6 +271,7 @@ fn runtime(
 ) -> Runtime {
     let (changes, _) = watch::channel(0);
     let (done_tx, done) = watch::channel(false);
+    let (run_activity_tx, run_activity) = watch::channel(0);
     let signals = Signals {
         stop: CancellationToken::new(),
         wake: Arc::new(Notify::new()),
@@ -303,6 +304,7 @@ fn runtime(
         store,
         signals.clone(),
         done_tx,
+        run_activity_tx,
         mail.clone(),
         web,
         subscriptions.clone(),
@@ -312,6 +314,7 @@ fn runtime(
             signals,
             supervisor: Mutex::new(Some(supervisor)),
             done,
+            run_activity,
             mail,
             browser,
             subscriptions,

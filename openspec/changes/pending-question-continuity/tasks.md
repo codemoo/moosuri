@@ -1,0 +1,8 @@
+- [x] Reproduce lost continuation with the original parser/Store/typed-IO case.
+- [x] Retain established unresolved fields and original question display; share eligibility.
+- [x] Add whole-question cancellation with shared generic reminder reply grammar.
+- [x] Author correction/reopen/write, cancellation/replay/saved-work and expiry outcomes.
+- [x] Preserve an established missing timezone despite complete typed clocks; author Calendar and local-mission ambiguous-answer/reopen/IANA-correction outcomes.
+- [x] Complete focused native regressions and scoped lint; record the initial reproduced failure and corrected same-case outcome.
+- [x] Complete independent frozen review and root-owned integrated native validation.
+- [ ] Complete public commit/push and exact-source Linux acceptance.

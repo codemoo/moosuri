@@ -22,6 +22,7 @@ use tower::ServiceExt;
 mod everyday;
 mod followup;
 mod outcomes;
+mod repair_choice;
 pub use everyday::{Stage, plan as stage_plan};
 
 const PASSWORD: &str = "Synthetic-evaluation-passphrase-2026";
@@ -523,6 +524,7 @@ impl World {
         };
         match case.kind {
             Kind::FollowupMonitor => self.execute_followup(&mut out).await?,
+            Kind::RepairChoice => self.execute_repair_choice(&mut out).await?,
             Kind::EverydayGuidance | Kind::EverydayClarification | Kind::EverydayReminder => {
                 self.execute_everyday(case.kind, &mut out).await?;
             }

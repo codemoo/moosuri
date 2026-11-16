@@ -1,26 +1,11 @@
 //! Literal replies to the immediate owned reminder question, never tool/action grants.
 use super::*;
 pub(super) fn cancelled(s: &str) -> bool {
-    // Normalize only a complete short reply. A quoted/conditional cancellation
-    // or a named saved reminder still follows ordinary command admission.
-    let s = s.trim().trim_end_matches(['.', '!', '。']).trim();
-    let compact: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    let remainder = ["됐어", "아니야", "아니요", "괜찮아"]
-        .iter()
-        .find_map(|prefix| compact.strip_prefix(prefix))
-        .map(|rest| rest.strip_prefix(',').unwrap_or(rest))
-        .unwrap_or(&compact);
-    if matches!(
-        remainder,
-        "" | "취소" | "취소해줘" | "취소해주세요" | "그만"
-    ) && !s.is_empty()
-    {
-        return true;
-    }
-    matches!(
-        s.to_ascii_lowercase().as_str(),
-        "cancel" | "cancel reminder" | "never mind" | "nevermind" | "stop"
-    )
+    crate::request_continuations::cancelled_question_reply(s)
+        || s.trim()
+            .trim_end_matches(['.', '!', '。'])
+            .trim()
+            .eq_ignore_ascii_case("cancel reminder")
 }
 // A time clause anywhere in a bare label conflicts with the question's saved
 // time. Reuse the shared civil-time vocabulary at word boundaries; quantities

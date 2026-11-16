@@ -6,6 +6,7 @@ mod grader;
 mod model;
 mod observe;
 pub mod paired;
+pub mod repair_choice;
 mod runner;
 mod world;
 
@@ -78,6 +79,7 @@ fn elapsed(t: Instant) -> u64 {
 }
 fn script(kind: Kind) -> model::Script {
     match kind {
+        Kind::RepairChoice => model::Script::RepairChoice,
         Kind::FollowupMonitor => model::Script::FollowupMonitor,
         Kind::EverydayGuidance => model::Script::EverydayGuidance,
         Kind::EverydayClarification => model::Script::EverydayClarification,
@@ -118,7 +120,10 @@ fn pending(case: Case) -> Row {
         task_success: None,
         mission_eligible: matches!(case.kind, Kind::Mission),
         mission_success: None,
-        handling_eligible: matches!(case.kind, Kind::Truncated | Kind::CancelMission),
+        handling_eligible: matches!(
+            case.kind,
+            Kind::Truncated | Kind::CancelMission | Kind::RepairChoice
+        ),
         handling_success: None,
         checks: vec![],
         setup_ms: 0,
@@ -154,11 +159,25 @@ fn aggregate(rows: &[Row]) -> Counts {
             .count(),
     }
 }
+// Explicit control roles avoid coupling apparatus validity to case ordering.
+// Both completion and handling setup failures remain applicable and planned.
+fn setup_failure_controls() -> [Row; 2] {
+    [Kind::Calculation, Kind::RepairChoice].map(|kind| {
+        let mut row = pending(Case {
+            id: "injected-setup-failure",
+            family_id: "denominator-control",
+            kind,
+        });
+        row.error = Some("injected_setup_failure");
+        row
+    })
+}
 fn grade(case: Case, out: &runner::Execution) -> Vec<grader::Check> {
     let Some(o) = out.observations.last() else {
         return vec![grader::check("observation_present", false)];
     };
     match case.kind {
+        Kind::RepairChoice => grader::repair_choice(out),
         Kind::FollowupMonitor => grader::followup(out),
         Kind::EverydayGuidance | Kind::EverydayClarification | Kind::EverydayReminder => {
             grader::everyday(case.kind, out)
@@ -288,6 +307,9 @@ pub async fn run() -> Report {
                 if matches!(case.kind, Kind::FollowupMonitor) {
                     validation.extend(grader::followup_mutations(&out));
                 }
+                if matches!(case.kind, Kind::RepairChoice) {
+                    validation.extend(grader::repair_choice_mutations(&out));
+                }
                 row.timings = out.timings;
             }
             Ok(Err(e)) => row.error = Some(e),
@@ -347,19 +369,27 @@ pub async fn run() -> Report {
     ));
     // A setup error must remain planned/not-run and completion-eligible; this
     // structural check prevents apparatus failures silently improving the score.
-    let mut failed_setup = pending(world::CASES[0]);
-    failed_setup.error = Some("injected_setup_failure");
-    let denominator = aggregate(&[failed_setup]);
+    let denominator = aggregate(&setup_failure_controls());
     validation.push(grader::check(
         "setup_failure_retained_in_denominator",
-        denominator.planned == 1
-            && denominator.not_run == 1
+        denominator.planned == 2
+            && denominator.not_run == 2
             && denominator.executed == 0
             && denominator.pass == 0
-            && denominator.completion_eligible == 1,
+            && denominator.completion_eligible == 1
+            && denominator.handling_eligible == 1,
     ));
     let counts = aggregate(&rows);
     let required_validations = [
+        "repair_choice_positive_control",
+        "repair_choice_missing_live_settlement_rejected",
+        "repair_choice_accepted_ambiguous_answer_rejected",
+        "repair_choice_replaced_wait_rejected",
+        "repair_choice_forged_candidate_rejected",
+        "repair_choice_repeated_read_rejected",
+        "repair_choice_duplicate_reply_rejected",
+        "repair_choice_late_result_rejected",
+        "repair_choice_visible_notice_rejected",
         "followup_positive_control",
         "followup_duplicate_child_rejected",
         "followup_wrong_source_scope_rejected",
@@ -412,7 +442,7 @@ pub async fn run() -> Report {
             .iter()
             .all(|name| validation.iter().any(|c| c.name == *name));
     let success = counts.pass == counts.planned && validation_pass;
-    let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs")),"outcome_script_sha256":digest(include_bytes!("model/outcomes.rs")),"outcome_workflow_sha256":digest(include_bytes!("runner/outcomes.rs")),"everyday":everyday::FIXTURES,"followup":followup::FIXTURE,"followup_workflow_sha256":digest(include_bytes!("runner/followup.rs")),"followup_script_sha256":digest(include_bytes!("model/followup.rs")),"everyday_workflow_sha256":digest(include_bytes!("runner/everyday.rs")),"everyday_script_sha256":digest(include_bytes!("model/everyday.rs"))});
+    let fixture = serde_json::json!({"cases":world::CASES,"source":world::SOURCE,"foreign_source":world::FOREIGN_SOURCE,"preference_a":world::PREFERENCE_A,"preference_b":world::PREFERENCE_B,"observed_at":world::FIXTURE_CLOCK,"script_sha256":digest(include_bytes!("model.rs")),"outcome_script_sha256":digest(include_bytes!("model/outcomes.rs")),"outcome_workflow_sha256":digest(include_bytes!("runner/outcomes.rs")),"everyday":everyday::FIXTURES,"repair_choice":repair_choice::FIXTURE,"repair_choice_workflow_sha256":digest(include_bytes!("runner/repair_choice.rs")),"repair_choice_script_sha256":digest(include_bytes!("model/repair_choice.rs")),"repair_choice_observer_sha256":digest(include_bytes!("observe/repair_choice.rs")),"followup":followup::FIXTURE,"followup_workflow_sha256":digest(include_bytes!("runner/followup.rs")),"followup_script_sha256":digest(include_bytes!("model/followup.rs")),"everyday_workflow_sha256":digest(include_bytes!("runner/everyday.rs")),"everyday_script_sha256":digest(include_bytes!("model/everyday.rs"))});
     let observed_latency_ms = latencies(&rows);
     Report {
         format_version: 3,
@@ -426,6 +456,7 @@ pub async fn run() -> Report {
                 include_bytes!("grader/outcomes.rs").as_slice(),
                 include_bytes!("grader/everyday.rs").as_slice(),
                 include_bytes!("grader/followup.rs").as_slice(),
+                include_bytes!("grader/repair_choice.rs").as_slice(),
             ]
             .concat(),
         ),
@@ -487,9 +518,7 @@ mod tests {
     use super::*;
     #[test]
     fn setup_failure_does_not_shrink_applicable_denominator() {
-        let mut row = pending(world::CASES[0]);
-        row.error = Some("injected_setup_failure");
-        let c = aggregate(&[row]);
+        let c = aggregate(&setup_failure_controls());
         assert_eq!(
             (
                 c.planned,
@@ -497,9 +526,11 @@ mod tests {
                 c.pass,
                 c.not_run,
                 c.completion_eligible,
-                c.mission_success
+                c.handling_eligible,
+                c.task_success,
+                c.handling_success
             ),
-            (1, 0, 0, 1, 1, 0)
+            (2, 0, 0, 2, 1, 1, 0, 0)
         );
     }
     #[tokio::test]
@@ -546,13 +577,13 @@ mod tests {
         }
         assert_eq!(report.counts.task_success, 11);
         assert_eq!(report.counts.mission_success, 1);
-        assert_eq!(report.counts.handling_success, 2);
+        assert_eq!(report.counts.handling_success, 3);
         let server = &report.observed_latency_ms["server"];
-        assert_eq!(server["run_samples"], 32);
+        assert_eq!(server["run_samples"], 33);
         for stage in server["stages"].as_object().unwrap().values() {
             assert_eq!(
                 stage["observed_samples"].as_u64().unwrap() + stage["missing"].as_u64().unwrap(),
-                32
+                33
             );
         }
         assert!(report.success);

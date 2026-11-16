@@ -696,6 +696,164 @@ async fn conversational_civil_time_runtime_missing_clock_reopen_preserves_origin
 }
 
 #[tokio::test]
+async fn pending_mission_complete_local_clock_missing_zone_survives_ambiguity_and_reopen() {
+    let _guard = TEST_LOCK.lock().await;
+    let (dir, s, u, thread) = knowledge::tool_configured("http://127.0.0.1:11434/v1").await;
+    let initial = "On 2027-03-01 at 09:15 summarize public notices";
+    let mut partial = MissionChatDecision {
+        decision: "clarify".into(),
+        action: Some("create_scheduled".into()),
+        target_kind: None,
+        intent_quote: Some(initial.into()),
+        task_quote: Some("summarize public notices".into()),
+        constraints_quote: None,
+        time_quote: Some("2027-03-01 at 09:15".into()),
+        target_quote: None,
+        instruction_quote: None,
+        time: Some(MissionChatTime::LocalOnce {
+            date: "2027-03-01".into(),
+            time: "09:15".into(),
+        }),
+        clarification: Some("time".into()),
+    };
+    for (text, reason) in [(initial, "time"), ("my usual timezone", "ambiguous")] {
+        partial.clarification = Some(reason.into());
+        s.submit_turn(
+            &u,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            text.into(),
+        )
+        .await
+        .unwrap();
+        let claim = s.claim_agent_run().await.unwrap().unwrap();
+        let step = s
+            .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
+            .await
+            .unwrap();
+        s.commit_agent_step(
+            &step,
+            moosuri_store::PrivateCheckpoint {
+                bytes: json!({"kind":"mission_chat_decision","decision":partial})
+                    .to_string()
+                    .into_bytes(),
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            s.apply_mission_chat(&claim.lease).await.unwrap(),
+            Some(true)
+        );
+        let turn = s
+            .conversation(&u, thread.clone(), None)
+            .await
+            .unwrap()
+            .turns
+            .pop()
+            .unwrap();
+        assert_eq!(turn.run.mission_receipt.unwrap().state, "clarify");
+        assert!(
+            turn.assistant
+                .iter()
+                .any(|m| m.text.contains("execution time"))
+        );
+        assert!(s.recurring_missions(&u).await.unwrap().is_empty());
+    }
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    let answer_id = uuid::Uuid::new_v4().to_string();
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        answer_id.clone(),
+        "America/New_York".into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    let planning = s
+        .mission_chat_planning(&claim.lease)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(planning.timezone.is_none());
+    let continuation = planning
+        .continuation
+        .expect("local clock timezone must remain pending");
+    assert_eq!(continuation.initiating_request, initial);
+    assert_eq!(continuation.missing_field, "time");
+    assert_eq!(
+        continuation.answers,
+        ["my usual timezone", "America/New_York"]
+    );
+    let moosuri_core::CurrentChatDecision::Mission(draft) = continuation.draft else {
+        panic!("mission draft required")
+    };
+    assert_eq!(
+        serde_json::to_value(&draft.time).unwrap(),
+        serde_json::to_value(&partial.time).unwrap()
+    );
+    assert_eq!(draft.time_quote, partial.time_quote);
+    assert_eq!(draft.task_quote, partial.task_quote);
+    assert_eq!(draft.clarification.as_deref(), Some("ambiguous"));
+    partial.decision = "command".into();
+    partial.clarification = None;
+    let step = s
+        .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    s.commit_agent_step(
+        &step,
+        moosuri_store::PrivateCheckpoint {
+            bytes: json!({"kind":"mission_chat_decision","decision":partial})
+                .to_string()
+                .into_bytes(),
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        s.apply_mission_chat(&claim.lease).await.unwrap(),
+        Some(true)
+    );
+    assert!(s.apply_mission_chat(&claim.lease).await.is_err());
+    let saved = s.recurring_missions(&u).await.unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].template.task, "summarize public notices");
+    // 2027-03-01 09:15 America/New_York is 14:15 UTC before the DST transition.
+    let expected = 1_803_910_500;
+    assert_eq!(
+        saved[0].schedule.rule,
+        moosuri_core::ScheduleRule::Once { at: expected }
+    );
+    let replay = s
+        .submit_turn_with_schedule_context(
+            &u,
+            thread,
+            answer_id,
+            "America/New_York".into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.run.id, claim.lease.run_id());
+    assert_eq!(s.recurring_missions(&u).await.unwrap().len(), 1);
+    assert_eq!(s.usage_summary(&u).await.unwrap().dispatched_calls, 3);
+}
+
+#[tokio::test]
 async fn reminder_receipt_followup_moves_and_revokes_same_reminder_without_task_inference() {
     use moosuri_core::{ScheduleCreate, ScheduleDraft, ScheduleRule};
     let _guard = TEST_LOCK.lock().await;

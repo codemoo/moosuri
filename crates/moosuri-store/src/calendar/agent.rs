@@ -1051,8 +1051,8 @@ fn message(state: &str) -> &'static str {
         }
     }
 }
-fn clarification_message(d: &CalendarChatDecision) -> &'static str {
-    match d.clarification.as_deref() {
+fn clarification_message(d: &CalendarChatDecision, field: Option<&str>) -> &'static str {
+    match field {
         Some("time") => {
             "몇 시에 시작하나요? 오전/오후를 포함해 알려 주세요. / What start time should I use?"
         }
@@ -1162,7 +1162,7 @@ impl Store {
     ) -> Result<bool> {
         let l = l.clone();
         self.call(move|db|{let tx=db.conn.transaction()?;let r=match crate::chat::guard(&tx,&db.provider_key,&l) {Ok(r)=>r,Err(error)=>{tx.commit()?;return Err(error)}};let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_command_plans WHERE tenant_id=?1 AND run_id=?2)",params![r.tenant,r.id],|r|r.get(0))?;if !exists{return Ok(false)}
-            let receipt=if let Some(state)=state {let cmd=command(&tx,&db.provider_key,&l)?.ok_or(StoreError::Conflict)?;CalendarChatReceipt{action_id:None,operation:cmd.decision.operation.clone().unwrap_or_else(||cmd.decision.decision.clone()),state:state.clone(),event_id:None,provider_etag:None,message:if state=="clarify" {clarification_message(&cmd.decision).into()}else{message(&state).into()}}}else{let Some(receipt)=receipt(&tx,&r)? else{return Ok(false)};receipt};finish(&tx,&r,receipt)?;tx.commit()?;Ok(true)}).await
+            let receipt=if let Some(state)=state {let cmd=command(&tx,&db.provider_key,&l)?.ok_or(StoreError::Conflict)?;CalendarChatReceipt{action_id:None,operation:cmd.decision.operation.clone().unwrap_or_else(||cmd.decision.decision.clone()),state:state.clone(),event_id:None,provider_etag:None,message:if state=="clarify" {{let field=crate::request_continuations::clarification_field(&tx,&r,cmd.decision.clarification.as_deref())?;clarification_message(&cmd.decision,field.as_deref()).into()}}else{message(&state).into()}}}else{let Some(receipt)=receipt(&tx,&r)? else{return Ok(false)};receipt};finish(&tx,&r,receipt)?;tx.commit()?;Ok(true)}).await
     }
     pub async fn calendar_read_event_id(
         &self,
@@ -1277,7 +1277,10 @@ mod civil_tests {
         decision.clarification = Some("Legacy freeform explanation".into());
         assert!(validate_decision("Synthetic legacy request", &decision).is_ok());
         assert!(!decision.known_model_codes());
-        assert_eq!(clarification_message(&decision), message("clarify"));
+        assert_eq!(
+            clarification_message(&decision, decision.clarification.as_deref()),
+            message("clarify")
+        );
     }
     fn proposal(date: &str, q: &str) -> CalendarChatDecision {
         CalendarChatDecision {

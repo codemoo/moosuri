@@ -2,6 +2,8 @@
 use super::*;
 use crate::chat::Run;
 use moosuri_core::*;
+mod replies;
+pub(crate) use replies::cancelled as cancelled_question_reply;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Continuation {
     pub source_run_id: String,
@@ -95,13 +97,53 @@ fn task_control_candidate(text: &str) -> bool {
     .iter()
     .any(|word| low.contains(word))
 }
-pub(crate) fn admit(c: &Connection, r: &Run) -> Result<()> {
+fn previous(c: &Connection, r: &Run) -> Result<Option<Run>> {
     let prior:Option<String>=c.query_row("SELECT id FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND sequence=?3 AND state='completed' AND account_id=?4 AND session_digest=?5 AND auth_epoch=?6 AND created_at>=?7 AND EXISTS(SELECT 1 FROM agent_execution e WHERE e.tenant_id=chat_runs.tenant_id AND e.run_id=chat_runs.id AND e.invalidated=0)",params![r.tenant,r.thread,r.sequence-1,r.account,r.session.as_slice(),r.epoch,now()?-1800],|row|row.get(0)).optional()?;
-    let Some(id) = prior else { return Ok(()) };
+    let Some(id) = prior else { return Ok(None) };
     let old = crate::chat::load_run(c, &r.tenant, &id)?;
-    if encode(&old.model)? != encode(&r.model)? {
-        return Ok(());
+    Ok((encode(&old.model)? == encode(&r.model)?).then_some(old))
+}
+fn pending_context(c: &Connection, old: &Run, r: &Run) -> Result<Option<Continuation>> {
+    let pending:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM request_continuations WHERE tenant_id=?1 AND run_id=?2 AND pending=1)",params![r.tenant,old.id],|row|row.get(0))?;
+    let Some(v) = pending.then(|| context(c, old)).transpose()?.flatten() else {
+        return Ok(None);
+    };
+    if v.expires_at < now()?
+        || matches!(v.draft, CurrentChatDecision::Calendar(_)) && !same_calendar(c, old, r)?
+    {
+        return Ok(None);
     }
+    Ok(Some(v))
+}
+/// Consume only a complete literal reply to the immediate owned question. This
+/// cancels no saved mission, schedule or event and grants no action authority.
+pub(crate) fn finish_cancelled_question(c: &Connection, r: &Run) -> Result<bool> {
+    if !cancelled_question_reply(&r.text) {
+        return Ok(false);
+    }
+    let Some(old) = previous(c, r)? else {
+        return Ok(false);
+    };
+    if pending_context(c, &old, r)?.is_none() {
+        return Ok(false);
+    }
+    c.execute(
+        "UPDATE request_continuations SET pending=0 WHERE tenant_id=?1 AND run_id=?2",
+        params![r.tenant, old.id],
+    )?;
+    crate::chat::apply_patches(c, r, vec![crate::OutputPatch::Append {
+        item: "pending-question-cancelled".into(),
+        text: "이 질문을 취소했어요. 저장된 업무·알림·일정은 변경하지 않았습니다. / This question is cancelled. No saved task, reminder or event was changed.".into(),
+        phase: Some(MessagePhase::FinalAnswer), refusal: false,
+    }])?;
+    crate::chat::transition(c, r, RunState::Completed, None)?;
+    Ok(true)
+}
+pub(crate) fn admit(c: &Connection, r: &Run) -> Result<()> {
+    let Some(old) = previous(c, r)? else {
+        return Ok(());
+    };
+    let id = old.id.clone();
     // An actual immediately preceding task receipt supplies identity only. The
     // current message still must independently request the control operation.
     let selected: Option<String> = c.query_row(
@@ -136,16 +178,9 @@ pub(crate) fn admit(c: &Connection, r: &Run) -> Result<()> {
     }
     let selections_compatible:bool=c.query_row("SELECT a.target IS NULL OR b.target IS NULL OR a.target=b.target FROM mission_chat_plans a JOIN mission_chat_plans b ON b.tenant_id=a.tenant_id WHERE a.tenant_id=?1 AND a.run_id=?2 AND b.run_id=?3",params![r.tenant,old.id,r.id],|row|row.get(0)).optional()?.unwrap_or(true);
     let mut inherited = None;
-    let pending:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM request_continuations WHERE tenant_id=?1 AND run_id=?2 AND pending=1)",params![r.tenant,id],|row|row.get(0))?;
-    if pending
-        && selections_compatible
-        && let Some(mut v) = context(c, &old)?
-    {
+    if selections_compatible && let Some(mut v) = pending_context(c, &old, r)? {
         let calendar = matches!(v.draft, CurrentChatDecision::Calendar(_));
-        if v.expires_at >= now()?
-            && v.answers.len() < 4
-            && (!calendar || same_calendar(c, &old, r)?)
-        {
+        if v.answers.len() < 4 {
             c.execute("UPDATE mission_chat_plans SET anchor=(SELECT anchor FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?3),timezone=(SELECT timezone FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?3),target=COALESCE(target,(SELECT target FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?3)) WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id,old.id])?;
             if calendar {
                 let a = crate::calendar::agent::profile(c, &old.tenant, &old.id)?
@@ -273,6 +308,40 @@ pub(crate) fn time_decision(
     }
     Ok(effective)
 }
+/// A complete local clock still needs an admitted zone. Use the same frozen
+/// metadata and literal-zone validator as execution; browser changes on later
+/// turns cannot fill the original gap, and relative/interval times need no zone.
+fn missing_timezone(c: &Connection, r: &Run, d: &CurrentChatDecision) -> Result<bool> {
+    let fallback = match d {
+        CurrentChatDecision::Calendar(_) => {
+            crate::calendar::agent::profile(c, &r.tenant, &r.id)?
+                .ok_or(StoreError::Forbidden)?
+                .timezone
+        }
+        CurrentChatDecision::Mission(d)
+            if matches!(
+                d.time,
+                Some(
+                    MissionChatTime::Daily { .. }
+                        | MissionChatTime::Weekly { .. }
+                        | MissionChatTime::LocalOnce { .. }
+                )
+            ) =>
+        {
+            c.query_row(
+                "SELECT timezone FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2",
+                params![r.tenant, r.id],
+                |row| row.get::<_, Option<String>>(0),
+            )?
+        }
+        CurrentChatDecision::Mission(_) => return Ok(false),
+    };
+    match crate::missions::chat::source_zone(&text(c, r)?, fallback.as_deref()) {
+        Ok(zone) => Ok(zone.is_none()),
+        Err(StoreError::InvalidInput) => Ok(true),
+        Err(error) => Err(error),
+    }
+}
 pub(crate) fn pending(
     c: &Connection,
     r: &Run,
@@ -283,17 +352,34 @@ pub(crate) fn pending(
         CurrentChatDecision::Calendar(v) => (v.intent_quote.as_ref(), v.operation.as_ref()),
         CurrentChatDecision::Mission(v) => (v.intent_quote.as_ref(), v.action.as_ref()),
     };
-    // Null legacy/ambiguous proposals never grant a continuation.
-    if intent.is_none()
-        || operation.is_none()
-        || !matches!(
-            field,
-            Some("time" | "target" | "task" | "date" | "duration" | "account")
-        )
-    {
+    if intent.is_none() || operation.is_none() {
         return Ok(());
     }
-    let mut v = context(c, r)?.unwrap_or(Continuation {
+    let inherited = context(c, r)?;
+    let field = match field {
+        Some(field) if replies::field(field) => field.to_owned(),
+        Some("ambiguous") => {
+            let Some(prior) = inherited.as_ref() else {
+                return Ok(());
+            };
+            if !replies::field(&prior.missing_field)
+                || !replies::still_missing(
+                    &d,
+                    &prior.missing_field,
+                    prior.missing_field == "time" && missing_timezone(c, r, &d)?,
+                )
+            {
+                return Ok(());
+            }
+            if prior.missing_field == "target" && c.query_row(
+                "SELECT target IS NOT NULL FROM mission_chat_plans WHERE tenant_id=?1 AND run_id=?2",
+                params![r.tenant, r.id], |row| row.get::<_, bool>(0),
+            )? { return Ok(()); }
+            prior.missing_field.clone()
+        }
+        _ => return Ok(()),
+    };
+    let mut v = inherited.unwrap_or(Continuation {
         source_run_id: r.id.clone(),
         initiating_request: r.text.clone(),
         answers: vec![],
@@ -302,7 +388,23 @@ pub(crate) fn pending(
         expires_at: now()? + 1800,
     });
     v.draft = d;
-    v.missing_field = field.unwrap().into();
+    v.missing_field = field;
     c.execute("INSERT INTO request_continuations(tenant_id,run_id,context,pending) VALUES(?1,?2,?3,1) ON CONFLICT(tenant_id,run_id) DO UPDATE SET context=excluded.context,pending=1",params![r.tenant,r.id,encode(&v)?])?;
     Ok(())
+}
+
+/// Display an ambiguity follow-up using the established pending field, never by
+/// normalizing prose or altering the acknowledged decision/replay payload.
+pub(crate) fn clarification_field(
+    c: &Connection,
+    r: &Run,
+    field: Option<&str>,
+) -> Result<Option<String>> {
+    if field == Some("ambiguous") {
+        let pending:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM request_continuations WHERE tenant_id=?1 AND run_id=?2 AND pending=1)",params![r.tenant,r.id],|row|row.get(0))?;
+        if pending && let Some(v) = context(c, r)? {
+            return Ok(Some(v.missing_field));
+        }
+    }
+    Ok(field.map(str::to_owned))
 }

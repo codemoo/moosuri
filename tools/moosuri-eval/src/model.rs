@@ -3,6 +3,7 @@ use crate::{EvalResult, digest, world};
 mod everyday;
 mod followup;
 mod outcomes;
+mod repair_choice;
 use axum::{
     Router,
     body::Body,
@@ -18,6 +19,7 @@ use tokio::{net::TcpListener, task::JoinHandle};
 #[derive(Clone, Copy)]
 pub enum Script {
     FollowupMonitor,
+    RepairChoice,
     EverydayGuidance,
     EverydayClarification,
     PairedMemory,
@@ -146,6 +148,9 @@ fn skill(input: &Value) -> EvalResult<IssuedCall> {
     ))
 }
 fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<String>)> {
+    if matches!(model.script, Script::RepairChoice) {
+        return repair_choice::next(input);
+    }
     if matches!(model.script, Script::FollowupMonitor) {
         return followup::next(input);
     }
@@ -256,7 +261,8 @@ fn next(model: &Model, input: &Value) -> EvalResult<(Vec<IssuedCall>, Option<Str
             });
             Ok((calls, final_answer))
         }
-        Script::FollowupMonitor
+        Script::RepairChoice
+        | Script::FollowupMonitor
         | Script::EverydayGuidance
         | Script::EverydayClarification
         | Script::ChatMemory
@@ -378,6 +384,9 @@ async fn round(State(model): State<Model>, axum::Json(input): axum::Json<Value>)
                 .is_some_and(|s| s.lines().any(|line| line.starts_with("private:"))),
         });
     if matches!(model.script, Script::CancelMission)
+        || (matches!(model.script, Script::RepairChoice)
+            && calls.is_empty()
+            && model.ledger.lock().unwrap_or_else(|e| e.into_inner()).len() == 4)
         || (matches!(model.script, Script::EverydayGuidance)
             && calls.is_empty()
             && model.ledger.lock().unwrap_or_else(|e| e.into_inner()).len() == 4)

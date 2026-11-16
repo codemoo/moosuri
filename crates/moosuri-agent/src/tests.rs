@@ -59,6 +59,7 @@ async fn concurrent_shutdown_waits_for_cleanup_past_the_old_five_second_cutoff()
             signals,
             supervisor: Mutex::new(Some(supervisor)),
             done,
+            run_activity: watch::channel(0).1,
         }),
     };
     let started = tokio::time::Instant::now();

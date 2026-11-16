@@ -340,6 +340,7 @@ pub struct MissionCompoundStep {
 /// Cost routing only. Actual command interpretation is isolated from evidence.
 pub fn compound_report_candidate(text: &str) -> bool {
     let low = text.to_lowercase();
+    let operations = outside_quoted_literals(&low);
     // "saved document" / "저장된 문서" describes input, not a request
     // to save new output. Keep separate active save occurrences eligible.
     let english_output = low
@@ -373,7 +374,48 @@ pub fn compound_report_candidate(text: &str) -> bool {
             "계산",
         ]
         .iter()
-        .any(|v| low.contains(v))
+        .any(|v| operations.contains(v))
+}
+
+/// Routing cues inside a quoted title/body are data. Unmatched quotes stay
+/// visible; apostrophes inside words are not quotation delimiters.
+fn outside_quoted_literals(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while cursor < text.len() {
+        let c = text[cursor..].chars().next().unwrap();
+        let close = match c {
+            '"' => Some('"'),
+            '“' => Some('”'),
+            '‘' => Some('’'),
+            '\'' if cursor == 0
+                || !text[..cursor].ends_with(|c: char| c.is_ascii_alphanumeric()) =>
+            {
+                Some('\'')
+            }
+            _ => None,
+        };
+        if let Some(close) = close {
+            let start = cursor + c.len_utf8();
+            let end = text[start..]
+                .char_indices()
+                .find_map(|(offset, candidate)| {
+                    let after = start + offset + candidate.len_utf8();
+                    (candidate == close
+                        && (close != '\''
+                            || !text[after..].starts_with(|c: char| c.is_ascii_alphanumeric())))
+                    .then_some(after)
+                });
+            if let Some(end) = end {
+                output.push(' ');
+                cursor = end;
+                continue;
+            }
+        }
+        output.push(c);
+        cursor += c.len_utf8();
+    }
+    output
 }
 
 /// Exact top-level or trusted learned-child receipt identity. Legacy candidate
@@ -470,6 +512,25 @@ mod compound_report_tests {
         }
     }
 
+    #[test]
+    fn quoted_record_names_are_not_new_research_instructions() {
+        for text in [
+            "그 내용을 '여행 취소 계산' 문서로 저장해 줘.",
+            "그 내용을 ‘견적 비교’ 문서로 저장해 줘.",
+            "그 내용을 '여행 취소 계산'이라는 문서로 저장해 줘.",
+            "Save a document named \"Read and compare\" with this note.",
+            "Save a document named 'Don't calculate' with this note.",
+        ] {
+            assert!(!compound_report_candidate(text), "{text}");
+        }
+        for text in [
+            "자료를 읽고 '여행 계산' 문서로 저장해 줘.",
+            "Compare the quotes and save the report as 'Travel'.",
+            "Don't send anything; calculate the fee and save a document.",
+        ] {
+            assert!(compound_report_candidate(text), "{text}");
+        }
+    }
     #[test]
     fn existing_document_modifiers_do_not_request_a_new_report_but_explicit_output_still_routes() {
         for text in [

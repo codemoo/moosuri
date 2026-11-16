@@ -19,6 +19,14 @@ pub struct Stage {
 }
 pub fn plan(kind: Kind) -> Vec<Stage> {
     let stages: &[(&str, usize, usize)] = match kind {
+        Kind::RepairChoice => &[
+            ("observe_estimates_and_ask", 3, 3),
+            ("ambiguous_answer_rejected", 0, 0),
+            ("correct_selection_and_replay", 0, 0),
+            ("reopen_resume_original_work", 1, 0),
+            ("cancel_before_publication", 0, 0),
+            ("late_response_and_reopen", 0, 0),
+        ],
         Kind::FollowupMonitor => &[
             ("read_status_and_propose", 2, 1),
             ("accept_and_exact_replay", 0, 0),
@@ -153,7 +161,7 @@ impl World {
             Err("stage_contract_failed")
         }
     }
-    async fn wait_dispatches(&self, count: usize) -> EvalResult<()> {
+    pub(super) async fn wait_dispatches(&self, count: usize) -> EvalResult<()> {
         tokio::time::timeout(Duration::from_secs(8), async {
             while self.provider.ledger().len() < count {
                 tokio::time::sleep(Duration::from_millis(5)).await;

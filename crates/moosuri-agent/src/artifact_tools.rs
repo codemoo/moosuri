@@ -87,7 +87,7 @@ pub(crate) fn system(p: Option<&ArtifactRunProfile>) -> String {
         )
     }
     if let Some(t) = &p.selected {
-        s.push_str(&format!(" User-selected target: id={} revision={}. This trusted selection is not by itself write authorization.",t.id,t.revision));
+        s.push_str(&format!(" Current request target: id={} revision={}. This Store-verified selection or saved receipt is not by itself write authorization.",t.id,t.revision));
     }
     s
 }

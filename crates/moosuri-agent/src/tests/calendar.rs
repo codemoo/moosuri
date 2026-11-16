@@ -1107,3 +1107,521 @@ async fn calendar_model_reason_contract_keeps_the_same_pending_action_until_dura
     assert_eq!(actions[0].state, "applied");
     assert!(store.mail_actions(&user).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn request_continuation_ambiguous_duration_correction_reopens_and_writes_original_once() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let (dir, service, user, _connection, io) = fixture().await;
+    configure(&service.store, &user).await;
+    let initial = "Create Synthetic meeting on 2026-12-01 from 10:00";
+    let mut partial = decision(initial);
+    partial.decision = "clarify".into();
+    partial.end = None;
+    partial.end_quote = None;
+    partial.clarification = Some("duration".into());
+    let parsed = |value: &CalendarChatDecision| {
+        crate::calendar_intent::parse(&serde_json::to_string(value).unwrap()).unwrap()
+    };
+    let (thread, first) = sealed(&service.store, &user, initial, parsed(&partial)).await;
+    service.chat(&first).await.unwrap();
+    partial.clarification = Some("ambiguous".into());
+    let second = next_sealed(
+        &service.store,
+        &user,
+        &thread,
+        "30 or 45 minutes",
+        parsed(&partial),
+    )
+    .await;
+    service.chat(&second).await.unwrap();
+    assert_eq!(io.write_count(), 0);
+    drop(service);
+    let store = Store::open(dir.path()).unwrap();
+    let service = reattached_calendar(store, io.clone());
+    service
+        .store
+        .submit_turn_with_schedule_context(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "45 minutes".into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let claim = service.store.claim_agent_run().await.unwrap().unwrap();
+    let planning = service
+        .store
+        .mission_chat_planning(&claim.lease)
+        .await
+        .unwrap()
+        .unwrap();
+    let continuation = planning
+        .continuation
+        .expect("an ambiguous answer must preserve the original pending duration");
+    assert_eq!(continuation.initiating_request, initial);
+    assert_eq!(continuation.missing_field, "duration");
+    assert_eq!(continuation.answers, ["30 or 45 minutes", "45 minutes"]);
+    let turns = service
+        .store
+        .conversation(&user, thread, None)
+        .await
+        .unwrap()
+        .turns;
+    assert!(
+        turns[1]
+            .assistant
+            .iter()
+            .any(|message| message.text.contains("end time or duration"))
+    );
+    let mut completed = partial;
+    completed.decision = "command".into();
+    completed.clarification = None;
+    completed.duration_quote = Some("45 minutes".into());
+    completed.duration_minutes = Some(45);
+    let step = service
+        .store
+        .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    service
+        .store
+        .commit_agent_step(
+            &step,
+            PrivateCheckpoint {
+                bytes: json!({"kind":"mission_chat_decision","decision":parsed(&completed)})
+                    .to_string()
+                    .into_bytes(),
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    service.chat(&claim.lease).await.unwrap();
+    assert!(matches!(
+        service.chat(&claim.lease).await,
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(io.write_count(), 1);
+    let CalendarMutation::Create { fields } = io.writes.lock().unwrap()[0].mutation.clone() else {
+        panic!("original operation changed")
+    };
+    assert_eq!(fields.title, "Synthetic meeting");
+    assert_eq!(fields.start, "2026-12-01T01:00:00+00:00");
+    assert_eq!(fields.end, "2026-12-01T01:45:00+00:00");
+    assert_eq!(
+        service
+            .store
+            .usage_summary(&user)
+            .await
+            .unwrap()
+            .dispatched_calls,
+        3
+    );
+}
+
+fn reattached_calendar(store: Store, io: Arc<FixtureIo>) -> CalendarService {
+    let (changes, _) = watch::channel(0);
+    let signals = Signals {
+        stop: CancellationToken::new(),
+        wake: Arc::new(Notify::new()),
+        changes,
+        delivery: Arc::new(tokio::sync::RwLock::new(())),
+    };
+    let mail = MailService::new(
+        store.clone(),
+        Some(Arc::new(OAuthClient {
+            client_id: pin().client_id,
+            client_secret: secret("synthetic-client-secret"),
+            redirect_uri: REDIRECT.into(),
+        })),
+        signals,
+    );
+    CalendarService {
+        store,
+        mail,
+        io: Arc::new(CalendarIo::Fixture(io)),
+    }
+}
+
+#[tokio::test]
+async fn request_continuation_complete_clock_missing_zone_survives_ambiguity_and_reopen() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let (dir, service, user, _connection, io) = fixture().await;
+    configure(&service.store, &user).await;
+    let thread = service
+        .store
+        .create_thread(&user, "Synthetic timezone correction".into())
+        .await
+        .unwrap()
+        .id;
+    let mut partial = decision(TEXT);
+    partial.decision = "clarify".into();
+    partial.clarification = Some("time".into());
+    for (text, reason) in [(TEXT, "time"), ("my usual timezone", "ambiguous")] {
+        partial.clarification = Some(reason.into());
+        service
+            .store
+            .submit_turn(
+                &user,
+                thread.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                text.into(),
+            )
+            .await
+            .unwrap();
+        let claim = service.store.claim_agent_run().await.unwrap().unwrap();
+        let step = service
+            .store
+            .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
+            .await
+            .unwrap();
+        service
+            .store
+            .commit_agent_step(
+                &step,
+                PrivateCheckpoint {
+                    bytes: json!({"kind":"mission_chat_decision","decision":partial})
+                        .to_string()
+                        .into_bytes(),
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
+        service.chat(&claim.lease).await.unwrap();
+        assert_eq!(io.write_count(), 0);
+    }
+    drop(service);
+    let service = reattached_calendar(Store::open(dir.path()).unwrap(), io.clone());
+    service
+        .store
+        .submit_turn_with_schedule_context(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "America/New_York".into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let claim = service.store.claim_agent_run().await.unwrap().unwrap();
+    let planning = service
+        .store
+        .mission_chat_planning(&claim.lease)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(planning.calendar.unwrap().timezone.is_none());
+    let continuation = planning
+        .continuation
+        .expect("missing timezone must remain pending");
+    assert_eq!(continuation.initiating_request, TEXT);
+    assert_eq!(continuation.missing_field, "time");
+    assert_eq!(
+        continuation.answers,
+        ["my usual timezone", "America/New_York"]
+    );
+    let CurrentChatDecision::Calendar(draft) = continuation.draft else {
+        panic!("Calendar draft required")
+    };
+    assert_eq!(draft.start, partial.start);
+    assert_eq!(draft.end, partial.end);
+    assert_eq!(draft.title_quote, partial.title_quote);
+    assert_eq!(draft.clarification.as_deref(), Some("ambiguous"));
+    let mut completed = partial;
+    completed.decision = "command".into();
+    completed.clarification = None;
+    let step = service
+        .store
+        .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    service
+        .store
+        .commit_agent_step(
+            &step,
+            PrivateCheckpoint {
+                bytes: json!({"kind":"mission_chat_decision","decision":completed})
+                    .to_string()
+                    .into_bytes(),
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    service.chat(&claim.lease).await.unwrap();
+    assert!(matches!(
+        service.chat(&claim.lease).await,
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(io.write_count(), 1);
+    let CalendarMutation::Create { fields } = io.writes.lock().unwrap()[0].mutation.clone() else {
+        panic!("original create required")
+    };
+    assert_eq!(fields.title, "Synthetic meeting");
+    assert_eq!(fields.start, "2026-12-01T15:00:00+00:00");
+    assert_eq!(fields.end, "2026-12-01T16:00:00+00:00");
+    assert_eq!(
+        service
+            .store
+            .usage_summary(&user)
+            .await
+            .unwrap()
+            .dispatched_calls,
+        3
+    );
+}
+
+#[tokio::test]
+async fn pending_question_cancel_replay_reopen_preserves_saved_work_and_allows_fresh_request() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    for reply in ["취소", "됐어, 취소해 줘"] {
+        let (dir, service, user, connection, io) = fixture().await;
+        configure(&service.store, &user).await;
+        let original_event = service.change(&user, create(&connection)).await.unwrap();
+        let saved_mission = service
+            .store
+            .create_mission(
+                &user,
+                MissionCreate {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    task: "Compute 2 plus 3".into(),
+                    constraints: String::new(),
+                    checks: vec![MissionCheck::DecimalEquals {
+                        expected: "5".into(),
+                    }],
+                    execution_mode: MissionMode::Durable,
+                },
+            )
+            .await
+            .unwrap();
+        let paused = service
+            .store
+            .control_mission(
+                &user,
+                saved_mission.id,
+                MissionControl {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    expected_revision: saved_mission.revision,
+                    action: MissionAction::Pause,
+                },
+            )
+            .await
+            .unwrap();
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 3600;
+        let saved_schedule = service
+            .store
+            .create_schedule(
+                &user,
+                ScheduleCreate {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    draft: ScheduleDraft {
+                        title: "Synthetic unrelated reminder".into(),
+                        message: "Drink water".into(),
+                        rule: ScheduleRule::Once { at },
+                        valid_until: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let initial = "Create Synthetic meeting on 2026-12-01 from 10:00";
+        let mut partial = decision(initial);
+        partial.decision = "clarify".into();
+        partial.end = None;
+        partial.end_quote = None;
+        partial.clarification = Some("duration".into());
+        let (thread, first) = sealed(&service.store, &user, initial, partial).await;
+        service.chat(&first).await.unwrap();
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let submit = || {
+            service.store.submit_turn_with_schedule_context(
+                &user,
+                thread.clone(),
+                request_id.clone(),
+                reply.into(),
+                None,
+                Some(ScheduleChatContext {
+                    timezone: "Asia/Seoul".into(),
+                    target: None,
+                }),
+            )
+        };
+        let cancelled = submit().await.unwrap();
+        assert_eq!(cancelled.run.state, RunState::Completed);
+        assert!(cancelled.assistant.iter().any(|message| {
+            message
+                .text
+                .contains("No saved task, reminder or event was changed")
+        }));
+        assert_eq!(submit().await.unwrap().run.id, cancelled.run.id);
+        assert_eq!(
+            service
+                .store
+                .usage_summary(&user)
+                .await
+                .unwrap()
+                .dispatched_calls,
+            1
+        );
+        assert!(service.store.claim_agent_run().await.unwrap().is_none());
+        assert_eq!(io.write_count(), 1);
+        drop(service);
+        let store = Store::open(dir.path()).unwrap();
+        assert!(store.claim_agent_run().await.unwrap().is_none());
+        let untouched = store
+            .missions(&user)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|m| m.id == paused.id)
+            .unwrap();
+        assert_eq!(
+            (&*untouched.state, untouched.revision),
+            (&*paused.state, paused.revision)
+        );
+        let schedule = store
+            .schedules(&user)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == saved_schedule.id)
+            .unwrap();
+        assert_eq!(
+            (&*schedule.state, schedule.revision),
+            (&*saved_schedule.state, saved_schedule.revision)
+        );
+        let action = store
+            .calendar_actions(&user)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == original_event.id)
+            .unwrap();
+        assert_eq!(action.state, original_event.state);
+        let service = reattached_calendar(store, io.clone());
+        let fresh = "Create Synthetic replacement on 2026-12-02 from 13:00 to 13:30";
+        let mut d = decision(fresh);
+        d.title_quote = Some("Synthetic replacement".into());
+        d.date = Some("2026-12-02".into());
+        d.date_quote = d.date.clone();
+        d.start = Some("13:00".into());
+        d.start_quote = d.start.clone();
+        d.end = Some("13:30".into());
+        d.end_quote = d.end.clone();
+        let parsed = crate::calendar_intent::parse(&serde_json::to_string(&d).unwrap()).unwrap();
+        let fresh_lease = next_sealed(&service.store, &user, &thread, fresh, parsed).await;
+        service.chat(&fresh_lease).await.unwrap();
+        assert_eq!(io.write_count(), 2);
+        let CalendarMutation::Create { fields } = io.writes.lock().unwrap()[1].mutation.clone()
+        else {
+            panic!("fresh request did not create its own event")
+        };
+        assert_eq!(fields.title, "Synthetic replacement");
+        assert_eq!(fields.start, "2026-12-02T04:00:00+00:00");
+        assert_eq!(fields.end, "2026-12-02T04:30:00+00:00");
+        assert_eq!(
+            service
+                .store
+                .usage_summary(&user)
+                .await
+                .unwrap()
+                .dispatched_calls,
+            2
+        );
+    }
+}
+
+#[tokio::test]
+async fn ambiguous_pending_question_expiry_cannot_reauthorize_original_event_after_reopen() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let (dir, service, user, _connection, io) = fixture().await;
+    configure(&service.store, &user).await;
+    let initial = "Create Synthetic meeting on 2026-12-01 from 10:00";
+    let mut partial = decision(initial);
+    partial.decision = "clarify".into();
+    partial.end = None;
+    partial.end_quote = None;
+    partial.clarification = Some("duration".into());
+    let (thread, first) = sealed(&service.store, &user, initial, partial.clone()).await;
+    service.chat(&first).await.unwrap();
+    partial.clarification = Some("ambiguous".into());
+    let second = next_sealed(
+        &service.store,
+        &user,
+        &thread,
+        "30 or 45 minutes",
+        partial.clone(),
+    )
+    .await;
+    service.chat(&second).await.unwrap();
+    drop(service);
+    // Only the stopped synthetic question's clock metadata is expired. No
+    // production fixture hook or action/result row is injected.
+    let conn = rusqlite::Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+    assert_eq!(conn.execute("UPDATE request_continuations SET context=json_set(context,'$.expires_at',0) WHERE run_id=?1 AND pending=1", [second.run_id()]).unwrap(), 1);
+    drop(conn);
+    let store = Store::open(dir.path()).unwrap();
+    store
+        .submit_turn_with_schedule_context(
+            &user,
+            thread,
+            uuid::Uuid::new_v4().to_string(),
+            "45 minutes".into(),
+            None,
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    assert!(
+        store
+            .mission_chat_planning(&claim.lease)
+            .await
+            .unwrap()
+            .unwrap()
+            .continuation
+            .is_none()
+    );
+    partial.decision = "command".into();
+    partial.clarification = None;
+    partial.duration_quote = Some("45 minutes".into());
+    partial.duration_minutes = Some(45);
+    let parsed = crate::calendar_intent::parse(&serde_json::to_string(&partial).unwrap()).unwrap();
+    let step = store
+        .begin_mission_chat_step(&claim.lease, claim.context.checkpoint_seq)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .commit_agent_step(
+                &step,
+                PrivateCheckpoint {
+                    bytes: json!({"kind":"mission_chat_decision","decision":parsed})
+                        .to_string()
+                        .into_bytes()
+                },
+                vec![]
+            )
+            .await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert!(store.calendar_actions(&user).await.unwrap().is_empty());
+    assert_eq!(io.write_count(), 0);
+}

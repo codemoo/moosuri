@@ -68,8 +68,16 @@ async fn response(State(s): State<Arc<Script>>, axum::Json(input): axum::Json<Va
         assert_eq!(input["messages"].as_array().unwrap().len(), 2);
         assert!(!input.to_string().contains("INJECTED SOURCE INSTRUCTION"));
         let text = input["messages"][1]["content"].as_str().unwrap();
-        let edit = text.contains("수정");
+        let edit =
+            text.contains("수정") || mode == 9 && (text.contains("바꿔") || text.contains("추가"));
         let mut decision = json!({"decision":"command","action":if edit{"edit"}else{"create"},"kind":"document","intent_quote":text,"target_quote":null});
+        if mode == 9 && edit {
+            decision["target_quote"] = json!(if text.contains("방금 만든 문서") {
+                "방금 만든 문서"
+            } else {
+                "그 문서"
+            });
+        }
         match mode {
             5 => {
                 decision.as_object_mut().unwrap().remove("target_quote");
@@ -86,6 +94,8 @@ async fn response(State(s): State<Arc<Script>>, axum::Json(input): axum::Json<Va
             _ => (),
         }
         vec![call(0, "artifact_intent", decision)]
+    } else if mode == 9 {
+        followup::model_calls(&input, &prior)
     } else if mode == 4 {
         let names = input["tools"]
             .as_array()
@@ -653,3 +663,6 @@ async fn malformed_artifact_intent_never_reaches_store_write_or_another_model_ro
         runtime.shutdown().await;
     }
 }
+
+#[path = "tests/followup.rs"]
+mod followup;

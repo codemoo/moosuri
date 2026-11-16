@@ -28,11 +28,17 @@
 문서/보고서/목표/요청 기록 작성·저장·수정 cue 또는 사용자 선택 target이 있으면,
 **현재 user message만** 별도 모델 단계로 분류한다. 원문·이전 대화·skill body는 그
 단계에 전달하지 않는다. 읽기 요청은 write grant 없이 artifact read/search/briefing만
-사용한다. 분류 품질은 실모델 평가되지 않았으며 scripted fixture는 의미 정확도 점수가 아니다.
+사용한다. 분류와 이어지는 편집은 [한정된 실모델 평가](reviews/2026-11-16-adaptive-continuity.md)로
+검증한다. Scripted fixture는 의미 정확도 점수가 아니다.
 
 Store가 literal intent quote, 현재 계정·lease·profile, tool 실행 이전 상태를 재검증하고
 create/edit kind와 exact target/head를 봉인한다. 기존 target은 composer의 trusted 선택,
-또는 현재 요청의 정확한 제목과 **계정 전체 최대256개 후보 중 유일한 exact match**다.
+또는 현재 요청의 정확한 제목과 **소유 기록 중 유일한 exact match**다. 조회는 같은
+제목 최대2개만 읽어 모호함을 판정한다. “방금 만든 문서”, “그 문서” 같은 제한된 지칭은
+같은 계정·대화·로그인 세션의 직전 완료 run이 실제 저장한 단일 영수증으로만 해석한다.
+30분 이내이고 실행이 철회되지 않았으며 현재 revision이 같아야 한다. 새 제목·과거 모델
+출력으로 ID를 추정하지 않는다. 따옴표로 명시한 이름은 제목으로 처리하고, 지칭과
+동명 기록이 서로 다른 대상을 가리키면 거절한다.
 동명/누락/불명확 대상은 고정 clarification으로 끝난다. 모델에게 대상 ID를 고르게 하거나
 첫 후보를 택하지 않는다. 이 v1에는 의미 기반 후보 선택 모델이 없다. 이후 추가한다면
 sealed candidate snapshot에 대한 index-only 선택이어야 한다.

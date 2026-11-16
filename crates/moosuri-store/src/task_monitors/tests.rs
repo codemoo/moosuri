@@ -48,14 +48,21 @@ async fn finish(s: &Store, u: &UserContext, src: &SourceSummary) -> MissionView 
         )
         .await
         .unwrap();
+    assert_eq!(review(s, src).await, 1);
+
+    m
+}
+// Execute a real current child's read/verification path. A partial multi-source
+// review consumes the bounded repair rounds; its saved receipts remain current.
+async fn review(s: &Store, src: &SourceSummary) -> usize {
     let claim = s.claim_agent_run().await.unwrap().unwrap();
     let ctx = s.agent_context(&claim.lease).await.unwrap();
-    let st = s
+    let read = s
         .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
         .await
         .unwrap();
     s.commit_agent_step(
-        &st,
+        &read,
         crate::PrivateCheckpoint {
             bytes: b"{}".to_vec(),
         },
@@ -71,36 +78,78 @@ async fn finish(s: &Store, u: &UserContext, src: &SourceSummary) -> MissionView 
     )
     .await
     .unwrap();
-    s.execute_knowledge_tool(&st, "read".into()).await.unwrap();
-    let ctx = s.agent_context(&claim.lease).await.unwrap();
-    let end = s
-        .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
+    let crate::KnowledgeToolResult::Source(document) = s
+        .execute_knowledge_tool(&read, "read".into())
+        .await
+        .unwrap()
+    else {
+        panic!("actual source receipt required")
+    };
+    for attempt in 0..3 {
+        let ctx = s.agent_context(&claim.lease).await.unwrap();
+        let end = s
+            .begin_agent_step(&claim.lease, ctx.checkpoint_seq)
+            .await
+            .unwrap();
+        s.commit_agent_step(
+            &end,
+            crate::PrivateCheckpoint {
+                bytes: b"{}".to_vec(),
+            },
+            vec![],
+        )
         .await
         .unwrap();
-    s.commit_agent_step(
-        &end,
-        crate::PrivateCheckpoint {
-            bytes: b"{}".to_vec(),
+        let done = s
+            .mission_verify(
+                &end,
+                MissionCandidate {
+                    text: document.text.clone(),
+                    evidence: vec![MissionEvidence {
+                        step: read.step(),
+                        call_id: "read".into(),
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+        if done {
+            return attempt + 1;
+        }
+        assert!(attempt < 2, "bounded verification must settle");
+    }
+    unreachable!("bounded verification returned without settlement")
+}
+async fn revise_source(
+    s: &Store,
+    u: &UserContext,
+    source: &SourceSummary,
+    text: &str,
+) -> SourceSummary {
+    s.ingest_text(
+        u,
+        source.collection_id.clone(),
+        IngestBatch {
+            request_id: Uuid::new_v4().to_string(),
+            expected_cursor: source.revision,
+            next_cursor: source.revision + 1,
+            complete_snapshot: false,
+            entries: vec![SourceInput {
+                external_id: source.external_id.clone(),
+                version: (source.revision + 1).to_string(),
+                expected_revision: Some(source.revision),
+                title: source.title.clone(),
+                text: text.into(),
+                speaker: None,
+                observed_at: 100,
+                valid_from: None,
+                valid_until: None,
+            }],
         },
-        vec![],
     )
     .await
     .unwrap();
-    assert!(
-        s.mission_verify(
-            &end,
-            MissionCandidate {
-                text: "Synthetic support reply".into(),
-                evidence: vec![MissionEvidence {
-                    step: st.step(),
-                    call_id: "read".into()
-                }]
-            }
-        )
-        .await
-        .unwrap()
-    );
-    m
+    s.source(u, source.id.clone(), None).await.unwrap().source
 }
 fn accept(v: &TaskMonitorView) -> TaskMonitorAccept {
     TaskMonitorAccept {
@@ -551,4 +600,245 @@ async fn published_monitor_notice_rechecks_connection_and_expiry_at_push_and_rea
             Err(StoreError::NotFound)
         ));
     }
+}
+
+#[tokio::test]
+async fn invalidated_monitor_observation_cannot_publish_or_deliver_a_saved_success_notice() {
+    let _guard = TEST_LOCK.lock().await;
+    for boundary in ["before_publication", "after_publication", "deleted"] {
+        let (_dir, store, user) = crate::missions::tests::setup().await;
+        let source = seed(&store, &user).await;
+        finish(&store, &user, &source).await;
+        let proposed = store.task_monitors(&user).await.unwrap().remove(0);
+        let active = store
+            .accept_task_monitor(&user, proposed.id.clone(), accept(&proposed))
+            .await
+            .unwrap();
+        let (_, p256dh) = moosuri_connectors::push::generate_vapid().unwrap();
+        let device = store
+            .enroll_push(
+                &user,
+                crate::push::PushEnrollment {
+                    operation_revision: 1,
+                    request_id: Uuid::new_v4().to_string(),
+                    device_id: Uuid::new_v4().to_string(),
+                    subscription: moosuri_connectors::push::PushSubscription {
+                        endpoint: format!("https://fcm.googleapis.com/fcm/send/{}", Uuid::new_v4()),
+                        p256dh,
+                        auth: "_ordMnz7uTCmrpBTeUV4Bw".into(), // gitleaks:allow -- synthetic fixture
+                    },
+                },
+                "https://push-owner.example.test".into(),
+            )
+            .await
+            .unwrap();
+        let source = revise_source(&store, &user, &source, "Synthetic support reply revised").await;
+        let at = now().unwrap() + 61;
+        store.enqueue_scheduled_reminders_at(at).await.unwrap();
+        assert_eq!(store.poll_recurring_missions_at(at).await.unwrap(), 1);
+        assert_eq!(review(&store, &source).await, 1);
+        let observation = store
+            .task_monitors(&user)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|v| v.id == active.id)
+            .unwrap()
+            .observations
+            .remove(0);
+        assert_eq!(observation.state, "achieved");
+        let saved = if boundary != "before_publication" {
+            store.poll_recurring_missions_at(at).await.unwrap();
+            let notice = store
+                .notifications(&user, None, false)
+                .await
+                .unwrap()
+                .items
+                .remove(0);
+            assert_eq!(
+                notice.mission_id.as_deref(),
+                Some(observation.mission_id.as_str())
+            );
+            store.poll_push_queue().await.unwrap();
+            let queued = store.claim_push().await.unwrap().unwrap();
+            Some((notice, queued))
+        } else {
+            None
+        };
+        let fresh = if boundary == "deleted" {
+            store
+                .delete_mission(&user, observation.mission_id.clone())
+                .await
+                .unwrap();
+            None
+        } else {
+            Some(revise_source(&store, &user, &source, "Synthetic support reply newest").await)
+        };
+        // No scheduler pass is needed to fence an already saved/claimed notice.
+        assert!(
+            store
+                .notifications(&user, None, false)
+                .await
+                .unwrap()
+                .items
+                .is_empty(),
+            "{boundary}"
+        );
+        if let Some((notice, queued)) = saved {
+            assert!(
+                matches!(
+                    store.commit_push_dispatch(&queued.lease).await,
+                    Err(StoreError::Conflict)
+                ),
+                "{boundary}"
+            );
+            let (tenant, notification) = (user.tenant.0.clone(), notice.id.clone());
+            store.call(move |db| {
+                db.conn.execute("UPDATE push_queue SET state='accepted' WHERE tenant_id=?1 AND notification_id=?2", params![tenant,notification])?;
+                Ok(())
+            }).await.unwrap();
+            assert!(matches!(
+                store
+                    .authorize_push_display(&user, device.binding_id, notice.id.clone())
+                    .await,
+                Err(StoreError::NotFound)
+            ));
+            assert!(matches!(
+                store.mark_notification(&user, notice.id, false).await,
+                Err(StoreError::NotFound)
+            ));
+        }
+        store.poll_recurring_missions_at(at).await.unwrap();
+        let (tenant, child) = (user.tenant.0.clone(), observation.mission_id.clone());
+        store.call(move |db| {
+            let (state, publication): (String, String) = db.conn.query_row(
+                "SELECT m.state,o.publication_state FROM missions m JOIN recurring_mission_occurrences o ON o.tenant_id=m.tenant_id AND o.mission_id=m.id WHERE m.tenant_id=?1 AND m.id=?2",
+                params![tenant,child], |row| Ok((row.get(0)?,row.get(1)?)),
+            )?;
+            assert!(matches!(state.as_str(), "quarantined" | "deleted"));
+            if boundary == "before_publication" { assert_eq!(publication, "fenced"); }
+            Ok(())
+        }).await.unwrap();
+        let current = store
+            .task_monitors(&user)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|v| v.id == active.id)
+            .unwrap();
+        assert_eq!(
+            current.state, "active",
+            "child withdrawal does not revoke monitor permission"
+        );
+        if let Some(fresh) = fresh {
+            store.enqueue_scheduled_reminders_at(at + 61).await.unwrap();
+            assert_eq!(store.poll_recurring_missions_at(at + 61).await.unwrap(), 1);
+            assert_eq!(review(&store, &fresh).await, 1);
+            store.poll_recurring_missions_at(at + 61).await.unwrap();
+            store.poll_recurring_missions_at(at + 61).await.unwrap();
+            assert_eq!(
+                store
+                    .notifications(&user, None, false)
+                    .await
+                    .unwrap()
+                    .items
+                    .len(),
+                1
+            );
+            assert_eq!(
+                store
+                    .task_monitors(&user)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|v| v.id == active.id)
+                    .unwrap()
+                    .observations
+                    .len(),
+                2
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn monitor_partial_current_review_remains_visible_with_its_actual_source_receipt() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user) = crate::missions::tests::setup().await;
+    let source = seed(&store, &user).await;
+    connect(&store, &user, &source).await;
+    finish(&store, &user, &source).await;
+    let proposed = store.task_monitors(&user).await.unwrap().remove(0);
+    let active = store
+        .accept_task_monitor(&user, proposed.id.clone(), accept(&proposed))
+        .await
+        .unwrap();
+    add_message(&store, &user, &source, 2, "support-thread").await;
+    add_message(&store, &user, &source, 3, "support-thread").await;
+    let at = now().unwrap() + 61;
+    store.enqueue_scheduled_reminders_at(at).await.unwrap();
+    assert_eq!(store.poll_recurring_missions_at(at).await.unwrap(), 1);
+    let changed = store
+        .source(&user, Uuid::from_u128(2).to_string(), None)
+        .await
+        .unwrap()
+        .source;
+    assert_eq!(review(&store, &changed).await, 3);
+    let observation = store
+        .task_monitors(&user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.id == active.id)
+        .unwrap()
+        .observations
+        .remove(0);
+    assert_eq!(observation.state, "partial");
+    store.poll_recurring_missions_at(at).await.unwrap();
+    let notices = store.notifications(&user, None, false).await.unwrap().items;
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        notices[0].mission_id.as_deref(),
+        Some(observation.mission_id.as_str())
+    );
+    assert_eq!(notices[0].message, "실행 상태: partial");
+}
+
+#[tokio::test]
+async fn expired_reusable_monitor_does_not_swallow_the_next_completed_tasks_proposal() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user) = crate::missions::tests::setup().await;
+    let source = seed(&store, &user).await;
+    let first = finish(&store, &user, &source).await;
+    let proposed = store.task_monitors(&user).await.unwrap().remove(0);
+    let active = store
+        .accept_task_monitor(&user, proposed.id.clone(), accept(&proposed))
+        .await
+        .unwrap();
+    let (tenant, monitor) = (user.tenant.0.clone(), active.id.clone());
+    store.call(move |db| {
+        db.conn.execute("UPDATE task_monitor_policies SET expires_at=?3 WHERE tenant_id=?1 AND id=(SELECT policy_id FROM task_monitors WHERE tenant_id=?1 AND id=?2)", params![tenant,monitor,now()? - 1])?;
+        Ok(())
+    }).await.unwrap();
+    let second = finish(&store, &user, &source).await;
+    let all = store.task_monitors(&user).await.unwrap();
+    let old = all.iter().find(|v| v.id == active.id).unwrap();
+    assert_eq!(old.state, "expired");
+    assert_eq!(old.linked_mission_ids, [first.id]);
+    let replacement = all
+        .iter()
+        .find(|v| v.parent_mission_id == second.id)
+        .unwrap();
+    assert_eq!(replacement.state, "proposed");
+    assert_eq!(replacement.linked_mission_ids, [second.id]);
+    assert!(replacement.policy_id.is_none());
+    assert!(replacement.existing_monitor_id.is_none());
+    assert!(replacement.observations.is_empty());
+    let renewed = store
+        .accept_task_monitor(&user, replacement.id.clone(), accept(replacement))
+        .await
+        .unwrap();
+    assert_eq!(renewed.state, "active");
+    assert_ne!(renewed.policy_id, active.policy_id);
+    assert!(renewed.observations.is_empty());
 }

@@ -285,17 +285,24 @@ pub(crate) fn propose(
         return Ok(());
     }
     let scope = digest(&(TEMPLATE, &scope_spec))?;
-    let existing:Option<String>=c.query_row("SELECT id FROM task_monitors WHERE tenant_id=?1 AND account_id=?2 AND scope_digest=?3 AND (state='proposed' OR (state='active' AND EXISTS(SELECT 1 FROM task_monitor_policies p WHERE p.tenant_id=task_monitors.tenant_id AND p.id=task_monitors.policy_id AND p.reusable=1))) ORDER BY state='active' DESC LIMIT 1",params![r.tenant,r.account,scope],|v|v.get(0)).optional()?;
-    if let Some(id) = existing {
-        if c.query_row(
+    // Retire an unusable reusable match, then consider another pending proposal
+    // or create this completed task's own proposal. Expired authority grants none.
+    let existing = loop {
+        let existing:Option<String>=c.query_row("SELECT id FROM task_monitors WHERE tenant_id=?1 AND account_id=?2 AND scope_digest=?3 AND (state='proposed' OR (state='active' AND EXISTS(SELECT 1 FROM task_monitor_policies p WHERE p.tenant_id=task_monitors.tenant_id AND p.id=task_monitors.policy_id AND p.reusable=1))) ORDER BY state='active' DESC LIMIT 1",params![r.tenant,r.account,scope],|v|v.get(0)).optional()?;
+        let Some(id) = existing.as_ref() else {
+            break None;
+        };
+        let active: bool = c.query_row(
             "SELECT state='active' FROM task_monitors WHERE tenant_id=?1 AND id=?2",
             params![r.tenant, id],
-            |v| v.get::<_, bool>(0),
-        )? && !policy_current(c, &r.tenant, &id, now()?)?
-        {
-            stop(c, &r.tenant, &id, "withdrawn", "permission_unavailable")?;
-            return Ok(());
+            |row| row.get(0),
+        )?;
+        if active && !retain_current_policy(c, &r.tenant, id, now()?)? {
+            continue;
         }
+        break existing;
+    };
+    if let Some(id) = existing {
         c.execute(
             "INSERT OR IGNORE INTO task_monitor_links VALUES(?1,?2,?3,?4,?5)",
             params![r.tenant, r.account, parent, rev, id],
@@ -374,6 +381,24 @@ fn activate(c: &Connection, t: &str, id: &str, p: &str) -> Result<()> {
 fn policy_current(c: &Connection, t: &str, id: &str, at: i64) -> Result<bool> {
     let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM task_monitors m JOIN task_monitor_policies p ON p.tenant_id=m.tenant_id AND p.id=m.policy_id JOIN accounts a ON a.tenant_id=m.tenant_id AND a.id=m.account_id JOIN missions parent ON parent.tenant_id=m.tenant_id AND parent.id=m.parent_mission_id WHERE m.tenant_id=?1 AND m.id=?2 AND m.state='active' AND p.state='active' AND p.expires_at>?3 AND p.account_id=m.account_id AND p.auth_epoch=a.auth_epoch AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?3) AND parent.state!='deleted' AND parent.state!='cancelled' AND m.acceptance_revision=coalesce((SELECT max(x.revision) FROM mission_acceptances x WHERE x.tenant_id=m.tenant_id AND x.mission_id=m.parent_mission_id),1))",params![t,id,at],|r|r.get(0))?;
     Ok(valid && current_members(c, t, id).is_ok())
+}
+/// One retirement decision for admission/reuse; this never refreshes permission.
+fn retain_current_policy(c: &Connection, t: &str, id: &str, at: i64) -> Result<bool> {
+    if policy_current(c, t, id, at)? {
+        return Ok(true);
+    }
+    let expired: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM task_monitors m JOIN task_monitor_policies p ON p.tenant_id=m.tenant_id AND p.id=m.policy_id WHERE m.tenant_id=?1 AND m.id=?2 AND p.expires_at<=?3)",
+        params![t, id, at], |row| row.get(0),
+    )?;
+    stop(
+        c,
+        t,
+        id,
+        if expired { "expired" } else { "withdrawn" },
+        "permission_or_source_unavailable",
+    )?;
+    Ok(false)
 }
 pub(crate) fn authority(c: &Connection, r: &crate::chat::Run) -> Result<()> {
     let monitor:Option<String>=c.query_row("SELECT o.monitor_id FROM task_monitor_observations o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id WHERE o.tenant_id=?1 AND m.run_id=?2",params![r.tenant,r.id],|v|v.get(0)).optional()?;
@@ -464,15 +489,7 @@ pub(crate) fn ready(c: &Connection, t: &str, schedule: &str, at: i64) -> Result<
         "UPDATE task_monitors SET last_checked_at=?3 WHERE tenant_id=?1 AND id=?2",
         params![t, id, at],
     )?;
-    if !policy_current(c, t, &id, at)? {
-        let expired:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM task_monitors m JOIN task_monitor_policies p ON p.tenant_id=m.tenant_id AND p.id=m.policy_id WHERE m.tenant_id=?1 AND m.id=?2 AND p.expires_at<=?3)",params![t,id,at],|r|r.get(0))?;
-        stop(
-            c,
-            t,
-            &id,
-            if expired { "expired" } else { "withdrawn" },
-            "permission_or_source_unavailable",
-        )?;
+    if !retain_current_policy(c, t, &id, at)? {
         return Ok(false);
     }
     let busy:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM task_monitor_observations o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id WHERE o.tenant_id=?1 AND o.monitor_id=?2 AND m.state IN('queued','planning','executing','verifying','waiting','paused'))",params![t,id],|r|r.get(0))?;
@@ -562,6 +579,12 @@ pub(crate) fn admitted(
     }
     Ok(())
 }
+fn observation_usable(c: &Connection, t: &str, monitor: &str, mission: &str) -> Result<bool> {
+    Ok(c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM task_monitor_observations o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id WHERE o.tenant_id=?1 AND o.monitor_id=?2 AND o.mission_id=?3 AND o.resolved_at IS NULL AND m.state NOT IN('quarantined','deleted','withdrawn') AND NOT EXISTS(SELECT 1 FROM agent_execution e WHERE e.tenant_id=m.tenant_id AND e.run_id=m.run_id AND e.invalidated=1))",
+        params![t, monitor, mission], |row| row.get(0),
+    )?)
+}
 pub(crate) fn publication_current(
     c: &Connection,
     t: &str,
@@ -580,7 +603,10 @@ pub(crate) fn publication_current(
         if !policy_current(c, t, &id, at)? {
             return Ok(false);
         }
-        return Ok(!c.query_row("SELECT EXISTS(SELECT 1 FROM task_monitor_observations WHERE tenant_id=?1 AND monitor_id=?2 AND mission_id=?3 AND resolved_at IS NOT NULL)",params![t,id,mission],|r|r.get::<_,bool>(0))?);
+        // Source invalidation withdraws a child's result independently of the
+        // reusable monitor permission. Keep valid partial/failure outcomes visible;
+        // do not deliver an old achieved notice after its evidence was purged.
+        return observation_usable(c, t, &id, mission);
     }
     Ok(true)
 }

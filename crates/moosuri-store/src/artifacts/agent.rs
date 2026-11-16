@@ -292,22 +292,7 @@ pub(crate) fn tool(
         Err(e) => Err(e),
     }
 }
-impl Store {
-    /// Called only after the isolated current-message planning step commits, before
-    /// any local retrieval. No retrieved quote or model-provided ID is authority.
-    pub async fn prepare_artifact_intent(
-        &self,
-        lease: &StepLease,
-        intent: Option<ArtifactIntent>,
-    ) -> Result<ArtifactRunProfile> {
-        let lease = lease.clone();
-        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let run=crate::agent_execution::guard_step(&tx,&db.provider_key,&lease)?;let p=profile(&tx,&run.tenant,&run.id)?.ok_or(StoreError::Conflict)?;if p.planned{return Ok(p)}let completed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND step=?3 AND state='completed') AND NOT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2)",params![run.tenant,run.id,lease.step()],|row|row.get(0))?;if !completed{return Err(StoreError::Conflict)}
- if intent.is_none(){crate::agent_execution::record_planner_step(&tx,&run,&lease.run,lease.step(),&lease.nonce,"artifact_no_command")?;}
- let tools:i64=tx.query_row("SELECT tool_calls FROM agent_execution WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;if tools!=0{return Err(StoreError::Conflict)}
- if let Some(intent)=intent{if !moosuri_core::ARTIFACT_INTENT_ACTIONS.contains(&intent.action.as_str())||intent.intent_quote.trim().is_empty()||intent.intent_quote.len()>512||!run.text.contains(&intent.intent_quote){return Err(StoreError::InvalidInput)}let target=if intent.action=="create"{if intent.target_quote.is_some(){return Err(StoreError::InvalidInput)}None}else if let Some(target)=p.selected{Some(target)}else{let quote=intent.target_quote.filter(|s|!s.trim().is_empty()&&s.len()<=128&&run.text.contains(s)).ok_or(StoreError::Conflict)?;let candidates=tx.prepare("SELECT a.id,a.revision,json_extract(v.draft,'$.title') FROM personal_artifacts a JOIN personal_artifact_versions v ON v.tenant_id=a.tenant_id AND v.artifact_id=a.id AND v.revision=a.revision WHERE a.tenant_id=?1 AND a.kind=?2 AND a.status='active' ORDER BY a.id LIMIT 257")?.query_map(params![run.tenant,kind(intent.kind)],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;if candidates.len()>256{return Err(StoreError::Conflict)}let matching=candidates.into_iter().filter(|a|a.2==quote).collect::<Vec<_>>();if matching.len()!=1{return Err(StoreError::Conflict)}Some(ArtifactTarget{id:matching[0].0.clone(),revision:matching[0].1})};if let Some(t)=&target{let v=version(&tx,&run.tenant,&t.id,None)?;if v.artifact.revision!=t.revision||v.artifact.kind!=intent.kind||v.draft.is_none(){return Err(StoreError::Conflict)}}tx.execute("INSERT INTO personal_artifact_command_plans(tenant_id,run_id,schema_version,action,kind,target_id,target_revision,generation,used,request_id) VALUES(?1,?2,1,?3,?4,?5,?6,?7,0,?8)",params![run.tenant,run.id,intent.action,kind(intent.kind),target.as_ref().map(|t|&t.id),target.as_ref().map(|t|t.revision),knowledge::generation(&tx,&run.tenant)?,Uuid::new_v4().to_string()])?;}
- tx.execute("UPDATE personal_artifact_run_profiles SET planned=1 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id])?;let result=profile(&tx,&run.tenant,&run.id)?.ok_or(StoreError::Corrupt)?;tx.commit()?;Ok(result)}).await
-    }
-}
+mod intent;
 impl Store {
     pub async fn initialize_artifact_readonly(
         &self,

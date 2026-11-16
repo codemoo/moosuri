@@ -127,6 +127,7 @@ struct Control {
     signals: Signals,
     supervisor: Mutex<Option<JoinHandle<()>>>,
     done: watch::Receiver<bool>,
+    run_activity: watch::Receiver<usize>,
     mail: mail::MailService,
     browser: browser::BrowserService,
     subscriptions: subscriptions::SubscriptionService,
@@ -245,6 +246,7 @@ impl Runtime {
     ) -> Self {
         let (changes, _) = watch::channel(0);
         let (done_tx, done) = watch::channel(false);
+        let (run_activity_tx, run_activity) = watch::channel(0);
         let signals = Signals {
             stop: CancellationToken::new(),
             wake: Arc::new(Notify::new()),
@@ -264,6 +266,7 @@ impl Runtime {
             store,
             signals.clone(),
             done_tx,
+            run_activity_tx,
             mail.clone(),
             web,
             subscriptions.clone(),
@@ -273,6 +276,7 @@ impl Runtime {
                 signals,
                 supervisor: Mutex::new(Some(supervisor)),
                 done,
+                run_activity,
                 mail,
                 browser,
                 subscriptions,
@@ -301,6 +305,14 @@ impl Runtime {
     }
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.control.signals.changes.subscribe()
+    }
+    /// Counts only active supervised run workers and reaped workers whose local
+    /// retirement still needs settlement. It does not count DB-queued work,
+    /// background service workers or provider requests. Updates follow actual
+    /// JoinSet spawn/reap and retirement; channel closure or is_stopping() means
+    /// a zero value cannot establish live-runtime quiescence.
+    pub fn subscribe_run_activity(&self) -> watch::Receiver<usize> {
+        self.control.run_activity.clone()
     }
     /// The same short gate orders HTTP and runtime mutations against SSE delivery.
     /// Never hold it while waiting for a provider response or a client network write.
@@ -374,6 +386,7 @@ async fn supervise(
     store: Store,
     signals: Signals,
     done: watch::Sender<bool>,
+    run_activity: watch::Sender<usize>,
     mail: mail::MailService,
     web: web::Service,
     subscriptions: subscriptions::SubscriptionService,
@@ -408,6 +421,7 @@ async fn supervise(
             _ = signals.wake.notified() => (),
         }
         settle_retired(&mut retired, &store, &signals).await;
+        run_activity.send_replace(tasks.len() + retired.len());
         if cfg!(feature = "credential-broker-chat")
             && credential_check.elapsed() >= Duration::from_secs(2)
         {
@@ -456,6 +470,7 @@ async fn supervise(
                         ))
                         .id();
                     leases.insert(id, lease);
+                    run_activity.send_replace(tasks.len() + retired.len());
                 }
                 Ok(None) => {
                     signals.changed();
@@ -472,8 +487,10 @@ async fn supervise(
     let drain = async {
         while let Some(result) = tasks.join_next_with_id().await {
             reap(result, &mut leases, &mut retired);
+            run_activity.send_replace(tasks.len() + retired.len());
         }
         settle_retired(&mut retired, &store, &signals).await;
+        run_activity.send_replace(tasks.len() + retired.len());
     };
     if tokio::time::timeout(RUN_DRAIN, drain).await.is_err() {
         tasks.abort_all();

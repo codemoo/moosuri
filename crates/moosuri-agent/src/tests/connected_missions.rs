@@ -275,6 +275,7 @@ async fn model(State(s): State<Arc<Model>>, axum::Json(body): axum::Json<Value>)
 fn runtime(s: Store, address: std::net::SocketAddr) -> Runtime {
     let (changes, _) = watch::channel(0);
     let (done_tx, done) = watch::channel(false);
+    let (run_activity_tx, run_activity) = watch::channel(0);
     let signals = Signals {
         stop: CancellationToken::new(),
         wake: Arc::new(Notify::new()),
@@ -299,6 +300,7 @@ fn runtime(s: Store, address: std::net::SocketAddr) -> Runtime {
         s,
         signals.clone(),
         done_tx,
+        run_activity_tx,
         mail.clone(),
         web,
         subscriptions.clone(),
@@ -308,6 +310,7 @@ fn runtime(s: Store, address: std::net::SocketAddr) -> Runtime {
             signals,
             supervisor: Mutex::new(Some(supervisor)),
             done,
+            run_activity,
             mail,
             browser,
             subscriptions,

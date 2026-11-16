@@ -1,0 +1,7 @@
+- [x] Freeze12 fresh actual-model requests/expectations and preserve first8/12 plus setup failure.
+- [x] Trace quoted-title routing and missing current edit/target continuation.
+- [x] Consolidate artifact intent admission and verified target resolution.
+- [x] Add stored outcome/reopen/replay, stale/other-thread/ambiguity and quoted routing regressions.
+- [x] Independent frozen source review and native artifact8/core3 integration.
+- [x] Recheck original five-turn document workflow without changing expectations:5/5, one document/revisions1→2→3, no external effects.
+- [ ] Public commit/push, exact-source Linux acceptance and status update.

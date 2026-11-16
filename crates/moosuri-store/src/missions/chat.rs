@@ -51,6 +51,11 @@ pub(crate) fn admit(
     {
         return Err(StoreError::InvalidInput);
     }
+    if context.and_then(|v| v.target.as_ref()).is_none()
+        && crate::request_continuations::finish_cancelled_question(c, r)?
+    {
+        return Ok(());
+    }
     c.execute("INSERT INTO mission_chat_plans(tenant_id,run_id,anchor,timezone,target,original_session,original_epoch) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![r.tenant,r.id,now()?,zone,context.and_then(|v|v.target.as_ref()).map(encode).transpose()?,r.session.as_slice(),r.epoch])?;
     crate::request_continuations::admit(c, r)?;
     Ok(())
@@ -862,7 +867,7 @@ impl Store {
             if d.decision=="no_command"{tx.execute("UPDATE mission_chat_plans SET state='passed' WHERE tenant_id=?1 AND run_id=?2",params![r.tenant,r.id])?;tx.commit()?;return Ok(Some(false))}
             let mut receipt=new_receipt(&r,&d);
             let mut message="언제 실행할지와 어떤 일을 맡길지 구체적으로 말씀해 주세요. / Please include the task and its execution time.".to_owned();
-            if d.decision=="clarify" {message=match d.clarification.as_deref(){Some("time")=>"몇 시에 실행할까요? 오전/오후와 시간대를 포함해 자연스럽게 다시 말씀해 주세요. / What execution time should I use? Include AM/PM and timezone if needed.",Some("task")=>"어떤 일을 맡길까요? 수행할 내용을 말씀해 주세요. / What task should I take on?",Some("ambiguous")=>"지금 적용할 한 가지 요청을 말씀해 주세요. / Please state one current task or control request.",_=>"어느 업무에 적용할까요? / Which task do you mean?"}.into();}
+            if d.decision=="clarify" {let field=crate::request_continuations::clarification_field(&tx,&r,d.clarification.as_deref())?;message=match field.as_deref(){Some("time")=>"몇 시에 실행할까요? 오전/오후와 시간대를 포함해 자연스럽게 다시 말씀해 주세요. / What execution time should I use? Include AM/PM and timezone if needed.",Some("task")=>"어떤 일을 맡길까요? 수행할 내용을 말씀해 주세요. / What task should I take on?",Some("ambiguous")=>"지금 적용할 한 가지 요청을 말씀해 주세요. / Please state one current task or control request.",_=>"어느 업무에 적용할까요? / Which task do you mean?"}.into();}
             if d.decision=="unsupported"{message="요청한 작업은 현재 자동 실행을 지원하지 않아 저장하거나 예약하지 않았어요. 해당 시각에 직접 처리할 수 있도록 개인 알림을 설정할 수 있어요. / This action cannot be automated; no task was saved or scheduled.".into();receipt.state="unsupported".into();}
             else if d.decision=="command" {
                 let action=d.action.as_deref().ok_or(StoreError::InvalidInput)?;

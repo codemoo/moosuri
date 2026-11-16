@@ -98,5 +98,14 @@ mission settlement, current intent versus persisted replay, and evaluator oracle
 independence. The identified reminder conflict and both oracle gaps were fixed
 and re-reviewed without unresolved material findings in the reviewed scopes.
 
-Exact public-source Linux acceptance and publication are the remaining gates.
+Public source `68b994a4d184f9ebbbc31a46e9f61bba2e306439` passed all11 Linux phases in the
+isolated rootless, read-only, network-disabled test container: reminders, mission
+fresh/recovery, live guidance, connected input/effects, Calendar, artifacts, current
+intent contracts, persisted legacy Calendar compatibility, evaluator library, scoped
+Clippy and CLI/evaluator build. The source manifest matched before and after execution.
+Native14-workflow/53-apparatus results and Linux contract checks remain separate.
+
+Implementation and acceptance evidence were committed and pushed to public main;
+the canonical working folder is synchronized. CI remains disabled. No operating
+service, legacy collector, cron or personal DB was changed.
 This checkpoint is not an operational deployment or stable-release claim.

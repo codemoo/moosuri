@@ -6,4 +6,4 @@
 ## Verify and publish
 - [x] Verify interrupted setup, overlapping controls, foreground reruns and delayed browser dispatch with synthetic data.
 - [x] Complete independent boundary review and affected native/Linux checks.
-- [ ] Publish signed preview packages and exercise the public installer; keep CI disabled.
+- [x] Publish signed preview packages and exercise the public installer; keep CI disabled.

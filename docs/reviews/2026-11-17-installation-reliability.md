@@ -63,8 +63,15 @@ opaque executable bytes are not claimed to be covered by the text secret scan.
 
 The [dev.4 preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.4)
 uses the same public signing pin and a higher immutable release sequence. Source
-and package publication are separate commits; the published installer acceptance
-will be recorded after testing the actual public command. No personal
+and package publication are separate commits. All seven uploaded assets matched
+local SHA-256 digests before the main bootstrap was advanced to dev.4.
+
+The actual public `curl .../main/install.sh | bash` command installed dev.4 in an
+isolated macOS home: Korean arrow/number selections, a temporary password shown
+only on the controlling terminal, enforced first password change, web readiness,
+synthetic login, graceful foreground shutdown and interactive data-preserving
+removal all passed. This public-path check used service-manager stubs; actual
+launchd behavior was verified separately above. No personal
 provider, credentials, DB or existing production service was used. The existing
 limits remain: no native menu-click/visual acceptance in this turn, no actual Intel
 Mac, physical Linux ARM, Windows WSL2 or Linux desktop panel/systemd-session test.

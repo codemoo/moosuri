@@ -4,4 +4,4 @@
 - [x] Reuse durable chat, live guidance, cancellation and optional generic notices.
 - [x] Fence duplicates, uncertain sends, disconnect, account changes and restore.
 - [x] Complete independent review and integrated native/Linux outcome validation.
-- [ ] Publish the implementation and updated signed installers.
+- [x] Publish the implementation and updated signed installers.

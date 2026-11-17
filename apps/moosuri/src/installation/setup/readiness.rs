@@ -1,10 +1,27 @@
 //! One bounded probe shared by setup, CLI and the desktop menu.
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Observation {
+    Ready,
+    Unavailable,
+    OtherServer,
+}
+impl Observation {
+    pub(super) fn require_ready(self) -> Result<()> {
+        match self {
+            Self::Ready => Ok(()),
+            Self::Unavailable => Err("setup_service_not_ready_check_moosuri_status".into()),
+            Self::OtherServer => Err("setup_port_occupied_by_another_server".into()),
+        }
+    }
+}
+
 pub(super) struct Readiness {
     client: reqwest::Client,
     authority: String,
     base: String,
+    identity: String,
 }
 impl Readiness {
     pub(super) fn new(i: &Installation, s: &State) -> Result<Self> {
@@ -22,14 +39,15 @@ impl Readiness {
                 .1
                 .into(),
             base: format!("http://127.0.0.1:{}", s.port),
+            identity: uuid::Uuid::parse_str(&i.id).map_err(error)?.to_string(),
         })
     }
-    pub(super) async fn check(&self) -> bool {
+    pub(super) async fn observe(&self) -> Observation {
         tokio::time::timeout(Duration::from_secs(2), self.probe())
             .await
-            .unwrap_or(false)
+            .unwrap_or(Observation::Unavailable)
     }
-    async fn probe(&self) -> bool {
+    async fn probe(&self) -> Observation {
         let Ok(r) = self
             .client
             .get(format!("{}/health/ready", self.base))
@@ -37,10 +55,17 @@ impl Readiness {
             .send()
             .await
         else {
-            return false;
+            return Observation::Unavailable;
         };
+        if r.headers()
+            .get("x-moosuri-runtime")
+            .and_then(|v| v.to_str().ok())
+            != Some(self.identity.as_str())
+        {
+            return Observation::OtherServer;
+        }
         if r.status() != reqwest::StatusCode::NO_CONTENT {
-            return false;
+            return Observation::Unavailable;
         }
         let Ok(mut r) = self
             .client
@@ -49,7 +74,7 @@ impl Readiness {
             .send()
             .await
         else {
-            return false;
+            return Observation::Unavailable;
         };
         if r.status() != reqwest::StatusCode::OK
             || r.headers()
@@ -57,7 +82,7 @@ impl Readiness {
                 .and_then(|h| h.to_str().ok())
                 .is_none_or(|h| h.split(';').next() != Some("text/html"))
         {
-            return false;
+            return Observation::Unavailable;
         }
         let mut body = Vec::new();
         loop {
@@ -65,29 +90,30 @@ impl Readiness {
                 Ok(Some(chunk)) if body.len() + chunk.len() <= 65536 => {
                     body.extend_from_slice(&chunk)
                 }
-                Ok(None) => return String::from_utf8_lossy(&body).contains("manifest.webmanifest"),
-                _ => return false,
+                Ok(None) => {
+                    return if String::from_utf8_lossy(&body).contains("manifest.webmanifest") {
+                        Observation::Ready
+                    } else {
+                        Observation::Unavailable
+                    };
+                }
+                _ => return Observation::Unavailable,
             }
         }
     }
-    pub(super) async fn wait(&self, budget: Duration) -> bool {
+    pub(super) async fn wait(&self, budget: Duration) -> Observation {
         tokio::time::timeout(budget, async {
             loop {
-                if self.check().await {
-                    return true;
+                match self.observe().await {
+                    Observation::Unavailable => {
+                        tokio::time::sleep(Duration::from_millis(250)).await
+                    }
+                    result => return result,
                 }
-                tokio::time::sleep(Duration::from_millis(250)).await;
             }
         })
         .await
-        .unwrap_or(false)
-    }
-}
-
-pub(super) async fn ready(i: &Installation, s: &State) -> bool {
-    match Readiness::new(i, s) {
-        Ok(probe) => probe.check().await,
-        Err(_) => false,
+        .unwrap_or(Observation::Unavailable)
     }
 }
 
@@ -116,14 +142,21 @@ mod tests {
                 get(move || {
                     let mode = health.clone();
                     async move {
-                        match mode.load(Ordering::Relaxed) {
+                        let status = match mode.load(Ordering::Relaxed) {
                             1 => StatusCode::OK,
+                            5 => StatusCode::SERVICE_UNAVAILABLE,
                             3 => {
                                 tokio::time::sleep(Duration::from_secs(2)).await;
                                 StatusCode::NO_CONTENT
                             }
                             _ => StatusCode::NO_CONTENT,
-                        }
+                        };
+                        let identity = if mode.load(Ordering::Relaxed) == 4 {
+                            "other-installation"
+                        } else {
+                            "synthetic-installation"
+                        };
+                        (status, [("x-moosuri-runtime", identity)])
                     }
                 }),
             )
@@ -150,22 +183,35 @@ mod tests {
             client: reqwest::Client::builder().no_proxy().build().unwrap(),
             authority: "assistant.example.test".into(),
             base,
+            identity: "synthetic-installation".into(),
         };
-        assert!(probe.check().await);
+        assert_eq!(probe.observe().await, Observation::Ready);
         mode.store(1, Ordering::Relaxed);
         assert!(
-            !probe.check().await,
+            probe.observe().await != Observation::Ready,
             "a generic successful endpoint is not readiness"
         );
         mode.store(2, Ordering::Relaxed);
         assert!(
-            !probe.check().await,
+            probe.observe().await != Observation::Ready,
             "an oversized page is never buffered unboundedly"
         );
         mode.store(3, Ordering::Relaxed);
         let began = std::time::Instant::now();
-        assert!(!probe.wait(Duration::from_millis(150)).await);
+        assert_eq!(
+            probe.wait(Duration::from_millis(150)).await,
+            Observation::Unavailable
+        );
         assert!(began.elapsed() < Duration::from_secs(1));
+        mode.store(5, Ordering::Relaxed);
+        assert_eq!(probe.observe().await, Observation::Unavailable);
+        mode.store(0, Ordering::Relaxed);
+        assert_eq!(probe.observe().await, Observation::Ready);
+        mode.store(4, Ordering::Relaxed);
+        assert_eq!(
+            probe.wait(Duration::from_secs(2)).await,
+            Observation::OtherServer
+        );
         server.abort();
     }
 }

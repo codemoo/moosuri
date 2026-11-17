@@ -57,6 +57,8 @@ enum Command {
     Start(installation::setup::Start),
     /// Stop only the installed assistant's user service.
     Stop(installation::setup::Location),
+    /// Restart the installed user service, preserving login-autostart.
+    Restart(installation::setup::Location),
     /// Show installation and service readiness.
     Status(installation::setup::Location),
     /// Open your installed assistant in the browser.
@@ -343,6 +345,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::Setup(options) => return setup::run(options, cli.data_dir.as_deref()).await,
         Command::Start(options) => return setup::start(options).await,
         Command::Stop(location) => return setup::stop(location),
+        Command::Restart(location) => return setup::restart(location).await,
         Command::Status(location) => return setup::status(location).await,
         Command::Open(location) => return setup::open(location).await,
         Command::Uninstall(location) => return setup::uninstall(location),
@@ -482,6 +485,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::Setup(_)
         | Command::Start(_)
         | Command::Stop(_)
+        | Command::Restart(_)
         | Command::Status(_)
         | Command::Open(_)
         | Command::Uninstall(_)
@@ -732,6 +736,11 @@ async fn run(cli: Cli) -> Result<(), String> {
                     std::env::current_exe().map_err(|_| "pdf_extractor_unavailable")?,
                 )
                 .map_err(str::to_owned)?;
+            if let Some(managed) = &_managed_lock {
+                config = config
+                    .with_runtime_identity(managed.identity_for(&data)?)
+                    .map_err(str::to_owned)?;
+            }
             if let (Some(repository), Some(reference), Some(directory)) = (
                 community_catalog_repository,
                 community_catalog_ref,

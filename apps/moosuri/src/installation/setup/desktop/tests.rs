@@ -1,10 +1,16 @@
 use super::*;
 #[test]
 fn loaded_or_autostart_enabled_never_proves_server_readiness() {
-    assert_eq!(classify(false, false, true), Phase::Stopped);
-    assert_eq!(classify(true, false, true), Phase::Error);
-    assert_eq!(classify(true, true, true), Phase::Ready);
-    assert_eq!(classify(false, false, false), Phase::Error);
+    assert_eq!(
+        classify(false, Observation::Unavailable, true),
+        Phase::Stopped
+    );
+    assert_eq!(classify(true, Observation::Unavailable, true), Phase::Error);
+    assert_eq!(classify(true, Observation::Ready, true), Phase::Ready);
+    assert_eq!(
+        classify(false, Observation::Unavailable, false),
+        Phase::Error
+    );
 }
 #[test]
 fn desktop_and_control_locks_are_independent_and_single_instance() {
@@ -19,7 +25,18 @@ fn desktop_and_control_locks_are_independent_and_single_instance() {
     assert!(named_lock(temp.path(), "desktop.lock").is_err());
     assert!(control_lock(temp.path()).is_err());
     drop(desktop);
-    assert!(named_lock(temp.path(), "desktop.lock").is_ok());
+    // Concurrent tests spawn processes. Between fork and exec a child can hold
+    // a transient copy of this CLOEXEC descriptor even after its parent drops it.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match named_lock(temp.path(), "desktop.lock") {
+            Ok(_) => break,
+            Err(e) if e == "setup_control_busy" && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => panic!("released desktop lock remained unavailable: {e}"),
+        }
+    }
     drop(control);
 }
 
@@ -48,6 +65,24 @@ fn quit_cannot_be_lost_behind_a_queued_action_and_web_actions_require_readiness(
     };
     c.send(Action::Chat);
     assert!(receiver.try_recv().is_err());
+    set_state(&c.state, |s| {
+        s.phase = Phase::Stopped;
+        s.controllable = true;
+    });
+    c.send(Action::Chat);
+    assert!(matches!(receiver.try_recv(), Ok(Action::Chat)));
+    c.send(Action::Admin);
+    assert!(receiver.try_recv().is_err());
+    set_state(&c.state, |s| {
+        s.phase = Phase::Error;
+        s.detail = "port_conflict";
+    });
+    c.send(Action::Chat);
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(
+        classify(false, Observation::OtherServer, true),
+        Phase::Error
+    );
     set_state(&c.state, |s| s.phase = Phase::Ready);
     c.send(Action::Admin);
     c.send(Action::Quit);

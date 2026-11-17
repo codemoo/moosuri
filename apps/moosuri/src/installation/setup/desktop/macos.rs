@@ -17,6 +17,7 @@ pub(super) fn run(c: Controller) -> Result<()> {
     let admin = MenuItem::new(c.label("Web administration", "웹 관리자 화면"), false, None);
     let start = MenuItem::new(c.label("Start server", "서버 시작"), false, None);
     let stop = MenuItem::new(c.label("Stop server", "서버 중지"), false, None);
+    let restart = MenuItem::new(c.label("Restart server", "서버 재시작"), false, None);
     let auto = CheckMenuItem::new(
         c.label("Start server at login", "로그인 시 서버 자동 시작"),
         false,
@@ -62,6 +63,7 @@ pub(super) fn run(c: Controller) -> Result<()> {
         &PredefinedMenuItem::separator(),
         &start,
         &stop,
+        &restart,
         &auto,
         &shared,
         &PredefinedMenuItem::separator(),
@@ -85,7 +87,8 @@ pub(super) fn run(c: Controller) -> Result<()> {
         }
         if current != previous {
             state.set_text(current.phase.title(c.language));
-            chat.set_enabled(current.phase == Phase::Ready);
+            chat.set_text(current.chat_title(c.language));
+            chat.set_enabled(current.can_open());
             admin.set_enabled(current.phase == Phase::Ready);
             start.set_enabled(
                 current.controllable && !current.phase.busy() && current.phase != Phase::Ready,
@@ -93,6 +96,7 @@ pub(super) fn run(c: Controller) -> Result<()> {
             stop.set_enabled(
                 current.controllable && !current.phase.busy() && current.phase != Phase::Stopped,
             );
+            restart.set_enabled(current.controllable && !current.phase.busy());
             auto.set_enabled(current.controllable && !current.phase.busy());
             auto.set_checked(current.autostart);
             detail.set_text(c.detail(&current));
@@ -115,6 +119,8 @@ pub(super) fn run(c: Controller) -> Result<()> {
                 c.send(Action::Start);
             } else if id == *stop.id() {
                 c.send(Action::Stop);
+            } else if id == *restart.id() {
+                c.send(Action::Restart);
             } else if id == *auto.id() {
                 c.send(Action::Autostart(auto.is_checked()));
             } else if id == *guide.id() {

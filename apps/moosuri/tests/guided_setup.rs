@@ -292,7 +292,7 @@ impl Fixture {
             .arg(&self.pin);
         c
     }
-    fn fresh(&self, ko: bool, temporary: bool) -> Pty {
+    fn account(&self, ko: bool, temporary: bool) -> Pty {
         let mut p = Pty::spawn(self.setup(ko));
         p.choose(ko, 1);
         p.until(if ko { "내부 포트" } else { "Local port" });
@@ -312,6 +312,10 @@ impl Fixture {
             p.line(PASSWORD)
         }
         p.choose(ko, 1);
+        p
+    }
+    fn fresh(&self, ko: bool, temporary: bool) -> Pty {
+        let mut p = self.account(ko, temporary);
         p.choose(ko, 1);
         p.choose(ko, 2);
         p
@@ -509,4 +513,121 @@ fn interrupted_initial_install_retries_without_losing_remote_port() {
             resumed.finish();
         }
     }
+}
+
+#[test]
+fn conflicting_service_is_preserved_without_claiming_it_or_blocking_setup() {
+    let f = Fixture::new();
+    // Announce a service manager, but never call the host manager.
+    for name in ["launchctl", "systemctl"] {
+        fs::write(f.bin.join(name), "#!/bin/sh\nexit 0\n").unwrap();
+    }
+    let path = f.home.join(if cfg!(target_os = "macos") {
+        "Library/LaunchAgents/io.moosuri.assistant.plist"
+    } else {
+        ".config/systemd/user/moosuri.service"
+    });
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, b"existing unrelated service").unwrap();
+    let mut wizard = f.account(false, false);
+    wizard.choose(false, 1); // Try the user service.
+    wizard.until("Its files were preserved");
+    wizard.choose(false, 1); // Add the CLI to PATH.
+    wizard.choose(false, 2); // Finish without running.
+    wizard.finish();
+    let state: Value =
+        serde_json::from_slice(&fs::read(f.prefix.join("setup.json")).unwrap()).unwrap();
+    assert_eq!(state["service"], "none");
+    assert!(state["service_file"].is_null());
+    let mut removal = Pty::spawn(f.command("uninstall"));
+    removal.until("Remove runtime; keep data");
+    removal.line("2");
+    removal.finish();
+    assert_eq!(fs::read(&path).unwrap(), b"existing unrelated service");
+    assert!(f.data.is_dir());
+    assert!(!f.prefix.join("installation.json").exists());
+}
+
+fn browser_stub(f: &Fixture) -> PathBuf {
+    for name in ["open", "xdg-open", "wslview"] {
+        let p = f.bin.join(name);
+        fs::write(
+            &p,
+            "#!/bin/sh\nprintf '%s' \"$1\" > \"$HOME/browser-opened\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(p, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    f.home.join("browser-opened")
+}
+
+#[test]
+fn start_and_open_runs_in_terminal_and_rejects_another_installation_on_its_port() {
+    let f = Fixture::new();
+    f.fresh(false, false).finish();
+    let marker = browser_stub(&f);
+    let mut open = f.command("open");
+    open.arg("--start");
+    let mut server = Pty::spawn(open);
+    server.until("Keep it open; Ctrl+C stops the server");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !marker.exists() {
+        assert!(server.child.try_wait().unwrap().is_none());
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap(),
+        format!("http://127.0.0.1:{}/app", f.port)
+    );
+    // The manager cannot advertise this installation while opening a different data directory.
+    let other_data = f._root.path().join("wrong-data");
+    let out = Command::new(f.prefix.join("manager"))
+        .arg("--data-dir")
+        .arg(&other_data)
+        .args([
+            "serve",
+            "--dev",
+            "--origin",
+            &format!("http://127.0.0.1:{}", f.port),
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("installation_managed_server_data_mismatch")
+    );
+    assert!(!other_data.exists());
+    // A second installation can be configured while stopped, then collide later.
+    // Copy its durable runtime identity/state, using a different unused setup port first.
+    let other = Fixture::new();
+    other.fresh(false, false).finish();
+    let mut state: Value =
+        serde_json::from_slice(&fs::read(other.prefix.join("setup.json")).unwrap()).unwrap();
+    state["port"] = json!(f.port);
+    fs::write(
+        other.prefix.join("setup.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    let mut installation: Value =
+        serde_json::from_slice(&fs::read(other.prefix.join("installation.json")).unwrap()).unwrap();
+    installation["origin"] = json!(format!("http://127.0.0.1:{}", f.port));
+    fs::write(
+        other.prefix.join("installation.json"),
+        serde_json::to_vec(&installation).unwrap(),
+    )
+    .unwrap();
+    let other_marker = browser_stub(&other);
+    let out = other.command("open").arg("--start").output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("setup_port_occupied_by_another_server"));
+    assert!(!other_marker.exists());
+    let out = other.command("status").output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Port used by another server"));
+    unsafe {
+        libc::kill(server.child.id() as i32, libc::SIGTERM);
+    }
+    server.finish();
 }

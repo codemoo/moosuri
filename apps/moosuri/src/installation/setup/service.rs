@@ -165,7 +165,7 @@ pub(super) fn launcher(prefix: &Path, state: &mut State) -> Result<()> {
     // High-level commands carry their prefix explicitly through a small dispatch.
     let manager = prefix.join("manager");
     let text = format!(
-        "#!/bin/sh\ncase \"${{1-}}\" in\n  setup|start|stop|status|open|uninstall|desktop|autostart) command=$1; shift; exec {} \"$command\" --prefix {} \"$@\" ;;\n  *) exec {} \"$@\" ;;\nesac\n",
+        "#!/bin/sh\ncase \"${{1-}}\" in\n  setup|start|restart|stop|status|open|uninstall|desktop|autostart) command=$1; shift; exec {} \"$command\" --prefix {} \"$@\" ;;\n  *) exec {} \"$@\" ;;\nesac\n",
         shell(&manager.to_string_lossy()),
         shell(&prefix.to_string_lossy()),
         shell(&manager.to_string_lossy())
@@ -182,8 +182,19 @@ pub(super) fn launcher(prefix: &Path, state: &mut State) -> Result<()> {
     state.launcher = Some(managed(&target, text.as_bytes(), true)?);
     Ok(())
 }
+fn preflight_install_file(path: &Path, expected: &[u8]) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(_) if read(path, 65536, true).is_ok_and(|bytes| bytes == expected) => Ok(()),
+        _ => Err("setup_existing_service_preserved".into()),
+    }
+}
 pub(super) fn install(prefix: &Path, state: &mut State, kind: Kind) -> Result<()> {
     let path = expected_path(kind)?;
+    let content = render(prefix, kind)?;
+    // Check before claiming ownership in setup.json. A collision must not trap
+    // future setup/uninstall behind an external file we never created.
+    preflight_install_file(&path, content.as_bytes())?;
     if !path.exists() {
         let collision = match kind {
             Kind::Systemd => success("systemctl", &["--user", "--no-ask-password", "cat", UNIT]),
@@ -200,7 +211,6 @@ pub(super) fn install(prefix: &Path, state: &mut State, kind: Kind) -> Result<()
             return Err("setup_existing_service_preserved".into());
         }
     }
-    let content = render(prefix, kind)?;
     // Persist intended bytes before creating external files; a rerun can safely adopt
     // only exact matching files after interruption.
     state.service = kind;

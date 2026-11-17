@@ -55,10 +55,10 @@ impl ksni::Tray for Tray {
             .into(),
             MenuItem::Separator,
             self.item(
-                "Open Moosuri",
-                "무수리 열기",
+                s.chat_title(Language::En),
+                s.chat_title(Language::Ko),
                 Action::Chat,
-                s.phase == Phase::Ready,
+                s.can_open(),
             ),
             self.item(
                 "Web administration",
@@ -78,6 +78,12 @@ impl ksni::Tray for Tray {
                 "서버 중지",
                 Action::Stop,
                 s.controllable && !s.phase.busy() && s.phase != Phase::Stopped,
+            ),
+            self.item(
+                "Restart server",
+                "서버 재시작",
+                Action::Restart,
+                s.controllable && !s.phase.busy(),
             ),
             CheckmarkItem {
                 label: c

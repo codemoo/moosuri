@@ -9,6 +9,7 @@ pub(super) fn classify(error: &str) -> &'static str {
         }
         "setup_foreground_stop_use_ctrl_c" => "foreground_stop",
         "setup_service_not_ready_check_moosuri_status" => "not_ready",
+        "setup_port_occupied_by_another_server" => "port_conflict",
         "setup_service_stop_pending_check_moosuri_status" => "stopping",
         "setup_browser_unavailable_open_printed_url" => "browser",
         "setup_service_start_failed_run_foreground"
@@ -53,6 +54,10 @@ pub(super) fn hint(code: &str, language: Language) -> &'static str {
         "not_ready" => (
             "Web is not ready. Run moosuri status; start the server if stopped.",
             "웹이 준비되지 않았습니다. moosuri status로 확인하고 정지 상태라면 시작하세요.",
+        ),
+        "port_conflict" => (
+            "Another server is using this port. Close that server or review the configured port; Moosuri did not open it.",
+            "다른 서버가 이 포트를 사용 중입니다. 해당 서버를 종료하거나 포트 설정을 확인하세요. 다른 서버의 웹은 열지 않았습니다.",
         ),
         "stopping" => (
             "Shutdown is still finishing. Run moosuri status before retrying removal.",

@@ -52,6 +52,26 @@ const COOKIE_MAX_AGE: u64 = 400 * 24 * 60 * 60;
 mod web_configuration_tests {
     use super::*;
     #[test]
+    fn health_identity_survives_busy_and_setup_responses_without_reporting_readiness() {
+        let identity = HeaderValue::from_static("d7ecde2a-97fc-4367-87d5-897a8c5bfc23");
+        for (initialized, expected) in [
+            (Ok(true), StatusCode::NO_CONTENT),
+            (Ok(false), StatusCode::SERVICE_UNAVAILABLE),
+            (Err(StoreError::Busy), StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            let response = readiness_response(initialized, Some(&identity));
+            assert_eq!(response.status(), expected);
+            assert_eq!(response.headers()["x-moosuri-runtime"], identity);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+        assert!(
+            !readiness_response(Ok(true), None)
+                .headers()
+                .contains_key("x-moosuri-runtime")
+        );
+    }
+
+    #[test]
     fn browser_is_disabled_by_default_and_configuration_errors_are_static() {
         let config = ServerConfig::new("https://example.test", false).unwrap();
         assert!(config.browser.is_none());
@@ -83,6 +103,7 @@ mod web_configuration_tests {
 pub struct ServerConfig {
     origin: String,
     authority: String,
+    runtime_identity: Option<HeaderValue>,
     secure: bool,
     trusted_proxy: Option<(IpAddr, header::HeaderName)>,
     google: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
@@ -128,6 +149,7 @@ impl ServerConfig {
         Ok(Self {
             origin: canonical,
             authority,
+            runtime_identity: None,
             secure,
             trusted_proxy: None,
             google: None,
@@ -142,6 +164,15 @@ impl ServerConfig {
             #[cfg(feature = "test-fixtures")]
             community_catalog_fixtures: None,
         })
+    }
+    /// Opaque local runtime binding supplied by the signed installation manager.
+    /// This is readiness metadata, not an authentication credential or user identity.
+    pub fn with_runtime_identity(mut self, identity: &str) -> Result<Self, &'static str> {
+        let identity = uuid::Uuid::parse_str(identity).map_err(|_| "invalid_runtime_identity")?;
+        self.runtime_identity = Some(
+            HeaderValue::from_str(&identity.to_string()).map_err(|_| "invalid_runtime_identity")?,
+        );
+        Ok(self)
     }
     #[cfg(feature = "test-fixtures")]
     pub fn with_audio_fixture(mut self, base: String) -> Result<Self, &'static str> {
@@ -702,11 +733,29 @@ fn set_cookie(response: &mut Response, token: &str, secure: bool, max_age: u64) 
 }
 
 async fn ready(State(state): State<AppState>) -> HttpResult {
-    if state.store.initialized().await? {
-        Ok(StatusCode::NO_CONTENT.into_response())
-    } else {
-        Ok(failure(StatusCode::SERVICE_UNAVAILABLE, "setup_required"))
+    Ok(readiness_response(
+        state.store.initialized().await,
+        state.config.runtime_identity.as_ref(),
+    ))
+}
+fn readiness_response(
+    initialized: Result<bool, StoreError>,
+    identity: Option<&HeaderValue>,
+) -> Response {
+    let mut response = match initialized {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => failure(StatusCode::SERVICE_UNAVAILABLE, "setup_required"),
+        Err(error) => HttpError(error).into_response(),
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    if let Some(identity) = identity {
+        response
+            .headers_mut()
+            .insert("x-moosuri-runtime", identity.clone());
     }
+    response
 }
 async fn system(State(state): State<AppState>) -> HttpResult {
     Ok(Json(SystemStatus {

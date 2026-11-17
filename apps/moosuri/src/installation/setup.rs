@@ -10,7 +10,7 @@ mod tests;
 use super::*;
 use clap::Args;
 use moosuri_store::Store;
-use readiness::{Readiness, ready};
+use readiness::{Observation, Readiness};
 use std::{net::TcpListener, time::Duration};
 use terminal::{Language, Terminal};
 
@@ -43,6 +43,9 @@ pub struct Location {
 pub struct Open {
     #[arg(long)]
     pub prefix: Option<PathBuf>,
+    /// Start the owned service if needed, or run in this terminal without a service.
+    #[arg(long, conflicts_with = "wait_ready")]
+    pub start: bool,
     /// Used by setup's bounded browser helper across the foreground exec.
     #[arg(long, hide = true)]
     pub wait_ready: bool,
@@ -375,12 +378,10 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     state.language = tty.lang;
     save(&prefix, &state)?;
     if active {
-        if !Readiness::new(&i, &state)?
+        Readiness::new(&i, &state)?
             .wait(Duration::from_secs(20))
             .await
-        {
-            return Err("setup_service_not_ready_check_moosuri_status".into());
-        }
+            .require_ready()?;
         tty.say(
             "Moosuri is already running. Open settings to change your model or invite people.",
             "무수리가 이미 실행 중입니다. 설정에서 모델을 바꾸거나 사용자를 초대하세요.",
@@ -503,7 +504,12 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
                 0,
             )? == 0
         {
-            service::install(&prefix, &mut state, available)?;
+            match service::install(&prefix, &mut state, available) {
+                Err(e) if e == "setup_existing_service_preserved" => {
+                    tty.say("Another service uses this name. Its files were preserved; continue in foreground mode.", "같은 이름의 기존 서비스를 보존했습니다. 터미널 실행으로 설치를 계속합니다.")?;
+                }
+                result => result?,
+            }
             save(&prefix, &state)?;
         } else if matches!(available, service::Kind::None) {
             tty.say("No user service manager is available. Use foreground mode. For WSL2, see the systemd steps in the installation guide.","사용자 서비스 관리자를 사용할 수 없습니다. 터미널 실행을 사용하세요. WSL2의 systemd 설정은 설치 안내에 있습니다.")?;
@@ -512,7 +518,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     desktop::offer(&prefix, &mut state, tty)?;
     tty.say("\n5/5 · Open Moosuri", "\n5/5 · 무수리 열기")?;
     tty.line(&format!("{}{}", i.origin, state.next_page))?;
-    tty.say("Commands: moosuri start · moosuri stop · moosuri status · moosuri open\nModel, Google and invitation settings are available after sign-in.","명령어: moosuri start · moosuri stop · moosuri status · moosuri open\n로그인한 뒤 모델·Google 연결·사용자 초대를 설정할 수 있습니다.")?;
+    tty.say("Commands: moosuri open --start · moosuri restart · moosuri stop · moosuri status\nModel, Google and invitation settings are available after sign-in.","명령어: moosuri open --start · moosuri restart · moosuri stop · moosuri status\n로그인한 뒤 모델·Google 연결·사용자 초대를 설정할 수 있습니다.")?;
     service::path_hint(tty)?;
     match i.network {
         Network::Tailscale => tty.line(&format!(
@@ -554,13 +560,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
         if !options.no_browser {
             // A separate bounded helper survives the exec into the signed server.
             // It opens only after readiness; the URL above remains the fallback.
-            let _ = dispatch_detached(
-                Process::new(prefix.join("manager"))
-                    .args(["open", "--wait-ready", "--prefix"])
-                    .arg(&prefix)
-                    .arg("--page")
-                    .arg(&state.next_page),
-            );
+            dispatch_open_when_ready(&prefix, &state.next_page);
         }
         start(&Start {
             prefix: Some(prefix),
@@ -613,12 +613,20 @@ pub async fn start(options: &Start) -> Result<()> {
     if matches!(s.service, service::Kind::None) {
         return Err("setup_no_user_service_run_moosuri_start_foreground".into());
     }
-    let probe = Readiness::new(&i, &s)?;
-    if !service::running(&p, &s) || !probe.check().await {
-        service::start(&p, &s)?;
-        if !probe.wait(Duration::from_secs(20)).await {
-            return Err("setup_service_not_ready_check_moosuri_status".into());
-        }
+    start_service(&p, &i, &s).await
+}
+async fn start_service(p: &Path, i: &Installation, s: &State) -> Result<()> {
+    check_start_allowed(p)?;
+    no_pending(p)?;
+    service::verify(p, s)?;
+    let probe = Readiness::new(i, s)?;
+    let observed = probe.observe().await;
+    if observed == Observation::OtherServer {
+        return observed.require_ready();
+    }
+    if !service::running(p, s) || observed != Observation::Ready {
+        service::start(p, s)?;
+        probe.wait(Duration::from_secs(20)).await.require_ready()?;
     }
     println!(
         "{}: {}/app",
@@ -626,6 +634,20 @@ pub async fn start(options: &Start) -> Result<()> {
         i.origin
     );
     Ok(())
+}
+pub async fn restart(location: &Location) -> Result<()> {
+    let p = prefix(&location.prefix)?;
+    let _control = desktop::control_lock(&p)?;
+    check_start_allowed(&p)?;
+    no_pending(&p)?;
+    let i = installation(&p)?;
+    let s = load(&p)?;
+    if matches!(s.service, service::Kind::None) {
+        return Err("setup_no_user_service_run_moosuri_start_foreground".into());
+    }
+    service::stop(&p, &s)?;
+    drop(stopped_runtime(&p, Duration::from_secs(20))?);
+    start_service(&p, &i, &s).await
 }
 pub fn stop(location: &Location) -> Result<()> {
     let p = prefix(&location.prefix)?;
@@ -667,12 +689,28 @@ pub async fn status(location: &Location) -> Result<()> {
     let i = installation(&p)?;
     let s = load(&p)?;
     super::run(&Command::Status { prefix: p.clone() })?;
+    let observed = Readiness::new(&i, &s)?.observe().await;
+    let phase = match observed {
+        Observation::Ready => s.language.text("Running", "실행 중"),
+        Observation::OtherServer => s
+            .language
+            .text("Port used by another server", "다른 서버가 포트 사용 중"),
+        Observation::Unavailable if service::running(&p, &s) => s
+            .language
+            .text("Starting or needs attention", "시작 중 또는 확인 필요"),
+        Observation::Unavailable => s.language.text("Stopped", "정지됨"),
+    };
     println!(
-        "{}: {}\n{}/app",
-        s.language.text("Service ready", "서비스 준비 상태"),
-        ready(&i, &s).await,
+        "{}: {phase}\n{}/app",
+        s.language.text("Server", "서버"),
         i.origin
     );
+    if let Err(code) = observed.require_ready() {
+        println!(
+            "{}",
+            diagnostics::hint(diagnostics::classify(&code), s.language)
+        );
+    }
     println!("{}", service::log_hint(&p, &s));
     Ok(())
 }
@@ -683,16 +721,50 @@ pub async fn open(options: &Open) -> Result<()> {
     check_start_allowed(&p)?;
     no_pending(&p)?;
     let probe = Readiness::new(&i, &s)?;
-    let healthy = if options.wait_ready {
-        probe.wait(Duration::from_secs(20)).await
-    } else {
-        probe.check().await
-    };
-    if !healthy {
-        return Err("setup_service_not_ready_check_moosuri_status".into());
+    let mut observed = probe.observe().await;
+    if observed == Observation::Unavailable && options.start {
+        if matches!(s.service, service::Kind::None) {
+            // A terminal shortcut can host a foreground server; never create a
+            // hidden, unsupervised server when no service manager is configured.
+            let mut tty = Terminal::open(Some(s.language), true)
+                .map_err(|_| "setup_no_user_service_run_moosuri_start_foreground")?;
+            tty.say("Moosuri will run in this terminal. Keep it open; Ctrl+C stops the server. The browser opens when ready.", "이 터미널에서 무수리를 실행합니다. 창을 유지하세요. Ctrl+C로 종료하며 준비되면 브라우저가 열립니다.")?;
+            tty.line(&format!("{}{}", i.origin, options.page))?;
+            dispatch_open_when_ready(&p, &options.page);
+            return start(&Start {
+                prefix: Some(p),
+                foreground: true,
+            })
+            .await;
+        }
+        start(&Start {
+            prefix: Some(p.clone()),
+            foreground: false,
+        })
+        .await?;
+        observed = probe.observe().await;
+    } else if observed == Observation::Unavailable && options.wait_ready {
+        observed = probe.wait(Duration::from_secs(20)).await;
+    }
+    if let Err(code) = observed.require_ready() {
+        eprintln!(
+            "{}",
+            diagnostics::hint(diagnostics::classify(&code), s.language)
+        );
+        return Err(code);
     }
     browser(&format!("{}{}", i.origin, options.page))
 }
+fn dispatch_open_when_ready(prefix: &Path, page: &str) {
+    let _ = dispatch_detached(
+        Process::new(prefix.join("manager"))
+            .args(["open", "--wait-ready", "--prefix"])
+            .arg(prefix)
+            .arg("--page")
+            .arg(page),
+    );
+}
+
 fn browser(url: &str) -> Result<()> {
     let parsed = url::Url::parse(url).map_err(error)?;
     if !matches!(parsed.scheme(), "http" | "https") {

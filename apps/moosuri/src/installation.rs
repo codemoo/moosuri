@@ -1321,7 +1321,19 @@ fn uninstall(prefix: &Path, i: &Installation) -> Result<()> {
 }
 /// Direct execution from a managed release also respects pending activation and
 /// holds shared admission, so it cannot race the updater before Store opens.
-pub fn guard_managed_executable() -> Result<Option<File>> {
+pub struct ManagedExecution {
+    _guard: File,
+    installation: Installation,
+}
+impl ManagedExecution {
+    pub fn identity_for(&self, data: &Path) -> Result<&str> {
+        if data != self.installation.data_dir {
+            return Err("installation_managed_server_data_mismatch".into());
+        }
+        Ok(&self.installation.id)
+    }
+}
+pub fn guard_managed_executable() -> Result<Option<ManagedExecution>> {
     let exe = std::env::current_exe().map_err(error)?;
     let parent = exe.parent().ok_or("installation_executable_parent")?;
     let prefix = if parent.join("installation.json").exists() {
@@ -1340,8 +1352,11 @@ pub fn guard_managed_executable() -> Result<Option<File>> {
     let l = lock(&prefix, false)?;
     no_pending(&prefix)?;
     setup::check_start_allowed(&prefix)?;
-    let _ = installation(&prefix)?;
-    Ok(Some(l))
+    let installation = installation(&prefix)?;
+    Ok(Some(ManagedExecution {
+        _guard: l,
+        installation,
+    }))
 }
 #[cfg(test)]
 mod tests;

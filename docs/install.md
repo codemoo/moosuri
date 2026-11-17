@@ -65,8 +65,8 @@ a numbered choice and Enter. Use `--plain` for simple numbered menus and
 
 ## Platforms / 지원 환경
 
-The published [v0.1.0-dev.4 preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.4)
-contains all four archives, checksums, public signing pin and build evidence.
+The [installer previews](https://github.com/codemoo/moosuri/releases)
+provide four archives, checksums, the public signing pin and build evidence.
 Use Bash, `curl`, `tar` and either `sha256sum` or `shasum`; these are already present
 on most supported installations. Linux requires **glibc 2.34+** (for example,
 Ubuntu 22.04+ or Debian 12+). The bootstrap checks this before downloading.
@@ -207,3 +207,19 @@ No diagnostics are uploaded. A panel without StatusNotifier/AppIndicator may sho
 no icon even when the process is running. HTTPS/Tailscale checks confirm the local
 backend; your external proxy, DNS and certificates must also work. Tailscale Serve
 configuration is separate and is not removed by stopping/uninstalling Moosuri.
+
+## Start and open / 바로 시작하고 열기
+
+Run `moosuri open --start` to start the installed user service when needed and open
+chat after readiness. Without a user service, this command runs in the current
+terminal; keep it open and stop with Ctrl+C. The WSL desktop shortcut uses this
+same terminal-capable path. `moosuri restart` restarts an owned service while
+preserving the login-autostart preference. Both operations respect update,
+removal and other control operations already in progress.
+
+서버가 꺼져 있어도 `moosuri open --start`로 시작부터 채팅 열기까지 이어집니다.
+메뉴의 **시작하고 무수리 열기**, **서버 재시작**도 같은 기능입니다. 다른 서비스가
+선택한 포트를 사용하면 충돌을 알리고 해당 화면을 열지 않습니다. 서비스 파일이
+이미 다른 용도로 사용 중이면 파일을 보존하고 터미널 실행으로 설치를 마칩니다.
+기존 WSL 바로가기는 현재 버전의 `moosuri setup` 재실행으로 갱신하며, 직접
+수정한 바로가기는 덮어쓰지 않습니다. 이전 버전은 서명된 업데이트가 먼저 필요합니다.

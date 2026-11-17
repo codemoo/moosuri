@@ -71,6 +71,7 @@ enum Phase {
     Ready,
     Starting,
     Stopping,
+    Restarting,
     Stopped,
     Error,
 }
@@ -80,6 +81,7 @@ impl Phase {
             Self::Checking => ("Checking server…", "서버 확인 중…"),
             Self::Ready => ("Server running", "서버 실행 중"),
             Self::Starting => ("Starting server…", "서버 시작 중…"),
+            Self::Restarting => ("Restarting server…", "서버 재시작 중…"),
             Self::Stopping => ("Stopping server…", "서버 중지 중…"),
             Self::Stopped => ("Server stopped", "서버 중지됨"),
             Self::Error => ("Server needs attention", "서버 확인 필요"),
@@ -87,7 +89,10 @@ impl Phase {
         l.text(en, ko)
     }
     fn busy(self) -> bool {
-        matches!(self, Self::Checking | Self::Starting | Self::Stopping)
+        matches!(
+            self,
+            Self::Checking | Self::Starting | Self::Stopping | Self::Restarting
+        )
     }
 }
 #[derive(Clone, PartialEq, Eq)]
@@ -97,6 +102,19 @@ struct Snapshot {
     autostart: bool,
     detail: &'static str,
     exit: bool,
+}
+impl Snapshot {
+    fn can_open(&self) -> bool {
+        self.phase == Phase::Ready
+            || (self.controllable && !self.phase.busy() && self.detail != "port_conflict")
+    }
+    fn chat_title(&self, language: Language) -> &'static str {
+        if self.phase == Phase::Ready {
+            language.text("Open Moosuri", "무수리 열기")
+        } else {
+            language.text("Start and open Moosuri", "시작하고 무수리 열기")
+        }
+    }
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -109,8 +127,10 @@ impl Default for Snapshot {
         }
     }
 }
-fn classify(service_running: bool, ready: bool, controllable: bool) -> Phase {
-    if ready {
+fn classify(service_running: bool, observed: Observation, controllable: bool) -> Phase {
+    if observed == Observation::OtherServer {
+        Phase::Error
+    } else if observed == Observation::Ready {
         Phase::Ready
     } else if service_running {
         Phase::Error
@@ -135,14 +155,16 @@ async fn inspect(p: &Path) -> Result<Snapshot> {
         service::verify(p, &s)?;
     }
     let active = service::running(p, &s);
-    let healthy = ready(&i, &s).await;
+    let observed = Readiness::new(&i, &s)?.observe().await;
     Ok(Snapshot {
-        phase: classify(active, healthy, controllable),
+        phase: classify(active, observed, controllable),
         controllable,
         autostart: s.autostart,
-        detail: if !controllable {
+        detail: if observed == Observation::OtherServer {
+            "port_conflict"
+        } else if !controllable {
             "foreground"
-        } else if active && !healthy {
+        } else if active && observed != Observation::Ready {
             "not_ready"
         } else {
             ""
@@ -153,6 +175,7 @@ async fn inspect(p: &Path) -> Result<Snapshot> {
 #[derive(Clone, Copy)]
 enum Action {
     Start,
+    Restart,
     Stop,
     Autostart(bool),
     Chat,
@@ -172,10 +195,13 @@ impl Controller {
         if matches!(action, Action::Quit) {
             self.quitting.store(true, Ordering::Release);
             set_state(&self.state, |s| s.exit = true);
-        } else if matches!(action, Action::Chat | Action::Admin)
-            && self.snapshot().phase != Phase::Ready
-        {
-            return;
+        } else {
+            let s = self.snapshot();
+            if (matches!(action, Action::Admin) && s.phase != Phase::Ready)
+                || (matches!(action, Action::Chat) && !s.can_open())
+            {
+                return;
+            }
         }
         let _ = self.sender.try_send(action);
     }
@@ -259,7 +285,8 @@ fn controller(p: PathBuf, language: Language) -> (Controller, std::thread::JoinH
             }
             set_state(&state, |s| {
                 s.phase = match action {
-                    Action::Start => Phase::Starting,
+                    Action::Start | Action::Chat if s.phase != Phase::Ready => Phase::Starting,
+                    Action::Restart => Phase::Restarting,
                     Action::Stop => Phase::Stopping,
                     _ => s.phase,
                 }
@@ -269,25 +296,24 @@ fn controller(p: PathBuf, language: Language) -> (Controller, std::thread::JoinH
                     prefix: Some(p.clone()),
                     foreground: false,
                 })),
+                Action::Restart => rt.block_on(restart(&Location {
+                    prefix: Some(p.clone()),
+                })),
                 Action::Stop => stop(&Location {
                     prefix: Some(p.clone()),
                 }),
                 Action::Autostart(enabled) => change_autostart(&p, enabled),
-                Action::Chat | Action::Admin => rt.block_on(async {
+                Action::Chat => rt.block_on(open(&Open {
+                    prefix: Some(p.clone()),
+                    start: true,
+                    wait_ready: false,
+                    page: "/app".into(),
+                })),
+                Action::Admin => rt.block_on(async {
                     let i = installation(&p)?;
                     let s = load(&p)?;
-                    if !ready(&i, &s).await {
-                        return Err("setup_service_not_ready_check_moosuri_status".into());
-                    }
-                    browser(&format!(
-                        "{}{}",
-                        i.origin,
-                        if matches!(action, Action::Admin) {
-                            "/admin"
-                        } else {
-                            "/app"
-                        }
-                    ))
+                    Readiness::new(&i, &s)?.observe().await.require_ready()?;
+                    browser(&format!("{}/admin", i.origin))
                 }),
                 Action::Help => browser(
                     "https://github.com/codemoo/moosuri/blob/main/docs/install.md#desktop-menu--데스크톱-메뉴",

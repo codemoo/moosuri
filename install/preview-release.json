@@ -1,46 +1,46 @@
 {
   "format": 1,
   "channel": "preview",
-  "version": "0.1.0-dev.4",
-  "source_commit": "d21e443fb1145c1d1ed53951d69e66a90952440f",
+  "version": "0.1.0-dev.5",
+  "source_commit": "5ec0b9cd0a1854011e46bbd13466a84de0ad8390",
   "public_key": "71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e",
   "packages": {
     "aarch64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.4-aarch64-apple-darwin.tar.gz",
-      "sha256": "79d0eb223a64170f2fc284956558476e3d5b3ac379ae106e84e5e3363d59e0cc",
-      "bytes": 20754340,
-      "binary_sha256": "87ff039f839528a8c9c6fcc50a794aa7599c7027ade34eb2a259341fdb750fe3",
-      "manifest_sha256": "2c4d052cc8a594283a46ccd670c114603c33b76cbee87e263cc07dee60b21d96"
+      "file": "moosuri-0.1.0-dev.5-aarch64-apple-darwin.tar.gz",
+      "sha256": "b4bcb14cd62e2bc06a959f3869f98b29e0c6f83f48bf4e886b805fce73915caa",
+      "bytes": 20773323,
+      "binary_sha256": "d5f05bae65eaa7984920b72555d32f28c1b9c7c400c7f354bda1c204e7828da3",
+      "manifest_sha256": "e24d5bcf16ebec1f38a080c347757589b110e7ab524a77eacbe3366ba9b743d1"
     },
     "x86_64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.4-x86_64-apple-darwin.tar.gz",
-      "sha256": "a4c5050777ff1e0346cda5ff4cd574ab29e424882ab94095323ba2ed6d14f5c5",
-      "bytes": 21655897,
-      "binary_sha256": "0b83c945ec62262a93d378618027811c39cfe3c91534dd8547553a4933f283db",
-      "manifest_sha256": "c344a7848b5329c0c4c6bdd6f1332487099332a58dcfe61104b753fc36d21748"
+      "file": "moosuri-0.1.0-dev.5-x86_64-apple-darwin.tar.gz",
+      "sha256": "83a0ac5d1965c51c1c87152778f35df5866741af598cc1d032d13972adc6d940",
+      "bytes": 21687951,
+      "binary_sha256": "89cb1de86afdb3e13823326183e7c6ffce4efe55aca8bccd3e9d4925e6c64f28",
+      "manifest_sha256": "ac60de90ed5a17769ee5528182d86049517a93ff65137f1558a2dc1f53ab1dba"
     },
     "x86_64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.4-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "93956d9e1c251523b55f1797107e21a85ee41a1e461e01e3ce78fbc8020f6376",
-      "bytes": 22353260,
-      "binary_sha256": "62f374b61cdcdbc7aa48a2acc1f5ab4fe4a705ddb30fe5d02e350232d2df324c",
-      "manifest_sha256": "e7fbab0e8776929bc62396880603b8efaacda72701fc57fdfad7c09cc0e3778e"
+      "file": "moosuri-0.1.0-dev.5-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "523efb3f12c37a6ce662e16adab8f5f60b66fd83459d5dd1ae2771f0b8b6ef89",
+      "bytes": 22387972,
+      "binary_sha256": "0b6a5896b645df1cd76efef4393a6d6e24f22573c17da87e99d92d6c19e5f9b1",
+      "manifest_sha256": "4e1f1fe8e8f4f5272b818f8755ebde02e1cedb8ac4f56bae763267666353bc62"
     },
     "aarch64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.4-aarch64-unknown-linux-gnu.tar.gz",
-      "sha256": "fe5f35312cff400c5f414447ac3a3f84059d2e0e09ac34c4f5638964209c8eb8",
-      "bytes": 21309737,
-      "binary_sha256": "fc3377e9c1971e948f978dd49424269ae0372fc8c1c781edaa3385bf926bf73f",
-      "manifest_sha256": "572c9d4554135df16ce278b1d5c2444c02840a52f538c6c133492c582c355a59"
+      "file": "moosuri-0.1.0-dev.5-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "cdd6e28d13045e4f4d305d42f5ec01b8aaa1d9fc5936b4ddbc3b6b93b34f0a1e",
+      "bytes": 21335719,
+      "binary_sha256": "9c5c867a63ff0cc0a2d069a70a656fd4539eca9c6610b43341505e776d5ed5d6",
+      "manifest_sha256": "7ce508f953dba161c25bba3128c7ce64798c04c54b44f7eb9073841c706a2eeb"
     }
   },
   "runtime": "Rust + embedded React + SQLite + native desktop menu",
   "linux_glibc_minimum": "2.34",
   "ci_enabled": false,
   "acceptance": {
-    "macos_arm64": "umask022 PTY, interrupted setup and actual isolated launchd/control/menu lifetime; UI clicks unverified",
+    "macos_arm64": "umask022 PTY, start/open and port collision; actual isolated launchd restart/autostart/menu lifetime; UI clicks unverified",
     "macos_x64": "cross-built; actual Intel/Rosetta host unverified",
-    "linux_x64": "native isolated runtime, umask022 PTY and CLI contracts; actual panel/systemd session unverified",
+    "linux_x64": "native isolated runtime, six umask022 PTY scenarios and CLI contracts; actual panel/systemd session unverified",
     "linux_arm64": "QEMU runtime; physical hardware unverified",
     "wsl2": "Linux service/web shortcut implemented; real WSL2 host unverified"
   }

@@ -45,7 +45,19 @@ menus. The checks now wait boundedly for actual lock release and select by the
 visible removal label; no production assertion or failure path was removed.
 
 Final isolated Linux scoped Clippy, three health/configuration checks, 25
-installation contracts and all six PTY scenarios passed. Release builds, package
-publication and public-bootstrap acceptance are recorded below when complete. Physical ARM/Intel/WSL2, Linux panel/systemd-session
+installation contracts and all six PTY scenarios passed. All four release builds
+passed. Linux x64 and ARM64 QEMU release runtimes passed initialization, embedded
+web readiness, synthetic login, graceful stop and doctor.
+
+The [dev.5 preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.5)
+retains the independent signing pin and advances the signed sequence. Four exact
+archives carry verified signatures, source inventory, packager-reported provenance
+and notices for 399 selected Rust dependencies plus React and Rust std. Source,
+new history and package text scans passed; opaque executable bytes are outside the
+text scan claim. Package publication verifies all seven uploaded asset sizes and
+SHA-256 digests before advancing the public bootstrap. Public-bootstrap acceptance
+is recorded below after publication.
+
+ Physical ARM/Intel/WSL2, Linux panel/systemd-session
 and actual native menu clicks remain separate acceptance limits. Existing personal
 accounts, providers, services, collectors, cron and databases were not used.

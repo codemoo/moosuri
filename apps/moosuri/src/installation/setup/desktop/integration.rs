@@ -1,5 +1,4 @@
 use super::*;
-use std::process::Stdio;
 
 fn wsl() -> bool {
     cfg!(target_os = "linux")
@@ -139,19 +138,13 @@ pub(in crate::installation::setup) fn launch_if_installed(
         return Ok(());
     }
     // Launching a second instance is harmless: the GUI owns a distinct lock.
-    let child = Process::new(prefix.join("manager"))
-        .args(["desktop", "--prefix"])
-        .arg(prefix)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(error)?;
-    // The setup process need not remain alive for the tray, and the tray never owns the server.
-    std::thread::spawn(move || {
-        let mut child = child;
-        let _ = child.wait();
-    });
+    if !dispatch_detached(
+        Process::new(prefix.join("manager"))
+            .args(["desktop", "--prefix"])
+            .arg(prefix),
+    ) {
+        return Err("setup_desktop_launch_failed".into());
+    }
     Ok(())
 }
 pub(in crate::installation::setup) fn preflight_remove(prefix: &Path, state: &State) -> Result<()> {

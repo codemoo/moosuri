@@ -154,12 +154,21 @@ that OS default. CLI launcher: `~/.local/bin/moosuri`. Files are owner-private.
 Existing unsafe paths, symlinks, ACL grants or unrelated installations are refused;
 the installer does not relax those permissions. Use a local, nonsynchronized home.
 
-Reruns resume setup **after signed runtime activation**, preserving the existing
-administrator and model settings. They do not reinstall over existing data, reset
-passwords or silently update an older binary. If activation itself was interrupted,
-retain the error and existing paths for inspection; do not delete the data directory.
-A pending uninstall can be resumed using the recorded runtime's `manager uninstall
---prefix ...` before a new install.
+Initial runtime files and your chosen internal port are published together only
+when complete. An interruption before publication leaves no partial final runtime;
+rerun the same command. After publication, setup resumes without recreating your
+administrator or changing model settings. It also recognizes a ready foreground
+server. A simultaneous setup/control command reports that it is busy before
+changing anything. The server readiness wait has a total 20-second budget.
+
+설치 파일과 선택한 내부 포트를 한 번에 적용합니다. 중간에 멈췄다면 같은 명령으로
+이어갈 수 있으며 기존 관리자·모델 설정을 유지합니다. 설치 중 다른 제어 명령은
+완료를 기다린 뒤 다시 실행하도록 안내합니다. 터미널 실행 중 재설치도 계정을
+다시 만들지 않습니다. 브라우저는 웹 준비가 확인된 뒤 열립니다.
+
+A partial prefix left by an **older** installer is preserved: inspect it and choose
+a fresh runtime prefix; never remove the data directory as a workaround. A pending
+uninstall can be resumed using the recorded runtime's `manager uninstall --prefix ...`.
 
 For updates, keep using the [signed stopped-update procedure](local-installation.md).
 It verifies a newer signed bundle, requires a configured encrypted backup, migrates
@@ -179,3 +188,22 @@ For independent trust pins or offline install, use the existing
 [signed bundle installer](local-installation.md). No shell hooks from a downloaded
 package, recursive remote paths, public Funnel, DNS or unrelated service changes
 are introduced. No CI was enabled to publish this preview.
+
+## Troubleshooting / 문제 해결
+
+| What you see / 상황 | Next action / 다음 행동 |
+| --- | --- |
+| Another setup/control is in progress / 다른 설치·제어 진행 중 | Finish or quit that terminal wizard, then retry. / 해당 설치를 마치거나 종료한 뒤 재실행합니다. |
+| Server not ready / 웹 준비 안 됨 | `moosuri status` prints the URL and log location. If stopped, use `moosuri start`, or `moosuri start --foreground` without a user service. |
+| Foreground server / 터미널 실행 중 | Keep its terminal open. Stop with Ctrl+C there; `moosuri stop` explains this instead of claiming it stopped. |
+| Existing version requires update / 이전 버전 설치됨 | Follow [signed updates](local-installation.md#stopped-update-across-supported-store-schemas). Repeating the installer does not upgrade a running server. |
+| Pending activation / 업데이트 중단 | Follow [recovery](local-installation.md#recover-an-interrupted-update); preserve the bundle, backup and recovery identities. |
+| Menu or browser cannot launch / 메뉴·브라우저 실행 실패 | Use the printed URL. `moosuri desktop` retries the menu; the server remains usable through the web/CLI. |
+| Existing file differs / 기존 파일 변경됨 | The file is preserved. Inspect the named path before retrying; do not delete private data or overwrite an unrelated service. |
+
+Desktop diagnostics retain a concise failure reason and next command. Opening the
+help guide does not clear the failure; the next successful control/web action does.
+No diagnostics are uploaded. A panel without StatusNotifier/AppIndicator may show
+no icon even when the process is running. HTTPS/Tailscale checks confirm the local
+backend; your external proxy, DNS and certificates must also work. Tailscale Serve
+configuration is separate and is not removed by stopping/uninstalling Moosuri.

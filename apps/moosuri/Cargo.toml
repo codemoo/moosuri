@@ -12,6 +12,7 @@ default = []
 test-fixtures = ["moosuri-connectors/test-fixtures", "moosuri-server/test-fixtures"]
 
 [dependencies]
+tempfile.workspace = true
 moosuri-connectors = { path = "../../crates/moosuri-connectors" }
 ring = "0.17"
 sha2 = "0.10"
@@ -49,5 +50,4 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = ["
 ksni = "=0.3.7"
 
 [dev-dependencies]
-tempfile.workspace = true
 serde_json.workspace = true

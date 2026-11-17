@@ -43,6 +43,25 @@ fn sign(root: &Path, m: &Manifest, key: &Ed25519KeyPair) {
     )
     .unwrap();
 }
+
+#[test]
+fn initial_publication_never_replaces_an_existing_directory_even_when_empty() {
+    let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let staged = private(root.path(), "staged");
+    create(&staged.join("marker"), b"complete installation", false).unwrap();
+    let destination = private(root.path(), "unrelated");
+    let inode = fs::metadata(&destination).unwrap().ino();
+    assert!(publish_directory(&staged, &destination).is_err());
+    assert_eq!(fs::metadata(&destination).unwrap().ino(), inode);
+    assert!(!destination.join("marker").exists());
+    let absent = root.path().join("runtime");
+    publish_directory(&staged, &absent).unwrap();
+    assert_eq!(
+        fs::read(absent.join("marker")).unwrap(),
+        b"complete installation"
+    );
+    assert!(!staged.exists());
+}
 fn provenance_fixture(root: &Path, m: &mut Manifest, key: &Ed25519KeyPair) {
     use release_evidence as e;
     let i=serde_json::to_vec(&serde_json::json!({"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"metadata":{"component":{"name":"moosuri","version":m.version},"properties":e::LOCKS.iter().map(|name|serde_json::json!({"name":format!("moosuri:lock-sha256:{name}"),"value":"ab".repeat(32)})).collect::<Vec<_>>()},"components":[]})).unwrap();

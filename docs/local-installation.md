@@ -173,9 +173,14 @@ refused conservatively, even if the first transaction failed. New work or
 authority committed after migration is preserved by retry; recovery never restores
 an earlier database, replays an old backup or automatically downgrades a schema.
 
-An interrupted first install before its marker was published remains a partial
-new prefix; inspect it and choose a fresh prefix rather than recursively deleting
-an arbitrary directory.
+Initial installation stages a complete runtime in a private sibling directory and
+publishes it with an exclusive atomic rename. Before publication the final prefix
+remains absent; after publication it is complete. Guided setup choices, including
+a custom HTTPS/Tailscale bind port, are in that same publication. A hard kill can
+leave an unused `.moosuri-install-*` sibling; it does not block retry and is not
+adopted or recursively removed on a later run. An older installer's partial final
+prefix is still preserved: inspect it and choose a fresh prefix rather than deleting
+an arbitrary directory or private data.
 
 ## Data-preserving uninstall
 

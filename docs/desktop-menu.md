@@ -6,8 +6,8 @@ The same signed Rust binary provides both; no webview or second settings app is
 installed. Windows WSL2 uses a Linux service and web shortcut, without a Windows
 native tray.
 
-- **Open Moosuri / 무수리 열기:** opens chat in your browser.
-- **Web administration / 웹 관리자 화면:** opens `/admin`; normal sign-in and roles apply.
+- **Open Moosuri / 무수리 열기:** opens chat in your browser when the server is ready.
+- **Web administration / 웹 관리자 화면:** opens `/admin` when ready; normal sign-in and roles apply.
 - **Start/stop server / 서버 시작·중지:** affects every member and scheduled task on this installation.
 - **Start server at login / 로그인 시 서버 자동 시작:** changes the login policy without stopping a running server. Manual start/stop preserves this choice.
 - **Diagnostics / 진단 보기:** basic readiness, a concise last-action problem, version and installation guide. No personal data or raw service logs are copied into the menu.
@@ -43,3 +43,16 @@ Rerun `moosuri setup` to add desktop access to the same current-version installa
 Existing older installations first follow the [signed update procedure](local-installation.md).
 A newer bootstrap does not silently replace an older server or erase its accounts.
 Only unchanged owned shortcuts are removed by uninstall, and private data remains.
+
+Web entries are disabled while checking, starting or stopped, and readiness is
+rechecked on activation. Diagnostics retain a safe error category and useful next
+command until another control/web action succeeds (opening help does not clear it).
+Quitting is not lost behind an occupied action queue. An already-started lifecycle
+operation finishes within its bounded service/probe limits; quitting does not
+cancel that operation or stop the server. If the menu exits immediately during
+setup, setup explains how to reopen it and continues with the web/CLI fallback.
+
+The menu also survives the installation terminal closing. Server stop/removal wait
+for the installed runtime to release its admission lock after the OS acknowledges
+shutdown; if it takes more than 20 seconds, diagnostics report pending shutdown
+instead of claiming completion.

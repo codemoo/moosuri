@@ -8,7 +8,11 @@ mod macos;
 mod tests;
 use super::*;
 pub(super) use integration::{launch_if_installed, offer, preflight_remove, remove};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 use std::time::Instant;
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -57,7 +61,7 @@ fn named_lock(prefix: &Path, name: &str) -> Result<File> {
         .map_err(|_| "setup_control_busy".to_string())?;
     Ok(f)
 }
-pub(super) fn control_lock(prefix: &Path) -> Result<File> {
+pub(in crate::installation) fn control_lock(prefix: &Path) -> Result<File> {
     named_lock(prefix, "control.lock")
 }
 
@@ -160,10 +164,19 @@ enum Action {
 struct Controller {
     sender: mpsc::SyncSender<Action>,
     state: Arc<Mutex<Snapshot>>,
+    quitting: Arc<AtomicBool>,
     language: Language,
 }
 impl Controller {
     fn send(&self, action: Action) {
+        if matches!(action, Action::Quit) {
+            self.quitting.store(true, Ordering::Release);
+            set_state(&self.state, |s| s.exit = true);
+        } else if matches!(action, Action::Chat | Action::Admin)
+            && self.snapshot().phase != Phase::Ready
+        {
+            return;
+        }
         let _ = self.sender.try_send(action);
     }
     fn snapshot(&self) -> Snapshot {
@@ -173,27 +186,13 @@ impl Controller {
         self.language.text(en, ko)
     }
     fn detail(&self, s: &Snapshot) -> &'static str {
-        match s.detail {
-            "foreground" => self.label(
-                "Use moosuri start --foreground",
-                "moosuri start --foreground로 실행하세요",
-            ),
-            "not_ready" => self.label(
-                "The process is running but the dashboard is not ready",
-                "프로세스는 실행 중이지만 웹이 준비되지 않았습니다",
-            ),
-            "command_failed" => self.label(
-                "Action failed. Check the installation guide / CLI status",
-                "명령 실패 · 설치 안내 또는 CLI 상태를 확인하세요",
-            ),
-            "unavailable" => self.label(
-                "Installation or user service is unavailable",
-                "설치 또는 사용자 서비스를 확인할 수 없습니다",
-            ),
-            _ => self.label(
+        if s.detail.is_empty() {
+            self.label(
                 "Web settings require your normal sign-in",
                 "웹 설정은 평소처럼 로그인하여 사용합니다",
-            ),
+            )
+        } else {
+            diagnostics::hint(s.detail, self.language)
         }
     }
 }
@@ -203,8 +202,10 @@ fn set_state(state: &Arc<Mutex<Snapshot>>, f: impl FnOnce(&mut Snapshot)) {
 fn controller(p: PathBuf, language: Language) -> (Controller, std::thread::JoinHandle<()>) {
     let (sender, receiver) = mpsc::sync_channel(1);
     let state = Arc::new(Mutex::new(Snapshot::default()));
+    let quitting = Arc::new(AtomicBool::new(false));
     let c = Controller {
         sender,
+        quitting: quitting.clone(),
         state: state.clone(),
         language,
     };
@@ -221,11 +222,11 @@ fn controller(p: PathBuf, language: Language) -> (Controller, std::thread::JoinH
             return;
         };
         let mut last_error = None;
-        loop {
+        while !quitting.load(Ordering::Acquire) {
             match rt.block_on(inspect(&p)) {
                 Ok(mut s) => {
-                    if last_error.is_some_and(|t: Instant| t.elapsed() < Duration::from_secs(12)) {
-                        s.detail = "command_failed";
+                    if let Some(problem) = last_error {
+                        s.detail = problem;
                     }
                     let exit = s.exit;
                     set_state(&state, |v| *v = s);
@@ -233,7 +234,7 @@ fn controller(p: PathBuf, language: Language) -> (Controller, std::thread::JoinH
                         break;
                     }
                 }
-                Err(_) => {
+                Err(e) => {
                     if !p.join("setup.json").exists() {
                         set_state(&state, |s| s.exit = true);
                         break;
@@ -241,15 +242,21 @@ fn controller(p: PathBuf, language: Language) -> (Controller, std::thread::JoinH
                     set_state(&state, |s| {
                         s.phase = Phase::Error;
                         s.controllable = false;
-                        s.detail = "unavailable";
+                        s.detail = diagnostics::classify(&e);
                     });
                 }
+            }
+            if quitting.load(Ordering::Acquire) {
+                break;
             }
             let action = match receiver.recv_timeout(Duration::from_secs(3)) {
                 Ok(Action::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Ok(a) => a,
             };
+            if quitting.load(Ordering::Acquire) {
+                break;
+            }
             set_state(&state, |s| {
                 s.phase = match action {
                     Action::Start => Phase::Starting,
@@ -266,7 +273,12 @@ fn controller(p: PathBuf, language: Language) -> (Controller, std::thread::JoinH
                     prefix: Some(p.clone()),
                 }),
                 Action::Autostart(enabled) => change_autostart(&p, enabled),
-                Action::Chat | Action::Admin => installation(&p).and_then(|i| {
+                Action::Chat | Action::Admin => rt.block_on(async {
+                    let i = installation(&p)?;
+                    let s = load(&p)?;
+                    if !ready(&i, &s).await {
+                        return Err("setup_service_not_ready_check_moosuri_status".into());
+                    }
                     browser(&format!(
                         "{}{}",
                         i.origin,
@@ -282,11 +294,11 @@ fn controller(p: PathBuf, language: Language) -> (Controller, std::thread::JoinH
                 ),
                 Action::Quit => break,
             };
-            last_error = if result.is_err() {
-                Some(Instant::now())
-            } else {
-                None
-            };
+            match result {
+                Err(e) => last_error = Some(diagnostics::classify(&e)),
+                Ok(()) if !matches!(action, Action::Help) => last_error = None,
+                _ => (),
+            }
         }
         set_state(&state, |s| s.exit = true);
     });

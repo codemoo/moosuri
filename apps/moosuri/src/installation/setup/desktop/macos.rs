@@ -13,8 +13,8 @@ pub(super) fn run(c: Controller) -> Result<()> {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     let menu = Menu::new();
     let state = MenuItem::new(c.label("Checking server…", "서버 확인 중…"), false, None);
-    let chat = MenuItem::new(c.label("Open Moosuri", "무수리 열기"), true, None);
-    let admin = MenuItem::new(c.label("Web administration", "웹 관리자 화면"), true, None);
+    let chat = MenuItem::new(c.label("Open Moosuri", "무수리 열기"), false, None);
+    let admin = MenuItem::new(c.label("Web administration", "웹 관리자 화면"), false, None);
     let start = MenuItem::new(c.label("Start server", "서버 시작"), false, None);
     let stop = MenuItem::new(c.label("Stop server", "서버 중지"), false, None);
     let auto = CheckMenuItem::new(
@@ -85,6 +85,8 @@ pub(super) fn run(c: Controller) -> Result<()> {
         }
         if current != previous {
             state.set_text(current.phase.title(c.language));
+            chat.set_enabled(current.phase == Phase::Ready);
+            admin.set_enabled(current.phase == Phase::Ready);
             start.set_enabled(
                 current.controllable && !current.phase.busy() && current.phase != Phase::Ready,
             );

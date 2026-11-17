@@ -26,7 +26,7 @@ fn desktop_and_control_locks_are_independent_and_single_instance() {
 #[test]
 fn browser_dispatch_returns_while_the_viewer_is_still_running() {
     let start = Instant::now();
-    assert!(dispatch_browser(
+    assert!(dispatch_detached(
         Process::new("/bin/sh").args(["-c", "sleep 2"])
     ));
     assert!(start.elapsed() < Duration::from_secs(1));
@@ -35,4 +35,30 @@ fn browser_dispatch_returns_while_the_viewer_is_still_running() {
 #[test]
 fn embedded_product_icon_decodes_to_the_tray_dimensions() {
     assert_eq!(icon_rgba().len(), 24 * 24 * 4);
+}
+
+#[test]
+fn quit_cannot_be_lost_behind_a_queued_action_and_web_actions_require_readiness() {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let c = Controller {
+        sender,
+        state: Arc::new(Mutex::new(Snapshot::default())),
+        quitting: Arc::new(AtomicBool::new(false)),
+        language: Language::En,
+    };
+    c.send(Action::Chat);
+    assert!(receiver.try_recv().is_err());
+    set_state(&c.state, |s| s.phase = Phase::Ready);
+    c.send(Action::Admin);
+    c.send(Action::Quit);
+    assert!(c.quitting.load(Ordering::Acquire));
+    assert!(c.snapshot().exit);
+    assert!(matches!(receiver.try_recv(), Ok(Action::Admin)));
+    assert!(
+        !diagnostics::hint(
+            diagnostics::classify("private-token=synthetic"),
+            Language::En
+        )
+        .contains("synthetic")
+    );
 }

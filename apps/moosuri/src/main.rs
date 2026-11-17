@@ -60,7 +60,7 @@ enum Command {
     /// Show installation and service readiness.
     Status(installation::setup::Location),
     /// Open your installed assistant in the browser.
-    Open(installation::setup::Location),
+    Open(installation::setup::Open),
     /// Remove managed runtime and service; always preserve private data.
     Uninstall(installation::setup::Location),
     /// Import an explicitly selected private normalized export into a NEW staging data root.
@@ -344,7 +344,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::Start(options) => return setup::start(options).await,
         Command::Stop(location) => return setup::stop(location),
         Command::Status(location) => return setup::status(location).await,
-        Command::Open(location) => return setup::open(location),
+        Command::Open(location) => return setup::open(location).await,
         Command::Uninstall(location) => return setup::uninstall(location),
         _ => (),
     }

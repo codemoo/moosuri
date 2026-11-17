@@ -866,6 +866,126 @@ fn templates(prefix: &Path, i: &Installation) -> Result<BTreeMap<String, String>
         ("deployment/tailscale-serve.txt".into(), tail),
     ]))
 }
+fn install(
+    root: &Path,
+    trust_key: &Path,
+    prefix: &Path,
+    data_dir: &Path,
+    origin: &str,
+    network: &Network,
+    setup_state: Option<&[u8]>,
+) -> Result<Option<File>> {
+    let b = bundle(root, trust_key)?;
+    if b.manifest.store_schema != own_probe().store_schema {
+        return Err("installation_run_target_binary_required".into());
+    }
+    path_checked(prefix)?;
+    path_checked(data_dir)?;
+    if prefix.starts_with(data_dir) || data_dir.starts_with(prefix) {
+        return Err("installation_data_runtime_overlap".into());
+    }
+    if data_dir.exists() {
+        private_dir(data_dir)?
+    }
+    if origin.bytes().any(|b| b.is_ascii_control()) {
+        return Err("installation_control_character_refused".into());
+    }
+    let u = url::Url::parse(origin).map_err(error)?;
+    let local = matches!(network, Network::Local);
+    if moosuri_server::ServerConfig::new(origin, local).is_err()
+        || (local && (u.scheme() != "http" || u.port_or_known_default().is_none_or(|p| p < 1024)))
+        || (!local && u.scheme() != "https")
+        || u.username() != ""
+        || u.password().is_some()
+        || u.query().is_some()
+        || u.fragment().is_some()
+        || u.path() != "/"
+        || u.host_str().is_none()
+    {
+        return Err("installation_origin_network_mismatch".into());
+    }
+    if prefix.exists() {
+        return Err("installation_prefix_exists_preserved".into());
+    }
+    // All initial files live in an owned, private sibling until complete. A crash
+    // leaves only a disposable staging directory, never an unusable final prefix.
+    let parent = prefix.parent().ok_or("installation_parent_required")?;
+    let staging = tempfile::Builder::new()
+        .prefix(".moosuri-install-")
+        .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .tempdir_in(parent)
+        .map_err(error)?;
+    let staged = staging.path();
+    private_dir(staged)?;
+    create(&staged.join("installation.lock"), b"", false)?;
+    let _runtime = lock(staged, true)?;
+    let control = setup_state
+        .map(|_| setup::desktop::control_lock(staged))
+        .transpose()?;
+    new_dir(&staged.join("releases"))?;
+    new_dir(&staged.join("deployment"))?;
+    let r = stage(staged, &b)?;
+    upgrade_fault("after_install_stage")?;
+    create(&staged.join("manager"), &b.binary, true)?;
+    let mut i = Installation {
+        format: 1,
+        id: uuid::Uuid::new_v4().to_string(),
+        data_dir: data_dir.to_path_buf(),
+        origin: u.origin().ascii_serialization(),
+        network: network.clone(),
+        trust_key: key_hex(&b.key),
+        managed: BTreeMap::from([("manager".into(), hash(&b.binary))]),
+    };
+    // Deployment files must refer to the final location, never the staging path.
+    for (path, text) in templates(prefix, &i)? {
+        create(&staged.join(&path), text.as_bytes(), false)?;
+        i.managed.insert(path, hash(text.as_bytes()));
+    }
+    create(&staged.join("current.json"), &json(&r)?, false)?;
+    create(&staged.join("installation.json"), &json(&i)?, false)?;
+    if let Some(state) = setup_state {
+        create(&staged.join("setup.json"), state, false)?;
+    }
+    sync(&staged.join("deployment"))?;
+    sync(staged)?;
+    upgrade_fault("before_install_publish")?;
+    publish_directory(staged, prefix)?;
+    sync(parent)?;
+    upgrade_fault("after_install_publish")?;
+    // The control inode moves with the directory, so a competing setup/uninstall
+    // cannot enter between publication and the rest of the wizard.
+    Ok(control)
+}
+
+fn publish_directory(staged: &Path, destination: &Path) -> Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    path_checked(destination)?;
+    let from = CString::new(staged.as_os_str().as_bytes()).map_err(error)?;
+    let to = CString::new(destination.as_os_str().as_bytes()).map_err(error)?;
+    // Ordinary rename may replace an empty unrelated directory. Never overwrite
+    // even an empty destination created concurrently by another installer/user.
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
+    if result != 0 {
+        return Err(if destination.exists() {
+            "installation_prefix_exists_preserved".into()
+        } else {
+            "installation_atomic_publish_failed".into()
+        });
+    }
+    Ok(())
+}
+
 pub fn run(command: &Command) -> Result<()> {
     match command {
         Command::Component { command } => component::run(command)?,
@@ -931,72 +1051,7 @@ pub fn run(command: &Command) -> Result<()> {
             origin,
             network,
         } => {
-            let b = bundle(root, trust_key)?;
-            if b.manifest.store_schema != own_probe().store_schema {
-                return Err("installation_run_target_binary_required".into());
-            }
-            path_checked(prefix)?;
-            path_checked(data_dir)?;
-            if prefix.starts_with(data_dir) || data_dir.starts_with(prefix) {
-                return Err("installation_data_runtime_overlap".into());
-            }
-            if data_dir.exists() {
-                private_dir(data_dir)?
-            }
-            if origin.bytes().any(|b| b.is_ascii_control()) {
-                return Err("installation_control_character_refused".into());
-            }
-            let u = url::Url::parse(origin).map_err(error)?;
-            let local = matches!(network, Network::Local);
-            if moosuri_server::ServerConfig::new(origin, local).is_err()
-                || (local
-                    && (u.scheme() != "http" || u.port_or_known_default().is_none_or(|p| p < 1024)))
-                || (!local && u.scheme() != "https")
-                || u.username() != ""
-                || u.password().is_some()
-                || u.query().is_some()
-                || u.fragment().is_some()
-                || u.path() != "/"
-                || u.host_str().is_none()
-            {
-                return Err("installation_origin_network_mismatch".into());
-            }
-            new_dir(prefix)?;
-            create(&prefix.join("installation.lock"), b"", false)?;
-            let _lock = lock(prefix, true)?;
-            new_dir(&prefix.join("releases"))?;
-            new_dir(&prefix.join("deployment"))?;
-            let r = stage(prefix, &b)?;
-            let binary = prefix
-                .join("releases")
-                .join(r.sequence.to_string())
-                .join("moosuri");
-            create(
-                &prefix.join("manager"),
-                &read(&binary, BINARY_CAP, true)?,
-                true,
-            )?;
-            let mut i = Installation {
-                format: 1,
-                id: uuid::Uuid::new_v4().to_string(),
-                data_dir: data_dir.clone(),
-                origin: u.origin().ascii_serialization(),
-                network: network.clone(),
-                trust_key: key_hex(&b.key),
-                managed: BTreeMap::new(),
-            };
-            i.managed.insert(
-                "manager".into(),
-                hash(&read(&prefix.join("manager"), BINARY_CAP, true)?),
-            );
-            for (path, text) in templates(prefix, &i)? {
-                create(&prefix.join(&path), text.as_bytes(), false)?;
-                i.managed.insert(path, hash(text.as_bytes()));
-            }
-            create(&prefix.join("current.json"), &json(&r)?, false)?;
-            create(&prefix.join("installation.json"), &json(&i)?, false)?;
-            sync(&prefix.join("deployment"))?;
-            sync(prefix)?;
+            let _control = install(root, trust_key, prefix, data_dir, origin, network, None)?;
             println!(
                 "Verified native preview installed. Data is separate and unchanged. Run manager installation run --prefix <this-prefix> -- init, then review deployment files. No service/network setting was changed."
             );

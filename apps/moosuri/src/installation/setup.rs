@@ -1,6 +1,8 @@
 //! Guided setup reuses signed installation and ordinary account/model boundaries.
 mod connection;
 pub mod desktop;
+mod diagnostics;
+mod readiness;
 mod service;
 mod terminal;
 #[cfg(test)]
@@ -8,6 +10,7 @@ mod tests;
 use super::*;
 use clap::Args;
 use moosuri_store::Store;
+use readiness::{Readiness, ready};
 use std::{net::TcpListener, time::Duration};
 use terminal::{Language, Terminal};
 
@@ -35,6 +38,16 @@ pub struct Options {
 pub struct Location {
     #[arg(long)]
     pub prefix: Option<PathBuf>,
+}
+#[derive(Args)]
+pub struct Open {
+    #[arg(long)]
+    pub prefix: Option<PathBuf>,
+    /// Used by setup's bounded browser helper across the foreground exec.
+    #[arg(long, hide = true)]
+    pub wait_ready: bool,
+    #[arg(long, hide = true, default_value = "/app", value_parser = ["/app", "/settings/model", "/admin/providers", "/admin/google"])]
+    pub page: String,
 }
 #[derive(Args)]
 pub struct Start {
@@ -159,7 +172,12 @@ pub async fn run(options: &Options, data: Option<&Path>) -> Result<()> {
     }
     let result = wizard(options, data, &mut tty).await;
     if let Err(code) = &result {
-        tty.say("Setup paused. Your existing data has not been removed. Run the same command to resume.","설치를 멈췄습니다. 기존 데이터는 삭제하지 않았습니다. 같은 명령으로 다시 진행할 수 있습니다.")?;
+        tty.say(
+            "Setup paused. Your existing data has not been removed.",
+            "설치를 멈췄습니다. 기존 데이터는 삭제하지 않았습니다.",
+        )?;
+        tty.line(diagnostics::hint(diagnostics::classify(code), tty.lang))?;
+        tty.line("https://github.com/codemoo/moosuri/blob/main/docs/install.md#troubleshooting--문제-해결")?;
         tty.line(&format!(
             "{}: {code}",
             tty.lang.text("Details", "상세 코드")
@@ -172,7 +190,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     let prefix = prefix(&options.prefix)?;
     path_checked(&prefix)?;
     let fresh = !prefix.exists();
-    if fresh {
+    let control = if fresh {
         let bundle = options
             .bundle
             .as_ref()
@@ -265,36 +283,44 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             tty.lang.text("Private data", "개인 데이터"),
             data.display()
         ))?;
-        super::run(&Command::Install {
-            bundle: bundle.clone(),
-            trust_key: key.clone(),
-            prefix: prefix.clone(),
-            data_dir: data,
-            origin,
-            network,
-        })?;
-        save(
+        let initial = State {
+            format: 1,
+            language: tty.lang,
+            port,
+            service: service::Kind::None,
+            launcher: None,
+            service_file: None,
+            next_page: "/app".into(),
+            removing: false,
+            autostart: true,
+            desktop_files: Vec::new(),
+        };
+        super::install(
+            bundle,
+            key,
             &prefix,
-            &State {
-                format: 1,
-                language: tty.lang,
-                port,
-                service: service::Kind::None,
-                launcher: None,
-                service_file: None,
-                next_page: "/app".into(),
-                removing: false,
-                autostart: true,
-                desktop_files: Vec::new(),
-            },
-        )?;
+            &data,
+            &origin,
+            &network,
+            Some(&json(&initial)?),
+        )?
     } else {
-        // Rerun never overwrites an unrelated runtime or reinitializes an account.
+        // Do not add a lock file to an unrelated or legacy partial prefix.
         installation(&prefix)?;
-        no_pending(&prefix)?;
-        if current(&prefix)?.version != own_probe().version {
-            return Err("setup_existing_version_requires_signed_update".into());
-        }
+        // Acquire before reading state: a paused wizard cannot overwrite a later
+        // autostart change or race uninstall. The same guard covers all prompts.
+        Some(desktop::control_lock(&prefix)?)
+    };
+    let (runtime, active) = match lock(&prefix, true) {
+        Ok(guard) => (guard, false),
+        Err(e) if e == "installation_runtime_busy" => (lock(&prefix, false)?, true),
+        Err(e) => return Err(e),
+    };
+    no_pending(&prefix)?;
+    if current(&prefix)?.version != own_probe().version {
+        return Err("setup_existing_version_requires_signed_update".into());
+    }
+    if !fresh {
         tty.say(
             "Resuming your installed Moosuri. Existing accounts and settings are preserved.",
             "기존 무수리 설치를 이어갑니다. 계정과 설정은 유지합니다.",
@@ -314,7 +340,20 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
                     .port()
                     .ok_or("setup_port_required")?
             } else {
-                3210
+                // Older low-level installs did not record the bind port. Never
+                // invent one for an existing HTTPS proxy or Tailscale mapping.
+                loop {
+                    let value = tty.input(
+                        "Internal port configured in your proxy/Serve",
+                        "프록시/Serve에 설정한 내부 포트",
+                        "3210",
+                    )?;
+                    if let Ok(port) = value.parse::<u16>()
+                        && port >= 1024
+                    {
+                        break port;
+                    }
+                }
             };
             State {
                 format: 1,
@@ -335,7 +374,13 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     }
     state.language = tty.lang;
     save(&prefix, &state)?;
-    if service::running(&prefix, &state) && ready(&i, &state).await {
+    if active {
+        if !Readiness::new(&i, &state)?
+            .wait(Duration::from_secs(20))
+            .await
+        {
+            return Err("setup_service_not_ready_check_moosuri_status".into());
+        }
         tty.say(
             "Moosuri is already running. Open settings to change your model or invite people.",
             "무수리가 이미 실행 중입니다. 설정에서 모델을 바꾸거나 사용자를 초대하세요.",
@@ -343,7 +388,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
         service::launcher(&prefix, &mut state)?;
         save(&prefix, &state)?;
         desktop::offer(&prefix, &mut state, tty)?;
-        desktop::launch_if_installed(&prefix, &state)?;
+        launch_menu(&prefix, &state, tty)?;
         if !options.no_browser {
             let _ = browser(&format!("{}/app", i.origin));
         }
@@ -484,13 +529,15 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
         ))?,
         Network::Local => (),
     };
-    desktop::launch_if_installed(&prefix, &state)?;
+    drop(runtime);
+    drop(control);
     if !matches!(state.service, service::Kind::None) {
         start(&Start {
-            prefix: Some(prefix),
+            prefix: Some(prefix.clone()),
             foreground: false,
         })
         .await?;
+        launch_menu(&prefix, &state, tty)?;
         if !options.no_browser {
             let _ = browser(&format!("{}{}", i.origin, state.next_page));
         }
@@ -505,7 +552,15 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     )? == 0
     {
         if !options.no_browser {
-            let _ = browser(&format!("{}{}", i.origin, state.next_page));
+            // A separate bounded helper survives the exec into the signed server.
+            // It opens only after readiness; the URL above remains the fallback.
+            let _ = dispatch_detached(
+                Process::new(prefix.join("manager"))
+                    .args(["open", "--wait-ready", "--prefix"])
+                    .arg(&prefix)
+                    .arg("--page")
+                    .arg(&state.next_page),
+            );
         }
         start(&Start {
             prefix: Some(prefix),
@@ -528,50 +583,11 @@ fn valid_email(s: &str) -> bool {
                 && !b.contains('@')
         })
 }
-async fn ready(i: &Installation, s: &State) -> bool {
-    let Ok(url) = url::Url::parse(&i.origin) else {
-        return false;
-    };
-    let authority = &i
-        .origin
-        .split_once("://")
-        .map(|(_, a)| a)
-        .unwrap_or_default();
-    if url.host_str().is_none() {
-        return false;
+fn launch_menu(prefix: &Path, state: &State, tty: &mut Terminal) -> Result<()> {
+    if desktop::launch_if_installed(prefix, state).is_err() {
+        tty.say("The menu could not start. Continue in the browser; retry with moosuri desktop, or check moosuri status.", "메뉴를 시작하지 못했습니다. 웹에서 계속 사용할 수 있습니다. moosuri desktop으로 다시 열거나 moosuri status로 확인하세요.")?;
     }
-    let Ok(c) = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(2))
-        .build()
-    else {
-        return false;
-    };
-    for path in ["/health/ready", "/app"] {
-        let Ok(r) = c
-            .get(format!("http://127.0.0.1:{}{path}", s.port))
-            .header(reqwest::header::HOST, *authority)
-            .send()
-            .await
-        else {
-            return false;
-        };
-        if !r.status().is_success() {
-            return false;
-        }
-        let Ok(body) = r.bytes().await else {
-            return false;
-        };
-        if path == "/health/ready" {
-            if !body.is_empty() {
-                return false;
-            }
-        } else if !String::from_utf8_lossy(&body).contains("manifest.webmanifest") {
-            return false;
-        }
-    }
-    true
+    Ok(())
 }
 pub(super) fn check_start_allowed(prefix: &Path) -> Result<()> {
     if prefix.join("setup.json").exists() && load(prefix)?.removing {
@@ -597,17 +613,12 @@ pub async fn start(options: &Start) -> Result<()> {
     if matches!(s.service, service::Kind::None) {
         return Err("setup_no_user_service_run_moosuri_start_foreground".into());
     }
-    if !service::running(&p, &s) || !ready(&i, &s).await {
+    let probe = Readiness::new(&i, &s)?;
+    if !service::running(&p, &s) || !probe.check().await {
         service::start(&p, &s)?;
-        for _ in 0..30 {
-            if ready(&i, &s).await {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+        if !probe.wait(Duration::from_secs(20)).await {
+            return Err("setup_service_not_ready_check_moosuri_status".into());
         }
-    }
-    if !ready(&i, &s).await {
-        return Err("setup_service_not_ready_check_moosuri_status".into());
     }
     println!(
         "{}: {}/app",
@@ -620,7 +631,11 @@ pub fn stop(location: &Location) -> Result<()> {
     let p = prefix(&location.prefix)?;
     let _control = desktop::control_lock(&p)?;
     let s = load(&p)?;
+    if matches!(s.service, service::Kind::None) {
+        return Err("setup_foreground_stop_use_ctrl_c".into());
+    }
     service::stop(&p, &s)?;
+    let _stopped = stopped_runtime(&p, Duration::from_secs(20))?;
     println!(
         "{}",
         s.language.text(
@@ -629,6 +644,23 @@ pub fn stop(location: &Location) -> Result<()> {
         )
     );
     Ok(())
+}
+// launchctl can acknowledge bootout before the runtime finishes shutdown.
+// Confirm writer release before claiming a stop or starting runtime removal.
+fn stopped_runtime(prefix: &Path, budget: Duration) -> Result<File> {
+    let end = std::time::Instant::now() + budget;
+    loop {
+        match lock(prefix, true) {
+            Ok(guard) => return Ok(guard),
+            Err(e) if e == "installation_runtime_busy" => {
+                if std::time::Instant::now() >= end {
+                    return Err("setup_service_stop_pending_check_moosuri_status".into());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 pub async fn status(location: &Location) -> Result<()> {
     let p = prefix(&location.prefix)?;
@@ -644,10 +676,22 @@ pub async fn status(location: &Location) -> Result<()> {
     println!("{}", service::log_hint(&p, &s));
     Ok(())
 }
-pub fn open(location: &Location) -> Result<()> {
-    let p = prefix(&location.prefix)?;
+pub async fn open(options: &Open) -> Result<()> {
+    let p = prefix(&options.prefix)?;
     let i = installation(&p)?;
-    browser(&format!("{}/app", i.origin))
+    let s = load(&p)?;
+    check_start_allowed(&p)?;
+    no_pending(&p)?;
+    let probe = Readiness::new(&i, &s)?;
+    let healthy = if options.wait_ready {
+        probe.wait(Duration::from_secs(20)).await
+    } else {
+        probe.check().await
+    };
+    if !healthy {
+        return Err("setup_service_not_ready_check_moosuri_status".into());
+    }
+    browser(&format!("{}{}", i.origin, options.page))
 }
 fn browser(url: &str) -> Result<()> {
     let parsed = url::Url::parse(url).map_err(error)?;
@@ -660,7 +704,7 @@ fn browser(url: &str) -> Result<()> {
         vec!["wslview", "xdg-open", "explorer.exe"]
     };
     for c in candidates {
-        if dispatch_browser(Process::new(c).arg(url)) {
+        if dispatch_detached(Process::new(c).arg(url)) {
             return Ok(());
         }
     }
@@ -668,8 +712,11 @@ fn browser(url: &str) -> Result<()> {
     Err("setup_browser_unavailable_open_printed_url".into())
 }
 // Some desktop openers stay attached to the viewer; the menu must not wait for it.
-fn dispatch_browser(command: &mut Process) -> bool {
+fn dispatch_detached(command: &mut Process) -> bool {
     let Ok(mut child) = command
+        // A menu/opener must survive the install terminal closing (SIGHUP) and
+        // must not share the foreground server's Ctrl+C process group.
+        .process_group(0)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -712,7 +759,7 @@ pub fn uninstall(location: &Location) -> Result<()> {
     desktop::preflight_remove(&p, &s)?;
     service::stop(&p, &s)?;
     {
-        let _guard = lock(&p, true)?;
+        let _guard = stopped_runtime(&p, Duration::from_secs(20))?;
         let i = installation(&p)?;
         let _data = maintenance(&i.data_dir)?;
         no_pending(&p)?;

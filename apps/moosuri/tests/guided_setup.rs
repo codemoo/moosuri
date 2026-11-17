@@ -42,6 +42,9 @@ impl Pty {
         );
         unsafe {
             cmd.pre_exec(move || {
+                // Exercise the ordinary desktop/server default, even when the
+                // test runner itself uses a more restrictive mask.
+                libc::umask(0o022);
                 if libc::setsid() < 0 || libc::ioctl(slave, libc::TIOCSCTTY as _, 0) < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -76,6 +79,20 @@ impl Pty {
                 return;
             }
             if let Some(status) = self.child.try_wait().unwrap() {
+                // A fast successful rerun may exit between the preceding read
+                // and try_wait. Consume its final terminal output before failing.
+                let mut bytes = [0; 8192];
+                while let Ok(n) = self.master.read(&mut bytes) {
+                    if n == 0 {
+                        break;
+                    }
+                    self.transcript
+                        .push_str(&String::from_utf8_lossy(&bytes[..n]));
+                }
+                if let Some(i) = self.transcript[self.at..].find(needle) {
+                    self.at += i + needle.len();
+                    return;
+                }
                 let mut err = String::new();
                 self.child
                     .stderr
@@ -118,6 +135,9 @@ impl Pty {
         self.line(&n.to_string())
     }
     fn finish(&mut self) -> (String, String) {
+        self.finish_expected(true)
+    }
+    fn finish_expected(&mut self, success: bool) -> (String, String) {
         let end = Instant::now() + Duration::from_secs(15);
         let status = loop {
             if let Some(s) = self.child.try_wait().unwrap() {
@@ -149,7 +169,7 @@ impl Pty {
             .unwrap()
             .read_to_string(&mut err)
             .unwrap();
-        assert!(status.success(), "stdout: {out}; stderr: {err}");
+        assert_eq!(status.success(), success, "stdout: {out}; stderr: {err}");
         (out, err)
     }
 }
@@ -239,6 +259,15 @@ impl Fixture {
             port,
             _root: root,
         }
+    }
+    fn command(&self, action: &str) -> Command {
+        let mut cmd = Command::new(self.prefix.join("manager"));
+        cmd.env("HOME", &self.home)
+            .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
+            .arg(action)
+            .arg("--prefix")
+            .arg(&self.prefix);
+        cmd
     }
     fn setup(&self, ko: bool) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_moosuri"));
@@ -347,4 +376,137 @@ fn unattended_setup_cannot_consume_piped_secrets_or_mutate_installation() {
     assert!(!f.prefix.exists());
     assert!(!f.data.exists());
     assert!(String::from_utf8_lossy(&o.stderr).contains("setup_terminal_required"));
+}
+
+#[test]
+fn setup_serializes_state_changes_and_preserves_a_running_foreground_server() {
+    let f = Fixture::new();
+    let mut wizard = Pty::spawn(f.setup(false));
+    wizard.choose(false, 1);
+    wizard.until("Local port");
+    wizard.line(&f.port.to_string());
+    wizard.until("Your name:");
+    let original = fs::read(f.prefix.join("setup.json")).unwrap();
+    for action in ["stop", "uninstall", "autostart"] {
+        let mut cmd = f.command(action);
+        if action == "autostart" {
+            cmd.arg("off");
+        }
+        let out = cmd.output().unwrap();
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("setup_control_busy"));
+    }
+    assert_eq!(original, fs::read(f.prefix.join("setup.json")).unwrap());
+    drop(wizard); // A hard interruption releases both guards; runtime is complete.
+    let mut wizard = Pty::spawn(f.setup(false));
+    wizard.until("Your name:");
+    wizard.line("Synthetic Owner");
+    wizard.until("Email (");
+    wizard.line("owner@example.test");
+    wizard.until("Password (");
+    wizard.line(PASSWORD);
+    wizard.until("Confirm password");
+    wizard.line(PASSWORD);
+    wizard.choose(false, 1);
+    wizard.choose(false, 1);
+    wizard.choose(false, 2);
+    wizard.finish();
+
+    // The opener records only the synthetic URL. It must not launch while stopped.
+    let marker = f.home.join("browser-opened");
+    for name in ["open", "xdg-open", "wslview"] {
+        let path = f.bin.join(name);
+        fs::write(
+            &path,
+            "#!/bin/sh\nprintf '%s' \"$1\" > \"$HOME/browser-opened\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut browser = f
+        .command("open")
+        .arg("--wait-ready")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(350));
+    assert!(
+        !marker.exists(),
+        "no dead browser page before server startup"
+    );
+    let mut server = f
+        .command("start")
+        .arg("--foreground")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let end = Instant::now() + Duration::from_secs(20);
+    while !marker.exists() {
+        assert!(server.try_wait().unwrap().is_none());
+        assert!(Instant::now() < end);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(browser.wait().unwrap().success());
+    assert_eq!(
+        fs::read_to_string(marker).unwrap(),
+        format!("http://127.0.0.1:{}/app", f.port)
+    );
+    let before = fs::read(f.prefix.join("installation.json")).unwrap();
+    let mut resumed = Pty::spawn(f.setup(false));
+    resumed.until("Moosuri is already running");
+    resumed.finish();
+    assert_eq!(
+        before,
+        fs::read(f.prefix.join("installation.json")).unwrap()
+    );
+    let stop = f.command("stop").output().unwrap();
+    assert!(!stop.status.success());
+    assert!(String::from_utf8_lossy(&stop.stderr).contains("setup_foreground_stop_use_ctrl_c"));
+    assert!(server.try_wait().unwrap().is_none());
+    unsafe {
+        libc::kill(server.id() as i32, libc::SIGTERM);
+    }
+    assert!(server.wait().unwrap().success());
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn interrupted_initial_install_retries_without_losing_remote_port() {
+    for point in [
+        "after_install_stage",
+        "before_install_publish",
+        "after_install_publish",
+    ] {
+        let f = Fixture::new();
+        let mut cmd = f.setup(false);
+        cmd.env("MOOSURI_INSTALLATION_FAULT", point);
+        let mut wizard = Pty::spawn(cmd);
+        wizard.choose(false, 3);
+        wizard.until("Local port");
+        wizard.line(&f.port.to_string());
+        wizard.until("HTTPS address");
+        wizard.line("https://assistant.example.test");
+        wizard.finish_expected(false);
+        assert!(
+            !f.data.exists(),
+            "fault precedes any account initialization"
+        );
+        if point == "after_install_publish" {
+            let state: Value =
+                serde_json::from_slice(&fs::read(f.prefix.join("setup.json")).unwrap()).unwrap();
+            assert_eq!(state["port"], json!(f.port));
+            let mut resumed = Pty::spawn(f.setup(false));
+            resumed.until("Your name:");
+            assert!(!resumed.transcript.contains("Local port"));
+        } else {
+            assert!(
+                !f.prefix.exists(),
+                "unfinished initial runtime was never published"
+            );
+            let mut resumed = f.fresh(false, false);
+            resumed.finish();
+        }
+    }
 }

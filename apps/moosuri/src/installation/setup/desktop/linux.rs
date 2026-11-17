@@ -54,8 +54,18 @@ impl ksni::Tray for Tray {
             }
             .into(),
             MenuItem::Separator,
-            self.item("Open Moosuri", "무수리 열기", Action::Chat, true),
-            self.item("Web administration", "웹 관리자 화면", Action::Admin, true),
+            self.item(
+                "Open Moosuri",
+                "무수리 열기",
+                Action::Chat,
+                s.phase == Phase::Ready,
+            ),
+            self.item(
+                "Web administration",
+                "웹 관리자 화면",
+                Action::Admin,
+                s.phase == Phase::Ready,
+            ),
             MenuItem::Separator,
             self.item(
                 "Start server",
@@ -134,8 +144,9 @@ pub(super) fn run(c: Controller) -> Result<()> {
         .build()
         .map_err(error)?;
     rt.block_on(async {
+        let mut previous = c.snapshot();
         let tray = Tray {
-            snapshot: c.snapshot(),
+            snapshot: previous.clone(),
             icon: icon_rgba(),
             controller: c.clone(),
         };
@@ -150,12 +161,15 @@ pub(super) fn run(c: Controller) -> Result<()> {
             if snapshot.exit || handle.is_closed() {
                 break;
             }
-            if handle
-                .update(|tray| tray.snapshot = snapshot)
-                .await
-                .is_none()
-            {
-                break;
+            if snapshot != previous {
+                previous = snapshot.clone();
+                if handle
+                    .update(|tray| tray.snapshot = snapshot)
+                    .await
+                    .is_none()
+                {
+                    break;
+                }
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }

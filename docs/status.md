@@ -13,7 +13,7 @@ WSL2는 웹 바로가기를 유지한다. 독립 검토와 native/Linux 계약·
 네 플랫폼 빌드, Mac의 실제 임시 launchd 시작/중지·자동 시작·제거를 확인했다.
 메뉴 화면 도구가 시간 초과하여 실제 클릭/시각 검증은 남으며 Linux 패널/systemd·
 Intel/WSL2/물리 ARM 수락도 별도다. [검증 기록](reviews/2026-11-17-desktop-controls.md).
-새 서명 패키지 공개를 준비 중이다.
+[v0.1.0-dev.3](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.3)의 네 플랫폼 서명 패키지와 한 줄 설치로 공개했다.
 
 [한국어·영어 설치 마법사](install.md)를 구현했다. 방향키/번호 선택, 최초 관리자,
 선택적 API/local 모델 확인, 로컬 접속, 사용자 launchd/systemd 및 foreground 실행을

@@ -54,5 +54,13 @@ problem instead of silently printing a URL to its discarded output.
 
 This is a development preview, not stable-release or previous-service deployment
 acceptance. Ed25519 package verification is separate from Apple signing/notarization.
-No live provider call or CI activation was used. Public package identity and bootstrap
-acceptance follow in the release publication record.
+No live provider call or CI activation was used. [v0.1.0-dev.3](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.3)
+provides four immutable archives, checksum pins, Ed25519 signatures, exact binary/SBOM
+provenance and bundled notices. Runtime source is the clean
+`3f4aefcf69419e3a5333a1bd60a9e4ca3390e190` checkout. Each release build passed;
+Linux requires glibc2.34+. Notices cover399 selected Rust normal dependencies plus
+the embedded web runtime and Rust standard library. Where objc2-family crates
+publish license terms by link, the exact VCS-revision declaration, declared authors
+and corresponding standard terms are preserved as supplemental evidence; this is
+not legal clearance. Package text and newly published source/history were scanned
+for secrets. Public-bootstrap acceptance is recorded after publication.

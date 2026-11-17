@@ -39,9 +39,17 @@ covered by the removal/login outcome scenario. Read-only follow-up found no
 remaining concrete blockers in the affected paths.
 
 Native scoped Clippy and signed install/update/recovery/removal passed. Isolated
-Linux scoped Clippy, installation contracts and all nine real-binary PTY scenarios
-passed. Four release builds, signed packages and public-bootstrap acceptance are
-being finalized.
+Linux scoped Clippy, 27 installation contracts and all nine real-binary PTY
+scenarios passed. All four release builds passed. Linux x64 and ARM64 QEMU
+release runtimes passed initialization, embedded-web readiness, synthetic login,
+graceful shutdown and doctor. Build inputs match the committed runtime sources.
+
+The [dev.6 preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.6)
+retains the independent signing pin and advances the signed sequence. Four exact
+archives passed signatures, source-inventory/provenance verification and public
+text scans. Notices cover 399 selected Rust dependencies, React and Rust std.
+Provenance is a packager claim rather than authenticated build attestation; opaque
+executables are outside the text scan claim. Public-bootstrap acceptance is pending.
 
 ## Acceptance limits
 

@@ -1,47 +1,47 @@
 {
   "format": 1,
   "channel": "preview",
-  "version": "0.1.0-dev.5",
-  "source_commit": "5ec0b9cd0a1854011e46bbd13466a84de0ad8390",
+  "version": "0.1.0-dev.6",
+  "source_commit": "aff5dcd90404006ebbb5c93a570e4bbbbfbd18a1",
   "public_key": "71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e",
   "packages": {
     "aarch64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.5-aarch64-apple-darwin.tar.gz",
-      "sha256": "b4bcb14cd62e2bc06a959f3869f98b29e0c6f83f48bf4e886b805fce73915caa",
-      "bytes": 20773323,
-      "binary_sha256": "d5f05bae65eaa7984920b72555d32f28c1b9c7c400c7f354bda1c204e7828da3",
-      "manifest_sha256": "e24d5bcf16ebec1f38a080c347757589b110e7ab524a77eacbe3366ba9b743d1"
+      "file": "moosuri-0.1.0-dev.6-aarch64-apple-darwin.tar.gz",
+      "sha256": "32fb8c4a185cff2c731c663da6d9f492b06a9ba59bcb40c5c8139dcbbb631461",
+      "bytes": 20919324,
+      "binary_sha256": "09ae0b090928a5f639218c5b2fdd8bb05ab200d5ba46c913191d246c01fcf840",
+      "manifest_sha256": "49aa82da3c969533c4eb4ff03762c022b60b8a8c8a080844391c703712c61724"
     },
     "x86_64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.5-x86_64-apple-darwin.tar.gz",
-      "sha256": "83a0ac5d1965c51c1c87152778f35df5866741af598cc1d032d13972adc6d940",
-      "bytes": 21687951,
-      "binary_sha256": "89cb1de86afdb3e13823326183e7c6ffce4efe55aca8bccd3e9d4925e6c64f28",
-      "manifest_sha256": "ac60de90ed5a17769ee5528182d86049517a93ff65137f1558a2dc1f53ab1dba"
+      "file": "moosuri-0.1.0-dev.6-x86_64-apple-darwin.tar.gz",
+      "sha256": "f6e837821c2cb373b76cd148eadaec203b8ea66189fbf749383a6555c4d429d7",
+      "bytes": 22731036,
+      "binary_sha256": "b79f4b5d2ec7034fbfb92c038ce6f69833176ab47e5d3fda613e1635186e8417",
+      "manifest_sha256": "b0ed9e5ce268b7e7ba2b62a4677e58f1c17f3277569426e8838ac22197c8ad77"
     },
     "x86_64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.5-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "523efb3f12c37a6ce662e16adab8f5f60b66fd83459d5dd1ae2771f0b8b6ef89",
-      "bytes": 22387972,
-      "binary_sha256": "0b6a5896b645df1cd76efef4393a6d6e24f22573c17da87e99d92d6c19e5f9b1",
-      "manifest_sha256": "4e1f1fe8e8f4f5272b818f8755ebde02e1cedb8ac4f56bae763267666353bc62"
+      "file": "moosuri-0.1.0-dev.6-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "2e6437bbe7653a075b8a0bd2417058279d3084eb4f6af2abc1c0ad7708607d68",
+      "bytes": 22504619,
+      "binary_sha256": "b5d737fc5f0881247caa1e563c1f3e8b2641a43283a7250ed00c243747455f16",
+      "manifest_sha256": "ec3d7d5f18c41bf3f7ac0c183635dba3420c79b4c937f8ac0906a370ff6b5cab"
     },
     "aarch64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.5-aarch64-unknown-linux-gnu.tar.gz",
-      "sha256": "cdd6e28d13045e4f4d305d42f5ec01b8aaa1d9fc5936b4ddbc3b6b93b34f0a1e",
-      "bytes": 21335719,
-      "binary_sha256": "9c5c867a63ff0cc0a2d069a70a656fd4539eca9c6610b43341505e776d5ed5d6",
-      "manifest_sha256": "7ce508f953dba161c25bba3128c7ce64798c04c54b44f7eb9073841c706a2eeb"
+      "file": "moosuri-0.1.0-dev.6-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "a9180dfba1e3cc65234ce27716a44a72a36e87ff341b8215ab3cb47cc9505ead",
+      "bytes": 21443879,
+      "binary_sha256": "5da9b9d204ee341a0432c93926908cc5f5ab8cf32055739654dd087a1003ae80",
+      "manifest_sha256": "a61060ee42b0005a97a16402edcf013bc4e0bc12bc2379f11e38e67522ff3122"
     }
   },
   "runtime": "Rust + embedded React + SQLite + native desktop menu",
   "linux_glibc_minimum": "2.34",
   "ci_enabled": false,
   "acceptance": {
-    "macos_arm64": "umask022 PTY, start/open and port collision; actual isolated launchd restart/autostart/menu lifetime; UI clicks unverified",
+    "macos_arm64": "native installation contracts, three Tailscale synthetic-daemon outcomes, bilingual PTY and signed lifecycle; real Tailscale login/certificates unverified",
     "macos_x64": "cross-built; actual Intel/Rosetta host unverified",
-    "linux_x64": "native isolated runtime, six umask022 PTY scenarios and CLI contracts; actual panel/systemd session unverified",
+    "linux_x64": "native isolated runtime, nine PTY scenarios and installation contracts; real Tailscale daemon/login unverified",
     "linux_arm64": "QEMU runtime; physical hardware unverified",
-    "wsl2": "Linux service/web shortcut implemented; real WSL2 host unverified"
+    "wsl2": "Windows-host manual Tailscale route documented; actual WSL2 host unverified"
   }
 }

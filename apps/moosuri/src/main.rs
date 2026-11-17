@@ -1127,9 +1127,10 @@ async fn shutdown_signal() {
 async fn static_asset(uri: Uri) -> Response {
     let path = match uri.path() {
         "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/admin/google"
-        | "/settings/model" | "/settings/calendar" | "/settings/mail" | "/settings/sources"
-        | "/settings/usage" | "/app/knowledge" | "/app/memory" | "/app/skills"
-        | "/app/artifacts" | "/app/schedules" | "/app/missions" | "/login" => "/index.html",
+        | "/admin/telegram" | "/settings/model" | "/settings/calendar" | "/settings/mail"
+        | "/settings/sources" | "/settings/usage" | "/settings/telegram" | "/app/knowledge"
+        | "/app/memory" | "/app/skills" | "/app/artifacts" | "/app/schedules" | "/app/missions"
+        | "/login" => "/index.html",
         path if path.starts_with("/app/artifacts/")
             && !path[15..].is_empty()
             && !path[15..].contains('/') =>
@@ -1274,14 +1275,26 @@ mod web_key_tests {
         assert!(read_web_search_key_file(&socket).is_err());
     }
     #[tokio::test]
-    async fn calendar_shell_navigation_returns_the_public_app_entry() {
-        let response = static_asset(Uri::from_static("/settings/calendar")).await;
-        assert_eq!(response.status(), axum::http::StatusCode::OK);
-        assert!(
-            response.headers()[axum::http::header::CONTENT_TYPE]
-                .to_str()
-                .unwrap()
-                .starts_with("text/html")
+    async fn settings_shell_navigation_returns_the_public_app_entry() {
+        for path in [
+            "/settings/calendar",
+            "/admin/telegram",
+            "/settings/telegram",
+        ] {
+            let response = static_asset(Uri::from_static(path)).await;
+            assert_eq!(response.status(), axum::http::StatusCode::OK, "{path}");
+            assert!(
+                response.headers()[axum::http::header::CONTENT_TYPE]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("text/html")
+            );
+        }
+        assert_eq!(
+            static_asset(Uri::from_static("/settings/not-a-page"))
+                .await
+                .status(),
+            axum::http::StatusCode::NOT_FOUND
         );
     }
 }

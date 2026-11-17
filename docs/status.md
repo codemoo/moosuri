@@ -5,8 +5,11 @@
 [공개 셀프호스팅](public-access.md)의 등록된 DNS·일회용 HTTPS 응답 검증·내장 인증서 갱신,
 기존 프록시 연결·상태·중단 복구·이전 주소 복원을 구현했다. Tailscale과 공개 접속을
 선택하며 로컬 연결은 나중에 설정할 수 있다. DNS 기록은 생성·수정하지 않는다.
-독립 검토·Mac/Linux 설치 계약·양쪽 전체12개 터미널 시나리오·lint와 Linux 두 플랫폼
-빌드를 통과했다. 네 플랫폼 서명 패키지 공개와 공개 설치 검증을 진행 중이다.
+독립 검토·Mac/Linux 설치 계약·양쪽 전체12개 터미널 시나리오·lint와 네 플랫폼
+빌드를 통과했다. [v0.1.0-dev.7](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.7)의
+네 플랫폼 서명 패키지와 한 줄 설치로 공개한다. Linux x64·ARM64 QEMU의 웹·로그인·
+종료를 확인했으며 공개 한 줄 설치 검증이 남았다. 실제 DNS/CA 발급과 외부 기기
+접속은 별도 수락 범위다.
 [검증 기록](reviews/2026-11-17-public-access.md).
 
 [Tailscale 연동](tailscale.md)의 주소 자동 탐지·기존 프로필 로그인·전용 HTTPS 설정,

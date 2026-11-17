@@ -49,7 +49,15 @@ retains the independent signing pin and advances the signed sequence. Four exact
 archives passed signatures, source-inventory/provenance verification and public
 text scans. Notices cover 399 selected Rust dependencies, React and Rust std.
 Provenance is a packager claim rather than authenticated build attestation; opaque
-executables are outside the text scan claim. Public-bootstrap acceptance is pending.
+executables are outside the text scan claim. All seven uploaded asset sizes and
+SHA-256 digests matched before advancing the public bootstrap.
+
+The actual public `curl .../main/install.sh | bash` path installed dev.6 in an
+isolated macOS home. Korean arrow/number selection, controlling-terminal-only
+temporary password, mandatory first password change, managed runtime readiness,
+embedded chat, synthetic login, graceful foreground shutdown and data-preserving
+uninstall passed. This public-path check used service-manager stubs; it did not
+connect the real Tailscale daemon or mutate an existing service.
 
 ## Acceptance limits
 

@@ -9,7 +9,9 @@ connect/status/disconnect, 소유 경로 보존·중단 복구와 이전 주소 
 [v0.1.0-dev.6](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.6)의 네 플랫폼
 서명 패키지와 한 줄 설치로 공개했다. Linux x64·ARM64 QEMU의 웹·로그인·종료도
 확인했다. 실제 Tailscale 로그인·인증서·기기 간 접속은 별도 수락 범위다.
-공개 bootstrap 최종 수락을 진행 중이다. [검증 기록](reviews/2026-11-17-tailscale-connection.md).
+공개 한 줄 설치의 dev.6 다운로드·한국어 설치·임시 암호 강제 변경·웹 로그인·
+정상 종료·데이터 보존 제거도 격리된 Mac에서 통과했다.
+[검증 기록](reviews/2026-11-17-tailscale-connection.md).
 
 [설치·일상 제어 후속 보완](reviews/2026-11-17-daily-controls.md): `open --start` 및 메뉴의 시작하고 열기, 자동 시작 설정을
 유지하는 `restart`, 다른 설치의 포트 점유 감지, 서비스 파일 충돌 시 터미널 설치

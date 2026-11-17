@@ -65,7 +65,7 @@ a numbered choice and Enter. Use `--plain` for simple numbered menus and
 
 ## Platforms / 지원 환경
 
-The published [v0.1.0-dev.3 preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.3)
+The published [v0.1.0-dev.4 preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.4)
 contains all four archives, checksums, public signing pin and build evidence.
 Use Bash, `curl`, `tar` and either `sha256sum` or `shasum`; these are already present
 on most supported installations. Linux requires **glibc 2.34+** (for example,

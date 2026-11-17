@@ -42,13 +42,13 @@ HELP
     *) target=unsupported;;
   esac
   # BEGIN GENERATED RELEASE PINS (updated only with a verified preview publication)
-  version=0.1.0-dev.3
+  version=0.1.0-dev.4
   release_key=71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e # public Ed25519 pin; gitleaks:allow
   case "$target" in
-    aarch64-apple-darwin) archive_sha=dade30db4fab46952886903ad785aea8af1c683a7303f178d8acc57c5f2f00c0;;
-    x86_64-apple-darwin) archive_sha=fa815c45fa8e8a8bd9d062a7d1b564670f96e23cb249e786414331b9403d5529;;
-    x86_64-unknown-linux-gnu) archive_sha=90295f74f45d8ab1c6e675360da35f7f0b1e32268630e17061f4740b43660a6b;;
-    aarch64-unknown-linux-gnu) archive_sha=b30f7048995d1158b32cd96bcc4de58dbb3625fbf08aa17dc56503efa0241398;;
+    aarch64-apple-darwin) archive_sha=79d0eb223a64170f2fc284956558476e3d5b3ac379ae106e84e5e3363d59e0cc;;
+    x86_64-apple-darwin) archive_sha=a4c5050777ff1e0346cda5ff4cd574ab29e424882ab94095323ba2ed6d14f5c5;;
+    x86_64-unknown-linux-gnu) archive_sha=93956d9e1c251523b55f1797107e21a85ee41a1e461e01e3ce78fbc8020f6376;;
+    aarch64-unknown-linux-gnu) archive_sha=fe5f35312cff400c5f414447ac3a3f84059d2e0e09ac34c4f5638964209c8eb8;;
     *) printf '%s\n' "Unsupported platform / 지원하지 않는 환경: $platform $machine" >&2; return 1;;
   esac
   # END GENERATED RELEASE PINS

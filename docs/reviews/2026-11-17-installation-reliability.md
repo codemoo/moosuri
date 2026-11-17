@@ -54,7 +54,17 @@ Official guidance inspected for concrete behavior, not visual/feature parity:
 Linux x64 passed the 24 applicable installation contracts, all 4 real-binary PTY
 scenarios (including umask 022) and scoped all-target Clippy. Mac ARM64/Intel and
 Linux x64/ARM64 release builds passed; final application sources match the checked
-Linux snapshot. Signed package publication is being finalized. No personal
+Linux snapshot. Linux x64 and ARM64 QEMU release runtimes passed init, exact readiness, embedded
+app, synthetic login, graceful termination and doctor. Native signed bundle
+verification passed. Four archives include verified selected runtime notices
+(399 Rust normal dependencies plus web/std), source SBOM and bound provenance.
+Package text/license/metadata and changed source/history secret scans passed;
+opaque executable bytes are not claimed to be covered by the text secret scan.
+
+The [dev.4 preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.4)
+uses the same public signing pin and a higher immutable release sequence. Source
+and package publication are separate commits; the published installer acceptance
+will be recorded after testing the actual public command. No personal
 provider, credentials, DB or existing production service was used. The existing
 limits remain: no native menu-click/visual acceptance in this turn, no actual Intel
 Mac, physical Linux ARM, Windows WSL2 or Linux desktop panel/systemd-session test.

@@ -73,7 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/codemoo/moosuri/main/install.sh | b
 Choose English or 한국어, then follow the arrow/number menus. No Rust, Node, Python,
 Docker or database server is needed. Linux/WSL2 requires glibc 2.34+.
 
-- [Guided installation / 한국어·영어 설치](docs/install.md): administrator, optional API/local model setup, user-service lifecycle and troubleshooting. Signed Mac/Linux x64/ARM64 packages are available in the [installer preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.3); actual platform acceptance is recorded in the release notes.
+- [Guided installation / 한국어·영어 설치](docs/install.md): administrator, optional API/local model setup, user-service lifecycle and troubleshooting. Signed Mac/Linux x64/ARM64 packages are available in the [installer preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.4); actual platform acceptance is recorded in the release notes.
 
 - [Desktop menu](docs/desktop-menu.md): server status, start/stop, independent login-autostart and chat/admin links; account/model management stays on the web.
 - [Development quickstart](docs/development.md): build, init, shared API/local model settings and run the embedded web app. LLM configuration can be skipped while setting up accounts.

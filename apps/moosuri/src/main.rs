@@ -49,6 +49,10 @@ enum RecoveryRole {
 enum Command {
     /// Guided installation (English / 한국어), or resume an existing setup.
     Setup(installation::setup::Options),
+    /// Show the desktop menu. Closing it leaves the server running.
+    Desktop(installation::setup::Location),
+    /// Enable or disable server startup at login without stopping the server.
+    Autostart(installation::setup::desktop::Autostart),
     /// Start your installed assistant; --foreground runs in this terminal.
     Start(installation::setup::Start),
     /// Stop only the installed assistant's user service.
@@ -309,6 +313,13 @@ fn main() {
     if matches!(cli.command, Command::InternalPdfText) {
         std::process::exit(moosuri_documents::child_main());
     }
+    if let Command::Desktop(location) = &cli.command {
+        if let Err(code) = installation::setup::desktop::run(location) {
+            eprintln!("moosuri: {code}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -327,6 +338,8 @@ fn main() {
 async fn run(cli: Cli) -> Result<(), String> {
     use installation::setup;
     match &cli.command {
+        Command::Autostart(options) => return setup::desktop::autostart(options),
+        Command::Desktop(_) => unreachable!(),
         Command::Setup(options) => return setup::run(options, cli.data_dir.as_deref()).await,
         Command::Start(options) => return setup::start(options).await,
         Command::Stop(location) => return setup::stop(location),
@@ -464,7 +477,9 @@ async fn run(cli: Cli) -> Result<(), String> {
                 "Historical usage remains unknown. This allowance limits new inference request count and validated STT input duration; it is not a token or financial ceiling. Unknown outcomes consume allowance without refund."
             );
         }
-        Command::Setup(_)
+        Command::Desktop(_)
+        | Command::Autostart(_)
+        | Command::Setup(_)
         | Command::Start(_)
         | Command::Stop(_)
         | Command::Status(_)

@@ -19,6 +19,8 @@ fn local_service_arguments_never_expose_listener_or_trust_forwarded_headers() {
         service_file: None,
         next_page: "/app".into(),
         removing: false,
+        autostart: true,
+        desktop_files: Vec::new(),
     };
     let args = server_args(&i, &s);
     assert!(args.windows(2).any(|w| w == ["--bind", "127.0.0.1:3411"]));
@@ -37,6 +39,8 @@ fn setup_state_rejects_external_navigation_and_unsafe_ports() {
         service_file: None,
         next_page: "/app".into(),
         removing: false,
+        autostart: true,
+        desktop_files: Vec::new(),
     };
     save(t.path(), &s).unwrap();
     assert!(load(t.path()).is_ok());

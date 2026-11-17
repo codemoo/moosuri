@@ -1,5 +1,6 @@
 //! Guided setup reuses signed installation and ordinary account/model boundaries.
 mod connection;
+pub mod desktop;
 mod service;
 mod terminal;
 #[cfg(test)]
@@ -60,6 +61,13 @@ struct State {
     next_page: String,
     #[serde(default)]
     removing: bool,
+    #[serde(default = "default_autostart")]
+    autostart: bool,
+    #[serde(default)]
+    desktop_files: Vec<ManagedFile>,
+}
+fn default_autostart() -> bool {
+    true
 }
 fn home() -> Result<PathBuf> {
     let path = PathBuf::from(std::env::var_os("HOME").ok_or("setup_home_required")?);
@@ -276,6 +284,8 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
                 service_file: None,
                 next_page: "/app".into(),
                 removing: false,
+                autostart: true,
+                desktop_files: Vec::new(),
             },
         )?;
     } else {
@@ -315,6 +325,8 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
                 service_file: None,
                 next_page: "/app".into(),
                 removing: false,
+                autostart: true,
+                desktop_files: Vec::new(),
             }
         }
     };
@@ -328,6 +340,10 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             "Moosuri is already running. Open settings to change your model or invite people.",
             "무수리가 이미 실행 중입니다. 설정에서 모델을 바꾸거나 사용자를 초대하세요.",
         )?;
+        service::launcher(&prefix, &mut state)?;
+        save(&prefix, &state)?;
+        desktop::offer(&prefix, &mut state, tty)?;
+        desktop::launch_if_installed(&prefix, &state)?;
         if !options.no_browser {
             let _ = browser(&format!("{}/app", i.origin));
         }
@@ -448,6 +464,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             tty.say("No user service manager is available. Use foreground mode. For WSL2, see the systemd steps in the installation guide.","사용자 서비스 관리자를 사용할 수 없습니다. 터미널 실행을 사용하세요. WSL2의 systemd 설정은 설치 안내에 있습니다.")?;
         }
     }
+    desktop::offer(&prefix, &mut state, tty)?;
     tty.say("\n5/5 · Open Moosuri", "\n5/5 · 무수리 열기")?;
     tty.line(&format!("{}{}", i.origin, state.next_page))?;
     tty.say("Commands: moosuri start · moosuri stop · moosuri status · moosuri open\nModel, Google and invitation settings are available after sign-in.","명령어: moosuri start · moosuri stop · moosuri status · moosuri open\n로그인한 뒤 모델·Google 연결·사용자 초대를 설정할 수 있습니다.")?;
@@ -467,6 +484,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
         ))?,
         Network::Local => (),
     };
+    desktop::launch_if_installed(&prefix, &state)?;
     if !matches!(state.service, service::Kind::None) {
         start(&Start {
             prefix: Some(prefix),
@@ -573,6 +591,9 @@ pub async fn start(options: &Start) -> Result<()> {
             args: server_args(&i, &s),
         });
     }
+    let _control = desktop::control_lock(&p)?;
+    let s = load(&p)?;
+    check_start_allowed(&p)?;
     if matches!(s.service, service::Kind::None) {
         return Err("setup_no_user_service_run_moosuri_start_foreground".into());
     }
@@ -597,6 +618,7 @@ pub async fn start(options: &Start) -> Result<()> {
 }
 pub fn stop(location: &Location) -> Result<()> {
     let p = prefix(&location.prefix)?;
+    let _control = desktop::control_lock(&p)?;
     let s = load(&p)?;
     service::stop(&p, &s)?;
     println!(
@@ -638,22 +660,39 @@ fn browser(url: &str) -> Result<()> {
         vec!["wslview", "xdg-open", "explorer.exe"]
     };
     for c in candidates {
-        if Process::new(c)
-            .arg(url)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-        {
+        if dispatch_browser(Process::new(c).arg(url)) {
             return Ok(());
         }
     }
     println!("{}", url);
     Ok(())
 }
+// Some desktop openers stay attached to the viewer; the menu must not wait for it.
+fn dispatch_browser(command: &mut Process) -> bool {
+    let Ok(mut child) = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let end = std::time::Instant::now() + Duration::from_millis(250);
+    while std::time::Instant::now() < end {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Err(_) => return false,
+            _ => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    true
+}
 pub fn uninstall(location: &Location) -> Result<()> {
     let p = prefix(&location.prefix)?;
+    let _control = desktop::control_lock(&p)?;
     let mut s = load(&p)?;
     let mut tty = Terminal::open(Some(s.language), false)?;
     if !s.removing
@@ -670,6 +709,7 @@ pub fn uninstall(location: &Location) -> Result<()> {
         return Ok(());
     }
     service::preflight_remove(&p, &s)?;
+    desktop::preflight_remove(&p, &s)?;
     service::stop(&p, &s)?;
     {
         let _guard = lock(&p, true)?;
@@ -678,10 +718,14 @@ pub fn uninstall(location: &Location) -> Result<()> {
         no_pending(&p)?;
         s.removing = true;
         save(&p, &s)?;
+        desktop::remove(&p, &mut s)?;
         service::remove(&p, &mut s)?;
     }
     super::run(&Command::Uninstall { prefix: p.clone() })?;
     fs::remove_file(p.join("setup.json")).map_err(error)?;
+    for name in ["desktop.lock", "control.lock"] {
+        let _ = remove_exact(&p.join(name), &hash(b""));
+    }
     let _ = fs::remove_dir(&p);
     Ok(())
 }

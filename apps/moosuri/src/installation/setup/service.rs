@@ -10,14 +10,83 @@ pub(super) enum Kind {
 }
 const UNIT: &str = "moosuri.service";
 const LABEL: &str = "io.moosuri.assistant";
-fn success(program: &str, args: &[&str]) -> bool {
-    Process::new(program)
+// Service-manager calls are local but may hang when the user session is unavailable.
+// Bound both execution and captured status text; never forward raw service output.
+fn command(
+    program: &str,
+    args: &[&str],
+    capture: bool,
+    timeout: Duration,
+) -> Option<(bool, Vec<u8>)> {
+    use std::os::fd::AsRawFd;
+    let mut child = Process::new(program)
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(if capture {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+        .spawn()
+        .ok()?;
+    let mut pipe = child.stdout.take();
+    if let Some(pipe) = &pipe {
+        let fd = pipe.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    }
+    let mut bytes = Vec::new();
+    let mut overflow = false;
+    let end = std::time::Instant::now() + timeout;
+    let status = loop {
+        drain_available(&mut pipe, &mut bytes, &mut overflow);
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status.success()),
+            Err(_) => break None,
+            _ if std::time::Instant::now() >= end => break None,
+            _ => std::thread::sleep(Duration::from_millis(10)),
+        }
+    };
+    if status.is_none() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    drain_available(&mut pipe, &mut bytes, &mut overflow);
+    // Do not wait for EOF: a descendant may inherit stdout after the direct child exits.
+    if overflow {
+        None
+    } else {
+        Some((status?, bytes))
+    }
+}
+fn drain_available(
+    pipe: &mut Option<std::process::ChildStdout>,
+    bytes: &mut Vec<u8>,
+    overflow: &mut bool,
+) {
+    if let Some(pipe) = pipe {
+        // Limit each drain: continuous output cannot prevent deadline checks.
+        for _ in 0..17 {
+            let mut chunk = [0; 4096];
+            match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) if bytes.len() + n <= 65536 => bytes.extend_from_slice(&chunk[..n]),
+                Ok(_) => *overflow = true,
+                Err(_) => break,
+            }
+        }
+    }
+}
+fn output(program: &str, args: &[&str]) -> Option<(bool, Vec<u8>)> {
+    command(program, args, true, Duration::from_secs(8))
+}
+pub(super) fn success(program: &str, args: &[&str]) -> bool {
+    command(program, args, false, Duration::from_secs(8)).is_some_and(|(ok, _)| ok)
 }
 pub(super) fn available() -> Kind {
     if cfg!(target_os = "macos") {
@@ -45,7 +114,7 @@ fn expected_path(kind: Kind) -> Result<PathBuf> {
         Kind::None => return Err("setup_no_user_service".into()),
     })
 }
-fn xml(s: &str) -> String {
+pub(super) fn xml(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -72,7 +141,7 @@ fn render(prefix: &Path, kind: Kind) -> Result<String> {
         Kind::None => return Err("setup_no_user_service".into()),
     })
 }
-fn managed(path: &Path, bytes: &[u8], executable: bool) -> Result<ManagedFile> {
+pub(super) fn managed(path: &Path, bytes: &[u8], executable: bool) -> Result<ManagedFile> {
     path_checked(path)?;
     directories(parent(path)?)?;
     match fs::symlink_metadata(path) {
@@ -96,11 +165,20 @@ pub(super) fn launcher(prefix: &Path, state: &mut State) -> Result<()> {
     // High-level commands carry their prefix explicitly through a small dispatch.
     let manager = prefix.join("manager");
     let text = format!(
-        "#!/bin/sh\ncase \"${{1-}}\" in\n  setup|start|stop|status|open|uninstall) command=$1; shift; exec {} \"$command\" --prefix {} \"$@\" ;;\n  *) exec {} \"$@\" ;;\nesac\n",
+        "#!/bin/sh\ncase \"${{1-}}\" in\n  setup|start|stop|status|open|uninstall|desktop|autostart) command=$1; shift; exec {} \"$command\" --prefix {} \"$@\" ;;\n  *) exec {} \"$@\" ;;\nesac\n",
         shell(&manager.to_string_lossy()),
         shell(&prefix.to_string_lossy()),
         shell(&manager.to_string_lossy())
     );
+    if let Some(previous) = &state.launcher
+        && previous.path == target
+        && read(&target, 65536, true).is_ok_and(|bytes| hash(&bytes) == previous.sha256)
+        && previous.sha256 != hash(text.as_bytes())
+    {
+        atomic(&target, text.as_bytes())?;
+        fs::set_permissions(&target, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .map_err(error)?;
+    }
     state.launcher = Some(managed(&target, text.as_bytes(), true)?);
     Ok(())
 }
@@ -135,9 +213,10 @@ pub(super) fn install(prefix: &Path, state: &mut State, kind: Kind) -> Result<()
     if matches!(kind, Kind::Launchd) && !prefix.join("service.log").exists() {
         create(&prefix.join("service.log"), b"", false)?;
     }
+    set_autostart(prefix, state, state.autostart)?;
     Ok(())
 }
-fn verify(prefix: &Path, state: &State) -> Result<PathBuf> {
+pub(super) fn verify(prefix: &Path, state: &State) -> Result<PathBuf> {
     let file = state.service_file.as_ref().ok_or("setup_no_user_service")?;
     let expected = expected_path(state.service)?;
     let content = render(prefix, state.service)?;
@@ -151,15 +230,16 @@ fn verify(prefix: &Path, state: &State) -> Result<PathBuf> {
 }
 pub(super) fn start(prefix: &Path, state: &State) -> Result<()> {
     let path = verify(prefix, state)?;
+    let policy = state.autostart;
+    if matches!(state.service, Kind::Launchd) {
+        set_autostart(prefix, state, true)?;
+    }
     let ok = match state.service {
         Kind::Systemd => {
             success(
                 "systemctl",
                 &["--user", "--no-ask-password", "daemon-reload"],
-            ) && success(
-                "systemctl",
-                &["--user", "--no-ask-password", "enable", "--now", UNIT],
-            )
+            ) && success("systemctl", &["--user", "--no-ask-password", "start", UNIT])
         }
         Kind::Launchd => {
             let domain = format!("gui/{}", unsafe { libc::geteuid() });
@@ -181,6 +261,9 @@ pub(super) fn start(prefix: &Path, state: &State) -> Result<()> {
         }
         Kind::None => false,
     };
+    if matches!(state.service, Kind::Launchd) {
+        set_autostart(prefix, state, policy)?;
+    }
     if ok {
         Ok(())
     } else {
@@ -196,14 +279,51 @@ pub(super) fn running(prefix: &Path, state: &State) -> bool {
             "systemctl",
             &["--user", "--no-ask-password", "is-active", "--quiet", UNIT],
         ),
-        Kind::Launchd => success(
+        Kind::Launchd => output(
             "launchctl",
             &[
                 "print",
                 &format!("gui/{}/{LABEL}", unsafe { libc::geteuid() }),
             ],
+        )
+        .is_some_and(|(ok, bytes)| {
+            ok && String::from_utf8_lossy(&bytes)
+                .lines()
+                .any(|line| line.trim() == "state = running")
+        }),
+        Kind::None => false,
+    }
+}
+pub(super) fn set_autostart(prefix: &Path, state: &State, enabled: bool) -> Result<()> {
+    verify(prefix, state)?;
+    let ok = match state.service {
+        Kind::Systemd => {
+            success(
+                "systemctl",
+                &["--user", "--no-ask-password", "daemon-reload"],
+            ) && success(
+                "systemctl",
+                &[
+                    "--user",
+                    "--no-ask-password",
+                    if enabled { "enable" } else { "disable" },
+                    UNIT,
+                ],
+            )
+        }
+        Kind::Launchd => success(
+            "launchctl",
+            &[
+                if enabled { "enable" } else { "disable" },
+                &format!("gui/{}/{LABEL}", unsafe { libc::geteuid() }),
+            ],
         ),
         Kind::None => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err("setup_autostart_failed".into())
     }
 }
 pub(super) fn stop(prefix: &Path, state: &State) -> Result<()> {
@@ -233,7 +353,7 @@ pub(super) fn stop(prefix: &Path, state: &State) -> Result<()> {
         Err("setup_service_stop_failed".into())
     }
 }
-fn file_present(file: &ManagedFile, removing: bool) -> Result<bool> {
+pub(super) fn file_present(file: &ManagedFile, removing: bool) -> Result<bool> {
     match fs::symlink_metadata(&file.path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && removing => Ok(false),
         Ok(_) => {
@@ -432,6 +552,36 @@ fn append_path(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn manager_completion_never_waits_for_an_inherited_pipe() {
+        let began = std::time::Instant::now();
+        assert!(
+            command(
+                "/bin/sh",
+                &["-c", "sleep 2 & exit 0"],
+                true,
+                Duration::from_millis(150)
+            )
+            .unwrap()
+            .0
+        );
+        assert!(began.elapsed() < Duration::from_secs(1));
+        let began = std::time::Instant::now();
+        assert!(
+            command(
+                "/bin/sh",
+                &["-c", "sleep 2 & wait"],
+                true,
+                Duration::from_millis(150)
+            )
+            .is_none()
+        );
+        assert!(began.elapsed() < Duration::from_secs(1));
+    }
+    #[test]
+    fn status_only_manager_success_ignores_large_stdout() {
+        assert!(success("/bin/sh", &["-c", "head -c 70000 /dev/zero"]));
+    }
     #[test]
     fn teardown_preflight_preserves_changed_files_and_accepts_owned_missing_checkpoint() {
         let t = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();

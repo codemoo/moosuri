@@ -6,6 +6,15 @@
 [codemoo/moosuri](https://github.com/codemoo/moosuri)이며 안정판·운영 전환은 아직 아니다.
 GitHub Actions/자동 CI는 사용자 지시로 꺼져 있다. 로컬 검증을 작업 단위별로 수행한다.
 
+[데스크톱 메뉴](desktop-menu.md)를 추가했다. Mac 메뉴 막대·Linux 트레이에서 서버 상태,
+시작/중지, 로그인 자동 시작, 채팅/웹 관리자 바로가기를 제공한다. 메뉴 종료는 서버를
+멈추지 않으며, 서버 중지는 모든 사용자·예약에 적용된다. headless는 CLI/서비스,
+WSL2는 웹 바로가기를 유지한다. 독립 검토와 native/Linux 계약·양 언어 PTY·lint·
+네 플랫폼 빌드, Mac의 실제 임시 launchd 시작/중지·자동 시작·제거를 확인했다.
+메뉴 화면 도구가 시간 초과하여 실제 클릭/시각 검증은 남으며 Linux 패널/systemd·
+Intel/WSL2/물리 ARM 수락도 별도다. [검증 기록](reviews/2026-11-17-desktop-controls.md).
+새 서명 패키지 공개를 준비 중이다.
+
 [한국어·영어 설치 마법사](install.md)를 구현했다. 방향키/번호 선택, 최초 관리자,
 선택적 API/local 모델 확인, 로컬 접속, 사용자 launchd/systemd 및 foreground 실행을
 기존 서명 설치에 연결했다. 합성 PTY의 양 언어 설치·재실행과 독립 검토를 통과했다.

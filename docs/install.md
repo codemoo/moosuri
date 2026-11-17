@@ -116,6 +116,14 @@ WSL2가 없으면 위 Microsoft 설치 명령으로 먼저 준비하고 Ubuntu �
 설치하세요. 데이터는 Linux 홈 안에 저장합니다. Windows 부팅 자동 실행이나
 WSL 종료 후 계속 실행하는 기능을 보장하지 않습니다.
 
+## Desktop menu / 데스크톱 메뉴
+
+On a desktop, setup offers a [small menu app](desktop-menu.md) for server status,
+start/stop, login-autostart and chat/admin links. Closing the menu or browser leaves
+the server running. Settings stay in the authenticated web app. Linux requires a
+StatusNotifier-capable panel; WSL2 receives a web shortcut. Headless installs need
+no GUI. 서버를 끄면 모든 사용자와 예약 작업이 멈춥니다.
+
 ## Everyday commands / 자주 쓰는 명령
 
 ```sh

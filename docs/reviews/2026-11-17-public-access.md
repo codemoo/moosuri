@@ -47,7 +47,14 @@ contains four signed bundles built from source
 the binary/manifest signature, source revision, SBOM, selected third-party notices
 and install guide. Installer pins reference immutable package hashes. The
 provenance is a packager claim, not an authenticated build-service attestation.
-The actual public one-line install acceptance is the remaining publication check.
+All seven GitHub release assets match the prepared sizes and hashes. The actual
+public one-line command downloaded dev.7 into an isolated Mac ARM64 home and
+passed Korean arrow/number menus, a temporary password shown only on the terminal,
+one PATH block, foreground startup, installation-specific readiness, embedded web,
+synthetic login, mandatory password change, administrator access after changing
+the password, graceful shutdown and runtime removal retaining private data.
+This smoke run selected local access and disabled real service managers; registered
+domain proof is covered by the separate native/proxy TLS scenarios above.
 
 Verification does not change a real DNS zone, account, credential or certificate
 provider. Real ACME issuance, phone access, router/firewall and physical-platform

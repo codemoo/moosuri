@@ -34,11 +34,16 @@ pub(super) fn classify(error: &str) -> &'static str {
         {
             "integrity"
         }
+        e if e.starts_with("tailscale_") => "tailscale",
         _ => "unavailable",
     }
 }
 pub(super) fn hint(code: &str, language: Language) -> &'static str {
     let (en, ko) = match code {
+        "tailscale" => (
+            "Run moosuri tailscale status. Resume interrupted connection with connect or restore with disconnect.",
+            "moosuri tailscale status로 확인하세요. connect로 연결을 재개하거나 disconnect로 이전 접속을 복구하세요.",
+        ),
         "busy" => (
             "Another setup or control action is in progress. Finish it, then retry.",
             "설치 또는 제어 명령이 진행 중입니다. 마친 뒤 다시 실행하세요.",

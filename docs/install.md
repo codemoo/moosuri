@@ -32,8 +32,9 @@ a numbered choice and Enter. Use `--plain` for simple numbered menus and
 
 1. **Access / 접속 방식:** This computer is the default. It opens a loopback-only
    `http://127.0.0.1:3210` dashboard. Choose another free port when necessary.
-   Tailscale and an existing HTTPS domain are also available. Those modes need
-   your own Tailscale/proxy setup; the wizard displays the next step.
+   [Tailscale](tailscale.md) detects the current device and configures private HTTPS
+   Serve after account setup. Its app and tailnet HTTPS permission are prerequisites.
+   An existing public HTTPS domain still uses your own reverse proxy.
 2. **Administrator / 관리자:** Enter a name, email and a password of at least
    12 bytes. Email is your sign-in ID; no email is sent. Passwords are hidden.
    Leave it blank to receive a temporary password on the terminal only, then
@@ -205,8 +206,9 @@ Desktop diagnostics retain a concise failure reason and next command. Opening th
 help guide does not clear the failure; the next successful control/web action does.
 No diagnostics are uploaded. A panel without StatusNotifier/AppIndicator may show
 no icon even when the process is running. HTTPS/Tailscale checks confirm the local
-backend; your external proxy, DNS and certificates must also work. Tailscale Serve
-configuration is separate and is not removed by stopping/uninstalling Moosuri.
+backend; your external proxy, DNS and certificates must also work. Stopping Moosuri
+keeps the Tailscale route. Uninstall removes only an unchanged route created by
+`moosuri tailscale connect`; manually configured and unrelated routes are preserved.
 
 ## Start and open / 바로 시작하고 열기
 
@@ -223,3 +225,9 @@ removal and other control operations already in progress.
 이미 다른 용도로 사용 중이면 파일을 보존하고 터미널 실행으로 설치를 마칩니다.
 기존 WSL 바로가기는 현재 버전의 `moosuri setup` 재실행으로 갱신하며, 직접
 수정한 바로가기는 덮어쓰지 않습니다. 이전 버전은 서명된 업데이트가 먼저 필요합니다.
+
+## Tailscale integration / Tailscale 연결
+
+Use `moosuri tailscale connect`, `moosuri tailscale status` and
+`moosuri tailscale disconnect` after installation. The [connection guide](tailscale.md)
+covers automatic Mac/Linux setup, sign-in, PWA access and the Windows-host WSL manual path.

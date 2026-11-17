@@ -631,3 +631,312 @@ fn start_and_open_runs_in_terminal_and_rejects_another_installation_on_its_port(
     }
     server.finish();
 }
+
+#[cfg(feature = "test-fixtures")]
+struct Tailnet {
+    socket: PathBuf,
+    _runtime: tokio::runtime::Runtime,
+    config: std::sync::Arc<std::sync::Mutex<(Value, u64)>>,
+    conflict: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    writes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    login_mode: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+#[cfg(feature = "test-fixtures")]
+impl Tailnet {
+    fn new(f: &Fixture) -> Self {
+        use axum::{
+            Json, Router,
+            http::{HeaderMap, StatusCode},
+            routing::get,
+        };
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        let socket = f._root.path().join("tail.sock");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let config = Arc::new(Mutex::new((
+            json!({"TCP":{"8443":{"HTTPS":true}},"Web":{"other.synthetic.ts.net:8443":{"Handlers":{"/":{"Text":"keep"}}}},"AllowFunnel":{"other.synthetic.ts.net:8443":true}}),
+            1u64,
+        )));
+        let conflict = Arc::new(AtomicBool::new(false));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let login_mode = Arc::new(AtomicUsize::new(0));
+        let login_status = login_mode.clone();
+        let read_config = config.clone();
+        let set_config = config.clone();
+        let collide = conflict.clone();
+        let mutations = writes.clone();
+        let app=Router::new().route("/localapi/v0/status",get(move||{let mode=login_status.clone();async move {
+            let login=mode.compare_exchange(1,2,Ordering::Relaxed,Ordering::Relaxed).is_ok();
+            Json(json!({"Version":"1.104.7","BackendState":if login {"NeedsLogin"} else {"Running"},"AuthURL":if login {"https://login.tailscale.com/a/synthetic-test-only"} else {""},"Self":{"ID":"synthetic-node","DNSName":"assistant.synthetic.ts.net."},"CertDomains":["assistant.synthetic.ts.net"]}))
+        }}))
+            .route("/localapi/v0/serve-config",get(move||{let config=read_config.clone();async move{let c=config.lock().unwrap();([("etag",format!("\"{}\"",c.1))],Json(c.0.clone()))}})
+                .post(move|headers:HeaderMap,Json(next):Json<Value>|{let config=set_config.clone();let conflict=collide.clone();let writes=mutations.clone();async move{
+                    assert_eq!(headers.get("host").unwrap(),"local-tailscaled.sock");
+                    let mut c=config.lock().unwrap();
+                    if conflict.swap(false,Ordering::Relaxed){c.0["TCP"]["443"]=json!({"HTTPS":true});c.0["Web"]["assistant.synthetic.ts.net:443"]=json!({"Handlers":{"/":{"Text":"another operator"}}});c.1+=1;}
+                    if headers.get("if-match").and_then(|v|v.to_str().ok())!=Some(format!("\"{}\"",c.1).as_str()){return StatusCode::PRECONDITION_FAILED;}
+                    c.0=next;c.1+=1;writes.fetch_add(1,Ordering::Relaxed);StatusCode::OK
+                }}));
+        let listener = runtime.block_on(async { tokio::net::UnixListener::bind(&socket).unwrap() });
+        runtime.spawn(async {
+            axum::serve(listener, app).await.unwrap();
+        });
+        Self {
+            socket,
+            _runtime: runtime,
+            config,
+            conflict,
+            writes,
+            login_mode,
+        }
+    }
+    fn command(&self, f: &Fixture, action: &str) -> Command {
+        let mut c = f.command("tailscale");
+        c.arg("--socket").arg(&self.socket).arg(action);
+        if action == "connect" {
+            c.arg("--no-browser");
+        }
+        c
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn tailscale_connect_resume_and_disconnect_preserve_accounts_and_unrelated_routes() {
+    use std::sync::atomic::Ordering;
+    let f = Fixture::new();
+    f.fresh(false, false).finish();
+    let tail = Tailnet::new(&f);
+    let original = fs::read(f.prefix.join("installation.json")).unwrap();
+    let database = fs::read(f.data.join("assistant.sqlite")).unwrap();
+    let unrelated = tail.config.lock().unwrap().0.clone();
+    // Includes an interrupted external write and partial local example publication.
+    for fault in [
+        "tailscale_after_serve",
+        "tailscale_during_templates",
+        "tailscale_after_origin",
+    ] {
+        let out = tail
+            .command(&f, "connect")
+            .env("MOOSURI_INSTALLATION_FAULT", fault)
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "fault must interrupt: {fault}");
+        let blocked = f.command("start").arg("--foreground").output().unwrap();
+        assert!(!blocked.status.success());
+        assert!(String::from_utf8_lossy(&blocked.stderr).contains("tailscale_change_pending"));
+        let out = tail.command(&f, "connect").output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let current: Value =
+            serde_json::from_slice(&fs::read(f.prefix.join("installation.json")).unwrap()).unwrap();
+        assert_eq!(current["origin"], "https://assistant.synthetic.ts.net");
+        assert_eq!(current["network"], "tailscale");
+        let before = tail.writes.load(Ordering::Relaxed);
+        assert!(
+            tail.command(&f, "connect")
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        assert_eq!(
+            tail.writes.load(Ordering::Relaxed),
+            before,
+            "no duplicate external effect"
+        );
+        let out = tail.command(&f, "disconnect").output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!f.prefix.join("tailscale.json").exists());
+        assert_eq!(
+            fs::read(f.prefix.join("installation.json")).unwrap(),
+            original
+        );
+        assert_eq!(tail.config.lock().unwrap().0, unrelated);
+        assert_eq!(fs::read(f.data.join("assistant.sqlite")).unwrap(), database);
+    }
+    // A managed tailnet origin still uses Moosuri credentials and secure cookies.
+    assert!(
+        tail.command(&f, "connect")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    struct Running(Child);
+    impl Drop for Running {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut server = Running(
+        f.command("start")
+            .arg("--foreground")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    tail._runtime.block_on(async {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let base = format!("http://127.0.0.1:{}", f.port);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if client
+                .get(format!("{base}/health/ready"))
+                .header("host", "assistant.synthetic.ts.net")
+                .send()
+                .await
+                .is_ok_and(|r| r.status() == 204)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline && server.0.try_wait().unwrap().is_none());
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let response = client
+            .post(format!("{base}/api/v1/auth/login"))
+            .header("host", "assistant.synthetic.ts.net")
+            .header("origin", "https://assistant.synthetic.ts.net")
+            .header("x-forwarded-for", "ignored-untrusted-value")
+            .json(&json!({"email":"owner@example.test","password":PASSWORD}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert!(
+            response.headers()["set-cookie"]
+                .to_str()
+                .unwrap()
+                .contains("; Secure")
+        );
+        let rejected = client
+            .post(format!("{base}/api/v1/auth/login"))
+            .header("host", "assistant.synthetic.ts.net")
+            .header("origin", &base)
+            .json(&json!({"email":"owner@example.test","password":PASSWORD}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), 403);
+    });
+    unsafe {
+        libc::kill(server.0.id() as i32, libc::SIGTERM);
+    }
+    assert!(server.0.wait().unwrap().success());
+    assert!(
+        tail.command(&f, "disconnect")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn tailscale_cas_race_and_unowned_routes_are_preserved() {
+    use std::sync::atomic::Ordering;
+    let f = Fixture::new();
+    f.fresh(false, false).finish();
+    let tail = Tailnet::new(&f);
+    let original = fs::read(f.prefix.join("installation.json")).unwrap();
+    tail.conflict.store(true, Ordering::Relaxed);
+    let out = tail.command(&f, "connect").output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("tailscale_configuration_changed_retry"));
+    assert_eq!(tail.writes.load(Ordering::Relaxed), 0);
+    let concurrent = tail.config.lock().unwrap().0.clone();
+    assert!(
+        tail.command(&f, "disconnect")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(tail.config.lock().unwrap().0, concurrent);
+    assert_eq!(
+        fs::read(f.prefix.join("installation.json")).unwrap(),
+        original
+    );
+    // A matching route configured outside Moosuri is still not owned.
+    {
+        let mut c = tail.config.lock().unwrap();
+        c.0["Web"]["assistant.synthetic.ts.net:443"] =
+            json!({"Handlers":{"/":{"Proxy":format!("http://127.0.0.1:{}",f.port)}}});
+        c.1 += 1;
+    }
+    let out = tail.command(&f, "connect").output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("tailscale_unowned_route_preserved"));
+    assert!(!f.prefix.join("tailscale.json").exists());
+    assert_eq!(tail.writes.load(Ordering::Relaxed), 0);
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn tailscale_no_browser_and_owned_custom_endpoint_removal_survive_interruption() {
+    use std::sync::atomic::Ordering;
+    let f = Fixture::new();
+    f.fresh(false, false).finish();
+    let tail = Tailnet::new(&f);
+    let marker = browser_stub(&f);
+    tail.login_mode.store(1, Ordering::Relaxed);
+    let mut connection = Pty::spawn(tail.command(&f, "connect"));
+    connection.until("Finish Tailscale sign-in");
+    connection.finish();
+    assert!(
+        !marker.exists(),
+        "no-browser also suppresses authentication browser dispatch"
+    );
+    let receipt = fs::read(f.prefix.join("tailscale.json")).unwrap();
+    let mut alien: Value = serde_json::from_slice(&receipt).unwrap();
+    alien["installation_id"] = json!("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    fs::write(
+        f.prefix.join("tailscale.json"),
+        serde_json::to_vec(&alien).unwrap(),
+    )
+    .unwrap();
+    let external = tail.config.lock().unwrap().0.clone();
+    let writes = tail.writes.load(Ordering::Relaxed);
+    let mut removal = Pty::spawn(f.command("uninstall"));
+    removal.until("Remove runtime; keep data");
+    removal.line("2");
+    let (_, err) = removal.finish_expected(false);
+    assert!(err.contains("tailscale_binding_invalid"));
+    assert_eq!(tail.config.lock().unwrap().0, external);
+    assert_eq!(tail.writes.load(Ordering::Relaxed), writes);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(f.prefix.join("tailscale.json")).unwrap())
+            .unwrap(),
+        alien
+    );
+    fs::write(f.prefix.join("tailscale.json"), receipt).unwrap();
+    let mut cmd = f.command("uninstall");
+    cmd.env("MOOSURI_INSTALLATION_FAULT", "tailscale_after_remove");
+    Pty::spawn(cmd).finish_expected(false);
+    assert!(f.prefix.join("tailscale.json").exists());
+    let after_effect = tail.writes.load(Ordering::Relaxed);
+    assert_eq!(after_effect, writes + 1);
+    Pty::spawn(f.command("uninstall")).finish();
+    assert_eq!(tail.writes.load(Ordering::Relaxed), after_effect);
+    assert!(!f.prefix.join("installation.json").exists());
+    assert!(f.data.join("assistant.sqlite").exists());
+}

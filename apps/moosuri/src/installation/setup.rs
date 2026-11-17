@@ -4,6 +4,7 @@ pub mod desktop;
 mod diagnostics;
 mod readiness;
 mod service;
+pub mod tailscale;
 mod terminal;
 #[cfg(test)]
 mod tests;
@@ -81,6 +82,8 @@ struct State {
     autostart: bool,
     #[serde(default)]
     desktop_files: Vec<ManagedFile>,
+    #[serde(default)]
+    tailscale_requested: bool,
 }
 fn default_autostart() -> bool {
     true
@@ -221,9 +224,12 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             ],
             0,
         )?;
-        if mode == 1 {
-            tty.say("Use an existing Tailscale HTTPS hostname. Moosuri will show the Serve command; it never enables public Funnel.","이미 연결한 Tailscale의 HTTPS 주소를 사용합니다. Serve 명령을 안내하며 공개 Funnel은 켜지 않습니다.")?;
-        }
+        let tail = if mode == 1 {
+            tailscale::prepare(tty, !options.no_browser).await?
+        } else {
+            tailscale::Prepared::Local
+        };
+        let tailscale_requested = matches!(tail, tailscale::Prepared::Automatic);
         if mode == 2 {
             tty.say("Use an existing HTTPS reverse proxy. DNS, certificates and other services are left under your control.","준비된 HTTPS 리버스 프록시를 사용합니다. DNS·인증서·기존 서비스는 직접 설정합니다.")?;
         }
@@ -241,7 +247,9 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
                 )?,
             }
         };
-        let (network, origin) = if mode == 0 {
+        let (network, origin) = if let tailscale::Prepared::Manual(origin) = tail {
+            (Network::Tailscale, origin)
+        } else if mode <= 1 {
             (Network::Local, format!("http://127.0.0.1:{port}"))
         } else {
             let origin = loop {
@@ -297,6 +305,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             removing: false,
             autostart: true,
             desktop_files: Vec::new(),
+            tailscale_requested,
         };
         super::install(
             bundle,
@@ -329,7 +338,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             "기존 무수리 설치를 이어갑니다. 계정과 설정은 유지합니다.",
         )?;
     }
-    let i = installation(&prefix)?;
+    let mut i = installation(&prefix)?;
     let mut state = match load(&prefix) {
         Ok(s) => s,
         Err(e) => {
@@ -369,6 +378,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
                 removing: false,
                 autostart: true,
                 desktop_files: Vec::new(),
+                tailscale_requested: false,
             }
         }
     };
@@ -517,12 +527,14 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     }
     desktop::offer(&prefix, &mut state, tty)?;
     tty.say("\n5/5 · Open Moosuri", "\n5/5 · 무수리 열기")?;
-    tty.line(&format!("{}{}", i.origin, state.next_page))?;
+    if !state.tailscale_requested {
+        tty.line(&format!("{}{}", i.origin, state.next_page))?;
+    }
     tty.say("Commands: moosuri open --start · moosuri restart · moosuri stop · moosuri status\nModel, Google and invitation settings are available after sign-in.","명령어: moosuri open --start · moosuri restart · moosuri stop · moosuri status\n로그인한 뒤 모델·Google 연결·사용자 초대를 설정할 수 있습니다.")?;
     service::path_hint(tty)?;
     match i.network {
         Network::Tailscale => tty.line(&format!(
-            "tailscale serve --bg http://127.0.0.1:{}",
+            "tailscale serve --bg --https=443 --set-path=/ http://127.0.0.1:{}",
             state.port
         ))?,
         Network::Https => tty.line(&format!(
@@ -537,6 +549,11 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     };
     drop(runtime);
     drop(control);
+    if state.tailscale_requested {
+        tailscale::connect(&prefix, None, false, false).await?;
+        i = installation(&prefix)?;
+        state = load(&prefix)?;
+    }
     if !matches!(state.service, service::Kind::None) {
         start(&Start {
             prefix: Some(prefix.clone()),
@@ -593,6 +610,7 @@ pub(super) fn check_start_allowed(prefix: &Path) -> Result<()> {
     if prefix.join("setup.json").exists() && load(prefix)?.removing {
         return Err("setup_uninstall_pending".into());
     }
+    tailscale::check_start(prefix)?;
     Ok(())
 }
 pub async fn start(options: &Start) -> Result<()> {
@@ -766,6 +784,9 @@ fn dispatch_open_when_ready(prefix: &Path, page: &str) {
 }
 
 fn browser(url: &str) -> Result<()> {
+    browser_impl(url, true)
+}
+fn browser_impl(url: &str, print_fallback: bool) -> Result<()> {
     let parsed = url::Url::parse(url).map_err(error)?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("setup_browser_url_invalid".into());
@@ -780,7 +801,9 @@ fn browser(url: &str) -> Result<()> {
             return Ok(());
         }
     }
-    println!("{}", url);
+    if print_fallback {
+        println!("{}", url);
+    }
     Err("setup_browser_unavailable_open_printed_url".into())
 }
 // Some desktop openers stay attached to the viewer; the menu must not wait for it.
@@ -809,7 +832,7 @@ fn dispatch_detached(command: &mut Process) -> bool {
     });
     true
 }
-pub fn uninstall(location: &Location) -> Result<()> {
+pub async fn uninstall(location: &Location) -> Result<()> {
     let p = prefix(&location.prefix)?;
     let _control = desktop::control_lock(&p)?;
     let mut s = load(&p)?;
@@ -837,6 +860,7 @@ pub fn uninstall(location: &Location) -> Result<()> {
         no_pending(&p)?;
         s.removing = true;
         save(&p, &s)?;
+        tailscale::detach_for_removal(&p).await?;
         desktop::remove(&p, &mut s)?;
         service::remove(&p, &mut s)?;
     }

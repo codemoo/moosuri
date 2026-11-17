@@ -21,6 +21,7 @@ fn local_service_arguments_never_expose_listener_or_trust_forwarded_headers() {
         removing: false,
         autostart: true,
         desktop_files: Vec::new(),
+        tailscale_requested: false,
     };
     let args = server_args(&i, &s);
     assert!(args.windows(2).any(|w| w == ["--bind", "127.0.0.1:3411"]));
@@ -41,6 +42,7 @@ fn setup_state_rejects_external_navigation_and_unsafe_ports() {
         removing: false,
         autostart: true,
         desktop_files: Vec::new(),
+        tailscale_requested: false,
     };
     save(t.path(), &s).unwrap();
     assert!(load(t.path()).is_ok());

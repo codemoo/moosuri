@@ -53,6 +53,8 @@ enum Command {
     Desktop(installation::setup::Location),
     /// Enable or disable server startup at login without stopping the server.
     Autostart(installation::setup::desktop::Autostart),
+    /// Connect and inspect private Tailscale HTTPS access.
+    Tailscale(installation::setup::tailscale::Options),
     /// Start your installed assistant; --foreground runs in this terminal.
     Start(installation::setup::Start),
     /// Stop only the installed assistant's user service.
@@ -340,6 +342,7 @@ fn main() {
 async fn run(cli: Cli) -> Result<(), String> {
     use installation::setup;
     match &cli.command {
+        Command::Tailscale(options) => return setup::tailscale::run(options).await,
         Command::Autostart(options) => return setup::desktop::autostart(options),
         Command::Desktop(_) => unreachable!(),
         Command::Setup(options) => return setup::run(options, cli.data_dir.as_deref()).await,
@@ -348,7 +351,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::Restart(location) => return setup::restart(location).await,
         Command::Status(location) => return setup::status(location).await,
         Command::Open(location) => return setup::open(location).await,
-        Command::Uninstall(location) => return setup::uninstall(location),
+        Command::Uninstall(location) => return setup::uninstall(location).await,
         _ => (),
     }
     if let Command::InternalClaudeRun {
@@ -480,7 +483,8 @@ async fn run(cli: Cli) -> Result<(), String> {
                 "Historical usage remains unknown. This allowance limits new inference request count and validated STT input duration; it is not a token or financial ceiling. Unknown outcomes consume allowance without refund."
             );
         }
-        Command::Desktop(_)
+        Command::Tailscale(_)
+        | Command::Desktop(_)
         | Command::Autostart(_)
         | Command::Setup(_)
         | Command::Start(_)

@@ -1063,6 +1063,7 @@ pub fn run(command: &Command) -> Result<()> {
             backup_output,
         } => {
             let _lock = lock(prefix, true)?;
+            setup::tailscale::check_start(prefix)?;
             let i = installation(prefix)?;
             no_pending(prefix)?;
             let from = current(prefix)?;
@@ -1122,6 +1123,7 @@ pub fn run(command: &Command) -> Result<()> {
         }
         Command::Recover { prefix, choose } => {
             let _lock = lock(prefix, true)?;
+            setup::tailscale::check_start(prefix)?;
             let i = installation(prefix)?;
             let mut p = pending(prefix)?.ok_or("installation_no_pending_activation")?;
             let guard = moosuri_store::backup::MaintenanceGuard::open_for_upgrade(&i.data_dir)
@@ -1233,6 +1235,9 @@ fn remove_exact(path: &Path, digest: &str) -> Result<bool> {
     }
 }
 fn uninstall(prefix: &Path, i: &Installation) -> Result<()> {
+    if prefix.join("tailscale.json").exists() {
+        return Err("tailscale_disconnect_before_low_level_removal".into());
+    }
     let mut kept = 0;
     for (path, digest) in &i.managed {
         if !matches!(

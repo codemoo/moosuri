@@ -8,7 +8,9 @@
 독립 검토·합성 Bot API/모델 통합·계정/전송/철회·기존 대화/스키마/복원·React 검사와
 Mac/Linux lint 및 네 플랫폼 빌드를 통과했다. Linux x64·ARM64 QEMU 실행도 확인했다.
 [v0.1.0-dev.8](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.8)의 네 플랫폼
-서명 패키지와 한 줄 설치로 공개했다. 실제 Telegram 계정/기기 수락은 별도다.
+서명 패키지와 한 줄 설치로 공개했다. 공개 명령의 dev.8 다운로드·한국어 설치·임시
+암호 강제 변경·웹 로그인·Telegram 설정 직접 접근·정상 종료·데이터 보존 제거를
+격리된 Mac ARM64에서 확인했다. 실제 Telegram 계정/기기 수락은 별도다.
 개인 텍스트를 지원하며 파일·음성과 메일 최종 발송 승인은 웹에서 처리한다.
 [검증 기록](reviews/2026-11-17-telegram.md).
 

@@ -63,4 +63,13 @@ the embedded web runtime and Rust standard library. Where objc2-family crates
 publish license terms by link, the exact VCS-revision declaration, declared authors
 and corresponding standard terms are preserved as supplemental evidence; this is
 not legal clearance. Package text and newly published source/history were scanned
-for secrets. Public-bootstrap acceptance is recorded after publication.
+for secrets. All four uploaded GitHub archive sizes/SHA256 digests match their
+committed bootstrap pins (seven release assets total).
+
+The public `main/install.sh` command then downloaded and installed exactly dev.3
+in a separate synthetic macOS home. Korean arrow/number input, a TTY-only generated
+password, forced change before administration, embedded app/readiness, launcher,
+foreground shutdown and interactive data-preserving uninstall all passed. Real
+service managers were unavailable fixtures for this public-download check; the
+separate actual launchd acceptance above covers service control. Release artifacts
+remain immutable and the acceptance documentation does not move their source tag.

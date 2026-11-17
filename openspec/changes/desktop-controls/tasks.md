@@ -7,4 +7,4 @@
 - [x] Verify readiness/error states, autostart independence, menu lifetime, removal and ownership boundaries.
 - [x] Complete independent review and macOS/Linux build/runtime checks with actual-platform limits recorded.
 - [x] Publish updated signed installer packages, instructions and acceptance; keep CI disabled.
-- [ ] Verify the published one-line command through isolated installation, login and data-preserving removal.
+- [x] Verify the published one-line command through isolated installation, login and data-preserving removal.

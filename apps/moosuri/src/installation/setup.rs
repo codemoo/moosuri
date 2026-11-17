@@ -665,7 +665,7 @@ fn browser(url: &str) -> Result<()> {
         }
     }
     println!("{}", url);
-    Ok(())
+    Err("setup_browser_unavailable_open_printed_url".into())
 }
 // Some desktop openers stay attached to the viewer; the menu must not wait for it.
 fn dispatch_browser(command: &mut Process) -> bool {

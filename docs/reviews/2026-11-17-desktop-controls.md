@@ -21,7 +21,9 @@ status-only output could incorrectly make launchd unavailable. All were fixed;
 the second frozen review found no remaining material findings in that delta.
 Regression contracts cover deadline/pipe behavior, large status output and browser
 dispatch. The final later change only reuses/decodes the existing product artwork,
-with a targeted decode check and refreshed platform builds.
+with a targeted decode check and refreshed platform builds. Browser dispatch also
+returns a fixed failure when no opener is available, so the menu can expose that
+problem instead of silently printing a URL to its discarded output.
 
 ## Evidence and limits
 

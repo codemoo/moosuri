@@ -24,6 +24,7 @@ mod schedules;
 mod source_connections;
 mod store_retry;
 pub mod subscriptions;
+mod telegram;
 mod web;
 mod web_tools;
 
@@ -254,6 +255,10 @@ impl Runtime {
             changes,
             delivery: Arc::new(tokio::sync::RwLock::new(())),
         };
+        let telegram_origin = redirect_uri
+            .as_deref()
+            .and_then(|s| url::Url::parse(s).ok())
+            .map(|u| u.origin().ascii_serialization());
         let mail = mail::MailService::new(store.clone(), oauth, signals.clone())
             .with_managed_google(redirect_uri)
             .with_pdf_extractor(pdf_extractor);
@@ -271,6 +276,7 @@ impl Runtime {
             mail.clone(),
             web,
             subscriptions.clone(),
+            telegram_origin,
         ));
         Self {
             control: Arc::new(Control {
@@ -383,6 +389,7 @@ async fn settle_retired(retired: &mut Vec<RunLease>, store: &Store, signals: &Si
     }
     *retired = unresolved;
 }
+#[allow(clippy::too_many_arguments)]
 async fn supervise(
     store: Store,
     signals: Signals,
@@ -391,6 +398,7 @@ async fn supervise(
     mail: mail::MailService,
     web: web::Service,
     subscriptions: subscriptions::SubscriptionService,
+    telegram_origin: Option<String>,
 ) {
     let claude_service = subscriptions.clone();
     let claude_worker =
@@ -399,6 +407,11 @@ async fn supervise(
         tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
     let mut schedule_worker = tokio::spawn(schedules::worker(store.clone(), signals.clone()));
     let mut push_worker = tokio::spawn(push::worker(store.clone(), signals.clone()));
+    let mut telegram_worker = tokio::spawn(telegram::worker(
+        store.clone(),
+        signals.clone(),
+        telegram_origin.clone(),
+    ));
     let mut mail_worker = tokio::spawn(mail.clone().worker(signals.stop.clone()));
     let mut reply_watch_worker =
         tokio::spawn(mail.clone().reply_watch_worker(signals.stop.clone()));
@@ -441,6 +454,14 @@ async fn supervise(
             let _ = (&mut reply_watch_worker).await;
             reply_watch_worker =
                 tokio::spawn(mail.clone().reply_watch_worker(signals.stop.clone()));
+        }
+        if telegram_worker.is_finished() {
+            let _ = (&mut telegram_worker).await;
+            telegram_worker = tokio::spawn(telegram::worker(
+                store.clone(),
+                signals.clone(),
+                telegram_origin.clone(),
+            ));
         }
         if push_worker.is_finished() {
             let _ = (&mut push_worker).await;
@@ -540,6 +561,13 @@ async fn supervise(
     {
         extraction_worker.abort();
         let _ = extraction_worker.await;
+    }
+    if tokio::time::timeout(MAIL_DRAIN, &mut telegram_worker)
+        .await
+        .is_err()
+    {
+        telegram_worker.abort();
+        let _ = telegram_worker.await;
     }
     if tokio::time::timeout(MAIL_DRAIN, &mut push_worker)
         .await

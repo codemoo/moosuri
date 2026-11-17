@@ -119,6 +119,18 @@ WSL2가 없으면 위 Microsoft 설치 명령으로 먼저 준비하고 Ubuntu �
 설치하세요. 데이터는 Linux 홈 안에 저장합니다. Windows 부팅 자동 실행이나
 WSL 종료 후 계속 실행하는 기능을 보장하지 않습니다.
 
+## Telegram / 텔레그램
+
+Use the same assistant from Telegram private chats after installation. In the web
+administrator page, open **Telegram bot**, register a BotFather token, then let
+each member open their own **My Telegram** pairing link. Long polling needs no
+public webhook or domain; the server needs an outbound internet connection.
+See the [connection guide](telegram.md) for commands, optional notifications and
+current text-only scope. Mail sends still use the web final-preview approval.
+
+관리자에서 봇을 한 번 등록하고 각 사용자가 **내 Telegram**에서 자기 계정을 연결합니다.
+PWA와 같은 기억·도구·대화를 사용하며, 사진·음성·파일과 발송 승인은 웹에서 처리합니다.
+
 ## Desktop menu / 데스크톱 메뉴
 
 On a desktop, setup offers a [small menu app](desktop-menu.md) for server status,

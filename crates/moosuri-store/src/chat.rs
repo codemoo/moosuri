@@ -958,7 +958,7 @@ pub(super) fn submit_turn_artifact_in(
     )
 }
 #[allow(clippy::too_many_arguments)]
-fn submit_turn_context_in(
+pub(super) fn submit_turn_context_in(
     tx: &Connection,
     provider_key: &[u8; 32],
     web_profile: &moosuri_core::WebToolProfile,
@@ -1277,14 +1277,24 @@ fn cancel_run_inner(
     let tx = db
         .conn
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let run = load_run(&tx, &user.tenant.0, &run_id)?;
+    let result = cancel_run_in(&tx, &user, &run_id, expected_attempt)?;
+    tx.commit()?;
+    Ok(result)
+}
+pub(super) fn cancel_run_in(
+    conn: &Connection,
+    user: &UserContext,
+    run_id: &str,
+    expected_attempt: i32,
+) -> Result<ChatTurn> {
+    let run = load_run(conn, &user.tenant.0, run_id)?;
     if run.attempt != expected_attempt || !run.state.active() {
         return Err(StoreError::Conflict);
     }
-    crate::calendar::agent::cancel(&tx, &run)?;
-    let native_unknown = crate::native_task_mail::cancel(&tx, &run)?;
+    crate::calendar::agent::cancel(conn, &run)?;
+    let native_unknown = crate::native_task_mail::cancel(conn, &run)?;
     transition(
-        &tx,
+        conn,
         &run,
         if native_unknown {
             RunState::OutcomeUnknown
@@ -1293,10 +1303,10 @@ fn cancel_run_inner(
         },
         None,
     )?;
-    let result = turn(&tx, &load_run(&tx, &run.tenant, &run.id)?)?;
-    tx.commit()?;
+    let result = turn(conn, &load_run(conn, &run.tenant, &run.id)?)?;
     Ok(result)
 }
+
 fn retry_run_inner(
     db: &mut Database,
     user: UserContext,
@@ -1331,6 +1341,7 @@ fn retry_run_inner(
     agent_execution::reset_attempt(&tx, &run.tenant, &run.id)?;
     tx.execute("UPDATE chat_runs SET attempt=attempt+1,state='queued',version=version+1,error=NULL,session_digest=?1,auth_epoch=?2,admitted_order=?3 WHERE tenant_id=?4 AND id=?5",params![user.digest.as_slice(),user.epoch,order,run.tenant,run.id])?;
     let current = load_run(&tx, &run.tenant, &run.id)?;
+    crate::telegram::track_retry(&tx, &current)?;
     crate::run_timings::admit(&tx, &current.tenant, &current.id, current.attempt)?;
     let result = turn(&tx, &current)?;
     emit(

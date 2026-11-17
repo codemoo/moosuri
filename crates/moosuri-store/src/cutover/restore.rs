@@ -480,6 +480,7 @@ fn quarantine(
         [],
     )?;
     crate::push::quarantine_for_restore(&tx)?;
+    crate::telegram::quarantine(&tx)?;
     tx.execute_batch("DELETE FROM vault_handoffs; DELETE FROM vault_grants;")?;
     crate::credential_broker::quarantine(&tx)?;
     crate::credential_chat::quarantine(&tx)?;

@@ -746,6 +746,7 @@ impl ExportInput<'_> {
             }
         }
         crate::push::strip_for_export(&destination)?;
+        crate::telegram::quarantine(&destination)?;
         if destination.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))? != "ok"
             || destination
                 .prepare("PRAGMA foreign_key_check")?

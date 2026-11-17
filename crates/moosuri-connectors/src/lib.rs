@@ -12,6 +12,7 @@ pub mod web;
 pub mod browser;
 
 pub mod push;
+pub mod telegram;
 
 pub mod chatgpt_oauth;
 

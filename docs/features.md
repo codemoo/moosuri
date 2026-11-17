@@ -100,6 +100,7 @@
 | F68 | 제안/할 수 있는 일의 Git 스킬 · 기본 | R27, 기존 work-cards/agent UI | React cards/catalog · P4/P7 | local ranking·ready/install/connect/unsupported·숨김/mute·설치만으로 외부 실행0·기존 채팅 중심 흐름 |
 | F69 | 볼트 연결·credential 자동 재사용 · v1 선택 설치 | R28, credential-use | trusted-device broker/typed adapter · P0/P6/P8 | 개인 binding 자동 선택·범위/목적지/수신인 검사·model secret0·잠금 대기/재개·기기 local grant·online dispatch commitment/revoke 순서·same effect 복구 |
 | F70 | 공식·커스텀 데이터 연결과 추적 · 기본 | R29, 기존 source_protocol/source_adapters의 공통 계약 | core/store/source connectors/React · P3/P6 | connection/scope/epoch·원문/version/batch/run provenance, ingest 전용 token·revoke, heartbeat/commit/coverage 구분, official≠ready, custom 보고≠provider 증명, DATA01~DATA03/DATA06~DATA08 |
+| F71 | Telegram 개인 비서 채널 · 선택 | R30, Telegram Bot API | connectors/store/agent/React · P6/P7 | 관리자 봇·일회용 계정 연결, 개인 텍스트·기존 harness·선택 알림, offset/dispatch 영수증·철회·복원, 메일 최종 승인 유지 |
 
 ## 사용자 경험에서 제외하지 않을 세부 조건
 

@@ -201,28 +201,15 @@ impl Store {
         input: RunInstructionRequest,
     ) -> Result<RunInstructionReceipt> {
         let user = user.clone();
-        self.call(move|db| {
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let user=validate(&tx,&user,true,false)?;
-            Uuid::parse_str(&input.request_id).map_err(|_|StoreError::InvalidInput)?;
-            if input.text.trim().is_empty() || input.text.len()>2000 {return Err(StoreError::InvalidInput)}
-            let run=chat::load_run(&tx,&user.tenant.0,&id)?;
-            if run.account!=user.account.id {return Err(StoreError::NotFound)}
-            let durable:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM missions WHERE tenant_id=?1 AND run_id=?2 AND account_id=?3 AND mode='durable')",params![run.tenant,run.id,run.account],|row|row.get(0))?;
-            if run.epoch!=user.epoch || (!durable && run.session!=user.digest) {return Err(StoreError::Unauthorized)}
-            if let Some(old)=receipts(&tx,&run)?.into_iter().find(|r|r.request_id==input.request_id) {
-                if old.attempt!=input.expected_attempt || old.text!=input.text {return Err(StoreError::Conflict)}
-                return Ok(old);
-            }
-            if run.attempt!=input.expected_attempt || !supports(&tx,&run)? {return Err(StoreError::Conflict)}
-            chat::execution_authority(&tx,&run)?;
-            crate::agent_execution::guard_execution(&tx,&run)?;
-            let sequence:i64=tx.query_row("SELECT count(*)+1 FROM run_instructions WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0))?;
-            tx.execute("INSERT INTO run_instructions(tenant_id,run_id,request_id,attempt,execution_attempt,sequence,text,state,session_digest,auth_epoch) VALUES(?1,?2,?3,?4,?4,?5,?6,'received',?7,?8)",params![run.tenant,run.id,input.request_id,run.attempt,sequence,input.text,user.digest.as_slice(),user.epoch])?;
-            publish(&tx,&run)?;
-            let receipt=receipts(&tx,&run)?.pop().ok_or(StoreError::Corrupt)?;
-            tx.commit()?;Ok(receipt)
-        }).await
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let receipt = submit_in(&tx, &user, &id, input)?;
+            tx.commit()?;
+            Ok(receipt)
+        })
+        .await
     }
     pub async fn run_instruction(
         &self,
@@ -387,3 +374,48 @@ mod tests {
 
 #[cfg(test)]
 mod handoff_tests;
+
+/// Shared transaction boundary for web and paired messaging transports.
+pub(crate) fn submit_in(
+    c: &Connection,
+    user: &UserContext,
+    id: &str,
+    input: RunInstructionRequest,
+) -> Result<RunInstructionReceipt> {
+    let user = validate(c, user, true, false)?;
+    Uuid::parse_str(&input.request_id).map_err(|_| StoreError::InvalidInput)?;
+    if input.text.trim().is_empty() || input.text.len() > 2000 {
+        return Err(StoreError::InvalidInput);
+    }
+    let run = chat::load_run(c, &user.tenant.0, id)?;
+    if run.account != user.account.id {
+        return Err(StoreError::NotFound);
+    }
+    let durable:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM missions WHERE tenant_id=?1 AND run_id=?2 AND account_id=?3 AND mode='durable')",params![run.tenant,run.id,run.account],|row|row.get(0))?;
+    if run.epoch != user.epoch || (!durable && run.session != user.digest) {
+        return Err(StoreError::Unauthorized);
+    }
+    if let Some(old) = receipts(c, &run)?
+        .into_iter()
+        .find(|r| r.request_id == input.request_id)
+    {
+        if old.attempt != input.expected_attempt || old.text != input.text {
+            return Err(StoreError::Conflict);
+        }
+        return Ok(old);
+    }
+    if run.attempt != input.expected_attempt || !supports(c, &run)? {
+        return Err(StoreError::Conflict);
+    }
+    chat::execution_authority(c, &run)?;
+    crate::agent_execution::guard_execution(c, &run)?;
+    let sequence: i64 = c.query_row(
+        "SELECT count(*)+1 FROM run_instructions WHERE tenant_id=?1 AND run_id=?2",
+        params![run.tenant, run.id],
+        |r| r.get(0),
+    )?;
+    c.execute("INSERT INTO run_instructions(tenant_id,run_id,request_id,attempt,execution_attempt,sequence,text,state,session_digest,auth_epoch) VALUES(?1,?2,?3,?4,?4,?5,?6,'received',?7,?8)",params![run.tenant,run.id,input.request_id,run.attempt,sequence,input.text,user.digest.as_slice(),user.epoch])?;
+    publish(c, &run)?;
+    let receipt = receipts(c, &run)?.pop().ok_or(StoreError::Corrupt)?;
+    Ok(receipt)
+}

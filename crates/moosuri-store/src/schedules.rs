@@ -289,7 +289,7 @@ fn claim(conn: &Connection, now: i64) -> Result<Option<ReminderLease>> {
 fn quiet_settings(conn: &Connection, tenant: &str, account: &str) -> Result<QuietHours> {
     Ok(conn.query_row("SELECT revision,enabled,timezone,start_minute,end_minute FROM notification_settings WHERE tenant_id=?1 AND account_id=?2",params![tenant,account],|r|Ok(QuietHours{revision:r.get(0)?,enabled:r.get(1)?,timezone:r.get(2)?,start_minute:r.get(3)?,end_minute:r.get(4)?})).optional()?.unwrap_or(QuietHours{revision:0,enabled:false,timezone:"UTC".into(),start_minute:1320,end_minute:420}))
 }
-fn notification(
+pub(crate) fn notification(
     conn: &Connection,
     tenant: &str,
     account: &str,

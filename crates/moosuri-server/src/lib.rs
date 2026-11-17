@@ -23,6 +23,7 @@ mod share_origin;
 mod source_connections;
 mod subscriptions;
 mod task_monitors;
+mod telegram;
 pub mod vault;
 use axum::{
     Json, Router,
@@ -380,6 +381,7 @@ pub fn router_with_runtime(
     };
     Router::new()
         .merge(credential_broker::routes())
+        .merge(telegram::routes())
         .route("/api/v1/settings/chatgpt", get(subscriptions::list))
         .route(
             "/api/v1/settings/chatgpt/handoffs",

@@ -94,7 +94,7 @@ fn counter(conn: &Connection) -> Result<i64> {
 fn eligible(conn: &Connection, binding: &str, time: i64) -> Result<bool> {
     Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM push_subscriptions p JOIN accounts a ON a.tenant_id=p.tenant_id AND a.id=p.account_id JOIN sessions s ON s.digest=p.session_digest AND s.tenant_id=p.tenant_id AND s.account_id=p.account_id WHERE p.binding_id=?1 AND p.state='active' AND p.credentials IS NOT NULL AND a.auth_epoch=p.auth_epoch AND s.auth_epoch=a.auth_epoch AND s.expires_at>?2 AND s.password_change_only=0 AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?2))",params![binding,time],|r|r.get(0))?)
 }
-fn quiet(conn: &Connection, tenant: &str, account: &str, time: i64) -> Result<bool> {
+pub(crate) fn quiet(conn: &Connection, tenant: &str, account: &str, time: i64) -> Result<bool> {
     let row:Option<(bool,String,u16,u16)>=conn.query_row("SELECT enabled,timezone,start_minute,end_minute FROM notification_settings WHERE tenant_id=?1 AND account_id=?2",params![tenant,account],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
     let Some((true, zone, start, end)) = row else {
         return Ok(false);

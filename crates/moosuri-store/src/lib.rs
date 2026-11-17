@@ -5,6 +5,7 @@ pub mod push;
 pub mod recovery_budget;
 mod run_instructions;
 mod run_timings;
+pub mod telegram;
 pub use run_timings::{TimingMark, timing_mark};
 
 mod connection_waits;
@@ -226,6 +227,8 @@ struct Database {
     knowledge_journal: knowledge_journal::Journal,
     destructive_journal: destructive_intents::Journal,
     web_profile: moosuri_core::WebToolProfile,
+    #[cfg(feature = "test-fixtures")]
+    telegram_fixture: Option<String>,
 }
 #[derive(Clone)]
 struct LoginAccount {
@@ -435,6 +438,7 @@ impl Store {
         media::quarantine(&conn)?;
         schedules::restart(&conn)?;
         push::restart(&conn)?;
+        telegram::restart(&conn)?;
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;
         browser::restart(&conn)?;
@@ -455,6 +459,8 @@ impl Store {
             knowledge_journal,
             destructive_journal,
             web_profile,
+            #[cfg(feature = "test-fixtures")]
+            telegram_fixture: None,
         };
         database.replay_journal()?;
         knowledge::replay(&mut database)?;

@@ -9,7 +9,7 @@ license.workspace = true
 [features]
 default = []
 credential-broker-chat = []
-test-fixtures = []
+test-fixtures = ["moosuri-connectors/test-fixtures"]
 
 [dependencies]
 moosuri-credential-broker = { path = "../moosuri-credential-broker" }

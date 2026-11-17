@@ -35,6 +35,7 @@ import { ApiFailure, errorText, isAborted, RequestScope } from "./api";
 import { ScopeRegistry, useScope } from "./account-scope";
 import { ChatPanel, type ChatMemory } from "./ChatPanel";
 import { PwaInstallButton } from "./PwaInstallButton";
+const TelegramSettings = lazy(() => import("./TelegramSettings").then(module => ({default: module.TelegramSettings})));
 const NativeCredentials = lazy(() => import("./NativeCredentials").then(module => ({default: module.NativeCredentials})));
 const MailConnections = lazy(() => import("./MailConnections").then(module => ({default: module.MailConnections})));
 const GoogleSetup = lazy(() => import("./GoogleSetup").then(module => ({default: module.GoogleSetup})));
@@ -795,7 +796,9 @@ function Workspace({
   }, [navigationFocus]);
   const deleteOpener = useRef<HTMLButtonElement | null>(null);
   const admin =
-    path === "/admin" || path === "/admin/providers" || path === "/admin/usage" || path === "/admin/google";
+    path === "/admin" || path === "/admin/providers" || path === "/admin/usage" || path === "/admin/google" || path === "/admin/telegram";
+  const telegramAdmin = path === "/admin/telegram";
+  const personalTelegram = path === "/settings/telegram";
   const googleAdmin = path === "/admin/google";
   const adminUsage = path === "/admin/usage";
   const personalUsage = path === "/settings/usage";
@@ -813,7 +816,7 @@ function Workspace({
   const missionsPage = path === "/app/missions";
   const schedulesPage = path === "/app/schedules";
   const chatPage = ![admin, personalUsage, knowledgeOpen, personalModel, calendarPage,
-    nativeCredentials, personalMail, personalSources, communitySkills, artifactPage,
+    nativeCredentials, personalMail, personalSources, personalTelegram, communitySkills, artifactPage,
     missionsPage, schedulesPage].some(Boolean);
   const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
@@ -1132,6 +1135,7 @@ function Workspace({
         <button className={`nav-link ${schedulesPage ? "chosen" : ""}`} aria-current={schedulesPage?"page":undefined} onClick={()=>{navigate("/app/schedules");setDrawer(false)}}>예약 · 소식<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${calendarPage?"chosen":""}`} aria-current={calendarPage ? "page" : undefined} onClick={()=>{navigate("/settings/calendar");setDrawer(false)}}>내 Calendar<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${nativeCredentials ? "chosen":""}`} aria-current={nativeCredentials ? "page" : undefined} onClick={()=>{navigate("/settings/credentials");setDrawer(false)}}>신뢰 기기 credential · 실험<span aria-hidden="true">↗</span></button>
+        <button className={`nav-link ${personalTelegram ? "chosen" : ""}`} aria-current={personalTelegram ? "page" : undefined} onClick={()=>{navigate("/settings/telegram");setDrawer(false)}}>내 Telegram<span aria-hidden="true">↗</span></button>
         <button className={`nav-link ${personalMail ? "chosen" : ""}`} aria-current={personalMail ? "page" : undefined} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
         <button
           className={`nav-link ${personalUsage ? "chosen" : ""}`} aria-current={personalUsage ? "page" : undefined}
@@ -1204,12 +1208,14 @@ function Workspace({
                     : "YOUR SPACE"}
             </span>
             <h1 id="workspace-heading" ref={pageHeading} tabIndex={-1}>
-              {personalMail ? "내 Gmail" : nativeCredentials ? "신뢰 기기 연결" : calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : schedulesPage ? "예약 · 소식" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
+              {personalTelegram ? "내 Telegram" : personalMail ? "내 Gmail" : nativeCredentials ? "신뢰 기기 연결" : calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : schedulesPage ? "예약 · 소식" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
                   ? "기억"
                   : "자료"
                 : admin
-                  ? googleAdmin
+                  ? telegramAdmin
+                    ? "Telegram 봇 설정"
+                    : googleAdmin
                     ? "Google 연결 설정"
                     : adminUsage
                     ? "계정별 사용량"
@@ -1246,7 +1252,7 @@ function Workspace({
         {admin && allowedAdmin && (
           <nav className="settings-tabs" aria-label="설치 관리">
             <button
-              aria-current={!providerAdmin && !adminUsage && !googleAdmin ? "page" : undefined}
+              aria-current={!providerAdmin && !adminUsage && !googleAdmin && !telegramAdmin ? "page" : undefined}
               onClick={() => navigate("/admin")}
             >
               사용자
@@ -1266,12 +1272,13 @@ function Workspace({
             <button aria-current={googleAdmin ? "page" : undefined} onClick={() => navigate("/admin/google")}>
               Google 연결
             </button>
+            <button aria-current={telegramAdmin ? "page" : undefined} onClick={() => navigate("/admin/telegram")}>Telegram 봇</button>
           </nav>
         )}
         <DeferredPage key={path} back={() => navigate("/app")}>
         {missionsPage ? <Missions accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} instructionDrafts={chatMemory.missionInstructions} onInstruction={(id,change)=>setChatMemory(current=>({...current,missionInstructions:{...current.missionInstructions,[id]:change(current.missionInstructions?.[id]??emptyInstructions())}}))}/> : schedulesPage ? <Schedules accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} openMission={id=>navigate(`/app/missions#mission-${id}`)} openArtifact={id=>navigate(`/app/artifacts/${id}`)}/> : artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
-        ) : calendarPage ? <Calendar accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} setup={allowedAdmin?()=>navigate("/admin/google"):undefined}/> : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
+        ) : personalTelegram ? <TelegramSettings accountId={session.user.id} onExpired={onExpired}/> : calendarPage ? <Calendar accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} setup={allowedAdmin?()=>navigate("/admin/google"):undefined}/> : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
           setSelected(null);
           setChatMemory(current => ({
             ...current,
@@ -1300,7 +1307,9 @@ function Workspace({
           />
         ) : admin ? (
           allowedAdmin ? (
-            googleAdmin ? (
+            telegramAdmin ? (
+              <TelegramSettings accountId={session.user.id} admin onExpired={onExpired} />
+            ) : googleAdmin ? (
               <GoogleSetup accountId={session.user.id} onExpired={onExpired} />
             ) : adminUsage ? (
               <UsageView

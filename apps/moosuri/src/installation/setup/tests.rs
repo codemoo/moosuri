@@ -22,8 +22,9 @@ fn local_service_arguments_never_expose_listener_or_trust_forwarded_headers() {
         autostart: true,
         desktop_files: Vec::new(),
         tailscale_requested: false,
+        public_requested: None,
     };
-    let args = server_args(&i, &s);
+    let args = server_args(Path::new("/private/synthetic-runtime"), &i, &s);
     assert!(args.windows(2).any(|w| w == ["--bind", "127.0.0.1:3411"]));
     assert!(args.contains(&"--dev".into()));
     assert!(!args.contains(&"--trusted-proxy".into()));
@@ -43,6 +44,7 @@ fn setup_state_rejects_external_navigation_and_unsafe_ports() {
         autostart: true,
         desktop_files: Vec::new(),
         tailscale_requested: false,
+        public_requested: None,
     };
     save(t.path(), &s).unwrap();
     assert!(load(t.path()).is_ok());

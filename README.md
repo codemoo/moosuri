@@ -75,6 +75,7 @@ Docker or database server is needed. Linux/WSL2 requires glibc 2.34+.
 
 - [Guided installation / 한국어·영어 설치](docs/install.md): administrator, optional API/local model setup, user-service lifecycle and troubleshooting. Signed Mac/Linux x64/ARM64 packages are available in the [installer preview](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.6); actual platform acceptance is recorded in the release notes.
 
+- [Public self-hosted access](docs/public-access.md): verify your registered domain, native automatic HTTPS and existing-proxy support.
 - [Tailscale connection](docs/tailscale.md): private HTTPS setup, status and disconnect for an existing installation; WSL Windows-host guidance.
 - [Desktop menu](docs/desktop-menu.md): server status, start-and-open, restart/stop, independent login-autostart and chat/admin links; account/model management stays on the web.
 - [Development quickstart](docs/development.md): build, init, shared API/local model settings and run the embedded web app. LLM configuration can be skipped while setting up accounts.

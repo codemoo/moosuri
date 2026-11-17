@@ -28,6 +28,8 @@ pub enum Network {
     Local,
     Https,
     Tailscale,
+    /// Native public HTTPS with automatic ACME renewal.
+    Public,
 }
 #[derive(Subcommand)]
 pub enum Command {
@@ -824,9 +826,13 @@ fn templates(prefix: &Path, i: &Installation) -> Result<BTreeMap<String, String>
     let prefix = prefix.to_str().ok_or("installation_utf8_path_required")?;
     let manager = manager.to_str().ok_or("installation_utf8_path_required")?;
     let proxy_arguments = match i.network {
-        Network::Local => " --dev",
-        Network::Https => " --trusted-proxy 127.0.0.1",
-        Network::Tailscale => "",
+        Network::Local => " --dev".to_owned(),
+        Network::Https => " --trusted-proxy 127.0.0.1".to_owned(),
+        Network::Tailscale => String::new(),
+        Network::Public => format!(
+            " --public-https-config {}",
+            unit(&format!("{prefix}/public-access.json"))
+        ),
     };
     let bind_arguments = if matches!(i.network, Network::Local) {
         let port = url::Url::parse(&i.origin)
@@ -1064,6 +1070,7 @@ pub fn run(command: &Command) -> Result<()> {
         } => {
             let _lock = lock(prefix, true)?;
             setup::tailscale::check_start(prefix)?;
+            setup::public_access::check_start(prefix)?;
             let i = installation(prefix)?;
             no_pending(prefix)?;
             let from = current(prefix)?;
@@ -1124,6 +1131,7 @@ pub fn run(command: &Command) -> Result<()> {
         Command::Recover { prefix, choose } => {
             let _lock = lock(prefix, true)?;
             setup::tailscale::check_start(prefix)?;
+            setup::public_access::check_start(prefix)?;
             let i = installation(prefix)?;
             let mut p = pending(prefix)?.ok_or("installation_no_pending_activation")?;
             let guard = moosuri_store::backup::MaintenanceGuard::open_for_upgrade(&i.data_dir)
@@ -1235,6 +1243,9 @@ fn remove_exact(path: &Path, digest: &str) -> Result<bool> {
     }
 }
 fn uninstall(prefix: &Path, i: &Installation) -> Result<()> {
+    if prefix.join("public-access.json").exists() {
+        return Err("public_disconnect_before_low_level_removal".into());
+    }
     if prefix.join("tailscale.json").exists() {
         return Err("tailscale_disconnect_before_low_level_removal".into());
     }

@@ -534,7 +534,7 @@ fn validate_addresses(addresses: &[SocketAddr], local_test: bool) -> Result<(), 
     }
 }
 
-pub(crate) fn public_address(ip: IpAddr) -> bool {
+pub fn public_address(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             let [a, b, c, _] = ip.octets();

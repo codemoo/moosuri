@@ -212,6 +212,9 @@ pub(super) async fn prepare(tty: &mut Terminal, open_browser: bool) -> Result<Pr
     }
 }
 fn admission(p: &Path) -> Result<()> {
+    if p.join("public-access.json").exists() {
+        return Err("tailscale_disconnect_public_access_first".into());
+    }
     if load(p)?.removing {
         return Err("setup_uninstall_pending".into());
     }

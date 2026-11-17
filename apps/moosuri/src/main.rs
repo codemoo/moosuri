@@ -55,6 +55,8 @@ enum Command {
     Autostart(installation::setup::desktop::Autostart),
     /// Connect and inspect private Tailscale HTTPS access.
     Tailscale(installation::setup::tailscale::Options),
+    /// Connect a public domain with optional automatic DNS and renewable HTTPS.
+    Public(installation::setup::public_access::Options),
     /// Start your installed assistant; --foreground runs in this terminal.
     Start(installation::setup::Start),
     /// Stop only the installed assistant's user service.
@@ -137,6 +139,9 @@ enum Command {
     },
     /// Serve the built React app, private chat API and runtime behind an HTTPS proxy.
     Serve {
+        /// Private managed public-HTTPS receipt; ordinary access still requires app login.
+        #[arg(long, conflicts_with_all = ["dev", "trusted_proxy"])]
+        public_https_config: Option<PathBuf>,
         #[arg(long, default_value = "127.0.0.1:3210")]
         bind: SocketAddr,
         /// Exact browser origin (for example https://assistant.example.com).
@@ -343,6 +348,7 @@ async fn run(cli: Cli) -> Result<(), String> {
     use installation::setup;
     match &cli.command {
         Command::Tailscale(options) => return setup::tailscale::run(options).await,
+        Command::Public(options) => return setup::public_access::run(options).await,
         Command::Autostart(options) => return setup::desktop::autostart(options),
         Command::Desktop(_) => unreachable!(),
         Command::Setup(options) => return setup::run(options, cli.data_dir.as_deref()).await,
@@ -483,7 +489,8 @@ async fn run(cli: Cli) -> Result<(), String> {
                 "Historical usage remains unknown. This allowance limits new inference request count and validated STT input duration; it is not a token or financial ceiling. Unknown outcomes consume allowance without refund."
             );
         }
-        Command::Tailscale(_)
+        Command::Public(_)
+        | Command::Tailscale(_)
         | Command::Desktop(_)
         | Command::Autostart(_)
         | Command::Setup(_)
@@ -706,6 +713,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             );
         }
         Command::Serve {
+            public_https_config,
             bind,
             origin,
             dev,
@@ -734,6 +742,10 @@ async fn run(cli: Cli) -> Result<(), String> {
             if !bind.ip().is_loopback() {
                 return Err("loopback_bind_required_use_a_tls_proxy".into());
             }
+            let public_tls = public_https_config
+                .as_deref()
+                .map(|p| installation::setup::public_access::tls::Prepared::load(p, &origin, &data))
+                .transpose()?;
             let mut config = moosuri_server::ServerConfig::new(&origin, dev)
                 .map_err(str::to_owned)?
                 .with_pdf_extractor(
@@ -897,6 +909,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                 env!("CARGO_PKG_VERSION"),
                 listener.local_addr().map_err(|_| "listen_failed")?
             );
+            let public_worker = public_tls.map(|tls| tls.start(app.clone()));
             let (drain, stopping) = tokio::sync::oneshot::channel::<()>();
             let server = axum::serve(
                 listener,
@@ -909,7 +922,19 @@ async fn run(cli: Cli) -> Result<(), String> {
             tokio::pin!(server);
             let result = tokio::select! {
                 result = &mut server => result.map_err(|_| "server_failed"),
+                _ = async {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        if public_worker.as_ref().is_some_and(|w| !w.healthy()) { break; }
+                    }
+                } => {
+                    runtime.stop();
+                    let _ = drain.send(());
+                    runtime.shutdown().await;
+                    Err("public_https_worker_stopped")
+                },
                 _ = shutdown_signal() => {
+                    if let Some(worker) = &public_worker { worker.stop(); }
                     // Stop accepting first, interrupt model work, and bound HTTP
                     // draining even if a peer never finishes its body or reads SSE.
                     runtime.stop();
@@ -921,6 +946,9 @@ async fn run(cli: Cli) -> Result<(), String> {
                     match http { Ok(Err(_)) => Err("server_failed"), _ => Ok(()) }
                 }
             };
+            if let Some(worker) = public_worker {
+                worker.shutdown().await;
+            }
             if let Some(worker) = snapshot_worker {
                 worker.shutdown().await;
             }

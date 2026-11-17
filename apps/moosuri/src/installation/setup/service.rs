@@ -165,7 +165,7 @@ pub(super) fn launcher(prefix: &Path, state: &mut State) -> Result<()> {
     // High-level commands carry their prefix explicitly through a small dispatch.
     let manager = prefix.join("manager");
     let text = format!(
-        "#!/bin/sh\ncase \"${{1-}}\" in\n  setup|start|restart|stop|status|open|uninstall|desktop|autostart|tailscale) command=$1; shift; exec {} \"$command\" --prefix {} \"$@\" ;;\n  *) exec {} \"$@\" ;;\nesac\n",
+        "#!/bin/sh\ncase \"${{1-}}\" in\n  setup|start|restart|stop|status|open|uninstall|desktop|autostart|tailscale|public) command=$1; shift; exec {} \"$command\" --prefix {} \"$@\" ;;\n  *) exec {} \"$@\" ;;\nesac\n",
         shell(&manager.to_string_lossy()),
         shell(&prefix.to_string_lossy()),
         shell(&manager.to_string_lossy())

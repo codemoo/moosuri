@@ -2,6 +2,7 @@
 mod connection;
 pub mod desktop;
 mod diagnostics;
+pub mod public_access;
 mod readiness;
 mod service;
 pub mod tailscale;
@@ -84,6 +85,8 @@ struct State {
     desktop_files: Vec<ManagedFile>,
     #[serde(default)]
     tailscale_requested: bool,
+    #[serde(default)]
+    public_requested: Option<public_access::Request>,
 }
 fn default_autostart() -> bool {
     true
@@ -135,7 +138,7 @@ fn load(prefix: &Path) -> Result<State> {
 fn save(prefix: &Path, state: &State) -> Result<()> {
     atomic(&prefix.join("setup.json"), &json(state)?)
 }
-fn server_args(i: &Installation, s: &State) -> Vec<String> {
+fn server_args(p: &Path, i: &Installation, s: &State) -> Vec<String> {
     let mut a = vec![
         "serve".into(),
         "--bind".into(),
@@ -146,8 +149,14 @@ fn server_args(i: &Installation, s: &State) -> Vec<String> {
     match i.network {
         Network::Local => a.push("--dev".into()),
         Network::Https => a.extend(["--trusted-proxy".into(), "127.0.0.1".into()]),
-        Network::Tailscale => (),
+        Network::Tailscale | Network::Public => (),
     };
+    if matches!(i.network, Network::Public) {
+        a.extend([
+            "--public-https-config".into(),
+            p.join("public-access.json").to_string_lossy().into_owned(),
+        ]);
+    }
     a
 }
 fn validate_port(port: u16) -> Result<()> {
@@ -220,7 +229,10 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
                     "Tailscale · private network",
                     "Tailscale · 내 기기끼리 접속",
                 ),
-                ("My HTTPS domain · advanced", "내 HTTPS 도메인 · 고급 설정"),
+                (
+                    "Public self-hosting · my domain",
+                    "공개 셀프호스팅 · 내 도메인",
+                ),
             ],
             0,
         )?;
@@ -230,9 +242,11 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             tailscale::Prepared::Local
         };
         let tailscale_requested = matches!(tail, tailscale::Prepared::Automatic);
-        if mode == 2 {
-            tty.say("Use an existing HTTPS reverse proxy. DNS, certificates and other services are left under your control.","준비된 HTTPS 리버스 프록시를 사용합니다. DNS·인증서·기존 서비스는 직접 설정합니다.")?;
-        }
+        let public_requested = if mode == 2 {
+            Some(public_access::prepare(tty)?)
+        } else {
+            None
+        };
         let port = loop {
             let value = tty.input("Local port", "내부 포트", "3210")?;
             match value
@@ -249,36 +263,8 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
         };
         let (network, origin) = if let tailscale::Prepared::Manual(origin) = tail {
             (Network::Tailscale, origin)
-        } else if mode <= 1 {
-            (Network::Local, format!("http://127.0.0.1:{port}"))
         } else {
-            let origin = loop {
-                let value = tty.input(
-                    "HTTPS address (e.g. https://assistant.example.com)",
-                    "HTTPS 주소 (예: https://assistant.example.com)",
-                    "",
-                )?;
-                if value.starts_with("https://")
-                    && moosuri_server::ServerConfig::new(&value, false).is_ok()
-                {
-                    break url::Url::parse(&value)
-                        .map_err(error)?
-                        .origin()
-                        .ascii_serialization();
-                }
-                tty.say(
-                    "Enter one HTTPS origin without a path, password or query.",
-                    "경로·비밀번호·쿼리 없는 HTTPS 주소를 입력해주세요.",
-                )?
-            };
-            (
-                if mode == 1 {
-                    Network::Tailscale
-                } else {
-                    Network::Https
-                },
-                origin,
-            )
+            (Network::Local, format!("http://127.0.0.1:{port}"))
         };
         let data = data
             .map(Path::to_path_buf)
@@ -306,6 +292,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             autostart: true,
             desktop_files: Vec::new(),
             tailscale_requested,
+            public_requested,
         };
         super::install(
             bundle,
@@ -379,6 +366,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
                 autostart: true,
                 desktop_files: Vec::new(),
                 tailscale_requested: false,
+                public_requested: None,
             }
         }
     };
@@ -387,7 +375,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     }
     state.language = tty.lang;
     save(&prefix, &state)?;
-    if active {
+    if active && state.public_requested.is_none() {
         Readiness::new(&i, &state)?
             .wait(Duration::from_secs(20))
             .await
@@ -527,7 +515,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
     }
     desktop::offer(&prefix, &mut state, tty)?;
     tty.say("\n5/5 · Open Moosuri", "\n5/5 · 무수리 열기")?;
-    if !state.tailscale_requested {
+    if !state.tailscale_requested && state.public_requested.is_none() {
         tty.line(&format!("{}{}", i.origin, state.next_page))?;
     }
     tty.say("Commands: moosuri open --start · moosuri restart · moosuri stop · moosuri status\nModel, Google and invitation settings are available after sign-in.","명령어: moosuri open --start · moosuri restart · moosuri stop · moosuri status\n로그인한 뒤 모델·Google 연결·사용자 초대를 설정할 수 있습니다.")?;
@@ -545,10 +533,15 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
             ),
             prefix.join("deployment/proxy.nginx.conf").display()
         ))?,
-        Network::Local => (),
+        Network::Local | Network::Public => (),
     };
     drop(runtime);
     drop(control);
+    if state.public_requested.is_some() {
+        public_access::connect(&prefix, state.public_requested.clone(), false, false).await?;
+        i = installation(&prefix)?;
+        state = load(&prefix)?;
+    }
     if state.tailscale_requested {
         tailscale::connect(&prefix, None, false, false).await?;
         i = installation(&prefix)?;
@@ -561,7 +554,7 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
         })
         .await?;
         launch_menu(&prefix, &state, tty)?;
-        if !options.no_browser {
+        if !options.no_browser && public_access::browser_ready(&prefix, &i, &state).await? {
             let _ = browser(&format!("{}{}", i.origin, state.next_page));
         }
     } else if tty.select(
@@ -611,6 +604,7 @@ pub(super) fn check_start_allowed(prefix: &Path) -> Result<()> {
         return Err("setup_uninstall_pending".into());
     }
     tailscale::check_start(prefix)?;
+    public_access::check_start(prefix)?;
     Ok(())
 }
 pub async fn start(options: &Start) -> Result<()> {
@@ -621,8 +615,8 @@ pub async fn start(options: &Start) -> Result<()> {
     no_pending(&p)?;
     if options.foreground {
         return super::run(&Command::Run {
-            prefix: p,
-            args: server_args(&i, &s),
+            prefix: p.clone(),
+            args: server_args(&p, &i, &s),
         });
     }
     let _control = desktop::control_lock(&p)?;
@@ -771,6 +765,9 @@ pub async fn open(options: &Open) -> Result<()> {
         );
         return Err(code);
     }
+    if !public_access::browser_ready(&p, &i, &s).await? {
+        return Err("public_https_not_ready_check_moosuri_public_status".into());
+    }
     browser(&format!("{}{}", i.origin, options.page))
 }
 fn dispatch_open_when_ready(prefix: &Path, page: &str) {
@@ -861,6 +858,7 @@ pub async fn uninstall(location: &Location) -> Result<()> {
         s.removing = true;
         save(&p, &s)?;
         tailscale::detach_for_removal(&p).await?;
+        public_access::detach_for_removal(&p)?;
         desktop::remove(&p, &mut s)?;
         service::remove(&p, &mut s)?;
     }

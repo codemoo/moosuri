@@ -34,7 +34,9 @@ a numbered choice and Enter. Use `--plain` for simple numbered menus and
    `http://127.0.0.1:3210` dashboard. Choose another free port when necessary.
    [Tailscale](tailscale.md) detects the current device and configures private HTTPS
    Serve after account setup. Its app and tailnet HTTPS permission are prerequisites.
-   An existing public HTTPS domain still uses your own reverse proxy.
+   [Public self-hosting](public-access.md) supports native automatic HTTPS or your existing TLS proxy. It verifies your
+   registered domain and this server’s HTTPS route before activation. DNS and external
+   TCP443 reachability are required; DNS alone does not bypass CGNAT.
 2. **Administrator / 관리자:** Enter a name, email and a password of at least
    12 bytes. Email is your sign-in ID; no email is sent. Passwords are hidden.
    Leave it blank to receive a temporary password on the terminal only, then
@@ -187,8 +189,7 @@ The initial trust is the GitHub HTTPS script and its repository publisher. A scr
 and checksum from the same channel are not independent authenticity proofs.
 For independent trust pins or offline install, use the existing
 [signed bundle installer](local-installation.md). No shell hooks from a downloaded
-package, recursive remote paths, public Funnel, DNS or unrelated service changes
-are introduced. No CI was enabled to publish this preview.
+package, recursive remote paths or public Funnel are introduced. Public setup verifies user-configured DNS and never changes its records or unrelated services. No CI was enabled to publish this preview.
 
 ## Troubleshooting / 문제 해결
 

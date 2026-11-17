@@ -488,10 +488,11 @@ fn interrupted_initial_install_retries_without_losing_remote_port() {
         cmd.env("MOOSURI_INSTALLATION_FAULT", point);
         let mut wizard = Pty::spawn(cmd);
         wizard.choose(false, 3);
+        wizard.until("Your domain");
+        wizard.line("assistant.example.test");
+        wizard.choose(false, 2); // Existing proxy; no certificate issuance in this scenario.
         wizard.until("Local port");
         wizard.line(&f.port.to_string());
-        wizard.until("HTTPS address");
-        wizard.line("https://assistant.example.test");
         wizard.finish_expected(false);
         assert!(
             !f.data.exists(),
@@ -939,4 +940,342 @@ fn tailscale_no_browser_and_owned_custom_endpoint_removal_survive_interruption()
     assert_eq!(tail.writes.load(Ordering::Relaxed), after_effect);
     assert!(!f.prefix.join("installation.json").exists());
     assert!(f.data.join("assistant.sqlite").exists());
+}
+
+#[cfg(feature = "test-fixtures")]
+struct PublicFixture {
+    port: u16,
+    ca: PathBuf,
+    key: PathBuf,
+}
+#[cfg(feature = "test-fixtures")]
+impl PublicFixture {
+    fn new(f: &Fixture) -> Self {
+        use sha2::{Digest, Sha256};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let domain = "assistant.example.test";
+        let cert = rcgen::generate_simple_self_signed(vec![domain.into()]).unwrap();
+        let directory = rustls_acme::acme::LETS_ENCRYPT_PRODUCTION_DIRECTORY;
+        let digest = Sha256::digest(serde_json::to_vec(&(vec![domain], directory)).unwrap());
+        let name = format!(
+            "certificate-{}.pem",
+            digest
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+        let hash = Sha256::digest(f.data.as_os_str().as_encoded_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let dir = f
+            .data
+            .parent()
+            .unwrap()
+            .join(format!(".moosuri-https-{hash}"));
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let key = dir.join(name);
+        fs::write(
+            &key,
+            format!("{}{}", cert.key_pair.serialize_pem(), cert.cert.pem()),
+        )
+        .unwrap();
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+        let ca = f.home.join("synthetic-ca.pem");
+        fs::write(&ca, cert.cert.pem()).unwrap();
+        fs::set_permissions(&ca, fs::Permissions::from_mode(0o600)).unwrap();
+        Self { port, ca, key }
+    }
+    fn connect(&self, f: &Fixture) -> Command {
+        let mut c = f.command("public");
+        c.args([
+            "connect",
+            "--domain",
+            "assistant.example.test",
+            "--tls-port",
+            &self.port.to_string(),
+            "--no-browser",
+        ])
+        .env(
+            "MOOSURI_PUBLIC_TEST_ADDRESS",
+            format!("127.0.0.1:{}", self.port),
+        )
+        .env("MOOSURI_PUBLIC_TEST_CA", &self.ca);
+        c
+    }
+}
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn public_registered_domain_verified_before_activation_and_recovers_to_local_access() {
+    let f = Fixture::new();
+    f.fresh(false, false).finish();
+    let tls = PublicFixture::new(&f);
+    let original = fs::read(f.prefix.join("installation.json")).unwrap();
+    let database = fs::read(f.data.join("assistant.sqlite")).unwrap();
+    for fault in ["public_during_templates", "public_after_origin"] {
+        let failed = tls
+            .connect(&f)
+            .env("MOOSURI_INSTALLATION_FAULT", fault)
+            .output()
+            .unwrap();
+        assert!(!failed.status.success(), "{fault}");
+        let denied = f.command("start").arg("--foreground").output().unwrap();
+        assert!(!denied.status.success());
+    }
+    let connected = tls.connect(&f).output().unwrap();
+    assert!(
+        connected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&connected.stderr)
+    );
+    assert_eq!(fs::read(f.data.join("assistant.sqlite")).unwrap(), database);
+    let mut server = f
+        .command("start")
+        .arg("--foreground")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let domain = "assistant.example.test";
+        let addr = format!("127.0.0.1:{}", tls.port).parse().unwrap();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .resolve(domain, addr)
+            .add_root_certificate(
+                reqwest::Certificate::from_pem(&fs::read(&tls.ca).unwrap()).unwrap(),
+            )
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let url = format!("https://{domain}:{}", tls.port);
+        let end = tokio::time::Instant::now() + Duration::from_secs(12);
+        loop {
+            if let Ok(r) = client
+                .get(format!("{url}/health/ready"))
+                .header("host", domain)
+                .send()
+                .await
+                && r.status() == 204
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < end,
+                "managed HTTPS did not start"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let login = client
+            .post(format!("{url}/api/v1/auth/login"))
+            .header("host", domain)
+            .header("origin", format!("https://{domain}"))
+            .header("x-real-ip", "8.8.4.4")
+            .json(&json!({"email":"owner@example.test","password":PASSWORD}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(login.status(), 200);
+        assert!(
+            login.headers()["set-cookie"]
+                .to_str()
+                .unwrap()
+                .contains("Secure")
+        );
+        let denied = client
+            .post(format!("{url}/api/v1/auth/login"))
+            .header("host", domain)
+            .header("origin", "https://another.example.test")
+            .json(&json!({"email":"owner@example.test","password":PASSWORD}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), 403);
+    });
+    assert_eq!(unsafe { libc::kill(server.id() as i32, libc::SIGTERM) }, 0);
+    assert!(server.wait().unwrap().success());
+    let disconnected = f.command("public").arg("disconnect").output().unwrap();
+    assert!(
+        disconnected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&disconnected.stderr)
+    );
+    assert_eq!(
+        fs::read(f.prefix.join("installation.json")).unwrap(),
+        original
+    );
+    assert!(tls.key.exists());
+    let mut local = f
+        .command("start")
+        .arg("--foreground")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    runtime.block_on(async {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let until = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Ok(r) = client
+                .get(format!("http://127.0.0.1:{}/health/ready", f.port))
+                .send()
+                .await
+                && r.status() == 204
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < until,
+                "local runtime cannot reopen"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+    assert_eq!(unsafe { libc::kill(local.id() as i32, libc::SIGTERM) }, 0);
+    assert!(local.wait().unwrap().success());
+}
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn public_wrong_destination_and_foreign_receipt_never_activate_a_domain() {
+    let f = Fixture::new();
+    f.fresh(false, false).finish();
+    let tls = PublicFixture::new(&f);
+    let before = fs::read(f.prefix.join("installation.json")).unwrap();
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let wrong = reservation.local_addr().unwrap();
+    drop(reservation);
+    let failed = tls
+        .connect(&f)
+        .env("MOOSURI_PUBLIC_TEST_ADDRESS", wrong.to_string())
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert_eq!(
+        fs::read(f.prefix.join("installation.json")).unwrap(),
+        before
+    );
+    let receipt = f.prefix.join("public-access.json");
+    let raw = fs::read(&receipt).unwrap();
+    let mut foreign: Value = serde_json::from_slice(&raw).unwrap();
+    foreign["installation_id"] = json!("foreign");
+    fs::write(&receipt, serde_json::to_vec(&foreign).unwrap()).unwrap();
+    assert!(
+        !f.command("public")
+            .arg("disconnect")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(receipt.exists());
+    fs::write(receipt, raw).unwrap();
+    assert!(
+        f.command("public")
+            .arg("disconnect")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(
+        fs::read(f.prefix.join("installation.json")).unwrap(),
+        before
+    );
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn public_existing_proxy_must_route_the_one_use_check_to_this_backend() {
+    use rustls_acme::rustls;
+    let f = Fixture::new();
+    f.fresh(false, false).finish();
+    let cert = rcgen::generate_simple_self_signed(vec!["assistant.example.test".into()]).unwrap();
+    let ca = f.home.join("proxy-ca.pem");
+    fs::write(&ca, cert.cert.pem()).unwrap();
+    fs::set_permissions(&ca, fs::Permissions::from_mode(0o600)).unwrap();
+    let tls = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![cert.cert.der().clone()],
+        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()).into(),
+    )
+    .unwrap();
+    let config = axum_server::tls_rustls::RustlsConfig::from_config(std::sync::Arc::new(tls));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let backend = f.port;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let handle = axum_server::Handle::new();
+    let server_handle = handle.clone();
+    rt.spawn(async move {
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri| async move {
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .build()
+                .unwrap();
+            match client
+                .get(format!("http://127.0.0.1:{backend}{}", uri.path()))
+                .send()
+                .await
+            {
+                Ok(r) => (r.status(), r.text().await.unwrap_or_default()),
+                Err(_) => (reqwest::StatusCode::BAD_GATEWAY, String::new()),
+            }
+        });
+        axum_server::from_tcp_rustls(listener, config)
+            .unwrap()
+            .handle(server_handle)
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+    });
+    let connected = f
+        .command("public")
+        .args([
+            "connect",
+            "--domain",
+            "assistant.example.test",
+            "--proxy",
+            "--no-browser",
+        ])
+        .env("MOOSURI_PUBLIC_TEST_ADDRESS", address.to_string())
+        .env("MOOSURI_PUBLIC_TEST_CA", ca)
+        .output()
+        .unwrap();
+    assert!(
+        connected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&connected.stderr)
+    );
+    let saved: Value =
+        serde_json::from_slice(&fs::read(f.prefix.join("installation.json")).unwrap()).unwrap();
+    assert_eq!(saved["network"], "https");
+    assert_eq!(saved["origin"], "https://assistant.example.test");
+    assert!(
+        f.command("public")
+            .arg("disconnect")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    handle.shutdown();
 }

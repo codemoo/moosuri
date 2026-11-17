@@ -55,8 +55,14 @@ archives carry verified signatures, source inventory, packager-reported provenan
 and notices for 399 selected Rust dependencies plus React and Rust std. Source,
 new history and package text scans passed; opaque executable bytes are outside the
 text scan claim. Package publication verifies all seven uploaded asset sizes and
-SHA-256 digests before advancing the public bootstrap. Public-bootstrap acceptance
-is recorded below after publication.
+SHA-256 digests before advancing the public bootstrap; all seven matched.
+
+The actual public `curl .../main/install.sh | bash` path installed dev.5 in an
+isolated macOS home. Korean arrow/number selection, controlling-terminal-only
+temporary password, mandatory first password change, managed runtime identity,
+embedded chat page, synthetic login, graceful foreground shutdown and interactive
+data-preserving removal passed. The public-path check used service stubs; actual
+launchd controls were verified separately above. CI remains disabled.
 
  Physical ARM/Intel/WSL2, Linux panel/systemd-session
 and actual native menu clicks remain separate acceptance limits. Existing personal

@@ -13,4 +13,4 @@
 - [x] Add start-and-open, serialized restart and recoverable generated WSL shortcut refresh.
 - [x] Preserve conflicting external service files without claiming ownership or trapping setup.
 - [x] Verify native/Linux outcomes and independent boundary review.
-- [ ] Publish updated signed preview and verify the public bootstrap.
+- [x] Publish updated signed preview and verify the public bootstrap.

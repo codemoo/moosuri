@@ -34,6 +34,7 @@ let restrictLogin: boolean,
   deferSend: boolean,
   completeSend: ((value: Response) => void) | null,
   capEnabled: boolean;
+let pendingCapability: Promise<Response> | undefined;
 const turn = (id: string, text: string, state = "completed") => ({
   sequence: 1,
   user_text: text,
@@ -78,6 +79,7 @@ beforeEach(() => {
   deferSend = false;
   completeSend = null;
   capEnabled = true;
+  pendingCapability = undefined;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -157,6 +159,8 @@ beforeEach(() => {
         }
         return Response.json(result);
       }
+      if (path === "/text-preview" && pendingCapability)
+        return pendingCapability;
       if (path === "/text-preview")
         return capEnabled
           ? Response.json({
@@ -618,3 +622,23 @@ it.each(["Original request", "A newer draft"])(
     ).toHaveLength(1);
   },
 );
+
+it("opens a saved conversation while model discovery stalls and keeps it when discovery fails", async () => {
+  let finish!: (r: Response) => void;
+  pendingCapability = new Promise((resolve) => {
+    finish = resolve;
+  });
+  turns = [
+    turn("55555555-5555-4555-8555-555555555555", "Existing conversation"),
+  ];
+  mount();
+  await screen.findByText("Existing conversation");
+  expect(await composer()).toBeDisabled();
+  await act(async () => {
+    finish(Response.json({ code: "unavailable" }, { status: 503 }));
+  });
+  expect(
+    await screen.findByText("모델 연결 상태를 확인할 수 없습니다."),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Existing conversation")).toBeInTheDocument();
+});

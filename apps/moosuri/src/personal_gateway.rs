@@ -1669,6 +1669,16 @@ mod tests {
         }
         let a_headers = authenticated(&sessions[0], &a);
         let b_headers = authenticated(&sessions[1], &b);
+        let absent = request(
+            &g,
+            "/api/v1/text-preview",
+            Method::GET,
+            a_headers.clone(),
+            "",
+        )
+        .await;
+        assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+        assert_eq!(json(absent).await["code"], "not_found");
         check_memory_lifecycle(&g, &a_headers, &b_headers).await;
         let key = Uuid::new_v4().to_string();
         let body = serde_json::json!({"title":"Only A history","request_id":key}).to_string();

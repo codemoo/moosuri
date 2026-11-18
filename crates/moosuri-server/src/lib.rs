@@ -981,6 +981,7 @@ pub fn personal_service_router(
         routes
     };
     routes
+        .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(config, boundary))
 }

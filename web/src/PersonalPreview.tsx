@@ -369,7 +369,7 @@ function Workspace({
     [selected, setSelected] = useState<string | null>(null),
     [memory, setMemory] = useState<ChatMemory>({ drafts: {}, pending: {} }),
     [page, setPage] = useState<ChatPage | null>(null),
-    [cap, setCap] = useState<Capability | null>(null),
+    [cap, setCap] = useState<Capability | null>(),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [reading, setReading] = useState(false),
@@ -441,17 +441,26 @@ function Workspace({
     let live = true;
     setLoading(true);
     setError("");
-    void Promise.all([
-      scope.request<ThreadsResponse>("/threads"),
-      scope.request<Capability>("/text-preview").catch((e) => {
-        if (e instanceof ApiFailure && e.status === 404) return null;
-        throw e;
-      }),
-    ])
-      .then(([result, cap]) => {
+    setCap(undefined);
+    void scope
+      .request<Capability>("/text-preview")
+      .then((capability) => {
+        if (live) setCap(capability);
+      })
+      .catch((e) => {
+        if (!live || isAborted(e)) return;
+        if (e instanceof ApiFailure && e.status === 404) {
+          setCap(null);
+          return;
+        }
+        if (e instanceof ApiFailure && e.status === 401) expired();
+        else setError("모델 연결 상태를 확인할 수 없습니다.");
+      });
+    void scope
+      .request<ThreadsResponse>("/threads")
+      .then((result) => {
         if (!live) return;
         setThreads(result.threads);
-        setCap(cap);
         if (!initialized.current) {
           const restored = recovery?.load(result.threads.map((t) => t.id));
           const created =
@@ -929,7 +938,7 @@ function Workspace({
                 않습니다. 발송·예약은 지원하지 않습니다.
               </p>
               {cap && <span>모델: {cap.model}</span>}
-              {!loading && !ready && (
+              {!loading && cap === null && (
                 <p>이 설치에 텍스트 미리보기가 연결되어 있지 않습니다.</p>
               )}
             </div>

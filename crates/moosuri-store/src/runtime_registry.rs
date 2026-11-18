@@ -84,13 +84,20 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
     }
     let id: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if id != APP_ID || !(1..=2).contains(&version) {
+    if id != APP_ID || !(1..=3).contains(&version) {
         return Err(StoreError::InvalidInput);
     }
     if version == 1 {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!(
             "../../../migrations/installation_registry/0002_administrators.sql"
+        ))?;
+        tx.commit()?;
+    }
+    if version <= 2 {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!(
+            "../../../migrations/installation_registry/0003_web_session_epoch.sql"
         ))?;
         tx.commit()?;
     }
@@ -158,6 +165,28 @@ fn lookup_email(root: &Path, email: String, ready: bool) -> Result<Allocation> {
     )
     .optional()?
     .ok_or(StoreError::NotFound)
+}
+
+/// Public sessions need the same allocation and its uninterrupted routing epoch.
+pub enum SessionDestination {
+    Account(Uuid),
+    Email(String),
+}
+pub fn session_route(root: &Path, destination: SessionDestination) -> Result<(Allocation, i64)> {
+    let (column, value) = match destination {
+        SessionDestination::Account(id) => ("account_id", id.to_string()),
+        SessionDestination::Email(email) => ("email", email_valid(email)?),
+    };
+    let (_lock, db) = open(root, false)?;
+    let sql = format!(
+        "SELECT account_id,tenant_id,volume_id,generation,session_epoch FROM allocations WHERE {column}=?1 AND route_state='ready'"
+    );
+    let (a, epoch) = db
+        .query_row(&sql, [value], |r| Ok((decode(r)?, r.get(4)?)))
+        .optional()?
+        .ok_or(StoreError::NotFound)?;
+    admin::unsuspended(&db, &a)?;
+    Ok((a, epoch))
 }
 
 /// Installation-only identity lookup for preparing an inert socket or mount.

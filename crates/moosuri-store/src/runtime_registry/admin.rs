@@ -317,6 +317,9 @@ pub fn change_member(
     } else {
         tx.execute("UPDATE installation_members SET role=?2,suspended=?3,role_revision=role_revision+1 WHERE account_id=?1",params![m.account_id,role,suspended])?;
     }
+    if suspended && !m.suspended {
+        tx.execute("UPDATE allocations SET session_epoch=session_epoch+1 WHERE account_id=?1 AND generation=?2",params![m.account_id,m.generation])?;
+    }
     let result = member(&tx, &m.account_id)?;
     let raw = serde_json::to_string(&result).map_err(|_| StoreError::Corrupt)?;
     tx.execute(

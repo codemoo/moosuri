@@ -87,6 +87,8 @@ struct Password {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Route {
+    #[serde(default)]
+    epoch: i64,
     account: Uuid,
     tenant: Uuid,
     volume: Uuid,
@@ -666,32 +668,48 @@ fn response(status: StatusCode, body: Vec<u8>) -> Response {
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
-async fn allocation(g: &Gateway, email: String) -> Result<Allocation, StatusCode> {
-    let registry = g.registry.clone();
-    tokio::task::spawn_blocking(move || runtime_registry::lookup_ready(&registry, email))
-        .await
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-        .map_err(|e| {
-            if matches!(e, moosuri_store::StoreError::NotFound) {
-                StatusCode::UNAUTHORIZED
-            } else {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
-        })
+struct SessionAllocation {
+    allocation: Allocation,
+    epoch: i64,
 }
-async fn active(g: &Gateway, route: &Route) -> Result<Allocation, StatusCode> {
-    let registry = g.registry.clone();
-    let id = route.account;
-    let a = tokio::task::spawn_blocking(move || runtime_registry::lookup_id(&registry, id))
-        .await
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-        .map_err(|e| {
-            if matches!(e, moosuri_store::StoreError::NotFound) {
-                StatusCode::UNAUTHORIZED
-            } else {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
-        })?;
+impl std::ops::Deref for SessionAllocation {
+    type Target = Allocation;
+    fn deref(&self) -> &Allocation {
+        &self.allocation
+    }
+}
+async fn resolve(
+    g: &Gateway,
+    destination: runtime_registry::SessionDestination,
+) -> Result<SessionAllocation, StatusCode> {
+    let root = g.registry.clone();
+    let (allocation, epoch) =
+        tokio::task::spawn_blocking(move || runtime_registry::session_route(&root, destination))
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .map_err(route_error)?;
+    Ok(SessionAllocation { allocation, epoch })
+}
+fn route_error(e: moosuri_store::StoreError) -> StatusCode {
+    match e {
+        moosuri_store::StoreError::NotFound | moosuri_store::StoreError::Forbidden => {
+            StatusCode::UNAUTHORIZED
+        }
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+async fn allocation(g: &Gateway, email: String) -> Result<SessionAllocation, StatusCode> {
+    resolve(g, runtime_registry::SessionDestination::Email(email)).await
+}
+async fn active(g: &Gateway, route: &Route) -> Result<SessionAllocation, StatusCode> {
+    let a = resolve(
+        g,
+        runtime_registry::SessionDestination::Account(route.account),
+    )
+    .await?;
+    if a.epoch != route.epoch {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
     if a.tenant_id != route.tenant.to_string()
         || a.volume_id != route.volume.to_string()
         || a.generation != route.generation
@@ -700,8 +718,9 @@ async fn active(g: &Gateway, route: &Route) -> Result<Allocation, StatusCode> {
     }
     Ok(a)
 }
-async fn recheck(g: &Gateway, allocation: &Allocation) -> Result<(), StatusCode> {
+async fn recheck(g: &Gateway, allocation: &SessionAllocation) -> Result<(), StatusCode> {
     let route = Route {
+        epoch: allocation.epoch,
         account: Uuid::parse_str(&allocation.account_id)
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
         tenant: Uuid::parse_str(&allocation.tenant_id)
@@ -718,7 +737,7 @@ async fn authenticated_allocation(
     g: &Gateway,
     headers: &HeaderMap,
     require_account_header: bool,
-) -> Result<(Allocation, String), StatusCode> {
+) -> Result<(SessionAllocation, String), StatusCode> {
     let session = cookie(headers, SESSION, 128)?;
     if !opaque(&session) {
         return Err(StatusCode::UNAUTHORIZED);
@@ -904,13 +923,14 @@ fn check_user(body: &[u8], a: &Allocation) -> Result<(), StatusCode> {
 }
 fn issued(
     g: &Gateway,
-    a: &Allocation,
+    a: &SessionAllocation,
     status: StatusCode,
     body: Vec<u8>,
     set: (String, u64),
 ) -> Result<Response, StatusCode> {
     check_user(&body, a)?;
     let route = Route {
+        epoch: a.epoch,
         account: Uuid::parse_str(&a.account_id).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
         tenant: Uuid::parse_str(&a.tenant_id).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
         volume: Uuid::parse_str(&a.volume_id).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
@@ -1834,6 +1854,7 @@ mod tests {
         let session = "s".repeat(43);
         let route = g
             .sign(&Route {
+                epoch: 0,
                 account: Uuid::parse_str(&a.account_id).unwrap(),
                 tenant: Uuid::parse_str(&a.tenant_id).unwrap(),
                 volume: Uuid::parse_str(&a.volume_id).unwrap(),
@@ -2227,6 +2248,55 @@ mod tests {
                 .status(),
             StatusCode::FORBIDDEN
         );
+        let list = json(request(&g, collection, Method::GET, auth[1].0.clone(), "").await).await;
+        let current = list["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["account_id"] == a.account_id)
+            .unwrap();
+        let suspended = json(
+            request(
+                &g,
+                &change,
+                Method::POST,
+                auth[1].0.clone(),
+                &mutation(current, "suspend"),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(suspended["suspended"], true);
+        let resumed = request(
+            &g,
+            &change,
+            Method::POST,
+            auth[1].0.clone(),
+            &mutation(&suspended, "resume"),
+        )
+        .await;
+        assert_eq!(resumed.status(), StatusCode::OK);
+        assert_eq!(
+            request(
+                &g,
+                "/api/v1/auth/session",
+                Method::GET,
+                auth[0].0.clone(),
+                ""
+            )
+            .await
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let fresh = request(
+            &g,
+            "/api/v1/auth/login",
+            Method::POST,
+            headers(),
+            r#"{"email":"a@example.test","password":"Synthetic-password-42"}"#,
+        )
+        .await;
+        assert_eq!(fresh.status(), StatusCode::OK);
         let logout = request(
             &g,
             "/api/v1/auth/logout",

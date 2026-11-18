@@ -263,13 +263,16 @@ fn binding_matches(a: &runtime_registry::Allocation, b: &Binding) -> bool {
         && a.volume_id == b.volume_id.to_string()
         && a.generation == b.generation
 }
-fn authority(registry: &Path, binding: &Binding) -> Result<(), String> {
-    let a =
-        runtime_registry::lookup_id(registry, binding.account_id).map_err(|_| "account_fenced")?;
-    if !binding_matches(&a, binding) {
-        return Err("account_fenced".into());
+fn epoch(registry: &Path, b: &Binding) -> Result<i64, &'static str> {
+    let (a, epoch) = runtime_registry::session_route(
+        registry,
+        runtime_registry::SessionDestination::Account(b.account_id),
+    )
+    .map_err(|_| "account_fenced")?;
+    if !binding_matches(&a, b) {
+        return Err("account_fenced");
     }
-    Ok(())
+    Ok(epoch)
 }
 impl Broker {
     fn new(options: &Options, stop: CancellationToken) -> Result<Arc<Self>, String> {
@@ -436,6 +439,9 @@ impl Broker {
         {
             return Reply::error("request_invalid");
         }
+        let Ok(start_epoch) = epoch(&self.registry, b) else {
+            return Reply::error("account_fenced");
+        };
         let permit = match self.admit(b, &key, client.is_some()) {
             Ok(Admission::Existing(receipt)) => return Reply::receipt(r.call_id, receipt),
             Ok(Admission::Fresh(p)) => p,
@@ -503,7 +509,7 @@ impl Broker {
             Some(r) => r,
             None => return Reply::error("ledger_unavailable"),
         };
-        if authority(&self.registry, b).is_err() {
+        if epoch(&self.registry, b) != Ok(start_epoch) {
             return Reply::receipt(r.call_id, receipt);
         }
         Reply {

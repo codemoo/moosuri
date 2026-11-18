@@ -29,7 +29,7 @@ fn cipher(g: &Gateway) -> Result<LessSafeKey, StatusCode> {
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(LessSafeKey::new(key))
 }
-fn seal(g: &Gateway, a: &Allocation, state: &str) -> Result<String, StatusCode> {
+fn seal(g: &Gateway, a: &SessionAllocation, state: &str) -> Result<String, StatusCode> {
     let mut nonce = [0u8; 12];
     SystemRandom::new()
         .fill(&mut nonce)
@@ -48,6 +48,7 @@ fn seal(g: &Gateway, a: &Allocation, state: &str) -> Result<String, StatusCode> 
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
     data.extend_from_slice(state.as_bytes());
+    data.extend_from_slice(&a.epoch.to_be_bytes());
     cipher(g)?
         .seal_in_place_append_tag(
             Nonce::assume_unique_for_key(nonce),
@@ -67,7 +68,7 @@ fn open(g: &Gateway, state: &str) -> Result<(Route, String), StatusCode> {
         .decode(state)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     // 3 UUIDs, generation, expiry, 64 lowercase hex state bytes, AEAD overhead.
-    if frame.len() != 12 + 128 + 16 {
+    if ![12 + 128 + 16, 12 + 136 + 16].contains(&frame.len()) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let (nonce, data) = frame.split_at_mut(12);
@@ -89,11 +90,16 @@ fn open(g: &Gateway, state: &str) -> Result<(Route, String), StatusCode> {
     if expires <= ts || expires > ts + TTL {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let inner = std::str::from_utf8(&plain[64..])
+    let inner = std::str::from_utf8(&plain[64..128])
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .to_owned();
     Ok((
         Route {
+            epoch: if plain.len() == 136 {
+                i64::from_be_bytes(plain[128..136].try_into().unwrap())
+            } else {
+                0
+            },
             account,
             tenant,
             volume,
@@ -104,7 +110,7 @@ fn open(g: &Gateway, state: &str) -> Result<(Route, String), StatusCode> {
         inner,
     ))
 }
-fn consent_url(g: &Gateway, a: &Allocation, bytes: &[u8]) -> Result<Response, StatusCode> {
+fn consent_url(g: &Gateway, a: &SessionAllocation, bytes: &[u8]) -> Result<Response, StatusCode> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Start {

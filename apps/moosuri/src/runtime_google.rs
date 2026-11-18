@@ -231,21 +231,25 @@ fn provider(error: GmailError) -> &'static str {
         _ => "google_result_unavailable",
     }
 }
-fn authority(registry: &Path, b: Binding) -> Result<(), &'static str> {
-    allocation(registry, b, true)
+fn same_owner(a: &runtime_registry::Allocation, b: Binding) -> bool {
+    a.account_id == b.account_id.to_string()
+        && a.tenant_id == b.tenant_id.to_string()
+        && a.volume_id == b.volume_id.to_string()
+        && a.generation == b.generation
 }
-fn allocation(registry: &Path, b: Binding, ready: bool) -> Result<(), &'static str> {
-    let a = if ready {
-        runtime_registry::lookup_id(registry, b.account_id)
-    } else {
-        runtime_registry::lookup_allocated_id(registry, b.account_id)
-    }
+fn epoch(registry: &Path, b: Binding) -> Result<i64, &'static str> {
+    let (a, epoch) = runtime_registry::session_route(
+        registry,
+        runtime_registry::SessionDestination::Account(b.account_id),
+    )
     .map_err(|_| "account_fenced")?;
-    if a.account_id != b.account_id.to_string()
-        || a.tenant_id != b.tenant_id.to_string()
-        || a.volume_id != b.volume_id.to_string()
-        || a.generation != b.generation
-    {
+    if !same_owner(&a, b) {
+        return Err("account_fenced");
+    }
+    Ok(epoch)
+}
+fn uninterrupted(registry: &Path, b: Binding, expected: i64) -> Result<(), &'static str> {
+    if epoch(registry, b)? != expected {
         return Err("account_fenced");
     }
     Ok(())
@@ -286,7 +290,11 @@ impl Broker {
             }
             // Provision inert sockets before the member is ready. Dispatch
             // always requires a currently ready registry allocation.
-            allocation(&options.registry, *b, false).map_err(str::to_owned)?;
+            let a = runtime_registry::lookup_allocated_id(&options.registry, b.account_id)
+                .map_err(|_| "account_fenced")?;
+            if !same_owner(&a, *b) {
+                return Err("account_fenced".into());
+            }
         }
         let client = OAuthClient::from_web_client_json(
             std::str::from_utf8(&private_bytes(&config.client_file, 16384)?)
@@ -399,6 +407,7 @@ impl Broker {
         b: Binding,
         id: Uuid,
         tokens: TokenSet,
+        grant_epoch: i64,
         previous: Option<&SecretString>,
         expected: Option<&str>,
     ) -> Result<Zeroizing<Vec<u8>>, &'static str> {
@@ -417,7 +426,7 @@ impl Broker {
             .as_ref()
             .or(previous)
             .ok_or("google_offline_grant_missing")?;
-        authority(&self.registry, b)?;
+        uninterrupted(&self.registry, b, grant_epoch)?;
         let mailbox = self
             .gmail
             .profile(&tokens.access_token, &self.stop)
@@ -427,7 +436,7 @@ impl Broker {
         if expected.is_some_and(|e| !e.eq_ignore_ascii_case(&mailbox)) {
             return Err("google_account_mismatch");
         }
-        authority(&self.registry, b)?;
+        uninterrupted(&self.registry, b, grant_epoch)?;
         let access_binding = self.issue(
             b,
             "access",
@@ -460,7 +469,7 @@ impl Broker {
         {
             return Err("google_request_invalid");
         }
-        authority(&self.registry, b)?;
+        let grant_epoch = epoch(&self.registry, b)?;
         if !matches!(r.operation, Operation::Describe) && r.app_revision != Some(self.revision) {
             return Err("google_app_changed");
         }
@@ -475,12 +484,12 @@ impl Broker {
             }
             Operation::Exchange { code, verifier } => {
                 let tokens = self.gmail.exchange_code(&self.client,&code,&verifier,&self.stop).await.map_err(provider)?;
-                self.tokens(b,r.request_id,tokens,None,None).await
+                self.tokens(b,r.request_id,tokens,grant_epoch,None,None).await
             }
             Operation::Refresh { refresh_token, refresh_binding } => {
                 let email = self.check(b,"refresh",&refresh_binding,&refresh_token)?;
                 let tokens = self.gmail.refresh(&self.client,&refresh_token,&self.stop).await.map_err(provider)?;
-                self.tokens(b,r.request_id,tokens,Some(&refresh_token),Some(&email)).await
+                self.tokens(b,r.request_id,tokens,grant_epoch,Some(&refresh_token),Some(&email)).await
             }
             Operation::InboxPage { access_token, access_binding } => {
                 let mailbox = self.check(b,"access",&access_binding,&access_token)?;
@@ -490,7 +499,7 @@ impl Broker {
                 let mut messages = Vec::new();
                 let mut seen = BTreeSet::new();
                 for item in page.messages {
-                    authority(&self.registry,b)?;
+                    uninterrupted(&self.registry,b,grant_epoch)?;
                     if !seen.insert(item.id.clone()) { return Err("google_response_invalid"); }
                     let m = self.gmail.inbox_metadata(&access_token,&item.id,&self.stop).await.map_err(provider)?;
                     messages.push(Metadata {id:m.id,received_at_ms:m.received_at_ms,subject:m.subject,from:m.from,date:m.date});
@@ -499,7 +508,7 @@ impl Broker {
                 self.success(b,r.request_id,Inbox {mailbox,messages,has_more:page.next_page_token.is_some(),scope:"one_inbox_page_metadata_only"})
             }
         }?;
-        authority(&self.registry, b)?;
+        uninterrupted(&self.registry, b, grant_epoch)?;
         Ok(response)
     }
 }

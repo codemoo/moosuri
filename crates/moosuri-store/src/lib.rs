@@ -6,6 +6,7 @@ pub mod push;
 pub mod recovery_budget;
 mod run_instructions;
 mod run_timings;
+pub mod runtime_model_ledger;
 pub mod runtime_registry;
 pub mod telegram;
 pub use run_timings::{TimingMark, timing_mark};

@@ -44,6 +44,12 @@ pub struct Options {
     /// Existing root-owned mode 0700 host UID reservation directory.
     #[arg(long)]
     pub allocations_root: PathBuf,
+    /// Optional root-owned private broker parent; only the registry account child is mounted.
+    #[arg(long)]
+    pub model_sockets_root: Option<PathBuf>,
+    /// Enable the image-pinned member text preview on its read-only broker mount.
+    #[arg(long, requires = "model_sockets_root")]
+    pub enable_text_preview: bool,
     /// Administrator-assigned dedicated non-root host UID/GID, at least 10000.
     #[arg(long)]
     pub uid: u32,
@@ -78,6 +84,8 @@ struct Expected {
     data: PathBuf,
     ipc: PathBuf,
     scratch: PathBuf,
+    model: Option<PathBuf>,
+    text_preview: bool,
     memory: u64,
     nano_cpus: u64,
     pids: u32,
@@ -90,24 +98,39 @@ impl Expected {
             "org.moosuri.generation": self.generation.to_string()})
     }
     fn command(&self) -> Value {
-        json!([
-            "personal-volume",
-            "--root",
-            "/data",
-            "--account",
-            self.account,
-            "--tenant",
-            self.tenant,
-            "--volume",
-            self.volume,
-            "--generation",
+        let mut command = vec![
+            "personal-volume".to_owned(),
+            "--root".to_owned(),
+            "/data".to_owned(),
+            "--account".to_owned(),
+            self.account.clone(),
+            "--tenant".to_owned(),
+            self.tenant.clone(),
+            "--volume".to_owned(),
+            self.volume.clone(),
+            "--generation".to_owned(),
             self.generation.to_string(),
-            "serve",
-            "--socket",
-            "/ipc/personal.sock"
-        ])
+            "serve".to_owned(),
+            "--socket".to_owned(),
+            "/ipc/personal.sock".to_owned(),
+        ];
+        if self.text_preview {
+            command.extend([
+                "--text-preview-config".to_owned(),
+                "/etc/moosuri/text-preview.json".to_owned(),
+            ]);
+        }
+        json!(command)
     }
     fn create(&self) -> Value {
+        let mut binds = vec![
+            format!("{}:/data:rw", self.data.display()),
+            format!("{}:/ipc:rw", self.ipc.display()),
+            format!("{}:/tmp:rw", self.scratch.display()),
+        ];
+        if let Some(model) = &self.model {
+            binds.push(format!("{}:/model:ro", model.display()));
+        }
         json!({"Image": self.image, "Entrypoint": [ENTRYPOINT], "Cmd": self.command(),
             "User": format!("{}:{}",self.uid,self.uid), "WorkingDir": "/", "Env": self.env,
             "Labels": self.labels(), "Healthcheck": {"Test": ["NONE"]},
@@ -118,11 +141,15 @@ impl Expected {
                 "Memory":self.memory,"NanoCpus":self.nano_cpus,"PidsLimit":self.pids,
                 "RestartPolicy":{"Name":"no","MaximumRetryCount":0},
                 "LogConfig":{"Type":"none","Config":{}},
-                "Binds":[format!("{}:/data:rw",self.data.display()),format!("{}:/ipc:rw",self.ipc.display()),format!("{}:/tmp:rw",self.scratch.display())]}})
+                "Binds":binds}})
     }
     fn reservation(&self) -> Value {
-        json!({"profile":PROFILE,"account":self.account,"tenant":self.tenant,
-            "volume":self.volume,"uid":self.uid,"data":self.data,"ipc":self.ipc,"scratch":self.scratch})
+        let mut row = json!({"profile":PROFILE,"account":self.account,"tenant":self.tenant,
+            "volume":self.volume,"uid":self.uid,"data":self.data,"ipc":self.ipc,"scratch":self.scratch});
+        if let Some(model) = &self.model {
+            row["model"] = json!(model);
+        }
+        row
     }
 }
 
@@ -194,6 +221,11 @@ fn run_blocking(args: &Options) -> Result<(), String> {
             return Err("kiri_provision_foreign_ipc_entry".into());
         }
     }
+    let model = args
+        .model_sockets_root
+        .as_deref()
+        .map(|root| model_directory(root, &account, args.uid))
+        .transpose()?;
     let engine = Engine(args.engine_socket.clone());
     let version = engine.required("GET", "/version", None)?;
     if version["KiriVersion"] != "0.2.1"
@@ -233,6 +265,8 @@ fn run_blocking(args: &Options) -> Result<(), String> {
         data,
         ipc,
         scratch,
+        model,
+        text_preview: args.enable_text_preview,
         memory: args.memory_bytes,
         nano_cpus: args.nano_cpus,
         pids: args.pids,
@@ -406,6 +440,32 @@ fn validate_mount(p: &Path, cap: u64) -> Result<(), String> {
 #[cfg(not(target_os = "linux"))]
 fn validate_mount(_: &Path, _: u64) -> Result<(), String> {
     Err("kiri_provision_linux_only".into())
+}
+// Bind the directory, not a socket inode: broker replacement remains visible.
+fn model_directory(root: &Path, account: &str, uid: u32) -> Result<PathBuf, String> {
+    trusted_dir(root, 0, true)?;
+    let child = root.join(account);
+    trusted_dir(&child, 0, false)?;
+    let meta = checked_metadata(&child)?;
+    if meta.mode() & 0o7777 != 0o711 {
+        return Err("kiri_provision_model_directory_mode_required".into());
+    }
+    let entries = fs::read_dir(&child)
+        .map_err(|_| "kiri_provision_model_directory_unavailable")?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "kiri_provision_model_directory_unavailable")?;
+    if entries.len() != 1 || entries[0].file_name() != "model.sock" {
+        return Err("kiri_provision_exact_model_socket_required".into());
+    }
+    let socket = checked_metadata(&child.join("model.sock"))?;
+    if !socket.file_type().is_socket()
+        || socket.uid() != uid
+        || socket.nlink() != 1
+        || socket.mode() & 0o7777 != 0o600
+    {
+        return Err("kiri_provision_private_owner_model_socket_required".into());
+    }
+    Ok(child)
 }
 fn validate_initialized_data(root: &Path, expected: &str, uid: u32) -> Result<(), String> {
     let entries = fs::read_dir(root)
@@ -673,17 +733,25 @@ fn verify_inspect(v: &Value, e: &Expected) -> Result<(), String> {
     let mounts = v["Mounts"]
         .as_array()
         .ok_or("kiri_provision_mount_inspect_missing")?;
-    if mounts.len() != 3 {
+    if mounts.len() != 3 + usize::from(e.model.is_some()) {
         return Err("kiri_provision_inspected_mount_conflict".into());
     }
-    for (dest, source) in [("/data", &e.data), ("/ipc", &e.ipc), ("/tmp", &e.scratch)] {
+    let mut required = vec![
+        ("/data", &e.data, true),
+        ("/ipc", &e.ipc, true),
+        ("/tmp", &e.scratch, true),
+    ];
+    if let Some(model) = &e.model {
+        required.push(("/model", model, false));
+    }
+    for (dest, source, writable) in required {
         let m = mounts
             .iter()
             .find(|m| m["Destination"] == dest)
             .ok_or("kiri_provision_inspected_mount_conflict")?;
         if m["Type"] != "bind"
             || m["Source"] != json!(source)
-            || m["RW"] != true
+            || m["RW"] != writable
             || m["Propagation"] != "rprivate"
         {
             return Err("kiri_provision_inspected_mount_conflict".into());
@@ -715,6 +783,8 @@ mod tests {
             data: "/srv/synthetic/data".into(),
             ipc: "/srv/synthetic/ipc".into(),
             scratch: "/srv/synthetic/scratch".into(),
+            model: None,
+            text_preview: false,
             memory: 67108864,
             nano_cpus: 500000000,
             pids: 32,
@@ -723,13 +793,17 @@ mod tests {
     }
     // Fields and null/empty shapes are from Kiri 0.2.1's real Linux inspect.
     fn inspect(e: &Expected, running: bool) -> Value {
-        json!({
+        let mut v = json!({
         "Name":format!("/{}",e.name),"Image":e.image,"Path":ENTRYPOINT,"Args":e.command(),
         "Config":{"Entrypoint":[ENTRYPOINT],"Cmd":e.command(),"User":"10001:10001","WorkingDir":"/","Env":[],"Labels":e.labels(),"Healthcheck":{"Test":["NONE"]},"Tty":false,"OpenStdin":false},
         "HostConfig":{"AutoRemove":false,"Privileged":false,"CapAdd":[],"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges:true"],"ReadonlyRootfs":true,"Memory":67108864,"NanoCpus":500000000,"CpuQuota":50000,"CpuPeriod":100000,"PidsLimit":32,"NetworkMode":"none","Dns":[],"DnsSearch":[],"DnsOptions":[],"Devices":[],"GroupAdd":null,"Ulimits":[],"Sysctls":null,"DeviceCgroupRules":null,"Links":null,"RestartPolicy":{"Name":"no","MaximumRetryCount":0},"LogConfig":{"Type":"none","Config":{}}},
         "NetworkSettings":{"Networks":{"none":{"IPAddress":"","GlobalIPv6Address":""}},"Ports":{}},
         "Mounts":[{"Destination":"/data","Type":"bind","Source":e.data,"RW":true,"Propagation":"rprivate"},{"Destination":"/ipc","Type":"bind","Source":e.ipc,"RW":true,"Propagation":"rprivate"},{"Destination":"/tmp","Type":"bind","Source":e.scratch,"RW":true,"Propagation":"rprivate"}],
-        "State":{"Running":running,"Paused":false,"Dead":false,"Restarting":false}})
+        "State":{"Running":running,"Paused":false,"Dead":false,"Restarting":false}});
+        if let Some(model) = &e.model {
+            v["Mounts"].as_array_mut().unwrap().push(json!({"Destination":"/model","Type":"bind","Source":model,"RW":false,"Propagation":"rprivate"}));
+        }
+        v
     }
     fn fake(
         responses: Vec<(u16, Value)>,
@@ -858,5 +932,36 @@ mod tests {
         ]);
         assert!(reconcile(&engine, &e, true).is_err());
         assert_eq!(worker.join().unwrap().len(), 3);
+    }
+    #[test]
+    fn optional_model_mount_is_exact_owner_directory_and_read_only() {
+        let mut e = expected();
+        e.model = Some(PathBuf::from("/srv/model").join(&e.account));
+        let body = e.create();
+        assert!(
+            body["HostConfig"]["Binds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v.as_str()
+                    == Some(&format!(
+                        "{}:/model:ro",
+                        e.model.as_ref().unwrap().display()
+                    )))
+        );
+        let (_dir, engine, worker) = fake(vec![(200, inspect(&e, true))]);
+        assert_eq!(reconcile(&engine, &e, true).unwrap(), "running");
+        assert_eq!(worker.join().unwrap().len(), 1);
+        let mut writable = inspect(&e, false);
+        writable["Mounts"][3]["RW"] = json!(true);
+        let mut peer = inspect(&e, false);
+        peer["Mounts"][3]["Source"] = json!("/srv/model/00000000-0000-0000-0000-000000000099");
+        for v in [writable, peer] {
+            let (_dir, engine, worker) = fake(vec![(200, v)]);
+            assert!(reconcile(&engine, &e, true).is_err());
+            assert_eq!(worker.join().unwrap().len(), 1);
+        }
+        let without_option = expected();
+        assert!(verify_inspect(&inspect(&e, true), &without_option).is_err());
     }
 }

@@ -145,13 +145,37 @@ fn lookup_email(root: &Path, email: String, ready: bool) -> Result<Allocation> {
     .ok_or(StoreError::NotFound)
 }
 
-/// Recheck a signed route's immutable account and current generation.
-pub fn lookup_id(root: &Path, account_id: Uuid) -> Result<Allocation> {
+/// Installation-only identity lookup for preparing an inert socket or mount.
+/// This never grants routing, dispatch, or permission to reuse a session.
+pub fn lookup_allocated_id(root: &Path, account_id: Uuid) -> Result<Allocation> {
     let (_directory, db) = open(root, false)?;
     db.query_row(
+        "SELECT account_id,tenant_id,volume_id,generation FROM allocations WHERE account_id=?1",
+        [account_id.to_string()],
+        decode,
+    )
+    .optional()?
+    .ok_or(StoreError::NotFound)
+}
+
+/// Recheck a signed route's immutable account and current generation.
+pub fn lookup_id(root: &Path, account_id: Uuid) -> Result<Allocation> {
+    with_ready_allocation(root, account_id, Ok)
+}
+
+/// Serialize a short local admission/ledger transition against gateway fencing.
+/// The callback must not call the registry again or perform any network IO.
+pub fn with_ready_allocation<T>(
+    root: &Path,
+    account_id: Uuid,
+    action: impl FnOnce(Allocation) -> Result<T>,
+) -> Result<T> {
+    let (_directory, db) = open(root, false)?;
+    let allocation = db.query_row(
         "SELECT account_id,tenant_id,volume_id,generation FROM allocations WHERE account_id=?1 AND route_state='ready'",
         [account_id.to_string()], decode,
-    ).optional()?.ok_or(StoreError::NotFound)
+    ).optional()?.ok_or(StoreError::NotFound)?;
+    action(allocation)
 }
 
 /// Operator compare-and-set after the verified personal process has answered.

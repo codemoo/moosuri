@@ -26,6 +26,7 @@ mod installation;
 mod kiri_provision;
 mod legacy_relations;
 mod personal_gateway;
+mod runtime_model;
 mod skills;
 mod subscriptions;
 mod work_sessions;
@@ -60,6 +61,10 @@ enum Command {
     PersonalGateway(personal_gateway::Options),
     /// Reconcile a prepared member's Linux Kiri container.
     KiriProvision(kiri_provision::Options),
+    /// Serve an installation-owned, pinned model to allocated members over Unix sockets.
+    RuntimeModel(runtime_model::Options),
+    /// Make one text call using the member broker socket and private standard input.
+    RuntimeModelCall(runtime_model::ClientOptions),
     /// Serve a bounded local Gmail INBOX metadata bridge using existing gws authentication.
     GwsInbox(gws_inbox::Options),
     /// Guided installation (English / 한국어), or resume an existing setup.
@@ -398,6 +403,12 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::RuntimeModel(options) = &cli.command {
+        return runtime_model::run(options).await;
+    }
+    if let Command::RuntimeModelCall(options) = &cli.command {
+        return runtime_model::run_client(options).await;
+    }
     if let Command::PersonalGateway(options) = &cli.command {
         return personal_gateway::run(options).await;
     }
@@ -548,7 +559,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::PersonalGateway(_)
+        Command::RuntimeModel(_)
+        | Command::RuntimeModelCall(_)
+        | Command::PersonalGateway(_)
         | Command::KiriProvision(_)
         | Command::PersonalVolume(_)
         | Command::AccountRuntime(_)

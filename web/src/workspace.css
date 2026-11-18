@@ -136,7 +136,21 @@ body { background: var(--paper); color: var(--ink); }
   border-radius: 21px;
 }
 .chat-compose-dock:focus-within { border-color: #7e73af; }
-.workspace .chat-composer { background: transparent; border: 0; box-shadow: none; padding: 3px 0 0; gap: 0; }
+.workspace .chat-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0 8px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 3px 0 0;
+}
+.workspace .chat-composer-bottom { display: contents; }
+.workspace .chat-composer-bottom > span { grid-column: 1 / -1; grid-row: 2; padding: 3px 0 1px; }
+.workspace .chat-composer-bottom > span:empty { display: none; }
+.workspace .chat-composer textarea { grid-column: 1; grid-row: 1; }
+.workspace .chat-send { grid-column: 2; grid-row: 1; }
 .workspace .chat-composer textarea { min-height: 44px; font-size: 16px; color: var(--ink); }
 .workspace .chat-composer textarea::placeholder { color: var(--muted); }
 .workspace .chat-send { flex: none; height: 44px; width: 44px; border-radius: 13px; background: var(--accent); color: var(--accent-ink); }

@@ -80,6 +80,9 @@ it("online navigation never stores a credential-bearing response; offline uses o
   expect(await (await w.fetchEvent("/app?thread=opaque", "navigate")!).text()).toBe("public-shell");
   expect(await (await w.fetchEvent("/app/schedules", "navigate")!).text()).toBe("public-shell");
   expect(await (await w.fetchEvent("/app/missions", "navigate")!).text()).toBe("public-shell");
+  for (const path of ["/app/feed", "/app/goals", "/app/goals/00000000-0000-4000-8000-000000000001", "/app/library"]) {
+    expect(await (await w.fetchEvent(path, "navigate")!).text()).toBe("public-shell");
+  }
   expect(await (await w.fetchEvent("/settings/calendar", "navigate")!).text()).toBe("public-shell");
   expect(await (await w.fetchEvent("/assets/app-fixed.js")!).text()).toBe("public-asset");
   expect([...w.entries.values()].every(data => !data.has("/app"))).toBe(true);

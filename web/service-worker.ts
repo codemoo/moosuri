@@ -31,6 +31,9 @@ const navigationPaths = new Set([
   "/app/memory",
   "/app/skills",
   "/app/artifacts",
+  "/app/feed",
+  "/app/goals",
+  "/app/library",
   "/app/schedules",
   "/app/missions",
 ]);
@@ -85,7 +88,7 @@ self.addEventListener("fetch", (event) => {
   }
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
   const artifactPage =
-    /^\/app\/artifacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    /^\/app\/(?:artifacts|goals)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       url.pathname,
     );
   if (

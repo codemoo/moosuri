@@ -1,0 +1,257 @@
+//! Offline installation-owned account allocation. No engine access or user secrets.
+use crate::{Result, StoreError, email_valid, files};
+use fs2::FileExt;
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
+use serde::Serialize;
+use std::{fs, os::unix::fs::MetadataExt, path::Path, time::Duration};
+use uuid::Uuid;
+
+const REGISTRY: &str = "account-runtimes.sqlite";
+const APP_ID: i64 = 0x4d535252;
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+pub struct Allocation {
+    pub account_id: String,
+    pub tenant_id: String,
+    pub volume_id: String,
+    pub generation: i64,
+}
+
+/// Use a directory created for this registry by the installer. A legacy assistant
+/// root, a symlink, or a directory containing unrelated files is never adopted.
+fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
+    let meta = fs::symlink_metadata(root).map_err(|_| StoreError::Unavailable)?;
+    if !meta.is_dir()
+        || meta.uid() != unsafe { libc::geteuid() }
+        || meta.mode() & 0o077 != 0
+        || fs::canonicalize(root).map_err(|_| StoreError::InvalidInput)? != root
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    // Serialize the directory inspection with journal creation and unlink.
+    let directory = fs::File::open(root).map_err(|_| StoreError::Unavailable)?;
+    FileExt::lock_exclusive(&directory).map_err(|_| StoreError::Unavailable)?;
+    for item in fs::read_dir(root).map_err(|_| StoreError::Unavailable)? {
+        let item = item.map_err(|_| StoreError::Unavailable)?;
+        let m = fs::symlink_metadata(item.path()).map_err(|_| StoreError::InvalidInput)?;
+        if !matches!(
+            item.file_name().to_str(),
+            Some("account-runtimes.sqlite" | "account-runtimes.sqlite-journal")
+        ) || !m.is_file()
+            || m.nlink() != 1
+            || m.uid() != meta.uid()
+            || m.mode() & 0o077 != 0
+        {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    let file = root.join(REGISTRY);
+    if create {
+        files::private_file(&file)?;
+    }
+    // Recovery of a hot SQLite rollback journal needs a writable handle even
+    // for lookup. No CREATE flag: a lookup cannot create a missing registry.
+    let mut db = Connection::open_with_flags(
+        &file,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )?;
+    db.busy_timeout(Duration::from_secs(5))?;
+    db.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL;")?;
+    if create {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let id: i64 = tx.query_row("PRAGMA application_id", [], |r| r.get(0))?;
+        if id == 0 {
+            let existing: bool =
+                tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema)", [], |r| {
+                    r.get(0)
+                })?;
+            if existing {
+                return Err(StoreError::InvalidInput);
+            }
+            tx.execute_batch("CREATE TABLE allocations (
+                request_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, account_id TEXT NOT NULL UNIQUE,
+                tenant_id TEXT NOT NULL UNIQUE, volume_id TEXT NOT NULL UNIQUE,
+                generation INTEGER NOT NULL CHECK(generation>0),
+                route_state TEXT NOT NULL DEFAULT 'reserved' CHECK(route_state IN ('reserved','ready','fenced'))
+            ) STRICT; PRAGMA user_version=1;")?;
+            tx.pragma_update(None, "application_id", APP_ID)?;
+        } else if id != APP_ID {
+            return Err(StoreError::InvalidInput);
+        }
+        tx.commit()?;
+    }
+    let id: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if id != APP_ID || version != 1 {
+        return Err(StoreError::InvalidInput);
+    }
+    Ok((directory, db))
+}
+fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<Allocation> {
+    Ok(Allocation {
+        account_id: row.get(0)?,
+        tenant_id: row.get(1)?,
+        volume_id: row.get(2)?,
+        generation: row.get(3)?,
+    })
+}
+/// The caller retries with the same request id. A lost reply must not mint a
+/// second account or authorize a conflicting invite to the same address.
+pub fn reserve(root: &Path, request: Uuid, email: String) -> Result<Allocation> {
+    let email = email_valid(email)?;
+    let (_directory, mut db) = open(root, true)?;
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let request = request.to_string();
+    let existing=tx.query_row(
+        "SELECT account_id,tenant_id,volume_id,generation,email FROM allocations WHERE request_id=?1",
+        [&request],|r|Ok((decode(r)?,r.get::<_,String>(4)?)),
+    ).optional()?;
+    let result = match existing {
+        Some((allocation, previous)) if previous == email => allocation,
+        Some(_) => return Err(StoreError::Conflict),
+        None => {
+            let allocation = Allocation {
+                account_id: Uuid::new_v4().to_string(),
+                tenant_id: Uuid::new_v4().to_string(),
+                volume_id: Uuid::new_v4().to_string(),
+                generation: 1,
+            };
+            tx.execute("INSERT INTO allocations(request_id,email,account_id,tenant_id,volume_id,generation) VALUES(?1,?2,?3,?4,?5,?6)",params![request,email,allocation.account_id,allocation.tenant_id,allocation.volume_id,allocation.generation])?;
+            allocation
+        }
+    };
+    tx.commit()?;
+    fs::File::open(root)
+        .and_then(|f| f.sync_all())
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(result)
+}
+pub fn lookup(root: &Path, email: String) -> Result<Allocation> {
+    lookup_email(root, email, false)
+}
+
+pub fn lookup_ready(root: &Path, email: String) -> Result<Allocation> {
+    lookup_email(root, email, true)
+}
+fn lookup_email(root: &Path, email: String, ready: bool) -> Result<Allocation> {
+    let email = email_valid(email)?;
+    let (_directory, db) = open(root, false)?;
+    db.query_row(
+        "SELECT account_id,tenant_id,volume_id,generation FROM allocations WHERE email=?1 AND (?2=0 OR route_state='ready')",
+        params![email, ready],
+        decode,
+    )
+    .optional()?
+    .ok_or(StoreError::NotFound)
+}
+
+/// Recheck a signed route's immutable account and current generation.
+pub fn lookup_id(root: &Path, account_id: Uuid) -> Result<Allocation> {
+    let (_directory, db) = open(root, false)?;
+    db.query_row(
+        "SELECT account_id,tenant_id,volume_id,generation FROM allocations WHERE account_id=?1 AND route_state='ready'",
+        [account_id.to_string()], decode,
+    ).optional()?.ok_or(StoreError::NotFound)
+}
+
+/// Operator compare-and-set after the verified personal process has answered.
+pub fn set_routing(root: &Path, allocation: &Allocation, enable: bool) -> Result<()> {
+    let (_directory, db) = open(root, false)?;
+    let changed = db.execute(
+        "UPDATE allocations SET route_state=?1 WHERE account_id=?2 AND tenant_id=?3 AND volume_id=?4 AND generation=?5 AND (?1='fenced' OR route_state IN ('reserved','ready'))",
+        params![if enable {"ready"} else {"fenced"},allocation.account_id,allocation.tenant_id,allocation.volume_id,allocation.generation])?;
+    if changed != 1 {
+        return Err(StoreError::Conflict);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // A dying writer leaves SQLite's rollback journal on disk. The first
+    // lookup after restart must restore the committed registry before routing.
+    #[test]
+    fn lookup_recovers_a_crashed_registry_writer() {
+        const CHILD: &str = "MOOSURI_SYNTHETIC_REGISTRY_CRASH_DIR";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = std::path::PathBuf::from(root);
+            let (_lock, db) = open(&root, false).unwrap();
+            db.execute_batch("PRAGMA cache_size=2; BEGIN IMMEDIATE;
+                UPDATE allocations SET email='discarded@example.test';
+                CREATE TABLE disposable(payload BLOB); INSERT INTO disposable VALUES(zeroblob(1048576));").unwrap();
+            std::process::exit(73);
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let original = reserve(&root, Uuid::new_v4(), "before@example.test".into()).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime_registry::tests::lookup_recovers_a_crashed_registry_writer",
+            ])
+            .env(CHILD, &root)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(73));
+        assert!(root.join("account-runtimes.sqlite-journal").is_file());
+        assert_eq!(
+            lookup(&root, "before@example.test".into()).unwrap(),
+            original
+        );
+        assert!(!root.join("account-runtimes.sqlite-journal").exists());
+    }
+    #[test]
+    fn retries_and_concurrent_invites_cannot_assign_two_volumes() {
+        use std::{sync::Barrier, thread};
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let id = Uuid::new_v4();
+        let start = Barrier::new(4);
+        let allocations = thread::scope(|s| {
+            (0..4)
+                .map(|_| {
+                    s.spawn(|| {
+                        start.wait();
+                        reserve(&root, id, "A@example.test".into()).unwrap()
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|job| job.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(allocations.windows(2).all(|pair| pair[0] == pair[1]));
+        assert_eq!(
+            lookup(&root, "a@example.test".into()).unwrap(),
+            allocations[0]
+        );
+        assert!(matches!(
+            reserve(&root, id, "b@example.test".into()),
+            Err(StoreError::Conflict)
+        ));
+        assert!(matches!(
+            reserve(&root, Uuid::new_v4(), "a@example.test".into()),
+            Err(StoreError::Conflict)
+        ));
+        let b = reserve(&root, Uuid::new_v4(), "b@example.test".into()).unwrap();
+        assert_ne!(allocations[0].volume_id, b.volume_id);
+        let aid = Uuid::parse_str(&allocations[0].account_id).unwrap();
+        assert!(lookup_id(&root, aid).is_err());
+        set_routing(&root, &allocations[0], true).unwrap();
+        assert_eq!(
+            lookup_ready(&root, "A@example.test".into()).unwrap(),
+            allocations[0]
+        );
+        set_routing(&root, &allocations[0], false).unwrap();
+        assert!(lookup_id(&root, aid).is_err());
+        assert!(set_routing(&root, &allocations[0], true).is_err());
+        fs::write(root.join("assistant.sqlite"), b"legacy root").unwrap();
+        assert!(matches!(
+            reserve(&root, Uuid::new_v4(), "c@example.test".into()),
+            Err(StoreError::InvalidInput)
+        ));
+    }
+}

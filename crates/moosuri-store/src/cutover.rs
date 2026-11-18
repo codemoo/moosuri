@@ -16,7 +16,8 @@ mod admission;
 pub(crate) mod publication;
 pub(crate) mod restore;
 pub(crate) use admission::{
-    RuntimeAdmission, require_active, runtime_admission, sync_parent_before_admission,
+    RuntimeAdmission, personal_admission, require_active, runtime_admission,
+    sync_parent_before_admission,
 };
 pub use restore::{EnrollmentAccount, RestoreSummary, restore};
 #[cfg(test)]

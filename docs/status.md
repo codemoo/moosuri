@@ -2,7 +2,7 @@
 
 2026-11-19. 실제 지원 범위·검증 한계·남은 작업은 이 문서가 정본이다.
 
-**사용자별 런타임 전환**에서 Ubuntu 24.04의 Kiri 0.2.1에 합성 사용자 두 명을 올렸다. 전용 볼륨·소켓·UID, CPU·메모리·디스크 한도, 재부팅 후 데이터 유지와 마운트 누락 시 시작 차단을 확인했다. 개인 컨테이너는 네트워크를 끄고 각자의 Unix 소켓을 쓴다. Kiri 내부 브리지에서는 호스트 서비스에 접근할 수 있었다. 실행 조건과 미완료 항목은 [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md), 측정값은 [Linux 실험](../deployment/kiri/linux-vm-smoke/README.md)에 있다.
+**사용자별 런타임 전환**에서 Ubuntu 24.04의 Kiri 0.2.1에 합성 사용자 두 명을 올렸다. 전용 볼륨·소켓·UID, CPU·메모리·디스크 한도, 재부팅 후 데이터 유지와 마운트 누락 시 시작 차단을 확인했다. 개인 컨테이너는 네트워크를 끄고 각자의 Unix 소켓을 쓴다. Kiri 내부 브리지에서는 호스트 서비스에 접근할 수 있었다. 실제 무수리 개인 서비스 두 개의 준비 응답과 동시 재조정을 검증했다. 신규 회원의 개인 비밀번호·세션과 서명 라우팅은 [개인 런타임 개발판](../deployment/kiri/README.md)에 정리했다. 실행 조건과 미완료 항목은 [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md), 측정값은 [Linux 실험](../deployment/kiri/linux-vm-smoke/README.md)에 있다.
 
 **개발판**에서 Gmail 기본 연결을 서버 Google OAuth로 변경했다. 채팅 연결 카드는 원래 로그인·해당 Google 동의 흐름·현재 메일 연결 버전을 확인하고 마지막 조회를 한 번 이어간다. SQLite는 82다. 합성 OAuth·재시도·철회·웹 화면을 검증했다. 개인 Google 계정의 실제 동의 및 운영 전환은 대기 중이다. [Gmail 연결](gws-inbox.md)
 

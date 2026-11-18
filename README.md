@@ -79,6 +79,7 @@ Docker or database server is needed. Linux/WSL2 requires glibc 2.34+.
 - [Telegram](docs/telegram.md): private text conversations and opt-in generic notifications, with per-account pairing and the same assistant runtime.
 - [Tailscale connection](docs/tailscale.md): private HTTPS setup, status and disconnect for an existing installation; WSL Windows-host guidance.
 - [Desktop menu](docs/desktop-menu.md): server status, start-and-open, restart/stop, independent login-autostart and chat/admin links; account/model management stays on the web.
+- [Per-account Kiri runtime preview](deployment/kiri/README.md) for isolated Linux member sessions.
 - [Development quickstart](docs/development.md): build, init, shared API/local model settings and run the embedded web app. LLM configuration can be skipped while setting up accounts.
 - [Linux ARM64 development](docs/linux-arm64.md): cross-build and direct emulation evidence; native hardware and official release acceptance remain open.
 - [Signed HTTPS download](docs/signed-download.md): fetch an explicit versioned bundle with an independent signing pin; verify before any install.

@@ -16,13 +16,16 @@ use std::{
 };
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+mod account_runtime;
 mod backup_live;
 mod backup_snapshots;
 mod calls;
 mod gws_inbox;
 mod import_private;
 mod installation;
+mod kiri_provision;
 mod legacy_relations;
+mod personal_gateway;
 mod skills;
 mod subscriptions;
 mod work_sessions;
@@ -49,6 +52,14 @@ enum RecoveryRole {
 // One startup value, never a collection or hot-path allocation. Keep clap's flat CLI.
 #[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Allocate or inspect a personal runtime identity in a separate installation registry.
+    AccountRuntime(account_runtime::Options),
+    /// Initialize or verify a single new member volume inside its own runtime.
+    PersonalVolume(account_runtime::PersonalOptions),
+    /// Serve the private Unix gateway for isolated member authentication.
+    PersonalGateway(personal_gateway::Options),
+    /// Reconcile a prepared member's Linux Kiri container.
+    KiriProvision(kiri_provision::Options),
     /// Serve a bounded local Gmail INBOX metadata bridge using existing gws authentication.
     GwsInbox(gws_inbox::Options),
     /// Guided installation (English / 한국어), or resume an existing setup.
@@ -387,6 +398,18 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::PersonalGateway(options) = &cli.command {
+        return personal_gateway::run(options).await;
+    }
+    if let Command::KiriProvision(options) = &cli.command {
+        return kiri_provision::run(options).await;
+    }
+    if let Command::PersonalVolume(options) = &cli.command {
+        return account_runtime::personal(options).await;
+    }
+    if let Command::AccountRuntime(options) = &cli.command {
+        return account_runtime::run(options).await;
+    }
     if let Command::GwsInbox(options) = &cli.command {
         return gws_inbox::run(options).await;
     }
@@ -525,7 +548,11 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::GwsInbox(_)
+        Command::PersonalGateway(_)
+        | Command::KiriProvision(_)
+        | Command::PersonalVolume(_)
+        | Command::AccountRuntime(_)
+        | Command::GwsInbox(_)
         | Command::Models { .. }
         | Command::Skills { .. }
         | Command::Subscriptions { .. }

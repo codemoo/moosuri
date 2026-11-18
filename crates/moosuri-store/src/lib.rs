@@ -1,10 +1,12 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
 pub mod audio;
+pub mod personal_volume;
 pub mod push;
 pub mod recovery_budget;
 mod run_instructions;
 mod run_timings;
+pub mod runtime_registry;
 pub mod telegram;
 pub use run_timings::{TimingMark, timing_mark};
 
@@ -795,8 +797,28 @@ fn insert_account(
     role: Role,
     temporary: bool,
 ) -> Result<AccountSummary> {
-    let account = AccountId(Uuid::new_v4().to_string());
-    let tenant = TenantId(Uuid::new_v4().to_string());
+    insert_account_with_identity(
+        conn,
+        (Uuid::new_v4(), Uuid::new_v4()),
+        name,
+        email,
+        hash,
+        role,
+        temporary,
+    )
+}
+
+fn insert_account_with_identity(
+    conn: &Connection,
+    ids: (Uuid, Uuid),
+    name: String,
+    email: String,
+    hash: String,
+    role: Role,
+    temporary: bool,
+) -> Result<AccountSummary> {
+    let account = AccountId(ids.0.to_string());
+    let tenant = TenantId(ids.1.to_string());
     conn.execute("INSERT INTO tenants(id) VALUES (?1)", [&tenant.0])?;
     conn.execute("INSERT INTO accounts(id,tenant_id,name,email,role,password_hash,must_change_password,temporary_expires_at,auth_epoch) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0)", params![account.0,tenant.0,name,email,if role==Role::Admin { "admin" } else { "member" },hash,temporary,if temporary { Some(now()?+TEMP_SECONDS) } else { None }])?;
     Ok(AccountSummary {

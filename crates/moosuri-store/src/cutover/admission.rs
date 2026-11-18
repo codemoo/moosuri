@@ -28,9 +28,19 @@ pub(crate) fn controls_present(root: &Path) -> Result<bool> {
 /// Existing roots are inspected under their existing lock without chmod/create.
 /// The lock is transferred directly into Store; it never opens a preflight gap.
 pub(crate) fn runtime_admission(root: &Path) -> StoreResult<Option<RuntimeAdmission>> {
-    runtime_inner(root).map_err(store_error)
+    runtime_inner(root, None).map_err(store_error)
 }
-fn runtime_inner(root: &Path) -> Result<Option<RuntimeAdmission>> {
+pub(crate) fn personal_admission(
+    root: &Path,
+    owner: crate::personal_volume::VolumeOwner,
+    initialize: bool,
+) -> StoreResult<Option<RuntimeAdmission>> {
+    runtime_inner(root, Some((owner, initialize))).map_err(store_error)
+}
+fn runtime_inner(
+    root: &Path,
+    personal: Option<(crate::personal_volume::VolumeOwner, bool)>,
+) -> Result<Option<RuntimeAdmission>> {
     super::restore::reject_stage(root)?;
     if controls_present(root)? {
         return Err(Error::Sealed);
@@ -44,7 +54,7 @@ fn runtime_inner(root: &Path) -> Result<Option<RuntimeAdmission>> {
         Ok(_) => inspection_file(&lock_path, 0)?,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             // A sealed legacy root missing its lock must remain entirely unchanged.
-            inspect_if_present(&root)?;
+            inspect_if_present(&root, personal)?;
             match OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -71,7 +81,7 @@ fn runtime_inner(root: &Path) -> Result<Option<RuntimeAdmission>> {
     })?;
     // This is the authoritative late check. No chmod, private_file, journal or
     // live SQLite opening is allowed before it, including callers holding None.
-    inspect_if_present(&root)?;
+    inspect_if_present(&root, personal)?;
     sync_parent_before_admission(&root)?;
     crate::push::validate_optional_file(&root).map_err(|_| Error::Integrity)?;
     crate::files::prepare_dir(&root).map_err(|_| Error::InvalidInput)?;
@@ -86,19 +96,68 @@ pub(crate) fn sync_parent_before_admission(root: &Path) -> Result<()> {
     fault(root, "admission_parent_sync")?;
     files::sync_dir(root.parent().ok_or(Error::InvalidInput)?)
 }
-fn inspect_if_present(root: &Path) -> Result<()> {
+fn inspect_if_present(
+    root: &Path,
+    personal: Option<(crate::personal_volume::VolumeOwner, bool)>,
+) -> Result<()> {
     if controls_present(root)? {
         return Err(Error::Sealed);
     }
     match fs::symlink_metadata(root.join("assistant.sqlite")) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Ok(m) if m.is_file() && m.len() == 0 => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => allow_empty_store(root, personal),
+        Ok(m) if m.is_file() && m.len() == 0 => allow_empty_store(root, personal),
         Ok(_) => {
             let (_temp, conn) = inspect(root)?;
-            require_active(&conn, root)
+            require_active(&conn, root)?;
+            let bound: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='personal_runtime_identity' AND type='table')", [], |row|row.get(0))?;
+            match personal {
+                Some((owner, _)) if bound => owner
+                    .check_identity(&conn, None)
+                    .map_err(|_| Error::Integrity),
+                // An interrupted first initialization can have completed schema creation
+                // before the atomic owner/account transaction. An occupied DB is never adopted.
+                Some((_, true)) if !bound => {
+                    let empty:bool=conn.query_row("SELECT NOT EXISTS(SELECT 1 FROM accounts) AND NOT EXISTS(SELECT 1 FROM tenants)",[],|row|row.get(0))?;
+                    if empty { Ok(()) } else { Err(Error::Integrity) }
+                }
+                None if !bound => Ok(()),
+                _ => Err(Error::Integrity),
+            }
         }
         Err(_) => Err(Error::Unavailable),
     }
+}
+
+fn allow_empty_store(
+    root: &Path,
+    personal: Option<(crate::personal_volume::VolumeOwner, bool)>,
+) -> Result<()> {
+    let Some((_, initializing)) = personal else {
+        return Ok(());
+    };
+    if !initializing {
+        return Err(Error::Integrity);
+    }
+    // A new initialization can resume before its first DB commit. Preserved
+    // authority, keys or a nonempty WAL alongside a lost DB require recovery.
+    for entry in fs::read_dir(root).map_err(|_| Error::Unavailable)? {
+        let entry = entry.map_err(|_| Error::Unavailable)?;
+        let m = fs::symlink_metadata(entry.path()).map_err(|_| Error::Unavailable)?;
+        if !matches!(
+            entry.file_name().to_str(),
+            Some(
+                "writer.lock"
+                    | "assistant.sqlite"
+                    | "assistant.sqlite-wal"
+                    | "assistant.sqlite-shm"
+            )
+        ) || !m.is_file()
+            || m.len() != 0
+        {
+            return Err(Error::Integrity);
+        }
+    }
+    Ok(())
 }
 
 fn runtime_directory(path: &Path) -> Result<PathBuf> {

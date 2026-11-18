@@ -219,7 +219,9 @@ mod tests {
             .canonicalize()
             .unwrap();
         let rows = table(&root, "source-connectors.tsv", HEADERS).unwrap();
-        let features = super::super::definitions(&root, "features.md", 'F', super::super::FEATURE_COUNT).unwrap();
+        let features =
+            super::super::definitions(&root, "features.md", 'F', super::super::FEATURE_COUNT)
+                .unwrap();
         let scenarios = super::super::scenarios(&root, &features).unwrap();
         registry(&root, &rows, &features, &scenarios).unwrap();
         for (id, column, value, expected) in [

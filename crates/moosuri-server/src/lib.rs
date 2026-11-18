@@ -49,7 +49,7 @@ use std::{
 const COOKIE: &str = "moosuri_session";
 // Database authorization expires after 30 idle days. The longer-lived locator cookie
 // allows sliding activity without stale GET responses overwriting a new account cookie.
-const COOKIE_MAX_AGE: u64 = 400 * 24 * 60 * 60;
+pub const COOKIE_MAX_AGE: u64 = 400 * 24 * 60 * 60;
 
 #[cfg(test)]
 mod web_configuration_tests {
@@ -374,7 +374,6 @@ type LoginBuckets = HashMap<(IpAddr, [u8; 32]), VecDeque<Instant>>;
 struct AppState {
     store: Store,
     config: ServerConfig,
-    logins: Arc<Mutex<LoginBuckets>>,
     probes: Arc<tokio::sync::Semaphore>,
     invitation_sends: Arc<tokio::sync::Semaphore>,
     runtime: moosuri_agent::Runtime,
@@ -401,14 +400,15 @@ pub fn router_with_runtime(
         mail,
         browser,
         config,
-        logins: Arc::new(Mutex::new(HashMap::new())),
         probes: Arc::new(tokio::sync::Semaphore::new(2)),
         invitation_sends: Arc::new(tokio::sync::Semaphore::new(1)),
         delivery: runtime.delivery_gate(),
         runtime,
         streams: Arc::new(Mutex::new(HashMap::new())),
     };
+    let auth = auth_routes(store_auth_state(&state));
     Router::new()
+        .merge(auth)
         .merge(credential_broker::routes())
         .merge(telegram::routes())
         .route("/api/v1/settings/chatgpt", get(subscriptions::list))
@@ -514,14 +514,10 @@ pub fn router_with_runtime(
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
         .route("/health/ready", get(ready))
         .route("/api/v1/system", get(system))
-        .route("/api/v1/auth/login", post(login))
-        .route("/api/v1/auth/session", get(session))
         .route(
             "/api/v1/shares/origin",
             post(share_origin::validate_origin).layer(DefaultBodyLimit::max(256)),
         )
-        .route("/api/v1/auth/password", post(change_password))
-        .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/vault", get(vault::status))
         .route("/api/v1/vault/handoff", post(vault::handoff))
         .nest("/api/v1/admin/invitations", invitations::routes())
@@ -652,16 +648,19 @@ pub fn router_with_runtime(
         .route("/api/v1/admin/usage", get(chat::account_usage))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })
         .layer(DefaultBodyLimit::max(16 * 1024))
-        .layer(middleware::from_fn_with_state(state.clone(), boundary))
+        .layer(middleware::from_fn_with_state(
+            state.config.clone(),
+            boundary,
+        ))
         .with_state(state)
 }
 
-async fn boundary(State(state): State<AppState>, request: Request, next: Next) -> Response {
+async fn boundary(State(config): State<ServerConfig>, request: Request, next: Next) -> Response {
     let host = request
         .headers()
         .get(header::HOST)
         .and_then(|h| h.to_str().ok());
-    if host != Some(state.config.authority.as_str()) {
+    if host != Some(config.authority.as_str()) {
         return failure(StatusCode::MISDIRECTED_REQUEST, "invalid_host");
     }
     let collector = request.uri().path().starts_with("/api/v1/source-ingest/")
@@ -686,7 +685,7 @@ async fn boundary(State(state): State<AppState>, request: Request, next: Next) -
             .headers()
             .get(header::ORIGIN)
             .and_then(|h| h.to_str().ok());
-        if origin != Some(state.config.origin.as_str()) {
+        if origin != Some(config.origin.as_str()) {
             return failure(StatusCode::FORBIDDEN, "invalid_origin");
         }
     }
@@ -892,8 +891,46 @@ enum LoginPurpose {
     Normal,
     ChatgptHelper,
 }
+#[derive(Clone)]
+struct AuthState {
+    store: Store,
+    config: ServerConfig,
+    logins: Arc<Mutex<LoginBuckets>>,
+    delivery: Arc<tokio::sync::RwLock<()>>,
+}
+fn store_auth_state(state: &AppState) -> AuthState {
+    AuthState {
+        store: state.store.clone(),
+        config: state.config.clone(),
+        logins: Default::default(),
+        delivery: state.delivery.clone(),
+    }
+}
+fn auth_routes<S: Clone + Send + Sync + 'static>(state: AuthState) -> Router<S> {
+    Router::new()
+        .route("/api/v1/auth/login", post(login))
+        .route("/api/v1/auth/session", get(session))
+        .route("/api/v1/auth/password", post(change_password))
+        .route("/api/v1/auth/logout", post(logout))
+        .with_state(state)
+}
+/// Internal member endpoint for the account router. It starts no installation
+/// workers. The host gateway validates the public origin and supplies the fixed
+/// internal Host/Origin only on its private Unix transport.
+pub fn personal_auth_router(store: Store) -> Router {
+    let config = ServerConfig::new("https://personal.internal", false).expect("fixed HTTPS origin");
+    auth_routes(AuthState {
+        store,
+        config: config.clone(),
+        logins: Default::default(),
+        delivery: Default::default(),
+    })
+    .layer(DefaultBodyLimit::max(16 * 1024))
+    .layer(middleware::from_fn_with_state(config, boundary))
+}
+
 async fn login(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
     headers: HeaderMap,
     Json(input): Json<LoginRequest>,
@@ -978,7 +1015,7 @@ async fn login(
         state.config.secure,
     ))
 }
-async fn session(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
+async fn session(State(state): State<AuthState>, headers: HeaderMap) -> HttpResult {
     let token = cookie_token(&headers)?;
     let user = state.store.authenticate(token.clone()).await?;
     // Read responses never set cookies: a delayed response from A must not replace B's login.
@@ -990,12 +1027,16 @@ struct PasswordRequest {
     password: String,
 }
 async fn change_password(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     headers: HeaderMap,
     Json(input): Json<PasswordRequest>,
 ) -> HttpResult {
     let _delivery = state.delivery.write().await;
-    let user = current(&state, &headers).await?;
+    let user = state.store.authenticate(cookie_token(&headers)?).await?;
+    expected_account(&headers, &user)?;
+    if user.is_chatgpt_helper() {
+        return Err(StoreError::Forbidden.into());
+    }
     let result = state.store.change_password(&user, input.password).await?;
     Ok(session_response(
         &result.user,
@@ -1003,7 +1044,7 @@ async fn change_password(
         state.config.secure,
     ))
 }
-async fn logout(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
+async fn logout(State(state): State<AuthState>, headers: HeaderMap) -> HttpResult {
     let _delivery = state.delivery.write().await;
     // Revoke the supplied session, but never send Set-Cookie: a late logout
     // response from another tab must not erase a more recent login cookie.

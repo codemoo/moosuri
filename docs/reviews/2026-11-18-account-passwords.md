@@ -9,3 +9,7 @@ Validation completed before packaging:
 - The plan verifier now includes the existing Telegram requirement/feature rows. Native Clippy passed. Independent read-only account-boundary review reported no P0/P1/P2 findings.
 
 Package/build results are recorded separately in the preview release evidence; synthetic checks do not certify every device or live model connection.
+
+All four native packages built successfully and passed signed-manifest, provenance, exact-archive and public-text checks. macOS ARM64, Linux x64 and Linux ARM64 QEMU packages initialized an exact-eight synthetic account and passed HTTPS-proxy-compatible web entry, login, Telegram settings, graceful stop and doctor checks. macOS Intel is cross-built; no physical Intel/ARM/WSL acceptance is claimed.
+
+[v0.1.0-dev.9](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.9) publishes the packages and exact one-line installer pins. Registry dependency versions are unchanged; existing exact-source license evidence was reused after comparing the dependency locks. CI remains disabled.

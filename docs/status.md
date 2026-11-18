@@ -5,7 +5,10 @@
 계정 비밀번호의 최소 길이를8자로 맞췄다. 서버·설치 마법사는 공통 검증을 사용하고,
 웹도 같은 Unicode 글자 수와 최대256 UTF-8바이트를 검사한다. 기존 암호 로그인과
 변경 시 세션 철회는 유지한다. 합성 경계·기존 세션 검사, React30검사와 독립 검토를
-통과했다. [검증 기록](reviews/2026-11-18-account-passwords.md). 설치 패키지 갱신은 준비 중이다.
+통과했다. [검증 기록](reviews/2026-11-18-account-passwords.md).
+[v0.1.0-dev.9](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.9)의 네 플랫폼
+서명 패키지와 한 줄 설치로 공개했다. Mac ARM64·Linux x64·Linux ARM64 QEMU에서
+실제 배포 파일의8자 계정 초기화·로그인·웹·종료를 확인했다. Intel은 교차 빌드다.
 
 [Telegram 개인 대화](telegram.md)를 PWA와 함께 사용할 수 있다. 관리자 봇·계정별
 일회용 연결로 같은 기억·도구·저장 대화를 사용하며, 추가 지침·맡긴 작업 중지·웹 재시도와

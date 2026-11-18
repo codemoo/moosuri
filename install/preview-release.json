@@ -1,47 +1,47 @@
 {
   "format": 1,
   "channel": "preview",
-  "version": "0.1.0-dev.8",
-  "source_commit": "8157ccc7a6c2bee697521b128003b487079062b6",
+  "version": "0.1.0-dev.9",
+  "source_commit": "2f480e45ef28b3a93525b17419914a675c62a053",
   "public_key": "71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e",
   "packages": {
     "aarch64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.8-aarch64-apple-darwin.tar.gz",
-      "sha256": "2a503ad5536fbd0bb446b341fbdee93c1674f854e7835f6e0bb5a6ebe1ce7369",
-      "bytes": 22668285,
-      "binary_sha256": "c8f5db4e7241b12494ec2b953ace3214242a041b299d1310483d840fae06dff5",
-      "manifest_sha256": "fbcba16ab5f949d12769b65840f0e58d37dc7f73f96540f34e9d05e65348fffe"
+      "file": "moosuri-0.1.0-dev.9-aarch64-apple-darwin.tar.gz",
+      "sha256": "6ac62ce096f4d7f87b159868602ccc7e4a52038b5b4b933e368567cb96175d03",
+      "bytes": 20542520,
+      "binary_sha256": "ca5ac0fce07f3ce7922948b26e17d89d0effcc1c01441e1b3ee5ca79fba01201",
+      "manifest_sha256": "03efcaf02bac2a021fb27fb1a814cb9798f1ba1b9f6b7ef47e2bd2ca2bf18d87"
     },
     "x86_64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.8-x86_64-apple-darwin.tar.gz",
-      "sha256": "a0789545312684a96ca449a8644d35441c7220c0bada36b321b8b7b953e7b1ae",
-      "bytes": 24505495,
-      "binary_sha256": "d7d263e17b222f50c1aa45dc1c42f949f5bad5707562ec79a4db2b945e2a5799",
-      "manifest_sha256": "f80013eff56b8d58595ef5c4949ce555b2144b686cbfb7e2a4260918b30b7acc"
+      "file": "moosuri-0.1.0-dev.9-x86_64-apple-darwin.tar.gz",
+      "sha256": "ffdd519cd4a18204760bb256cee8cf44319f9e9e643dd6f8c112036c07cc0dc5",
+      "bytes": 22448240,
+      "binary_sha256": "9e9e27684d350759748a5ed9a153c8dceecac8826eb44adaa171d3b414fba895",
+      "manifest_sha256": "4c11d1a5132c540bc0a814498a6870cdac0cc6bab6e6fed25bfd6442cd069fe7"
     },
     "x86_64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.8-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "d192bf86702d476c21563492cdd161d9f220830c0e8b283188da8dc01c22f7d7",
-      "bytes": 24137801,
-      "binary_sha256": "82c6afb9345a2d38f3a8e7811d8622501e4c8f1fa4d6a738b8d6890738b5cd1c",
-      "manifest_sha256": "1c84dad1a13806c9d18a26a79131d85402518505c9aa713ec660598bbd049cc7"
+      "file": "moosuri-0.1.0-dev.9-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "d07123956bd52c82328db55ccfc37a4b01d867e88b823407947be0757cc9bec7",
+      "bytes": 24146261,
+      "binary_sha256": "97494a6049ec404c9fa74547db9beee935738706d2545a580f1dd706bcce3815",
+      "manifest_sha256": "6330d3a931227f372f28c6ebe4f1118fd0b29ab3aeaebeed55214a72078bd8ac"
     },
     "aarch64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.8-aarch64-unknown-linux-gnu.tar.gz",
-      "sha256": "0f47eaf2f5dd00812d6edae1fe52bca763d033822e8f570701d837421b170f6b",
-      "bytes": 22998982,
-      "binary_sha256": "f5388670c05f50d3e7d77ab5f36b467d1e81f67bc4d7f188da0fab4fa96625f5",
-      "manifest_sha256": "6cca8b7f79777b0b9ee230f1bceb8b27cd40bc49ea847211dce705707907d9de"
+      "file": "moosuri-0.1.0-dev.9-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "f40dcf29cb44f9dc7100f8728f687260859b86868c6b86f1683978a38987e916",
+      "bytes": 22987110,
+      "binary_sha256": "44f315d499b7fdd3f49d8a1964e0dc4255ca6501989db3fbdf8545ad2990e05c",
+      "manifest_sha256": "c8cdef078ab3f6c6f3f2ed72b5ca73d54dad45414d2f53f8292bb81da3fcb397"
     }
   },
   "runtime": "Rust + embedded React + SQLite + native desktop menu",
   "linux_glibc_minimum": "2.34",
   "ci_enabled": false,
   "acceptance": {
-    "macos_arm64": "native Telegram HTTP/model and Store outcomes, shared chat/schema/restore boundaries and packaged CLI probe; live Telegram unverified",
+    "macos_arm64": "native password-policy/session regression, Clippy, packaged exact-eight account init/login/web/shutdown",
     "macos_x64": "cross-built; physical Intel/Rosetta host unverified",
-    "linux_x64": "isolated Telegram HTTP/model and Store outcomes, shared chat/schema/restore boundaries and packaged runtime; live Telegram unverified",
-    "linux_arm64": "QEMU runtime; physical hardware unverified",
+    "linux_x64": "isolated password-policy/session regression and packaged exact-eight account init/login/web/shutdown",
+    "linux_arm64": "QEMU packaged exact-eight account runtime; physical hardware unverified",
     "wsl2": "Linux installer; physical WSL2 host unverified"
   }
 }

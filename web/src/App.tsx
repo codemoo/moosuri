@@ -62,7 +62,7 @@ const AdminProviderSettings = lazy(() => import("./ProviderSettings").then(modul
 const PersonalModelSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.PersonalModelSettings})));
 
 function Brand() {
-  return <span className="brand"><img className="brand-icon" src="/moosuri-icon-192.png" width="32" height="32" alt="" />무수리</span>;
+  return <span className="brand"><img className="brand-icon" src="/moosuri-icon-192.png" width="32" height="32" alt="" />Moosuri</span>;
 }
 function Notice({ children }: { children: ReactNode }) {
   return (
@@ -87,7 +87,7 @@ function Modal({
   fallbackFocus,
   side = false,
 }: {
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   close: () => void;
   returnFocus?: HTMLElement | null;
@@ -1334,7 +1334,7 @@ function Workspace({
       </AppShell>
       {drawer && (
         <Modal
-          title="무수리"
+          title={<Brand />}
           side
           returnFocus={historyOpener.current}
           close={() => setDrawer(false)}

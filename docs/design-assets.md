@@ -4,12 +4,16 @@
 
 | 화면 역할 | 색상 | 참고 유물 |
 | --- | --- | --- |
-| 화면 바탕과 카드 | `#111514`, `#1B211E` | 검은 옻칠로 마감한 왕실 문방구 [흑칠나전연상](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=438958&menuNo=800065)과 영조·정조의 글씨를 인쇄한 [영은경희록](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=366176&menuNo=800065) |
-| 선택 상태와 주요 버튼 | `#ADDCC2`, `#233C32` | 청·홍·녹·백·흑 단청 안료를 쓴 어좌 뒤 [일월오봉도](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=363400&menuNo=800070)와 산의 맑은 청록이 두드러지는 [청록산수도병풍](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=360183&menuNo=800070) |
-| 본문과 제목 | `#F0EBDE` | 조선 백자의 따뜻한 유백색 [백자 달항아리](https://www.museum.go.kr/MUSEUM/contents/M0502000000.do?schM=view&relicId=941) |
+| 화면 바탕과 카드 | `#151515`, `#212120` | 검은 옻칠로 마감한 왕실 문방구 [흑칠나전연상](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=438958&menuNo=800065)과 영조·정조의 글씨를 인쇄한 [영은경희록](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=366176&menuNo=800065) |
+| 선택 상태와 주요 버튼 | `#C4D0DF`, `#29313A` | 청색을 비롯한 단청 안료를 쓴 어좌 뒤 [일월오봉도](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=363400&menuNo=800070) |
+| 본문과 제목 | `#F2EFE9` | 조선 백자의 따뜻한 유백색 [백자 달항아리](https://www.museum.go.kr/MUSEUM/contents/M0502000000.do?schM=view&relicId=941) |
 | 삭제와 오류 | `#EDA394`, `#3A2522` | 일월오봉도의 홍색 안료 |
 
-표의 HEX는 국립고궁박물관과 국립중앙박물관의 유물 해설을 바탕으로 다크 UI에서 읽기 쉽게 조정한 화면용 색상이다. 색상 토큰은 [workspace.css](../web/src/workspace.css)에서 관리한다.
+표의 HEX는 국립고궁박물관과 국립중앙박물관의 유물 해설을 바탕으로 다크 UI에서 읽기 쉽게 조정한 화면용 색상이다. 무채색 바탕에 푸른 회색을 조작 강조색으로 쓰고, 청록은 브랜드 아이콘에 담았다. 색상 토큰은 [workspace.css](../web/src/workspace.css)에서 관리한다.
+
+## 글꼴과 워드마크
+
+로그인과 작업 공간의 브랜드 표기는 아이콘과 함께 **Moosuri**를 사용한다. 일반 텍스트, 한글 입력창, Astryx 컨트롤은 Pretendard Variable 1.3.9의 가변 굵기를 공유한다. 폰트는 원본 WOFF2를 웹 서버에서 제공하며 PWA 앱 셸에 함께 캐시한다. ASCII와 한글을 모두 포함한다. [Pretendard 1.3.9](https://github.com/orioncactus/pretendard/releases/tag/v1.3.9) · [SIL Open Font License](../web/src/fonts/OFL-Pretendard.txt)
 
 ## 화면 배치
 

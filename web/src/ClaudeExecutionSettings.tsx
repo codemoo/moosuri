@@ -4,12 +4,14 @@ import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 
 type Binding = { id: string; revision: number; label: string; status: string; cleanup_state?: string };
+type ModelSyncStatus = "checking" | "ready" | "login_required" | "unavailable";
 type State = { runtime_configured: boolean; bindings: Binding[]; text_only: true };
 type Props = {
   accountId: string;
   onExpired: () => void;
   onVerified: () => void;
   onConnectApi?: () => void;
+  refreshKey?: number;
 };
 const setupGuide = "https://github.com/codemoo/moosuri/blob/main/docs/claude-execution.md#operator-profile";
 
@@ -18,7 +20,7 @@ export function ClaudeExecutionSettings(props: Props) {
   return <ClaudeConnections key={props.accountId} {...props} />;
 }
 
-function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi }: Props) {
+function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, refreshKey = 0 }: Props) {
   const scope = useScope(accountId);
   const guideId = useId();
   const [state, setState] = useState<State | null>(null);
@@ -30,6 +32,11 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi }: P
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const pending = useRef(false);
+  const queuedRefresh = useRef(false);
+  const queuedLogins = useRef(new Map<string, Binding>());
+  const [syncStatus, setSyncStatus] = useState<Record<string, ModelSyncStatus>>({});
+  const verified = useRef(onVerified);
+  verified.current = onVerified;
 
   function fail(error: unknown, fallback: string) {
     if (isAborted(error)) return;
@@ -41,28 +48,70 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi }: P
     else setError(fallback);
   }
 
+  // Only entry and an explicit parent refresh recover pending bindings. A
+  // successful sync reloads the selector without triggering another probe.
   useEffect(() => {
-    let active = true;
-    void scope.request<State>("/settings/claude")
-      .then(value => { if (active) setState(value); })
-      .catch(error => { if (active) fail(error, "Claude 연결 상태를 불러오지 못했습니다. 연결 새로고침으로 다시 확인해 주세요."); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [scope]);
+    if (pending.current) queuedRefresh.current = true;
+    else void refresh();
+  }, [scope, refreshKey]);
 
-  async function refresh() {
-    if (pending.current) return;
+  function finish() {
+    pending.current = false;
+    setLoading(false);
+    setBusy(false);
+    // A login can settle while a status refresh is in progress; retain that
+    // one recovery without replaying duplicate button clicks.
+    const login = queuedLogins.current.values().next().value;
+    if (login) {
+      queuedLogins.current.delete(login.id);
+      void refresh(login);
+    } else if (queuedRefresh.current) {
+      queuedRefresh.current = false;
+      void refresh();
+    }
+  }
+
+  async function syncModels(binding: Binding) {
+    setSyncStatus(old => ({ ...old, [binding.id]: "checking" }));
+    try {
+      const result = await scope.request<{ status: string; models: string[] }>(
+        `/settings/claude/${encodeURIComponent(binding.id)}/models`, "POST", { revision: binding.revision },
+      );
+      const ready = result.status === "ready" && Array.isArray(result.models) && result.models.length > 0;
+      setSyncStatus(old => ({ ...old, [binding.id]: ready ? "ready" : result.status === "login_required" ? "login_required" : "unavailable" }));
+      if (ready) {
+        setState(current => current && { ...current, bindings: current.bindings.map(item => item.id === binding.id && item.revision === binding.revision
+          ? { ...item, status: "active" } : item) });
+        verified.current();
+      }
+    } catch (error) {
+      if (isAborted(error) || error instanceof ApiFailure && error.status === 401) throw error;
+      setSyncStatus(old => ({ ...old, [binding.id]: "unavailable" }));
+      fail(error, "Claude 모델을 불러오지 못했습니다. 잠시 뒤 모델 목록 다시 확인을 눌러 주세요.");
+    }
+  }
+
+  async function refresh(loginBinding?: Binding, afterLogin = false) {
+    if (pending.current) {
+      if (afterLogin && loginBinding) queuedLogins.current.set(loginBinding.id, loginBinding);
+      return;
+    }
     pending.current = true;
     setLoading(true);
     setError("");
     try {
-      setState(await scope.request<State>("/settings/claude"));
+      const value = await scope.request<State>("/settings/claude");
+      setState(value);
+      if (value.runtime_configured) {
+        const candidates = loginBinding ? value.bindings.filter(item => item.id === loginBinding.id && item.revision === loginBinding.revision)
+          : value.bindings.filter(item => item.status === "pending" && item.cleanup_state !== "pending");
+        for (const binding of candidates) {
+          if (binding.status === "pending" || binding.status === "active") await syncModels(binding);
+        }
+      }
     } catch (error) {
       fail(error, "Claude 연결 상태를 불러오지 못했습니다. 연결 새로고침으로 다시 확인해 주세요.");
-    } finally {
-      pending.current = false;
-      setLoading(false);
-    }
+    } finally { finish(); }
   }
 
   async function action(kind: "create" | "probe" | "disconnect", binding?: Binding) {
@@ -109,8 +158,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi }: P
         ? "텍스트 연결을 확인하지 못했습니다. 서버의 공식 로그인 상태와 정확한 모델 ID를 확인해 주세요. 요청은 자동으로 다시 보내지 않습니다."
         : "요청 결과를 확인하지 못했습니다. Claude 연결 새로고침으로 현재 상태를 먼저 확인해 주세요.");
     } finally {
-      pending.current = false;
-      setBusy(false);
+      finish();
     }
   }
 
@@ -164,19 +212,28 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi }: P
         : binding.status === "disconnected" ? "로컬 연결 해제됨" : "다시 연결 필요"}</p>
       {state.runtime_configured && (binding.status === "pending" || binding.status === "active") && <>
         <ClaudeSubscriptionLogin key={`${binding.id}:${binding.revision}`} accountId={accountId} bindingId={binding.id}
-          revision={binding.revision} disabled={busy || loading} onExpired={onExpired} />
+          revision={binding.revision} disabled={busy || loading} onExpired={onExpired} onSucceeded={() => void refresh(binding, true)} />
+        <p className="settings-hint">공식 로그인 후 사용 가능한 모델을 자동으로 확인합니다. 모델 확인은 본인 구독을 사용합니다.</p>
+        {syncStatus[binding.id] === "checking" && <p role="status">사용할 Claude 모델을 확인하는 중…</p>}
+        {syncStatus[binding.id] === "ready" && <p role="status">Claude 모델을 준비했습니다. 아래 ‘사용할 모델’에서 선택하고 저장하세요.</p>}
+        {syncStatus[binding.id] === "login_required" && <p role="status">공식 로그인이 필요합니다. 구독 로그인을 완료하면 모델 목록을 자동으로 불러옵니다.</p>}
+        {syncStatus[binding.id] === "unavailable" && <p role="status">사용 가능한 모델을 확인하지 못했습니다. 구독 이용 상태와 서버 연결을 확인한 뒤 다시 시도하세요.</p>}
+        <button className="secondary" disabled={busy || loading} onClick={() => void refresh(binding)}>모델 목록 다시 확인</button>
         <details className="probe-details">
           <summary>터미널로 연결하기 (고급)</summary>
           <p>서버 터미널에서 아래 도우미를 실행하세요. 내주소와 프로필 경로를 자신의 무수리 이메일과 설치 관리자가 제공한 경로로 바꾸세요. 비밀번호는 도우미가 별도로 묻습니다.</p>
           <code className="claude-login-command">{`moosuri subscriptions claude-login --server ${window.location.origin} --email 내주소 --binding ${binding.id} --revision ${binding.revision} --profile-file /private/path/claude-profile.json`}</code>
           <p>터미널 연결을 선택해도 동일한 공식 로그인과 코드 입력을 사용합니다.</p>
         </details>
-        <label>정확한 모델 ID<input aria-label={`Claude 모델 ${binding.label}`} value={models[binding.id] ?? ""} maxLength={200}
-          onChange={event => setModels(old => ({ ...old, [binding.id]: event.target.value }))}
-          disabled={busy || loading} placeholder="공식 계정에서 사용할 정확한 claude- 버전 ID" /></label>
-        <p className="settings-hint">공식 로그인 후 모델을 확인하세요. 이 확인은 본인 구독을 실제로 사용합니다. 실시간 모델 목록과 추론 강도 설정은 아직 제공하지 않습니다.</p>
-        <button className="secondary" disabled={busy || loading || !(models[binding.id] ?? "").trim()}
-          onClick={() => void action("probe", binding)}>Claude 텍스트 연결 확인</button>
+        <details className="probe-details">
+          <summary>정확한 모델 직접 확인 (고급)</summary>
+          <label>정확한 모델 ID<input aria-label={`Claude 모델 ${binding.label}`} value={models[binding.id] ?? ""} maxLength={200}
+            onChange={event => setModels(old => ({ ...old, [binding.id]: event.target.value }))}
+            disabled={busy || loading} placeholder="공식 계정에서 사용할 정확한 claude- 버전 ID" /></label>
+          <p className="settings-hint">목록에 없는 정확한 모델 ID를 알고 있을 때만 직접 확인하세요. 이 확인은 본인 구독을 실제로 사용합니다.</p>
+          <button className="secondary" disabled={busy || loading || !(models[binding.id] ?? "").trim()}
+            onClick={() => void action("probe", binding)}>Claude 텍스트 연결 확인</button>
+        </details>
       </>}
       <button className="text-button" disabled={busy || loading || binding.status === "disconnected"}
         onClick={() => void action("disconnect", binding)}>Claude 연결 해제</button>

@@ -3,7 +3,7 @@ import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 
 type Login = { attempt_id: string; status: string; authorization_url: string | null; expires_in_seconds: number };
-type Props = { accountId: string; bindingId: string; revision: number; disabled: boolean; onExpired: () => void };
+type Props = { accountId: string; bindingId: string; revision: number; disabled: boolean; onExpired: () => void; onSucceeded?: () => void };
 const active = (status?: string) => ["starting", "awaiting_code", "verifying"].includes(status ?? "");
 function officialUrl(value: string | null) {
   if (!value) return undefined;
@@ -14,7 +14,7 @@ function officialUrl(value: string | null) {
   } catch { return undefined; }
 }
 
-export function ClaudeSubscriptionLogin({ accountId, bindingId, revision, disabled, onExpired }: Props) {
+export function ClaudeSubscriptionLogin({ accountId, bindingId, revision, disabled, onExpired, onSucceeded }: Props) {
   const scope = useScope(accountId);
   const [login, setLogin] = useState<Login | null>(null);
   const [code, setCode] = useState("");
@@ -22,6 +22,15 @@ export function ClaudeSubscriptionLogin({ accountId, bindingId, revision, disabl
   const [error, setError] = useState("");
   const pending = useRef(false);
   const generation = useRef(0);
+  const succeeded = useRef<string | null>(null);
+  const succeededCallback = useRef(onSucceeded);
+  succeededCallback.current = onSucceeded;
+  useEffect(() => {
+    if (login?.status === "succeeded" && succeeded.current !== login.attempt_id) {
+      succeeded.current = login.attempt_id;
+      succeededCallback.current?.();
+    }
+  }, [login?.status, login?.attempt_id]);
   const base = `/settings/claude/${encodeURIComponent(bindingId)}/login`;
   const path = login ? `${base}/${encodeURIComponent(login.attempt_id)}` : base;
   const url = officialUrl(login?.authorization_url ?? null);
@@ -85,7 +94,7 @@ export function ClaudeSubscriptionLogin({ accountId, bindingId, revision, disabl
       </form>
     </>}
     {login?.status === "verifying" && <p role="status">Claude가 로그인 코드를 확인하고 있습니다…</p>}
-    {login?.status === "succeeded" && <p className="settings-success" role="status">구독 로그인을 완료했습니다. 아래에서 사용할 모델의 텍스트 연결을 확인하세요.</p>}
+    {login?.status === "succeeded" && <p className="settings-success" role="status">구독 로그인을 완료했습니다. 사용할 모델 목록을 자동으로 확인합니다.</p>}
     {login?.status === "expired" && <p role="status">로그인 시간이 만료되었습니다. 새로 시작해 주세요.</p>}
     {login?.status === "cancelled" && <p role="status">로그인을 취소했습니다.</p>}
     {login?.status === "failed" && <p role="alert">Claude 로그인을 완료하지 못했습니다. 새 로그인 링크에서 다시 진행해 주세요.</p>}

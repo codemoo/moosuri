@@ -138,6 +138,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [retry, setRetry] = useState(0);
+  const [claudeRefresh, setClaudeRefresh] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   function fail(error: unknown) {
@@ -146,22 +147,25 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
     else setError(settingsError(error));
   }
   useEffect(() => {
+    let active = true;
     setLoading(true);
     setError("");
     setNotice("");
     void scope
       .request<ModelSettings>("/settings/model")
       .then((value) => {
+        if (!active) return;
         setSettings(value);
         setDraft(selectionKey(value.selection));
         setLoading(false);
       })
       .catch((error) => {
-        if (!isAborted(error)) {
+        if (active && !isAborted(error)) {
           fail(error);
           setLoading(false);
         }
       });
+    return () => { active = false; };
   }, [scope, retry]);
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -214,7 +218,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
           {notice}
         </p>
       )}
-      <ClaudeExecutionSettings accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} onConnectApi={onConnectClaudeApi} />
+      <ClaudeExecutionSettings accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} refreshKey={claudeRefresh} onConnectApi={onConnectClaudeApi} />
       <PersonalChatGpt accountId={accountId} onExpired={onExpired} choices={settings?.choices ?? []} onVerified={()=>setRetry(v=>v+1)} />
       <section className="admin-card">
         <div className="section-heading">
@@ -295,7 +299,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
         <button
           className="text-button"
           disabled={busy || loading}
-          onClick={() => setRetry((value) => value + 1)}
+          onClick={() => { setRetry((value) => value + 1); setClaudeRefresh(value => value + 1); }}
         >
           새로고침
         </button>

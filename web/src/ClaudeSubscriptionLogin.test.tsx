@@ -39,3 +39,13 @@ it("never presents a nonofficial login URL or raw provider failure text",async()
  await screen.findByLabelText("2. Claude에서 받은 로그인 코드");
  expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
+it("notifies model recovery once when polling observes login success", async () => {
+ const succeeded = vi.fn();
+ vi.stubGlobal("fetch", vi.fn(async (url:RequestInfo|URL) => response({ ...waiting, status: String(url).endsWith("/login") ? "verifying" : "succeeded", authorization_url: null })));
+ const view = render(<ClaudeSubscriptionLogin {...props} onSucceeded={succeeded}/>);
+ await userEvent.setup().click(screen.getByRole("button", {name:"구독 로그인"}));
+ await waitFor(() => expect(succeeded).toHaveBeenCalledOnce());
+ view.rerender(<ClaudeSubscriptionLogin {...props} onSucceeded={() => succeeded()}/>);
+ expect(succeeded).toHaveBeenCalledOnce();
+ expect(screen.getByText(/사용할 모델 목록을 자동으로 확인합니다/)).toBeInTheDocument();
+});

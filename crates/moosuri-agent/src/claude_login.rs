@@ -51,7 +51,11 @@ impl SubscriptionService {
         id: String,
         revision: i64,
     ) -> Result<ClaudeLoginView, StoreError> {
-        let reference = self.store.claude_launch_ref(u, id, revision).await?;
+        let _sync = self
+            .claude_model_sync
+            .try_lock()
+            .map_err(|_| StoreError::Busy)?;
+        let reference = self.store.claude_login_ref(u, id, revision).await?;
         let profile = self.claude_profile().await?;
         if profile.digest() != reference.profile_digest || profile.root_id() != reference.root_id {
             return Err(StoreError::Conflict);
@@ -112,7 +116,7 @@ impl SubscriptionService {
                 tokio::select! {biased;
                     _=service.signals.stopping().cancelled(), if !running.cancel.is_cancelled()=>running.cancel.cancel(),
                     _=tick.tick()=>{
-                        if service.store.claude_launch_ref(&running.owner,running.reference.id.clone(),running.reference.revision).await.is_err()
+                        if service.store.claude_login_ref(&running.owner,running.reference.id.clone(),running.reference.revision).await.is_err()
                             || running.created.elapsed()>=Duration::from_secs(300) { running.cancel.cancel(); }
                     },
                     Some(LoginEvent::AuthorizationUrl(url))=output.recv()=>{
@@ -156,7 +160,7 @@ impl SubscriptionService {
         }
         if let Err(error) = self
             .store
-            .claude_launch_ref(u, binding.into(), attempt.reference.revision)
+            .claude_login_ref(u, binding.into(), attempt.reference.revision)
             .await
         {
             attempt.cancel.cancel();

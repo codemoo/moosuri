@@ -206,6 +206,47 @@ impl Profile {
         }
         Ok(())
     }
+    // Host-owned metadata outside the container-writable HOME. Every login
+    // checks it under the same OS lock used by text inference.
+    fn login_allowed(&self, environment: &str) -> Result<(), TransportError> {
+        self.allowed_environment(environment)?;
+        match std::fs::symlink_metadata(
+            self.config
+                .auth_root
+                .join(format!("{environment}.text-verified")),
+        ) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            _ => Err(err()),
+        }
+    }
+    fn retain_text_identity(&self, environment: &str) -> Result<(), TransportError> {
+        self.allowed_environment(environment)?;
+        let path = self
+            .config
+            .auth_root
+            .join(format!("{environment}.text-verified"));
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)
+            .map_err(|_| err())?;
+        let m = f.metadata().map_err(|_| err())?;
+        if !m.is_file()
+            || m.uid() != unsafe { libc::geteuid() }
+            || m.nlink() != 1
+            || m.mode() & 0o777 != 0o600
+        {
+            return Err(err());
+        }
+        f.sync_all().map_err(|_| err())?;
+        std::fs::File::open(&self.config.auth_root)
+            .map_err(|_| err())?
+            .sync_all()
+            .map_err(|_| err())
+    }
     pub fn block_environment(&self, environment: &str) -> Result<(), TransportError> {
         if uuid::Uuid::parse_str(environment)
             .map_err(|_| err())?
@@ -508,6 +549,7 @@ impl Profile {
             return Err(TransportError::Cancelled);
         }
         let _os = tokio::select! {_=external.cancelled()=>return Err(TransportError::Cancelled),r=self.os_lock(environment)=>r?};
+        self.login_allowed(environment)?;
         let (env, temp, listener) = tokio::select! {_=external.cancelled()=>return Err(TransportError::Cancelled),r=self.prepare(environment)=>r?};
         let name = format!("moosuri-claude-{}", uuid::Uuid::new_v4());
         let cancel = CancellationToken::new();
@@ -610,6 +652,9 @@ impl Profile {
         if self.remove(&name).await.is_err() {
             let _ = self.block_environment(environment);
             return Err(TransportError::Transport);
+        }
+        if result.is_ok() {
+            self.retain_text_identity(environment)?;
         }
         result
     }

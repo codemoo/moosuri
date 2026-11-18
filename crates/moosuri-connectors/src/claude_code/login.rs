@@ -72,6 +72,7 @@ impl Profile {
         external: &CancellationToken,
     ) -> Result<(), TransportError> {
         let _os = tokio::select! {biased;_=external.cancelled()=>return Err(TransportError::Cancelled),r=self.os_lock(environment)=>r?};
+        self.login_allowed(environment)?;
         let (env, temp, listener) = tokio::select! {biased;_=external.cancelled()=>return Err(TransportError::Cancelled),r=self.prepare(environment)=>r?};
         let name = format!("moosuri-claude-{}", uuid::Uuid::new_v4());
         let cancel = CancellationToken::new();

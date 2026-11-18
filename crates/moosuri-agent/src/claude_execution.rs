@@ -30,6 +30,15 @@ impl crate::subscriptions::SubscriptionService {
         id: String,
         revision: i64,
     ) -> Result<ClaudeModelsView, StoreError> {
+        self.claude_models_refresh(u, id, revision, false).await
+    }
+    pub async fn claude_models_refresh(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+        force: bool,
+    ) -> Result<ClaudeModelsView, StoreError> {
         // Serialize discovery/probes before reading saved successes, so refreshes
         // and concurrent tabs cannot duplicate inference for this runtime.
         let _sync = self
@@ -40,7 +49,11 @@ impl crate::subscriptions::SubscriptionService {
             .store
             .claude_launch_ref(u, id.clone(), revision)
             .await?;
-        let models = self
+        let p = self.claude_profile().await?;
+        if p.digest() != r.profile_digest || p.root_id() != r.root_id {
+            return Err(StoreError::Conflict);
+        }
+        let mut models = self
             .store
             .model_settings(u)
             .await?
@@ -53,15 +66,11 @@ impl crate::subscriptions::SubscriptionService {
             })
             .map(|c| c.model)
             .collect::<Vec<_>>();
-        if !models.is_empty() {
+        if !models.is_empty() && !force {
             return Ok(ClaudeModelsView {
                 status: "ready",
                 models,
             });
-        }
-        let p = self.claude_profile().await?;
-        if p.digest() != r.profile_digest || p.root_id() != r.root_id {
-            return Err(StoreError::Conflict);
         }
         let cancel = CancellationToken::new();
         let operation = p.account_models(&r.environment_id, &cancel);
@@ -93,12 +102,14 @@ impl crate::subscriptions::SubscriptionService {
                 models: vec![],
             });
         }
-        let mut models = vec![];
-        // Connector emits only the unique default/sonnet/haiku concrete IDs.
+        // Connector emits at most three unique standard-tier concrete IDs.
         // Failed/unknown attempts are still admitted by the durable probe budget.
         for model in catalog.models.into_iter().take(3) {
+            if models.contains(&model) {
+                continue;
+            }
             if self
-                .claude_probe(u, id.clone(), revision, model.clone())
+                .claude_probe_inner(u, id.clone(), revision, model.clone())
                 .await
                 .is_ok()
             {
@@ -122,11 +133,39 @@ impl crate::subscriptions::SubscriptionService {
         revision: i64,
         model: String,
     ) -> Result<moosuri_core::ModelChoice, StoreError> {
+        let _sync = self
+            .claude_model_sync
+            .try_lock()
+            .map_err(|_| StoreError::Busy)?;
+        self.claude_probe_inner(u, id, revision, model).await
+    }
+    async fn claude_probe_inner(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+        model: String,
+    ) -> Result<moosuri_core::ModelChoice, StoreError> {
         // Ownership precedes profile verification/launch.
         let r = self.store.claude_launch_ref(u, id, revision).await?;
         let p = self.claude_profile().await?;
-        if p.digest() != r.profile_digest {
+        if p.digest() != r.profile_digest || p.root_id() != r.root_id {
             return Err(StoreError::Conflict);
+        }
+        if let Some(choice) = self
+            .store
+            .model_settings(u)
+            .await?
+            .choices
+            .into_iter()
+            .find(|c| {
+                c.source == moosuri_core::ModelSource::PersonalClaudeCode
+                    && c.provider_id == r.id
+                    && c.provider_revision == revision
+                    && c.model == model
+            })
+        {
+            return Ok(choice);
         }
         let request = TextRequest {
             model: model.clone(),
@@ -222,9 +261,9 @@ impl crate::subscriptions::SubscriptionService {
         id: String,
         revision: i64,
     ) -> Result<ClaudeExecutionRef, StoreError> {
-        let r = self.store.claude_launch_ref(u, id, revision).await?;
+        let r = self.store.claude_login_ref(u, id, revision).await?;
         let p = self.claude_profile().await?;
-        if p.digest() != r.profile_digest {
+        if p.digest() != r.profile_digest || p.root_id() != r.root_id {
             return Err(StoreError::Conflict);
         }
         Ok(r)
@@ -427,6 +466,144 @@ mod tests {
         assert_eq!(
             store.claude_bindings(&u).await.unwrap()[0].status,
             "pending"
+        );
+        runtime.shutdown().await;
+    }
+    #[tokio::test]
+    async fn manual_and_forced_sync_reuse_proof_and_repair_only_missing_tiers() {
+        let _g = crate::tests::TEST_LOCK.lock().await;
+        let (_dir, store, u) = setup().await;
+        let f = moosuri_connectors::claude_code::fixture::Fixture::new();
+        let r = store
+            .create_claude_binding(
+                &u,
+                "Partial".into(),
+                f.profile.digest().into(),
+                f.profile.root_id(),
+            )
+            .await
+            .unwrap();
+        let runtime = Runtime::start_with_google_setup_claude(
+            store.clone(),
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(f.profile.clone())),
+        );
+        let service = runtime.subscription_service();
+        let old = store
+            .create_claude_binding(
+                &u,
+                "Previously verified".into(),
+                f.profile.digest().into(),
+                f.profile.root_id(),
+            )
+            .await
+            .unwrap();
+        store
+            .record_claude_probe(&u, old.clone(), "claude-fixture-v1".into())
+            .await
+            .unwrap();
+        assert!(
+            service
+                .claude_native_ref(&u, old.id.clone(), old.revision)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .claude_login_start(&u, old.id, old.revision)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            f.launches(),
+            0,
+            "legacy proof is guarded before any official login launch"
+        );
+        f.behavior("partial");
+        let first = service
+            .claude_models(&u, r.id.clone(), r.revision)
+            .await
+            .unwrap();
+        assert_eq!(first.models.len(), 2);
+        assert_eq!(f.launches(), 4);
+        service
+            .claude_probe(&u, r.id.clone(), r.revision, first.models[0].clone())
+            .await
+            .unwrap();
+        assert_eq!(f.launches(), 4, "manual probe reuses exact success");
+        // A verified binding cannot mutate its credential environment via either
+        // login entry point, including proofs created before marker support.
+        assert!(
+            service
+                .claude_native_ref(&u, r.id.clone(), r.revision)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .claude_login_start(&u, r.id.clone(), r.revision)
+                .await
+                .is_err()
+        );
+        {
+            let _guard = service.claude_model_sync.lock().await;
+            assert!(
+                service
+                    .claude_probe(&u, r.id.clone(), r.revision, "claude-fixture-v1".into())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                service
+                    .claude_models(&u, r.id.clone(), r.revision)
+                    .await
+                    .is_err()
+            );
+        }
+        f.behavior("ok");
+        let repaired = service
+            .claude_models_refresh(&u, r.id.clone(), r.revision, true)
+            .await
+            .unwrap();
+        assert_eq!(repaired.models.len(), 3);
+        assert_eq!(
+            f.launches(),
+            6,
+            "one catalog plus only previously failed tier"
+        );
+        service
+            .claude_models_refresh(&u, r.id.clone(), r.revision, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            f.launches(),
+            7,
+            "explicit refresh reads catalog but reuses all proof"
+        );
+        runtime.shutdown().await;
+        let incompatible = moosuri_connectors::claude_code::fixture::Fixture::new();
+        let runtime = Runtime::start_with_google_setup_claude(
+            store,
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(incompatible.profile.clone())),
+        );
+        assert!(
+            runtime
+                .subscription_service()
+                .claude_models(&u, r.id.clone(), r.revision)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            incompatible.launches(),
+            0,
+            "profile/root mismatch cannot return saved eligibility"
         );
         runtime.shutdown().await;
     }

@@ -199,6 +199,25 @@ impl Store {
         })
         .await
     }
+    /// Official login may only mutate an environment with no verified proof.
+    /// Active accounts switch credentials by creating a fresh binding.
+    pub async fn claude_login_ref(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+    ) -> Result<ClaudeExecutionRef> {
+        let u = u.clone();
+        self.call(move |db| {
+            let u = validate(&db.conn, &u, true, false)?;
+            let r = reference(&db.conn, &u.tenant.0, &u.account.id, &id, revision)?;
+            let pending: bool = db.conn.query_row(
+                "SELECT status='pending' FROM claude_code_bindings WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND revision=?4",
+                params![u.tenant.0, u.account.id, id, revision], |row| row.get(0))?;
+            if !pending { return Err(StoreError::Conflict); }
+            Ok(r)
+        }).await
+    }
     pub async fn record_claude_probe(
         &self,
         u: &UserContext,

@@ -48,6 +48,8 @@ pub(super) async fn native(
 #[serde(deny_unknown_fields)]
 pub(super) struct ModelsInput {
     revision: i64,
+    #[serde(default)]
+    force: bool,
 }
 pub(super) async fn models(
     State(s): State<AppState>,
@@ -64,7 +66,7 @@ pub(super) async fn models(
     Ok(Json(
         s.runtime
             .subscription_service()
-            .claude_models(&u, id, i.revision)
+            .claude_models_refresh(&u, id, i.revision, i.force)
             .await?,
     )
     .into_response())

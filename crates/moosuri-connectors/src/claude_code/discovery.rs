@@ -42,18 +42,25 @@ fn catalog(v: &Value, request_id: &str) -> Result<AccountModels, TransportError>
         return Err(TransportError::LimitExceeded);
     }
     let mut models = Vec::new();
-    // These official aliases identify the account default and two standard tiers.
-    // Other catalog entries can require separate paid credits/consent.
-    for alias in ["default", "sonnet", "haiku"] {
+    // Resolve eligibility from the official standard aliases only. A separately
+    // billed tier is excluded even when it is the account's current default.
+    let standard = ["opus", "sonnet", "haiku"]
+        .into_iter()
+        .filter_map(|alias| {
+            rows.iter()
+                .find(|row| row["value"] == alias)
+                .and_then(|row| row["resolvedModel"].as_str())
+                .filter(|value| valid_model(value) && !value.contains("fable"))
+        })
+        .collect::<Vec<_>>();
+    for alias in ["default", "opus", "sonnet", "haiku"] {
         let Some(row) = rows.iter().find(|row| row["value"] == alias) else {
             continue;
         };
-        let value = row
-            .get("resolvedModel")
-            .and_then(Value::as_str)
-            .or_else(|| row.get("value").and_then(Value::as_str))
-            .ok_or_else(err)?;
-        if valid_model(value) && !models.iter().any(|m| m == value) {
+        let Some(value) = row["resolvedModel"].as_str() else {
+            continue;
+        };
+        if standard.contains(&value) && !models.iter().any(|m| m == value) && models.len() < 3 {
             models.push(value.to_owned());
         }
     }
@@ -163,9 +170,83 @@ impl Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn successful_text_prevents_stale_native_and_web_login_but_failed_text_does_not() {
+        use crate::model::protocol::{TextMessage, TextRole};
+        let f = crate::claude_code::fixture::Fixture::new();
+        let environment = "00000000-0000-4000-8000-000000000001";
+        let request = TextRequest {
+            model: "claude-fixture-v1".into(),
+            effort: None,
+            max_output_tokens: 2048,
+            messages: vec![TextMessage {
+                role: TextRole::User,
+                text: "OK".into(),
+                phase: None,
+            }],
+        };
+        let cancel = CancellationToken::new();
+        let (tx, _rx) = mpsc::channel(16);
+        f.behavior("nonzero");
+        assert!(
+            f.profile
+                .stream_text(environment, &request, &tx, &cancel)
+                .await
+                .is_err()
+        );
+        assert!(f.profile.login_allowed(environment).is_ok());
+        f.behavior("ok");
+        let (tx, _rx) = mpsc::channel(16);
+        f.profile
+            .stream_text(environment, &request, &tx, &cancel)
+            .await
+            .unwrap();
+        assert!(f.profile.login_allowed(environment).is_err());
+        let before = f.launches();
+        assert!(
+            f.profile
+                .login_with_cancel(environment, &cancel)
+                .await
+                .is_err()
+        );
+        let (events, _output) = mpsc::channel(1);
+        let (_codes, mut input) = mpsc::channel(1);
+        assert!(
+            f.profile
+                .login_web(environment, &events, &mut input, &cancel)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            f.launches(),
+            before,
+            "stale login metadata cannot launch after verified inference"
+        );
+    }
+    #[test]
+    fn credit_default_cannot_enter_automatic_probes_and_standard_aliases_are_unique() {
+        let response = json!({"type":"control_response","response":{"subtype":"success","request_id":"r","response":{"account":{"subscriptionType":"pro"},"models":[
+            {"value":"default","resolvedModel":"claude-fable-synthetic"},
+            {"value":"opus","resolvedModel":"claude-opus-synthetic"},
+            {"value":"sonnet","resolvedModel":"claude-sonnet-synthetic"},
+            {"value":"haiku","resolvedModel":"claude-haiku-synthetic"},
+            {"value":"fable","resolvedModel":"claude-fable-synthetic"}]}}});
+        assert_eq!(
+            catalog(&response, "r").unwrap().models,
+            [
+                "claude-opus-synthetic",
+                "claude-sonnet-synthetic",
+                "claude-haiku-synthetic"
+            ]
+        );
+        let mut response = response;
+        response["response"]["response"]["models"][0]["resolvedModel"] =
+            json!("claude-opus-synthetic");
+        assert_eq!(catalog(&response, "r").unwrap().models.len(), 3);
+    }
     #[test]
     fn catalog_never_promotes_aliases_or_account_identity_to_eligibility() {
-        let response = |account| json!({"type":"control_response","response":{"subtype":"success","request_id":"r","response":{"account":account,"models":[{"value":"sonnet","resolvedModel":"claude-sonnet-synthetic"},{"value":"default","resolvedModel":"claude-opus-synthetic"},{"value":"claude-opus-synthetic"}]}}});
+        let response = |account| json!({"type":"control_response","response":{"subtype":"success","request_id":"r","response":{"account":account,"models":[{"value":"sonnet","resolvedModel":"claude-sonnet-synthetic"},{"value":"default","resolvedModel":"claude-opus-synthetic"},{"value":"opus","resolvedModel":"claude-opus-synthetic"}]}}});
         let parsed = catalog(
             &response(json!({"subscriptionType":"pro","apiProvider":"firstParty","email":"synthetic@example.test"})),
             "r",

@@ -8,6 +8,10 @@ Moosuri SHALL use the owner’s selected subscription to analyze supported attac
 - **WHEN** the selected model returns the wrong answer to an independent image challenge
 - **THEN** the server does not admit images for that owner, binding revision, model and effort
 
+#### Scenario: Official CLI reports a thinking budget during image input
+- **WHEN** the initialized official Claude session reports a valid numeric thinking-budget progress frame
+- **THEN** the decoder continues the same response without treating that frame as answer content or successful completion
+
 #### Scenario: Conversation moves to a subscription connection
 - **WHEN** an earlier attachment revision was selected only on another connection
 - **THEN** the owner must select it for this connection before a follow-up can send its contents

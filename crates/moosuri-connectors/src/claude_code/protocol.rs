@@ -256,6 +256,31 @@ impl Decoder {
             Some("system") if v["subtype"] == "ui_invalidate" && v["event"] == "ui.render" => {}
             Some("system")
                 if self.init && v["subtype"] == "status" && v["status"] == "requesting" => {}
+            Some("system") if self.init && v["subtype"] == "thinking_tokens" => {
+                // Official SDKThinkingTokensMessage is estimated block progress,
+                // never assistant text, final usage, or evidence of completion.
+                // https://platform.claude.com/docs/en/agent-sdk/typescript#sdkthinkingtokensmessage
+                let total = v["estimated_tokens"].as_u64().ok_or_else(bad)?;
+                let delta = v["estimated_tokens_delta"].as_u64().ok_or_else(bad)?;
+                if self.message.is_none()
+                    || self.block.is_none()
+                    || !matches!(
+                        self.block_kind.as_deref(),
+                        Some("thinking" | "redacted_thinking")
+                    )
+                    || self.block_snapshot
+                    || self.stopped
+                    || total > 1_000_000_000_000
+                    || delta > total
+                    || v["uuid"]
+                        .as_str()
+                        .is_none_or(|id| id.len() != 36 || Uuid::parse_str(id).is_err())
+                    || v.get("user_message_uuid")
+                        .is_some_and(|id| id != &self.user)
+                {
+                    return Err(bad());
+                }
+            }
             Some("stream_event") if self.init => {
                 let e = &v["event"];
                 match e["type"].as_str() {
@@ -568,6 +593,72 @@ mod tests {
             d.line(&serde_json::to_vec(v).unwrap())?;
         }
         Ok(d)
+    }
+    fn thinking_frames() -> Vec<Value> {
+        let mut f = frames();
+        for item in &mut f[2..6] {
+            if item["type"] == "stream_event" {
+                item["event"]["index"] = json!(1);
+            }
+        }
+        let progress = json!({"type":"system","subtype":"thinking_tokens","session_id":"s","estimated_tokens":50,"estimated_tokens_delta":50,"user_message_uuid":"u","uuid":"00000000-0000-4000-8000-000000000001"});
+        f.splice(2..2, vec![
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}}),
+            progress.clone(),
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Synthetic private reasoning"}}}),
+            {let mut next=progress;next["estimated_tokens"]=json!(202);next["estimated_tokens_delta"]=json!(152);next},
+            json!({"type":"assistant","session_id":"s","message":{"id":"m","role":"assistant","model":MODEL,"content":[{"type":"thinking","thinking":"Synthetic private reasoning","signature":"synthetic"}]}}),
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_stop","index":0}}),
+        ]);
+        f
+    }
+    #[test]
+    fn thinking_progress_is_informational_and_requires_bound_block_and_identity() {
+        let f = thinking_frames();
+        let mut d = Decoder::new("s", "u", MODEL, "2.1.322");
+        for frame in &f[..8] {
+            let events = d.line(&serde_json::to_vec(frame).unwrap()).unwrap();
+            assert!(events.iter().all(|e| !matches!(
+                e,
+                ModelEvent::TextDelta { .. }
+                    | ModelEvent::UsageSnapshot(_)
+                    | ModelEvent::Finished { .. }
+            )));
+        }
+        assert!(
+            d.finish(true).is_err(),
+            "progress alone cannot complete a turn"
+        );
+        assert!(decode(&f).unwrap().finish(true).is_ok());
+        for (key, value) in [
+            ("estimated_tokens", json!(-1)),
+            ("estimated_tokens", json!(0.5)),
+            ("estimated_tokens", json!(1_000_000_000_001u64)),
+            ("estimated_tokens_delta", json!(51)),
+            ("uuid", json!("invalid")),
+            ("user_message_uuid", json!("another-user")),
+            ("session_id", json!("another-session")),
+            ("parent_tool_use_id", json!("native-tool")),
+        ] {
+            let mut invalid = f.clone();
+            invalid[3][key] = value;
+            assert!(decode(&invalid).is_err(), "{key}");
+        }
+        let mut no_user = f.clone();
+        no_user[3]
+            .as_object_mut()
+            .unwrap()
+            .remove("user_message_uuid");
+        assert!(decode(&no_user).unwrap().finish(true).is_ok());
+        for offset in [0, 2, 8, 9, f.len()] {
+            let mut invalid = f.clone();
+            let progress = invalid.remove(3);
+            invalid.insert(offset.min(invalid.len()), progress);
+            assert!(
+                decode(&invalid).is_err(),
+                "progress outside thinking block at {offset}"
+            );
+        }
     }
     #[test]
     fn completion_requires_result_clean_exit_and_no_suffix() {

@@ -43,7 +43,7 @@ The trusted system prompt is a private file. Input uses the official stream-JSON
 expansion. Content never enters argv, environment variables or diagnostics.
 
 The existing `begin_agent_step` transaction commits the invocation/usage receipt
-before process launch or stdin. Output remains partial until the decoder sees
+before process launch or stdin. The decoder accepts the official numeric `thinking_tokens` progress frame only within its initialized session; that frame supplies no answer, usage receipt or execution authority. Output remains partial until the decoder sees
 consistent model/message/session/input identity, a valid terminal result, clean
 EOF and exit 0. Truncation, malformed suffix, cancellation, timeout and lost result
 stay unknown after dispatch; no provider inference is automatically repeated.

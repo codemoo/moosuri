@@ -43,7 +43,13 @@ pub(super) async fn response(s: &Provider, body: &Value) -> axum::response::Resp
     let answer = if s.answer_phase.load(Ordering::SeqCst) == 1 {
         "WRONG".to_owned()
     } else {
+        // Real models may format a correct row-major answer as four rows.
         answer
+            .as_bytes()
+            .chunks(4)
+            .map(|row| std::str::from_utf8(row).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     if s.hold_tool.load(Ordering::SeqCst) == 1 {
         s.tool_entered.notify_one();

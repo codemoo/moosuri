@@ -4,6 +4,14 @@ use moosuri_connectors::model::protocol::{
     FinishOutcome, ModelEvent, TextMessage, TextRequest, TextRole,
 };
 use moosuri_core::{ModelChoice, ModelSelection, ModelSource};
+// Row formatting is not image evidence. Ignore only ASCII spacing while still
+// requiring every color letter, its order and the complete unpredictable pattern.
+fn answer_matches(actual: &str, expected: &str) -> bool {
+    actual
+        .bytes()
+        .filter(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+        .eq(expected.bytes())
+}
 impl SubscriptionService {
     pub async fn personal_vision_probe(
         &self,
@@ -98,7 +106,7 @@ impl SubscriptionService {
         }
         if invalid
             || model.as_deref() != Some(&request.model)
-            || text.trim() != expected
+            || !answer_matches(&text, &expected)
             || finish != Some(FinishOutcome::Completed)
         {
             return Err(StoreError::Unavailable);
@@ -125,5 +133,32 @@ impl SubscriptionService {
             },
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod answer_tests {
+    use super::answer_matches;
+    #[test]
+    fn row_spacing_preserves_exact_complete_color_evidence() {
+        let expected = "RGBYYBGRGRYBBYRG";
+        for actual in [
+            "RGBYYBGRGRYBBYRG",
+            "RGBY\nYBGR\nGRYB\nBYRG",
+            " R G B Y\r\nY B G R\nG R Y B\nB Y R G\t",
+        ] {
+            assert!(answer_matches(actual, expected));
+        }
+        for actual in [
+            "RGBYYBGRGRYBBYRR",
+            "RGBYYBGRGRYBBYR",
+            "RGBYYBGRGRYBBYRGR",
+            "The colors are RGBYYBGRGRYBBYRG",
+            "```RGBYYBGRGRYBBYRG```",
+            "RGBY\u{200b}YBGRGRYBBYRG",
+            "I cannot inspect the image",
+        ] {
+            assert!(!answer_matches(actual, expected));
+        }
     }
 }

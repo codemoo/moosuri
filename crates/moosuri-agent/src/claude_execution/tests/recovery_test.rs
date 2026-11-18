@@ -213,9 +213,17 @@ async fn claude_restored_probe_admission_precedes_process_and_last_chat_can_fini
         terminal(&store, &owner, &thread.id).await.run.state,
         RunState::Completed
     );
+    // Reading an existing verification spends no inference allowance. A new
+    // model still needs a real call and must stop before launching a process.
+    assert!(
+        service
+            .claude_probe(&owner, binding.id.clone(), 1, "claude-fixture-v1".into())
+            .await
+            .is_ok()
+    );
     assert!(matches!(
         service
-            .claude_probe(&owner, binding.id, 1, "claude-fixture-v1".into())
+            .claude_probe(&owner, binding.id, 1, "claude-fixture-unverified".into())
             .await,
         Err(StoreError::RecoveryAllowanceExhausted)
     ));

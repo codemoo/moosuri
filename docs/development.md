@@ -28,7 +28,7 @@ and symlinks are rejected. Do not point it at your home or source root.
 ./target/debug/moosuri serve --origin http://127.0.0.1:3210 --dev
 ```
 
-The hidden terminal prompt accepts a password of 12–256 UTF-8 bytes. Leaving it
+The hidden terminal prompt accepts a password with at least 8 Unicode characters and at most 256 UTF-8 bytes. Leaving it
 blank generates a temporary password shown once on the controlling terminal;
 first login must change it. For unattended setup, `--password-file` reads a
 small owner-only regular file and never prints its contents. No password value
@@ -111,7 +111,7 @@ copying a live DB is not a supported backup.
 ## Recovering a journal-locked account
 
 Stop the installation, use its existing account UUID, and explicitly choose the
-current role. Supply a new password of 12–256 UTF-8 bytes, different from the revoked password, through an owner-only
+current role. Supply a new password with at least 8 Unicode characters and at most 256 UTF-8 bytes, different from the revoked password, through an owner-only
 regular file belonging to the current OS user (one hard link, no symlink). No
 password value belongs in command arguments or logs.
 

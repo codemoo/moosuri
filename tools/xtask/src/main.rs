@@ -233,8 +233,8 @@ fn scenarios(root: &Path, features: &BTreeSet<String>) -> Check<BTreeSet<String>
 }
 
 fn verify(root: &Path) -> Check<()> {
-    let features = definitions(root, "features.md", 'F', 70)?;
-    let requirements = definitions(root, "requirements.md", 'R', 29)?;
+    let features = definitions(root, "features.md", 'F', 71)?;
+    let requirements = definitions(root, "requirements.md", 'R', 30)?;
     let inventory = table(
         root,
         "source-inventory.tsv",

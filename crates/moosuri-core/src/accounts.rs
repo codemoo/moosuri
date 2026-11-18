@@ -3,6 +3,11 @@ use super::{AccountSummary, Role};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// Enrollment policy; existing password hashes keep their normal login path.
+pub fn account_password_valid(password: &str) -> bool {
+    password.len() <= 256 && password.chars().count() >= 8
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountStatus {

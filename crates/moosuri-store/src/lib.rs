@@ -272,7 +272,7 @@ fn digest(token: &str) -> [u8; 32] {
     Sha256::digest(token.as_bytes()).into()
 }
 fn password_valid(password: &str) -> Result<()> {
-    if !(12..=256).contains(&password.len()) {
+    if !moosuri_core::account_password_valid(password) {
         Err(StoreError::InvalidInput)
     } else {
         Ok(())

@@ -1,3 +1,4 @@
+import { ACCOUNT_PASSWORD_HELP } from "./account-password";
 export type RequestOptions = { timeoutMs?: number };
 
 /** An account lifetime owns every request. Closing it aborts transport and fences
@@ -375,7 +376,7 @@ export function errorText(error: unknown): string {
   if (error.code === "invalid_credentials")
     return "The email or password is incorrect, or the invitation has expired.";
   if (error.code === "password_too_short" || error.code === "invalid_password")
-    return "Choose a password with at least 12 characters.";
+    return ACCOUNT_PASSWORD_HELP;
   if (error.code === "account_exists" || error.code === "invalid_account")
     return "Could not create this account. Check the details and try again.";
   return "The action could not be completed. Please try again.";

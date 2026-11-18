@@ -38,7 +38,7 @@ a numbered choice and Enter. Use `--plain` for simple numbered menus and
    registered domain and this server’s HTTPS route before activation. DNS and external
    TCP443 reachability are required; DNS alone does not bypass CGNAT.
 2. **Administrator / 관리자:** Enter a name, email and a password of at least
-   12 bytes. Email is your sign-in ID; no email is sent. Passwords are hidden.
+   8 Unicode characters (at most 256 UTF-8 bytes). Email is your sign-in ID; no email is sent. Passwords are hidden.
    Leave it blank to receive a temporary password on the terminal only, then
    change it at the first sign-in. Additional accounts are created later.
 3. **Model / 모델:** Connect OpenAI API, Anthropic API, OpenRouter, Ollama,

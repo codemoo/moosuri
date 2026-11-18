@@ -418,16 +418,16 @@ async fn wizard(options: &Options, data: Option<&Path>, tty: &mut Terminal) -> R
         };
         let password = loop {
             let p = tty.secret(
-                "Password (12+ characters; Enter creates a temporary one)",
-                "비밀번호 (12자 이상, Enter로 임시 비밀번호 생성)",
+                "Password (8+ characters; Enter creates a temporary one)",
+                "비밀번호 (8자 이상, Enter로 임시 비밀번호 생성)",
             )?;
             if p.is_empty() {
                 break p;
             }
-            if p.len() < 12 || p.len() > 256 {
+            if !moosuri_core::account_password_valid(&p) {
                 tty.say(
-                    "Use 12–256 bytes.",
-                    "12자 이상으로 입력해주세요 (최대 256바이트).",
+                    "Use at least 8 characters, up to 256 UTF-8 bytes.",
+                    "8자 이상으로 입력해주세요 (최대 256바이트).",
                 )?;
                 continue;
             }

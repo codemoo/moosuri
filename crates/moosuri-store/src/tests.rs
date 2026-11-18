@@ -43,6 +43,97 @@ pub(super) async fn member(store: &Store, admin: &UserContext, email: &str) -> L
 // Serializing fixtures keeps unrelated tests from spending each other's two permits.
 pub(super) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[tokio::test]
+async fn account_password_eight_character_boundary_and_rotation() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    for password in [
+        "a".repeat(7),
+        "가".repeat(7),
+        "😀".repeat(7),
+        "a".repeat(257),
+        "가".repeat(86),
+    ] {
+        assert!(matches!(
+            store
+                .bootstrap("Admin".into(), "admin@example.test".into(), password, false)
+                .await,
+            Err(StoreError::InvalidInput)
+        ));
+    }
+    assert!(!store.initialized().await.unwrap());
+    assert!(password_valid(&"a".repeat(256)).is_ok());
+    assert!(password_valid(&"😀".repeat(64)).is_ok());
+    store
+        .bootstrap(
+            "Admin".into(),
+            "admin@example.test".into(),
+            "eight888".into(),
+            false,
+        )
+        .await
+        .unwrap();
+    let session = store
+        .login("admin@example.test".into(), "eight888".into())
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.change_password(&session.user, "seven77".into()).await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert!(store.authenticate(session.token.clone()).await.is_ok());
+    let changed = store
+        .change_password(&session.user, "가나다라마바사아".into())
+        .await
+        .unwrap();
+    assert!(!changed.user.password_change_required());
+    assert!(matches!(
+        store.authenticate(session.token).await,
+        Err(StoreError::Unauthorized)
+    ));
+    assert!(matches!(
+        store
+            .login("admin@example.test".into(), "eight888".into())
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    assert!(
+        store
+            .login("admin@example.test".into(), "가나다라마바사아".into())
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn account_password_legacy_unicode_hash_still_authenticates() {
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    admin(&store).await;
+    // Earlier releases admitted four Korean characters as twelve UTF-8 bytes.
+    let hash = hash_password(Zeroizing::new("가나다라".into()))
+        .await
+        .unwrap();
+    store
+        .call(move |db| {
+            db.conn.execute(
+                "UPDATE accounts SET password_hash=?1 WHERE email='admin@example.test'",
+                [hash],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .login("admin@example.test".into(), "가나다라".into())
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
 async fn tenant_scope_restriction_revocation_and_durable_reopen() {
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();

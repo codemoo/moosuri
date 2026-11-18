@@ -21,7 +21,7 @@ Accounts and personal tenants have independent opaque UUIDs. All empty-thread
 operations revalidate the session, account epoch and tenant. Admin permissions
 allow listing/creating accounts and never bypass thread tenancy. Account email
 normalization is ASCII trim + lowercase, preserving dots and plus suffixes.
-Passwords accept 12–256 UTF-8 bytes, use random-salted Argon2id (19 MiB, two
+Passwords accept at least 8 Unicode characters and at most 256 UTF-8 bytes, use random-salted Argon2id (19 MiB, two
 iterations, one lane), and are never stored as plaintext. Session tokens are 32
 random bytes encoded as lowercase hex; the DB stores SHA-256 digests only.
 Regular sessions expire after 30 days and successful authentication renews

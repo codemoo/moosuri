@@ -1,4 +1,5 @@
 import { emptyInstructions } from "./run-instructions";
+import { accountPasswordValid, ACCOUNT_PASSWORD_HELP } from "./account-password";
 import {InvitationEmail} from "./InvitationEmail";
 import { useWorkspaceViewport } from "./workspace-viewport";
 import { fenceIncomingShares } from "./share-state";
@@ -637,6 +638,10 @@ function PasswordChange({
       setError("The passwords do not match.");
       return;
     }
+    if (!accountPasswordValid(password)) {
+      setError(ACCOUNT_PASSWORD_HELP);
+      return;
+    }
     setBusy(true);
     setError("");
     const release = beginMutation();
@@ -679,7 +684,7 @@ function PasswordChange({
               type="password"
               autoComplete="new-password"
               aria-describedby="password-help"
-              minLength={12}
+              minLength={8}
               required
               value={password}
               disabled={busy}
@@ -687,14 +692,14 @@ function PasswordChange({
             />
           </label>
           <p id="password-help" className="field-help">
-            Use at least 12 characters.
+            {ACCOUNT_PASSWORD_HELP}
           </p>
           <label>
             Confirm new password
             <input
               type="password"
               autoComplete="new-password"
-              minLength={12}
+              minLength={8}
               required
               value={confirm}
               disabled={busy}

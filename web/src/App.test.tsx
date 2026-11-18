@@ -266,13 +266,21 @@ describe("account and session boundaries", () => {
         (call) => call.path === "/threads" || call.path.startsWith("/admin"),
       ),
     ).toBe(false);
+    for (const label of ["New password", "Confirm new password"]) {
+      await user.type(screen.getByLabelText(label), "😀😀😀😀");
+    }
+    await user.click(screen.getByRole("button", { name: "Save password & continue" }));
+    expect(calls.some(call => call.path === "/auth/password")).toBe(false);
+    for (const label of ["New password", "Confirm new password"]) {
+      await user.clear(screen.getByLabelText(label));
+    }
     await user.type(
       screen.getByLabelText("New password"),
-      "new-synthetic-password",
+      "eight888",
     );
     await user.type(
       screen.getByLabelText("Confirm new password"),
-      "new-synthetic-password",
+      "eight888",
     );
     await user.click(
       screen.getByRole("button", { name: "Save password & continue" }),

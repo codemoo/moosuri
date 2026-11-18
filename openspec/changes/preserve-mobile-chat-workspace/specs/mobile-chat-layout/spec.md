@@ -2,11 +2,16 @@
 
 ### Requirement: Visible workspace at normal zoom
 The application SHALL fit the normal-scale visual viewport when it is available,
-retain dynamic-viewport CSS fallback, and SHALL NOT disable user zoom.
+retain dynamic-viewport CSS fallback, and suppress page scaling from mobile
+pinch, double tap, and text-field focus. Single-finger panning SHALL remain available.
 
 #### Scenario: Keyboard-sized viewport
 - **WHEN** the visible viewport shrinks during drafting
 - **THEN** the composer remains inside the application frame and the draft remains intact.
+
+#### Scenario: Touch gestures on the scrollable conversation
+- **WHEN** the user pinches or double taps a scrollable area of the chat
+- **THEN** the page remains at its initial scale, and a one-finger drag still scrolls the chat
 
 ### Requirement: Stable conversation position
 The conversation SHALL retain bottom following or the visible older run position

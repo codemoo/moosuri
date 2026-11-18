@@ -1,8 +1,10 @@
 # Layout ownership
 
 The workspace hook observes normal-scale visual viewport resize/scroll and releases
-listeners on unmount. Pinch zoom retains the last normal layout size; browser zoom
-is never disabled. Browsers without VisualViewport keep the CSS dynamic viewport.
+listeners on unmount. On touch devices, viewport bounds and CSS touch actions keep
+the page at its initial scale and preserve panning. WebKit gesture events provide
+a fallback, and text controls use at least 16 px to avoid focus zoom. Browsers
+without VisualViewport keep the CSS dynamic viewport.
 
 The chat scroll container and turn content share a ResizeObserver. A bottom-following
 reader remains at the latest message; an older reader keeps the first visible run

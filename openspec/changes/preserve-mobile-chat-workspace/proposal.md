@@ -8,8 +8,7 @@ a long desktop menu places account controls outside the visible frame.
 
 ## What changes
 
-Size the authenticated workspace to the visual viewport at normal zoom, retain
-pinch zoom, preserve bottom or reading anchors on asynchronous layout, and place
+Size the authenticated workspace to the visual viewport at normal zoom, suppress mobile page scaling, preserve bottom or reading anchors on asynchronous layout, and place
 the new-response control above the actual composer. Keep idle attachment/voice/
 library controls compact and allow expanded tools and navigation to scroll.
 

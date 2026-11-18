@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 
 // Mobile browsers can resize only the visual viewport when the keyboard opens.
-// Keep the application frame inside that viewport without disabling pinch zoom.
+// Keep the application frame inside that viewport while the user types.
 export function useWorkspaceViewport() {
   const frame = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -11,7 +11,7 @@ export function useWorkspaceViewport() {
     let request = 0;
     const update = () => {
       request = 0;
-      // A pinch-zoomed visual viewport is a magnifying window, not a new layout.
+      // Keep the last layout if a browser or accessibility setting overrides page scale.
       if (Math.abs(viewport.scale - 1) > 0.01) return;
       if (Number.isFinite(viewport.height) && viewport.height > 0) {
         element.style.setProperty("--workspace-height", `${viewport.height}px`);

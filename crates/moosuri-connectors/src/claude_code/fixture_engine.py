@@ -40,10 +40,18 @@ if mode=='login':
  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
 assert mode=='text'
 model,session=a[index+2:index+4]
-v=json.loads(sys.stdin.buffer.read())
+v=json.loads(sys.stdin.buffer.readline())
+behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
+if v.get('type')=='control_request':
+ assert model=='default' and v['request']=={'subtype':'initialize'}
+ print(json.dumps({'type':'system','subtype':'ui_invalidate'}),flush=True)
+ print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':v['request_id'],'response':{'account':{} if behavior=='logged-out' else {'subscriptionType':'pro','apiProvider':'firstParty'},'models':[{'value':alias,'resolvedModel':concrete} for alias,concrete in [('default','claude-fixture-v1'),('opus','claude-fixture-v1'),('sonnet','claude-fixture-sonnet'),('haiku','claude-fixture-haiku'),('fable','claude-fixture-fable')]]}}}),flush=True)
+ assert sys.stdin.buffer.read()==b''
+ sys.exit(0)
 assert v['client_composed'] is True and v['parent_tool_use_id'] is None
 assert v['message']['role']=='user' and v['session_id']==session
 behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
+if behavior=='identity-mismatch':model='claude-not-requested'
 if behavior=='hold':
  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
 def emit(value):

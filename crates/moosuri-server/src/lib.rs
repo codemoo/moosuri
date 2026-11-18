@@ -451,6 +451,10 @@ pub fn router_with_runtime(
                 .layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
         .route(
+            "/api/v1/settings/claude/{id}/models",
+            post(claude_execution::models),
+        )
+        .route(
             "/api/v1/settings/claude/{id}/probe",
             post(claude_execution::probe),
         )

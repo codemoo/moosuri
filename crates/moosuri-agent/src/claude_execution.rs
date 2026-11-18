@@ -5,6 +5,11 @@ use moosuri_connectors::{
     model::protocol::{FinishOutcome, ModelEvent, TextMessage, TextRequest, TextRole},
 };
 use moosuri_store::{ClaudeExecutionRef, UserContext};
+#[derive(serde::Serialize)]
+pub struct ClaudeModelsView {
+    pub status: &'static str,
+    pub models: Vec<String>,
+}
 impl crate::subscriptions::SubscriptionService {
     pub async fn claude_profile(&self) -> Result<Arc<Profile>, StoreError> {
         let p = self.claude.clone().ok_or(StoreError::Unavailable)?;
@@ -16,6 +21,99 @@ impl crate::subscriptions::SubscriptionService {
             return Err(StoreError::Unavailable);
         }
         Ok(p)
+    }
+    /// Recover already signed-in pending bindings as well as newly completed logins.
+    /// A catalog row alone never becomes a selectable model.
+    pub async fn claude_models(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+    ) -> Result<ClaudeModelsView, StoreError> {
+        // Serialize discovery/probes before reading saved successes, so refreshes
+        // and concurrent tabs cannot duplicate inference for this runtime.
+        let _sync = self
+            .claude_model_sync
+            .try_lock()
+            .map_err(|_| StoreError::Busy)?;
+        let r = self
+            .store
+            .claude_launch_ref(u, id.clone(), revision)
+            .await?;
+        let models = self
+            .store
+            .model_settings(u)
+            .await?
+            .choices
+            .into_iter()
+            .filter(|c| {
+                c.source == moosuri_core::ModelSource::PersonalClaudeCode
+                    && c.provider_id == id
+                    && c.provider_revision == revision
+            })
+            .map(|c| c.model)
+            .collect::<Vec<_>>();
+        if !models.is_empty() {
+            return Ok(ClaudeModelsView {
+                status: "ready",
+                models,
+            });
+        }
+        let p = self.claude_profile().await?;
+        if p.digest() != r.profile_digest || p.root_id() != r.root_id {
+            return Err(StoreError::Conflict);
+        }
+        let cancel = CancellationToken::new();
+        let operation = p.account_models(&r.environment_id, &cancel);
+        tokio::pin!(operation);
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        let catalog = loop {
+            tokio::select! {biased;
+                _=self.signals.stopping().cancelled(),if !cancel.is_cancelled()=>cancel.cancel(),
+                _=tick.tick()=>{if self.store.claude_launch_ref(u,r.id.clone(),r.revision).await.is_err(){cancel.cancel();}},
+                result=&mut operation=>break result,
+            }
+        };
+        // Recheck owner/session/revision after the subprocess before any result.
+        self.store
+            .claude_launch_ref(u, id.clone(), revision)
+            .await?;
+        let catalog = match catalog {
+            Ok(catalog) if !cancel.is_cancelled() => catalog,
+            _ => {
+                return Ok(ClaudeModelsView {
+                    status: "unavailable",
+                    models: vec![],
+                });
+            }
+        };
+        if catalog.login_required {
+            return Ok(ClaudeModelsView {
+                status: "login_required",
+                models: vec![],
+            });
+        }
+        let mut models = vec![];
+        // Connector emits only the unique default/sonnet/haiku concrete IDs.
+        // Failed/unknown attempts are still admitted by the durable probe budget.
+        for model in catalog.models.into_iter().take(3) {
+            if self
+                .claude_probe(u, id.clone(), revision, model.clone())
+                .await
+                .is_ok()
+            {
+                models.push(model);
+            }
+        }
+        self.store.claude_launch_ref(u, id, revision).await?;
+        Ok(ClaudeModelsView {
+            status: if models.is_empty() {
+                "unavailable"
+            } else {
+                "ready"
+            },
+            models,
+        })
     }
     pub async fn claude_probe(
         &self,
@@ -205,6 +303,132 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+    #[tokio::test]
+    async fn account_models_recover_pending_and_reuse_verified_choices_without_inference() {
+        let _g = crate::tests::TEST_LOCK.lock().await;
+        let (_dir, store, u) = setup().await;
+        let f = moosuri_connectors::claude_code::fixture::Fixture::new();
+        let r = store
+            .create_claude_binding(
+                &u,
+                "Signed in before repair".into(),
+                f.profile.digest().into(),
+                f.profile.root_id(),
+            )
+            .await
+            .unwrap();
+        let runtime = Runtime::start_with_google_setup_claude(
+            store.clone(),
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(f.profile.clone())),
+        );
+        let service = runtime.subscription_service();
+        let result = service
+            .claude_models(&u, r.id.clone(), r.revision)
+            .await
+            .unwrap();
+        assert_eq!(result.status, "ready");
+        assert_eq!(
+            result.models,
+            [
+                "claude-fixture-v1",
+                "claude-fixture-sonnet",
+                "claude-fixture-haiku"
+            ]
+        );
+        assert_eq!(
+            f.launches(),
+            4,
+            "one non-inference catalog and three exact probes"
+        );
+        assert_eq!(store.claude_bindings(&u).await.unwrap()[0].status, "active");
+        let repeat = service
+            .claude_models(&u, r.id.clone(), r.revision)
+            .await
+            .unwrap();
+        assert_eq!(repeat.status, "ready");
+        assert_eq!(repeat.models.len(), 3);
+        assert_eq!(f.launches(), 4);
+        assert!(
+            service
+                .claude_models(&u, r.id.clone(), r.revision + 1)
+                .await
+                .is_err()
+        );
+        assert_eq!(f.launches(), 4);
+        runtime.shutdown().await;
+        // Saved eligibility survives runtime restart without another catalog/probe.
+        let runtime = Runtime::start_with_google_setup_claude(
+            store.clone(),
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(f.profile.clone())),
+        );
+        assert_eq!(
+            runtime
+                .subscription_service()
+                .claude_models(&u, r.id, r.revision)
+                .await
+                .unwrap()
+                .status,
+            "ready"
+        );
+        assert_eq!(f.launches(), 4);
+        runtime.shutdown().await;
+    }
+    #[tokio::test]
+    async fn logged_out_catalog_and_wrong_identity_never_create_eligible_models() {
+        let _g = crate::tests::TEST_LOCK.lock().await;
+        let (_dir, store, u) = setup().await;
+        let f = moosuri_connectors::claude_code::fixture::Fixture::new();
+        let r = store
+            .create_claude_binding(
+                &u,
+                "Pending".into(),
+                f.profile.digest().into(),
+                f.profile.root_id(),
+            )
+            .await
+            .unwrap();
+        let runtime = Runtime::start_with_google_setup_claude(
+            store.clone(),
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(f.profile.clone())),
+        );
+        let service = runtime.subscription_service();
+        f.behavior("logged-out");
+        for _ in 0..2 {
+            let result = service
+                .claude_models(&u, r.id.clone(), r.revision)
+                .await
+                .unwrap();
+            assert_eq!(result.status, "login_required");
+            assert!(result.models.is_empty());
+        }
+        assert_eq!(
+            f.launches(),
+            2,
+            "refresh only initializes; no unauthenticated inference"
+        );
+        f.behavior("identity-mismatch");
+        let result = service.claude_models(&u, r.id, r.revision).await.unwrap();
+        assert_eq!(result.status, "unavailable");
+        assert!(result.models.is_empty());
+        assert!(store.model_settings(&u).await.unwrap().choices.is_empty());
+        assert_eq!(
+            store.claude_bindings(&u).await.unwrap()[0].status,
+            "pending"
+        );
+        runtime.shutdown().await;
     }
     #[tokio::test]
     async fn saved_runtime_text_uses_real_supervisor_and_retains_usage() {

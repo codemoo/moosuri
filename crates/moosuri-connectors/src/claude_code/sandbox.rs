@@ -1,4 +1,7 @@
 use super::protocol;
+#[path = "discovery.rs"]
+mod discovery;
+pub use discovery::AccountModels;
 #[path = "login.rs"]
 mod login;
 use crate::model::{

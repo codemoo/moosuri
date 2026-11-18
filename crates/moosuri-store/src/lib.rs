@@ -162,6 +162,15 @@ pub struct UserContext {
     absolute_deadline: Option<i64>,
 }
 impl UserContext {
+    /// Compare opaque session identity without exposing an authentication digest.
+    pub fn same_session(&self, other: &Self) -> bool {
+        self.account.id == other.account.id
+            && self.digest == other.digest
+            && self.epoch == other.epoch
+            && self.restricted == other.restricted
+            && self.helper == other.helper
+    }
+
     pub fn account(&self) -> &AccountSummary {
         &self.account
     }

@@ -1,8 +1,11 @@
 use super::protocol;
+#[path = "login.rs"]
+mod login;
 use crate::model::{
     CancellationToken, TransportError,
     protocol::{ModelEvent, TextRequest},
 };
+pub use login::{LoginCode, LoginEvent};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -406,7 +409,14 @@ impl Profile {
         }
         Ok(())
     }
-    fn launch(&self, env: &Path, bridge: &Path, name: &str, login: bool) -> Command {
+    fn launch(
+        &self,
+        env: &Path,
+        bridge: &Path,
+        name: &str,
+        login: bool,
+        terminal: bool,
+    ) -> Command {
         let c = &self.config;
         let mut cmd = self.engine();
         cmd.args([
@@ -414,6 +424,7 @@ impl Profile {
             "--rm",
             "--pull=never",
             "--network=none",
+            "--log-driver=none",
             "--read-only",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
@@ -455,7 +466,7 @@ impl Profile {
                 if ro { ",readonly" } else { "" }
             ));
         }
-        if login {
+        if terminal {
             cmd.arg("-it");
         } else {
             cmd.arg("-i");
@@ -498,7 +509,7 @@ impl Profile {
         let name = format!("moosuri-claude-{}", uuid::Uuid::new_v4());
         let cancel = CancellationToken::new();
         let proxy = ProxyTask(tokio::spawn(proxy_server(listener, cancel.clone())));
-        let mut cmd = self.launch(&env, temp.path(), &name, true);
+        let mut cmd = self.launch(&env, temp.path(), &name, true, true);
         cmd.stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
@@ -540,7 +551,7 @@ impl Profile {
         let name = format!("moosuri-claude-{}", session);
         let local = CancellationToken::new();
         let proxy = ProxyTask(tokio::spawn(proxy_server(listener, local.clone())));
-        let mut cmd = self.launch(&env, temp.path(), &name, false);
+        let mut cmd = self.launch(&env, temp.path(), &name, false, false);
         cmd.arg(&request.model).arg(&session);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -608,9 +619,17 @@ impl Drop for ProxyTask {
 }
 async fn proxy_server(listener: UnixListener, cancel: CancellationToken) {
     let mut jobs = tokio::task::JoinSet::new();
-    let mut total = 0;
     loop {
-        tokio::select! {_=cancel.cancelled()=>break,r=listener.accept()=>match r{Ok((s,_))if total<32=>{total+=1;jobs.spawn(async move{let _=proxy_connection(s).await;});},_=>break},Some(_)=jobs.join_next()=>{}}
+        tokio::select! {
+            biased;
+            _=cancel.cancelled()=>break,
+            Some(_)=jobs.join_next(), if !jobs.is_empty()=>{},
+            r=listener.accept()=>match r {
+                Ok((s,_)) if jobs.len()<32=>{jobs.spawn(async move{let _=proxy_connection(s).await;});},
+                Ok((s,_))=>drop(s), // Refuse excess connections without closing the parent lease.
+                Err(_)=>break,
+            }
+        }
     }
     jobs.abort_all();
     while jobs.join_next().await.is_some() {}
@@ -703,12 +722,20 @@ pub async fn helper_main(
     let address = listener.local_addr().map_err(|_| err())?;
     let relay = tokio::spawn(async move {
         let mut jobs = tokio::task::JoinSet::new();
-        while let Ok((mut tcp, _)) = listener.accept().await {
-            jobs.spawn(async move {
-                if let Ok(mut unix) = UnixStream::connect("/bridge/proxy.sock").await {
-                    let _ = tokio::io::copy_bidirectional(&mut tcp, &mut unix).await;
+        loop {
+            tokio::select! {
+                biased;
+                Some(_)=jobs.join_next(), if !jobs.is_empty()=>{},
+                next=listener.accept()=>match next {
+                    Ok((mut tcp,_)) if jobs.len()<32=>{jobs.spawn(async move {
+                        if let Ok(mut unix) = UnixStream::connect("/bridge/proxy.sock").await {
+                            let _ = tokio::time::timeout(Duration::from_secs(310), tokio::io::copy_bidirectional(&mut tcp, &mut unix)).await;
+                        }
+                    });},
+                    Ok((tcp,_))=>drop(tcp),
+                    Err(_)=>break,
                 }
-            });
+            }
         }
     });
     let mut cmd = Command::new("/runtime/claude");
@@ -735,7 +762,7 @@ pub async fn helper_main(
         .current_dir("/work")
         .kill_on_drop(true);
     if mode == "login" {
-        cmd.args(["auth", "login"]);
+        cmd.args(["auth", "login", "--claudeai"]);
     } else {
         let model = model.ok_or_else(err)?;
         let session = session.ok_or_else(err)?;

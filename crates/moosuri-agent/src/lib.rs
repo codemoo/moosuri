@@ -7,6 +7,7 @@ pub mod calendar;
 mod calendar_intent;
 mod calendar_tools;
 pub mod claude_execution;
+mod claude_login;
 mod conversation_tools;
 pub mod credential_broker;
 mod credential_chat;

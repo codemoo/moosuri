@@ -440,6 +440,17 @@ pub fn router_with_runtime(
             post(claude_execution::native),
         )
         .route(
+            "/api/v1/settings/claude/{id}/login",
+            post(claude_execution::login_start),
+        )
+        .route(
+            "/api/v1/settings/claude/{id}/login/{attempt}",
+            get(claude_execution::login_status)
+                .post(claude_execution::login_code)
+                .delete(claude_execution::login_cancel)
+                .layer(axum::extract::DefaultBodyLimit::max(8192)),
+        )
+        .route(
             "/api/v1/settings/claude/{id}/probe",
             post(claude_execution::probe),
         )

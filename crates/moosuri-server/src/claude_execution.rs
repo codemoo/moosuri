@@ -80,3 +80,69 @@ pub(super) async fn disconnect(
             .into_response(),
     )
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Code {
+    code: zeroize::Zeroizing<String>,
+}
+pub(super) async fn login_start(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(i): Json<Input>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    Ok(Json(
+        s.runtime
+            .subscription_service()
+            .claude_login_start(&u, id, i.revision)
+            .await?,
+    )
+    .into_response())
+}
+pub(super) async fn login_status(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((id, attempt)): Path<(String, String)>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    Ok(Json(
+        s.runtime
+            .subscription_service()
+            .claude_login_status(&u, &id, attempt)
+            .await?,
+    )
+    .into_response())
+}
+pub(super) async fn login_code(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((id, attempt)): Path<(String, String)>,
+    Json(i): Json<Code>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    let code = moosuri_connectors::claude_code::LoginCode::new(i.code)
+        .map_err(|_| StoreError::InvalidInput)?;
+    Ok(Json(
+        s.runtime
+            .subscription_service()
+            .claude_login_code(&u, &id, attempt, code)
+            .await?,
+    )
+    .into_response())
+}
+pub(super) async fn login_cancel(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((id, attempt)): Path<(String, String)>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    Ok(Json(
+        s.runtime
+            .subscription_service()
+            .claude_login_cancel(&u, &id, attempt)
+            .await?,
+    )
+    .into_response())
+}

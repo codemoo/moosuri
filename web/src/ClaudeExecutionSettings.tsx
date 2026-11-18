@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { ClaudeSubscriptionLogin } from "./ClaudeSubscriptionLogin";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 
@@ -82,7 +83,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi }: P
           status: "pending", cleanup_state: "not_requested",
         }] });
         setGuideOpen(false);
-        setNotice("연결을 추가했습니다. 아래에서 서버 로그인 안내를 열어 공식 로그인을 완료하세요.");
+        setNotice("연결을 추가했습니다. 구독 로그인을 눌러 Claude 공식 로그인과 코드 입력을 완료하세요.");
       }
       if (binding && kind === "probe") {
         await scope.request(`/settings/claude/${encodeURIComponent(binding.id)}/probe`, "POST", {
@@ -162,11 +163,13 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi }: P
         : binding.status === "pending" ? "공식 로그인과 모델 확인 대기"
         : binding.status === "disconnected" ? "로컬 연결 해제됨" : "다시 연결 필요"}</p>
       {state.runtime_configured && (binding.status === "pending" || binding.status === "active") && <>
+        <ClaudeSubscriptionLogin key={`${binding.id}:${binding.revision}`} accountId={accountId} bindingId={binding.id}
+          revision={binding.revision} disabled={busy || loading} onExpired={onExpired} />
         <details className="probe-details">
-          <summary>서버에서 공식 로그인하기</summary>
+          <summary>터미널로 연결하기 (고급)</summary>
           <p>서버 터미널에서 아래 도우미를 실행하세요. 내주소와 프로필 경로를 자신의 무수리 이메일과 설치 관리자가 제공한 경로로 바꾸세요. 비밀번호는 도우미가 별도로 묻습니다.</p>
           <code className="claude-login-command">{`moosuri subscriptions claude-login --server ${window.location.origin} --email 내주소 --binding ${binding.id} --revision ${binding.revision} --profile-file /private/path/claude-profile.json`}</code>
-          <p>로그인은 공식 CLI 화면에서 완료합니다. 브라우저에서만 구독 로그인을 완료하는 방식은 아직 지원하지 않습니다.</p>
+          <p>터미널 연결을 선택해도 동일한 공식 로그인과 코드 입력을 사용합니다.</p>
         </details>
         <label>정확한 모델 ID<input aria-label={`Claude 모델 ${binding.label}`} value={models[binding.id] ?? ""} maxLength={200}
           onChange={event => setModels(old => ({ ...old, [binding.id]: event.target.value }))}

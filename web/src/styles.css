@@ -1265,3 +1265,7 @@ dialog > p {
   outline-offset: 4px;
   border-radius: 2px;
 }
+
+.claude-subscription-login { display: grid; gap: 0.65rem; padding-block: 0.75rem; }
+.claude-subscription-login form { display: grid; gap: 0.65rem; }
+.claude-subscription-login a { width: fit-content; }

@@ -22,11 +22,21 @@ if 'rm' in a:
  with (root/'removed').open('a') as f:f.write('removed\n')
  sys.exit(0)
 assert 'run' in a
-for flag in ['--network=none','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--pull=never','--pids-limit=32','--user=0:0','--ipc=none']:
+for flag in ['--network=none','--log-driver=none','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--pull=never','--pids-limit=32','--user=0:0','--ipc=none']:
  assert flag in a,flag
 with (root/'launches').open('a') as f:f.write('run\n')
 index=a.index('internal-claude-run');mode=a[index+1]
 if mode=='login':
+ behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
+ if behavior.startswith('web-login'):
+  assert '-i' in a and '-it' not in a
+  origin='https://untrusted.example' if behavior=='web-login-untrusted' else 'https://claude.com'
+  print(origin+'/cai/oauth/authorize?state=synthetic&code_challenge=synthetic',flush=True)
+  print('Paste code here if prompted > ',end='',flush=True)
+  code=sys.stdin.readline().rstrip('\n')
+  if code!='synthetic-code#state':sys.exit(2)
+  print('Login successful',flush=True)
+  sys.exit(2 if behavior=='web-login-nonzero' else 0)
  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
 assert mode=='text'
 model,session=a[index+2:index+4]
@@ -43,10 +53,10 @@ def event(value):emit({'type':'stream_event','parent_tool_use_id':None,'event':v
 event({'type':'message_start','message':{'id':'m','role':'assistant','model':model}})
 event({'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}})
 event({'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'OK'}})
+emit({'type':'assistant','parent_tool_use_id':None,'message':{'id':'m','role':'assistant','model':model,'content':[{'type':'text','text':'OK'}]}})
 event({'type':'content_block_stop','index':0})
 event({'type':'message_delta','delta':{'stop_reason':'end_turn'}})
 event({'type':'message_stop'})
-emit({'type':'assistant','parent_tool_use_id':None,'message':{'id':'m','role':'assistant','model':model,'content':[{'type':'text','text':'OK'}]}})
 if behavior=='truncated':sys.exit(2)
 emit({'type':'result','subtype':'success','is_error':False,'result':'OK','stop_reason':'end_turn','user_message_uuid':v['uuid'],'modelUsage':{model:{'inputTokens':8,'outputTokens':2,'cacheReadInputTokens':0,'cacheCreationInputTokens':0}}})
 if behavior=='suffix':print('{bad json',flush=True)

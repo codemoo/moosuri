@@ -64,7 +64,7 @@ socket. It does not accept rootful Docker or substitute an unsandboxed process.
 The API cannot supply an executable, image, mount, endpoint or filesystem path.
 The engine receives an explicit empty Docker config and no inherited environment.
 Every launch rechecks pinned files and rootless engine status, disables pulling,
-uses no external network namespace interfaces, drops capabilities, requires
+disables container stdout logging, uses no external network namespace interfaces, drops capabilities, requires
 no-new-privileges and constrains processes/CPU/memory. Host repositories, other
 users' homes, keychain/D-Bus/SSH-agent sockets and the engine socket are not mounted
 inside the container. The image must provide only the trusted CLI/helper runtime
@@ -115,7 +115,11 @@ accepts only port 443 and a fixed official-origin allowlist, rejects nonpublic D
 answers and pins the chosen public address for that connection. There is no
 custom inference URL, ambient proxy, model-selected destination or TLS bypass.
 The helper has a persistent parent lease; losing the host bridge ends the helper
-and its container. Each bridge/output/request/connection lifetime is bounded.
+and its container. Each bridge/output/request/connection lifetime is bounded. Connection admission
+limits concurrent sockets; normal connection churn never drops the parent lease.
+The host runtime must retain its rootless-daemon and auth-mount dependencies before
+serving. The auth storage bound is deployment-wide; this profile does not claim
+per-user filesystem quotas.
 
 ## Owner login and selection
 
@@ -136,8 +140,21 @@ the shared connection; they cannot edit shared credentials from this entry point
 
 For a configured subscription runtime, choose **내 Claude 연결 추가** to create an
 owned binding. Creating a binding is not official login or model verification.
-On the same Linux server,
-run the displayed native helper with the exact operator profile:
+Choose **구독 로그인**, open the official Claude link, sign in with your own
+subscription account, then paste the returned code into **Claude에서 받은 로그인 코드**.
+The code is sent once to the original unchanged `claude auth login --claudeai`
+process through stdin. A successful official login is displayed separately from
+model verification. Failed/expired attempts can be restarted; interrupted HTTP
+responses do not automatically replay a code. Cancel closes that original login.
+
+Login URLs and codes stay outside the database, model context, conversation
+history, browser persistence and logs. The API exposes only the validated official
+authorization URL and fixed states, never raw terminal output. Attempts are held
+in memory for five minutes and belong to the exact authenticated Moosuri session,
+binding and revision. Reloading the same session can resume the current attempt
+by choosing login again. Another session cannot read or complete it.
+
+The **터미널로 연결하기 (고급)** alternative remains available on the Linux server:
 
 ```sh
 moosuri subscriptions claude-login --server https://assistant.example.com \
@@ -145,13 +162,10 @@ moosuri subscriptions claude-login --server https://assistant.example.com \
   --profile-file /private/path/profile.json
 ```
 
-The helper asks privately for the Moosuri password, validates
-the owned binding/profile and runs the official `claude auth login` inside that
-binding's environment. Authentication choices remain those of the unchanged CLI;
-each user uses their own official account and billing agreement. No Claude token
-is sent through the Moosuri API. A remote browser-only login is not implemented;
-use the official CLI's own supported terminal/browser completion flow on that
-server. The exact login UX still requires deployment acceptance.
+The native helper asks privately for the Moosuri password and invokes the same
+official login inside the owned environment. Nothing extracts or relays Claude
+bearer tokens, copies a Mac keychain or implements a consumer OAuth adapter.
+Each user completes their own official consent and subscription eligibility.
 
 Login has a bounded lifetime and polls the authenticated current binding/session;
 a revoked/expired Moosuri session or changed binding cancels it. Server and native

@@ -11,7 +11,8 @@ use tokio::{
 pub struct SubscriptionService {
     pub(crate) store: Store,
     pub(crate) signals: Signals,
-    logins: Arc<tokio::sync::Semaphore>,
+    pub(crate) logins: Arc<tokio::sync::Semaphore>,
+    pub(crate) claude_logins: crate::claude_login::Logins,
     pub(crate) claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
     pub(crate) claude_ready: Arc<tokio::sync::OnceCell<Result<(), ()>>>,
     #[cfg(any(test, feature = "test-fixtures"))]
@@ -65,6 +66,7 @@ impl SubscriptionService {
             store,
             signals,
             claude: None,
+            claude_logins: Default::default(),
             claude_ready: Arc::new(tokio::sync::OnceCell::new()),
             logins: Arc::new(tokio::sync::Semaphore::new(2)),
             #[cfg(test)]

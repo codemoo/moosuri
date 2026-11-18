@@ -1,4 +1,4 @@
-//! Conservative official CLI text profile. Snapshots never duplicate streamed text.
+//! Conservative official CLI text profile. Per-block snapshots validate streamed text.
 use crate::model::{
     TransportError,
     protocol::{FinishOutcome, ModelEvent, TextRequest, TextRole, Usage},
@@ -68,9 +68,12 @@ pub struct Decoder {
     message: Option<String>,
     block: Option<u64>,
     block_kind: Option<String>,
+    next_block: u64,
+    block_snapshot: bool,
+    block_nonempty: bool,
+    block_text: String,
     stopped: bool,
     text: String,
-    message_text: String,
     assistant: bool,
     usage: Option<Usage>,
     events: usize,
@@ -88,9 +91,12 @@ impl Decoder {
             message: None,
             block: None,
             block_kind: None,
+            next_block: 0,
+            block_snapshot: false,
+            block_nonempty: false,
+            block_text: String::new(),
             stopped: false,
             text: String::new(),
-            message_text: String::new(),
             assistant: false,
             usage: None,
             events: 0,
@@ -149,30 +155,53 @@ impl Decoder {
                         self.message = Some(id.into());
                     }
                     Some("content_block_start") => {
-                        if self.message.is_none() || self.block.is_some() || self.stopped {
+                        if self.message.is_none()
+                            || self.block.is_some()
+                            || self.stopped
+                            || e["index"].as_u64() != Some(self.next_block)
+                        {
                             return Err(bad());
                         }
                         let kind = e["content_block"]["type"].as_str().ok_or_else(bad)?;
                         if !["text", "thinking", "redacted_thinking"].contains(&kind)
                             || kind == "text" && e["content_block"]["text"] != ""
+                            || kind == "thinking" && e["content_block"]["thinking"] != ""
+                            || kind == "redacted_thinking"
+                                && !e["content_block"]["data"].is_string()
                         {
                             return Err(bad());
                         }
                         self.block = Some(e["index"].as_u64().ok_or_else(bad)?);
                         self.block_kind = Some(kind.into());
+                        self.block_nonempty = kind == "redacted_thinking"
+                            && e["content_block"]["data"]
+                                .as_str()
+                                .is_some_and(|s| !s.is_empty());
                     }
                     Some("content_block_delta") => {
-                        if self.block != e["index"].as_u64() || self.block.is_none() || self.stopped
+                        if self.block != e["index"].as_u64()
+                            || self.block.is_none()
+                            || self.stopped
+                            || self.block_snapshot
                         {
                             return Err(bad());
                         }
                         if self.block_kind.as_deref() != Some("text") {
-                            if !matches!(
-                                e["delta"]["type"].as_str(),
-                                Some("thinking_delta") | Some("signature_delta")
-                            ) {
+                            if self.block_kind.as_deref() != Some("thinking")
+                                || !matches!(
+                                    e["delta"]["type"].as_str(),
+                                    Some("thinking_delta") | Some("signature_delta")
+                                )
+                            {
                                 return Err(bad());
                             }
+                            let field = if e["delta"]["type"] == "thinking_delta" {
+                                "thinking"
+                            } else {
+                                "signature"
+                            };
+                            self.block_nonempty |=
+                                !e["delta"][field].as_str().ok_or_else(bad)?.is_empty();
                             return Ok(out);
                         }
                         if e["delta"]["type"] != "text_delta" {
@@ -183,7 +212,8 @@ impl Decoder {
                             return Err(TransportError::LimitExceeded);
                         }
                         self.text.push_str(t);
-                        self.message_text.push_str(t);
+                        self.block_text.push_str(t);
+                        self.block_nonempty |= !t.is_empty();
                         out.push(ModelEvent::TextDelta {
                             text: t.into(),
                             item_id: self.message.clone(),
@@ -193,9 +223,14 @@ impl Decoder {
                     Some("content_block_stop") => {
                         if self.block.take() != e["index"].as_u64()
                             || self.block_kind.take().is_none()
+                            || self.block_nonempty && !self.block_snapshot
                         {
                             return Err(bad());
                         }
+                        self.next_block += 1;
+                        self.block_snapshot = false;
+                        self.block_nonempty = false;
+                        self.block_text.clear();
                     }
                     Some("message_delta") => {
                         if self.message.is_none()
@@ -222,30 +257,54 @@ impl Decoder {
             }
             Some("assistant") if self.init => {
                 let m = &v["message"];
-                if self.assistant
-                    || self.block.is_some()
+                if self.block.is_none()
+                    || self.block_snapshot
+                    || self.stopped
+                    || m["role"] != "assistant"
                     || m["model"] != self.model
                     || Some(m["id"].as_str().ok_or_else(bad)?) != self.message.as_deref()
+                    || v.get("error").is_some()
+                    || v.get("aborted").is_some()
                 {
                     return Err(bad());
                 }
-                let mut text = String::new();
-                for b in m["content"].as_array().ok_or_else(bad)? {
-                    if matches!(
-                        b["type"].as_str(),
-                        Some("thinking") | Some("redacted_thinking")
-                    ) {
-                        continue;
-                    }
-                    if b["type"] != "text" {
-                        return Err(bad());
-                    }
-                    text.push_str(b["text"].as_str().ok_or_else(bad)?);
-                }
-                if text != self.message_text {
+                // The official CLI emits one snapshot for the completed content block,
+                // before that block's stop event, rather than one final message snapshot.
+                let blocks = m["content"].as_array().ok_or_else(bad)?;
+                if blocks.len() != 1
+                    || blocks[0]["type"].as_str() != self.block_kind.as_deref()
+                    || self.block_kind.as_deref() == Some("text")
+                        && blocks[0]["text"].as_str() != Some(self.block_text.as_str())
+                    || self.block_kind.as_deref() == Some("thinking")
+                        && (!blocks[0]["thinking"].is_string()
+                            || blocks[0].get("signature").is_some_and(|x| !x.is_string()))
+                    || self.block_kind.as_deref() == Some("redacted_thinking")
+                        && !blocks[0]["data"].is_string()
+                {
                     return Err(bad());
                 }
+                self.block_snapshot = true;
                 self.assistant = true;
+            }
+            Some("rate_limit_event") if self.init => {
+                let info = &v["rate_limit_info"];
+                if !matches!(info["status"].as_str(), Some("allowed" | "allowed_warning"))
+                    || info.get("errorCode").is_some()
+                    || ["resetsAt", "utilization"].iter().any(|key| {
+                        info.get(*key)
+                            .is_some_and(|x| x.as_f64().is_none_or(|n| !n.is_finite() || n < 0.0))
+                    })
+                    || [
+                        "canUserPurchaseCredits",
+                        "hasChargeableSavedPaymentMethod",
+                        "overageEnabled",
+                    ]
+                    .iter()
+                    .any(|key| info.get(*key).is_some_and(|x| !x.is_boolean()))
+                {
+                    return Err(bad());
+                }
+                // Informational quota frames never authorize text or completion.
             }
             Some("result") if self.init => {
                 if v["user_message_uuid"] != self.user {
@@ -377,10 +436,10 @@ mod tests {
             json!({"type":"stream_event","session_id":"s","event":{"type":"message_start","message":{"id":"m","role":"assistant","model":MODEL}}}),
             json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}),
             json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"안녕 OK"}}}),
+            json!({"type":"assistant","session_id":"s","message":{"id":"m","role":"assistant","model":MODEL,"content":[{"type":"text","text":"안녕 OK"}]}}),
             json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_stop","index":0}}),
             json!({"type":"stream_event","session_id":"s","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"}}}),
             json!({"type":"stream_event","session_id":"s","event":{"type":"message_stop"}}),
-            json!({"type":"assistant","session_id":"s","message":{"id":"m","model":MODEL,"content":[{"type":"text","text":"안녕 OK"}]}}),
             json!({"type":"result","session_id":"s","subtype":"success","is_error":false,"result":"안녕 OK","stop_reason":"end_turn","user_message_uuid":"u","modelUsage":{MODEL:{"inputTokens":8,"outputTokens":2,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}),
         ]
     }
@@ -463,17 +522,18 @@ mod tests {
     #[test]
     fn thinking_never_becomes_answer() {
         let mut f = frames();
-        let reasoning = vec![
-            json!({"type":"content_block_start","index":9,"content_block":{"type":"thinking","thinking":""}}),
-            json!({"type":"content_block_delta","index":9,"delta":{"type":"thinking_delta","thinking":"PRIVATE REASONING"}}),
-            json!({"type":"content_block_stop","index":9}),
-        ];
-        for (e, v) in reasoning.into_iter().enumerate() {
-            f.insert(
-                2 + e,
-                json!({"type":"stream_event","session_id":"s","event":v}),
-            );
+        for frame in &mut f[2..6] {
+            if frame["type"] == "stream_event" {
+                frame["event"]["index"] = json!(1);
+            }
         }
+        let reasoning = vec![
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}}),
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"PRIVATE REASONING"}}}),
+            json!({"type":"assistant","session_id":"s","message":{"id":"m","role":"assistant","model":MODEL,"content":[{"type":"thinking","thinking":"PRIVATE REASONING","signature":"sig"}]}}),
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_stop","index":0}}),
+        ];
+        f.splice(2..2, reasoning);
         let mut d = Decoder::new("s", "u", MODEL, "2.1.322");
         let mut text = String::new();
         for v in f {
@@ -485,6 +545,98 @@ mod tests {
         }
         assert_eq!(text, "안녕 OK");
         assert!(d.finish(true).is_ok());
+    }
+
+    fn multi_block_frames() -> Vec<Value> {
+        let mut f = frames();
+        let second = vec![
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}}),
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" again"}}}),
+            json!({"type":"assistant","session_id":"s","message":{"id":"m","role":"assistant","model":MODEL,"content":[{"type":"text","text":" again"}]}}),
+            json!({"type":"stream_event","session_id":"s","event":{"type":"content_block_stop","index":1}}),
+        ];
+        f.splice(6..6, second);
+        f.last_mut().unwrap()["result"] = json!("안녕 OK again");
+        f
+    }
+
+    #[test]
+    fn per_block_snapshots_validate_without_duplicating_text() {
+        let f = multi_block_frames();
+        let mut d = Decoder::new("s", "u", MODEL, "2.1.322");
+        let mut text = String::new();
+        for frame in &f {
+            for event in d.line(&serde_json::to_vec(frame).unwrap()).unwrap() {
+                if let ModelEvent::TextDelta { text: delta, .. } = event {
+                    text.push_str(&delta);
+                }
+            }
+        }
+        assert_eq!(text, "안녕 OK again");
+        assert!(d.finish(true).is_ok());
+        for end in 0..f.len() {
+            assert!(decode(&f[..end]).unwrap().finish(true).is_err());
+        }
+        assert!(decode(&f).unwrap().finish(false).is_err());
+    }
+
+    #[test]
+    fn snapshots_must_match_one_open_block_once() {
+        for (field, value) in [
+            ("id", json!("other")),
+            ("model", json!("other")),
+            ("role", json!("user")),
+            ("content", json!([{"type":"text","text":"forged"}])),
+            ("content", json!([{"type":"thinking","thinking":"hidden"}])),
+            (
+                "content",
+                json!([{"type":"text","text":"안녕 OK"},{"type":"text","text":"extra"}]),
+            ),
+        ] {
+            let mut f = frames();
+            f[4]["message"][field] = value;
+            assert!(decode(&f).is_err(), "{field}");
+        }
+        let mut f = frames();
+        f.insert(5, f[4].clone());
+        assert!(decode(&f).is_err(), "duplicate snapshot");
+        let mut f = frames();
+        f.swap(4, 5);
+        assert!(decode(&f).is_err(), "snapshot after stop");
+        let mut f = frames();
+        f.remove(4);
+        assert!(decode(&f).is_err(), "missing snapshot");
+        let mut f = multi_block_frames();
+        f[8]["message"]["content"][0]["text"] = json!("안녕 OK again");
+        assert!(
+            decode(&f).is_err(),
+            "cumulative snapshot instead of block snapshot"
+        );
+        let mut f = multi_block_frames();
+        f[6]["event"]["index"] = json!(0);
+        assert!(decode(&f).is_err(), "replayed block index");
+    }
+
+    #[test]
+    fn only_valid_same_session_informational_rate_limits_are_accepted() {
+        for status in ["allowed", "allowed_warning"] {
+            let mut f = frames();
+            f.insert(1, json!({"type":"rate_limit_event","session_id":"s","rate_limit_info":{"status":status,"resetsAt":123,"utilization":0.8,"overageEnabled":false}}));
+            assert!(decode(&f).unwrap().finish(true).is_ok());
+            assert!(decode(&f[..2]).unwrap().finish(true).is_err());
+        }
+        for event in [
+            json!({"type":"rate_limit_event","session_id":"other","rate_limit_info":{"status":"allowed"}}),
+            json!({"type":"rate_limit_event","session_id":"s","rate_limit_info":{"status":"rejected"}}),
+            json!({"type":"rate_limit_event","session_id":"s","rate_limit_info":{"status":"allowed","errorCode":"credits_required"}}),
+            json!({"type":"rate_limit_event","session_id":"s","rate_limit_info":{"status":"allowed_warning","overageEnabled":"yes"}}),
+            json!({"type":"rate_limit_event","session_id":"s","rate_limit_info":{"status":"unknown"}}),
+            json!({"type":"unknown_event","session_id":"s"}),
+        ] {
+            let mut f = frames();
+            f.insert(1, event);
+            assert!(decode(&f).is_err());
+        }
     }
 }
 #[cfg(test)]

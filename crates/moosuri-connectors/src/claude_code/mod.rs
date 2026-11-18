@@ -3,7 +3,7 @@ pub mod protocol;
 #[cfg(unix)]
 mod sandbox;
 #[cfg(unix)]
-pub use sandbox::{Profile, helper_main};
+pub use sandbox::{LoginCode, LoginEvent, Profile, helper_main};
 
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixture;

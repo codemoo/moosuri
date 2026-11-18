@@ -57,3 +57,14 @@ filesystem removal is acknowledged. Local deletion SHALL NOT imply remote revoke
 - **WHEN** account content is purged while the optional runtime or filesystem cleanup is unavailable
 - **THEN** only opaque retirement metadata remains, local deletion completion stays
   pending, and no old binding is selectable or executable.
+
+### Requirement: Session-owned official subscription login bridge
+The system SHALL bridge the unchanged official CLI authorization URL and returned one-time code to its original process, scoped to the current owner session and binding revision, without persisting raw output, URLs, codes or bearer tokens.
+
+#### Scenario: Complete official login from settings
+- **WHEN** the owner starts subscription login and returns the code from the official page
+- **THEN** the code reaches only that original process once, and official success remains separate from exact-model verification
+
+#### Scenario: Stale requests and session withdrawal
+- **WHEN** code submission or cancellation supersedes an earlier status response, or the originating session expires or is revoked
+- **THEN** stale UI responses cannot revive the prior code screen and withdrawn authority cancels the process while holding the environment lock through cleanup

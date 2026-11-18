@@ -25,7 +25,7 @@ moosuri runtime-gws-relay --registry "$REGISTRY" --socket-dir "$GOOGLE_SOCKETS" 
   --config /etc/moosuri/private/gws-bindings.json
 ```
 
-4. 초대 또는 프로비저닝에 `--enable-local-gws --google-sockets-root "$GOOGLE_SOCKETS"`를 지정한다. 수명주기 설정에는 최상위 `google_sockets_root`와 각 회원의 `enable_local_gws: true`를 저장한다. 컨테이너는 전용 소켓을 `/google:ro`로 마운트하고 네트워크 격리를 유지한다. 기존 컨테이너 프로필을 바꿀 때는 해당 회원의 볼륨을 보존한 채 프로필을 교체한다.
+4. `kiri-onboard`에서는 설치 구성에 `google_sockets_root`를 설정하고 초대 처리 시 `--enable-local-gws`를 지정한다. 수명주기 서비스가 이 회원의 설정을 보존한다. 직접 `kiri-invite` 또는 `kiri-provision`을 실행하는 설치는 `--enable-local-gws --google-sockets-root "$GOOGLE_SOCKETS"`를 사용하고, 수명주기 설정에는 회원별 `enable_local_gws: true`를 지정한다. 컨테이너는 전용 소켓을 `/google:ro`로 마운트하고 네트워크 격리를 유지한다. 기존 컨테이너 프로필을 바꿀 때는 해당 회원의 볼륨을 보존한 채 프로필을 교체한다.
 5. 각 회원 컨테이너에 해당 웹 클라이언트를 한 번 등록한다. 아래 환경 변수에는 그 회원의 예약값과 공개 HTTPS origin을 넣는다. Google에서 받은 JSON 파일은 비공개 표준 입력으로 전달한다.
 
 ```sh

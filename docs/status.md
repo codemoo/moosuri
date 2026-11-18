@@ -14,7 +14,7 @@
 | 브라우저로 Gmail 연결 후 원래 대화에서 최근 메일 확인 | 개발판 중앙 서버는 schema 82부터 Google OAuth를 제공한다. 개인 서비스는 schema 84에서 읽기 권한을 암호화하고 schema 85에서 최대 다섯 건의 조회 결과를 대화에 보관한다. 합성 Google 서버에서 계정·세션 분리, 새로고침, 연결 교체·해제와 중복 조회 차단을 확인했다. 메일 헤더는 모델 입력에서 제외한다. 실제 Google 계정 동의 검증은 남아 있다. [개인 Gmail](../deployment/kiri/google.md) · [중앙 서버 Gmail](gws-inbox.md) |
 | 재부팅 후 회원 세션 복구 | 2 vCPU·2 GiB VM에서 20회원 유휴 구동을 확인했다. 재부팅 후 활성 19명은 복구됐고 차단한 1명은 기동하지 않았다. 64 MiB 상한에 닿은 회원이 있어 동시 사용 성능과 운영 적정 인원은 미확정이다. [측정 조건·수치](../deployment/kiri/measurements/2026-11-19-idle-capacity.md) |
 
-Kiri의 공용 모델은 설치자가 설정한 API·호환 엔드포인트·로컬 모델을 사용한다. ChatGPT 공식 로그인은 사용자와 워크스페이스에 묶인다. Claude의 공식 실행기는 비루트 Linux 프로세스를 요구하므로 회원별 구독을 연결하려면 호스트 브로커와 분리된 실행기가 필요하다. [구독 연결 검토와 구현 조건](../deployment/kiri/subscriptions.md)
+각 Kiri 컨테이너는 회원 전용 소켓으로 호스트의 무수리 엔진을 호출한다. 엔진이 설치에 설정된 모델에 요청하고 사용량을 호출한 회원에게 기록한다. 현재 이 경로는 API·호환 엔드포인트·로컬 모델의 텍스트 추론을 지원한다. ChatGPT·Claude 로그인 기반 어댑터 연결은 후속 작업이다. [구독 연결 검토와 구현 조건](../deployment/kiri/subscriptions.md)
 
 기존 설치의 오프라인 도구는 schema 81–85의 합성 A/B 백업에서 한 회원의 수동 기억·근거·삭제 이력을 추출하고 검색 색인을 재구축한다. 원본 없이 추출 결과를 확인할 수 있다. 전체 계정 복원, 개인 컨테이너의 정규 도구·스케줄 실행, 운영 시범 계정 전환은 후속 작업이다. [이전 도구 범위](../audit/account-runtime-extraction.md) · [남은 작업](../openspec/changes/isolate-account-runtime/tasks.md)
 

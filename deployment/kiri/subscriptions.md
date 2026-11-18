@@ -1,8 +1,14 @@
-# Kiri 구독 모델의 현재 경계
+# 무수리 엔진과 모델 공급자 연결
 
-2026-11-19에 공식 자료와 현재 코드를 대조했다. **현재 `runtime-model`은 API/compatible/local 모델 broker다. Kiri용 ChatGPT/Claude 구독 실행기는 구현되지 않았다.** 기존 단일 사용자 프로그램의 로그인·실행 기능이나 합성 child 성공을 Kiri 멀티유저 수락으로 표시하지 않는다.
+설치자는 호스트에서 무수리 엔진의 모델 연결을 관리한다. 회원 A와 B의 컨테이너에는 각각 자신의 `/model/model.sock`이 보인다. 호스트에서는 두 소켓이 같은 무수리 프로세스(`runtime-model`)로 연결된다. 엔진이 호출자의 UID와 현재 계정 상태를 확인하고, 설정된 공급자에 추론을 요청한 뒤 응답과 사용량을 해당 호출에 연결한다. 대화 이력·기억·도구 권한·작업 진행은 회원의 개인 런타임이 관리한다. [엔진 구현](../../apps/moosuri/src/runtime_model.rs) · [컨테이너 구성](README.md)
 
-`runtime-model` 설정에 명시적으로 `"subscription":"chatgpt_plan"`을 넣으면 `chatgpt_shared_subscription_unsupported`, `"subscription":"claude_code"`를 넣으면 `claude_rootless_executor_bridge_required`로 시작을 거절한다. 두 검사는 provider credential, fingerprint key, 호출 원장, 소켓 및 외부 실행기를 열기 전에 끝난다. 기존 API 설정은 이 필드를 생략한다. API 요청·fingerprint·정산·epoch 검사는 바뀌지 않는다. 이 표시는 token 종류를 추측하는 검사가 아니다. `key_file`에는 API/local credential만 사용하며 개인 구독 token을 API key로 복사하지 않는다.
+| 엔진의 모델 연결 | Kiri 개발판 지원 범위 |
+| --- | --- |
+| 설치 API 키, OpenRouter, 호환 API, 로컬 모델 | 회원 전용 소켓을 통한 텍스트 추론. 두 컨테이너에서 동일한 엔진을 호출하는 경로를 검증했다. |
+| ChatGPT 공식 로그인 | 기존 로그인·추론 경로를 Kiri 엔진에 연결하는 작업이 남아 있다. 설정값 `chatgpt_plan`의 현재 진단은 `chatgpt_engine_adapter_unavailable`이다. |
+| Claude 공식 실행기 | Linux 비루트 실행기와 호스트 엔진 사이의 연결이 필요하다. 설정값 `claude_code`의 현재 진단은 `claude_rootless_executor_bridge_required`이다. |
+
+회원의 무수리 로그인과 모델 공급자의 로그인은 별개다. 공급자 계정의 사용 범위는 엔진 뒤에 연결한 서비스의 공식 인증 방식과 계약에 따른다. 별도의 공급자 인증이 필요한 연결은 해당 어댑터의 설정에서 안내한다.
 
 ## 공식 지원 범위
 
@@ -16,21 +22,8 @@
 
 공식 문서는 해당 설치·계정·모델의 사용 자격이나 계약 수락 증명이 아니다. 이 작업은 인증·결제·실제 provider 추론을 수행하지 않았다.
 
-## 코드 대조
+## 엔진에 어댑터를 연결할 때
 
-- 기존 [SIWC 프로그램](../../crates/moosuri-agent/src/subscriptions.rs)은 개인 `SubscriptionRef`와 `SubscriptionAuthority`를 먼저 확인하고, [Store](../../crates/moosuri-store/src/subscriptions.rs)가 owner별 봉인·refresh lease/CAS를 소유한다. [보호된 VM 전달](../../docs/chatgpt-authentication.md)은 이 개인 프로그램의 별도 경로다. 현재 Kiri member router는 이를 구독 설정/추론 경로로 연결하지 않았다. 설치 broker가 개인 DB를 대신 열거나 봉인된 자료를 공용 key 파일로 바꾸지 않는다.
-- 기존 [Claude Profile](../../crates/moosuri-connectors/src/claude_code/sandbox.rs)의 `Profile::from_json`은 Linux non-root를 요구하고 euid 0을 거절한다. rootless engine, exact binary/image/profile, private auth/scratch root 및 accepted isolation/hosting 조건을 계속 검사한다. [공식 실행 계약](../../docs/claude-execution.md)은 그대로 적용된다.
-- 반면 [Kiri 운영 안내](README.md)의 member text profile은 `broker_uid:0`을 고정한다. [broker](../../apps/moosuri/src/runtime_model.rs)는 registry의 owner-private 권한과 member별 socket chown을 요구한다. [provisioner](../../apps/moosuri/src/kiri_provision.rs)는 root 제어 경로와 서로 다른 member UID를 사용한다. 따라서 root broker에서 `Profile::stream_text`를 직접 호출하는 안은 실제 배포에서 성립하지 않는다.
-- broker를 임의로 rootless로 바꾸거나 registry/키 권한을 넓히고 chown capability를 주는 안, Kiri guest에 rootful/rootless engine 소켓을 마운트하는 안은 이 차이를 해결하지 않는다. `synthetic_from_json`으로만 통과하는 경로도 기능으로 제공하지 않는다.
-
-## 필요한 다음 독립 구현
-
-구현 가능한 후보는 **root broker → 회원별 UID로 실행되는 별도 rootless executor**다. 아직 구현되거나 수락된 bridge는 아니다.
-
-1. root broker만 registry·epoch·기존 단일 호출 원장을 소유하고 dispatch를 먼저 기록한다. rootless executor에는 registry, 다른 회원 볼륨, 설치 API credential을 전달하지 않는다.
-2. member와 분리된 host IPC에서 커널 peer UID를 양방향 검사한다. root broker는 executor의 고정 UID·전체 owner/volume/generation·profile/root/environment/revision을 고정한다. executor는 root broker와 자기 소유자만 허용한다. 회원 요청이 URL, HOME, environment, session, engine 경로를 선택할 수 없게 한다.
-3. 각 최종 사용자의 기존 공식 로그인·정확한 모델 검증과 현재 소유권에서 association을 만든다. 서로 다른 회원이 같은 인증 HOME을 공유하거나 config 변경으로 과거 환경을 재사용할 수 없게 한다. executor는 기존 `Profile`의 fresh session, `client_composed`, empty tools, no persistence, cleanup ACK와 retired-environment 검사를 재사용한다.
-4. 취소·정지·resume epoch 변경·연결 해제·executor 재시작·비정상 suffix/EOF를 동일 호출 영수증으로 정리한다. 원격 완료/비용이 불명확하면 unknown이며 새 ID로 자동 재추론하지 않는다. 소비자 구독의 실제 결제·남은 allowance나 provider hard output-token cap을 로컬 예산과 혼동하지 않는다.
-5. 실제 Linux에서 UID A/B의 교차 접근, root↔rootless 인증, host/guest mount, parent loss·descendant cleanup, retired HOME, quota 및 API regression을 먼저 검증한다. 이후에도 공식 binary·계정 로그인·실제 모델 수락은 별도다. SIWC의 회원별 경로를 추가하려면 그 배포 유형의 공식 허용 범위와 개인 봉인/host/refresh 소유부터 별도로 연결한다.
-
-현재의 부분 대안은 기존 API/local broker를 사용하는 것이다. 기존 단일 사용자 SIWC/공식 Claude 프로그램은 각자의 문서상 승인된 환경에서 계속 사용할 수 있지만, 그것을 이 Kiri 구독 bridge의 구현 완료라고 설명하지 않는다.
+- ChatGPT 어댑터는 기존 공식 로그인 구현의 소유자·워크스페이스 확인과 갱신 잠금을 재사용한다. [로그인 구현](../../crates/moosuri-agent/src/subscriptions.rs) · [인증 저장소](../../crates/moosuri-store/src/subscriptions.rs)
+- Claude 실행기는 비루트 Linux UID를 요구한다. 호스트 엔진에서 해당 실행기에 요청을 넘기고, 검증된 프로필과 인증 환경을 지정해야 한다. [실행 조건](../../docs/claude-execution.md) · [프로필 검사](../../crates/moosuri-connectors/src/claude_code/sandbox.rs)
+- 어댑터 수락 시험은 두 컨테이너가 같은 엔진에 동시에 요청하는 흐름에서 시작한다. 각 응답의 소유자, 공급자 세션 분리, 단일 갱신, 재시도 시 중복 호출·정산 방지를 확인한다. [전환 작업표](../../openspec/changes/isolate-account-runtime/tasks.md)

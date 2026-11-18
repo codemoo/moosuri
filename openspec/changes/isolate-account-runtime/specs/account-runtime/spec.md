@@ -20,6 +20,11 @@ The installation SHALL allocate at most one active runtime for each account and 
 ### Requirement: Shared model capacity
 The installation SHALL supply read-only shared modules and model availability, and broker model calls using installation credentials while isolating user history, external actions, and provider sessions.
 
+#### Scenario: Two personal containers call one Moosuri engine
+- **WHEN** members A and B request inference through their respective private model sockets
+- **THEN** the same installation engine selects the configured upstream adapter, attributes each call to its originating member and returns results through that member’s socket
+- **AND** each container keeps its conversation, tool permissions and work state on its own volume and receives no upstream credential
+
 #### Scenario: Rotate the installation model credential
 - **WHEN** two members use the same provider and its installation credential rotates
 - **THEN** each retains their own conversation and neither member obtains the provider credential or the other's session

@@ -80,7 +80,7 @@ enum SubscriptionRoute {
 impl SubscriptionRoute {
     fn unavailable(self) -> &'static str {
         match self {
-            Self::ChatgptPlan => "chatgpt_shared_subscription_unsupported",
+            Self::ChatgptPlan => "chatgpt_engine_adapter_unavailable",
             Self::ClaudeCode => "claude_rootless_executor_bridge_required",
         }
     }
@@ -967,7 +967,7 @@ mod tests {
         for (route, expected) in [
             (
                 SubscriptionRoute::ChatgptPlan,
-                "chatgpt_shared_subscription_unsupported",
+                "chatgpt_engine_adapter_unavailable",
             ),
             (
                 SubscriptionRoute::ClaudeCode,

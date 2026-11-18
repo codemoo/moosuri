@@ -477,10 +477,24 @@ async fn telegram_web_retry_tracks_only_the_new_attempt_and_sends_its_result() {
         .await
         .unwrap();
     let claim = s.claim_run().await.unwrap().unwrap();
+    s.append_output(
+        &claim.lease,
+        vec![crate::OutputPatch::Append {
+            item: "partial".into(),
+            text: "unfinished synthetic claim".into(),
+            phase: None,
+            refusal: false,
+        }],
+    )
+    .await
+    .unwrap();
     s.finish_run(&claim.lease, RunState::Failed, None)
         .await
         .unwrap();
     s.poll_telegram_delivery(1).await.unwrap();
+    let failed = s.claim_telegram_dispatch(1, None).await.unwrap().unwrap();
+    assert!(failed.text.contains("응답을 마치지 못했습니다"));
+    assert!(!failed.text.contains("unfinished synthetic claim"));
     flush(&s).await;
     let r = s
         .retry_run(&a, claim.lease.run_id().into(), 1)
@@ -510,5 +524,97 @@ async fn telegram_web_retry_tracks_only_the_new_attempt_and_sends_its_result() {
             .unwrap()
             .text,
         "Recovered answer"
+    );
+}
+
+#[tokio::test]
+async fn telegram_missing_model_settles_the_update_and_allows_the_next_user_through() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, s, owner) = setup().await;
+    let other = member(&s, &owner, "second-telegram@example.test")
+        .await
+        .user;
+    pair(&s, &owner, 1, 111).await;
+    pair(&s, &other, 2, 222).await;
+    flush(&s).await;
+    s.set_default_model(&owner, None).await.unwrap();
+    assert!(
+        !s.ingest_telegram(1, update(3, 111, "Synthetic request"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !s.ingest_telegram(1, update(3, 111, "Synthetic request"))
+            .await
+            .unwrap()
+    );
+    s.ingest_telegram(1, update(4, 222, "/help")).await.unwrap();
+    s.call(|db| {
+        let rows = db
+            .conn
+            .prepare("SELECT body FROM telegram_outbox ORDER BY rowid")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].contains("내 모델"));
+        assert!(rows[1].contains("/help") || rows[1].contains("/new"));
+        assert_eq!(
+            db.conn.query_row(
+                "SELECT offset FROM telegram_bot WHERE singleton=1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?,
+            5
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn telegram_refusal_never_relays_filtered_answer_fragments() {
+    let _g = TEST_LOCK.lock().await;
+    let (_dir, store, owner) = setup().await;
+    pair(&store, &owner, 1, 111).await;
+    flush(&store).await;
+    store
+        .ingest_telegram(1, update(2, 111, "synthetic filtered request"))
+        .await
+        .unwrap();
+    let claim = store.claim_run().await.unwrap().unwrap();
+    store
+        .append_output(
+            &claim.lease,
+            vec![
+                crate::OutputPatch::Append {
+                    item: "fragment".into(),
+                    text: "Unfinished synthetic answer".into(),
+                    phase: None,
+                    refusal: false,
+                },
+                crate::OutputPatch::Append {
+                    item: "declined".into(),
+                    text: "Synthetic refusal".into(),
+                    phase: None,
+                    refusal: true,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    store
+        .finish_run(&claim.lease, RunState::Refused, None)
+        .await
+        .unwrap();
+    store.poll_telegram_delivery(1).await.unwrap();
+    assert_eq!(
+        store
+            .claim_telegram_dispatch(1, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .text,
+        "Synthetic refusal"
     );
 }

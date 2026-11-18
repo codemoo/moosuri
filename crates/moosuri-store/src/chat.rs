@@ -1074,7 +1074,7 @@ pub(super) fn submit_turn_context_in(
     {
         // P1 excludes raw document and image history as well as current uploads.
         // Include queued/running ancestors, matching dependency inheritance.
-        return Err(StoreError::Conflict);
+        return Err(StoreError::SubscriptionMediaUnsupported);
     }
     let mut needs_vision = false;
     for media in &attachments {
@@ -1088,7 +1088,7 @@ pub(super) fn submit_turn_context_in(
     if needs_vision {
         let vision:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM provider_vision_probes WHERE provider_id=?1 AND revision=?2 AND model=?3 AND effort=?4)",params![choice.provider_id,choice.provider_revision,choice.model,choice.effort.as_deref().unwrap_or("")],|r|r.get(0))?;
         if !vision {
-            return Err(StoreError::InvalidInput);
+            return Err(StoreError::VisionRequired);
         }
         if target.is_some() {
             return Err(StoreError::InvalidInput);

@@ -41,23 +41,43 @@ fn run_text(c: &Connection, b: &Binding, id: &str, attempt: i32) -> Result<Strin
     let mut text = t
         .assistant
         .iter()
-        .filter(|m| m.phase != Some(MessagePhase::Commentary))
+        .filter(|m| {
+            m.phase != Some(MessagePhase::Commentary) && (r.state != RunState::Refused || m.refusal)
+        })
         .map(|m| m.text.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
-    if text.trim().is_empty() {
-        text=match r.state {
-        RunState::Completed=>"처리를 마쳤습니다. 작업 상세는 웹에서 확인해주세요.",
-        RunState::Cancelled=>"응답을 중지했습니다.",
-        RunState::OutcomeUnknown=>"처리 결과를 확인할 수 없습니다. 웹에서 실행 기록을 확인해주세요. 같은 작업을 자동으로 다시 실행하지 않습니다.",
-        _=>"응답을 마치지 못했습니다. 웹에서 오류와 재시도 가능 여부를 확인해주세요.",
-    }.into();
+    // A terminal failure may retain streamed fragments for the web transcript.
+    // Deliver its actual outcome, never relay an unfinished fragment as the answer.
+    let status = match r.state {
+        RunState::Completed if text.len() > 128 * 1024 => {
+            Some("답변이 길어 무수리 웹에 보관했습니다. 대화를 열어 전체 답변을 확인해주세요.")
+        }
+        RunState::Completed if text.trim().is_empty() => {
+            Some("처리를 마쳤습니다. 작업 상세는 웹에서 확인해주세요.")
+        }
+        RunState::Completed => None,
+        RunState::Refused if !text.trim().is_empty() && text.len() <= 128 * 1024 => None,
+        RunState::Refused => {
+            Some("모델이 요청을 처리할 수 없다고 응답했습니다. 웹에서 확인해주세요.")
+        }
+        RunState::Cancelled => Some("응답을 중지했습니다."),
+        RunState::OutcomeUnknown => Some(
+            "처리 결과를 확인할 수 없습니다. 웹에서 실행 기록을 확인해주세요. 같은 작업을 자동으로 다시 실행하지 않습니다.",
+        ),
+        RunState::Failed if t.run.error.as_deref() == Some("tools_required") => Some(
+            "이 요청에는 도구가 필요합니다. 무수리 웹의 내 모델에서 도구 연결을 확인한 뒤 다시 시도해주세요.",
+        ),
+        RunState::Failed | RunState::Incomplete => {
+            Some("응답을 마치지 못했습니다. 웹에서 오류와 재시도 가능 여부를 확인해주세요.")
+        }
+        RunState::Running | RunState::Queued => return Err(StoreError::Conflict),
+    };
+    if let Some(status) = status {
+        text = status.into();
     }
     if t.run.connection_wait.is_some() {
         text.push_str("\n\n추가 연결이나 확인이 필요합니다. 무수리 웹에서 이어주세요.");
-    }
-    if text.len() > 128 * 1024 {
-        return Err(StoreError::InvalidInput);
     }
     Ok(text)
 }

@@ -292,12 +292,12 @@ impl Store {
             let wake=match handle(&tx,&db.provider_key,&db.web_profile,revision,&update) {
                 Ok(w)=>{tx.execute_batch("RELEASE telegram_input;")?;w},
                 Err(StoreError::Busy|StoreError::Unavailable|StoreError::Corrupt)=>return Err(StoreError::Busy),
-                Err(_)=>{
+                Err(error)=>{
                     tx.execute_batch("ROLLBACK TO telegram_input; RELEASE telegram_input;")?;
                     if let Some(m)=&update.message
                         && m.chat.kind=="private"&&m.from.as_ref().is_some_and(|f|!f.is_bot&&f.id==m.chat.id) {
                             let id:Option<String>=tx.query_row("SELECT id FROM telegram_bindings WHERE chat_id=?1 AND bot_revision=?2",params![m.chat.id,revision],|r|r.get(0)).optional()?;
-                            if let Some(b)=id.and_then(|id|binding(&tx,&id,revision,false).ok()) {reply(&tx,&b,update.update_id,"요청을 시작하지 못했습니다. 웹에서 모델 연결·계정 상태를 확인한 뒤 다시 보내주세요.")?;}
+                            if let Some(b)=id.and_then(|id|binding(&tx,&id,revision,false).ok()) {let message=match error {StoreError::ModelRequired=>"무수리 웹의 내 모델에서 모델을 선택한 뒤 다시 보내주세요.",_=>"요청을 시작하지 못했습니다. 웹에서 모델 연결·계정 상태를 확인한 뒤 다시 보내주세요."};reply(&tx,&b,update.update_id,message)?;}
                     }false
                 }
             };

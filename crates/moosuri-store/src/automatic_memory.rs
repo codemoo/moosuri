@@ -270,6 +270,24 @@ struct Job {
 fn job(conn: &Connection, lease: &ExtractionLease) -> Result<Job> {
     conn.query_row("SELECT collection_id,source_id,source_revision,grant_revision,state,deadline FROM automatic_memory_jobs WHERE tenant_id=?1 AND id=?2 AND nonce=?3",params![lease.tenant,lease.job,lease.nonce],|r|Ok(Job{collection:r.get(0)?,source:r.get(1)?,revision:r.get(2)?,grant_revision:r.get(3)?,state:r.get(4)?,deadline:r.get(5)?})).optional()?.ok_or(StoreError::Conflict)
 }
+/// Collection grants admit API/compatible transports only, with the original
+/// owner's exact provider pin. Subscription transports need separate background
+/// extraction admission and must never fall back to the installation default.
+fn extraction_binding(
+    conn: &Connection,
+    key: &[u8; 32],
+    tenant: &str,
+    account: &str,
+    model: &ModelChoice,
+) -> Result<ProviderBinding> {
+    if !matches!(
+        model.source,
+        moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalCompatible
+    ) {
+        return Err(StoreError::ExtractionModelUnsupported);
+    }
+    providers::binding_for_owner_choice(conn, key, tenant, account, model)
+}
 fn checked(
     conn: &Connection,
     key: &[u8; 32],
@@ -287,7 +305,7 @@ fn checked(
     {
         return Err(StoreError::Conflict);
     }
-    providers::binding_for_choice(conn, key, &g.model)?;
+    extraction_binding(conn, key, &lease.tenant, &g.account, &g.model)?;
     let source = knowledge::sources::document(conn, &lease.tenant, &j.source, None)?;
     if source.source.revision != j.revision {
         return Err(StoreError::Conflict);
@@ -338,8 +356,9 @@ impl Store {
             if !group.connected||group.deleted{return Err(StoreError::Conflict)}
             if (change.attribution_mode=="reported"&&!change.reported_speaker.is_empty())||!matches!(change.attribution_mode.as_str(),"reported"|"specified")||change.daily_calls>10||change.daily_input_bytes>24000||change.daily_output_tokens>4000||change.daily_calls==0||change.daily_input_bytes==0||change.daily_output_tokens<1024||(change.attribution_mode=="specified"&&!speaker_label(&change.reported_speaker)) {return Err(StoreError::InvalidInput)}
             let model=if change.enabled {
-                let model=providers::selected_choice(&db.conn,&u)?;if !model.function_tools{return Err(StoreError::Conflict)}
-                providers::binding_for_choice(&db.conn,&db.provider_key,&model)?;model
+                let model=providers::selected_choice(&db.conn,&u)?;
+                extraction_binding(&db.conn,&db.provider_key,&u.tenant.0,&u.account.id,&model)?;
+                if !model.function_tools{return Err(StoreError::ToolsRequired)}model
             } else {grant(&db.conn,&u.tenant.0,&collection)?.ok_or(StoreError::Conflict)?.model};
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let revision=grant(&tx,&u.tenant.0,&collection)?.map(|g|g.revision).unwrap_or(0);
@@ -389,7 +408,7 @@ impl Store {
             let doc=doc?;
             let Some(speaker)=attribution(&g,&doc) else{tx.execute("UPDATE automatic_memory_jobs SET state='skipped',reason='unknown_attribution' WHERE tenant_id=?1 AND id=?2",params![tenant,id])?;continue};
             let units=available_units(&tx,&tenant,&source,&doc.text)?;if units.is_empty(){tx.execute("UPDATE automatic_memory_jobs SET state='skipped',reason='input_bound' WHERE tenant_id=?1 AND id=?2",params![tenant,id])?;continue}
-            let binding=match providers::binding_for_choice(&tx,&db.provider_key,&g.model){Ok(v)=>v,Err(_)=>{tx.execute("UPDATE automatic_memory_jobs SET state='cancelled',reason='provider_changed' WHERE tenant_id=?1 AND id=?2",params![tenant,id])?;continue}};
+            let binding=match extraction_binding(&tx,&db.provider_key,&tenant,&g.account,&g.model){Ok(v)=>v,Err(_)=>{tx.execute("UPDATE automatic_memory_jobs SET state='cancelled',reason='provider_changed' WHERE tenant_id=?1 AND id=?2",params![tenant,id])?;continue}};
             let mut nonce=[0u8;32];OsRng.try_fill_bytes(&mut nonce).map_err(|_|StoreError::Unavailable)?;
             tx.execute("UPDATE automatic_memory_jobs SET state='acquired',nonce=?3,deadline=?4 WHERE tenant_id=?1 AND id=?2",params![tenant,id,nonce.as_slice(),now()?+120])?;
             let generation=knowledge::generation(&tx,&tenant)?;

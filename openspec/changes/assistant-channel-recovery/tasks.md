@@ -1,0 +1,4 @@
+- [x] Cover mixed instructions and Telegram admission and terminal responses.
+- [x] Bind compatible extraction to the owner and distinguish setup failures.
+- [x] Expose personal image verification and retain the composer during setup.
+- [x] Prevent stale inventory from reversing confirmed task changes.

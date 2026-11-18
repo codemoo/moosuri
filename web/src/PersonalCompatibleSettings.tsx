@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from "react";
-import type {ModelCatalog, ProviderSummary, ProvidersResponse} from "../shared/api-types";
+import type {ModelCatalog, ModelChoice, ProviderSummary, ProvidersResponse} from "../shared/api-types";
 import {useScope} from "./account-scope";
 import {ApiFailure, isAborted} from "./api";
 
@@ -8,6 +8,7 @@ type Candidate = {name:string; base_url:string; models:{id:string;name:string}[]
 type Props = {accountId:string; onExpired:()=>void; onVerified:()=>void};
 type Draft = {name:string; base:string; key:string; previous?:ProviderSummary; workstationModel?:string};
 const blank = ():Draft => ({name:"",base:"",key:""});
+const visionKey=(choice:ModelChoice)=>JSON.stringify([choice.provider_id,choice.provider_revision,choice.model,choice.effort]);
 
 export function PersonalCompatibleSettings({accountId, onExpired, onVerified}:Props) {
   const scope = useScope(accountId);
@@ -16,6 +17,7 @@ export function PersonalCompatibleSettings({accountId, onExpired, onVerified}:Pr
   const [candidates,setCandidates] = useState<Candidate[]|null>(null);
   const [catalogs,setCatalogs] = useState<Record<string, string[]>>({});
   const [models,setModels] = useState<Record<string,string>>({});
+  const [visionProofs,setVisionProofs] = useState<Record<string,boolean>>({});
   const [busy,setBusy] = useState(false);
   const [notice,setNotice] = useState("");
   const [error,setError] = useState("");
@@ -23,6 +25,7 @@ export function PersonalCompatibleSettings({accountId, onExpired, onVerified}:Pr
   function fail(e:unknown) {
     if (isAborted(e)) return;
     if (e instanceof ApiFailure && e.status === 401) {onExpired(); return;}
+    if(e instanceof ApiFailure && e.code === "vision_probe_failed") {setError("이 모델 조합의 이미지 읽기를 확인하지 못했습니다. 다른 이미지 지원 모델을 확인하거나 글만 보내세요."); return;}
     setError(e instanceof ApiFailure && e.status === 409 ? "연결이 변경되었습니다. 목록을 다시 불러오세요." : "연결을 확인하지 못했습니다. 서버에서 접근 가능한 주소, API 키와 모델 ID를 확인하세요.");
   }
   async function reload() {
@@ -69,7 +72,13 @@ export function PersonalCompatibleSettings({accountId, onExpired, onVerified}:Pr
   }
   async function verify(p:ProviderSummary, model:string) {
     await scope.request(`${path}/${encodeURIComponent(p.id)}/probe`,"POST",{revision:p.revision, model,effort:null});
-    onVerified(); setNotice("텍스트 응답을 확인했습니다. 아래 모델 선택에서 사용할 수 있습니다.");
+    await reload(); onVerified(); setNotice("텍스트 응답을 확인했습니다. 아래 모델 선택에서 사용할 수 있습니다.");
+  }
+  async function verifyVision(p:ProviderSummary, choice:ModelChoice) {
+    const result=await scope.request<{vision:boolean}>(`${path}/${encodeURIComponent(p.id)}/vision-probe`,"POST",{revision:p.revision,model:choice.model,effort:choice.effort});
+    if(result?.vision!==true)throw new ApiFailure(502,"vision_probe_failed");
+    setVisionProofs(old=>({...old,[visionKey(choice)]:true}));
+    onVerified(); setNotice(`${choice.model} · ${choice.effort??"모델 기본값"}의 이미지 읽기를 확인했습니다. 대화로 돌아가 직접 다시 보내세요.`);
   }
   async function discover() {
     const result = await scope.request<{candidates:Candidate[]}>(path+"/discover");
@@ -123,6 +132,10 @@ export function PersonalCompatibleSettings({accountId, onExpired, onVerified}:Pr
       <label>확인할 모델 ID<input list={`custom-list-${p.id}`} value={models[p.id]??""} onChange={e=>setModels(old=>({...old,[p.id]:e.target.value}))}/></label>
       <datalist id={`custom-list-${p.id}`}>{catalogs[p.id]?.map(id=><option key={id}>{id}</option>)}</datalist>
       <button type="button" disabled={busy || !models[p.id]?.trim()} onClick={()=>void work(()=>verify(p,models[p.id].trim()))}>텍스트 연결 확인</button>
+      {(p.choices??[]).filter(choice=>choice.provider_id===p.id&&choice.provider_revision===p.revision).map(choice=><div key={visionKey(choice)}>
+        <span>{choice.model} · {choice.effort??"모델 기본값"}</span>{" "}
+        {visionProofs[visionKey(choice)]?<span role="status">이미지 읽기 확인됨</span>:<button type="button" disabled={busy} onClick={()=>void work(()=>verifyVision(p,choice))}>이미지 연결 확인 · {choice.model} · {choice.effort??"모델 기본값"}</button>}
+      </div>)}
       <button type="button" disabled={busy} onClick={()=>setDraft({name:p.name,base:p.config.base_url??"",key:"",previous:p})}>연결 수정</button>
       <button type="button" disabled={busy} onClick={()=>void work(async()=>{
         const result=await scope.request<ProviderSummary>(`${path}/${encodeURIComponent(p.id)}`,"DELETE",{revision:p.revision});

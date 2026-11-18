@@ -16,8 +16,10 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
         .collect::<String>();
     // Optimize only a complete unquoted imperative clause. A quoted search
     // phrase or a mention followed by another task must reach normal planning.
+    // A separate explicit operation must still reach the combined planner.
+    // Plain dated fact clauses may precede/follow the memory imperative.
     // This cost gate never grants a memory write; the isolated classifier does.
-    let memory_mutation = low.split(['.', '!', '?', '\n']).any(|clause| {
+    let memory_clause = |clause: &str| {
         if clause
             .chars()
             .any(|c| matches!(c, '\'' | '"' | '`' | '‘' | '’' | '“' | '”'))
@@ -66,8 +68,50 @@ pub(super) fn candidate(text: &str, selected: bool) -> bool {
                     .iter()
                     .any(|ending| clause.ends_with(&format!("{stem}{ending}")))
             })
+    };
+    let clauses = low.split(['.', '!', '?', '\n', ';']);
+    let memory_mutation = clauses.clone().any(memory_clause);
+    let separate_action = clauses.clone().any(|clause| {
+        !memory_clause(clause)
+            && (crate::calendar_intent::candidate(clause)
+                || [
+                    "줘",
+                    "주세요",
+                    "부탁",
+                    "요약해",
+                    "조사해",
+                    "검색해",
+                    "확인해",
+                    "읽어",
+                    "찾아",
+                    "알려",
+                    "맡아",
+                    "맡기",
+                    "맡겨",
+                    "중단",
+                    "멈춰",
+                    "재개",
+                    "취소",
+                ]
+                .iter()
+                .any(|verb| clause.contains(verb))
+                || clause.split(|c: char| !c.is_alphabetic()).any(|word| {
+                    matches!(
+                        word,
+                        "summarize"
+                            | "research"
+                            | "read"
+                            | "search"
+                            | "check"
+                            | "delegate"
+                            | "pause"
+                            | "resume"
+                            | "cancel"
+                            | "schedule"
+                    )
+                }))
     });
-    if memory_mutation {
+    if memory_mutation && !separate_action {
         return false;
     }
     // A civil date/clock is itself a scheduling cue, independent of verb spelling.

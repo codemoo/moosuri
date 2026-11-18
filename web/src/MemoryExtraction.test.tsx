@@ -80,3 +80,22 @@ it("a source revision change fences the prior extraction and pins the next reque
  expect(fetch.mock.calls[1][1]?.signal?.aborted).toBe(true);expect(screen.queryByRole("status")).not.toBeInTheDocument();
  fireEvent.click(screen.getByRole("button",{name:"이 자료에서 기억 찾기"}));expect(JSON.parse(String(fetch.mock.calls[3][1]?.body))).toEqual({expected_revision:4});await act(async()=>{});
 });
+it.each([
+ ["model_required","사용할 모델이 없어요."],
+ ["tools_required","자동 기억에는 도구가 필요해요."],
+ ["extraction_model_unsupported","현재 선택한 구독 모델은 자동 기억을 지원하지 않아요."],
+])("explains %s and links model recovery without losing attribution or enabling extraction",async(code,message)=>{
+ const fetch=vi.fn(async(_path:string,init?:RequestInit)=>init?.method==="PUT"?new Response(JSON.stringify({code}),{status:409,headers:{"content-type":"application/json"}}):response(status()));vi.stubGlobal("fetch",fetch);
+ render(<MemoryExtraction accountId="a" collectionId="c" connected onExpired={vi.fn()}/>);
+ await screen.findByRole("button",{name:"자동 기억 켜기"});
+ fireEvent.change(screen.getByLabelText("작성자 기준"),{target:{value:"specified"}});
+ fireEvent.change(screen.getByLabelText("기억에 표시할 사람"),{target:{value:"Mina"}});
+ fireEvent.click(screen.getByRole("button",{name:"자동 기억 켜기"}));
+ const alert=await screen.findByRole("alert");expect(alert).toHaveTextContent(message);
+ expect(screen.getByRole("link",{name:"내 모델 열기"})).toHaveAttribute("href","/settings/model");
+ expect(screen.getByRole("button",{name:"자동 기억 켜기"})).toBeEnabled();
+ expect(screen.getByDisplayValue("Mina")).toBeInTheDocument();expect(screen.getByText(/현재 꺼짐/)).toBeInTheDocument();
+ fireEvent.click(screen.getByRole("button",{name:"결과 새로고침"}));
+ await waitFor(()=>expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+ expect(screen.queryByRole("link",{name:"내 모델 열기"})).not.toBeInTheDocument();
+});

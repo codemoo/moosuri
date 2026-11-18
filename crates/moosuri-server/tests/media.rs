@@ -290,19 +290,19 @@ async fn upload_probe_chat_retry_reload_library_and_delete_during_response() {
     let request = Uuid::new_v4().to_string();
     let input = json!({"request_id":request,"text":"Describe the tiles","attachments":[{"id":id,"revision":1}]});
     let messages = format!("/api/v1/threads/{thread}/messages");
-    assert_eq!(
-        send(
-            &app,
-            &login,
-            "POST",
-            &messages,
-            input.to_string().into_bytes(),
-            false
-        )
-        .await
-        .status(),
-        StatusCode::BAD_REQUEST
-    );
+    let response = send(
+        &app,
+        &login,
+        "POST",
+        &messages,
+        input.to_string().into_bytes(),
+        false,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let error: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(error["code"], "vision_required");
     let probe = call(
         &app,
         &login,

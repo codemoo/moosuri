@@ -226,3 +226,39 @@ it("adopts an exact local draft result for learning without granting send approv
  expect(writes).toEqual([{url:"/api/v1/missions/m/adopt-draft",body:{action_id:"synthetic-draft",revision:3,digest:"d".repeat(64)}}]);
  expect(screen.getByText(/내용·받는 사람 검토와 매번의 발송 허락은 계속 필요해요/)).toBeInTheDocument();
 });
+it("removes a deleted mission after an older inventory request finishes",async()=>{
+ let reads=0;let release!:(response:Response)=>void;
+ vi.stubGlobal("fetch",missionFetch(async(url,init)=>{
+  if(!String(url).includes("/missions"))return new Response("[]");
+  if(init?.method==="DELETE")return new Response("{}");
+  reads++;
+  if(reads===2)return new Promise<Response>(resolve=>{release=resolve});
+  return new Response(JSON.stringify(reads===1?[mission]:[]));
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ await screen.findByRole("heading",{name:"Synthetic task"});
+ fireEvent.click(screen.getByRole("button",{name:"상태 새로고침"}));
+ await waitFor(()=>expect(reads).toBe(2));
+ fireEvent.click(screen.getByRole("button",{name:"기록 삭제"}));
+ await waitFor(()=>expect(screen.getByRole("button",{name:"기록 삭제"})).toBeDisabled());
+ release(new Response(JSON.stringify([mission])));
+ await waitFor(()=>expect(screen.queryByRole("heading",{name:"Synthetic task"})).not.toBeInTheDocument());
+ expect(reads).toBe(3);
+});
+it("shows a newly created mission after a pre-creation inventory request finishes",async()=>{
+ let reads=0;let release!:(response:Response)=>void;
+ vi.stubGlobal("fetch",missionFetch(async(url,init)=>{
+  if(!String(url).includes("/missions"))return new Response("[]");
+  if(init?.method==="POST")return new Response(JSON.stringify(mission));
+  reads++;
+  if(reads===1)return new Promise<Response>(resolve=>{release=resolve});
+  return new Response(JSON.stringify([mission]));
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ fireEvent.change(screen.getByLabelText("맡길 일"),{target:{value:"Synthetic task"}});
+ fireEvent.click(screen.getByRole("button",{name:"일 맡기기"}));
+ await waitFor(()=>expect(screen.getByLabelText("맡길 일")).toHaveValue(""));
+ release(new Response("[]"));
+ await screen.findByRole("heading",{name:"Synthetic task"});
+ expect(reads).toBe(2);
+});

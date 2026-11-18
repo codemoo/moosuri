@@ -204,9 +204,8 @@ impl Profile {
                     drop(input);
                 } else if v["type"] != "system"
                     || !matches!(v["subtype"].as_str(), Some("init" | "ui_invalidate"))
+                    || (v["subtype"] == "init" && v["session_id"] != session)
                 {
-                    return Err(err());
-                } else if v["subtype"] == "init" && v["session_id"] != session {
                     return Err(err());
                 }
             }

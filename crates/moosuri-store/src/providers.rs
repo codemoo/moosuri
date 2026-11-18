@@ -835,7 +835,7 @@ pub(super) fn selected_mission_model(conn: &Connection, user: &UserContext) -> R
 pub(super) fn selected_choice(conn: &Connection, user: &UserContext) -> Result<ModelChoice> {
     settings(conn, user)?
         .effective
-        .ok_or(StoreError::Unavailable)
+        .ok_or(StoreError::ModelRequired)
 }
 
 pub(super) fn binding_for_owner_choice(

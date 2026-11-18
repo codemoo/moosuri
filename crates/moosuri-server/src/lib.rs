@@ -53,6 +53,24 @@ const COOKIE_MAX_AGE: u64 = 400 * 24 * 60 * 60;
 #[cfg(test)]
 mod web_configuration_tests {
     use super::*;
+    #[tokio::test]
+    async fn extraction_model_failures_preserve_recovery_codes_in_http_responses() {
+        use http_body_util::BodyExt;
+        for (error, code) in [
+            (StoreError::ModelRequired, "model_required"),
+            (StoreError::ToolsRequired, "tools_required"),
+            (
+                StoreError::ExtractionModelUnsupported,
+                "extraction_model_unsupported",
+            ),
+        ] {
+            let response = HttpError(error).into_response();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(value["code"], code);
+        }
+    }
     #[test]
     fn health_identity_survives_busy_and_setup_responses_without_reporting_readiness() {
         let identity = HeaderValue::from_static("d7ecde2a-97fc-4367-87d5-897a8c5bfc23");
@@ -690,6 +708,13 @@ impl IntoResponse for HttpError {
         let (status, code) = match self.0 {
             StoreError::InvalidInput => (StatusCode::BAD_REQUEST, "invalid_input"),
             StoreError::ModelRequired => (StatusCode::CONFLICT, "model_required"),
+            StoreError::SubscriptionMediaUnsupported => {
+                (StatusCode::CONFLICT, "subscription_media_unsupported")
+            }
+            StoreError::VisionRequired => (StatusCode::CONFLICT, "vision_required"),
+            StoreError::ExtractionModelUnsupported => {
+                (StatusCode::CONFLICT, "extraction_model_unsupported")
+            }
             StoreError::ToolsRequired => (StatusCode::CONFLICT, "tools_required"),
             StoreError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             StoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),

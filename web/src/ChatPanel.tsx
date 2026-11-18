@@ -153,8 +153,14 @@ function runExplanation(run: RunView) {
   }
   return "";
 }
+const modelSendErrors:Record<string,string>={
+  model_required:"사용할 모델이 없습니다. 내 모델에서 연결과 모델을 저장한 뒤 직접 다시 보내세요. 입력과 첨부는 유지됩니다.",
+  subscription_media_unsupported:"현재 구독 모델은 이미지·파일이 포함된 대화를 지원하지 않습니다. 내 모델에서 지원하는 API·로컬 모델로 바꾼 뒤 직접 다시 보내세요. 이번 첨부만 있다면 선택을 해제하고 글만 보낼 수 있습니다. 이전 메시지에도 첨부가 있으면 새 대화에서 글만 보내세요. 입력과 첨부는 유지됩니다.",
+  vision_required:"현재 모델의 이미지 읽기가 확인되지 않았습니다. 내 모델에서 개인 LLM의 이미지 연결을 확인하거나 이미지 읽기가 확인된 모델로 바꾼 뒤 직접 다시 보내세요. 공용 연결은 관리자에게 이미지 확인을 요청하세요. 이번 이미지 선택을 해제하고 글만 보낼 수도 있습니다. 이전 메시지에도 이미지가 있으면 확인된 모델을 사용하거나 새 대화를 시작하세요. 입력과 첨부는 유지됩니다.",
+};
 function chatError(error: unknown) {
   if (error instanceof ApiFailure) {
+    if (modelSendErrors[error.code]) return modelSendErrors[error.code];
     if (error.status === 409)
       return "대화 상태나 모델 설정이 변경되었습니다. 기록과 내 모델 설정을 다시 확인해 주세요.";
     if (error.status === 429)
@@ -433,7 +439,8 @@ export function ChatPanel(props: Props) {
       setTurns([]);
       setNextBefore(null);
     }
-    setError("");
+    // Admission guidance must survive the snapshot refresh triggered by a rejection.
+    setError(current=>changed||!Object.values(modelSendErrors).includes(current)?"":current);
     setConnection("");
     setLoading(!!thread);
     setHistoryReady(!thread);
@@ -1074,6 +1081,7 @@ export function ChatPanel(props: Props) {
       {error && (
         <p className="notice chat-notice" role="alert">
           {error}
+          {Object.values(modelSendErrors).includes(error)&&<> <a href="/settings/model" target="_blank" rel="noreferrer">내 모델 확인 ↗</a></>}
         </p>
       )}
       <div

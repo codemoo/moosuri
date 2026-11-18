@@ -210,6 +210,8 @@ async fn wait(s: &Store, u: &moosuri_store::UserContext, t: &str) -> moosuri_cor
 fn gate_supports_frozen_natural_variants_without_granting_authority_and_normal_chat_is_free() {
     for text in [
         "매일 아침9시에 공개 뉴스 찾아서 요약해 줘",
+        "나는 차를 좋아한다고 기억해줘. 매일 아침9시에 공개 뉴스를 요약해줘.",
+        "내일 오전10시부터11시까지 회의 등록해줘. 나는 차를 좋아한다고 기억해줘.",
         "매일 아침9시에 공개 뉴스 요약 부탁해",
         "매일 아침9시에 '기억해 줘' 관련 공개 뉴스를 찾아서 요약해 줘",
         "매일 아침9시에 기억해 줘 관련 공개 뉴스를 찾아서 요약해 줘",
@@ -993,4 +995,71 @@ fn chrono_hour_seoul(at: i64) -> String {
     // Schedule view's UTC timestamp: Seoul is UTC+09 with no DST.
     let seconds = (at + 9 * 3600).rem_euclid(86400);
     format!("{:02}:{:02}", seconds / 3600, seconds % 3600 / 60)
+}
+
+#[tokio::test]
+async fn memory_clause_does_not_hide_a_separate_scheduled_action() {
+    let _g = TEST_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let requests = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+    let recorded = requests.clone();
+    let app = Router::new().route("/v1/chat/completions", post(move |axum::Json(body): axum::Json<Value>| {
+        let recorded = recorded.clone();
+        async move {
+            recorded.lock().await.push(body.clone());
+            let current = body["messages"][1]["content"].as_str().unwrap();
+            let mission = body["tools"].as_array().unwrap().iter().any(|d| d["function"]["name"] == "mission_chat_decision");
+            let (name, arguments) = if mission {
+                // This fixture deliberately declines the mixed actions rather than
+                // accepting just one and silently discarding the other.
+                ("mission_chat_decision", serde_json::to_value(semantic(current, "unsupported")).unwrap())
+            } else {
+                ("memory_command_decision", json!({"decision":"clarify","action":null,"intent_quote":null,"fact_quote":null,"subject":null,"target_quote":null,"clarification":"unsupported"}))
+            };
+            let content = frame(json!({"id":"mixed-memory-task","model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[knowledge::tool_call(0,"mixed-decision".into(),name,arguments)]},"finish_reason":null}]}))
+                + &frame(json!({"id":"mixed-memory-task","model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}})) + "data: [DONE]\n\n";
+            Response::builder().header("content-type","text/event-stream").body(Body::from(content)).unwrap()
+        }
+    }));
+    let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_dir, s, u, thread) = knowledge::tool_configured(&base).await;
+    let text = "나는 차를 좋아한다고 기억해줘. 매일 아침9시에 공개 뉴스를 찾아 요약해줘.";
+    s.submit_turn_with_schedule_context(
+        &u,
+        thread.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        text.into(),
+        None,
+        Some(ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let runtime = Runtime::start(s.clone());
+    let done = wait(&s, &u, &thread).await;
+    assert_eq!(done.run.state, RunState::Completed, "{:?}", done.run.error);
+    assert_eq!(
+        done.run.mission_receipt.as_ref().map(|r| r.state.as_str()),
+        Some("unsupported")
+    );
+    let recorded = requests.lock().await;
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(recorded[0]["messages"][1]["content"], text);
+    assert!(
+        recorded[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["function"]["name"] == "mission_chat_decision")
+    );
+    assert!(s.memories(&u, None).await.unwrap().items.is_empty());
+    assert!(s.recurring_missions(&u).await.unwrap().is_empty());
+    assert!(s.missions(&u).await.unwrap().is_empty());
+    drop(recorded);
+    runtime.shutdown().await;
+    upstream.abort();
 }

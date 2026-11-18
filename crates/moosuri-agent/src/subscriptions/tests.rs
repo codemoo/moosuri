@@ -840,7 +840,7 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
                 "Follow-up while queued".into()
             )
             .await,
-        Err(StoreError::Conflict)
+        Err(StoreError::SubscriptionMediaUnsupported)
     ));
     let first = store.claim_agent_run().await.unwrap().unwrap();
     assert!(
@@ -879,7 +879,7 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
                 "Plain follow-up".into()
             )
             .await,
-        Err(StoreError::Conflict)
+        Err(StoreError::SubscriptionMediaUnsupported)
     ));
     assert_eq!(f.state.models.load(Ordering::SeqCst), requests);
     assert_eq!(

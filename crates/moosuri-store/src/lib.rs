@@ -113,6 +113,12 @@ pub enum StoreError {
     ModelRequired,
     #[error("verified model tools are required")]
     ToolsRequired,
+    #[error("the selected model does not support automatic extraction")]
+    ExtractionModelUnsupported,
+    #[error("the selected subscription cannot read attachments in this conversation")]
+    SubscriptionMediaUnsupported,
+    #[error("verified image input is required")]
+    VisionRequired,
     #[error("authentication required")]
     Unauthorized,
     #[error("operation forbidden")]

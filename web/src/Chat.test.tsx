@@ -1950,3 +1950,69 @@ it("authoritative thread absence releases its held DELETE without unlocking a ne
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(test.calls.filter(call => call.method === "DELETE")).toHaveLength(2);
 });
+
+it.each([
+ ["subscription_media_unsupported",false], ["subscription_media_unsupported",true],
+ ["vision_required",false], ["vision_required",true],
+] as const)("recovers %s with retained input and %s existing media without an automatic resend",async(code,existing)=>{
+ const user=userEvent.setup();
+ const media={id:"11111111-1111-4111-8111-111111111111",revision:2,digest:"synthetic",state:"ready",width:32,height:32,bytes:30,created_at:1};
+ const prior={...turn({state:"completed",can_cancel:false},"Earlier image question"),attachments:[media]};
+ const model={...choice,source:code==="subscription_media_unsupported"?"personal_chat_gpt":"personal_compatible"};
+ const test=fixture({turns:existing?[prior]:[],extra:call=>{
+  if(call.path==="/settings/model")return response({selection:null,effective:model,choices:[model]});
+  if(call.path==="/media")return response({items:[media],used_bytes:30,quota_bytes:67108864});
+  if(call.path.startsWith("/mail/reply-watches"))return response({targets:[],watches:[]});
+ },post:()=>response({code},400)});
+ open();await ready(test.streams);
+ if(!existing){
+  await user.click(screen.getByRole("button",{name:"첨부 추가"}));
+  await user.click(screen.getByLabelText("내 이미지·파일 보관함"));
+  await user.click(await screen.findByRole("button",{name:"대화에 첨부"}));
+ }
+ await user.type(screen.getByLabelText("메시지"),"Keep this image question");
+ await user.click(screen.getByRole("button",{name:"메시지 전송"}));
+ const alert=await screen.findByRole("alert");
+ expect(alert).toHaveTextContent(code==="vision_required"?"현재 모델의 이미지 읽기가 확인되지 않았습니다":"현재 구독 모델은 이미지·파일이 포함된 대화를 지원하지 않습니다");
+ expect(alert).toHaveTextContent("이전 메시지에도");
+ expect(screen.getByLabelText("메시지")).toHaveValue("Keep this image question");
+ if(!existing)expect(screen.getByText("첨부 준비됨")).toBeInTheDocument();
+ expect(screen.queryByRole("button",{name:"같은 요청 다시 제출"})).not.toBeInTheDocument();
+ const settings=screen.getByRole("link",{name:"내 모델 확인 ↗"});
+ expect(settings).toHaveAttribute("href","/settings/model");
+ expect(settings).toHaveAttribute("target","_blank");
+ await user.click(settings);
+ const reads=test.calls.filter(call=>call.path==="/settings/model").length;
+ await act(async()=>{window.dispatchEvent(new Event("focus"))});
+ await waitFor(()=>expect(test.calls.filter(call=>call.path==="/settings/model").length).toBeGreaterThan(reads));
+ expect(postCalls(test.calls)).toHaveLength(1);
+ expect(screen.getByLabelText("메시지")).toHaveValue("Keep this image question");
+ await waitFor(()=>expect(screen.getByRole("button",{name:"메시지 전송"})).toBeEnabled());
+ await user.click(screen.getByRole("button",{name:"메시지 전송"}));
+ await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(2));
+ expect(postCalls(test.calls)[1].body?.attachments).toEqual(existing?undefined:[{id:media.id,revision:2}]);
+ expect(postCalls(test.calls)[1].body?.request_id).not.toBe(postCalls(test.calls)[0].body?.request_id);
+});
+
+it("keeps model-required guidance and the rejected draft until the owner saves a model and explicitly resends",async()=>{
+ let available=true;
+ const user=userEvent.setup();
+ const test=fixture({extra:call=>{
+  if(call.path==="/settings/model")return response({selection:null,effective:available?choice:null,choices:available?[choice]:[]});
+  if(call.path.startsWith("/mail/reply-watches"))return response({targets:[],watches:[]});
+ },post:()=>{available=false;return response({code:"model_required"},400)}});
+ open();await ready(test.streams);
+ await user.type(screen.getByLabelText("메시지"),"Preserve this request while configuring my model");
+ await user.click(screen.getByRole("button",{name:"메시지 전송"}));
+ expect(await screen.findByRole("alert")).toHaveTextContent("사용할 모델이 없습니다");
+ expect(screen.getByRole("link",{name:"내 모델 확인 ↗"})).toHaveAttribute("target","_blank");
+ await waitFor(()=>expect(screen.getByRole("button",{name:"메시지 전송"})).toBeDisabled());
+ available=true;
+ await act(async()=>{window.dispatchEvent(new Event("focus"))});
+ await waitFor(()=>expect(screen.getByRole("button",{name:"메시지 전송"})).toBeEnabled());
+ expect(screen.getByRole("alert")).toHaveTextContent("직접 다시 보내세요");
+ expect(screen.getByLabelText("메시지")).toHaveValue("Preserve this request while configuring my model");
+ expect(postCalls(test.calls)).toHaveLength(1);
+ await user.click(screen.getByRole("button",{name:"메시지 전송"}));
+ await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(2));
+});

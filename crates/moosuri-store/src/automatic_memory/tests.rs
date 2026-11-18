@@ -839,3 +839,267 @@ async fn call_unknown_marker_excludes_both_attribution_modes_and_cannot_be_a_spe
     let claim = store.claim_memory_extraction().await.unwrap().unwrap();
     assert_eq!(claim.reported_speaker, "Synthetic Mina");
 }
+
+#[tokio::test]
+async fn personal_compatible_grants_pin_owner_destination_and_fence_revoked_work() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    // The shared loopback fixture enrolls this destination for members. It also
+    // remains a valid default so an accidental fallback would be observable.
+    let admin = configured(&store).await;
+    let u = member(&store, &admin, "extraction-owner@example.test")
+        .await
+        .user;
+    let other = member(&store, &admin, "extraction-other@example.test")
+        .await
+        .user;
+    let config = store
+        .list_providers(&admin)
+        .await
+        .unwrap()
+        .providers
+        .remove(0)
+        .config;
+    let provider = store
+        .create_personal_compatible(
+            &u,
+            ProviderChange {
+                name: "Private extraction fixture".into(),
+                config,
+                enabled: true,
+                credential: CredentialChange::Replace(zeroize::Zeroizing::new(
+                    "synthetic-extraction-key".into(),
+                )),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .record_model_probe(&u, provider.id.clone(), 1, "private-fixture".into(), None)
+        .await
+        .unwrap();
+    let choice = store
+        .record_tool_probe(&u, provider.id.clone(), 1, "private-fixture".into(), None)
+        .await
+        .unwrap();
+    let model = ModelSelection {
+        source: choice.source,
+        provider_id: choice.provider_id.clone(),
+        provider_revision: 1,
+        model: choice.model.clone(),
+        effort: None,
+    };
+    store.set_model_preference(&u, Some(model)).await.unwrap();
+    let c = collection(&store, &u).await;
+    store
+        .set_memory_extraction(&u, c.id.clone(), change(0, true))
+        .await
+        .unwrap();
+    let own = u.clone();
+    let foreign = other.clone();
+    store
+        .call(move |db| {
+            assert!(
+                extraction_binding(
+                    &db.conn,
+                    &db.provider_key,
+                    &foreign.tenant.0,
+                    &foreign.account.id,
+                    &choice
+                )
+                .is_err()
+            );
+            // A function-tools bit never admits subscription extraction.
+            for source in [
+                ModelSource::PersonalChatGpt,
+                ModelSource::PersonalClaudeCode,
+            ] {
+                let mut unsupported = choice.clone();
+                unsupported.source = source;
+                assert_eq!(
+                    extraction_binding(
+                        &db.conn,
+                        &db.provider_key,
+                        &own.tenant.0,
+                        &own.account.id,
+                        &unsupported
+                    )
+                    .err(),
+                    Some(StoreError::ExtractionModelUnsupported)
+                );
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    // The opted-in grant keeps its original private binding after a preference
+    // change; an available installation default cannot replace that grant.
+    store.set_model_preference(&u, None).await.unwrap();
+    let first = source(&store, &u, &c, "I prefer trains.", None).await;
+    let claim = store.claim_memory_extraction().await.unwrap().unwrap();
+    assert_eq!(claim.binding.id, provider.id);
+    assert_eq!(claim.binding.model, "private-fixture");
+    assert_eq!(
+        claim.binding.config.base_url.as_deref(),
+        Some("http://127.0.0.1:11434/v1")
+    );
+    assert_eq!(
+        claim.binding.credential.as_deref().map(String::as_str),
+        Some("synthetic-extraction-key")
+    );
+    assert!(
+        store
+            .admit_memory_extraction(&claim.lease, 3000)
+            .await
+            .unwrap()
+    );
+    store.check_memory_extraction(&claim.lease).await.unwrap();
+    assert_eq!(
+        store
+            .finish_memory_extraction(&claim.lease, vec![0], RunUsage::default())
+            .await
+            .unwrap(),
+        1
+    );
+    let memory = store.memories(&u, None).await.unwrap().items.remove(0);
+    assert_eq!(memory.draft.evidence[0].source_id, first);
+    assert_eq!(memory.extraction_origin.unwrap().model, "private-fixture");
+    assert!(store.memories(&other, None).await.unwrap().items.is_empty());
+
+    let c = updated_collection(&store, &u, &c.id).await;
+    let second = source(&store, &u, &c, "I avoid peanuts.", None).await;
+    let late = store.claim_memory_extraction().await.unwrap().unwrap();
+    assert!(
+        store
+            .admit_memory_extraction(&late.lease, 3000)
+            .await
+            .unwrap()
+    );
+    store
+        .disconnect_personal_compatible(&u, provider.id, 1)
+        .await
+        .unwrap();
+    assert!(store.check_memory_extraction(&late.lease).await.is_err());
+    assert!(
+        store
+            .finish_memory_extraction(&late.lease, vec![0], RunUsage::default())
+            .await
+            .is_err()
+    );
+    store
+        .fail_memory_extraction(&late.lease, "transport_failed".into())
+        .await
+        .unwrap();
+    // An explicit retry cannot dispatch the old private grant through the
+    // currently selected shared default, or repeat its consumed dispatch.
+    store
+        .request_memory_extraction(&u, second.clone(), 1)
+        .await
+        .unwrap();
+    assert!(store.claim_memory_extraction().await.unwrap().is_none());
+    assert_eq!(
+        store
+            .source_memory_extraction_status(&u, second)
+            .await
+            .unwrap()
+            .state,
+        "failed"
+    );
+    let c = updated_collection(&store, &u, &c.id).await;
+    let third = source(&store, &u, &c, "I travel on Fridays.", None).await;
+    assert!(store.claim_memory_extraction().await.unwrap().is_none());
+    let status = store
+        .source_memory_extraction_status(&u, third)
+        .await
+        .unwrap();
+    assert_eq!(status.state, "cancelled");
+    assert_eq!(status.reason.as_deref(), Some("provider_changed"));
+    assert_eq!(store.memories(&u, None).await.unwrap().items.len(), 1);
+}
+
+#[tokio::test]
+async fn enable_reports_model_tools_and_unsupported_source_without_minting_a_grant() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let u = configured(&store).await;
+    let c = collection(&store, &u).await;
+    let choice = store.model_settings(&u).await.unwrap().effective.unwrap();
+    store.set_default_model(&u, None).await.unwrap();
+    assert_eq!(
+        store
+            .set_memory_extraction(&u, c.id.clone(), change(0, true))
+            .await
+            .err(),
+        Some(StoreError::ModelRequired)
+    );
+    store
+        .set_default_model(
+            &u,
+            Some(ModelSelection {
+                source: choice.source,
+                provider_id: choice.provider_id.clone(),
+                provider_revision: choice.provider_revision,
+                model: choice.model,
+                effort: choice.effort,
+            }),
+        )
+        .await
+        .unwrap();
+    store
+        .call(move |db| {
+            db.conn.execute(
+                "UPDATE provider_model_probes SET function_tools=0 WHERE provider_id=?1",
+                [choice.provider_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .set_memory_extraction(&u, c.id.clone(), change(0, true))
+            .await
+            .err(),
+        Some(StoreError::ToolsRequired)
+    );
+    let claude = store
+        .create_claude_binding(
+            &u,
+            "Unsupported extraction".into(),
+            "a".repeat(64),
+            "b".repeat(64),
+        )
+        .await
+        .unwrap();
+    let choice = store
+        .record_claude_probe(&u, claude, "claude-fixture".into())
+        .await
+        .unwrap();
+    store
+        .set_model_preference(
+            &u,
+            Some(ModelSelection {
+                source: choice.source,
+                provider_id: choice.provider_id,
+                provider_revision: choice.provider_revision,
+                model: choice.model,
+                effort: choice.effort,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .set_memory_extraction(&u, c.id.clone(), change(0, true))
+            .await
+            .err(),
+        Some(StoreError::ExtractionModelUnsupported)
+    );
+    let status = store.memory_extraction_status(&u, c.id).await.unwrap();
+    assert_eq!(status.revision, 0);
+    assert!(!status.enabled);
+    assert_eq!(status.state, "idle");
+    assert!(store.claim_memory_extraction().await.unwrap().is_none());
+}

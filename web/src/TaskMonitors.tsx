@@ -16,18 +16,19 @@ const states:Record<string,string>={proposed:"후속 확인 제안",active:"허�
 const reasons:Record<string,string>={coverage_limited_needs_review:"변경 자료가 검토 한도를 넘었어요. 전체를 확인하지 않았으니 직접 검토해 주세요.",membership_removed_needs_review:"스레드 자료가 제거되었어요. 남은 자료를 다시 읽지 않았으니 직접 검토해 주세요.",permission_or_source_unavailable:"자료·연결·계정 권한 또는 유효 기간이 바뀌어 중지했어요.",permission_unavailable:"원래 허용한 권한을 더 사용할 수 없어 중지했어요."};
 export function TaskMonitors(props:Props){return <Contents key={props.accountId} {...props}/>}
 function Contents({accountId,missionId,missionIds,onExpired}:Props){
- const scope=useScope(accountId,"task-monitors");const [items,setItems]=useState<TaskMonitor[]>([]),[error,setError]=useState("");const alive=useRef(true),reading=useRef<Promise<void>|null>(null);
- useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[]);
+ const scope=useScope(accountId,"task-monitors");const [items,setItems]=useState<TaskMonitor[]>([]),[error,setError]=useState("");const alive=useRef(true),reading=useRef<Promise<void>|null>(null),generation=useRef(0);
+ useEffect(()=>{alive.current=true;return()=>{alive.current=false;generation.current++}},[]);
  function failure(e:unknown){if(!alive.current||isAborted(e))return;if(e instanceof ApiFailure&&e.status===401){onExpired();return}setError(e instanceof ApiFailure&&e.status===409?"확인 상태가 바뀌었어요. 새로고침 후 현재 제안을 확인해 주세요.":"처리 결과를 확인하지 못했어요. 같은 요청으로 다시 시도할 수 있어요.")}
- async function load(){if(reading.current)return reading.current;const work=scope.request<unknown>("/task-monitors").then(v=>{if(!Array.isArray(v)||v.length>128||!v.every(validMonitor))throw new Error("Invalid monitor inventory");if(alive.current)setItems(v)});reading.current=work;try{await work}finally{if(reading.current===work)reading.current=null}}
+ // Confirmed writes need an inventory started after the write, not an older poll.
+ async function load(fresh=false){if(fresh){generation.current++;await reading.current?.catch(()=>{})}if(reading.current)return reading.current;const version=generation.current;const work=scope.request<unknown>("/task-monitors").then(v=>{if(!Array.isArray(v)||v.length>128||!v.every(validMonitor))throw new Error("Invalid monitor inventory");if(alive.current&&version===generation.current)setItems(v)});reading.current=work;try{await work}finally{if(reading.current===work)reading.current=null}}
  useEffect(()=>{void load().catch(failure);const timer=setInterval(()=>void load().catch(failure),5000);return()=>clearInterval(timer)},[scope]);
  const selected=missionIds??(missionId?[missionId]:null);const shown=items.filter(m=>!selected||selected.some(id=>m.parent_mission_id===id||m.linked_mission_ids.includes(id)));if(!shown.length&&!error)return null;
  return <section className="task-monitors" aria-label="완료한 일의 후속 확인"><h3>새 답장이나 변경이 있으면 알려드릴까요?</h3>{error&&<p role="alert">{error}</p>}{shown.map(m=><Monitor key={m.id} monitor={m} scope={scope} refresh={load} failure={failure}/>)}<button onClick={()=>void load().catch(failure)}>후속 확인 새로고침</button></section>
 }
-function Monitor({monitor:m,scope,refresh,failure}:{monitor:TaskMonitor;scope:ReturnType<typeof useScope>;refresh:()=>Promise<void>;failure:(e:unknown)=>void}){
+function Monitor({monitor:m,scope,refresh,failure}:{monitor:TaskMonitor;scope:ReturnType<typeof useScope>;refresh:(fresh?:boolean)=>Promise<void>;failure:(e:unknown)=>void}){
  const [busy,setBusy]=useState(false),[cadence,setCadence]=useState(m.cadence_seconds??300),[days,setDays]=useState(7),[reuse,setReuse]=useState(false),[notes,setNotes]=useState<Record<number,string>>({});
  const pending=useRef<{path:string;body:unknown}|null>(null);
- async function send(path:string,body:unknown){if(busy)return;setBusy(true);if(pending.current?.path!==path)pending.current={path,body};try{await scope.request(pending.current.path,"POST",pending.current.body);pending.current=null;await refresh()}catch(e){if(e instanceof ApiFailure&&e.status>=400&&e.status<500)pending.current=null;failure(e)}finally{setBusy(false)}}
+ async function send(path:string,body:unknown){if(busy)return;setBusy(true);if(pending.current?.path!==path)pending.current={path,body};try{await scope.request(pending.current.path,"POST",pending.current.body);pending.current=null;await refresh(true)}catch(e){if(e instanceof ApiFailure&&e.status>=400&&e.status<500)pending.current=null;failure(e)}finally{setBusy(false)}}
  const draft=()=>{if(!busy)pending.current=null};
  return <article><p><strong>{states[m.state]??m.state}</strong> · <a href={`/app/missions#mission-${m.parent_mission_id}`}>원래 맡긴 일</a>{m.linked_mission_ids.length>1&&` · 같은 대화의 후속 확인에 연결됨`}</p>
  {m.scope.kind==="connected_thread"?<p>이 자료와 같은 대화에 나중에 들어오는 답장도 확인해요.</p>:<p>아래 저장 자료가 수정되면 확인해요. 새 답장은 감지할 수 없어요.</p>}

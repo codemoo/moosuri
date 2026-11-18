@@ -39,3 +39,47 @@ it("shows reported zero and reset time, and distinguishes an unknown subscriptio
   expect(await gpt.findByText(/리셋 시각을 제공하지 않습니다/)).toBeInTheDocument();
   expect(gpt.getByRole("link")).toHaveAttribute("href","https://chatgpt.com/settings/usage");
 });
+
+const visionChoice={source:"personal_compatible",provider_id:"owner-local",provider_revision:4,provider_name:"Owner local",kind:"compatible",model:"synthetic-vision",effort:null,verified_at:1,function_tools:false};
+const visionProvider={id:"owner-local",revision:4,name:"Owner local",enabled:true,has_credential:false,config:{kind:"compatible",base_url:"http://127.0.0.1:11434/v1"},choices:[visionChoice,{...visionChoice,model:"other-model"},{...visionChoice,model:"old-revision",provider_revision:3}]};
+it("verifies images for the exact saved personal model without changing the chosen text model",async()=>{
+ const verified=vi.fn();const sent:unknown[]=[];
+ vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
+  expect(new Headers(init.headers).get("X-Moosuri-Account")).toBe("owner");
+  if(url.endsWith("/vision-probe")){sent.push(JSON.parse(String(init.body)));return response({vision:true})}
+  return response({providers:[visionProvider],default_selection:null});
+ }));
+ render(<PersonalCompatibleSettings accountId="owner" onExpired={vi.fn()} onVerified={verified}/>);
+ const user=userEvent.setup();
+ await user.click(await screen.findByRole("button",{name:"이미지 연결 확인 · synthetic-vision · 모델 기본값"}));
+ expect(await screen.findByText("이미지 읽기 확인됨")).toBeInTheDocument();
+ expect(sent).toEqual([{revision:4,model:"synthetic-vision",effort:null}]);
+ expect(verified).toHaveBeenCalledOnce();
+ expect(screen.getByRole("button",{name:"이미지 연결 확인 · other-model · 모델 기본값"})).toBeInTheDocument();
+ expect(screen.queryByText(/old-revision/)).not.toBeInTheDocument();
+ expect(screen.getByText(/대화로 돌아가 직접 다시 보내세요/)).toBeInTheDocument();
+});
+it.each(["failed","unconfirmed"])("keeps image verification available after a %s result",async(result)=>{
+ const verified=vi.fn();
+ vi.stubGlobal("fetch",vi.fn(async(url:string)=>url.endsWith("/vision-probe")
+  ? result==="failed"?new Response(JSON.stringify({code:"vision_probe_failed"}),{status:502}):response({vision:false})
+  : response({providers:[visionProvider],default_selection:null})));
+ render(<PersonalCompatibleSettings accountId="owner" onExpired={vi.fn()} onVerified={verified}/>);
+ await userEvent.setup().click(await screen.findByRole("button",{name:"이미지 연결 확인 · synthetic-vision · 모델 기본값"}));
+ expect(await screen.findByRole("alert")).toHaveTextContent("이미지 읽기를 확인하지 못했습니다");
+ expect(screen.queryByText("이미지 읽기 확인됨")).not.toBeInTheDocument();
+ expect(screen.getByRole("button",{name:"이미지 연결 확인 · synthetic-vision · 모델 기본값"})).toBeEnabled();
+ expect(verified).not.toHaveBeenCalled();
+});
+it("offers image verification immediately after a new text model is verified",async()=>{
+ let ready=false;
+ vi.stubGlobal("fetch",vi.fn(async(url:string)=>{
+  if(url.endsWith("/probe")){ready=true;return response(visionChoice)}
+  return response({providers:[{...visionProvider,choices:ready?[visionChoice]:[]}],default_selection:null});
+ }));
+ render(<PersonalCompatibleSettings accountId="owner" onExpired={vi.fn()} onVerified={vi.fn()}/>);
+ const user=userEvent.setup();
+ await user.type(await screen.findByLabelText("확인할 모델 ID"),visionChoice.model);
+ await user.click(screen.getByRole("button",{name:"텍스트 연결 확인"}));
+ expect(await screen.findByRole("button",{name:"이미지 연결 확인 · synthetic-vision · 모델 기본값"})).toBeEnabled();
+});

@@ -65,7 +65,25 @@ struct Config {
     model: String,
     /// API/local endpoint credential only. No personal subscription auth HOME.
     key_file: Option<PathBuf>,
+    /// Explicit unsupported subscription requests fail before any credential IO.
+    /// Never put a consumer subscription token in key_file as an API substitute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subscription: Option<SubscriptionRoute>,
     bindings: Vec<Binding>,
+}
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SubscriptionRoute {
+    ChatgptPlan,
+    ClaudeCode,
+}
+impl SubscriptionRoute {
+    fn unavailable(self) -> &'static str {
+        match self {
+            Self::ChatgptPlan => "chatgpt_shared_subscription_unsupported",
+            Self::ClaudeCode => "claude_rootless_executor_bridge_required",
+        }
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -279,6 +297,9 @@ impl Broker {
         private_dir(&options.registry)?;
         let config: Config = serde_json::from_slice(&private_bytes(&options.config, MAX_FRAME)?)
             .map_err(|_| "model_config_invalid")?;
+        if let Some(subscription) = config.subscription {
+            return Err(subscription.unavailable().into());
+        }
         if config.version != 1
             || config.bindings.is_empty()
             || config.bindings.len() > 128
@@ -905,6 +926,7 @@ mod tests {
                 },
                 model: "synthetic-model".into(),
                 key_file: Some(key_file),
+                subscription: None,
                 // Native tests have one real OS uid. Never publish two sockets
                 // for that uid simultaneously; switch sole configured binding
                 // only after stopping the previous synthetic broker below.
@@ -930,6 +952,42 @@ mod tests {
             serde_json::from_slice(&fs::read(&options.config).unwrap()).unwrap();
         config.bindings = vec![binding.clone()];
         file(&options.config, &serde_json::to_vec(&config).unwrap());
+    }
+    #[test]
+    fn subscription_routes_fail_before_credentials_ledger_or_executor_access() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let (options, _) = fixture(&root, "http://127.0.0.1:65531/v1".into());
+        let original = fs::read(&options.config).unwrap();
+        let mut c: Config = serde_json::from_slice(&original).unwrap();
+        // Missing credential/fingerprint files prove that subscription rejection
+        // occurs before either private file can be opened or a ledger created.
+        c.key_file = Some(root.join("never-open-subscription-token"));
+        fs::remove_file(&options.fingerprint_key).unwrap();
+        for (route, expected) in [
+            (
+                SubscriptionRoute::ChatgptPlan,
+                "chatgpt_shared_subscription_unsupported",
+            ),
+            (
+                SubscriptionRoute::ClaudeCode,
+                "claude_rootless_executor_bridge_required",
+            ),
+        ] {
+            c.subscription = Some(route);
+            file(&options.config, &serde_json::to_vec(&c).unwrap());
+            assert_eq!(
+                Broker::new(&options, CancellationToken::new())
+                    .err()
+                    .as_deref(),
+                Some(expected)
+            );
+            assert_eq!(fs::read_dir(&options.ledger).unwrap().count(), 0);
+            assert_eq!(fs::read_dir(&options.socket_dir).unwrap().count(), 0);
+            assert!(!root.join("never-open-subscription-token").exists());
+        }
+        let encoded: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        assert!(encoded.get("subscription").is_none());
     }
     fn request(binding: &Binding) -> Request {
         Request {

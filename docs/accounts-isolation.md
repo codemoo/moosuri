@@ -6,7 +6,9 @@
 
 `AccountId`는 바뀔 수 있는 이름/이메일과 분리한다. v1은 계정 하나에 개인 `TenantId` 하나이며 그룹 공동 문서는 후속 설계다. account와 tenant가 같은 값이더라도 다른 타입으로 둔다. 설치 관리 `AdminContext`, 인증된 `UserContext`, durable 작업의 `ExecutionContext`를 분리한다. browser/model/header가 다른 user ID를 넣어 context를 만들 수 없다.
 
-assistant.sqlite 하나에 설정·계정·사용량·개인 테이블을 둔다. 모든 개인 객체의 조회/수정은 `tenant_id`를 필수로 받는 repository를 통한다. `(tenant_id,id)` unique와 composite FK를 사용한다. ID만으로 전역 조회하는 메서드는 두지 않는다. SQLite connection은 store 내부에만 노출한다. 계정/예산/작업 접수를 같은 DB transaction으로 묶고 vault와는 outbox/journal로 동기화한다.
+운영 dev.30의 공유 Store는 `assistant.sqlite` 하나에 설정·계정·사용량·개인 테이블을 둔다. 신규 회원용 Kiri 개발판에서는 설치의 라우팅 인덱스와 각 회원의 SQLite·세션·파일이 서로 다른 볼륨에 있다. 공용 모델의 비밀과 호출 원장은 설치 서비스가 맡는다. 두 저장소에 걸치는 작업에는 세대 확인과 중복 방지 영수증이 필요하다. [전환 설계](../openspec/changes/isolate-account-runtime/design.md) · [구현과 실행 범위](../deployment/kiri/README.md)
+
+공유 Store의 계약은 다음과 같다. 모든 개인 객체의 조회/수정은 `tenant_id`를 필수로 받는 repository를 통한다. `(tenant_id,id)` unique와 composite FK를 사용한다. ID만으로 전역 조회하는 메서드는 두지 않는다. SQLite connection은 store 내부에만 노출한다. 계정/예산/작업 접수를 같은 DB transaction으로 묶고 vault와는 outbox/journal로 동기화한다.
 
 | 영역 | 반드시 사용자에 귀속되는 것 |
 | --- | --- |

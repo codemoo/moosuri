@@ -1,0 +1,32 @@
+{
+  "environment": "Disposable Ubuntu 24.04 x86_64, Kiri 0.2.1, synthetic accounts, umask 0077",
+  "binary_sha256": "66c9b050408126ed131a8d92f33d0981f9deff005b76ebe098d380c3b13685ed",
+  "storage_module_sha256": "d9f3a1727ed03dadc6f2658378951d86b7ac4b775b098f1e3596dcdc9819b907",
+  "capacity_bytes_per_volume": 67108864,
+  "storage_cases": [
+    "dedicated-UID-private-initialization",
+    "prepare-and-exact-retry",
+    "uid-cap-request-mismatch",
+    "foreign-root-symlink-refused",
+    "nested-foreign-filesystem-refused",
+    "owned-unit-stop-start-preserves-data",
+    "hard-cap-member-enospc-B-unaffected",
+    "interrupted-format-dispatch-inspect-only",
+    "fenced-allocation-refused"
+  ],
+  "onboarding_cases": [
+    "actual-owner-storage-and-private-init-ready",
+    "web-admin-invitation-planned-metadata",
+    "web-plan-to-onboard-storage-init-ready-retry-password",
+    "worker-once-restarts-same-container-preserves-member-session"
+  ],
+  "after_guest_reboot": {
+    "storage_members": 2,
+    "active_enabled_mount_units": 4,
+    "ipc_source_inode_preserved": true,
+    "retained_canaries_preserved": true,
+    "preallocated_image_size_inode_blocks_preserved": true,
+    "fenced_route_unchanged_by_check": true
+  },
+  "scope": "Measured the web invitation path. The CLI fresh-install reservation and the guard that rejects unsupported hosts before registry lookup were added after this guest build."
+}

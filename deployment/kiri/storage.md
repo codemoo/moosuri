@@ -94,7 +94,9 @@ Local tests cover generated mount names/dependencies, security flag parsing,
 stacked mount rejection, exact plans/results and an inert non-Linux entrypoint.
 A disposable Ubuntu 24.04 x86_64 Kiri VM verified actual UID initialization under umask 0077, bounded A/B filesystems,
 retry/data preservation, ENOSPC isolation, foreign-source refusal, systemd mount
-recovery, web invitation fulfillment and member session recovery. No production host or
+recovery, web invitation fulfillment and member session recovery. A guest reboot
+restored all four mount units for two accounts, with the original data, bind
+sources and physical disk reservations. [Recorded observations](linux-vm-smoke/onboarding-evidence.json) No production host or
 native macOS mount/formatter was used. Systemd/e2fsprogs/coreutils, root access,
 loop support and physical backing space are required; other Linux distributions,
 architectures, SELinux policies, installation restore and concurrent host storage

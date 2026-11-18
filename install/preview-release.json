@@ -1,37 +1,37 @@
 {
   "format": 1,
   "channel": "preview",
-  "version": "0.1.0-dev.25",
-  "source_commit": "e51b7079cc0423c2fd34ca94e679d421121c127a",
+  "version": "0.1.0-dev.26",
+  "source_commit": "471dce8f7a778a018f0e832776e2f1a947993c08",
   "public_key": "71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e",
   "packages": {
     "aarch64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.25-aarch64-apple-darwin.tar.gz",
-      "sha256": "2d12cf7cd5d6b51dab50f51c3bbfd077a880034e72afc30990297fcee6cd2a32",
-      "bytes": 21672962,
-      "binary_sha256": "088dfc930e47b2289979bb109d0bbc87c229c2338d9cad1efd0bf996717cd45a",
-      "manifest_sha256": "23dc90929471f848b6928c5fe04ede8a786d7d0059f7bc1b4c6ad7765cbbaad9"
+      "file": "moosuri-0.1.0-dev.26-aarch64-apple-darwin.tar.gz",
+      "sha256": "02591372e9bec9577a9c82f5f002e6d743f368c0b96da8272499ada3ee73f9d0",
+      "bytes": 21668085,
+      "binary_sha256": "cf08d3a55ce65ef3e91c98a42b3b2eb4fc26268706f2b890bb956549b30db591",
+      "manifest_sha256": "8450adc9992a8f766782e1cecbe880dccc64bb2b425dd304a555d7ed7787ebbe"
     },
     "x86_64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.25-x86_64-apple-darwin.tar.gz",
-      "sha256": "a12f20b9c99b20291f38c33dd93f8457ad551fc7b6fc6934b0466fd98ba64f0a",
-      "bytes": 22748562,
-      "binary_sha256": "4bb69577358e37a77acec6325b99ceea91d08cb44f9cb0425d0806bd8b242f91",
-      "manifest_sha256": "3328ed26749d841a8324e5b3c3af336a32242dfefc7bd00628c8b9d92abf1bc3"
+      "file": "moosuri-0.1.0-dev.26-x86_64-apple-darwin.tar.gz",
+      "sha256": "b3259a87382f63faed695cec836acac873c6f6f2eb021d6d9df80debb547eeeb",
+      "bytes": 22743906,
+      "binary_sha256": "bca11493a9af09d59501f3280e6c47de5b8b6e63afd558fffbacda5c3037ab64",
+      "manifest_sha256": "d6dcbc8a5c640bbe04aaa801366c39eb0ce880e800ef78b7f3968529627019d8"
     },
     "x86_64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.25-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "dc89959a3c39232c7f74de00b96827f302227b60c7d8f1cb9036ad1d9557673b",
-      "bytes": 24409593,
-      "binary_sha256": "1b56429d2710d1868db88135f7d9c8cfc06786813cd0d80cffd20ca8c27ab896",
-      "manifest_sha256": "7733f6369e422e9167334341e355ce55ad6e7c996d93ac37d12c38311e48fcf6"
+      "file": "moosuri-0.1.0-dev.26-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "5528f22f5cbdaf78b80d1ef99f4d31a6a2691e368c350bcb9c7f4a14bcef0a62",
+      "bytes": 24397409,
+      "binary_sha256": "87f49d209b2a1eb0546ed7ba3c91c673ef79ed6b99b925f9f3e9316ed81af90a",
+      "manifest_sha256": "7847b27d42d511f0975138bc108431b089fd458c96b3ddad1848389d298497b6"
     },
     "aarch64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.25-aarch64-unknown-linux-gnu.tar.gz",
-      "sha256": "bb4cb02b6f8a795eb0088e15069c3a7bda1968b678a04764b58a65c11be9c95f",
-      "bytes": 23209799,
-      "binary_sha256": "3f38ca782fae33671871a166086706ba09fa03e0f2033c5f260cd93065669a63",
-      "manifest_sha256": "65e03265d7ef0645fb1f164bc2af0c5e40142e4b790814adfb79d4cf10130c4f"
+      "file": "moosuri-0.1.0-dev.26-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "a3b4280e9f4401cb6df65c0bff3bfd23feec9c019dbc9b51b186604ff74441d3",
+      "bytes": 23206898,
+      "binary_sha256": "3d4a559e5f03b2eca7cb995d3ffa423bfd16b81987efc7d8b53b0b21af73c754",
+      "manifest_sha256": "1e593b5a31b2f49bd67c07c955092bcfd57bfed78fbff6c5d333709c10e7a210"
     }
   },
   "runtime": "Rust + embedded React + SQLite + native desktop menu",
@@ -40,7 +40,7 @@
   "acceptance": {
     "macos_arm64": "native binary probe",
     "macos_x64": "cross-built",
-    "linux_x64": "signed upgrade, packaged web, live assistant channel checks",
+    "linux_x64": "signed upgrade, packaged web, official Claude image proof and saved image chat",
     "linux_arm64": "emulated packaged login/web",
     "wsl2": "physical host unverified"
   }

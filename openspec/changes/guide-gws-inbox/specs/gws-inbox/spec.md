@@ -35,3 +35,7 @@ The assistant SHALL allow an owner to continue the latest-inbox request that ope
 #### Scenario: Other pending action
 - **WHEN** a user finishes setup while another conversation action is pending
 - **THEN** the assistant does not dispatch that action through inbox continuation
+
+#### Scenario: Browser adds the local time zone
+- **WHEN** the original chat request carries only its browser time zone and no selected target
+- **THEN** the confirmed read continues using the original time zone and a selected schedule, mission or artifact remains ineligible

@@ -234,7 +234,11 @@ export type CredentialChatStatus = { service?: string, request_id: string, repos
 export type RunInstructionRequest = { request_id: string, expected_attempt: number, text: string, };
 export type RunInstructionReceipt = { request_id: string, run_id: string, thread_id: string, attempt: number, sequence: number, text: string, state: string, reason: string | null, };
 export type RunInstructionTarget = { run_id: string, thread_id: string, attempt: number, supports_instructions: boolean, };
-export type RunView = { mail_connection_recovery?: MailConnectionRecovery, gmail_resume_available?: boolean, supports_instructions?: boolean, instruction_target?: RunInstructionTarget, instructions?: Array<RunInstructionReceipt>, connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
+export type RunView = { mail_connection_recovery?: MailConnectionRecovery,
+/**
+ * Server eligibility for resuming this original setup request. Readiness is checked on POST.
+ */
+gmail_resume_available?: boolean, supports_instructions?: boolean, instruction_target?: RunInstructionTarget, instructions?: Array<RunInstructionReceipt>, connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**
  * Fixed application error category, never provider text.
  */

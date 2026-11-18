@@ -211,30 +211,9 @@ async fn original_payload_and_confirmation_revocation_are_fenced() {
 }
 
 #[tokio::test]
-async fn attachments_selected_artifacts_context_and_old_auth_never_resume() {
+async fn attachments_selected_artifacts_and_old_auth_never_resume() {
     let _guard = TEST_LOCK.lock().await;
     let (_dir, s, u, t) = setup().await;
-    let turn = s
-        .submit_turn_with_schedule_context(
-            &u,
-            t.clone(),
-            Uuid::new_v4().to_string(),
-            "show my latest email".into(),
-            None,
-            Some(moosuri_core::ScheduleChatContext {
-                timezone: "Asia/Seoul".into(),
-                target: None,
-            }),
-        )
-        .await
-        .unwrap();
-    let c = complete_card(&s, &u, &t, turn.run.id).await;
-    assert!(!c.run.gmail_resume_available);
-    assert!(
-        s.resume_gmail(&u, t.clone(), c.run.id, [7; 32])
-            .await
-            .is_err()
-    );
     let c = card(&s, &u, &t, "show my latest email").await;
     let media = Uuid::new_v4().to_string();
     s.media_begin(&u, media.clone(), [9; 32]).await.unwrap();
@@ -274,4 +253,123 @@ async fn attachments_selected_artifacts_context_and_old_auth_never_resume() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn browser_timezone_only_context_resumes_exact_original_payload() {
+    let _guard = TEST_LOCK.lock().await;
+    let (dir, s, u, t) = setup().await;
+    // Exact normal browser submission: empty media, no artifact/mission target,
+    // and timezone with a null schedule target. This must work without removing
+    // or rewriting the submitted original request.
+    let turn = s
+        .submit_turn_with_mission_context(
+            &u,
+            t.clone(),
+            Uuid::new_v4().to_string(),
+            "이메일 가장 최근꺼 뭐야".into(),
+            None,
+            vec![],
+            Some(moosuri_core::ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+            None,
+        )
+        .await
+        .unwrap();
+    let original = complete_card(&s, &u, &t, turn.run.id).await;
+    assert!(original.run.gmail_resume_available);
+    let resumed = s
+        .resume_gmail(&u, t.clone(), original.run.id.clone(), [7; 32])
+        .await
+        .unwrap();
+    assert_eq!(resumed.user_text, original.user_text);
+    let original_id = original.run.id.clone();
+    let resumed_id = resumed.run.id.clone();
+    s.call(move |db| {
+        let a = chat::load_run(&db.conn, &u.tenant.0, &original_id)?;
+        let b = chat::load_run(&db.conn, &u.tenant.0, &resumed_id)?;
+        assert_eq!(a.original_timezone.as_deref(), Some("Asia/Seoul"));
+        assert_eq!(a.original_timezone, b.original_timezone);
+        let digest = |id: &str| {
+            db.conn.query_row(
+                "SELECT payload_digest FROM chat_runs WHERE id=?1",
+                [id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+        };
+        assert_eq!(digest(&original_id)?, digest(&resumed_id)?);
+        Ok(())
+    })
+    .await
+    .unwrap();
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    let owner = s
+        .login("admin@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    let replay = s
+        .resume_gmail(&owner, t, original.run.id, [7; 32])
+        .await
+        .unwrap();
+    assert_eq!(replay.run.id, resumed.run.id);
+}
+
+#[tokio::test]
+async fn selected_schedule_context_is_not_downgraded_to_timezone_only() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, s, u, t) = setup().await;
+    let turn = s
+        .submit_turn_with_schedule_context(
+            &u,
+            t.clone(),
+            Uuid::new_v4().to_string(),
+            "show my latest email".into(),
+            None,
+            Some(moosuri_core::ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let c = complete_card(&s, &u, &t, turn.run.id).await;
+    let id = c.run.id.clone();
+    let owner = u.clone();
+    // Even if a terminal setup marker exists, the originally admitted nonnull
+    // target remains part of the exact digest and cannot be silently removed.
+    s.call(move |db| {
+        let r = chat::load_run(&db.conn, &owner.tenant.0, &id)?;
+        let context = Some(moosuri_core::ScheduleChatContext {
+            timezone: "Asia/Seoul".into(),
+            target: Some(moosuri_core::ScheduleTarget {
+                id: Uuid::new_v4().to_string(),
+                revision: 1,
+            }),
+        });
+        let payload = serde_json::to_vec(&(
+            "turn-context-v1",
+            &r.thread,
+            &r.text,
+            &None::<ArtifactTarget>,
+            &Vec::<moosuri_core::MediaRef>::new(),
+            &context,
+        ))
+        .unwrap();
+        let digest: [u8; 32] = Sha256::digest(payload).into();
+        db.conn.execute(
+            "UPDATE chat_runs SET payload_digest=?1 WHERE id=?2",
+            params![digest.as_slice(), id],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        s.resume_gmail(&u, t, c.run.id, [7; 32]).await,
+        Err(StoreError::Conflict)
+    ));
 }

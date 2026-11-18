@@ -3,9 +3,11 @@
 //! canonical submission transaction, including lost acknowledgements.
 use super::*;
 use crate::chat::{self, Run, RunLease};
-use moosuri_core::{ArtifactTarget, ChatTurn, MailConnectionRecovery, RunState};
+use moosuri_core::{
+    ArtifactTarget, ChatTurn, MailConnectionRecovery, RunState, ScheduleChatContext,
+};
 
-fn original(c: &Connection, r: &Run) -> Result<Option<(String, Option<ArtifactTarget>)>> {
+fn original(c: &Connection, r: &Run) -> Result<Option<(String, Option<ScheduleChatContext>)>> {
     if r.state != RunState::Completed
         || !Store::latest_inbox_intent(&r.text)
         || !matches!(
@@ -27,11 +29,26 @@ fn original(c: &Connection, r: &Run) -> Result<Option<(String, Option<ArtifactTa
     if target.is_some() {
         return Ok(None);
     }
-    // Reconstruct exactly the original canonical no-media/no-context payload.
-    // Extra attachments, schedule/mission context or unknown submit variants
-    // therefore cannot be silently discarded during a resume.
-    let canonical = if target.is_some() {
-        serde_json::to_vec(&(&r.thread, &r.text, &target))
+    // Browser chat always carries its original timezone, even for literal mail
+    // reads. Reconstruct only that inert context, with no selected schedule,
+    // mission, artifact or media. The exact canonical digest still rejects every
+    // other input shape; preserve the timezone when submitting the child too.
+    let context = r
+        .original_timezone
+        .as_ref()
+        .map(|timezone| ScheduleChatContext {
+            timezone: timezone.clone(),
+            target: None,
+        });
+    let canonical = if context.is_some() {
+        serde_json::to_vec(&(
+            "turn-context-v1",
+            &r.thread,
+            &r.text,
+            &None::<ArtifactTarget>,
+            &Vec::<moosuri_core::MediaRef>::new(),
+            &context,
+        ))
     } else {
         serde_json::to_vec(&(&r.thread, &r.text))
     }
@@ -58,7 +75,7 @@ fn original(c: &Connection, r: &Run) -> Result<Option<(String, Option<ArtifactTa
     let mut bytes: [u8; 16] = hash[..16].try_into().map_err(|_| StoreError::Corrupt)?;
     bytes[6] = (bytes[6] & 0x0f) | 0x50;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    Ok(Some((Uuid::from_bytes(bytes).to_string(), target)))
+    Ok(Some((Uuid::from_bytes(bytes).to_string(), context)))
 }
 
 fn latest(c: &Connection, r: &Run, request: &str) -> Result<bool> {
@@ -79,7 +96,7 @@ fn checked(
     user: &UserContext,
     thread: &str,
     id: &str,
-) -> Result<(Run, String, Option<ArtifactTarget>)> {
+) -> Result<(Run, String, Option<ScheduleChatContext>)> {
     let user = validate(c, user, true, false)?;
     let r = chat::load_run(c, &user.tenant.0, id)?;
     if r.thread != thread {
@@ -91,13 +108,13 @@ fn checked(
     if r.epoch != user.epoch {
         return Err(StoreError::Conflict);
     }
-    let Some((request, target)) = original(c, &r)? else {
+    let Some((request, context)) = original(c, &r)? else {
         return Err(StoreError::Conflict);
     };
     if !latest(c, &r, &request)? {
         return Err(StoreError::Conflict);
     }
-    Ok((r, request, target))
+    Ok((r, request, context))
 }
 
 impl Store {
@@ -121,9 +138,9 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let (original,request,target)=checked(&tx,&user,&thread,&run)?;
+            let (original,request,context)=checked(&tx,&user,&thread,&run)?;
             if !crate::mail::gws::gws_inbox_confirmed_in(&tx,&user,&fingerprint)? { return Err(StoreError::Conflict); }
-            let turn=chat::submit_turn_context_in(&tx,&db.provider_key,&db.web_profile,user,thread,request,original.text,target,vec![],None,None)?;
+            let turn=chat::submit_turn_context_in(&tx,&db.provider_key,&db.web_profile,user,thread,request,original.text,None,vec![],context,None)?;
             let previous:Option<Vec<u8>>=tx.query_row("SELECT fingerprint FROM gmail_resume_bindings WHERE tenant_id=?1 AND run_id=?2",params![original.tenant,turn.run.id],|row|row.get(0)).optional()?;
             if previous.as_ref().is_some_and(|p|p.as_slice()!=fingerprint) { return Err(StoreError::Conflict); }
             tx.execute("INSERT OR IGNORE INTO gmail_resume_bindings VALUES(?1,?2,?3)",params![original.tenant,turn.run.id,fingerprint.as_slice()])?;

@@ -839,6 +839,11 @@ function ProviderEditor({
   const [clearKey, setClearKey] = useState(false);
   const [error, setError] = useState("");
   const submitting = useRef(false);
+  const editorRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!provider && initialKind === "anthropic")
+      editorRef.current?.scrollIntoView?.({ block: "start" });
+  }, [provider, initialKind]);
   const split = (value: string) =>
     value
       .split(/[\s,]+/)
@@ -888,6 +893,7 @@ function ProviderEditor({
     <section
       className="admin-card provider-editor"
       aria-labelledby="provider-editor-title"
+      ref={editorRef}
     >
       <div className="section-heading">
         <div>

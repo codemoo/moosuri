@@ -20,7 +20,7 @@ the pending binding explicitly and the failed-refresh regression uses the actual
 reference shape. Read-only follow-up resolved the finding. Signed deployment
 acceptance is recorded after completion. Playwright with synthetic accounts verified
 the desktop and 390px mobile layouts and real navigation into the Anthropic
-editor. That shortcut focuses the API key field so the existing audio settings
+editor. That shortcut scrolls the editor into view and focuses the API key field so the existing audio settings
 do not leave the requested form below the mobile viewport.
 
 No real Claude account login/probe or rootless production-runtime acceptance is

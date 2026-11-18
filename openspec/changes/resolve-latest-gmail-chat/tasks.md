@@ -1,0 +1,4 @@
+- [x] Route only supported current-owner utterances and retain existing authorization.
+- [x] Settle verified Gmail metadata or provide actionable connection guidance.
+- [x] Verify Korean and English input, exhaustion, account boundaries and disconnected operation with synthetic fixtures.
+- [x] Verify latest Gmail bypasses a selected official Claude fixture while ordinary chat launches it.

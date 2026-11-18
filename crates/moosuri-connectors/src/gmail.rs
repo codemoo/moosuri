@@ -6,6 +6,8 @@
 //! lost response must be reconciled, never blindly retried. Google acceptance is
 //! not proof of recipient delivery. No model-facing raw send tool belongs here.
 mod drafts;
+mod inbox_metadata;
+pub use inbox_metadata::InboxMetadata;
 pub(crate) mod full;
 mod mime;
 pub use drafts::{Draft, DraftPage, DraftRef};

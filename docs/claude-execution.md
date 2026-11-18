@@ -23,6 +23,8 @@ uses the owner's subscription. The owner can verify a different exact ID under
 advanced settings. Effort is unspecified for this text route. Tools, attachments,
 background tasks, memory writes and external actions remain unavailable.
 
+Moosuri handles explicit latest-inbox questions separately before sending a request to the CLI. This account-scoped route uses an existing Gmail read connection and displays only checked message metadata. When Gmail is unavailable, it returns a connection step. The Claude process receives no Gmail metadata or credential through this route.
+
 Each inference has a fresh official session and process with session persistence
 disabled. Canonical Moosuri history is sent as labelled, quoted conversation data
 alongside the current request, rather than claiming native CLI transcript replay.

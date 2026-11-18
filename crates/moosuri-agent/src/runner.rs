@@ -794,6 +794,31 @@ pub(crate) async fn execute_with_calendar(
         .await;
         return;
     }
+    // This literal current-owner service route is independent of the selected
+    // text provider. It never exposes credentials or mail to that provider.
+    if !native_resume
+        && !media_context
+        && images.is_empty()
+        && documents.is_empty()
+        && context.checkpoint.is_none()
+        && context.calls.is_empty()
+        && messages
+            .last()
+            .is_some_and(|m| m.role == ContextRole::User && Store::latest_inbox_intent(&m.text))
+    {
+        match mail.latest_inbox_chat(&lease).await {
+            Ok(true) => {
+                signals.changed();
+                return;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                let (state, reason) = store_failure(&error);
+                finish(&store, &lease, None, state, Some(reason), &signals).await;
+                return;
+            }
+        }
+    }
     if let Some(reference) = binding.claude_code.take() {
         execute_claude_text(
             &store,

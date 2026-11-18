@@ -1427,3 +1427,135 @@ async fn compose_consent_is_opt_in_and_partial_grant_cannot_expand_drafts() {
         Err(StoreError::Forbidden)
     ));
 }
+
+#[tokio::test]
+async fn latest_inbox_owner_missing_ambiguous_and_withdrawal_are_fenced() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let a = admin(&store).await;
+    let b = member(&store, &a.user, "other@example.test").await;
+    configured(&store, &a.user).await;
+    let foreign = connect(&store, &b.user).await;
+    let thread = store.create_thread(&a.user, "latest".into()).await.unwrap();
+    store
+        .submit_turn(
+            &a.user,
+            thread.id.clone(),
+            Uuid::new_v4().to_string(),
+            "내 이메일 가장 최근에 온게 뭐야?".into(),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    let (owner, missing) = store
+        .latest_inbox_request(&claim.lease)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(owner.account.id, a.user.account.id);
+    assert!(missing.is_empty());
+    assert!(
+        store
+            .pin_latest_inbox(&claim.lease, foreign.id, foreign.epoch)
+            .await
+            .is_err()
+    );
+    let c1 = connect(&store, &a.user).await;
+    store
+        .pin_latest_inbox(&claim.lease, c1.id.clone(), c1.epoch)
+        .await
+        .unwrap();
+    let c2 = connect(&store, &a.user).await;
+    assert_eq!(
+        store
+            .latest_inbox_request(&claim.lease)
+            .await
+            .unwrap()
+            .unwrap()
+            .1
+            .len(),
+        2
+    );
+    assert!(
+        store
+            .pin_latest_inbox(&claim.lease, c1.id.clone(), c1.epoch)
+            .await
+            .is_err()
+    );
+    store.disconnect_mail(&a.user, c1.id).await.unwrap();
+    assert!(
+        store
+            .finish_latest_inbox(&claim.lease, "PRIVATE_LATE_MAIL".into(), None)
+            .await
+            .is_err()
+    );
+    assert!(
+        !serde_json::to_string(&store.conversation(&a.user, thread.id, None).await.unwrap())
+            .unwrap()
+            .contains("PRIVATE_LATE_MAIL")
+    );
+    let _ = c2;
+}
+
+#[tokio::test]
+async fn latest_inbox_literal_settlement_is_terminal_and_hidden_from_model_history() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let a = admin(&store).await;
+    configured(&store, &a.user).await;
+    let thread = store.create_thread(&a.user, "latest".into()).await.unwrap();
+    store
+        .submit_turn(
+            &a.user,
+            thread.id.clone(),
+            Uuid::new_v4().to_string(),
+            "내 이메일 가장 최근에 온 게 뭐야?".into(),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    store
+        .finish_latest_inbox(&claim.lease, "PRIVATE_LITERAL_MAIL".into(), None)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .finish_latest_inbox(&claim.lease, "duplicate".into(), None)
+            .await
+            .is_err()
+    );
+    let history = store
+        .conversation(&a.user, thread.id.clone(), None)
+        .await
+        .unwrap();
+    assert!(
+        serde_json::to_string(&history)
+            .unwrap()
+            .contains("PRIVATE_LITERAL_MAIL")
+    );
+    store
+        .submit_turn(
+            &a.user,
+            thread.id,
+            Uuid::new_v4().to_string(),
+            "ordinary unrelated request".into(),
+        )
+        .await
+        .unwrap();
+    let next = store.claim_agent_run().await.unwrap().unwrap();
+    assert!(
+        store
+            .latest_inbox_request(&next.lease)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !next
+            .messages
+            .iter()
+            .any(|m| m.text.contains("PRIVATE_LITERAL_MAIL"))
+    );
+}

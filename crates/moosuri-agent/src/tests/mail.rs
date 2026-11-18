@@ -64,3 +64,152 @@ async fn delegated_mail_request_creates_reviewable_draft_but_cannot_send() {
     runtime.shutdown().await;
     server.abort();
 }
+
+#[tokio::test]
+async fn latest_inbox_unconfigured_turn_finishes_without_any_model_call() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
+    let runtime = Runtime::start(store.clone());
+    store
+        .submit_turn(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "내 이메일 가장 최근에 온게 뭐야?".into(),
+        )
+        .await
+        .unwrap();
+    runtime.wake();
+    let done = wait_for(&store, &user, &thread, |t| !t.run.state.active()).await;
+    assert_eq!(done.run.state, RunState::Completed);
+    let text = done
+        .assistant
+        .iter()
+        .map(|m| m.text.as_str())
+        .collect::<String>();
+    assert!(text.contains("Google 앱이 아직 설정되지"));
+    assert!(text.contains("/settings/mail"));
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        0
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn latest_inbox_scans_metadata_across_pages_and_keeps_literal_result_out_of_models() {
+    use moosuri_connectors::gmail::{OAuthClient, SecretString, TokenSet};
+    let _guard = TEST_LOCK.lock().await;
+    let requests = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let captured = requests.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().fallback(axum::routing::any(move |request: axum::extract::Request| {
+        let captured = captured.clone();
+        async move {
+            assert_eq!(request.method(), "GET");
+            captured.lock().unwrap().push(request.uri().to_string());
+            let path = request.uri().path();
+            let value = if path == "/messages" {
+                assert!(request.uri().query().unwrap().contains("q=in%3Ainbox"));
+                if request.uri().query().unwrap().contains("pageToken=page2") {
+                    json!({"messages":[{"id":"newer","threadId":"thread"}]})
+                } else {
+                    json!({"messages":[{"id":"old","threadId":"thread"}],"nextPageToken":"page2"})
+                }
+            } else {
+                assert!(request.uri().query().unwrap().contains("format=metadata"));
+                let id = path.trim_start_matches("/messages/");
+                json!({"id":id,"internalDate":if id=="newer"{"3000"}else{"1000"},"labelIds":["INBOX"],"payload":{"headers":[{"name":"Subject","value":if id=="newer"{"PRIVATE_NEWEST_LITERAL"}else{"PRIVATE_OLDER_LITERAL"}},{"name":"From","value":"sender@example.test"},{"name":"Date","value":"synthetic date"}]}})
+            };
+            axum::Json(value).into_response()
+        }
+    }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_dir, store, user, thread) = tool_configured(&format!("http://{address}/v1")).await;
+    let start = store.start_mail_oauth(&user).await.unwrap();
+    let handle = store
+        .capture_mail_oauth(
+            start.state,
+            SecretString::new("synthetic-code".into()).unwrap(),
+        )
+        .await
+        .unwrap();
+    let exchange = store.claim_mail_oauth(&user, handle).await.unwrap();
+    store
+        .complete_mail_oauth(
+            exchange,
+            TokenSet {
+                access_token: SecretString::new("synthetic-access".into()).unwrap(),
+                refresh_token: Some(SecretString::new("synthetic-refresh".into()).unwrap()),
+                expires_in: 3600,
+                scopes: Some(
+                    moosuri_connectors::gmail::MINIMAL_SCOPES
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                ),
+            },
+            "owner@example.test".into(),
+        )
+        .await
+        .unwrap();
+    let (changes, _) = watch::channel(0);
+    let signals = Signals {
+        stop: CancellationToken::new(),
+        wake: Arc::new(Notify::new()),
+        changes,
+        delivery: Arc::new(tokio::sync::RwLock::new(())),
+    };
+    let mail = crate::mail::MailService::new(
+        store.clone(),
+        Some(Arc::new(OAuthClient {
+            client_id: "synthetic.apps.googleusercontent.com".into(),
+            client_secret: SecretString::new("synthetic-secret".into()).unwrap(),
+            redirect_uri: "https://assistant.example.test/callback".into(),
+        })),
+        signals,
+    )
+    .with_synthetic_google(address);
+    store
+        .submit_turn(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "내 이메일 가장 최근에 온 게 뭐야?".into(),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    assert!(mail.latest_inbox_chat(&claim.lease).await.unwrap());
+    let history = store
+        .conversation(&user, thread.clone(), None)
+        .await
+        .unwrap();
+    let text = serde_json::to_string(&history).unwrap();
+    assert!(text.contains("PRIVATE_NEWEST_LITERAL"));
+    assert!(!text.contains("PRIVATE_OLDER_LITERAL"));
+    assert!(text.contains("전체에서 가장 최근"));
+    assert_eq!(requests.lock().unwrap().len(), 4);
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        0
+    );
+    store
+        .submit_turn(
+            &user,
+            thread,
+            uuid::Uuid::new_v4().to_string(),
+            "ordinary question".into(),
+        )
+        .await
+        .unwrap();
+    let next = store.claim_agent_run().await.unwrap().unwrap();
+    assert!(
+        !next
+            .messages
+            .iter()
+            .any(|m| m.text.contains("PRIVATE_NEWEST_LITERAL"))
+    );
+    server.abort();
+}

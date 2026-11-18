@@ -396,6 +396,76 @@ mod tests {
         .unwrap()
     }
     #[tokio::test]
+    async fn latest_gmail_bypasses_selected_claude_but_conversation_still_uses_it() {
+        let _guard = crate::tests::TEST_LOCK.lock().await;
+        let (_dir, store, user) = setup().await;
+        let fixture = moosuri_connectors::claude_code::fixture::Fixture::new();
+        select(&store, &user, &fixture.profile).await;
+        let effective = store
+            .model_settings(&user)
+            .await
+            .unwrap()
+            .effective
+            .unwrap();
+        assert_eq!(effective.source, ModelSource::PersonalClaudeCode);
+        assert!(!effective.function_tools);
+        let runtime = Runtime::start_with_google_setup_claude(
+            store.clone(),
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(fixture.profile.clone())),
+        );
+        let inbox = store
+            .create_thread(&user, "Inbox lookup".into())
+            .await
+            .unwrap()
+            .id;
+        store
+            .submit_turn(
+                &user,
+                inbox.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                "내 이메일 가장 최근에 온게 뭐야?".into(),
+            )
+            .await
+            .unwrap();
+        runtime.wake();
+        let done = terminal(&store, &user, &inbox).await;
+        assert_eq!(done.run.state, RunState::Completed);
+        assert!(
+            done.assistant
+                .iter()
+                .any(|answer| answer.text.contains("/settings/mail"))
+        );
+        assert_eq!(fixture.launches(), 0);
+        let conversation = store
+            .create_thread(&user, "Ordinary conversation".into())
+            .await
+            .unwrap()
+            .id;
+        store
+            .submit_turn(
+                &user,
+                conversation.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                "오늘 하루를 정리할 간단한 질문 하나만 줘.".into(),
+            )
+            .await
+            .unwrap();
+        runtime.wake();
+        let done = terminal(&store, &user, &conversation).await;
+        assert_eq!(done.run.state, RunState::Completed);
+        assert_eq!(fixture.launches(), 1);
+        assert_eq!(
+            store.usage_summary(&user).await.unwrap().dispatched_calls,
+            1
+        );
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn claude_usage_checks_owner_revision_and_discards_revoked_session_results() {
         let _g = crate::tests::TEST_LOCK.lock().await;
         let (_dir, store, u) = setup().await;

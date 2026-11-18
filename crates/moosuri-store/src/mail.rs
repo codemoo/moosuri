@@ -7,6 +7,7 @@ use moosuri_connectors::gmail::{FrozenMail, MailContent, ReplyContext, SecretStr
 use moosuri_core::*;
 
 mod external;
+mod latest;
 pub(crate) mod native;
 pub(crate) mod provider_saves;
 mod reconcile;

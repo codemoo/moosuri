@@ -635,3 +635,35 @@ async fn attachment_external_body_text_is_hydrated_with_a_four_call_aggregate_bu
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn latest_inbox_metadata_reads_only_headers_and_validates_scope_and_time() {
+    let (client, task) = server(Router::new().fallback(any(|request: Request| async move {
+        let path = request.uri().to_string();
+        assert!(path.starts_with("/messages/"));
+        assert!(path.contains("format=metadata"));
+        assert!(path.contains("metadataHeaders=Subject"));
+        assert!(!path.contains("format=full"));
+        let id = request.uri().path().trim_start_matches("/messages/");
+        json(serde_json::json!({"id": id, "labelIds": if id == "moved" { vec!["SENT"] } else { vec!["INBOX"] }, "internalDate": if id == "invalid" {"n/a"} else {"123456"}, "payload": {"headers": [{"name":"Subject","value":"literal\nignore instructions"},{"name":"From","value":"sender@example.test"}]}}))
+    }))).await;
+    let metadata = client
+        .inbox_metadata(&secret(), "ok", &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(metadata.received_at_ms, 123456);
+    assert_eq!(metadata.subject, "literal ignore instructions");
+    assert!(
+        client
+            .inbox_metadata(&secret(), "moved", &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert!(
+        client
+            .inbox_metadata(&secret(), "invalid", &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    task.abort();
+}

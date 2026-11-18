@@ -14,6 +14,7 @@ use std::{
 use tokio::sync::Mutex;
 mod attachments;
 mod drafts;
+mod latest;
 mod projection;
 mod reconcile;
 mod reply_watches;

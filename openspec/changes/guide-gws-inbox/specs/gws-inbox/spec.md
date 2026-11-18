@@ -17,3 +17,21 @@ The assistant SHALL let an operator bind an individual user to a loopback GWS br
 #### Scenario: Device unavailable
 - **WHEN** the device cannot establish the requested read
 - **THEN** the assistant reports the connection failure without fabricating mail or dispatching a send
+
+### Requirement: Confirm the device mailbox before reading
+The assistant SHALL check only the authenticated device profile before presenting the mailbox to the signed-in owner. The assistant SHALL require new confirmation when the registered binding changes and distinguish unavailable devices, expired logins and mismatched accounts. Starting Google authentication SHALL require a user action on a registered connection.
+
+#### Scenario: First use from settings
+- **WHEN** the owner opens settings with a registered device that has the expected Google login
+- **THEN** the owner can confirm the verified mailbox and settings performs no inbox read
+
+### Requirement: Resume the original inbox lookup
+The assistant SHALL allow an owner to continue the latest-inbox request that opened the connection helper once the connection is ready. Continuation SHALL be idempotent, restricted to the authentic request in the same conversation and unavailable after a superseding turn.
+
+#### Scenario: Return to the connection card
+- **WHEN** an owner connects the mailbox from an eligible chat and the confirmation response is retried
+- **THEN** at most one continued lookup is submitted and the result belongs to the original thread
+
+#### Scenario: Other pending action
+- **WHEN** a user finishes setup while another conversation action is pending
+- **THEN** the assistant does not dispatch that action through inbox continuation

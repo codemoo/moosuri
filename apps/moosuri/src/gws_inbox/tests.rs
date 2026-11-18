@@ -14,7 +14,7 @@ fn bridge(script: &str) -> Arc<Bridge> {
         executable,
         mailbox: "owner@example.invalid".into(),
         key_digest: Sha256::digest("a".repeat(64).as_bytes()).into(),
-        gate: Semaphore::new(1),
+        gate: Arc::new(Semaphore::new(1)),
         directory,
     })
 }
@@ -34,10 +34,10 @@ async fn fixed_mailbox_metadata_only_commands_and_sorted_literal_projection() {
         r##"#!/usr/bin/env python3
 import sys,json
 assert sys.argv[-2:]==['--format','json']
-p=json.loads(sys.argv[-3]); assert p['userId']=='owner@example.invalid'
+p=json.loads(sys.argv[-3])
 op=sys.argv[1:-4]
 if op==['gmail','users','getProfile']:
- assert p=={'userId':'owner@example.invalid','fields':'emailAddress'}
+ assert p=={'userId':'me','fields':'emailAddress'}
  print(json.dumps({'emailAddress':'owner@example.invalid'}))
 elif op==['gmail','users','messages','list']:
  assert p=={'userId':'owner@example.invalid','labelIds':['INBOX'],'maxResults':20,'includeSpamTrash':False,'fields':'messages(id)'}
@@ -135,4 +135,70 @@ fn shared_key_requires_private_owned_regular_file_without_aliases() {
     fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
     fs::hard_link(&key, directory.path().join("hardlink")).unwrap();
     assert!(read_key(&key).is_err());
+}
+
+#[tokio::test]
+async fn profile_probe_is_signed_nonce_bound_and_never_lists_mail() {
+    let bridge = bridge(
+        r##"#!/usr/bin/env python3
+import json,sys
+assert sys.argv[1:4]==['gmail','users','getProfile']
+assert json.loads(sys.argv[-3])=={'userId':'me','fields':'emailAddress'}
+print('{"emailAddress":"owner@example.invalid"}')
+"##,
+    );
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let mut req = request(&json!({"nonce":nonce}).to_string());
+    *req.uri_mut() = "/v1/profile/check".parse().unwrap();
+    let response = router(bridge.clone()).oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let reply: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(reply["state"], "ready");
+    assert_eq!(reply["mailbox"], "owner@example.invalid");
+    let signed = serde_json::to_vec(&(
+        "moosuri/gws-profile/v1",
+        nonce,
+        "ready",
+        "owner@example.invalid",
+    ))
+    .unwrap();
+    let expected: String = ring::hmac::sign(
+        &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &bridge.key_digest),
+        &signed,
+    )
+    .as_ref()
+    .iter()
+    .map(|b| format!("{b:02x}"))
+    .collect();
+    assert_eq!(reply["signature"], expected);
+    assert!(reply.get("messages").is_none());
+}
+
+#[tokio::test]
+async fn explicit_login_runs_only_official_fixed_read_only_command() {
+    let bridge = bridge(
+        r##"#!/usr/bin/env python3
+import sys
+assert sys.argv[1:]==['auth','login','--readonly','--services','gmail']
+"##,
+    );
+    let mut req = request("{}");
+    *req.uri_mut() = "/v1/auth/login".parse().unwrap();
+    let response = router(bridge.clone()).oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let reply: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(reply, json!({"state":"login_started"}));
+    let permit = tokio::time::timeout(Duration::from_secs(5), bridge.gate.acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    drop(permit);
+    let mut malicious = request("{\"args\":[\"send\"]}");
+    *malicious.uri_mut() = "/v1/auth/login".parse().unwrap();
+    assert_eq!(
+        router(bridge).oneshot(malicious).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
 }

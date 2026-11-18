@@ -69,6 +69,16 @@ async fn gws_latest_metadata_is_owner_bound_literal_and_general_context_has_no_m
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let (dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
     let (r, _) = registry(dir.path(), &user.account().id, &endpoint);
+    let binding = r.binding(&user.account().id).unwrap().unwrap();
+    let confirmation = store
+        .gws_inbox_challenge(&user, binding.fingerprint())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .confirm_gws_inbox(&user, binding.fingerprint(), confirmation)
+        .await
+        .unwrap();
     let mail = service(&store, r.clone());
     let semantic = claim(
         &store,
@@ -155,6 +165,16 @@ async fn gws_offline_wrong_mailbox_and_revoked_binding_never_deliver_metadata_or
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let (dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
     let (r, path) = registry(dir.path(), &user.account().id, &endpoint);
+    let binding = r.binding(&user.account().id).unwrap().unwrap();
+    let confirmation = store
+        .gws_inbox_challenge(&user, binding.fingerprint())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .confirm_gws_inbox(&user, binding.fingerprint(), confirmation)
+        .await
+        .unwrap();
     let mail = service(&store, r);
     let saved = std::fs::read_to_string(&path).unwrap();
     for m in 0..4 {
@@ -219,5 +239,120 @@ async fn gws_offline_wrong_mailbox_and_revoked_binding_never_deliver_metadata_or
         store.usage_summary(&user).await.unwrap().dispatched_calls,
         0
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn gws_first_link_checks_only_signed_profile_and_requires_exact_owner_confirmation() {
+    let _guard = TEST_LOCK.lock().await;
+    let lists = Arc::new(AtomicUsize::new(0));
+    let count = lists.clone();
+    let mode = Arc::new(AtomicU8::new(0));
+    let shared = mode.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1/inbox/latest", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route(
+            "/v1/inbox/latest",
+            post(move || {
+                let count = count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(json!({"mailbox":"owner@example.test","messages":[]}))
+                }
+            }),
+        )
+        .route(
+            "/v1/profile/check",
+            post(move |axum::Json(body): axum::Json<Value>| {
+                let shared = shared.clone();
+                async move {
+                    let state = if shared.load(Ordering::SeqCst) == 0 {
+                        "ready"
+                    } else {
+                        "wrong_account"
+                    };
+                    let mailbox = if state == "ready" {
+                        "owner@example.test"
+                    } else {
+                        ""
+                    };
+                    let signed = serde_json::to_vec(&(
+                        "moosuri/gws-profile/v1",
+                        body["nonce"].as_str().unwrap(),
+                        state,
+                        mailbox,
+                    ))
+                    .unwrap();
+                    let digest =
+                        ring::digest::digest(&ring::digest::SHA256, "a".repeat(64).as_bytes());
+                    let signature: String = ring::hmac::sign(
+                        &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, digest.as_ref()),
+                        &signed,
+                    )
+                    .as_ref()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                    axum::Json(json!({"state":state,"mailbox":mailbox,"signature":signature}))
+                }
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
+    let (registry, path) = registry(dir.path(), &user.account().id, &endpoint);
+    let mail = service(&store, registry.clone());
+    assert_eq!(
+        mail.gws_inbox_status(&user).await.unwrap()["confirmed"],
+        false
+    );
+    let before = claim(&store, &user, &thread, "show my latest email").await;
+    assert!(mail.latest_inbox_chat(&before.lease).await.unwrap());
+    assert_eq!(lists.load(Ordering::SeqCst), 0);
+    let check = mail.gws_inbox_readiness(&user).await.unwrap();
+    assert_eq!(check["state"], "needs_confirmation");
+    assert_eq!(lists.load(Ordering::SeqCst), 0);
+    let confirmation = check["confirmation"].as_str().unwrap().to_owned();
+    let ready = mail
+        .gws_inbox_confirm(&user, confirmation.clone())
+        .await
+        .unwrap();
+    assert_eq!(ready["state"], "ready");
+    assert!(mail.gws_inbox_confirm(&user, confirmation).await.is_err());
+    assert_eq!(
+        mail.gws_inbox_readiness(&user).await.unwrap()["state"],
+        "ready"
+    );
+    assert_eq!(lists.load(Ordering::SeqCst), 0);
+    let after = claim(&store, &user, &thread, "show my latest email").await;
+    assert!(mail.latest_inbox_chat(&after.lease).await.unwrap());
+    assert_eq!(lists.load(Ordering::SeqCst), 1);
+    mode.store(1, Ordering::SeqCst);
+    assert_eq!(
+        mail.gws_inbox_readiness(&user).await.unwrap()["state"],
+        "wrong_account"
+    );
+    assert_eq!(
+        mail.gws_inbox_status(&user).await.unwrap()["confirmed"],
+        false
+    );
+    mode.store(0, Ordering::SeqCst);
+    let check = mail.gws_inbox_readiness(&user).await.unwrap();
+    assert_eq!(check["state"], "needs_confirmation");
+    let original = std::fs::read_to_string(&path).unwrap();
+    private(
+        &path,
+        &original.replace("owner@example.test", "new-owner@example.test"),
+    );
+    assert_eq!(
+        mail.gws_inbox_status(&user).await.unwrap()["confirmed"],
+        false
+    );
+    let changed = mail
+        .gws_inbox_confirm(&user, check["confirmation"].as_str().unwrap().into())
+        .await
+        .unwrap();
+    assert_eq!(changed["state"], "offline"); // signed profile identity cannot match newly selected binding
+    assert_eq!(lists.load(Ordering::SeqCst), 1);
     server.abort();
 }

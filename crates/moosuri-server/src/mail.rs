@@ -39,6 +39,9 @@ pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/connections", get(connections))
         .route("/gws-inbox", get(gws_inbox))
+        .route("/gws-inbox/check", post(gws_inbox_check))
+        .route("/gws-inbox/confirm", post(gws_inbox_confirm))
+        .route("/gws-inbox/login", post(gws_inbox_login))
         .route(
             "/reply-watches",
             get(reply_watches).post(create_reply_watch),
@@ -70,7 +73,56 @@ pub(super) fn routes() -> Router<AppState> {
 }
 async fn gws_inbox(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     let user = current(&s, &headers).await?;
-    Ok(Json(s.mail.gws_inbox_status(&user)?).into_response())
+    Ok(Json(s.mail.gws_inbox_status(&user).await?).into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GwsEmpty {}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GwsConfirmation {
+    confirmation: String,
+}
+async fn gws_inbox_check(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(_): Json<GwsEmpty>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    Ok(Json(s.mail.gws_inbox_readiness(&user).await?).into_response())
+}
+async fn gws_inbox_confirm(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<GwsConfirmation>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    let _delivery = s.delivery.write().await;
+    Ok(Json(s.mail.gws_inbox_confirm(&user, input.confirmation).await?).into_response())
+}
+async fn gws_inbox_login(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(_): Json<GwsEmpty>,
+) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    let _delivery = s.delivery.write().await;
+    Ok(Json(s.mail.gws_inbox_login(&user).await?).into_response())
 }
 async fn connections(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     let u = current(&s, &headers).await?;

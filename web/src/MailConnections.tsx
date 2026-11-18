@@ -302,7 +302,7 @@ export function MailConnections({
       {connectionNotice && <p role="status">{connectionNotice}</p>}
       <button onClick={() => void reload().catch(fail)}>상태 새로고침</button>
       <GwsInboxHelp key={accountId} accountId={accountId} />
-      <h3>다른 연결: Google 웹 OAuth</h3>
+      <details className="mail-alternative"><summary>다른 방법 · Google 웹 OAuth와 메일 작성</summary>
       {!connections ? (
         <p role="status">연결 상태 확인 중…</p>
       ) : (
@@ -490,6 +490,7 @@ export function MailConnections({
         key={connection} connection={connection} action={action} request={scope.request.bind(scope)} fail={fail}
         disabled={busy || !!editing || timingEditing}
         importDraft={content => { setSelected(null); setEditing(null); setTimingEditing(false); setDraft(content); setRecipients({to:content.to.join(", "),cc:content.cc.join(", "),bcc:content.bcc.join(", ")}); }} />}
+      </details>
       <section className="admin-card">
         <h3>발송 허락과 결과</h3>
         <ul>

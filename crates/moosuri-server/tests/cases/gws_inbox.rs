@@ -54,18 +54,18 @@ async fn gws_inbox_http_exposes_only_current_owner_descriptor_and_observes_revoc
     );
     assert_eq!(
         value(send(&app, "GET", path, Some(&a), Value::Null).await).await,
-        json!({"configured":false})
+        json!({"configured":false,"confirmed":false})
     );
     let status = value(send(&app, "GET", path, Some(&b), Value::Null).await).await;
     assert_eq!(
         status,
-        json!({"configured":true,"mailbox":"private-member@example.test"})
+        json!({"configured":true,"mailbox":"private-member@example.test","confirmed":false})
     );
     assert!(!status.to_string().contains("127.0.0.1"));
     assert!(!status.to_string().contains("key_file"));
     private(&config, "[]");
     assert_eq!(
         value(send(&app, "GET", path, Some(&b), Value::Null).await).await,
-        json!({"configured":false})
+        json!({"configured":false,"confirmed":false})
     );
 }

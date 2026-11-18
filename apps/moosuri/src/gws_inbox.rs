@@ -38,12 +38,15 @@ pub struct Options {
     /// Explicit absolute gws executable; otherwise GWS_PATH, then PATH discovery.
     #[arg(long)]
     gws_path: Option<PathBuf>,
+    /// Explicit local action: open official GWS read-only Gmail sign-in, then exit.
+    #[arg(long)]
+    login: bool,
 }
 struct Bridge {
     executable: PathBuf,
     mailbox: String,
     key_digest: [u8; 32],
-    gate: Semaphore,
+    gate: Arc<Semaphore>,
     directory: tempfile::TempDir,
 }
 #[derive(Serialize)]
@@ -66,13 +69,26 @@ pub async fn run(options: &Options) -> Result<(), String> {
     if !options.bind.ip().is_loopback() || !valid_mailbox(&options.mailbox) {
         return Err("gws_inbox_requires_loopback_and_exact_mailbox".into());
     }
+    if options.login {
+        let executable = resolve_executable(options.gws_path.as_deref())?;
+        let status = tokio::process::Command::new(executable)
+            .args(["auth", "login", "--readonly", "--services", "gmail"])
+            .status()
+            .await
+            .map_err(|_| "gws_inbox_login_failed")?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err("gws_inbox_login_failed".into())
+        };
+    }
     let key = read_key(&options.key_file)?;
     let executable = resolve_executable(options.gws_path.as_deref())?;
     let bridge = Arc::new(Bridge {
         executable,
         mailbox: options.mailbox.clone(),
         key_digest: Sha256::digest(key.as_bytes()).into(),
-        gate: Semaphore::new(1),
+        gate: Arc::new(Semaphore::new(1)),
         directory: tempfile::tempdir().map_err(|_| "gws_inbox_private_directory_failed")?,
     });
     let version = bridge.command(&["--version"], None).await?;
@@ -136,8 +152,9 @@ async fn endpoint_inner(bridge: Arc<Bridge>, request: Request) -> Response {
     {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    let path = request.uri().path().to_owned();
     if request.method() != Method::POST
-        || request.uri().path() != "/v1/inbox/latest"
+        || !["/v1/inbox/latest", "/v1/profile/check", "/v1/auth/login"].contains(&path.as_str())
         || request.uri().query().is_some()
     {
         return StatusCode::NOT_FOUND.into_response();
@@ -145,12 +162,50 @@ async fn endpoint_inner(bridge: Arc<Bridge>, request: Request) -> Response {
     let Ok(_permit) = bridge.gate.try_acquire() else {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     };
-    let bytes =
-        match tokio::time::timeout(Duration::from_secs(3), to_bytes(request.into_body(), 64)).await
-        {
-            Ok(Ok(bytes)) => bytes,
-            _ => return StatusCode::BAD_REQUEST.into_response(),
+    let bytes = match tokio::time::timeout(
+        Duration::from_secs(3),
+        to_bytes(request.into_body(), 128),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        _ => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    if path == "/v1/profile/check" {
+        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+            return StatusCode::BAD_REQUEST.into_response();
         };
+        let Some(nonce) = value
+            .get("nonce")
+            .and_then(Value::as_str)
+            .filter(|s| uuid::Uuid::parse_str(s).is_ok())
+        else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        if value.as_object().is_none_or(|o| o.len() != 1) {
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+        let state = match bridge.profile().await {
+            Ok(()) => "ready",
+            Err(e) if e == "gws_inbox_mailbox_mismatch" => "wrong_account",
+            Err(e) if e == "gws_inbox_login_required" => "login_required",
+            Err(_) => "offline",
+        };
+        let mailbox = if state == "ready" {
+            bridge.mailbox.as_str()
+        } else {
+            ""
+        };
+        let signed = serde_json::to_vec(&("moosuri/gws-profile/v1", nonce, state, mailbox))
+            .expect("fixed profile tuple");
+        let tag = ring::hmac::sign(
+            &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &bridge.key_digest),
+            &signed,
+        );
+        let signature: String = tag.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+        return axum::Json(json!({"state":state,"mailbox":mailbox,"signature":signature}))
+            .into_response();
+    }
     // serde's ordinary empty struct permits unknown fields; explicitly require {}.
     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -160,6 +215,42 @@ async fn endpoint_inner(bridge: Arc<Bridge>, request: Request) -> Response {
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    if path == "/v1/auth/login" {
+        // Only this explicit authenticated server action can launch local sign-in.
+        // No provider URL, secret, browser content or token crosses the bridge.
+        let bridge = bridge.clone();
+        drop(_permit);
+        let Ok(permit) = bridge.gate.clone().try_acquire_owned() else {
+            return StatusCode::TOO_MANY_REQUESTS.into_response();
+        };
+        let mut command = bridge.base_command();
+        // Allow the official sign-in process to open the signed-in desktop's browser.
+        #[cfg(target_os = "linux")]
+        for name in [
+            "DISPLAY",
+            "XAUTHORITY",
+            "WAYLAND_DISPLAY",
+            "XDG_RUNTIME_DIR",
+            "DBUS_SESSION_BUS_ADDRESS",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        command
+            .args(["auth", "login", "--readonly", "--services", "gmail"])
+            .stdout(Stdio::null());
+        let Ok(mut child) = command.spawn() else {
+            return StatusCode::BAD_GATEWAY.into_response();
+        };
+        tokio::spawn(async move {
+            let _bridge = bridge;
+            let _permit = permit;
+            let _group = ProcessGroup(child.id());
+            let _ = tokio::time::timeout(Duration::from_secs(300), child.wait()).await;
+        });
+        return axum::Json(json!({"state":"login_started"})).into_response();
+    }
     match tokio::time::timeout(Duration::from_secs(45), bridge.latest()).await {
         Ok(Ok(inbox)) => axum::Json(inbox).into_response(),
         Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
@@ -167,14 +258,8 @@ async fn endpoint_inner(bridge: Arc<Bridge>, request: Request) -> Response {
     }
 }
 impl Bridge {
-    async fn command(
-        &self,
-        args: &[&str],
-        params: Option<Value>,
-    ) -> Result<Zeroizing<Vec<u8>>, String> {
+    fn base_command(&self) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new(&self.executable);
-        // Preserve only local gws auth/config choices. Do not load cwd .env, log
-        // private API output to files, run sanitizers, or inherit request headers.
         cmd.env_clear();
         for name in [
             "HOME",
@@ -193,11 +278,21 @@ impl Bridge {
         }
         cmd.env("GOOGLE_WORKSPACE_CLI_LOG", "off")
             .current_dir(self.directory.path())
-            .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        cmd.process_group(0);
+        cmd
+    }
+    async fn command(
+        &self,
+        args: &[&str],
+        params: Option<Value>,
+    ) -> Result<Zeroizing<Vec<u8>>, String> {
+        let mut cmd = self.base_command();
+        cmd.args(args).stderr(Stdio::piped());
         if let Some(params) = params {
             cmd.arg("--params")
                 .arg(params.to_string())
@@ -209,21 +304,29 @@ impl Bridge {
         let _group = ProcessGroup(child.id());
         tokio::time::timeout(Duration::from_secs(10), async {
             let mut bytes = Zeroizing::new(Vec::new());
-            child
-                .stdout
-                .take()
-                .ok_or("gws_inbox_command_failed")?
-                .take((OUTPUT_LIMIT + 1) as u64)
-                .read_to_end(&mut bytes)
+            let mut errors = Zeroizing::new(Vec::new());
+            let stdout = child.stdout.take().ok_or("gws_inbox_command_failed")?;
+            let stderr = child.stderr.take().ok_or("gws_inbox_command_failed")?;
+            let mut stdout = stdout.take((OUTPUT_LIMIT + 1) as u64);
+            let mut stderr = stderr.take((OUTPUT_LIMIT + 1) as u64);
+            let (out, err) = tokio::join!(
+                stdout.read_to_end(&mut bytes),
+                stderr.read_to_end(&mut errors)
+            );
+            out.map_err(|_| "gws_inbox_command_failed")?;
+            err.map_err(|_| "gws_inbox_command_failed")?;
+            if bytes.len() > OUTPUT_LIMIT || errors.len() > OUTPUT_LIMIT {
+                return Err("gws_inbox_command_failed".into());
+            }
+            if !child
+                .wait()
                 .await
-                .map_err(|_| "gws_inbox_command_failed")?;
-            if bytes.len() > OUTPUT_LIMIT
-                || !child
-                    .wait()
-                    .await
-                    .map_err(|_| "gws_inbox_command_failed")?
-                    .success()
+                .map_err(|_| "gws_inbox_command_failed")?
+                .success()
             {
+                if auth_failure(&bytes) || auth_failure(&errors) {
+                    return Err("gws_inbox_login_required".into());
+                }
                 return Err("gws_inbox_command_failed".into());
             }
             Ok(bytes)
@@ -236,16 +339,23 @@ impl Bridge {
         let bytes = self.command(args, Some(params)).await?;
         serde_json::from_slice(&bytes).map_err(|_| "gws_inbox_invalid_response".into())
     }
-    async fn latest(self: &Arc<Self>) -> Result<Inbox, String> {
-        let profile = self
-            .api(
+    async fn profile(&self) -> Result<(), String> {
+        // `me` is used only for identity. Listing remains pinned to the configured mailbox.
+        let bytes = self
+            .command(
                 &["gmail", "users", "getProfile"],
-                json!({"fields":"emailAddress"}),
+                Some(json!({"userId":"me","fields":"emailAddress"})),
             )
             .await?;
+        let profile: Value =
+            serde_json::from_slice(&bytes).map_err(|_| "gws_inbox_invalid_response")?;
         if profile.get("emailAddress").and_then(Value::as_str) != Some(self.mailbox.as_str()) {
             return Err("gws_inbox_mailbox_mismatch".into());
         }
+        Ok(())
+    }
+    async fn latest(self: &Arc<Self>) -> Result<Inbox, String> {
+        self.profile().await?;
         let list = self.api(&["gmail", "users", "messages", "list"], json!({"labelIds":["INBOX"], "maxResults":20,"includeSpamTrash":false,"fields":"messages(id)"})).await?;
         let items = match list.get("messages") {
             Some(Value::Array(items)) if items.len() <= 20 => items.as_slice(),
@@ -290,6 +400,29 @@ impl Bridge {
             messages,
         })
     }
+}
+fn auth_failure(bytes: &[u8]) -> bool {
+    let value = serde_json::from_slice::<Value>(bytes).unwrap_or(Value::Null);
+    if value
+        .pointer("/error/code")
+        .and_then(Value::as_i64)
+        .is_some_and(|n| n == 401 || n == 403)
+    {
+        return true;
+    }
+    // Diagnostics are inspected privately and are never forwarded or logged.
+    let text = Zeroizing::new(String::from_utf8_lossy(bytes).to_ascii_lowercase());
+    [
+        "no credentials found",
+        "not authenticated",
+        "invalid_grant",
+        "authentication required",
+        "login required",
+        "autherror",
+        "unauthenticated",
+    ]
+    .iter()
+    .any(|s| text.contains(s))
 }
 struct ProcessGroup(Option<u32>);
 impl Drop for ProcessGroup {

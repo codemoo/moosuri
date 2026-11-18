@@ -82,6 +82,7 @@ impl MailService {
                 &context,
                 setup,
                 self.gws_inbox_status(&self.store.mail_run_owner(lease).await?)
+                    .await
                     .ok()
                     .is_some_and(|s| s["configured"] == true)
             ),

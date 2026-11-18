@@ -17,6 +17,7 @@ import {activatePushAccount,clearBrowserPushBinding} from "./push-binding";
 
 import {VaultLaunch,lockVaultWindows} from "./VaultLaunch";
 import { clearMailReturn, mailReturnThread, rememberMailReturn } from "./mail-return";
+import { GWS_CONNECTED, gwsConnectedTarget } from "./gws-connection";
 import {
   lazy,
   useEffect,
@@ -759,6 +760,29 @@ function Workspace({
   useEffect(() => {
     if (navigationFocus > 0) pageHeading.current?.focus({ preventScroll: true });
   }, [navigationFocus]);
+  useEffect(() => {
+    let live = true;
+    const resumed = (event: Event) => {
+      const target = gwsConnectedTarget(event, session.user.id);
+      if (!target) return;
+      // A delayed connection must not take the owner away from another task.
+      const canReturn = () => pathRef.current === "/settings/mail"
+        || pathRef.current === "/admin/google"
+        || ((pathRef.current === "/app" || pathRef.current === "/") && selectedRef.current === target.threadId);
+      if (!canReturn()) return;
+      void (async () => {
+        const owned = threadIds.current.includes(target.threadId)
+          || (await scope.request<ThreadsResponse>("/threads")).threads.some(thread => thread.id === target.threadId);
+        if (!live || !owned || !canReturn()) return;
+        clearMailReturn(session.user.id);
+        setSelected(target.threadId);
+        setRetry(value => value + 1);
+        navigateParent("/app");
+      })().catch(fail);
+    };
+    window.addEventListener(GWS_CONNECTED, resumed);
+    return () => { live = false; window.removeEventListener(GWS_CONNECTED, resumed); };
+  }, [scope, session.user.id, navigateParent]);
   const deleteOpener = useRef<HTMLButtonElement | null>(null);
   const admin =
     path === "/admin" || path === "/admin/providers" || path === "/admin/usage" || path === "/admin/google" || path === "/admin/telegram";

@@ -306,7 +306,17 @@ impl Store {
         text: String,
         binding: Option<&MailBinding>,
     ) -> Result<()> {
-        self.finish_inbox_result(lease, text, binding, None).await
+        self.finish_inbox_result(lease, text, binding, None, None)
+            .await
+    }
+    pub async fn finish_gws_latest_inbox(
+        &self,
+        lease: &RunLease,
+        text: String,
+        fingerprint: [u8; 32],
+    ) -> Result<()> {
+        self.finish_inbox_result(lease, text, None, None, Some(fingerprint))
+            .await
     }
     pub async fn finish_mail_connection_guidance(
         &self,
@@ -314,7 +324,7 @@ impl Store {
         text: String,
         recovery: MailConnectionRecovery,
     ) -> Result<()> {
-        self.finish_inbox_result(lease, text, None, Some(recovery))
+        self.finish_inbox_result(lease, text, None, Some(recovery), None)
             .await
     }
     async fn finish_inbox_result(
@@ -323,6 +333,7 @@ impl Store {
         text: String,
         binding: Option<&MailBinding>,
         recovery: Option<MailConnectionRecovery>,
+        gws_fingerprint: Option<[u8; 32]>,
     ) -> Result<()> {
         let pin = binding.map(|b| (b.id.clone(), b.epoch, b.app.clone()));
         let lease = lease.clone();
@@ -331,6 +342,11 @@ impl Store {
             let run = chat::guard(&tx, &db.provider_key, &lease)?;
             if !(intent(&run.text) || recovery.is_some() && connection_help_intent(&run.text)) || crate::missions::is_mission(&tx, &run.tenant, &run.id)? { return Err(StoreError::Forbidden); }
             let user = chat::authority(&tx, &run)?;
+            if let Some(fingerprint)=gws_fingerprint {
+                if !super::gws::gws_inbox_confirmed_in(&tx,&user,&fingerprint)? {return Err(StoreError::Conflict);}
+                let resume:Option<Vec<u8>>=tx.query_row("SELECT fingerprint FROM gmail_resume_bindings WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id],|r|r.get(0)).optional()?;
+                if resume.is_some_and(|pin|pin.as_slice()!=fingerprint) {return Err(StoreError::Conflict);}
+            }
             if let Some(recovery) = recovery {
                 if matches!(recovery, MailConnectionRecovery::AdminSetup) && user.account.role != Role::Admin { return Err(StoreError::Forbidden); }
                 let item = format!("mail-recovery-{}", json(&recovery)?.trim_matches('"'));

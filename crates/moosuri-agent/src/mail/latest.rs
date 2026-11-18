@@ -14,12 +14,12 @@ fn connection_guidance(
     if !configured {
         if admin {
             Some((
-                "이 설치에는 Google 앱이 아직 준비되지 않아 Gmail을 확인하지 못했어요. 관리자인 본인이 Google 설치 설정에서 이 서버의 OAuth 앱을 먼저 설정한 뒤, Gmail 설정에서 본인 계정의 읽기 권한을 연결해 주세요. 연결을 마치면 여기서 다시 요청할 수 있어요.",
+                "이 설치에는 Google 앱이 아직 준비되지 않아 Gmail을 확인하지 못했어요. 관리자인 본인이 Google 설치 설정에서 이 서버의 OAuth 앱을 먼저 설정한 뒤, Gmail 설정에서 본인 계정의 읽기 권한을 연결해 주세요. 연결을 마치면 이 대화에서 조회를 이어갈 수 있어요.",
                 AdminSetup,
             ))
         } else {
             Some((
-                "이 설치에는 Google 앱이 아직 준비되지 않아 Gmail을 확인하지 못했어요. 설치 관리자에게 Google 앱 설정을 요청해 주세요. 준비가 끝나면 Gmail 설정에서 본인 Google 계정으로 로그인하고 읽기 권한을 연결한 뒤 다시 요청해 주세요.",
+                "이 설치에는 Google 앱이 아직 준비되지 않아 Gmail을 확인하지 못했어요. 설치 관리자에게 Google 앱 설정을 요청해 주세요. 준비가 끝나면 Gmail 설정에서 본인 Google 계정으로 로그인하고 읽기 권한을 연결해 주세요.",
                 MemberSetup,
             ))
         }
@@ -34,12 +34,12 @@ fn connection_guidance(
             .any(|c| !c.native_send && c.status == "needs_reconnect")
     {
         Some((
-            "Gmail 읽기 연결을 다시 인증해야 해요. Gmail 설정에서 본인 계정을 다시 연결한 뒤 요청해 주세요. 지금은 메일을 확인하지 못했어요.",
+            "Gmail 읽기 연결을 다시 인증해야 해요. Gmail 설정에서 본인 계정을 다시 연결해 주세요. 지금은 메일을 확인하지 못했어요.",
             Reconnect,
         ))
     } else if active == 0 {
         Some((
-            "현재 로그인한 계정에 Gmail 읽기 연결이 없어요. Gmail 설정에서 본인 Google 계정으로 로그인하고 읽기 권한을 허용한 뒤 다시 요청해 주세요. 기기의 미리보기·발송 전용 연결만으로는 이 조회를 할 수 없어요.",
+            "현재 로그인한 계정에 Gmail 읽기 연결이 없어요. Gmail 설정에서 본인 Google 계정으로 로그인하고 읽기 권한을 허용해 주세요. 기기의 미리보기·발송 전용 연결만으로는 이 조회를 할 수 없어요.",
             Connect,
         ))
     } else {
@@ -71,11 +71,18 @@ impl MailService {
             .any(|c| !c.native_send && (c.status == "active" || c.status == "needs_reconnect"))
         {
             let _delivery = self.signals.delivery.write().await;
-            self.store.finish_mail_connection_guidance(lease, if user.account().role == moosuri_core::Role::Admin {
-                "Gmail을 확인하려면 Gmail 설정에서 본인 기기의 GWS 받은편지함 도우미를 연결해 주세요. GWS 인증은 별도 기기에 유지되며 볼트 연결은 필요하지 않아요. 웹 OAuth를 원하면 관리자인 본인이 Google 앱을 설정하는 기존 방식도 선택할 수 있어요. 아직 메일은 읽지 않았어요."
+            let text = if latest {
+                "최근 받은 메일을 보려면 아래에서 Gmail을 연결해 주세요. 연결하면 이 대화에서 조회를 이어갈 수 있어요."
             } else {
-                "Gmail을 확인하려면 Gmail 설정에서 본인 기기의 GWS 받은편지함 도우미를 연결해 주세요. GWS 인증은 별도 기기에 유지되며 볼트 연결은 필요하지 않아요. 웹 OAuth를 원하면 설치 관리자에게 Google 앱 준비를 요청하는 기존 방식도 선택할 수 있어요. 아직 메일은 읽지 않았어요."
-            }.into(), moosuri_core::MailConnectionRecovery::GwsSetup).await?;
+                "Gmail을 확인하려면 아래에서 본인 계정을 연결해 주세요."
+            };
+            self.store
+                .finish_mail_connection_guidance(
+                    lease,
+                    text.into(),
+                    moosuri_core::MailConnectionRecovery::GwsSetup,
+                )
+                .await?;
             return Ok(true);
         }
         if let Some((guidance, recovery)) = connection_guidance(
@@ -99,7 +106,7 @@ impl MailService {
                 .ok_or(StoreError::Conflict)?;
             match self.latest_inbox_read(lease, &user, c).await {
                 Ok((text, binding)) => (text, Some(binding)),
-                Err(_) => ("Gmail 받은편지함을 확인하지 못했어요. 설정 → Gmail (/settings/mail)에서 현재 계정의 연결과 읽기 권한을 확인하거나 다시 연결한 뒤 새로 요청해 주세요. 최신 메일이나 받은편지함이 비었다고 확인한 것은 아니에요.".into(), None),
+                Err(_) => ("Gmail 받은편지함을 확인하지 못했어요. 설정 → Gmail (/settings/mail)에서 현재 계정의 연결과 읽기 권한을 확인해 주세요. 최신 메일이나 받은편지함이 비었다고 확인한 것은 아니에요.".into(), None),
             }
         };
         let _delivery = self.signals.delivery.write().await;

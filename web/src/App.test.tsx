@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { RequestScope } from "./api";
 import { rememberMailReturn } from "./mail-return";
+import { GWS_CONNECTED } from "./gws-connection";
 import type { CommunitySkillCard, SessionView, ThreadSummary } from "../shared/api-types";
 
 const alice: SessionView = {
@@ -130,6 +131,37 @@ it("returns an OAuth callback to the original owned conversation without sending
   expect(calls.filter(call => call.path === "/mail/oauth/complete")).toHaveLength(1);
   expect(calls.filter(call => call.init.method === "POST").map(call => call.path)).toEqual(["/mail/oauth/complete"]);
   expect(sessionStorage.getItem("moosuri.gmail-return.v1." + alice.user.id)).toBeNull();
+});
+
+it("returns a verified Gmail resume to its owned original thread from settings without resending text", async () => {
+  const original = {...thread, id:"11111111-1111-4111-8111-111111111111", title:"Original Gmail read"};
+  const runId = "22222222-2222-4222-8222-222222222222";
+  window.history.replaceState(null, "", "/settings/mail");
+  const calls = server(path => path === "/threads" ? response({threads:[thread, original]})
+    : path === "/mail/connections" ? response({configured:false,connections:[]})
+    : path === "/mail/actions" ? response({actions:[]})
+    : path === "/mail/gws-inbox" ? response({configured:false,confirmed:false}) : response({},204));
+  render(<App />);
+  await screen.findByRole("heading", {name:"내 Gmail과 메일 확인"});
+  fireEvent(window, new CustomEvent(GWS_CONNECTED, {detail:{accountId:bob.user.id, threadId:original.id, runId}}));
+  expect(window.location.pathname).toBe("/settings/mail");
+  fireEvent(window, new CustomEvent(GWS_CONNECTED, {detail:{accountId:alice.user.id, threadId:original.id, runId}}));
+  await screen.findByRole("heading", {name:original.title,level:1});
+  expect(window.location.pathname).toBe("/app");
+  expect(calls.filter(call => call.init.method === "POST")).toEqual([]);
+});
+
+it("does not let a delayed Gmail completion hijack another conversation or its draft", async () => {
+  window.history.replaceState(null, "", "/app");
+  const original = {...thread,id:"11111111-1111-4111-8111-111111111111",title:"Original Gmail read"};
+  server(path => path === "/threads" ? response({threads:[thread,original]}) : response({},204));
+  render(<App />);
+  const composer = await screen.findByRole("textbox", {name:"메시지"});
+  await userEvent.type(composer,"Keep current unsent draft");
+  fireEvent(window, new CustomEvent(GWS_CONNECTED, {detail:{accountId:alice.user.id,threadId:original.id,runId:"22222222-2222-4222-8222-222222222222"}}));
+  expect(screen.getByRole("heading", {name:thread.title,level:1})).toBeInTheDocument();
+  expect(composer).toHaveValue("Keep current unsent draft");
+  expect(composer).toHaveFocus();
 });
 
 it("bypasses long navigation, marks only the destination and leaves draft focus alone on refresh", async () => {

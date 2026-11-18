@@ -5,6 +5,9 @@ impl MailService {
         &self,
         lease: &moosuri_store::RunLease,
     ) -> Result<bool, StoreError> {
+        if self.store.gmail_resume_fingerprint(lease).await?.is_some() {
+            return Ok(true);
+        }
         let Some(registry) = &self.gws_inbox else {
             return Ok(false);
         };
@@ -16,18 +19,147 @@ impl MailService {
             .map(|m| m.is_some())
             .unwrap_or(true))
     }
-    pub fn gws_inbox_status(&self, user: &UserContext) -> Result<serde_json::Value, StoreError> {
-        let mailbox = self
+    pub async fn gws_inbox_status(
+        &self,
+        user: &UserContext,
+    ) -> Result<serde_json::Value, StoreError> {
+        let binding = self
             .gws_inbox
             .as_ref()
-            .map(|r| r.mailbox(&user.account().id))
+            .map(|r| r.binding(&user.account().id))
             .transpose()
             .map_err(|_| StoreError::Unavailable)?
             .flatten();
-        Ok(match mailbox {
-            Some(mailbox) => serde_json::json!({"configured":true,"mailbox":mailbox}),
-            None => serde_json::json!({"configured":false}),
+        match binding {
+            Some(binding) => Ok(
+                serde_json::json!({"configured":true,"mailbox":binding.mailbox(),"confirmed":self.store.gws_inbox_confirmed(user,binding.fingerprint()).await?}),
+            ),
+            None => Ok(serde_json::json!({"configured":false,"confirmed":false})),
+        }
+    }
+    /// Settings checks never list or read mail. A new binding always needs owner consent.
+    pub async fn gws_inbox_readiness(
+        &self,
+        user: &UserContext,
+    ) -> Result<serde_json::Value, StoreError> {
+        self.gws_probe(user, None).await
+    }
+    pub async fn gws_inbox_confirm(
+        &self,
+        user: &UserContext,
+        confirmation: String,
+    ) -> Result<serde_json::Value, StoreError> {
+        self.gws_probe(user, Some(confirmation)).await
+    }
+    async fn gws_probe(
+        &self,
+        user: &UserContext,
+        confirmation: Option<String>,
+    ) -> Result<serde_json::Value, StoreError> {
+        let Some(registry) = &self.gws_inbox else {
+            return Ok(serde_json::json!({"state":"unconfigured"}));
+        };
+        let binding = match registry.binding(&user.account().id) {
+            Ok(Some(binding)) => binding,
+            Ok(None) => return Ok(serde_json::json!({"state":"unconfigured"})),
+            Err(_) => return Ok(serde_json::json!({"state":"offline"})),
+        };
+        let observed = self.store.gws_inbox_observation(user).await?;
+        let state = registry
+            .profile(&binding, &self.signals.stopping().child_token())
+            .await
+            .unwrap_or("offline");
+        if state != "ready" {
+            if state == "wrong_account" || state == "login_required" {
+                self.store
+                    .revoke_gws_inbox(user, binding.fingerprint())
+                    .await?;
+            }
+            return Ok(serde_json::json!({"state":state,"mailbox":binding.mailbox()}));
+        }
+        registry.check(&binding).map_err(|_| StoreError::Conflict)?;
+        if let Some(confirmation) = confirmation {
+            self.store
+                .confirm_gws_inbox(user, binding.fingerprint(), confirmation)
+                .await?;
+        }
+        if self
+            .store
+            .gws_inbox_confirmed(user, binding.fingerprint())
+            .await?
+        {
+            registry.check(&binding).map_err(|_| StoreError::Conflict)?;
+            return Ok(serde_json::json!({"state":"ready","mailbox":binding.mailbox()}));
+        }
+        let challenge = self
+            .store
+            .gws_inbox_challenge_observed(user, binding.fingerprint(), observed)
+            .await?;
+        registry.check(&binding).map_err(|_| StoreError::Conflict)?;
+        Ok(match challenge {
+            Some(challenge) => {
+                serde_json::json!({"state":"needs_confirmation","mailbox":binding.mailbox(),"confirmation":challenge})
+            }
+            None => serde_json::json!({"state":"ready","mailbox":binding.mailbox()}),
         })
+    }
+    /// Runtime-only pin for a resume; caller rechecks selection in its write transaction.
+    pub async fn gws_inbox_resume_fingerprint(
+        &self,
+        user: &UserContext,
+    ) -> Result<Option<[u8; 32]>, StoreError> {
+        let Some(registry) = &self.gws_inbox else {
+            return Ok(None);
+        };
+        let Some(binding) = registry
+            .binding(&user.account().id)
+            .map_err(|_| StoreError::Unavailable)?
+        else {
+            return Ok(None);
+        };
+        if registry
+            .profile(&binding, &self.signals.stopping().child_token())
+            .await
+            .ok()
+            != Some("ready")
+        {
+            return Ok(None);
+        }
+        if !self
+            .store
+            .gws_inbox_confirmed(user, binding.fingerprint())
+            .await?
+        {
+            return Ok(None);
+        }
+        registry.check(&binding).map_err(|_| StoreError::Conflict)?;
+        Ok(Some(binding.fingerprint()))
+    }
+    pub async fn gws_inbox_login(
+        &self,
+        user: &UserContext,
+    ) -> Result<serde_json::Value, StoreError> {
+        let Some(registry) = &self.gws_inbox else {
+            return Ok(serde_json::json!({"state":"unconfigured"}));
+        };
+        let Some(binding) = registry
+            .binding(&user.account().id)
+            .map_err(|_| StoreError::Unavailable)?
+        else {
+            return Ok(serde_json::json!({"state":"unconfigured"}));
+        };
+        // Sign-in is an explicit settings action, and invalidates previous selection.
+        self.store
+            .revoke_gws_inbox(user, binding.fingerprint())
+            .await?;
+        if registry
+            .login(&binding, &self.signals.stopping().child_token())
+            .await
+            .is_err()
+        {
+            return Ok(serde_json::json!({"state":"offline","mailbox":binding.mailbox()}));
+        }
+        Ok(serde_json::json!({"state":"login_started","mailbox":binding.mailbox()}))
     }
     pub(crate) async fn gws_model_context(
         &self,
@@ -59,6 +191,17 @@ impl MailService {
         user: &UserContext,
         latest: bool,
     ) -> Result<Option<bool>, StoreError> {
+        let resumed_pin = self.store.gmail_resume_fingerprint(lease).await?;
+        if let Some(pin) = resumed_pin {
+            let current = self
+                .gws_inbox
+                .as_ref()
+                .and_then(|r| r.binding(&user.account().id).ok().flatten());
+            if current.is_none_or(|binding| binding.fingerprint() != pin) {
+                self.finish_gws_unavailable(lease).await?;
+                return Ok(Some(true));
+            }
+        }
         let Some(registry) = &self.gws_inbox else {
             return Ok(None);
         };
@@ -78,6 +221,8 @@ impl MailService {
         }
         let result = async {
             let binding = registry.binding(&user.account().id).map_err(|_|StoreError::Unavailable)?.ok_or(StoreError::Conflict)?;
+            if resumed_pin.is_some_and(|pin|pin!=binding.fingerprint()) {return Err(StoreError::Conflict);}
+            if !self.store.gws_inbox_confirmed(user,binding.fingerprint()).await? {return Err(StoreError::Conflict);}
             self.store.check_run(lease).await?;
             let cancel = self.signals.stopping().child_token();
             let operation = registry.latest(&binding, &cancel);
@@ -89,6 +234,7 @@ impl MailService {
                     _=tick.tick()=> {
                         self.store.check_run(lease).await?;
                         registry.check(&binding).map_err(|_|StoreError::Conflict)?;
+                        if !self.store.gws_inbox_confirmed(user,binding.fingerprint()).await? {return Err(StoreError::Conflict);}
                     },
                     result=&mut operation=>break result.map_err(|_|StoreError::Unavailable)?,
                 }
@@ -105,7 +251,8 @@ impl MailService {
             };
             let _delivery = self.signals.delivery.write().await;
             registry.check(&binding).map_err(|_|StoreError::Conflict)?;
-            self.store.finish_latest_inbox(lease,text,None).await
+            if !self.store.gws_inbox_confirmed(user,binding.fingerprint()).await? {return Err(StoreError::Conflict);}
+            self.store.finish_gws_latest_inbox(lease,text,binding.fingerprint()).await
         }.await;
         match result {
             Ok(()) => {}
@@ -121,6 +268,6 @@ impl MailService {
         lease: &moosuri_store::RunLease,
     ) -> Result<(), StoreError> {
         let _delivery = self.signals.delivery.write().await;
-        self.store.finish_mail_connection_guidance(lease,"설정된 GWS 받은편지함 도우미에서 현재 메일을 확인하지 못했어요. Gmail 설정에서 본인의 GWS 연결, 기기 실행 상태와 인증을 확인한 뒤 다시 요청해 주세요. 다른 계정이나 웹 OAuth로 자동 전환하지 않았고, 메일이나 빈 받은편지함을 확인한 것은 아니에요.".into(),moosuri_core::MailConnectionRecovery::GwsSetup).await
+        self.store.finish_mail_connection_guidance(lease,"Gmail 연결을 확인하지 못했어요. 아래에서 본인 계정을 연결하면 이 대화에서 최근 메일 조회를 이어갈 수 있어요.".into(),moosuri_core::MailConnectionRecovery::GwsSetup).await
     }
 }

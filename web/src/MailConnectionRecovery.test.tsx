@@ -7,7 +7,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("uses only fixed server recovery actions and separates installer setup from owner consent", () => {
   const view = render(<MailConnectionRecovery action="admin_setup" />);
   expect(screen.getByRole("link", {name: "기기 Gmail 연결 안내 열기 ↗"})).toHaveAttribute("href", "/settings/mail");
-  fireEvent.click(screen.getByText("Google 웹 OAuth로 연결"));
+  fireEvent.click(screen.getByText("다른 방법 · Google 웹 OAuth로 연결"));
   expect(screen.getByRole("link", {name: "Google 설치 설정 열기 ↗"})).toHaveAttribute("href", "/admin/google");
   view.rerender(<MailConnectionRecovery action="connect" />);
   expect(screen.getByRole("link", {name: "내 Gmail 읽기 연결하기 ↗"})).toHaveAttribute("href", "/settings/mail");

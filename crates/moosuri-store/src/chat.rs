@@ -257,6 +257,7 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
         } else {
             None
         },
+        gmail_resume_available: crate::gmail_resume::available(conn, run)?,
         supports_instructions: instruction_target
             .as_ref()
             .map(|t| t.supports_instructions)

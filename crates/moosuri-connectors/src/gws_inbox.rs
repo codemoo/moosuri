@@ -96,6 +96,52 @@ mod tests {
         );
         server.abort();
     }
+    #[tokio::test]
+    async fn signed_profile_rejects_replay_tampering_and_binding_rotation() {
+        let mode = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+        let shared = mode.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/v1/inbox/latest", listener.local_addr().unwrap());
+        let app=Router::new().route("/v1/profile/check",post(move|axum::Json(body):axum::Json<serde_json::Value>| {let shared=shared.clone();async move {
+            let mode=shared.load(std::sync::atomic::Ordering::SeqCst);
+            let nonce=if mode==1 {"replayed-nonce"} else {body["nonce"].as_str().unwrap()};
+            let signed=serde_json::to_vec(&("moosuri/gws-profile/v1",nonce,"ready","owner@example.test")).unwrap();
+            let tag=ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA256,&Sha256::digest("a".repeat(64).as_bytes())),&signed);
+            let signature:String=if mode==2 {"é".repeat(32)} else {tag.as_ref().iter().map(|b|format!("{b:02x}")).collect()};
+            axum::Json(serde_json::json!({"state":"ready","mailbox":"owner@example.test","signature":signature}))
+        }}));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let (registry, _, key) = registry(dir.path(), &endpoint);
+        let binding = registry
+            .binding("00000000-0000-0000-0000-000000000001")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            registry
+                .profile(&binding, &CancellationToken::new())
+                .await
+                .unwrap(),
+            "ready"
+        );
+        for m in [1, 2] {
+            mode.store(m, std::sync::atomic::Ordering::SeqCst);
+            assert!(
+                registry
+                    .profile(&binding, &CancellationToken::new())
+                    .await
+                    .is_err()
+            );
+        }
+        private(&key, &"b".repeat(64));
+        assert!(
+            registry
+                .profile(&binding, &CancellationToken::new())
+                .await
+                .is_err()
+        );
+        server.abort();
+    }
 }
 #[derive(Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -111,6 +157,9 @@ pub struct GwsInboxBinding {
     pin: [u8; 32],
 }
 impl GwsInboxBinding {
+    pub fn fingerprint(&self) -> [u8; 32] {
+        self.pin
+    }
     pub fn mailbox(&self) -> &str {
         &self.entry.mailbox
     }
@@ -247,6 +296,117 @@ impl GwsInboxRegistry {
             return Err("gws_inbox_binding_changed");
         }
         Ok(())
+    }
+    /// Fixed, authenticated profile-only operation. The random nonce prevents replay.
+    pub async fn profile(
+        &self,
+        binding: &GwsInboxBinding,
+        cancel: &CancellationToken,
+    ) -> Result<&'static str, &'static str> {
+        self.check(binding)?;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let reply = self
+            .control(
+                binding,
+                "/v1/profile/check",
+                serde_json::json!({"nonce":nonce}),
+                cancel,
+            )
+            .await?;
+        let state = reply
+            .get("state")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("gws_inbox_invalid_response")?;
+        let mailbox = reply
+            .get("mailbox")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let signature = reply
+            .get("signature")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("gws_inbox_invalid_response")?;
+        let signed = serde_json::to_vec(&("moosuri/gws-profile/v1", &nonce, state, mailbox))
+            .map_err(|_| "gws_inbox_invalid_response")?;
+        if signature.len() != 64 || !signature.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("gws_inbox_invalid_response");
+        }
+        let mut tag = [0u8; 32];
+        for (i, b) in tag.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&signature[i * 2..i * 2 + 2], 16)
+                .map_err(|_| "gws_inbox_invalid_response")?;
+        }
+        ring::hmac::verify(
+            &ring::hmac::Key::new(
+                ring::hmac::HMAC_SHA256,
+                &Sha256::digest(binding.key.as_bytes()),
+            ),
+            &signed,
+            &tag,
+        )
+        .map_err(|_| "gws_inbox_invalid_response")?;
+        self.check(binding)?;
+        match state {
+            "ready" if mailbox == binding.mailbox() => Ok("ready"),
+            "wrong_account" => Ok("wrong_account"),
+            "login_required" => Ok("login_required"),
+            "offline" => Ok("offline"),
+            _ => Err("gws_inbox_invalid_response"),
+        }
+    }
+    pub async fn login(
+        &self,
+        binding: &GwsInboxBinding,
+        cancel: &CancellationToken,
+    ) -> Result<(), &'static str> {
+        let reply = self
+            .control(binding, "/v1/auth/login", serde_json::json!({}), cancel)
+            .await?;
+        self.check(binding)?;
+        if reply.get("state").and_then(serde_json::Value::as_str) == Some("login_started") {
+            Ok(())
+        } else {
+            Err("gws_inbox_invalid_response")
+        }
+    }
+    async fn control(
+        &self,
+        binding: &GwsInboxBinding,
+        path: &str,
+        body: serde_json::Value,
+        cancel: &CancellationToken,
+    ) -> Result<serde_json::Value, &'static str> {
+        self.check(binding)?;
+        let mut endpoint = url::Url::parse(&binding.entry.endpoint)
+            .map_err(|_| "gws_inbox_invalid_configuration")?;
+        endpoint.set_path(path);
+        let operation = async {
+            let mut response = self
+                .client
+                .post(endpoint)
+                .bearer_auth(&*binding.key)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|_| "gws_inbox_unavailable")?;
+            if response.status() != reqwest::StatusCode::OK
+                || response.content_length().is_some_and(|n| n > 4096)
+            {
+                return Err("gws_inbox_invalid_response");
+            }
+            let mut bytes = Zeroizing::new(Vec::new());
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| "gws_inbox_unavailable")?
+            {
+                if bytes.len() + chunk.len() > 4096 {
+                    return Err("gws_inbox_invalid_response");
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            serde_json::from_slice(&bytes).map_err(|_| "gws_inbox_invalid_response")
+        };
+        tokio::select! {biased;_=cancel.cancelled()=>Err("gws_inbox_cancelled"),result=operation=>result}
     }
     pub async fn latest(
         &self,

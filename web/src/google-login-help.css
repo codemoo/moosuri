@@ -10,3 +10,16 @@
 .gws-inbox-help { padding: 12px; border: 1px solid var(--line); border-radius: 10px; line-height: 1.6; overflow-wrap: anywhere; }
 .gws-inbox-help h4 { margin-top: 0; }
 .gws-inbox-help ol { padding-left: 22px; }
+
+.gws-inbox-help { background: var(--surface, transparent); padding: 18px; border-radius: 14px; }
+.gws-inbox-heading { display: flex; align-items: center; gap: 12px; }
+.gws-inbox-heading h4 { margin: 0; font-size: 1.05rem; }
+.gws-inbox-heading p { margin: 3px 0 0; }
+.gws-inbox-symbol { display: grid; place-items: center; flex: 0 0 36px; height: 36px; border: 1px solid var(--line); border-radius: 11px; font-weight: 700; }
+.gws-mailbox { display: grid; gap: 2px; padding: 10px 12px; border-radius: 9px; background: var(--background, transparent); border: 1px solid var(--line); }
+.gws-inbox-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.gws-inbox-actions button { white-space: normal; min-height: 42px; }
+.gws-inbox-help details { margin-top: 14px; }
+.gws-inbox-help summary, .mail-alternative > summary { cursor: pointer; }
+.mail-alternative { margin-block: 20px; }
+.mail-connection-recovery > .gws-inbox-help { border: 0; padding: 0; }

@@ -65,6 +65,10 @@ pub struct RunView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mail_connection_recovery: Option<crate::MailConnectionRecovery>,
+    /// Server eligibility for resuming this original setup request. Readiness is checked on POST.
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub gmail_resume_available: bool,
     #[serde(default)]
     #[ts(as = "Option<bool>", optional)]
     pub supports_instructions: bool,

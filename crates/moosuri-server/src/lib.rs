@@ -9,6 +9,7 @@ mod chat;
 mod claude_execution;
 mod community_skills;
 mod credential_broker;
+mod gmail_resume;
 mod google_setup;
 mod invitations;
 mod knowledge;
@@ -624,6 +625,10 @@ pub fn router_with_runtime(
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/api/v1/threads/{id}/events", get(chat::events))
+        .route(
+            "/api/v1/threads/{thread}/runs/{run}/resume-gmail",
+            post(gmail_resume::resume),
+        )
         .route("/api/v1/runs/{id}/cancel", post(chat::cancel))
         .route("/api/v1/runs/{id}/retry", post(chat::retry))
         .route("/api/v1/runs/{id}/instructions", post(chat::instruction))

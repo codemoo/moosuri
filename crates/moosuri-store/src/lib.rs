@@ -46,6 +46,7 @@ pub use source_connections::*;
 mod agent_execution;
 mod chat;
 mod destructive_intents;
+mod gmail_resume;
 mod knowledge;
 mod knowledge_journal;
 mod learned_skills;

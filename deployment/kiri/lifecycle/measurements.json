@@ -1,0 +1,108 @@
+{
+  "scope": "opt-in Linux configured-member restart recovery; not reserve/initialize/invite orchestration",
+  "binary_sha256": "aca93910387a8ad9a582dab7a8f6e68a7abe8b4da926eb244f51044232988a24",
+  "runtime_image_config": "sha256:61ca38a10a8450612a4bbebb60b09b48d35efb40e8039e984ca8b13a3a4be802",
+  "performance": {
+    "guest": {
+      "kernel": "6.8.0-147-generic",
+      "arch": "x86_64",
+      "vcpus": 2,
+      "memory_kib": 2014852,
+      "tested_members": 2,
+      "running_containers": 2
+    },
+    "resources": {
+      "per_member_memory_bytes": 268435456,
+      "per_member_cpu": 0.5,
+      "pids": 128,
+      "filesystem_bytes": 67108864
+    },
+    "first_warm_cycle_ms": 26.159,
+    "reconcile_to_ready": {
+      "definition": "one CLI --once pass, starting stopped A and checking already-running B; elapsed includes CLI startup, registry/profile checks, durable status and both UID-authenticated readiness checks; filesystem/page cache warm; no provider",
+      "samples_ms": [
+        262.455
+      ]
+    },
+    "warm_reconcile": {
+      "definition": "10 sequential CLI --once passes, both members already ready; no parallel worker",
+      "samples_ms": [
+        29.847,
+        24.682,
+        26.513,
+        27.566,
+        31.34,
+        31.93,
+        31.287,
+        28.737,
+        36.957,
+        31.366
+      ],
+      "median_ms": 30.567,
+      "p95_nearest_rank_ms": 36.957
+    },
+    "ready_http": {
+      "definition": "20 sequential HTTP GET /health/ready over each private Unix socket from guest root; Python http.client incl connect+headers+close; no TLS/public gateway/provider",
+      "members": {
+        "A": {
+          "samples_ms": [
+            1.018,
+            0.74,
+            0.547,
+            0.497,
+            0.419,
+            0.373,
+            0.411,
+            0.351,
+            0.34,
+            0.347,
+            0.295,
+            0.304,
+            0.271,
+            0.26,
+            0.248,
+            0.247,
+            0.251,
+            0.232,
+            0.219,
+            0.221
+          ],
+          "median_ms": 0.322,
+          "p95_nearest_rank_ms": 0.74
+        },
+        "B": {
+          "samples_ms": [
+            0.36,
+            0.274,
+            0.227,
+            0.237,
+            0.23,
+            0.214,
+            0.219,
+            0.227,
+            0.217,
+            0.207,
+            0.205,
+            0.233,
+            0.238,
+            0.212,
+            0.206,
+            0.211,
+            0.212,
+            0.23,
+            0.206,
+            0.206
+          ],
+          "median_ms": 0.218,
+          "p95_nearest_rank_ms": 0.274
+        }
+      }
+    },
+    "limits": "shared physical host; uncontrolled host load; 2-member preview only; not 1/5/20 capacity or paired dev.30 baseline"
+  },
+  "real_reboot": {
+    "new_boot_id": true,
+    "reboot_to_checked_private_ready_ms": 19652.682,
+    "timing_definition": "one already-planned VM reboot: systemctl reboot request through new SSH availability, fresh worker status and both old owner cookies accepted; includes guest boot and polling, not pure runtime startup"
+  }
+}

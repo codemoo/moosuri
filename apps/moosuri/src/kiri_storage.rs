@@ -117,6 +117,10 @@ impl Plan {
     }
 }
 pub async fn run(o: &Options) -> Result<(), String> {
+    // Reject unsupported hosts before even opening installation metadata.
+    if !cfg!(target_os = "linux") || !o.experimental || unsafe { libc::geteuid() } != 0 {
+        return Err("storage_explicit_experimental_linux_root_only".into());
+    }
     let o = o.clone();
     let result = tokio::task::spawn_blocking(move || {
         let a = runtime_registry::lookup(&o.registry_directory, o.email.clone())

@@ -90,6 +90,15 @@ fn prepared_result_and_plan_replay_are_exact_and_non_linux_entry_is_inert() {
             uid: 10061,
             capacity_bytes: r.plan.cap,
         };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        assert!(
+            runtime
+                .block_on(run(&o))
+                .unwrap_err()
+                .contains("linux_root_only")
+        );
         assert!(
             prepare(&o, &a, 10061)
                 .unwrap_err()

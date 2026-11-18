@@ -284,7 +284,11 @@ impl Gateway {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(2))
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(if path.ends_with("/text-preview") {
+                85
+            } else {
+                10
+            }))
             .unix_socket(socket)
             .build()
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
@@ -308,7 +312,8 @@ impl Gateway {
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         let status = response.status();
-        if ![200, 201, 204, 400, 401, 403, 404, 409, 422, 429, 503].contains(&status.as_u16()) {
+        if ![200, 201, 202, 204, 400, 401, 403, 404, 409, 422, 429, 503].contains(&status.as_u16())
+        {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
         let mut result = Vec::new();
@@ -345,6 +350,8 @@ enum Endpoint {
     Password,
     Logout,
     Threads,
+    PreviewInfo,
+    TextPreview(Uuid),
     Thread(Uuid),
     History(Uuid, Option<i64>),
 }
@@ -357,10 +364,21 @@ impl Endpoint {
             "/api/v1/auth/password" => Self::Password,
             "/api/v1/auth/logout" => Self::Logout,
             "/api/v1/threads" => Self::Threads,
+            "/api/v1/text-preview" => Self::PreviewInfo,
             _ => {
                 let tail = path
                     .strip_prefix("/api/v1/threads/")
                     .ok_or(StatusCode::NOT_FOUND)?;
+                if let Some(raw) = tail.strip_suffix("/text-preview") {
+                    let id = Uuid::parse_str(raw)
+                        .ok()
+                        .filter(|id| !id.is_nil() && id.to_string() == raw)
+                        .ok_or(StatusCode::BAD_REQUEST)?;
+                    if method != Method::POST || uri.query().is_some() {
+                        return Err(StatusCode::BAD_REQUEST);
+                    }
+                    return Ok(Self::TextPreview(id));
+                }
                 let (id, history) = tail
                     .strip_suffix("/messages")
                     .map(|id| (id, true))
@@ -380,7 +398,7 @@ impl Endpoint {
             }
         };
         let valid = match endpoint {
-            Self::Session | Self::History(..) => method == Method::GET,
+            Self::Session | Self::PreviewInfo | Self::History(..) => method == Method::GET,
             Self::Threads => method == Method::GET || method == Method::POST,
             Self::Thread(_) => method == Method::DELETE,
             _ => method == Method::POST,
@@ -414,6 +432,8 @@ impl Endpoint {
             Self::Password => "/api/v1/auth/password".into(),
             Self::Logout => "/api/v1/auth/logout".into(),
             Self::Threads => "/api/v1/threads".into(),
+            Self::PreviewInfo => "/api/v1/text-preview".into(),
+            Self::TextPreview(id) => format!("/api/v1/threads/{id}/text-preview"),
             Self::Thread(id) => format!("/api/v1/threads/{id}"),
             Self::History(id, before) => format!(
                 "/api/v1/threads/{id}/messages{}",
@@ -422,7 +442,14 @@ impl Endpoint {
         }
     }
     fn threads(self) -> bool {
-        matches!(self, Self::Threads | Self::Thread(_) | Self::History(..))
+        matches!(
+            self,
+            Self::Threads
+                | Self::Thread(_)
+                | Self::History(..)
+                | Self::TextPreview(_)
+                | Self::PreviewInfo
+        )
     }
 }
 #[derive(Deserialize, Serialize)]
@@ -455,6 +482,28 @@ fn thread_response(
         ));
     }
     match endpoint {
+        Endpoint::PreviewInfo => {
+            let value: serde_json::Value =
+                serde_json::from_slice(&body).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            if status != StatusCode::OK
+                || value["capability"] != "text_only_preview"
+                || value["tools"] != false
+            {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        }
+        Endpoint::TextPreview(id) => {
+            let turn: moosuri_core::ChatTurn =
+                serde_json::from_slice(&body).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            if ![StatusCode::OK, StatusCode::CREATED, StatusCode::ACCEPTED].contains(&status)
+                || turn.run.thread_id != id.to_string()
+                || turn.run.model.function_tools
+                || turn.run.mission_receipt.is_some()
+                || turn.run.calendar_receipt.is_some()
+            {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        }
         Endpoint::Threads if method == Method::GET => {
             if status != StatusCode::OK {
                 return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -732,7 +781,21 @@ async fn handle(
     }
     let a = active(g, &route).await?;
     if endpoint.threads() {
-        let payload = if matches!(endpoint, Endpoint::Threads) && method == Method::POST {
+        let payload = if matches!(endpoint, Endpoint::TextPreview(_)) {
+            #[derive(Deserialize, Serialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                request_id: String,
+                text: String,
+                capability: String,
+            }
+            let input: Input =
+                serde_json::from_slice(body).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+            if input.capability != "text_only_preview" {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            Some(serde_json::to_vec(&input).map_err(|_| StatusCode::BAD_REQUEST)?)
+        } else if matches!(endpoint, Endpoint::Threads) && method == Method::POST {
             let input: CreateThread =
                 serde_json::from_slice(body).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
             Some(serde_json::to_vec(&input).map_err(|_| StatusCode::BAD_REQUEST)?)
@@ -843,6 +906,11 @@ fn router(g: Gateway) -> Router {
         .route("/api/v1/threads", get(handler).post(handler))
         .route("/api/v1/threads/{id}", delete(handler))
         .route("/api/v1/threads/{id}/messages", get(handler))
+        .route("/api/v1/text-preview", get(handler))
+        .route(
+            "/api/v1/threads/{id}/text-preview",
+            post(handler).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .layer(DefaultBodyLimit::max(4096))
         .with_state(g)
 }
@@ -1551,5 +1619,143 @@ mod tests {
         released.notify_one();
         assert_eq!(work.await.unwrap().status(), StatusCode::UNAUTHORIZED);
         task.abort();
+    }
+    #[tokio::test]
+    async fn opt_in_preview_crosses_gateway_and_member_socket_once_and_uses_saved_history() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let options = options(&root);
+        let (a, store, old) = real_member(&options, "preview@example.test").await;
+        old.abort();
+        let _ = old.await;
+        let personal = options.ipc_root.join(&a.account_id).join("personal.sock");
+        fs::remove_file(&personal).unwrap();
+        let model = root.join("model.sock");
+        let listener = tokio::net::UnixListener::bind(&model).unwrap();
+        fs::set_permissions(&model, fs::Permissions::from_mode(0o600)).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let broker = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let byte = stream.read_u8().await.unwrap();
+                    if byte == b'\n' {
+                        break;
+                    }
+                    bytes.push(byte);
+                    assert!(bytes.len() < 64 * 1024);
+                }
+                let r: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                counted.fetch_add(1, Ordering::SeqCst);
+                let reply = serde_json::json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":r["connection_revision"],"model":r["model"],"output":"Synthetic bounded text answer","outcome":"completed","receipt":{"state":"settled","input_tokens":7,"output_tokens":3,"charged_tokens":10}});
+                let mut bytes = serde_json::to_vec(&reply).unwrap();
+                bytes.push(b'\n');
+                stream.write_all(&bytes).await.unwrap();
+            }
+        });
+        let owner = moosuri_store::personal_volume::VolumeOwner {
+            account: Uuid::parse_str(&a.account_id).unwrap(),
+            tenant: Uuid::parse_str(&a.tenant_id).unwrap(),
+            volume: Uuid::parse_str(&a.volume_id).unwrap(),
+            generation: a.generation as u64,
+        };
+        let router = moosuri_server::personal_text_preview_router(
+            store.clone(),
+            owner,
+            moosuri_server::personal_text::Options {
+                socket: model,
+                broker_uid: unsafe { libc::geteuid() },
+                pin: moosuri_store::personal_text_preview::ModelPin {
+                    connection_revision: Uuid::new_v4(),
+                    model: "synthetic-text".into(),
+                    kind: moosuri_core::ProviderKind::Compatible,
+                    max_output_tokens: 128,
+                },
+            },
+        );
+        let listener = tokio::net::UnixListener::bind(&personal).unwrap();
+        fs::set_permissions(&personal, fs::Permissions::from_mode(0o600)).unwrap();
+        let member = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let g = Gateway::new(&options).unwrap();
+        let login = request(
+            &g,
+            "/api/v1/auth/login",
+            Method::POST,
+            headers(),
+            r#"{"email":"preview@example.test","password":"Synthetic-password-42"}"#,
+        )
+        .await;
+        assert_eq!(login.status(), StatusCode::OK);
+        let h = authenticated(&cookies(&login), &a);
+        assert_eq!(
+            json(request(&g, "/api/v1/text-preview", Method::GET, h.clone(), "").await).await["tools"],
+            false
+        );
+        let thread = json(
+            request(
+                &g,
+                "/api/v1/threads",
+                Method::POST,
+                h.clone(),
+                &serde_json::json!({"title":"Preview","request_id":Uuid::new_v4()}).to_string(),
+            )
+            .await,
+        )
+        .await;
+        let id = thread["id"].as_str().unwrap();
+        let endpoint = format!("/api/v1/threads/{id}/text-preview");
+        let body=serde_json::json!({"request_id":Uuid::new_v4(),"text":"Explain a queue","capability":"text_only_preview"}).to_string();
+        let first = request(&g, &endpoint, Method::POST, h.clone(), &body).await;
+        assert_eq!(first.status(), StatusCode::CREATED);
+        let first = json(first).await;
+        assert_eq!(first["run"]["state"], "completed");
+        assert_eq!(first["run"]["usage"]["input_tokens"], 7);
+        let duplicate = request(&g, &endpoint, Method::POST, h.clone(), &body).await;
+        assert_eq!(duplicate.status(), StatusCode::OK);
+        assert_eq!(json(duplicate).await["run"]["id"], first["run"]["id"]);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let history = json(
+            request(
+                &g,
+                &format!("/api/v1/threads/{id}/messages"),
+                Method::GET,
+                h.clone(),
+                "",
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(history["turns"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            history["turns"][0]["assistant"][0]["text"],
+            "Synthetic bounded text answer"
+        );
+        assert_eq!(
+            request(
+                &g,
+                &format!("/api/v1/threads/{id}/messages"),
+                Method::POST,
+                h.clone(),
+                "{}"
+            )
+            .await
+            .status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        runtime_registry::set_routing(&options.registry, &a, false).unwrap();
+        assert_eq!(
+            request(&g, &endpoint, Method::POST, h, &body)
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        broker.abort();
+        member.abort();
     }
 }

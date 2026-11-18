@@ -144,7 +144,7 @@ fn phase_name(phase: Option<MessagePhase>) -> Result<Option<String>> {
 fn phase_value(phase: Option<String>) -> Result<Option<MessagePhase>> {
     phase.map(|p| parse(&format!("\"{p}\""))).transpose()
 }
-fn thread_exists(conn: &Connection, user: &UserContext, thread: &str) -> Result<()> {
+pub(super) fn thread_exists(conn: &Connection, user: &UserContext, thread: &str) -> Result<()> {
     if !conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM threads WHERE tenant_id=?1 AND id=?2 AND mission_internal=0)",
         params![user.tenant.0, thread],
@@ -217,6 +217,9 @@ pub(super) fn load_run(conn: &Connection, tenant: &str, id: &str) -> Result<Run>
     Ok(run)
 }
 fn run_usage(conn: &Connection, run: &Run) -> Result<RunUsage> {
+    if let Some(usage) = crate::personal_text_preview::usage(conn, &run.tenant, &run.id)? {
+        return Ok(usage);
+    }
     let all_attempts = agent_execution::is_agent(conn, &run.tenant, &run.id)?;
     let values = conn.prepare("SELECT usage FROM model_call_receipts WHERE tenant_id=?1 AND run_id=?2 AND (?4 OR attempt=?3)")?
       .query_map(params![run.tenant,run.id,run.attempt,all_attempts], |r| r.get::<_,String>(0))?
@@ -291,7 +294,8 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
         },
         connection_wait: crate::native_task_mail::view(conn, &run.tenant, &run.id)?,
         credential: crate::credential_chat::status(conn, run)?,
-        can_retry: !crate::native_task_mail::has(conn, &run.tenant, &run.id)?
+        can_retry: !crate::personal_text_preview::has(conn, &run.tenant, &run.id)?
+            && !crate::native_task_mail::has(conn, &run.tenant, &run.id)?
             && !crate::credential_chat::has(conn, &run.tenant, &run.id)?
             && !run.state.active()
             && run.state != RunState::Completed
@@ -299,7 +303,8 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             && run.attempt < 32
             && agent_execution::retry_allowed(conn, &run.tenant, &run.id)?
             && is_latest(conn, run)?,
-        can_cancel: run.state.active(),
+        can_cancel: run.state.active()
+            && !crate::personal_text_preview::has(conn, &run.tenant, &run.id)?,
         created_at: run.created,
     })
 }
@@ -413,7 +418,7 @@ pub(super) fn queue_capacity(conn: &Connection, tenant: &str) -> Result<()> {
     }
     Ok(())
 }
-fn next_order(conn: &Connection) -> Result<i64> {
+pub(super) fn next_order(conn: &Connection) -> Result<i64> {
     conn.execute(
         "UPDATE chat_admission_counter SET value=value+1 WHERE singleton=1",
         [],
@@ -1336,7 +1341,8 @@ fn retry_run_inner(
         .conn
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
     let run = load_run(&tx, &user.tenant.0, &run_id)?;
-    if crate::native_task_mail::has(&tx, &run.tenant, &run.id)?
+    if crate::personal_text_preview::has(&tx, &run.tenant, &run.id)?
+        || crate::native_task_mail::has(&tx, &run.tenant, &run.id)?
         || crate::credential_chat::has(&tx, &run.tenant, &run.id)?
         || run.attempt != expected_attempt
         || run.state.active()

@@ -8,7 +8,7 @@ authenticate journals, or prove an independently restored personal volume.
 ```sh
 # Replay the latest supported source schema into disposable in-memory SQLite.
 cargo run --locked -p xtask -- account-runtime-inventory > inventory.json
-# Keep dev.30/schema81 verification independently available after schema82.
+# Keep dev.30/schema81 verification independently available on newer source.
 cargo run --locked -p xtask -- account-runtime-inventory --schema 81 > inventory81.json
 # Inspect only an explicitly supplied consistent stopped/checkpointed COPY.
 cargo run --locked -p xtask -- account-runtime-inventory --schema 81 --snapshot /path/to/offline-copy > snapshot-inventory.json
@@ -16,18 +16,18 @@ cargo run --locked -p xtask -- account-runtime-inventory --schema 81 --snapshot 
 
 The default schema follows the newest source migration; unknown versions fail.
 An explicit supported `--schema` replays only that pinned baseline. Schema81 has
-202 application tables, including virtual FTS, and schema82 has 203. Both have 34
+202 application tables, including virtual FTS, schema82 has 203, and schema83 has 204. All three have 34
 tables with neither `tenant_id` nor `account_id`. SQLite internal tables and the
 five FTS shadow tables are excluded using SQLite's actual table kinds, rather
 than a name-prefix guess. Schema82 extends the frozen 81 classification with its
-one exact Gmail server-resume table and migration hash.
+one exact Gmail server-resume table and migration hash. Schema83 adds the per-run private model-preview binding and receipt.
 
 The manifests pin every migration SHA-256, every application table SQL shape and
 the complete non-shadow table/index/trigger/view fingerprint. Each table has an
 explicit disposition, owner query or global/regeneration decision, key transition,
 verification and failure action. The tool checks SQLite integrity, all declared
 foreign keys, complete and unique owner-join coverage, exact AccountId/TenantId
-pairs, and cross-owner references for 187 declared relationships in 81 / 189 in 82.
+pairs, and cross-owner references for 187 declared relationships in 81, 189 in 82 and 190 in 83.
 Deletion/vault ACK and external auth-root cleanup records retain durable installation responsibility, and recovery spend dispatches remain non-rewindable even when owner-indexed.
 Parent-only broker auth/binding/repository/mail-grant rows resolve through their
 actual device/binding parents. Personal compatible providers partition by the
@@ -64,18 +64,10 @@ single-generation execution remain explicitly pending.
 Validation on isolated synthetic data (2026-11-19):
 
 - `cargo test --offline --locked -p xtask account_runtime_inventory -- --nocapture`:
-  12 passed, including source81/82 replay, parent joins, mismatched/missing owners,
+  13 passed, including source81/82/83 replay, parent joins, mismatched/missing owners,
   valid-FK cross-account provider misuse, private-provider promotion, source hash
   drift, unknown table/version/index/shape, incomplete classification, and immutable
   snapshot/no-sidecar/symlink/unknown-file failure boundaries.
-- Actual default82 and explicit81 CLI runs passed against pinned public migrations.
+- Schema81, schema82 and schema83 CLI runs passed against pinned public migrations.
   Source-only replay contains 10 bootstrap rows; these are not user data acceptance.
 - Formatting check passed. No production data, credentials or services were used.
-
-The schema82 test replays its pinned source migration when available; a dev.30-only
-checkout reports that replay as awaiting the separately owned82 migration. The
-integrated validation above included that exact migration. Re-review classifications
-and regenerate schema fingerprints for future schema changes; do not merely change
-the expected version or table count.
-
-The broader xtask suite passed 29/30; the unchanged source-connectors test expects 70 feature definitions while baseline features.md already contains F71. The inventory-specific 12 tests and both schemas pass.

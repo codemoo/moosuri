@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "schema": 83,
+  "migrations": [
+    {
+      "name": "0083_personal_text_preview.sql",
+      "sha256": "a5a87be60306e72a374a74a1838e4713f09f86c1fdc565eeafa4b5313e335eb7"
+    }
+  ],
+  "tables": [
+    {
+      "name": "personal_text_previews",
+      "kind": "table",
+      "sql_sha256": "fe626aee0d7fd659125539362bfc0486cebe46bcd77ce0c5a06615ced04e6ff6",
+      "scope": "personal",
+      "owner_query": "SELECT p.rowid AS rid,r.account_id,p.tenant_id FROM personal_text_previews p JOIN chat_runs r ON r.tenant_id=p.tenant_id AND r.id=p.run_id",
+      "key_transition": "Preserve per-run broker binding and receipt. Fence restored and unknown calls against the installation ledger before any new dispatch.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "volume_id",
+        "generation",
+        "connection_revision",
+        "call_id",
+        "nonce",
+        "receipt"
+      ]
+    }
+  ],
+  "schema_sha256": "f43e126f45bc4a8b00e004b1a363a3a837c80d85731a327275d820f86c6743e9",
+  "base_schema": 82
+}

@@ -55,6 +55,23 @@
 
 Linux Kiri 안의 두 실제 클라이언트에서 무수리 Rust 모델 서비스를 거쳐 로컬 합성 공급자를 호출했다. 첫 호출 2회와 서비스 재시작 뒤 새 호출 2회가 각각 한 번 정산됐다. 중복 제출은 기존 영수증, 다른 계정의 호출 ID 재사용은 충돌을 반환했다. 공급자가 받은 요청은 총 4회였고 중앙 원장에서 시험 질문과 답변 원문이 발견되지 않았다.
 
+### 개인 대화에 텍스트 답변 저장하기
+
+텍스트 시험 경로를 켜려면 고정 이미지의 `/etc/moosuri/text-preview.json`에 아래 공개 모델 선택을 넣는다. 파일은 root 소유·0444이며 공급자 주소나 인증 값은 넣지 않는다. 모델 이름과 연결 버전은 설치 모델 서비스의 설정과 일치해야 한다.
+
+```json
+{
+  "socket": "/model/model.sock",
+  "broker_uid": 0,
+  "pin": {
+    "connection_revision": "1fc91be7-8a93-4ef1-a1cb-eee7660a601b",
+    "model": "example-local-model", "kind": "compatible", "max_output_tokens": 256
+  }
+}
+```
+
+회원 프로비저닝에 `--model-sockets-root "$MODEL_SOCKETS" --enable-text-preview`를 지정한다. 로그인한 클라이언트는 `GET /api/v1/text-preview`로 지원 여부를 확인하고, `POST /api/v1/threads/{id}/text-preview`로 `request_id`, `text`, `capability: "text_only_preview"`를 보낸다. 답변은 기존 대화 이력에서 조회한다. 응답을 잃었다면 동일 요청 ID로 기존 상태를 조회한다. 동일한 요청으로 새 호출이 발생하지 않는다. 이 API가 제공하는 기능은 텍스트 대화이며 메일 발송·웹 탐색·예약·도구가 필요한 정규 비서 요청은 기존 운영 경로를 사용한다.
+
 ## 검증한 경계
 
 Ubuntu 24.04 x86_64의 격리 VM에서 실제 무수리 Linux 바이너리로 UID가 다른 회원 두 명을 초기화했다. 각 컨테이너의 준비 응답에서 계정·테넌트·볼륨·세대를 대조했다. 두 계정에 총 20개의 재조정 요청을 동시 실행도 4로 보내도 컨테이너 ID와 PID가 유지됐다. 한 볼륨의 마운트를 잃으면 그 계정의 재조정은 중단되고 다른 계정은 준비 응답을 계속 보냈다. 검증한 Linux 실행 파일의 SHA-256은 `f525302d4f692a135d5ef1e628d0d5e00748932171dd4a9a9aec5f1e58db2d7e`, 해당 OCI config의 SHA-256은 `61ca38a10a8450612a4bbebb60b09b48d35efb40e8039e984ca8b13a3a4be802`이다. 이 값은 실험 당시 아티팩트를 식별한다.

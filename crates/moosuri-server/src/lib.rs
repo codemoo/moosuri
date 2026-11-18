@@ -16,6 +16,7 @@ mod knowledge;
 mod mail;
 mod media;
 mod missions;
+pub mod personal_text;
 mod personal_threads;
 mod private_files;
 mod provider_quota;
@@ -919,6 +920,23 @@ fn auth_routes<S: Clone + Send + Sync + 'static>(state: AuthState) -> Router<S> 
 /// workers. The host gateway validates the public origin and supplies the fixed
 /// internal Host/Origin only on its private Unix transport.
 pub fn personal_auth_router(store: Store) -> Router {
+    personal_router(store, None)
+}
+/// Explicit text-only preview; ordinary /messages submission stays unavailable.
+pub fn personal_text_preview_router(
+    store: Store,
+    owner: moosuri_store::personal_volume::VolumeOwner,
+    options: personal_text::Options,
+) -> Router {
+    personal_router(store, Some((owner, options)))
+}
+fn personal_router(
+    store: Store,
+    preview: Option<(
+        moosuri_store::personal_volume::VolumeOwner,
+        personal_text::Options,
+    )>,
+) -> Router {
     let config = ServerConfig::new("https://personal.internal", false).expect("fixed HTTPS origin");
     let state = AuthState {
         store,
@@ -926,8 +944,13 @@ pub fn personal_auth_router(store: Store) -> Router {
         logins: Default::default(),
         delivery: Default::default(),
     };
-    auth_routes(state.clone())
-        .merge(personal_threads::routes(state))
+    let routes = auth_routes(state.clone()).merge(personal_threads::routes(state.clone()));
+    let routes = if let Some((owner, options)) = preview {
+        routes.merge(personal_text::routes(state, owner, options))
+    } else {
+        routes
+    };
+    routes
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(config, boundary))
 }

@@ -34,7 +34,7 @@ fn scalar(c: &Connection, query: &str) -> Check<i64> {
 }
 fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
-        [81, 82].contains(&schema),
+        (81..=83).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
     )?;
     let mut v: Value = serde_json::from_str(&read(
@@ -47,10 +47,10 @@ fn load(root: &Path, schema: i64) -> Check<Value> {
     )?;
     if v.get("base_schema").is_some() {
         ensure(
-            schema == 82 && v["base_schema"] == 81,
+            schema > 81 && v["base_schema"] == schema - 1,
             "unsupported inventory supplement",
         )?;
-        let base = load(root, 81)?;
+        let base = load(root, schema - 1)?;
         for key in ["migrations", "tables"] {
             let mut merged = array(&base, key)?.clone();
             merged.extend(array(&v, key)?.iter().cloned());
@@ -61,7 +61,13 @@ fn load(root: &Path, schema: i64) -> Check<Value> {
         }
     }
     ensure(
-        array(&v, "tables")?.len() == if schema == 81 { 202 } else { 203 },
+        array(&v, "tables")?.len()
+            == match schema {
+                81 => 202,
+                82 => 203,
+                83 => 204,
+                _ => unreachable!(),
+            },
         "inventory manifest table count mismatch",
     )?;
     Ok(v)
@@ -548,9 +554,9 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             "--schema" if selected.is_none() => {
                 selected = Some(
                     iter.next()
-                        .ok_or("--schema requires 81 or 82")?
+                        .ok_or("--schema requires 81, 82 or 83")?
                         .parse::<i64>()
-                        .map_err(|_| "--schema requires 81 or 82")?,
+                        .map_err(|_| "--schema requires 81, 82 or 83")?,
                 );
             }
             "--snapshot" if snapshot.is_none() => {
@@ -561,7 +567,7 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             }
             _ => {
                 return Err(
-                    "usage: account-runtime-inventory [--schema 81|82] [--snapshot DIRECTORY]"
+                    "usage: account-runtime-inventory [--schema 81|82|83] [--snapshot DIRECTORY]"
                         .into(),
                 );
             }
@@ -708,6 +714,17 @@ mod tests {
                 "schema82 replay awaits separately owned pinned migration; manifest is checked"
             );
         }
+    }
+    #[test]
+    fn schema83_preview_receipts_follow_the_original_run_owner() {
+        let manifest = load(&root(), 83).unwrap();
+        let c = replay(&root(), &manifest).unwrap();
+        let counts = inspect(&c, &manifest).unwrap();
+        assert_eq!(counts["application_tables"], 204);
+        assert_eq!(
+            table(&manifest, "personal_text_previews")["scope"],
+            "personal"
+        );
     }
     #[test]
     fn owner_ids_stay_distinct_and_parent_only_broker_rows_resolve() {
@@ -913,7 +930,7 @@ mod tests {
         let dir = Scratch::new();
         assert!(snapshot_files(&dir.0, &artifact_manifest(&root()).unwrap()).is_err());
         assert!(
-            load(&root(), 83)
+            load(&root(), 84)
                 .unwrap_err()
                 .contains("unsupported inventory schema")
         );

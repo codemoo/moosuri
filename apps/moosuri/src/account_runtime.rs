@@ -142,6 +142,9 @@ enum PersonalOperation {
     Serve {
         #[arg(long)]
         socket: PathBuf,
+        /// Optional owner-only JSON for explicitly limited broker text previews.
+        #[arg(long)]
+        text_preview_config: Option<PathBuf>,
     },
 }
 pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
@@ -152,12 +155,19 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
         generation: options.generation,
     };
     match &options.command {
-        PersonalOperation::Serve { socket } => {
+        PersonalOperation::Serve {
+            socket,
+            text_preview_config,
+        } => {
             let store = owner
                 .open_verified(&options.root)
                 .await
                 .map_err(|e| e.to_string())?;
-            return serve_member(socket, store, owner).await;
+            let preview = text_preview_config
+                .as_ref()
+                .map(|p| read_preview(p))
+                .transpose()?;
+            return serve_member(socket, store, owner, preview).await;
         }
         PersonalOperation::Initialize {
             name,
@@ -196,6 +206,7 @@ async fn serve_member(
     socket: &std::path::Path,
     store: moosuri_store::Store,
     owner: moosuri_store::personal_volume::VolumeOwner,
+    preview: Option<moosuri_server::personal_text::Options>,
 ) -> Result<(), String> {
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use tokio::net::UnixListener;
@@ -242,8 +253,69 @@ async fn serve_member(
     });
     axum::serve(
         listener,
-        moosuri_server::personal_auth_router(store).route("/health/ready", ready),
+        match preview {
+            Some(options) => moosuri_server::personal_text_preview_router(store, owner, options),
+            None => moosuri_server::personal_auth_router(store),
+        }
+        .route("/health/ready", ready),
     )
     .await
     .map_err(|_| "personal_service_stopped".into())
+}
+
+fn read_preview(path: &std::path::Path) -> Result<moosuri_server::personal_text::Options, String> {
+    use std::{
+        io::Read,
+        os::unix::fs::{MetadataExt, OpenOptionsExt},
+    };
+    let fixed = path == std::path::Path::new("/etc/moosuri/text-preview.json");
+    if !path.is_absolute() || std::fs::canonicalize(path).ok().as_deref() != Some(path) {
+        return Err("preview_config_invalid".into());
+    }
+    // The immutable image config and every ancestor must stay root-owned,
+    // without a symlink or writable group/other component.
+    if fixed {
+        let mut parent = path.parent();
+        while let Some(p) = parent {
+            let m = std::fs::symlink_metadata(p).map_err(|_| "preview_config_invalid")?;
+            if !m.is_dir() || m.uid() != 0 || m.mode() & 0o022 != 0 {
+                return Err("preview_config_invalid".into());
+            }
+            parent = p.parent();
+        }
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|_| "preview_config_unavailable")?;
+    let m = file.metadata().map_err(|_| "preview_config_unavailable")?;
+    let permissions = if fixed {
+        m.uid() == 0 && m.mode() & 0o777 == 0o444
+    } else {
+        m.uid() == unsafe { libc::geteuid() } && m.mode() & 0o077 == 0
+    };
+    if !m.is_file() || !permissions || m.nlink() != 1 || m.len() > 8192 {
+        return Err("preview_config_invalid".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(8193)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "preview_config_unavailable")?;
+    if bytes.len() > 8192 {
+        return Err("preview_config_invalid".into());
+    }
+    let options: moosuri_server::personal_text::Options =
+        serde_json::from_slice(&bytes).map_err(|_| "preview_config_invalid")?;
+    if (fixed
+        && (options.socket != std::path::Path::new("/model/model.sock") || options.broker_uid != 0))
+        || !options.socket.is_absolute()
+        || options.pin.connection_revision.is_nil()
+        || options.pin.model.is_empty()
+        || options.pin.model.len() > 200
+        || !(1..=2048).contains(&options.pin.max_output_tokens)
+    {
+        return Err("preview_config_invalid".into());
+    }
+    Ok(options)
 }

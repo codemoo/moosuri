@@ -14,6 +14,7 @@ test-fixtures = ["moosuri-store/test-fixtures","moosuri-connectors/test-fixtures
 [dependencies]
 moosuri-documents = { path = "../moosuri-documents" }
 subtle = "=2.6.1"
+libc = "0.2"
 moosuri-vault-protocol = { path = "../moosuri-vault-protocol" }
 moosuri-core = { path = "../moosuri-core" }
 moosuri-store = { path = "../moosuri-store" }
@@ -22,7 +23,7 @@ moosuri-agent = { path = "../moosuri-agent" }
 axum = { version = "0.8", features = ["http1", "json", "tokio"] }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 url = "2.5"
 uuid.workspace = true
 sha2 = "0.10"

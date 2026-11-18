@@ -178,16 +178,14 @@ pub(super) async fn response(
                     )
                 } else {
                     let sys = input[0]["content"].as_str().unwrap();
-                    let id = sys
-                        .split("User-selected target: id=")
-                        .nth(1)
-                        .unwrap()
-                        .split(' ')
-                        .next()
-                        .unwrap();
+                    // Read the target context actually supplied by the host;
+                    // the separate sealed intent remains the write authority.
+                    let target = sys.split("Current request target: id=").nth(1).unwrap();
+                    let (id, rest) = target.split_once(" revision=").unwrap();
+                    let revision: i64 = rest.split('.').next().unwrap().parse().unwrap();
                     write_call(
                         "artifact_read",
-                        json!({"id":id,"revision":1,"start_byte":0,"max_bytes":8192}),
+                        json!({"id":id,"revision":revision,"start_byte":0,"max_bytes":8192}),
                         "moosuri",
                     )
                 }
@@ -516,7 +514,19 @@ async fn personal_source_grounded_artifact_create_and_anchor_edit_finish_from_re
             .body,
         "Updated evidence."
     );
-    assert_eq!(f.state.requests.lock().unwrap().len(), 7);
+    let requests = f.state.requests.lock().unwrap();
+    assert_eq!(requests.len(), 7);
+    // The successful write is grounded in the actual pinned revision's read,
+    // not a fixture-only target identifier or classifier preview.
+    let read = requests[6]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["type"] == "function_call" && item["name"] == "artifact_read")
+        .unwrap();
+    let arguments: Value = serde_json::from_str(read["arguments"].as_str().unwrap()).unwrap();
+    assert_eq!(arguments["id"], receipt.id);
+    assert_eq!(arguments["revision"], 1);
 }
 #[tokio::test]
 async fn personal_write_stage_undeclared_external_call_is_rejected_and_withdrawal_fences_write() {

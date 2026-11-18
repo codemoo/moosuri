@@ -91,13 +91,11 @@ async fn gws_latest_metadata_is_owner_bound_literal_and_general_context_has_no_m
         .model_connection_context(&semantic.lease)
         .await
         .unwrap();
-    assert!(context.contains("\"run_read_route\":\"gws_latest_metadata\""));
-    assert!(context.contains("metadata-only") || context.contains("메타데이터만"));
-    assert!(context.contains("내 최신 메일 보여줘"));
+    assert!(context.contains("\"run_read_route\":\"none\""));
+    assert!(context.contains("\"recovery\":\"admin_setup\""));
     assert!(!context.contains("SYNTHETIC_NEWEST_METADATA"));
     assert!(
-        !mail
-            .connection_help_available(&semantic.lease)
+        mail.connection_help_available(&semantic.lease)
             .await
             .unwrap()
     );
@@ -105,7 +103,21 @@ async fn gws_latest_metadata_is_owner_bound_literal_and_general_context_has_no_m
         .finish_agent_execution(&semantic.lease, RunState::Cancelled, None)
         .await
         .unwrap();
-    let latest = claim(&store, &user, &thread, "내 최신 메일 보여줘").await;
+    let ordinary = claim(&store, &user, &thread, "최근 메일 뭐야?").await;
+    assert!(mail.latest_inbox_chat(&ordinary.lease).await.unwrap());
+    let ordinary_turn = store
+        .conversation(&user, thread.clone(), None)
+        .await
+        .unwrap()
+        .turns
+        .pop()
+        .unwrap();
+    assert!(matches!(
+        ordinary_turn.run.mail_connection_recovery,
+        Some(moosuri_core::MailConnectionRecovery::AdminSetup)
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let latest = claim(&store, &user, &thread, "GWS 내 최신 메일 보여줘").await;
     assert!(mail.latest_inbox_chat(&latest.lease).await.unwrap());
     let turn = store
         .conversation(&user, thread.clone(), None)
@@ -182,7 +194,7 @@ async fn gws_offline_wrong_mailbox_and_revoked_binding_never_deliver_metadata_or
             private(&path, &saved);
         }
         mode.store(m, Ordering::SeqCst);
-        let run = claim(&store, &user, &thread, "내 최신 메일 보여줘").await;
+        let run = claim(&store, &user, &thread, "GWS 내 최신 메일 보여줘").await;
         if m >= 2 {
             let service = mail.clone();
             let lease = run.lease.clone();
@@ -306,7 +318,7 @@ async fn gws_first_link_checks_only_signed_profile_and_requires_exact_owner_conf
         mail.gws_inbox_status(&user).await.unwrap()["confirmed"],
         false
     );
-    let before = claim(&store, &user, &thread, "show my latest email").await;
+    let before = claim(&store, &user, &thread, "GWS show my latest email").await;
     assert!(mail.latest_inbox_chat(&before.lease).await.unwrap());
     assert_eq!(lists.load(Ordering::SeqCst), 0);
     let check = mail.gws_inbox_readiness(&user).await.unwrap();
@@ -324,7 +336,7 @@ async fn gws_first_link_checks_only_signed_profile_and_requires_exact_owner_conf
         "ready"
     );
     assert_eq!(lists.load(Ordering::SeqCst), 0);
-    let after = claim(&store, &user, &thread, "show my latest email").await;
+    let after = claim(&store, &user, &thread, "GWS show my latest email").await;
     assert!(mail.latest_inbox_chat(&after.lease).await.unwrap());
     assert_eq!(lists.load(Ordering::SeqCst), 1);
     mode.store(1, Ordering::SeqCst);

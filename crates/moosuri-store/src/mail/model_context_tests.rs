@@ -122,8 +122,8 @@ async fn structured_gmail_helper_derives_admin_and_member_setup_without_model_ur
     let b = member(&store, &a.user, "member-help@example.test").await;
     configured(&store, &a.user).await;
     for (user, expected) in [
-        (&a.user, MailConnectionRecovery::GwsSetup),
-        (&b.user, MailConnectionRecovery::GwsSetup),
+        (&a.user, MailConnectionRecovery::AdminSetup),
+        (&b.user, MailConnectionRecovery::MemberSetup),
     ] {
         let t = store
             .create_thread(user, "Synthetic role guidance".into())

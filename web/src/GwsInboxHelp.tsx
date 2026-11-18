@@ -7,7 +7,7 @@ import "./google-login-help.css";
 
 type Readiness = { state: "unconfigured" | "needs_confirmation" | "ready" | "login_required" | "wrong_account" | "offline"; mailbox?: string; confirmation?: string };
 type Overview = { configured: boolean; mailbox?: string; confirmed?: boolean };
-export function GwsInboxHelp({ accountId, resumeTarget, context = "settings" }: { accountId: string; resumeTarget?: GmailResumeTarget; context?: "chat" | "settings" }) {
+export function GwsInboxHelp({ accountId, resumeTarget, context = "settings", configuredOnly = false }: { accountId: string; resumeTarget?: GmailResumeTarget; context?: "chat" | "settings"; configuredOnly?: boolean }) {
   const scope = useScope(accountId);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [status, setStatus] = useState<Readiness | null>(null);
@@ -65,9 +65,11 @@ export function GwsInboxHelp({ accountId, resumeTarget, context = "settings" }: 
   }, [accountId, scope, relevantPending, fail]);
   useEffect(() => {
     void scope.request<Overview>("/mail/gws-inbox").then(setOverview).catch(fail);
+  }, [scope, fail]);
+  useEffect(() => {
     // Returning from the trusted device's Google screen may only continue an
     // already explicit, unexpired workflow belonging to this account/card.
-    const returned = () => { if (document.visibilityState === "visible" && relevantPending()) void verify(); };
+    const returned = () => { if ((!configuredOnly || overview?.configured) && document.visibilityState === "visible" && relevantPending()) void verify(); };
     returned();
     window.addEventListener("focus", returned);
     window.addEventListener("online", returned);
@@ -77,7 +79,7 @@ export function GwsInboxHelp({ accountId, resumeTarget, context = "settings" }: 
       window.removeEventListener("online", returned);
       document.removeEventListener("visibilitychange", returned);
     };
-  }, [scope, fail, relevantPending, verify]);
+  }, [configuredOnly, overview?.configured, relevantPending, verify]);
   async function login() {
     if (busyRef.current || !claimGws(accountId)) return;
     busyRef.current = true; setBusy(true); setError("");
@@ -103,8 +105,9 @@ export function GwsInboxHelp({ accountId, resumeTarget, context = "settings" }: 
     wrong_account: "연결한 기기에 로그인된 Google 계정이 연결할 Gmail과 다릅니다. 올바른 계정으로 다시 로그인하세요.",
     offline: "연결한 기기에 닿지 않습니다. 연결한 기기를 켜고 네트워크 연결을 확인한 뒤 다시 확인하세요.",
   };
+  if (configuredOnly && !overview?.configured) return null;
   return <section className="gws-inbox-help" aria-label="기기 Gmail 연결" aria-busy={busy}>
-    <div className="gws-inbox-heading"><span className="gws-inbox-symbol" aria-hidden="true">G</span><div><h4>Gmail 연결</h4><p className="fine">기기의 Google 로그인으로 최근 받은메일 읽기</p></div></div>
+    <div className="gws-inbox-heading"><span className="gws-inbox-symbol" aria-hidden="true">G</span><div><h4>기존 기기 Gmail 연결 · 선택 사항</h4><p className="fine">기기의 Google 로그인으로 최근 받은메일 읽기</p></div></div>
     {mailbox && <p className="gws-mailbox"><span className="fine">연결할 계정</span><strong>{mailbox}</strong></p>}
     <p role="status">{busy ? "기기 Gmail 연결 확인 중…" : status ? descriptions[status.state] : overview ? overview.configured ? overview.confirmed ? "이 계정으로 연결한 기록이 있습니다. 연결을 확인하면 사용할 수 있어요." : "기기 연결이 준비됐습니다. 사용할 Gmail 계정을 확인해 주세요." : descriptions.unconfigured : error ? "기기 연결 상태를 불러오지 못했습니다." : "기기 연결 설정 확인 중…"}</p>
     {error && <p role="alert" className="notice">{error}</p>}

@@ -1,24 +1,6 @@
 //! Original-owner literal metadata route. Results never enter model history.
 use super::*;
 impl MailService {
-    pub(crate) async fn gws_route_selected(
-        &self,
-        lease: &moosuri_store::RunLease,
-    ) -> Result<bool, StoreError> {
-        if self.store.gmail_resume_fingerprint(lease).await?.is_some() {
-            return Ok(true);
-        }
-        let Some(registry) = &self.gws_inbox else {
-            return Ok(false);
-        };
-        let owner = self.store.mail_run_owner(lease).await?;
-        // An unreadable explicit registry is not permission to choose another
-        // provider. The literal route will return honest setup/unavailability.
-        Ok(registry
-            .mailbox(&owner.account().id)
-            .map(|m| m.is_some())
-            .unwrap_or(true))
-    }
     pub async fn gws_inbox_status(
         &self,
         user: &UserContext,
@@ -161,28 +143,6 @@ impl MailService {
         }
         Ok(serde_json::json!({"state":"login_started","mailbox":binding.mailbox()}))
     }
-    pub(crate) async fn gws_model_context(
-        &self,
-        lease: &moosuri_store::RunLease,
-    ) -> Result<&'static str, StoreError> {
-        let owner = self.store.mail_run_owner(lease).await?;
-        match &self.gws_inbox {
-            Some(registry) => match registry.mailbox(&owner.account().id) {
-                Ok(Some(_)) => Ok(
-                    "Owner GWS inbox helper is configured (availability not probed). It supports only an explicit latest-INBOX metadata request, up to20 recent messages, literal subject/from/date display with no body/model access. Do not claim the owner lacks all Gmail access. General search, body, attachments, summaries, sending and writes are unsupported by this helper; do not claim them done. For those requests explain the metadata-only limit and offer a supported latest inbox request or the separate existing official Gmail read connection. No need to show a missing-connection card merely because this helper cannot answer a broader query.",
-                ),
-                Err(_) => Ok(
-                    "Owner GWS helper configuration could not be checked. Do not claim it is absent or usable. Direct the owner to /settings/mail to check their GWS helper setup; no mail was read.",
-                ),
-                Ok(None) => Ok(
-                    "No GWS inbox helper is configured for the current owner. For missing live Gmail access, the default connection helper is /settings/mail → GWS. Authentication stays with the owner's GWS device helper, separate from the vault. The existing web OAuth connection is an optional alternative; do not require an installation Google app as the default.",
-                ),
-            },
-            None => Ok(
-                "No GWS inbox helper registry is configured. For missing live Gmail access, the default connection helper is /settings/mail → GWS. Authentication stays with the owner's GWS device helper, separate from the vault. The existing web OAuth connection is an optional alternative; do not require an installation Google app as the default.",
-            ),
-        }
-    }
     /// Some(bool) means this explicit route owned the turn, even on failure.
     /// An offline/misconfigured selected helper cannot silently fall back to OAuth.
     pub(super) async fn gws_latest_chat(
@@ -192,6 +152,9 @@ impl MailService {
         latest: bool,
     ) -> Result<Option<bool>, StoreError> {
         let resumed_pin = self.store.gmail_resume_fingerprint(lease).await?;
+        if resumed_pin.is_none() && !self.store.explicit_gws_latest_request(lease).await? {
+            return Ok(None);
+        }
         if let Some(pin) = resumed_pin {
             let current = self
                 .gws_inbox

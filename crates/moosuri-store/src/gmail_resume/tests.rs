@@ -373,3 +373,254 @@ async fn selected_schedule_context_is_not_downgraded_to_timezone_only() {
         Err(StoreError::Conflict)
     ));
 }
+
+async fn server_connect(s: &Store, u: &UserContext) -> moosuri_core::MailConnection {
+    use moosuri_connectors::gmail::{SecretString, TokenSet};
+    let started = s.start_mail_oauth(u).await.unwrap();
+    let handle = s
+        .capture_mail_oauth(
+            started.state,
+            SecretString::new("synthetic-code".into()).unwrap(),
+        )
+        .await
+        .unwrap();
+    let exchange = s.claim_mail_oauth(u, handle).await.unwrap();
+    s.complete_mail_oauth(
+        exchange,
+        TokenSet {
+            access_token: SecretString::new("synthetic-access".into()).unwrap(),
+            refresh_token: Some(SecretString::new("synthetic-refresh".into()).unwrap()),
+            expires_in: 3600,
+            scopes: Some(
+                moosuri_connectors::gmail::MINIMAL_SCOPES
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            ),
+        },
+        "synthetic@example.test".into(),
+    )
+    .await
+    .unwrap()
+}
+async fn server_card(s: &Store, u: &UserContext, t: &str) -> ChatTurn {
+    let turn = s
+        .submit_turn_with_mission_context(
+            u,
+            t.into(),
+            Uuid::new_v4().to_string(),
+            "최근 메일 뭐야?".into(),
+            None,
+            vec![],
+            Some(ScheduleChatContext {
+                timezone: "Asia/Seoul".into(),
+                target: None,
+            }),
+            None,
+        )
+        .await
+        .unwrap();
+    let original = complete_card(s, u, t, turn.run.id).await;
+    let id = original.run.id.clone();
+    s.call(move|db| { db.conn.execute("UPDATE chat_output SET item='mail-recovery-connect' WHERE run_id=?1 AND item='mail-recovery-gws_setup'",[id])?; Ok(()) }).await.unwrap();
+    s.conversation(u, t.into(), None)
+        .await
+        .unwrap()
+        .turns
+        .pop()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn server_resume_browser_payload_is_once_only_durable_and_connection_pinned() {
+    let _guard = TEST_LOCK.lock().await;
+    let (dir, s, u, t) = setup().await;
+    let original = server_card(&s, &u, &t).await;
+    assert!(original.run.gmail_resume_available);
+    assert!(
+        s.check_gmail_resume(&u, t.clone(), original.run.id.clone(), false)
+            .await
+            .is_ok()
+    );
+    assert!(matches!(
+        s.check_gmail_resume(&u, t.clone(), original.run.id.clone(), true)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let c = server_connect(&s, &u).await;
+    let (a, b) = tokio::join!(
+        s.resume_server_gmail(
+            &u,
+            t.clone(),
+            original.run.id.clone(),
+            c.id.clone(),
+            c.epoch
+        ),
+        s.resume_server_gmail(
+            &u,
+            t.clone(),
+            original.run.id.clone(),
+            c.id.clone(),
+            c.epoch
+        )
+    );
+    let child = a.unwrap();
+    assert_eq!(child.run.id, b.unwrap().run.id);
+    assert_eq!(child.user_text, original.user_text);
+    let claim = s.claim_agent_run().await.unwrap().unwrap();
+    assert_eq!(
+        s.gmail_server_resume_pin(&claim.lease).await.unwrap(),
+        Some((c.id.clone(), c.epoch))
+    );
+    s.pin_latest_inbox(&claim.lease, c.id.clone(), c.epoch)
+        .await
+        .unwrap();
+    s.finish_latest_inbox(&claim.lease, "Synthetic literal latest mail".into(), None)
+        .await
+        .unwrap();
+    drop(s);
+    let s = Store::open(dir.path()).unwrap();
+    let owner = s
+        .login("admin@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap()
+        .user;
+    let replay = s
+        .resume_server_gmail(
+            &owner,
+            t.clone(),
+            original.run.id.clone(),
+            c.id.clone(),
+            c.epoch,
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.run.id, child.run.id);
+    assert_eq!(
+        s.conversation(&owner, t.clone(), None)
+            .await
+            .unwrap()
+            .turns
+            .len(),
+        2
+    );
+    assert!(s.mail_actions(&owner).await.unwrap().is_empty());
+    s.submit_turn(
+        &owner,
+        t.clone(),
+        Uuid::new_v4().to_string(),
+        "A new question".into(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        s.resume_server_gmail(&owner, t, original.run.id, c.id, c.epoch)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+}
+
+#[tokio::test]
+async fn server_resume_rejects_other_owner_scope_epoch_and_queued_disconnect() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, s, u, t) = setup().await;
+    let original = server_card(&s, &u, &t).await;
+    let other = member(&s, &u, "gmail-other@example.test").await.user;
+    let foreign = server_connect(&s, &other).await;
+    assert!(
+        s.resume_server_gmail(
+            &other,
+            t.clone(),
+            original.run.id.clone(),
+            foreign.id.clone(),
+            foreign.epoch
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        s.resume_server_gmail(
+            &u,
+            t.clone(),
+            original.run.id.clone(),
+            foreign.id,
+            foreign.epoch
+        )
+        .await
+        .is_err()
+    );
+    let c = server_connect(&s, &u).await;
+    assert!(matches!(
+        s.resume_server_gmail(
+            &u,
+            t.clone(),
+            original.run.id.clone(),
+            c.id.clone(),
+            c.epoch + 1
+        )
+        .await,
+        Err(StoreError::Conflict)
+    ));
+    let id = c.id.clone();
+    s.call(move |db| {
+        db.conn
+            .execute("UPDATE mail_connections SET scopes='[]' WHERE id=?1", [id])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        s.resume_server_gmail(
+            &u,
+            t.clone(),
+            original.run.id.clone(),
+            c.id.clone(),
+            c.epoch
+        )
+        .await,
+        Err(StoreError::Conflict)
+    ));
+    let id = c.id.clone();
+    s.call(move |db| {
+        db.conn.execute(
+            "UPDATE mail_connections SET scopes=?1 WHERE id=?2",
+            params![
+                serde_json::to_string(&moosuri_connectors::gmail::MINIMAL_SCOPES).unwrap(),
+                id
+            ],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let child = s
+        .resume_server_gmail(
+            &u,
+            t.clone(),
+            original.run.id.clone(),
+            c.id.clone(),
+            c.epoch,
+        )
+        .await
+        .unwrap();
+    s.disconnect_mail(&u, c.id.clone()).await.unwrap();
+    assert!(
+        s.resume_server_gmail(&u, t.clone(), original.run.id, c.id, c.epoch)
+            .await
+            .is_err()
+    );
+    assert!(
+        s.claim_agent_run().await.unwrap().is_none(),
+        "withdrawal must fence a queued child before provider IO"
+    );
+    let child = s
+        .conversation(&u, t, None)
+        .await
+        .unwrap()
+        .turns
+        .into_iter()
+        .find(|turn| turn.run.id == child.run.id)
+        .unwrap();
+    assert_ne!(child.run.state, RunState::Queued);
+    assert!(s.mail_actions(&u).await.unwrap().is_empty());
+}

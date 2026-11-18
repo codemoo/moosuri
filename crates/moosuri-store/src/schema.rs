@@ -331,6 +331,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 81,
         sql: include_str!("../../../migrations/assistant/0081_gmail_resume.sql"),
     },
+    Migration {
+        version: 82,
+        sql: include_str!("../../../migrations/assistant/0082_gmail_server_resume.sql"),
+    },
 ];
 
 pub(crate) const CURRENT_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].version;

@@ -191,7 +191,7 @@ function GoogleSetupAccount({ accountId, onExpired, back }: { accountId: string;
   const ready = !!status?.configured && status.redirect_matches;
   return <main className="google-setup-scroll">
     {back && <button className="text-button" onClick={back}>← 대화로 돌아가기</button>}
-    <p>이 화면은 다른 연결 방식인 Google 웹 OAuth의 설치 설정입니다. 최근 받은메일만 읽으려면 <a href="/settings/mail">기기 GWS 연결 안내</a>를 먼저 확인하세요.</p>
+    <p>이 설치의 Google 앱을 준비하면 각 회원이 <a href="/settings/mail">내 Gmail 설정</a>에서 본인 Google 계정으로 로그인할 수 있습니다.</p>
     <div className="google-setup-intro"><p className="eyebrow">GOOGLE · 설치 설정</p><h2>한 번 준비하고, 각자 연결하세요.</h2><p>설치자가 Google 앱 하나를 준비합니다. 가족과 친구는 각자의 Google 계정으로 로그인해 개인 Gmail 또는 Calendar를 각각 연결합니다. Calendar는 별도 동의를 받고 Gmail 권한을 확장하지 않습니다.</p></div>
     {error && <p className="notice" role="alert">{error}</p>}
     {notice && <p className="google-setup-success" role="status">{notice}</p>}

@@ -45,10 +45,12 @@ impl Store {
             }
             let (recovery, text) = if app.is_some() && context.needs_reconnect {
                 (MailConnectionRecovery::Reconnect, "Gmail 읽기 연결을 다시 인증해야 해요. Gmail 설정에서 본인 계정을 다시 연결한 뒤 여기서 요청해 주세요. 아직 메일은 읽지 않았어요.")
+            } else if app.is_some() {
+                (MailConnectionRecovery::Connect, "Gmail 설정에서 본인 Google 계정으로 로그인하고 읽기 권한을 허용해 주세요. 연결은 이 서버에 보관되며 기기 도우미는 필요하지 않아요. 아직 메일은 읽지 않았어요.")
             } else if context.admin {
-                (MailConnectionRecovery::GwsSetup, "Gmail을 확인하려면 Gmail 설정에서 본인 기기의 GWS 받은편지함 도우미를 연결해 주세요. GWS 인증은 별도 기기에 유지되며 볼트 연결은 필요하지 않아요. 웹 OAuth를 원하면 관리자인 본인이 Google 앱을 설정하는 기존 방식도 선택할 수 있어요. 아직 메일은 읽지 않았어요.")
+                (MailConnectionRecovery::AdminSetup, "이 서버의 Google OAuth 앱이 아직 준비되지 않았어요. 관리자인 본인이 /admin/google에서 앱을 설정한 뒤 Gmail 설정에서 본인 Google 계정의 읽기 권한을 연결해 주세요. 아직 메일은 읽지 않았어요.")
             } else {
-                (MailConnectionRecovery::GwsSetup, "Gmail을 확인하려면 Gmail 설정에서 본인 기기의 GWS 받은편지함 도우미를 연결해 주세요. GWS 인증은 별도 기기에 유지되며 볼트 연결은 필요하지 않아요. 웹 OAuth를 원하면 설치 관리자에게 Google 앱 준비를 요청하는 기존 방식도 선택할 수 있어요. 아직 메일은 읽지 않았어요.")
+                (MailConnectionRecovery::MemberSetup, "이 서버의 Google OAuth 앱이 아직 준비되지 않았어요. 설치 관리자에게 앱 설정을 요청한 뒤 Gmail 설정에서 본인 Google 계정의 읽기 권한을 연결해 주세요. 아직 메일은 읽지 않았어요.")
             };
             let item = format!("mail-recovery-{}", json(&recovery)?.trim_matches('"'));
             crate::chat::apply_patches(&tx, &run, vec![

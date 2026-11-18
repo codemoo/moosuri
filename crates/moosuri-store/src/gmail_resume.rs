@@ -12,7 +12,14 @@ fn original(c: &Connection, r: &Run) -> Result<Option<(String, Option<ScheduleCh
         || !Store::latest_inbox_intent(&r.text)
         || !matches!(
             crate::mail::latest::recovery_view(c, &r.tenant, &r.id)?,
-            Some(MailConnectionRecovery::GwsSetup)
+            Some(
+                MailConnectionRecovery::GwsSetup
+                    | MailConnectionRecovery::AdminSetup
+                    | MailConnectionRecovery::MemberSetup
+                    | MailConnectionRecovery::Connect
+                    | MailConnectionRecovery::Reconnect
+                    | MailConnectionRecovery::ChooseAccount
+            )
         )
         || crate::media::has_context(c, &r.tenant, &r.id)?
         || crate::missions::is_mission(c, &r.tenant, &r.id)?
@@ -123,10 +130,21 @@ impl Store {
         user: &UserContext,
         thread: String,
         run: String,
+        legacy_gws: bool,
     ) -> Result<()> {
         let user = user.clone();
-        self.call(move |db| checked(&db.conn, &user, &thread, &run).map(|_| ()))
-            .await
+        self.call(move |db| {
+            let (original, _, _) = checked(&db.conn, &user, &thread, &run)?;
+            let is_legacy = matches!(
+                crate::mail::latest::recovery_view(&db.conn, &original.tenant, &original.id)?,
+                Some(MailConnectionRecovery::GwsSetup)
+            );
+            if is_legacy != legacy_gws {
+                return Err(StoreError::Conflict);
+            }
+            Ok(())
+        })
+        .await
     }
     pub async fn resume_gmail(
         &self,
@@ -139,7 +157,7 @@ impl Store {
         self.call(move |db| {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let (original,request,context)=checked(&tx,&user,&thread,&run)?;
-            if !crate::mail::gws::gws_inbox_confirmed_in(&tx,&user,&fingerprint)? { return Err(StoreError::Conflict); }
+            if !matches!(crate::mail::latest::recovery_view(&tx,&original.tenant,&original.id)?, Some(MailConnectionRecovery::GwsSetup)) || !crate::mail::gws::gws_inbox_confirmed_in(&tx,&user,&fingerprint)? { return Err(StoreError::Conflict); }
             let turn=chat::submit_turn_context_in(&tx,&db.provider_key,&db.web_profile,user,thread,request,original.text,None,vec![],context,None)?;
             let previous:Option<Vec<u8>>=tx.query_row("SELECT fingerprint FROM gmail_resume_bindings WHERE tenant_id=?1 AND run_id=?2",params![original.tenant,turn.run.id],|row|row.get(0)).optional()?;
             if previous.as_ref().is_some_and(|p|p.as_slice()!=fingerprint) { return Err(StoreError::Conflict); }
@@ -147,6 +165,42 @@ impl Store {
             tx.commit()?;
             Ok(turn)
         }).await
+    }
+    /// The caller supplies only a connection returned by verified OAuth completion.
+    /// Owner, actual read scope, unique active mailbox and epoch are checked in
+    /// the same transaction as the canonical child and its immutable route pin.
+    pub async fn resume_server_gmail(
+        &self,
+        user: &UserContext,
+        thread: String,
+        run: String,
+        connection_id: String,
+        connection_epoch: i64,
+    ) -> Result<ChatTurn> {
+        let user = user.clone();
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let (original, request, context) = checked(&tx, &user, &thread, &run)?;
+            if matches!(crate::mail::latest::recovery_view(&tx,&original.tenant,&original.id)?, Some(MailConnectionRecovery::GwsSetup)) { return Err(StoreError::Conflict); }
+            crate::mail::latest::guard_server_resume(&tx, &user, &connection_id, connection_epoch)?;
+            let turn = chat::submit_turn_context_in(&tx, &db.provider_key, &db.web_profile, user, thread, request, original.text, None, vec![], context, None)?;
+            let previous: Option<(String,i64)> = tx.query_row("SELECT connection_id,connection_epoch FROM gmail_server_resume_bindings WHERE tenant_id=?1 AND run_id=?2", params![original.tenant,turn.run.id], |r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+            if previous.as_ref().is_some_and(|(id,epoch)|id!=&connection_id || *epoch!=connection_epoch) { return Err(StoreError::Conflict); }
+            tx.execute("INSERT OR IGNORE INTO gmail_server_resume_bindings VALUES(?1,?2,?3,?4)", params![original.tenant,turn.run.id,connection_id,connection_epoch])?;
+            // Dependencies exist before dispatch, so disconnect withdraws queued
+            // work as well as already delivered output.
+            tx.execute("INSERT OR IGNORE INTO mail_run_dependencies VALUES(?1,?2,?3,?4)", params![original.tenant,turn.run.id,connection_id,connection_epoch])?;
+            tx.commit()?;
+            Ok(turn)
+        }).await
+    }
+    pub async fn gmail_server_resume_pin(&self, lease: &RunLease) -> Result<Option<(String, i64)>> {
+        let lease = lease.clone();
+        self.call(move |db| {
+            let r = chat::guard(&db.conn, &db.provider_key, &lease)?;
+            crate::mail::latest::server_resume_pin(&db.conn, &r.tenant, &r.id)
+        })
+        .await
     }
     /// Read under the execution lease; consumed by the literal GWS route before
     /// IO and at delivery. A resumed turn cannot select another mailbox/provider.

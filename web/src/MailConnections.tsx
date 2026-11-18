@@ -7,6 +7,7 @@ import {
 } from "react";
 import type {
   MailAction,
+  MailConnection,
   MailConnections as Connections,
   MailDraftContent,
 } from "../shared/api-types";
@@ -19,6 +20,7 @@ import { MailApproval } from "./MailApproval";
 import { GoogleLoginHelp } from "./GoogleLoginHelp";
 import { rememberMailReturn } from "./mail-return";
 import { GwsInboxHelp } from "./GwsInboxHelp";
+import { clearGoogleMailResume, pendingGoogleMailResume, resumeGoogleMail } from "./google-mail-connection";
 import "./mail.css";
 type ReadMessage = {
   id: string;
@@ -48,7 +50,16 @@ const blank: MailDraftContent = {
   text: "",
   reply: null,
 };
-export function MailConnections({
+export function MailConnections(props: {
+  accountId: string;
+  onExpired: () => void;
+  back: () => void;
+  originThreadId: string | null;
+  openGoogleSetup?: () => void;
+}) {
+  return <MailConnectionsAccount key={props.accountId} {...props} />;
+}
+function MailConnectionsAccount({
   accountId,
   onExpired,
   back,
@@ -81,6 +92,7 @@ export function MailConnections({
   const [timingEditing, setTimingEditing] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const oauthStarted = useRef(false);
+  const oauthCallback = useRef<{ handle: string | null; denied: boolean } | null>(null);
   function fail(e: unknown) {
     if (isAborted(e)) return;
     if (e instanceof ApiFailure && e.status === 401) onExpired();
@@ -111,27 +123,45 @@ export function MailConnections({
     return () => window.clearInterval(timer);
   }, [scope]);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const handle = params.get("oauth");
-    const denied = params.get("oauth_error");
-    if (handle || denied) {
-      params.delete("oauth");
-      params.delete("oauth_error");
-      const query = params.toString();
-      window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : "") + window.location.hash);
+    if (!oauthCallback.current) {
+      const params = new URLSearchParams(window.location.search);
+      const handle = params.get("oauth");
+      const denied = params.has("oauth_error");
+      oauthCallback.current = { handle, denied };
+      if (handle || denied) {
+        params.delete("oauth"); params.delete("oauth_error");
+        const query = params.toString();
+        window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : "") + window.location.hash);
+      }
     }
-    if (denied)
-      setError("Google 연결을 허락하지 않았습니다. 원할 때 다시 연결하세요.");
-    if (handle && !oauthStarted.current) {
+    let active = true;
+    void Promise.resolve().then(async () => {
+      if (!active || oauthStarted.current) return;
+      const { handle, denied } = oauthCallback.current!;
+      if (denied) {
+        clearGoogleMailResume(accountId);
+        setError("Google 연결을 허락하지 않았습니다. 원할 때 다시 연결하세요.");
+        oauthCallback.current!.handle = null;
+        return;
+      }
+      if (!handle) return;
       oauthStarted.current = true;
+      oauthCallback.current!.handle = null;
       setBusy(true);
-      void scope
-        .request("/mail/oauth/complete", "POST", { handle })
-        .then(reload)
-        .then(() => setConnectionNotice("Google 연결을 마쳤습니다. 연결된 계정을 확인한 뒤 대화로 돌아가 원래 요청을 다시 보내세요."))
-        .catch(fail)
-        .finally(() => setBusy(false));
-    }
+      const target = pendingGoogleMailResume(accountId);
+      try {
+        const verified = await scope.request<MailConnection>("/mail/oauth/complete", "POST", { handle });
+        if (!active) return;
+        await reload();
+        if (!active) return;
+        if (target) {
+          await resumeGoogleMail(accountId, target, verified, scope.request);
+          if (active) setConnectionNotice("Google 연결을 마쳤습니다. 원래 받은메일 요청을 이어갑니다.");
+        } else setConnectionNotice("Google 연결을 마쳤습니다. 연결된 계정을 확인한 뒤 대화로 돌아가세요.");
+      } catch (e) { if (active) { clearGoogleMailResume(accountId); fail(e); } }
+      finally { if (active) setBusy(false); }
+    });
+    return () => { active = false; };
   }, [scope]);
   useEffect(() => {
     const c = connections?.connections.find((c) => c.id === connection);
@@ -168,6 +198,7 @@ export function MailConnections({
   const action = actions.find((a) => a.id === selected) ?? null;
   async function connect(compose = false) {
     rememberMailReturn(accountId, originThreadId);
+    clearGoogleMailResume(accountId);
     setBusy(true);
     setError("");
     try {
@@ -301,13 +332,12 @@ export function MailConnections({
       )}
       {connectionNotice && <p role="status">{connectionNotice}</p>}
       <button onClick={() => void reload().catch(fail)}>상태 새로고침</button>
-      <GwsInboxHelp key={accountId} accountId={accountId} />
-      <details className="mail-alternative"><summary>다른 방법 · Google 웹 OAuth와 메일 작성</summary>
+      <p>Google 공식 화면에서 본인 계정으로 로그인하면 이 서버에서 Gmail을 사용할 수 있습니다.</p>
       {!connections ? (
         <p role="status">연결 상태 확인 중…</p>
       ) : (
         <section className="admin-card">
-          <h3>웹 OAuth 개인 연결</h3>
+          <h3>내 Google 계정 연결</h3>
           {!connections.configured && !connections.connections.some(c=>c.native_send) && (
             <div><p>{openGoogleSetup ? "설치의 Google 앱 설정을 먼저 준비하세요. 설정 후 각 회원이 자신의 계정으로 연결합니다." : "설치자에게 Google 연결 설정을 요청하세요. 준비가 끝나면 여기서 본인 Google 계정으로 로그인할 수 있습니다."} 다른 기능은 계속 사용할 수 있습니다.</p>{openGoogleSetup && <button onClick={openGoogleSetup}>Google 설치 설정 열기</button>}</div>
           )}
@@ -490,7 +520,7 @@ export function MailConnections({
         key={connection} connection={connection} action={action} request={scope.request.bind(scope)} fail={fail}
         disabled={busy || !!editing || timingEditing}
         importDraft={content => { setSelected(null); setEditing(null); setTimingEditing(false); setDraft(content); setRecipients({to:content.to.join(", "),cc:content.cc.join(", "),bcc:content.bcc.join(", ")}); }} />}
-      </details>
+      <GwsInboxHelp key={accountId} accountId={accountId} configuredOnly />
       <section className="admin-card">
         <h3>발송 허락과 결과</h3>
         <ul>

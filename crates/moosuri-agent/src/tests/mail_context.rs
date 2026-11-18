@@ -70,7 +70,7 @@ async fn gmail_connection_helper_requires_structured_current_intent_and_keeps_hi
     let app=Router::new().route("/v1/chat/completions",post(move |axum::Json(body):axum::Json<Value>|{let captured=captured.clone();async move {
         let messages=body["messages"].as_array().unwrap();let system=messages[0]["content"].as_str().unwrap();
         assert!(system.contains("MOOSURI_GMAIL_CAPABILITY_V1"));
-        assert!(system.contains("\"recovery\":\"gws_setup\""));
+        assert!(system.contains("\"recovery\":\"admin_setup\""));
         assert!(system.contains("\"run_read_route\":\"none\""));
         assert!(system.contains("/admin/google"));assert!(system.contains("latest actual user request"));
         assert!(!body.to_string().contains(PRIVATE));
@@ -170,7 +170,7 @@ async fn gmail_connection_helper_requires_structured_current_intent_and_keeps_hi
         if current == CURRENT {
             assert!(matches!(
                 done.run.mail_connection_recovery,
-                Some(moosuri_core::MailConnectionRecovery::GwsSetup)
+                Some(moosuri_core::MailConnectionRecovery::AdminSetup)
             ));
             assert!(
                 done.assistant

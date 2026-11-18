@@ -17,20 +17,12 @@ impl MailService {
         &self,
         lease: &moosuri_store::RunLease,
     ) -> Result<bool, StoreError> {
-        let owner = self.store.mail_run_owner(lease).await?;
-        if let Some(registry) = &self.gws_inbox {
-            match registry.mailbox(&owner.account().id) {
-                Ok(Some(_)) | Err(_) => return Ok(false),
-                Ok(None) => {}
-            }
-        }
         let c = self.store.mail_model_connection_context(lease).await?;
         Ok(!c.server_read_connected && !c.native_read_admitted)
     }
 
     pub(crate) async fn finish_model_connection_help(
         &self,
-        lease: &moosuri_store::RunLease,
         step: &moosuri_store::StepLease,
         arguments: &str,
     ) -> Result<(), StoreError> {
@@ -41,15 +33,6 @@ impl MailService {
             .map_err(|_| StoreError::InvalidInput)?;
         // Resolve setup again after the model response. This never invokes Gmail
         // or OAuth IO; only the trusted runtime can carry the installation pin.
-        let owner = self.store.mail_run_owner(lease).await?;
-        if let Some(registry) = &self.gws_inbox
-            && registry
-                .mailbox(&owner.account().id)
-                .map_err(|_| StoreError::Unavailable)?
-                .is_some()
-        {
-            return Err(StoreError::Conflict);
-        }
         let app = self.oauth_client().await?.map(|app| app.pin);
         let _delivery = self.signals.delivery.write().await;
         self.store

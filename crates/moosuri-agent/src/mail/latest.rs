@@ -55,8 +55,30 @@ impl MailService {
         else {
             return Ok(false);
         };
+        if let Some((id, epoch)) = self.store.gmail_server_resume_pin(lease).await? {
+            if !connections
+                .iter()
+                .any(|c| c.id == id && c.epoch == epoch && !c.native_send && c.status == "active")
+            {
+                return Err(StoreError::Conflict);
+            }
+        }
         if let Some(handled) = self.gws_latest_chat(lease, &user, latest).await? {
             return Ok(handled);
+        }
+        // Preserve an explicitly admitted native read when no server connection
+        // exists. A fresh user's setup and any server-pinned continuation use
+        // server OAuth; having an optional device grant never steals that route.
+        if !connections
+            .iter()
+            .any(|c| !c.native_send && c.status == "active")
+            && self
+                .store
+                .mail_model_connection_context(lease)
+                .await?
+                .native_read_admitted
+        {
+            return Ok(false);
         }
         if !latest
             && connections
@@ -66,25 +88,6 @@ impl MailService {
             return Ok(false);
         }
         let configured = self.configured().await;
-        if !connections
-            .iter()
-            .any(|c| !c.native_send && (c.status == "active" || c.status == "needs_reconnect"))
-        {
-            let _delivery = self.signals.delivery.write().await;
-            let text = if latest {
-                "최근 받은 메일을 보려면 아래에서 Gmail을 연결해 주세요. 연결하면 이 대화에서 조회를 이어갈 수 있어요."
-            } else {
-                "Gmail을 확인하려면 아래에서 본인 계정을 연결해 주세요."
-            };
-            self.store
-                .finish_mail_connection_guidance(
-                    lease,
-                    text.into(),
-                    moosuri_core::MailConnectionRecovery::GwsSetup,
-                )
-                .await?;
-            return Ok(true);
-        }
         if let Some((guidance, recovery)) = connection_guidance(
             configured,
             user.account().role == moosuri_core::Role::Admin,

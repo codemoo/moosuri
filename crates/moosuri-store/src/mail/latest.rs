@@ -5,6 +5,10 @@ use crate::chat::{self, RunLease};
 // Whole-message grammar: source text, quotes, negations, other owners and
 // compound actions cannot obtain mail authority by mentioning a matching phrase.
 fn intent(text: &str) -> bool {
+    let text = text
+        .strip_prefix("GWS ")
+        .or_else(|| text.strip_prefix("gws "))
+        .unwrap_or(text);
     if text.len() > 512 || text.contains(['\n', '\r']) {
         return false;
     }
@@ -249,7 +253,60 @@ pub(crate) fn recovery_view(
     .transpose()
 }
 
+pub(crate) fn server_resume_pin(
+    conn: &Connection,
+    tenant: &str,
+    run: &str,
+) -> Result<Option<(String, i64)>> {
+    Ok(conn.query_row("SELECT connection_id,connection_epoch FROM gmail_server_resume_bindings WHERE tenant_id=?1 AND run_id=?2", params![tenant,run], |r|Ok((r.get(0)?,r.get(1)?))).optional()?)
+}
+pub(crate) fn guard_server_resume(
+    conn: &Connection,
+    user: &UserContext,
+    id: &str,
+    epoch: i64,
+) -> Result<()> {
+    let c = connection(conn, user, id)?;
+    let count:i64 = conn.query_row("SELECT count(*) FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND status='active' AND native_send=0", params![user.tenant.0,user.account.id],|r|r.get(0))?;
+    let scopes: String = conn.query_row(
+        "SELECT scopes FROM mail_connections WHERE tenant_id=?1 AND id=?2",
+        params![user.tenant.0, id],
+        |r| r.get(0),
+    )?;
+    if count != 1
+        || c.native_send
+        || c.status != "active"
+        || c.epoch != epoch
+        || !parse::<Vec<String>>(&scopes)?
+            .iter()
+            .any(|s| s == moosuri_connectors::gmail::READ_SCOPE)
+    {
+        return Err(StoreError::Conflict);
+    }
+    Ok(())
+}
+fn guard_resume_selection(
+    conn: &Connection,
+    tenant: &str,
+    run: &str,
+    id: &str,
+    epoch: i64,
+) -> Result<()> {
+    if server_resume_pin(conn, tenant, run)?.is_some_and(|(p, e)| p != id || e != epoch) {
+        return Err(StoreError::Conflict);
+    }
+    Ok(())
+}
+
 impl Store {
+    pub async fn explicit_gws_latest_request(&self, lease: &RunLease) -> Result<bool> {
+        let lease = lease.clone();
+        self.call(move |db| {
+            let r = chat::guard(&db.conn, &db.provider_key, &lease)?;
+            Ok((r.text.starts_with("GWS ") || r.text.starts_with("gws ")) && intent(&r.text))
+        })
+        .await
+    }
     /// Cheap discovery only; authority is revalidated against the stored text.
     pub fn latest_inbox_intent(text: &str) -> bool {
         intent(text)
@@ -286,6 +343,7 @@ impl Store {
             let run = chat::guard(&tx, &db.provider_key, &lease)?;
             if !intent(&run.text) || crate::missions::is_mission(&tx, &run.tenant, &run.id)? { return Err(StoreError::Forbidden); }
             let user = chat::authority(&tx, &run)?;
+            guard_resume_selection(&tx,&run.tenant,&run.id,&id,epoch)?;
             let c = connection(&tx, &user, &id)?;
             let count: i64 = tx.query_row("SELECT count(*) FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND status='active' AND native_send=0", params![user.tenant.0, user.account.id], |r| r.get(0))?;
             if count != 1 || c.status != "active" || c.native_send || c.epoch != epoch { return Err(StoreError::Conflict); }
@@ -353,6 +411,7 @@ impl Store {
                 chat::apply_patches(&tx, &run, vec![OutputPatch::Append { item, text: String::new(), phase: None, refusal: false }])?;
             }
             if let Some((id, epoch, app)) = &pin {
+                guard_resume_selection(&tx,&run.tenant,&run.id,id,*epoch)?;
                 let c = connection(&tx, &user, id)?;
                 if c.status != "active" || c.native_send || c.epoch != *epoch { return Err(StoreError::Conflict); }
                 let count: i64 = tx.query_row("SELECT count(*) FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 AND status='active' AND native_send=0", params![user.tenant.0, user.account.id], |r| r.get(0))?;

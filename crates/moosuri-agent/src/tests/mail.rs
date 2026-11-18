@@ -94,11 +94,11 @@ async fn latest_inbox_unconfigured_turn_finishes_without_any_model_call() {
             .iter()
             .map(|m| m.text.as_str())
             .collect::<String>();
-        assert!(text.contains("GWS 받은편지함 도우미"));
+        assert!(text.contains("Google 앱"));
         assert!(text.contains("관리자인 본인"));
         assert!(matches!(
             done.run.mail_connection_recovery,
-            Some(moosuri_core::MailConnectionRecovery::GwsSetup)
+            Some(moosuri_core::MailConnectionRecovery::AdminSetup)
         ));
         assert_eq!(
             store.usage_summary(&user).await.unwrap().dispatched_calls,
@@ -128,7 +128,7 @@ async fn unconnected_inbox_request_recovers_before_unverified_model_tools_error(
     assert_eq!(blocked.run.state, RunState::Completed);
     assert!(matches!(
         blocked.run.mail_connection_recovery,
-        Some(moosuri_core::MailConnectionRecovery::GwsSetup)
+        Some(moosuri_core::MailConnectionRecovery::AdminSetup)
     ));
     assert!(
         blocked
@@ -380,12 +380,15 @@ async fn inbox_recovery_uses_actual_google_setup_and_current_members_own_connect
             .iter()
             .map(|m| m.text.as_str())
             .collect::<String>();
-        assert!(matches!(
-            turn.run.mail_connection_recovery,
-            Some(MailConnectionRecovery::GwsSetup)
-        ));
-        assert!(text.contains("GWS 받은편지함 도우미"));
-        assert!(text.contains("설치 관리자"));
+        assert!(match turn.run.mail_connection_recovery {
+            Some(MailConnectionRecovery::Connect) => configured,
+            Some(MailConnectionRecovery::MemberSetup) => !configured,
+            _ => false,
+        });
+        assert!(text.contains("본인 Google 계정"));
+        if !configured {
+            assert!(text.contains("설치 관리자"));
+        }
         assert!(!text.contains("관리자인 본인"));
         assert_eq!(turn.run.state, RunState::Completed);
         assert_eq!(

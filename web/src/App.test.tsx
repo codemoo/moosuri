@@ -14,6 +14,7 @@ import App from "./App";
 import { RequestScope } from "./api";
 import { rememberMailReturn } from "./mail-return";
 import { GWS_CONNECTED } from "./gws-connection";
+import { beginGoogleMailResume } from "./google-mail-connection";
 import type { CommunitySkillCard, SessionView, ThreadSummary } from "../shared/api-types";
 
 const alice: SessionView = {
@@ -131,6 +132,28 @@ it("returns an OAuth callback to the original owned conversation without sending
   expect(calls.filter(call => call.path === "/mail/oauth/complete")).toHaveLength(1);
   expect(calls.filter(call => call.init.method === "POST").map(call => call.path)).toEqual(["/mail/oauth/complete"]);
   expect(sessionStorage.getItem("moosuri.gmail-return.v1." + alice.user.id)).toBeNull();
+});
+
+it("finishes web OAuth, resumes its eligible read once and returns to the original conversation", async () => {
+  const original = {...thread,id:"11111111-1111-4111-8111-111111111111",title:"Original web Gmail read"};
+  const runId = "22222222-2222-4222-8222-222222222222";
+  const connection = {id:"33333333-3333-4333-8333-333333333333",epoch:4,email:"mine@example.test",status:"active",compose_enabled:false};
+  rememberMailReturn(alice.user.id, original.id);
+  beginGoogleMailResume(alice.user.id, {threadId:original.id,runId});
+  window.history.replaceState(null,"","/settings/mail?oauth=synthetic-once");
+  const calls = server(path => path === "/threads" ? response({threads:[thread,original]})
+    : path === "/mail/connections" ? response({configured:true,connections:[connection]})
+    : path === "/mail/actions" ? response({actions:[]})
+    : path === "/mail/gws-inbox" ? response({configured:false})
+    : path === "/mail/oauth/complete" ? response(connection)
+    : path.endsWith("/resume-gmail") ? response({}) : response({},204));
+  render(<StrictMode><App/></StrictMode>);
+  await screen.findByRole("heading", {name:original.title,level:1});
+  expect(window.location.pathname).toBe("/app");
+  expect(calls.filter(call => call.init.method === "POST").map(call => ({path:call.path,body:JSON.parse(String(call.init.body))}))).toEqual([
+    {path:"/mail/oauth/complete",body:{handle:"synthetic-once"}},
+    {path:`/threads/${original.id}/runs/${runId}/resume-gmail`,body:{connection_id:connection.id,connection_epoch:4}},
+  ]);
 });
 
 it("returns a verified Gmail resume to its owned original thread from settings without resending text", async () => {

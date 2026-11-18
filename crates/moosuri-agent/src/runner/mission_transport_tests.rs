@@ -209,3 +209,81 @@ async fn claude_mission_rejects_unavailable_profile_and_unbound_round_without_to
         runtime.shutdown().await;
     }
 }
+
+#[tokio::test]
+async fn verified_claude_chat_delegation_uses_isolated_planner_and_links_actual_mission_receipts() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let (_directory, store, user, fixture) = setup().await;
+    fixture.behavior("tool-bridge-mission-chat");
+    let thread = store
+        .create_thread(&user, "Synthetic natural delegation".into())
+        .await
+        .unwrap()
+        .id;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let original = "Take this on in the background: Calculate the exact sum of 917.13 and 409.15";
+    let admitted = store
+        .submit_turn(&user, thread.clone(), request_id.clone(), original.into())
+        .await
+        .unwrap();
+    assert_eq!(admitted.run.model.source, ModelSource::PersonalClaudeCode);
+    let before = store.usage_summary(&user).await.unwrap().dispatched_calls;
+    let runtime = runtime(store.clone(), Some(Arc::new(fixture.profile.clone())));
+    runtime.wake();
+    let chat = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let turn = store
+                .conversation(&user, thread.clone(), None)
+                .await
+                .unwrap()
+                .turns
+                .remove(0);
+            if !turn.run.state.active() {
+                break turn;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(chat.user_text, original);
+    assert_eq!(chat.run.state, RunState::Completed, "{:?}", chat.run.error);
+    let receipt = chat.run.mission_receipt.unwrap();
+    assert_eq!(receipt.request_id, request_id);
+    assert_eq!(receipt.action, "create_now");
+    let target = receipt.target.unwrap();
+    assert_eq!(target.kind, "one_off");
+    let done = terminal(&store, &user).await;
+    assert_eq!(done.id, target.id);
+    assert_eq!(done.request.request_id, request_id);
+    assert_eq!(
+        done.request.task,
+        "Calculate the exact sum of 917.13 and 409.15"
+    );
+    assert!(matches!(done.request.execution_mode, MissionMode::Durable));
+    // Natural delegation preserves semantic owner review; actual arithmetic
+    // evidence does not upgrade that criterion to automatic completion.
+    assert_eq!(done.state, "partial", "{:?}", done.report);
+    assert!(
+        done.request
+            .checks
+            .iter()
+            .any(|check| matches!(check, MissionCheck::UserReview { .. }))
+    );
+    let candidate = done.result.unwrap();
+    assert_eq!(candidate.text, "The exact sum is 1326.28.");
+    assert_eq!(candidate.evidence.len(), 1);
+    assert!(candidate.evidence[0].call_id.starts_with("moosuri_"));
+    assert!(
+        done.receipts
+            .iter()
+            .any(|receipt| receipt.detail.contains("1326.28"))
+    );
+    assert_eq!(store.missions(&user).await.unwrap().len(), 1);
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls - before,
+        3
+    );
+    assert_eq!(fixture.launches(), 5);
+    runtime.shutdown().await;
+}

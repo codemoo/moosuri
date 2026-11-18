@@ -181,6 +181,42 @@ async fn configured(base: &str) -> (tempfile::TempDir, Store, UserContext, Strin
         .id;
     (dir, store, user, thread)
 }
+async fn select_personal_compatible(s: &Store, u: &UserContext, base: &str) {
+    let provider = s
+        .create_personal_compatible(
+            u,
+            ProviderChange {
+                name: "Synthetic personal endpoint".into(),
+                enabled: true,
+                config: s
+                    .admit_personal_compatible_config(u, base.to_owned(), vec!["127.0.0.1".into()])
+                    .await
+                    .unwrap(),
+                credential: CredentialChange::Clear,
+            },
+        )
+        .await
+        .unwrap();
+    let choice = s
+        .record_model_probe(u, provider.id.clone(), 1, "fixture-model".into(), None)
+        .await
+        .unwrap();
+    s.record_tool_probe(u, provider.id.clone(), 1, choice.model.clone(), None)
+        .await
+        .unwrap();
+    s.set_model_preference(
+        u,
+        Some(ModelSelection {
+            source: moosuri_core::ModelSource::PersonalCompatible,
+            provider_id: provider.id,
+            provider_revision: 1,
+            model: choice.model,
+            effort: None,
+        }),
+    )
+    .await
+    .unwrap();
+}
 async fn submit(store: &Store, user: &UserContext, thread: &str) -> ChatTurn {
     store
         .submit_turn(

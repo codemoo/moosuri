@@ -131,9 +131,21 @@ async fn artifact_no_command_then_mission_skip_reads_actual_source_and_answers_w
 }
 #[tokio::test]
 async fn artifact_no_command_then_current_task_classifier_saves_exact_mission_at_second_step() {
+    verify_chat_registration(false).await;
+}
+
+#[tokio::test]
+async fn personal_compatible_chat_registers_the_exact_requested_recurring_task() {
+    verify_chat_registration(true).await;
+}
+
+async fn verify_chat_registration(personal: bool) {
     let _g = TEST_LOCK.lock().await;
     let fixture = fixture().await;
     let (_dir, s, u, thread) = knowledge::tool_configured(&fixture.base).await;
+    if personal {
+        select_personal_compatible(&s, &u, &fixture.base).await;
+    }
     let text = "저장된 syntheticcapacity 문서를 매일 아침9시에 찾아 요약해 줘";
     s.submit_turn_with_schedule_context(
         &u,

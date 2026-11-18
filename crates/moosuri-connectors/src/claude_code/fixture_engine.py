@@ -94,7 +94,14 @@ if behavior.startswith('tool-bridge'):
  turn=int(turn_path.read_text()) if turn_path.exists() else 0
  turn_path.write_text(str(turn+1))
  plan_path=root/'tool-bridge-decisions.json'
- if behavior=='tool-bridge-mission':
+ if behavior=='tool-bridge-mission-chat' and any(tool['name']=='mission_chat_decision' for tool in document['tools']):
+  assert len(document['messages'])==1 and document['messages'][0]['role']=='user'
+  text=''.join(part['text'] for part in document['messages'][0]['content'] if part['type']=='text')
+  task='Calculate the exact sum of 917.13 and 409.15'
+  assert text=='Take this on in the background: '+task
+  assert [tool['name'] for tool in document['tools']]==['mission_chat_decision','calendar_chat_decision']
+  decision={'kind':'calls','calls':[{'id':'untrusted-planner-label','name':'mission_chat_decision','arguments':{'decision':'command','action':'create_now','target_kind':None,'intent_quote':text,'task_quote':task,'constraints_quote':None,'time_quote':None,'target_quote':None,'instruction_quote':None,'time':None,'clarification':None}}]}
+ elif behavior in ['tool-bridge-mission','tool-bridge-mission-chat']:
   current=json.loads(''.join(part['text'] for part in document['messages'][-1]['content'] if part['type']=='text'))
   assert current['accepted']['task']=='Calculate the exact sum of 917.13 and 409.15'
   assert current['original']['task']==current['accepted']['task']

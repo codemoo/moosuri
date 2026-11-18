@@ -925,6 +925,130 @@ async fn calendar_cancellation_withdrawal_and_private_purge_commit_atomically_an
 }
 
 #[tokio::test]
+async fn calendar_personal_compatible_revocation_fences_dispatch_and_late_private_settlement() {
+    let _g = TEST_LOCK.lock().await;
+    for state in ["applied", "outcome_unknown"] {
+        let (_dir, s, u, connection) = setup().await;
+        let personal = s
+            .create_personal_compatible(
+                &u,
+                crate::ProviderChange {
+                    name: "Synthetic private Calendar model".into(),
+                    config: ProviderConfig {
+                        kind: ProviderKind::Compatible,
+                        base_url: Some("http://127.0.0.1:11434/v1".into()),
+                        allowed_ips: vec!["127.0.0.1".into()],
+                        router_providers: vec![],
+                        zero_data_retention: false,
+                    },
+                    enabled: true,
+                    credential: crate::CredentialChange::Clear,
+                },
+            )
+            .await
+            .unwrap();
+        let choice = s
+            .record_model_probe(&u, personal.id.clone(), 1, "synthetic-private".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(choice.source, ModelSource::PersonalCompatible);
+        s.record_tool_probe(&u, personal.id.clone(), 1, choice.model.clone(), None)
+            .await
+            .unwrap();
+        s.set_model_preference(
+            &u,
+            Some(ModelSelection {
+                source: choice.source,
+                provider_id: personal.id.clone(),
+                provider_revision: 1,
+                model: choice.model,
+                effort: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let (_thread, lease) = source(&s, &u, TEXT, None).await;
+        let step = commit(&s, &lease, &decision(TEXT)).await;
+        let binding = s.calendar_binding(&u, connection.id, app()).await.unwrap();
+        let CalendarAdmission::Dispatch(dispatch) = s
+            .admit_calendar_agent_change(&lease, &binding, primary(), None)
+            .await
+            .unwrap()
+        else {
+            panic!("expected personal compatible Calendar dispatch")
+        };
+        s.append_agent_output(
+            &step,
+            vec![crate::OutputPatch::Append {
+                item: "synthetic-private-calendar".into(),
+                text: "Synthetic private Calendar detail before revocation".into(),
+                phase: Some(MessagePhase::FinalAnswer),
+                refusal: false,
+            }],
+        )
+        .await
+        .unwrap();
+        s.disconnect_personal_compatible(&u, personal.id, personal.revision)
+            .await
+            .unwrap();
+        assert!(s.check_run(&lease).await.is_err());
+        assert!(
+            s.admit_calendar_agent_change(&lease, &binding, primary(), None)
+                .await
+                .is_err()
+        );
+        assert!(
+            s.retry_run(&u, lease.run_id().into(), lease.attempt())
+                .await
+                .is_err()
+        );
+        assert!(s.claim_agent_run().await.unwrap().is_none());
+        let mut observed = event(&dispatch);
+        if let CalendarMutation::Create { fields } = &dispatch.change.mutation {
+            observed.fields = fields.clone();
+        }
+        let result = s
+            .settle_calendar_change(
+                &dispatch,
+                state.into(),
+                if state == "applied" {
+                    Some(observed)
+                } else {
+                    None
+                },
+                "minimum-late-compatible-receipt".into(),
+                None,
+            )
+            .await;
+        assert!(matches!(result, Err(StoreError::Unauthorized)));
+        let tenant = u.tenant.0.clone();
+        let run = lease.run_id().to_owned();
+        let id = dispatch.change.request_id.clone();
+        s.call(move |db| {
+            let retired: (bool, bool, bool, bool) = db.conn.query_row(
+                "SELECT a.payload IS NULL,a.event IS NULL,o.withdrawn,e.invalidated FROM calendar_actions a JOIN calendar_agent_action_origins o ON o.tenant_id=a.tenant_id AND o.action_id=a.id JOIN agent_execution e ON e.tenant_id=o.tenant_id AND e.run_id=o.run_id WHERE a.tenant_id=?1 AND a.id=?2",
+                params![tenant, id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+            assert_eq!(retired, (true, true, true, true));
+            assert_eq!(db.conn.query_row("SELECT count(*) FROM calendar_actions WHERE tenant_id=?1", [&tenant], |r| r.get::<_, i64>(0))?, 1, "revocation must never prepare a replacement dispatch");
+            for table in ["calendar_command_plans", "calendar_agent_observations", "chat_output"] {
+                assert_eq!(db.conn.query_row(&format!("SELECT count(*) FROM {table} WHERE tenant_id=?1 AND run_id=?2"), params![tenant, run], |r| r.get::<_, i64>(0))?, 0, "private {table} survived revocation or late settlement");
+            }
+            Ok(())
+        }).await.unwrap();
+        let action = s.calendar_actions(&u).await.unwrap().remove(0);
+        assert_eq!(action.id, dispatch.change.request_id);
+        assert_eq!(action.state, state);
+        assert!(action.event.is_none());
+        assert_eq!(
+            action.receipt.as_deref(),
+            Some("minimum-late-compatible-receipt")
+        );
+    }
+}
+
+#[tokio::test]
 async fn calendar_personal_disconnect_retires_private_storage_before_late_settlement() {
     let _g = TEST_LOCK.lock().await;
     for state in ["applied", "outcome_unknown"] {

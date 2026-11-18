@@ -154,7 +154,7 @@ it("moves mobile drawer navigation and deleted dialog controls to a visible dest
   await user.click(screen.getByRole("button",{name:`Delete ${thread.title}`}));
   await user.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Delete conversation"}));
   await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
-  expect(screen.getByRole("heading",{level:1,name:"A new beginning"})).toHaveFocus();
+  expect(screen.getByRole("heading",{level:1,name:"새 대화"})).toHaveFocus();
 });
 
 it("keeps an uninitialized installation behind a safe operator setup instruction", async () => {
@@ -194,7 +194,7 @@ it("finishes the old cookie transition before accepting a new account login", as
       <App />
     </StrictMode>,
   );
-  await screen.findByRole("heading", { name: "Hello, Alice." });
+  await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
   await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
   expect(await screen.findByText("Finishing sign-out…")).toBeInTheDocument();
   expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
@@ -222,7 +222,7 @@ describe("account and session boundaries", () => {
       </StrictMode>,
     );
     expect(
-      await screen.findByRole("heading", { name: "Hello, Alice." }),
+      await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "메시지" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "메시지 전송" })).toBeDisabled();
@@ -286,7 +286,7 @@ describe("account and session boundaries", () => {
       screen.getByRole("button", { name: "Save password & continue" }),
     );
     expect(
-      await screen.findByRole("heading", { name: "Hello, Alice." }),
+      await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" }),
     ).toBeInTheDocument();
   });
   it("does not mistake an unreachable session endpoint for sign-out", async () => {
@@ -322,7 +322,7 @@ describe("account and session boundaries", () => {
     reconnected = true;
     act(() => { window.dispatchEvent(new Event("online")); });
     await act(async () => { late.resolve(response({ code: "unavailable" }, 503)); });
-    expect(await screen.findByRole("heading", { name: "Hello, Alice." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Let’s reconnect." })).toBeNull();
   });
   it("discards A’s late response after logout and B login", async () => {
@@ -343,11 +343,11 @@ describe("account and session boundaries", () => {
         <App />
       </StrictMode>,
     );
-    await screen.findByRole("heading", { name: "Hello, Alice." });
+    await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
     await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
     await signIn(user);
     expect(
-      await screen.findByRole("heading", { name: "Hello, Bob." }),
+      await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" }),
     ).toBeInTheDocument();
     await act(async () => {
       late.resolve(response({ threads: [thread] }));
@@ -502,7 +502,7 @@ describe("local invitations", () => {
     await user.click(screen.getByRole("button", { name: /Create invitation/ }));
     await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
     await signIn(user);
-    await screen.findByRole("heading", { name: "Hello, Bob." });
+    await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
     await act(async () => {
       late.resolve(
         response(
@@ -536,8 +536,8 @@ it("creates and deletes an empty thread only after server success", async () => 
       <App />
     </StrictMode>,
   );
-  await screen.findByRole("heading", { name: "Hello, Alice." });
-  await user.click(screen.getByRole("button", { name: "New conversation" }));
+  await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
+  await user.click(screen.getByRole("button", { name: "새 대화" }));
   await screen.findByRole("button", { name: `Delete ${thread.title}` });
   await user.click(
     screen.getByRole("button", { name: `Delete ${thread.title}` }),
@@ -647,7 +647,7 @@ describe("shared-cookie account changes", () => {
         <App />
       </StrictMode>,
     );
-    await screen.findByRole("heading", { name: "Hello, Alice." });
+    await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
     await waitFor(() =>
       expect(calls.some((call) => call.path === "/threads")).toBe(true),
     );
@@ -663,7 +663,7 @@ describe("shared-cookie account changes", () => {
     act(() => signals.receive());
     expect(oldRequests.every((call) => call.init.signal?.aborted)).toBe(true);
     expect(screen.queryByText(alice.user.email)).not.toBeInTheDocument();
-    await screen.findByRole("heading", { name: "Hello, Bob." });
+    await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
     await act(async () => {
       late.resolve(response({ threads: [thread] }));
       await late.promise;
@@ -687,10 +687,10 @@ describe("shared-cookie account changes", () => {
         <App />
       </StrictMode>,
     );
-    await screen.findByRole("heading", { name: "Hello, Alice." });
+    await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
     cookie = bob;
     fireEvent(window, new Event("focus"));
-    await screen.findByRole("heading", { name: "Hello, Bob." });
+    await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
     expect(screen.queryByText(alice.user.email)).not.toBeInTheDocument();
   });
 
@@ -705,7 +705,7 @@ describe("shared-cookie account changes", () => {
         <App />
       </StrictMode>,
     );
-    await screen.findByRole("heading", { name: "Hello, Alice." });
+    await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
     const checksBefore = calls.filter(
       (call) => call.path === "/auth/session",
     ).length;
@@ -717,7 +717,7 @@ describe("shared-cookie account changes", () => {
       checksBefore + 1,
     );
     expect(
-      screen.getByRole("heading", { name: "Hello, Alice." }),
+      screen.getByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
   });
@@ -746,12 +746,12 @@ describe("shared-cookie account changes", () => {
         <App />
       </StrictMode>,
     );
-    await screen.findByRole("heading", { name: "Hello, Alice." });
+    await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
     await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
     await screen.findByRole("button", { name: "Retry sign-out" });
     cookie = bob;
     await user.click(screen.getByRole("button", { name: "Retry sign-out" }));
-    await screen.findByRole("heading", { name: "Hello, Bob." });
+    await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
     expect(revocations).toBe(0);
     expect(
       calls
@@ -813,7 +813,7 @@ describe("authentication mutation overlap", () => {
     await act(async () => {
       late.resolve(response(alice));
     });
-    await screen.findByRole("heading", { name: "Hello, Alice." });
+    await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
   });
 
   it("prevents failed-logout retry from overlapping a held login and broadcasts only a nonsecret signal", async () => {
@@ -832,7 +832,7 @@ describe("authentication mutation overlap", () => {
         <App />
       </StrictMode>,
     );
-    await screen.findByRole("heading", { name: "Hello, Alice." });
+    await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
     await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
     await screen.findByRole("button", { name: "Retry sign-out" });
     await signIn(user);
@@ -846,7 +846,7 @@ describe("authentication mutation overlap", () => {
     await act(async () => {
       late.resolve(response(bob));
     });
-    await screen.findByRole("heading", { name: "Hello, Bob." });
+    await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
     expect(
       new Headers(
         calls.find((call) => call.path === "/auth/login")!.init.headers,
@@ -877,7 +877,7 @@ it.each(["", "검토 중인 초안\n예산은 10만 원"])(
     render(<App />);
     const composer = await screen.findByRole("textbox", { name: "메시지" });
     if (draft) await user.type(composer, draft);
-    await user.click(screen.getByRole("button", { name: /제안 · 할 수 있는 일/ }));
+    await user.click(screen.getByRole("button", { name: "아이디어" }));
     await user.click(await screen.findByRole("button", { name: "채팅에서 시작" }));
     expect(await screen.findByRole("textbox", { name: "메시지" })).toHaveValue(`모아 둔 자료 정리 절차로 도와줘: ${draft}`);
     expect(calls.filter(call => call.init.method === "POST")).toHaveLength(0);
@@ -924,6 +924,35 @@ it("opens an authorized action-needed mission push only for the active account a
   await screen.findByRole("heading",{name:"맡긴 일",level:2});expect(window.location.hash).toBe(`#mission-${id}`);
   fireEvent.click(screen.getByRole("button",{name:"← 대화로"}));expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("Keep the unsent original draft");
  }finally{if(old)Object.defineProperty(navigator,"serviceWorker",old);else Reflect.deleteProperty(navigator,"serviceWorker")}
+});
+
+it("opens the original conversation through title search and lazily loads the library and feed", async () => {
+  const user = userEvent.setup();
+  const second = {...thread, id:"second", title:"회의 기록"};
+  const calls = server(path => {
+    if (path === "/threads") return response({threads:[thread, second]});
+    if (path.startsWith("/notifications?")) return response({items:[], next_cursor:null});
+    if (path === "/media") return response({items:[], used_bytes:0, quota_bytes:1000});
+    if (path.startsWith("/artifacts?")) return response({items:[], next_after:null, coverage_complete:true});
+    return response({}, 204);
+  });
+  render(<App />);
+  await screen.findByRole("button", {name:thread.title});
+  expect(calls.some(call => call.path.startsWith("/notifications") || call.path === "/media")).toBe(false);
+  await user.keyboard("{Control>}k{/Control}");
+  const search = screen.getByRole("dialog", {name:"대화 검색"});
+  await user.type(within(search).getByRole("searchbox",{name:"대화 제목"}),"회의");
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("heading",{name:second.title,level:1})).toHaveFocus();
+  const primary = within(screen.getByRole("navigation",{name:"주 메뉴"}));
+  await user.click(primary.getByRole("button",{name:"소식함"}));
+  expect(await screen.findByText("받은 소식이 없습니다.")).toBeInTheDocument();
+  expect(calls.some(call => call.path.startsWith("/schedules"))).toBe(false);
+  await user.click(primary.getByRole("button",{name:"목표"}));
+  expect(await screen.findByRole("heading",{name:"새 목표",level:2})).toBeInTheDocument();
+  await user.click(primary.getByRole("button",{name:"보관함"}));
+  expect(await screen.findByText("보관한 첨부가 없습니다.")).toBeInTheDocument();
 });
 
 it("a hung thread deletion settles through inventory without replay and releases its blocking dialog", async () => {

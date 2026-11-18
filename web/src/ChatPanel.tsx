@@ -1,3 +1,4 @@
+import { Button } from "@astryxdesign/core/Button";
 import { MailReplyWatches } from "./MailReplyWatches";
 import { TaskMonitors } from "./TaskMonitors";
 import { InstructionReceipts, useRunInstructions } from "./RunInstructions";
@@ -100,6 +101,8 @@ type Props = {
   onThreadMissing: (id: string) => void;
   onThreadUpdated: () => void;
   openSettings: () => void;
+  openIdeas?: () => void;
+  openWork?: () => void;
   openCredentials?:()=>void;
   onOpenEvidence?: (reference: ChatEvidence) => void;
   artifactTarget?:{id:string;revision:number;title:string}|null;
@@ -1043,9 +1046,9 @@ export function ChatPanel(props: Props) {
     <section className="chat-panel" aria-label="대화">
       <div className="chat-status-row">
         {model?.effective ? (
-          <span>
+          <button className="text-button chat-model-chip" onClick={props.openSettings} title={model.effective.model}>
             {model.effective.model} · {model.effective.effort ?? "기본 강도"}
-          </span>
+          </button>
         ) : (
           <button className="text-button" onClick={props.openSettings}>
             내 모델 설정
@@ -1097,9 +1100,12 @@ export function ChatPanel(props: Props) {
         )}
         {!loading && turns.length === 0 && !optimistic && (
           <div className="chat-welcome">
-            <span className="eyebrow">생각을 이어 가는 공간</span>
-            <h2>Hello, {props.name.split(" ")[0]}.</h2>
-            <p>궁금한 점이나 함께 생각할 일을 적어 주세요.</p>
+            <img src="/moosuri-attendant.png" width="52" height="52" alt="" />
+            <h2>{props.name.split(" ")[0]}님, 무엇을 도와드릴까요?</h2>
+            {model?.effective && (props.openIdeas || props.openWork) && <div className="chat-welcome-actions">
+              {props.openIdeas && <Button label="할 수 있는 일 둘러보기" variant="secondary" onClick={props.openIdeas}/>}
+              {props.openWork && <Button label="맡긴 일 확인" variant="secondary" onClick={props.openWork}/>}
+            </div>}
             {!modelLoading && !model?.effective && (
               <div className="chat-model-missing">
                 <strong>사용할 모델을 먼저 선택해 주세요</strong>
@@ -1276,6 +1282,7 @@ export function ChatPanel(props: Props) {
         </div>
       )}
       <footer className="chat-composer-area">
+        <div className="chat-compose-dock">
         <VoiceComposer ref={voice} accountId={accountId} slot={slot} onExpired={props.onExpired} onInsert={(origin,text)=>{flushRef.current();const current=callbacks.current.memory.drafts[origin]??"";const next=current?`${current}\n${text}`:text;if(new TextEncoder().encode(next).byteLength>8192)return false;callbacks.current.onDraft(origin,next);if(origin===slot)instructions.chooseMode("next");requestAnimationFrame(()=>{if(origin===(currentThread.current??"new"))textarea.current?.focus();});return true;}}/>
         <IncomingShare accountId={accountId} sessionScope={props.shareScope ?? null} slot={slot} moveSlot={shareSlotMove}
           draft={() => callbacks.current.memory.drafts[slot] ?? ""}
@@ -1318,7 +1325,7 @@ export function ChatPanel(props: Props) {
           <textarea
             id="chat-message"
             ref={textarea}
-            rows={2}
+            rows={1}
             value={composerText}
             placeholder={instructionMode ? "진행 중인 작업에 추가할 내용을 적으세요…" : "메시지를 입력하세요…"}
             onChange={(event) => {
@@ -1344,6 +1351,7 @@ export function ChatPanel(props: Props) {
               }
             }}
             aria-describedby={composerBytes > composerLimit ? "chat-composer-help" : undefined}
+            aria-keyshortcuts="Enter Shift+Enter"
           />
           <div className="chat-composer-bottom">
             <span>
@@ -1353,15 +1361,12 @@ export function ChatPanel(props: Props) {
                   ? "모델 확인 중…"
                   : !model?.effective
                     ? "내 모델 설정에서 사용할 모델을 선택하세요"
-                    : "Enter로 전송 · Shift+Enter로 줄바꿈"}
+                    : ""}
             </span>
-            <button
-              className="primary"
-              type="submit"
+            <button className="chat-send primary" type="submit"
               aria-label={instructionMode ? "작업에 추가 지시 전송" : "메시지 전송"}
-              disabled={instructionMode ? !instructions.canSubmit || (!!media.selectionKey && !keepMedia) : !canSend}
-            >
-              ↑
+              disabled={instructionMode ? !instructions.canSubmit || (!!media.selectionKey && !keepMedia) : !canSend}>
+              <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
             </button>
           </div>
         </form>
@@ -1370,6 +1375,7 @@ export function ChatPanel(props: Props) {
             {instructionMode ? "추가 지시는 UTF-8 기준 2,000바이트까지 전송할 수 있습니다." : "메시지는 UTF-8 기준 8,192바이트까지 전송할 수 있습니다."}
           </p>
         )}
+        </div>
       </footer>
     </section>
   );

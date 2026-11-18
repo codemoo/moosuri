@@ -637,7 +637,7 @@ it("discards a late administrator save and clears its key before another account
   await user.type(await screen.findByLabelText("Email"), member.user.email);
   await user.type(screen.getByLabelText("Password"), "synthetic-password");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
-  await screen.findByRole("heading", { name: "Hello, Member." });
+  await screen.findByRole("heading", { name: "Member님, 무엇을 도와드릴까요?" });
   expect(pending.init.signal?.aborted).toBe(true);
   await act(async () => {
     late.resolve(response({ ...provider, name: "Admin A private draft" }, 201));

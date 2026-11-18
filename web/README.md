@@ -34,3 +34,10 @@ use synthetic accounts and mocked same-origin responses. Actual Rust/SQLite/brow
 acceptance is recorded separately in [the dated reviews](../docs/status.md#검증-기록을-읽는-기준);
 neither proves real-device or live-provider support. Microphone/STT and incoming PWA
 share remain separate implementation work.
+
+## Workspace theme
+
+The workspace uses the Astryx Neutral dark theme and its React navigation buttons.
+Moosuri defines the indigo accent and surfaces in `src/workspace.css`. Desktop and
+mobile use the same destinations, and conversation-title search uses the current
+account's thread list. [Astryx source](https://github.com/meta/astryx/tree/v0.7.16)

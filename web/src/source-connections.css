@@ -46,7 +46,7 @@
 }
 .source-list li + li,
 .source-runs li + li {
-  border-top: 1px solid var(--line, #ddd);
+  border-top: 1px solid var(--line, var(--line));
 }
 .source-list button {
   display: grid;
@@ -62,7 +62,7 @@
 }
 .source-list small,
 .source-runs small {
-  color: var(--muted, #595f65);
+  color: var(--muted, var(--muted));
 }
 .source-times {
   display: grid;
@@ -71,7 +71,7 @@
 }
 .source-times dt {
   font-size: 0.85rem;
-  color: var(--muted, #595f65);
+  color: var(--muted, var(--muted));
 }
 .source-times dd {
   margin: 8px 0;
@@ -86,7 +86,7 @@
 .source-secret,
 .source-confirm {
   padding: 20px;
-  border: 1px solid var(--line, #ddd);
+  border: 1px solid var(--line, var(--line));
   border-radius: 12px;
   margin-block: 16px;
 }
@@ -97,7 +97,7 @@
 .source-provenance {
   margin-block: 20px;
   padding-block: 12px;
-  border-block: 1px solid var(--line, #ddd);
+  border-block: 1px solid var(--line, var(--line));
   overflow-wrap: anywhere;
 }
 .source-provenance dl {

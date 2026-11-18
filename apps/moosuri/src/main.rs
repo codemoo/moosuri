@@ -1140,10 +1140,11 @@ async fn static_asset(uri: Uri) -> Response {
         | "/admin/telegram" | "/settings/model" | "/settings/calendar" | "/settings/mail"
         | "/settings/sources" | "/settings/usage" | "/settings/telegram" | "/app/knowledge"
         | "/app/memory" | "/app/skills" | "/app/artifacts" | "/app/schedules" | "/app/missions"
-        | "/login" => "/index.html",
-        path if path.starts_with("/app/artifacts/")
-            && !path[15..].is_empty()
-            && !path[15..].contains('/') =>
+        | "/app/feed" | "/app/goals" | "/app/library" | "/login" => "/index.html",
+        path if ["/app/artifacts/", "/app/goals/"].iter().any(|prefix| {
+            path.strip_prefix(prefix)
+                .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        }) =>
         {
             "/index.html"
         }

@@ -7,5 +7,5 @@
 .community-skills form { display: grid; gap: 12px; max-width: 720px; margin: 16px 0; }
 .community-skills form label { display: grid; gap: 6px; }
 .community-skills form input { width: 100%; min-width: 0; }
-.skill-share { margin-block: 1rem; padding: 1rem; border: 1px solid var(--line, #ddd); border-radius: 12px; }
+.skill-share { margin-block: 1rem; padding: 1rem; border: 1px solid var(--line, var(--line)); border-radius: 12px; }
 .skill-share pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; }

@@ -1010,7 +1010,7 @@ describe("durable text chat", () => {
           "synthetic-password",
         );
         await user.click(screen.getByRole("button", { name: "Sign in" }));
-        await screen.findByRole("heading", { name: "Hello, Bob." });
+        await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
       }
       expect(old.init.signal?.aborted).toBe(true);
       test.emit(
@@ -1541,7 +1541,7 @@ it.each(["composer", "button"])("a timed-out first creation and immutable messag
   }});
   test.state.session = { ...account, chat_draft_scope: "a".repeat(64) };
   open();
-  await screen.findByText("Hello, Alice.");
+  await screen.findByText("Alice님, 무엇을 도와드릴까요?");
   await user.type(screen.getByLabelText("메시지"), "Still unsent during thread creation");
   vi.useFakeTimers();
   try {
@@ -1566,7 +1566,7 @@ it.each(["composer", "button"])("a timed-out first creation and immutable messag
     expect(postCalls(test.calls)).toHaveLength(0);
     if (route === "button") {
       await act(async () => {
-        fireEvent.click(screen.getByRole("button", { name: "Retry new conversation" }));
+        fireEvent.click(screen.getByRole("button", { name: "새 대화 다시 확인" }));
         await vi.advanceTimersByTimeAsync(0);
       });
       expect(postCalls(test.calls)).toHaveLength(0);
@@ -1607,14 +1607,14 @@ it("explicit empty-conversation recovery reuses the original creation UUID", asy
   vi.useFakeTimers();
   try {
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+      fireEvent.click(screen.getByRole("button", { name: "새 대화" }));
       await vi.advanceTimersByTimeAsync(30000);
     });
     const original = test.calls.find(call => call.path === "/threads" && call.method === "POST")!;
     expect(original.body?.request_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(creates).toBe(1);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Retry new conversation" }));
+      fireEvent.click(screen.getByRole("button", { name: "새 대화 다시 확인" }));
       await vi.advanceTimersByTimeAsync(0);
     });
     const requests = test.calls.filter(call => call.path === "/threads" && call.method === "POST");
@@ -1633,7 +1633,7 @@ it.each([404, 409])("a definite creation %s restores unsent text and clears only
   }});
   test.state.session = { ...account, chat_draft_scope: "a".repeat(64) };
   open();
-  await screen.findByText("Hello, Alice.");
+  await screen.findByText("Alice님, 무엇을 도와드릴까요?");
   vi.useFakeTimers();
   try {
     await act(async () => {
@@ -1650,7 +1650,7 @@ it.each([404, 409])("a definite creation %s restores unsent text and clears only
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.getByLabelText("메시지")).toHaveValue("Original unsent message\n\nNext draft");
-    expect(screen.getByRole("button", { name: "New conversation" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "새 대화" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "같은 요청 다시 제출" })).not.toBeInTheDocument();
     expect(creates).toBe(2);
     const calls = test.calls.filter(call => call.path === "/threads" && call.method === "POST");
@@ -1674,7 +1674,7 @@ it("a late explicit new-conversation receipt preserves the thread and draft sele
   }});
   open();
   await ready(test.streams);
-  await user.click(screen.getByRole("button", { name: "New conversation" }));
+  await user.click(screen.getByRole("button", { name: "새 대화" }));
   await user.click(screen.getByRole("button", { name: "Other conversation" }));
   await screen.findByRole("heading", { name: "Other conversation" });
   await user.type(screen.getByLabelText("메시지"), "Other thread draft stays here");
@@ -1695,7 +1695,7 @@ it("creation recovery preserves both drafts when its admitted thread was selecte
   }});
   test.state.session = { ...account, chat_draft_scope: "a".repeat(64) };
   open();
-  await screen.findByText("Hello, Alice.");
+  await screen.findByText("Alice님, 무엇을 도와드릴까요?");
   await user.type(screen.getByLabelText("메시지"), "Immutable first request");
   vi.useFakeTimers();
   try {
@@ -1711,7 +1711,7 @@ it("creation recovery preserves both drafts when its admitted thread was selecte
       fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Draft written in admitted thread" } });
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Retry new conversation" }));
+      fireEvent.click(screen.getByRole("button", { name: "새 대화 다시 확인" }));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.getByLabelText("메시지")).toHaveValue("Draft written in admitted thread");
@@ -1725,7 +1725,7 @@ it("creation recovery preserves both drafts when its admitted thread was selecte
       fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "" } });
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Retry new conversation" }));
+      fireEvent.click(screen.getByRole("button", { name: "새 대화 다시 확인" }));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.getByLabelText("메시지")).toHaveValue("Original separate next draft");
@@ -1853,7 +1853,7 @@ it("a rejected background admission cannot restore a deleted conversation's draf
   test.state.session = { ...account, chat_draft_scope: "a".repeat(64) };
   sessionStorage.setItem("moosuri.chat-drafts.v1", JSON.stringify({ version: 1, account: account.user.id, scope: "a".repeat(64), saved_at: Date.now(), selected: null, slots: [{ id: "new", draft: "Private text from removed background conversation" }] }));
   open();
-  await screen.findByText("Hello, Alice.");
+  await screen.findByText("Alice님, 무엇을 도와드릴까요?");
   await waitFor(() => expect(screen.getByRole("button", { name: "메시지 전송" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "메시지 전송" }));
   await user.click(screen.getByRole("button", { name: other.title }));

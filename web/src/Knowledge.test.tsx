@@ -1147,7 +1147,7 @@ describe("knowledge lifetime boundaries", () => {
     await user.type(await screen.findByLabelText("Email"), other.user.email);
     await user.type(screen.getByLabelText("Password"), "synthetic-password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
-    await screen.findByRole("heading", { name: "Hello, Bob." });
+    await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
     await user.click(screen.getByRole("button", { name: "기억" }));
     expect(request.init.signal?.aborted).toBe(true);
     await act(async () => {

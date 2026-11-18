@@ -413,9 +413,11 @@ export function useMediaUploads(accountId: string, slot: string) {
 export function MediaLibraryView({
   accountId,
   onSelect,
+  standalone = false,
 }: {
   accountId: string;
-  onSelect: (media: MediaSummary) => void;
+  onSelect?: (media: MediaSummary) => void;
+  standalone?: boolean;
 }) {
   const scope = useScope(accountId);
   const [data, setData] = useState<MediaLibrary>();
@@ -548,14 +550,10 @@ export function MediaLibraryView({
       if (!pending.url) downloads.current.delete(controller);
     }
   }
-  return (
-    <details
-      className="media-library"
-      onToggle={(e) => {
-        if (e.currentTarget.open) void refresh();
-      }}
-    >
-      <summary aria-label="내 이미지·파일 보관함">보관함</summary>
+  useEffect(() => {
+    if (standalone) void refresh();
+  }, [scope, standalone]);
+  const content = <>
       <p>삭제하면 해당 첨부에서 파생된 대화 답변도 철회됩니다.</p>
       {data && data.used_bytes >= data.quota_bytes * 0.85 && (
         <p>보관함 공간이 거의 찼습니다. 필요 없는 이미지를 지워 주세요.</p>
@@ -570,9 +568,7 @@ export function MediaLibraryView({
             <PrivateImage accountId={accountId} media={media} />
             {media.state === "ready" ? (
               <>
-                <button type="button" onClick={() => onSelect(media)}>
-                  대화에 첨부
-                </button>
+                {onSelect && <button type="button" onClick={() => onSelect(media)}>대화에 첨부</button>}
                 {!media.filename && <button type="button" onClick={() => void download(media.id)}>
                   다운로드
                 </button>}
@@ -595,6 +591,13 @@ export function MediaLibraryView({
         ))}
       </div>
       {data?.items.length === 0 && <p>보관한 첨부가 없습니다.</p>}
-    </details>
-  );
+    </>;
+  return standalone
+    ? <section className="media-library media-library-page" aria-label="이미지·파일">{content}</section>
+    : <details className="media-library" onToggle={event => {
+        if (event.currentTarget.open) void refresh();
+      }}>
+        <summary aria-label="내 이미지·파일 보관함">보관함</summary>
+        {content}
+      </details>;
 }

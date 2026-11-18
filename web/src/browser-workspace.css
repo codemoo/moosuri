@@ -8,8 +8,8 @@
   gap: 10px;
   margin: 0 38px 8px;
   padding: 10px 13px;
-  background: #f2f4eb;
-  border: 1px solid #dfe5d5;
+  background: var(--raised);
+  border: 1px solid var(--line);
   border-radius: 12px;
   font-size: 12px;
 }
@@ -25,7 +25,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #687260;
+  color: var(--muted);
   font-size: 11px;
   margin-top: 4px;
 }
@@ -42,12 +42,12 @@
 }
 .browser-state-dot.waiting_for_user,
 .browser-state-dot.user_control {
-  background: #bf9554;
+  background: var(--notice-paper);
 }
 .browser-state-dot.closed,
 .browser-state-dot.expired,
 .browser-state-dot.outcome_unknown {
-  background: #aaa;
+  background: var(--accent-bg);
 }
 .chat-panel:has(.browser-workspace-panel) {
   padding-right: min(49%, 680px);
@@ -58,13 +58,13 @@
   top: 0;
   bottom: 0;
   width: min(49%, 680px);
-  background: #fafbf5;
-  border-left: 1px solid #dfe5d5;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   min-height: 0;
   z-index: 2;
-  color: #28352a;
+  color: var(--ink);
 }
 .browser-workspace-panel > header {
   display: flex;
@@ -72,7 +72,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 22px 20px 16px;
-  border-bottom: 1px solid #e4e8dc;
+  border-bottom: 1px solid var(--line);
 }
 .browser-workspace-panel h2 {
   font-size: 16px;
@@ -81,7 +81,7 @@
 }
 .browser-workspace-panel .eyebrow {
   font-size: 9px;
-  color: #687260;
+  color: var(--muted);
   letter-spacing: 1px;
 }
 .browser-workspace-content {
@@ -96,14 +96,14 @@
   overflow-wrap: anywhere;
 }
 .browser-error {
-  background: #f8eee4;
-  border: 1px solid #e8d7c5;
+  background: var(--raised);
+  border: 1px solid var(--notice-line);
   padding: 10px;
   border-radius: 8px;
-  color: #78533b;
+  color: var(--notice-ink);
 }
 .browser-privacy {
-  background: #eef1e6;
+  background: var(--raised);
   padding: 10px;
   border-radius: 8px;
 }
@@ -120,7 +120,7 @@
   display: block;
   margin: 0 0 7px;
   font-size: 11px;
-  color: #687260;
+  color: var(--muted);
 }
 .browser-address > div,
 .browser-text > div {
@@ -132,8 +132,8 @@
   flex: 1;
   min-width: 0;
   width: 100%;
-  border: 1px solid #d8dfce;
-  background: #fffef9;
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: 8px;
   min-height: 38px;
   padding: 8px 10px;
@@ -147,9 +147,9 @@
   font-size: 11px;
 }
 .browser-screen {
-  background: #edf0e6;
+  background: var(--raised);
   min-height: 100px;
-  border: 1px solid #dfe5d5;
+  border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
   margin: 12px 0;
@@ -161,7 +161,7 @@
   user-select: none;
 }
 .browser-screen img:focus-visible {
-  outline: 3px solid #62846e;
+  outline: 3px solid var(--accent);
   outline-offset: -3px;
 }
 .browser-screen img[tabindex="0"] {
@@ -170,11 +170,11 @@
 .browser-screen > p {
   text-align: center;
   padding: 30px 12px;
-  color: #687260;
+  color: var(--muted);
 }
 .browser-text small {
   display: block;
-  color: #687260;
+  color: var(--muted);
   font-size: 10px;
   line-height: 1.7;
   margin-top: 7px;
@@ -186,15 +186,15 @@
   gap: 10px 15px;
   flex: none;
   padding: 12px 18px;
-  border-top: 1px solid #e4e8dc;
-  background: #fafbf5;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
 }
 .browser-actions button {
   font-size: 12px;
   min-height: 38px;
 }
 .browser-help {
-  color: #687260;
+  color: var(--muted);
   margin-top: 12px;
   font-size: 10px !important;
 }
@@ -211,7 +211,7 @@
     max-height: 43dvh;
     min-height: 180px;
     margin: 0 16px 10px;
-    border: 1px solid #dfe5d5;
+    border: 1px solid var(--line);
     border-radius: 12px;
   }
   .browser-workspace-panel > header {

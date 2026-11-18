@@ -5,18 +5,13 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #282e29;
-  background: #f6f4ed;
+  color: var(--ink);
+  background: var(--paper);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   font-weight: 400;
   line-height: 1.5;
-  --paper: #f6f4ed;
-  --ink: #282e29;
-  --muted: #687260;
-  --line: #e3e4da;
-  --green: #264b40;
 }
 * {
   box-sizing: border-box;
@@ -50,7 +45,7 @@ button:disabled {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid #aa783e;
+  outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
 button:focus:not(:focus-visible) {
@@ -88,7 +83,7 @@ button {
   gap: 10px;
 }
 .brand-dot {
-  color: #a08052;
+  color: var(--notice-ink);
 }
 .mark {
   display: inline-flex;
@@ -120,7 +115,7 @@ button {
   color: var(--muted);
 }
 .muted {
-  color: #687260;
+  color: var(--muted);
 }
 .fine {
   color: var(--muted);
@@ -141,19 +136,19 @@ button {
 }
 .primary {
   background: var(--green);
-  color: #fff;
+  color: var(--accent-ink);
 }
 .primary:hover:enabled {
   background: #183c31;
 }
 .secondary {
-  background: #eaece3;
+  background: var(--raised);
 }
 .secondary:hover:enabled {
-  background: #dfe2d8;
+  background: var(--hover);
 }
 .danger {
-  background: #983e35;
+  background: var(--notice-paper);
   color: white;
 }
 .full {
@@ -177,7 +172,7 @@ button {
   font-size: 22px;
 }
 .icon-button:hover {
-  background: #e9ebe1;
+  background: var(--hover);
 }
 label {
   display: flex;
@@ -189,8 +184,8 @@ label {
 input {
   width: 100%;
   min-height: 46px;
-  border: 1px solid #d9dcd0;
-  background: #fffefb;
+  border: 1px solid var(--line);
+  background: var(--surface);
   padding: 11px 13px;
   color: var(--ink);
 }
@@ -203,11 +198,11 @@ form {
   gap: 20px;
 }
 .notice {
-  background: #f7eae0;
-  border: 1px solid #e7cbb6;
+  background: var(--notice-paper);
+  border: 1px solid var(--notice-line);
   border-radius: 9px;
   padding: 12px 15px;
-  color: #7f452a;
+  color: var(--notice-ink);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -264,7 +259,7 @@ form {
   margin: 18px 0;
 }
 .gate-card pre {
-  background: #e9ece2;
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 17px;
@@ -288,7 +283,7 @@ form {
   margin: 0 auto 44px;
   width: 245px;
   height: 245px;
-  border: 1px solid #d8ddce;
+  border: 1px solid var(--line);
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -326,7 +321,7 @@ form {
 .gate-aside > span {
   display: block;
   font-size: 9px;
-  color: #687260;
+  color: var(--muted);
   letter-spacing: 1.7px;
   margin-top: 25px;
 }
@@ -344,7 +339,7 @@ form {
   width: 270px;
   flex: none;
   border-right: 1px solid var(--line);
-  background: #eeefe6;
+  background: var(--raised);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -360,7 +355,7 @@ form {
 }
 .new-chat {
   width: 100%;
-  background: #e2e7db;
+  background: var(--raised);
   text-align: left;
   display: flex;
   align-items: center;
@@ -374,13 +369,13 @@ form {
   line-height: 1;
 }
 .new-chat:hover:enabled {
-  background: #d7dfce;
+  background: var(--hover);
 }
 .history-title {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 1.3px;
-  color: #687260;
+  color: var(--muted);
   margin: 30px 10px 13px;
   display: flex;
   justify-content: space-between;
@@ -397,7 +392,7 @@ form {
 }
 .sidebar-hint {
   font-size: 12px;
-  color: #687260;
+  color: var(--muted);
   line-height: 1.9;
   margin: 12px 10px;
 }
@@ -408,7 +403,7 @@ form {
   align-items: center;
 }
 .thread-row.active {
-  background: #fffef9;
+  background: var(--surface);
 }
 .thread-row:hover {
   background: #ffffff90;
@@ -431,18 +426,18 @@ form {
 }
 .thread-symbol {
   font-size: 19px;
-  color: #828b78;
+  color: var(--muted);
 }
 .thread-delete {
   background: none;
-  color: #7a8272;
+  color: var(--muted);
   width: 32px;
   min-height: 40px;
   flex: none;
   font-size: 19px;
 }
 .thread-delete:hover {
-  color: #953a32;
+  color: var(--notice-ink);
 }
 .sidebar-bottom {
   padding-top: 20px;
@@ -454,7 +449,7 @@ form {
   margin: 0 11px 24px;
   font-size: 10px;
   line-height: 1.6;
-  color: #687260;
+  color: var(--muted);
 }
 .boundary-note > span:first-child {
   font-size: 23px;
@@ -467,17 +462,17 @@ form {
   display: flex;
   justify-content: space-between;
   margin-bottom: 12px;
-  color: #636e5b;
+  color: var(--muted);
 }
 .nav-link:hover,
 .nav-link.chosen {
-  background: #e2e6d9;
+  background: var(--hover);
 }
 .account {
   display: flex;
   align-items: center;
   gap: 10px;
-  border-top: 1px solid #dce0d3;
+  border-top: 1px solid var(--line);
   padding-top: 18px;
 }
 .avatar {
@@ -487,8 +482,8 @@ form {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #dfe4d4;
-  color: #58664b;
+  background: var(--raised);
+  color: var(--muted);
   font-size: 12px;
   font-weight: 500;
 }
@@ -504,7 +499,7 @@ form {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #687260;
+  color: var(--muted);
   font-size: 10px;
   margin-top: 2px;
 }
@@ -545,7 +540,7 @@ form {
 }
 .connection-status {
   font-size: 10px;
-  color: #687260;
+  color: var(--muted);
   display: flex;
   align-items: center;
   gap: 7px;
@@ -554,7 +549,7 @@ form {
 .connection-status > span {
   width: 5px;
   height: 5px;
-  background: #b69b6a;
+  background: var(--notice-paper);
   border-radius: 50%;
 }
 .conversation-scroll {
@@ -575,7 +570,7 @@ form {
   margin-bottom: 27px;
 }
 .empty-mark .mark {
-  background: #e5eadb;
+  background: var(--raised);
 }
 .empty-mark .mark svg {
   stroke: #60734f;
@@ -592,7 +587,7 @@ form {
   margin: 15px 0;
 }
 .empty-state > p:not(.eyebrow) {
-  color: #687260;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.8;
   max-width: 350px;
@@ -602,8 +597,8 @@ form {
   display: flex;
   gap: 13px;
   text-align: left;
-  background: #eeefe5;
-  border: 1px solid #e1e4d7;
+  background: var(--raised);
+  border: 1px solid var(--line);
   padding: 16px 19px;
   border-radius: 11px;
   margin: 31px auto 15px;
@@ -612,16 +607,16 @@ form {
 .availability-icon {
   font-size: 24px;
   line-height: 1.2;
-  color: #7b8669;
+  color: var(--muted);
 }
 .availability strong {
   font-size: 11px;
   font-weight: 500;
-  color: #5a6650;
+  color: var(--muted);
 }
 .availability p {
   font-size: 11px;
-  color: #687260;
+  color: var(--muted);
   line-height: 1.7;
   margin-top: 4px;
 }
@@ -633,8 +628,8 @@ form {
   margin: 0 auto;
 }
 .composer {
-  background: #fbfaf5;
-  border: 1px solid #dfe2d6;
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 16px;
   padding: 17px 18px 12px;
   box-shadow: 0 4px 15px #424b2b03;
@@ -648,10 +643,10 @@ form {
   padding: 0;
   min-height: 40px;
   line-height: 1.6;
-  color: #687260;
+  color: var(--muted);
 }
 .composer textarea::placeholder {
-  color: #687260;
+  color: var(--muted);
   opacity: 1;
 }
 .composer-bottom {
@@ -661,11 +656,11 @@ form {
 }
 .composer-bottom > span {
   font-size: 9px;
-  color: #687260;
+  color: var(--muted);
 }
 .composer-bottom button {
-  background: #e2e6d9;
-  color: #7b876d;
+  background: var(--raised);
+  color: var(--muted);
   border-radius: 9px;
   min-width: 32px;
   height: 32px;
@@ -673,7 +668,7 @@ form {
 }
 .composer-caption {
   text-align: center;
-  color: #687260;
+  color: var(--muted);
   font-size: 9px;
   margin-top: 12px;
 }
@@ -716,7 +711,7 @@ dialog::backdrop {
 }
 dialog > p {
   font-size: 13px;
-  color: #687260;
+  color: var(--muted);
   line-height: 1.8;
 }
 .dialog-actions {
@@ -749,12 +744,12 @@ dialog > p {
 }
 .admin-intro > p:last-child {
   font-size: 13px;
-  color: #687260;
+  color: var(--muted);
   line-height: 1.8;
 }
 .admin-card {
   max-width: 1000px;
-  background: #fbfaf5;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 13px;
   margin-bottom: 22px;
@@ -772,7 +767,7 @@ dialog > p {
 }
 .section-heading p {
   font-size: 11px;
-  color: #687260;
+  color: var(--muted);
   line-height: 1.8;
   margin-top: 5px;
 }
@@ -782,8 +777,8 @@ dialog > p {
   font-size: 8px;
   letter-spacing: 0.7px;
   line-height: 1.4;
-  background: #eef0e6;
-  color: #7d886d;
+  background: var(--raised);
+  color: var(--muted);
   padding: 5px 8px;
   border-radius: 5px;
 }
@@ -806,11 +801,11 @@ dialog > p {
 }
 .count {
   font-size: 10px;
-  background: #e8ecdf;
+  background: var(--raised);
   padding: 3px 7px;
   border-radius: 5px;
   margin-left: 5px;
-  color: #738164;
+  color: var(--muted);
 }
 .user-list {
   list-style: none;
@@ -821,7 +816,7 @@ dialog > p {
   display: flex;
   align-items: center;
   gap: 14px;
-  border-top: 1px solid #e9eadd;
+  border-top: 1px solid var(--line);
   padding: 20px 0;
 }
 .user-list li:last-child {
@@ -841,18 +836,18 @@ dialog > p {
 }
 .user-detail > span {
   font-size: 10px;
-  color: #687260;
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 .user-state {
   font-size: 10px;
-  color: #687260;
+  color: var(--muted);
   width: 155px;
   text-align: right;
 }
 .admin-pill {
-  background: #e3e9d8;
-  color: #617448;
+  background: var(--raised);
+  color: var(--muted);
 }
 .temporary-label {
   margin: 23px 0 10px;
@@ -860,8 +855,8 @@ dialog > p {
 .temporary-password {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 16px;
-  background: #edf0e4;
-  border-color: #dce3ce;
+  background: var(--raised);
+  border-color: var(--line);
 }
 .mobile-only {
   display: none;
@@ -1251,17 +1246,17 @@ dialog > p {
   top: max(8px, env(safe-area-inset-top, 0px));
   left: max(8px, env(safe-area-inset-left, 0px));
   padding: 12px 16px;
-  color: #30271d;
-  background: #fffaf1;
+  color: var(--ink);
+  background: var(--surface);
   border-radius: 8px;
   transform: translateY(-200%);
 }
 .workspace-skip:focus {
   transform: none;
-  outline: 3px solid #aa783e;
+  outline: 3px solid var(--accent);
 }
 #workspace-heading:focus-visible {
-  outline: 3px solid #aa783e;
+  outline: 3px solid var(--accent);
   outline-offset: 4px;
   border-radius: 2px;
 }

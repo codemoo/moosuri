@@ -14,9 +14,9 @@
 .google-setup-step details { width: 100%; }
 .google-setup-step a, .google-setup-step dd, .google-client-id, .google-setup-success { overflow-wrap: anywhere; }
 .google-setup-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.google-local-result { width: 100%; min-width: 0; border-left: 3px solid #b6a77e; padding-left: 14px; box-sizing: border-box; }
+.google-local-result { width: 100%; min-width: 0; border-left: 3px solid var(--notice-line); padding-left: 14px; box-sizing: border-box; }
 .google-local-result dl { margin-bottom: 0; }
 .google-local-result dt { font-size: .85rem; margin-top: 8px; }
 .google-local-result dd { margin: 4px 0 0; }
-.google-setup-success { color: #385747; background: #eef3ec; border-radius: 10px; padding: 12px 16px; }
+.google-setup-success { color: var(--ink); background: var(--raised); border-radius: 10px; padding: 12px 16px; }
 @media (max-width: 600px) { .google-setup-scroll { padding: 16px; gap: 14px; } .google-setup-actions { width: 100%; } .google-setup-actions button { flex: 1 1 150px; } }

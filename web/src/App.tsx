@@ -1,3 +1,6 @@
+import { Button } from "@astryxdesign/core/Button";
+import { ConversationSearch, WorkspaceIcon } from "./WorkspaceNavigation";
+import { MediaLibraryView } from "./Media";
 import { emptyInstructions } from "./run-instructions";
 import { accountPasswordValid, ACCOUNT_PASSWORD_HELP } from "./account-password";
 import {InvitationEmail} from "./InvitationEmail";
@@ -784,6 +787,8 @@ function Workspace({
   const [creating, setCreating] = useState(false);
   const creationInFlight = useRef<Promise<ThreadSummary> | null>(null);
   const [drawer, setDrawer] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchOpener = useRef<HTMLButtonElement | null>(null);
   const [deleting, setDeleting] = useState<ThreadSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const deletePending = useRef<{ id: string; controller: AbortController } | null>(null);
@@ -817,12 +822,15 @@ function Workspace({
   const personalMail = path === "/settings/mail";
   const personalSources = path === "/settings/sources";
   const communitySkills = path === "/app/skills";
-  const artifactPage=path==="/app/artifacts"||path.startsWith("/app/artifacts/");
+  const goalPage = path === "/app/goals" || path.startsWith("/app/goals/");
+  const libraryPage = path === "/app/library";
+  const feedPage = path === "/app/feed";
+  const artifactPage = goalPage || path === "/app/artifacts" || path.startsWith("/app/artifacts/");
   const missionsPage = path === "/app/missions";
-  const schedulesPage = path === "/app/schedules";
+  const schedulesPage = path === "/app/schedules" || feedPage;
   const chatPage = ![admin, personalUsage, knowledgeOpen, personalModel, calendarPage,
     nativeCredentials, personalMail, personalSources, personalTelegram, communitySkills, artifactPage,
-    missionsPage, schedulesPage].some(Boolean);
+    missionsPage, schedulesPage, libraryPage].some(Boolean);
   const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -1009,178 +1017,102 @@ function Workspace({
     }
   }
   const current = threads.find((t) => t.id === selected);
+  function openDestination(destination: string) {
+    setDrawer(false);
+    setSearchOpen(false);
+    navigate(destination);
+  }
+  function openThread(id: string) {
+    setSelected(id);
+    openDestination("/app");
+  }
+  function openSearch(event: React.MouseEvent<HTMLButtonElement>) {
+    searchOpener.current = event.currentTarget;
+    setDrawer(false);
+    setSearchOpen(true);
+  }
+  useEffect(() => {
+    function shortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k" && !deleting) {
+        event.preventDefault();
+        searchOpener.current = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+        setDrawer(false);
+        setSearchOpen(value => !value);
+      }
+    }
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [deleting]);
+  const primary = [
+    {label:"채팅", path:"/app", active:chatPage, icon:"chat"},
+    {label:"소식함", path:"/app/feed", active:feedPage, icon:"feed"},
+    {label:"아이디어", path:"/app/skills", active:communitySkills, icon:"idea"},
+    {label:"목표", path:"/app/goals", active:goalPage, icon:"goal"},
+    {label:"보관함", path:"/app/library", active:libraryPage, icon:"library"},
+  ] as const;
+  const workLinks = [
+    {label:"맡긴 일", path:"/app/missions", active:missionsPage},
+    {label:"예약 · 소식", path:"/app/schedules", active:schedulesPage && !feedPage},
+    {label:"문서 · 목표 · 요청", path:"/app/artifacts", active:artifactPage && !goalPage},
+    {label:"자료", path:"/app/knowledge", active:knowledgePage},
+    {label:"기억", path:"/app/memory", active:memoryPage},
+  ];
+  const connections = [
+    {label:"내 모델", path:"/settings/model", active:personalModel},
+    {label:"내 Calendar", path:"/settings/calendar", active:calendarPage},
+    {label:"내 Gmail · 발송 확인", path:"/settings/mail", active:personalMail},
+    {label:"내 Telegram", path:"/settings/telegram", active:personalTelegram},
+    {label:"자료 수집 연결", path:"/settings/sources", active:personalSources},
+    {label:"신뢰 기기 credential · 실험", path:"/settings/credentials", active:nativeCredentials},
+    {label:"사용량", path:"/settings/usage", active:personalUsage},
+    ...(allowedAdmin ? [{label:admin ? "← Back to your space" : "Manage installation", path:admin ? "/app" : "/admin", active:admin}] : []),
+  ];
+  function links(items: typeof workLinks) {
+    return items.map(item => <button key={item.label} className={`nav-link ${item.active ? "chosen" : ""}`}
+      aria-current={item.active ? "page" : undefined} onClick={() => openDestination(item.path)}>{item.label}</button>);
+  }
   const history = (
     <>
-      <div className="sidebar-heading">
-        <Brand />
-        <button
-          className="icon-button mobile-only"
-          onClick={() => setDrawer(false)}
-          aria-label="Close conversations"
-        >
-          ×
+      <div className="sidebar-heading"><Brand /></div>
+      <div className="workspace-shortcuts">
+        <button className="new-chat" onClick={createThread} disabled={creating || loading}>
+          <WorkspaceIcon name="new"/>
+          {creating ? "만드는 중…" : chatMemory.threadCreation ? "새 대화 다시 확인" : "새 대화"}
         </button>
+        <Button variant="ghost" className="workspace-search-button" onClick={openSearch} label="대화 검색" icon={<WorkspaceIcon name="search"/>} isIconOnly/>
       </div>
-      <button
-        className="new-chat"
-        onClick={createThread}
-        disabled={creating || loading}
-      >
-        <span aria-hidden="true">＋</span>
-        {creating ? "Creating…" : chatMemory.threadCreation ? "Retry new conversation" : "New conversation"}
-      </button>
       {chatMemory.threadCreation?.status === "uncertain" && <p className="sidebar-hint" role="status">새 대화 생성 접수를 확인하지 못했습니다. 다시 확인할 때 같은 요청을 사용합니다.</p>}
-      <div className="history-title">
-        YOUR CONVERSATIONS <span>{threads.length}</span>
-      </div>
-      <nav className="thread-list" aria-label="Conversations">
-        {loading ? (
-          <p className="sidebar-hint" role="status">
-            Loading conversations…
-          </p>
-        ) : threads.length === 0 ? (
-          <p className="sidebar-hint">
-            A clear page.
-            <br />
-            Your conversations will live here.
-          </p>
-        ) : (
-          threads.map((thread) => (
-            <div
-              className={`thread-row ${thread.id === selected && chatPage ? "active" : ""}`}
-              key={thread.id}
-            >
-              <button
-                className="thread-select"
-                onClick={() => {
-                  setSelected(thread.id);
-                  navigate("/app");
-                  setDrawer(false);
-                }}
-                aria-current={
-                  thread.id === selected && chatPage
-                    ? "page"
-                    : undefined
-                }
-              >
-                <span className="thread-symbol" aria-hidden="true">
-                  ◌
-                </span>
-                <span>{thread.title}</span>
-              </button>
-              <button
-                className="thread-delete"
-                disabled={deleteBusy}
-                aria-label={`Delete ${thread.title}`}
-                onClick={(event) => {
-                  deleteOpener.current = event.currentTarget;
-                  setDeleting(thread);
-                  setDrawer(false);
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))
-        )}
+      <nav className="workspace-primary" aria-label="주 메뉴">
+        {primary.map(item => <Button key={item.path} label={item.label} variant="ghost" aria-current={item.active ? "page" : undefined}
+          icon={<WorkspaceIcon name={item.icon}/>} onClick={() => openDestination(item.path)}/>)}
       </nav>
+      <div className="workspace-sidebar-scroll">
+        <div className="history-title">최근 대화</div>
+        <nav className="thread-list" aria-label="Conversations">
+          {loading ? <p className="sidebar-hint" role="status">Loading conversations…</p>
+            : threads.length === 0 ? <p className="sidebar-hint">아직 대화가 없습니다.</p>
+            : threads.slice(0, 12).map(thread => (
+              <div className={`thread-row ${thread.id === selected && chatPage ? "active" : ""}`} key={thread.id}>
+                <button className="thread-select" onClick={() => openThread(thread.id)}
+                  aria-current={thread.id === selected && chatPage ? "page" : undefined}><span>{thread.title}</span></button>
+                <button className="thread-delete" disabled={deleteBusy} aria-label={`Delete ${thread.title}`}
+                  onClick={event => { deleteOpener.current = event.currentTarget; setDeleting(thread); setDrawer(false); }}>×</button>
+              </div>
+            ))}
+        </nav>
+        {threads.length > 12 && <button className="nav-link" onClick={openSearch}>대화 모두 찾기</button>}
+        <div className="history-title">작업 공간</div>
+        <nav className="workspace-links" aria-label="작업 공간">{links(workLinks)}</nav>
+        <div className="history-title">연결 및 설정</div>
+        <nav className="workspace-links" aria-label="연결 및 설정">{links(connections)}</nav>
+      </div>
       <div className="sidebar-bottom">
         <PwaInstallButton />
-        <div className="boundary-note">
-          <span aria-hidden="true">⌁</span>
-          <span>
-            Your conversations belong
-            <br />
-            to your account.
-          </span>
-        </div>
-        <button
-          className={`nav-link ${knowledgePage ? "chosen" : ""}`}
-          aria-current={knowledgePage ? "page" : undefined}
-          onClick={() => {
-            navigate("/app/knowledge");
-            setDrawer(false);
-          }}
-        >
-          자료<span aria-hidden="true">↗</span>
-        </button>
-        <button
-          className={`nav-link ${memoryPage ? "chosen" : ""}`}
-          aria-current={memoryPage ? "page" : undefined}
-          onClick={() => {
-            navigate("/app/memory");
-            setDrawer(false);
-          }}
-        >
-          기억<span aria-hidden="true">↗</span>
-        </button>
-        <button
-          className={`nav-link ${personalModel ? "chosen" : ""}`} aria-current={personalModel ? "page" : undefined}
-          onClick={() => {
-            navigate(personalModel ? "/app" : "/settings/model");
-            setDrawer(false);
-          }}
-        >
-          {personalModel ? "← 대화로 돌아가기" : "내 모델"}
-          <span aria-hidden="true">↗</span>
-        </button>
-        <button
-          className={`nav-link ${personalSources ? "chosen" : ""}`}
-          aria-current={personalSources ? "page" : undefined}
-          onClick={() => {
-            navigate("/settings/sources");
-            setDrawer(false);
-          }}
-        >
-          자료 수집 연결<span aria-hidden="true">↗</span>
-        </button>
-        <button className={`nav-link ${artifactPage?"chosen":""}`} aria-current={artifactPage ? "page" : undefined} onClick={()=>{navigate("/app/artifacts");setDrawer(false)}}>문서 · 목표 · 요청<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${communitySkills ? "chosen" : ""}`} aria-current={communitySkills ? "page" : undefined} onClick={()=>{navigate("/app/skills");setDrawer(false)}}>제안 · 할 수 있는 일<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${missionsPage?"chosen":""}`} aria-current={missionsPage ? "page" : undefined} onClick={()=>{navigate("/app/missions");setDrawer(false)}}>맡긴 일<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${schedulesPage ? "chosen" : ""}`} aria-current={schedulesPage?"page":undefined} onClick={()=>{navigate("/app/schedules");setDrawer(false)}}>예약 · 소식<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${calendarPage?"chosen":""}`} aria-current={calendarPage ? "page" : undefined} onClick={()=>{navigate("/settings/calendar");setDrawer(false)}}>내 Calendar<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${nativeCredentials ? "chosen":""}`} aria-current={nativeCredentials ? "page" : undefined} onClick={()=>{navigate("/settings/credentials");setDrawer(false)}}>신뢰 기기 credential · 실험<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${personalTelegram ? "chosen" : ""}`} aria-current={personalTelegram ? "page" : undefined} onClick={()=>{navigate("/settings/telegram");setDrawer(false)}}>내 Telegram<span aria-hidden="true">↗</span></button>
-        <button className={`nav-link ${personalMail ? "chosen" : ""}`} aria-current={personalMail ? "page" : undefined} onClick={()=>{navigate(personalMail?"/app":"/settings/mail");setDrawer(false)}}>내 Gmail · 발송 확인<span aria-hidden="true">↗</span></button>
-        <button
-          className={`nav-link ${personalUsage ? "chosen" : ""}`} aria-current={personalUsage ? "page" : undefined}
-          onClick={() => {
-            navigate(personalUsage ? "/app" : "/settings/usage");
-            setDrawer(false);
-          }}
-        >
-          {personalUsage ? "← 대화로 돌아가기" : "사용량"}
-          <span aria-hidden="true">↗</span>
-        </button>
-        {allowedAdmin && (
-          <button
-            className={`nav-link ${admin ? "chosen" : ""}`} aria-current={admin ? "page" : undefined}
-            onClick={() => {
-              navigate(admin ? "/app" : "/admin");
-              setDrawer(false);
-            }}
-          >
-            {admin ? "← Back to your space" : "Manage installation"}
-            <span aria-hidden="true">↗</span>
-          </button>
-        )}
         <div className="account">
-          <span className="avatar">
-            {session.user.name.slice(0, 1).toUpperCase()}
-          </span>
-          <span className="account-name">
-            {session.user.name}
-            <small>{session.user.email}</small>
-          </span>
+          <span className="avatar">{session.user.name.slice(0, 1).toUpperCase()}</span>
+          <span className="account-name">{session.user.name}<small>{session.user.email}</small></span>
           <VaultLaunch accountId={session.user.id}/>
-          <button
-            className="icon-button"
-            title="Sign out"
-            aria-label="Sign out"
-            onClick={onLogout}
-          >
-            ↪
-          </button>
+          <button className="icon-button" title="Sign out" aria-label="Sign out" onClick={onLogout}>↪</button>
         </div>
       </div>
     </>
@@ -1200,20 +1132,11 @@ function Workspace({
             aria-label="Open conversations"
             onClick={() => setDrawer(true)}
           >
-            ☰
+            <WorkspaceIcon name="menu"/>
           </button>
-          <div>
-            <span className="eyebrow">
-              {calendarPage ? "내 Google 연결" : missionsPage ? "계획과 결과" : schedulesPage ? "로컬 알림" : artifactPage ? "나의 기록" : communitySkills ? "제안" : personalSources ? "내 연결" : knowledgeOpen
-                ? "나의 기록"
-                : admin
-                  ? "INSTALLATION"
-                  : personalModel
-                    ? "MY SETTINGS"
-                    : "YOUR SPACE"}
-            </span>
+          <div className="work-title">
             <h1 id="workspace-heading" ref={pageHeading} tabIndex={-1}>
-              {personalTelegram ? "내 Telegram" : personalMail ? "내 Gmail" : nativeCredentials ? "신뢰 기기 연결" : calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : schedulesPage ? "예약 · 소식" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "할 수 있는 일" : personalSources ? "자료 수집 연결" : knowledgeOpen
+              {personalTelegram ? "내 Telegram" : personalMail ? "내 Gmail" : nativeCredentials ? "신뢰 기기 연결" : calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : feedPage ? "소식함" : schedulesPage ? "예약 · 소식" : libraryPage ? "보관함" : goalPage ? "목표" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "아이디어" : personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
                   ? "기억"
                   : "자료"
@@ -1231,16 +1154,13 @@ function Workspace({
                     ? "내 사용량"
                     : personalModel
                       ? "내 모델"
-                      : (current?.title ?? "A new beginning")}
+                      : (current?.title ?? "새 대화")}
             </h1>
           </div>
-          <button
-            className="icon-button mobile-only"
-            aria-label="Sign out"
-            onClick={onLogout}
-          >
-            ↪
-          </button>
+          <div className="work-header-actions">
+            <button className="icon-button mobile-only" aria-label="대화 검색" onClick={openSearch}><WorkspaceIcon name="search"/></button>
+            <button className="icon-button mobile-only" aria-label="새 대화 시작" disabled={creating || loading} onClick={createThread}><WorkspaceIcon name="new"/></button>
+          </div>
         </header>
         {error && (
           <div className="workspace-error">
@@ -1281,7 +1201,55 @@ function Workspace({
           </nav>
         )}
         <DeferredPage key={path} back={() => navigate("/app")}>
-        {missionsPage ? <Missions accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} instructionDrafts={chatMemory.missionInstructions} onInstruction={(id,change)=>setChatMemory(current=>({...current,missionInstructions:{...current.missionInstructions,[id]:change(current.missionInstructions?.[id]??emptyInstructions())}}))}/> : schedulesPage ? <Schedules accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} openMission={id=>navigate(`/app/missions#mission-${id}`)} openArtifact={id=>navigate(`/app/artifacts/${id}`)}/> : artifactPage ? <Artifacts accountId={session.user.id} initialKind={artifactKind} onKind={setArtifactKind} id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts} navigate={navigate} onExpired={onExpired} openReference={r=>{if(r.kind==="artifact"){navigate(`/app/artifacts/${r.id}`)}else{setKnowledgeTarget({kind:r.kind,id:r.id,revision:r.revision,title:"기록의 근거"});navigate(r.kind==="source"?"/app/knowledge":"/app/memory")}}} revise={(id,revision,title)=>{setArtifactTarget({id,revision,title});setSelected(null);setChatMemory(v=>({...v,drafts:{...v.drafts,new:`선택한 ${namesForArtifact(artifactKind)}를 수정해 줘. ${v.drafts.new??""}`}}));navigate("/app")}}/> : personalSources ? (
+        {missionsPage ? (
+          <Missions accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")}
+            instructionDrafts={chatMemory.missionInstructions}
+            onInstruction={(id, change) => setChatMemory(current => ({
+              ...current, missionInstructions: {
+                ...current.missionInstructions,
+                [id]: change(current.missionInstructions?.[id] ?? emptyInstructions()),
+              },
+            }))}/>
+        ) : schedulesPage ? (
+          <Schedules accountId={session.user.id} onExpired={onExpired} feedOnly={feedPage}
+            manageSchedules={() => navigate("/app/schedules")} back={() => navigate("/app")}
+            openMission={id => navigate(`/app/missions#mission-${id}`)}
+            openArtifact={id => navigate(`/app/artifacts/${id}`)}/>
+        ) : libraryPage ? (
+          <section className="workspace-library admin-scroll" aria-label="내 보관함">
+            <div className="workspace-library-tabs">
+              <Button label="문서" onClick={() => { setArtifactKind("document"); navigate("/app/artifacts"); }}/>
+              <Button label="자료" onClick={() => navigate("/app/knowledge")}/>
+              <Button label="기억" onClick={() => navigate("/app/memory")}/>
+            </div>
+            <h2>이미지와 파일</h2>
+            <MediaLibraryView accountId={session.user.id} standalone/>
+          </section>
+        ) : artifactPage ? (
+          <Artifacts accountId={session.user.id} initialKind={goalPage ? "goal" : artifactKind}
+            collectionPath={goalPage ? "/app/goals" : "/app/artifacts"} onKind={setArtifactKind}
+            id={path.split("/")[3]} drafts={artifactDrafts} updateDrafts={setArtifactDrafts}
+            navigate={navigate} onExpired={onExpired}
+            openReference={reference => {
+              if (reference.kind === "artifact") {
+                navigate(`/app/artifacts/${reference.id}`);
+              } else {
+                setKnowledgeTarget({kind:reference.kind, id:reference.id, revision:reference.revision, title:"기록의 근거"});
+                navigate(reference.kind === "source" ? "/app/knowledge" : "/app/memory");
+              }
+            }}
+            revise={(id, revision, title) => {
+              setArtifactTarget({id, revision, title});
+              setSelected(null);
+              setChatMemory(current => ({
+                ...current, drafts: {
+                  ...current.drafts,
+                  new: `선택한 ${namesForArtifact(goalPage ? "goal" : artifactKind)}를 수정해 줘. ${current.drafts.new ?? ""}`,
+                },
+              }));
+              navigate("/app");
+            }}/>
+        ) : personalSources ? (
           <SourceConnections accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")} />
         ) : personalTelegram ? <TelegramSettings accountId={session.user.id} onExpired={onExpired}/> : calendarPage ? <Calendar accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} setup={allowedAdmin?()=>navigate("/admin/google"):undefined}/> : communitySkills ? <CommunitySkills accountId={session.user.id} onExpired={onExpired} back={()=>navigate("/app")} connect={()=>navigate("/settings/mail")} start={(name)=>{
           setSelected(null);
@@ -1407,6 +1375,8 @@ function Workspace({
             onThreadMissing={threadMissing}
             onThreadUpdated={() => setRetry((value) => value + 1)}
             openSettings={() => navigate("/settings/model")}
+            openIdeas={() => navigate("/app/skills")}
+            openWork={() => navigate("/app/missions")}
             onOpenEvidence={(reference) => {
               setKnowledgeTarget(reference);
               navigate(reference.kind === "source" ? "/app/knowledge" : "/app/memory");
@@ -1417,13 +1387,16 @@ function Workspace({
       </section>
       {drawer && (
         <Modal
-          title="Your conversations"
+          title="무수리"
           returnFocus={historyOpener.current}
           close={() => setDrawer(false)}
         >
           <div className="mobile-history">{history}</div>
         </Modal>
       )}
+      {searchOpen && <Modal title="대화 검색" returnFocus={searchOpener.current} fallbackFocus={pageHeading.current} close={() => setSearchOpen(false)}>
+        <ConversationSearch threads={threads} openThread={openThread} openSources={() => openDestination("/app/knowledge")}/>
+      </Modal>}
       {deleting && (
         <Modal
           title="Delete conversation?"

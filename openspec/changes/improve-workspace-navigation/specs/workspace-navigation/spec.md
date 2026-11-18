@@ -23,3 +23,19 @@ control no longer exists.
 - **THEN** an unrelated conversation is not marked as the current page
 - **WHEN** deletion removes the invoking conversation control
 - **THEN** focus moves to the remaining workspace heading
+
+### Requirement: Distinct chat-first workspace destinations
+
+The workspace SHALL use Astryx's dark theme for the shell and keep chat as the
+default. The primary navigation SHALL open chat, incoming notices, ideas,
+goals, and the media library. On a narrow viewport the menu, search and
+new-chat entry points SHALL remain visible at the top.
+
+#### Scenario: Find an owned conversation
+- **WHEN** the owner opens title search and selects a result
+- **THEN** the existing conversation opens and the search closes
+- **AND** the owner's drafts stay bound to their original conversations
+
+#### Scenario: Open a destination without loading unrelated forms
+- **WHEN** the owner opens notices, goals, or the library directly
+- **THEN** the app shows the corresponding records, with schedule editing kept in its own screen

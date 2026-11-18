@@ -1,9 +1,9 @@
 .push-settings {
-  border: 1px solid var(--border, #d7ded5);
+  border: 1px solid var(--border, var(--line));
   border-radius: 12px;
   padding: 16px;
   margin: 16px 0;
-  background: var(--surface, #fff);
+  background: var(--surface, var(--surface));
 }
 .push-settings h2 {
   margin: 0 0 8px;

@@ -1,7 +1,10 @@
 use super::protocol;
 #[path = "discovery.rs"]
 mod discovery;
-pub use discovery::AccountModels;
+pub use discovery::{AccountModels, ModelEffortMetadata};
+#[path = "usage.rs"]
+mod usage;
+pub use usage::{AccountUsage, UsageLimit};
 #[path = "login.rs"]
 mod login;
 use crate::model::{
@@ -588,9 +591,13 @@ impl Profile {
         let (env, temp, listener) = tokio::select! {_=cancel.cancelled()=>return Err(TransportError::Cancelled),r=self.prepare(environment)=>r?};
         std::fs::write(temp.path().join("system.txt"), system).map_err(|_| err())?;
         std::fs::write(temp.path().join("mcp.json"), b"{\"mcpServers\":{}}").map_err(|_| err())?;
+        let mut settings = serde_json::json!({"disableAllHooks":true,"autoMemoryEnabled":false});
+        if let Some(effort) = &request.effort {
+            settings["effortLevel"] = serde_json::json!(effort);
+        }
         std::fs::write(
             temp.path().join("settings.json"),
-            b"{\"disableAllHooks\":true,\"autoMemoryEnabled\":false}",
+            serde_json::to_vec(&settings).map_err(|_| err())?,
         )
         .map_err(|_| err())?;
         let name = format!("moosuri-claude-{}", session);

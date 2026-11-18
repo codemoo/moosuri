@@ -61,6 +61,8 @@ fn plan_catalog_is_account_ordered_strict_and_bounded_without_api_shape_fallback
         vec!["z-model", "a-model"]
     );
     assert_eq!(catalog.models[0].name, "Z model");
+    assert!(catalog.models[0].efforts.is_empty());
+    assert!(catalog.models[0].default_effort.is_none());
     assert!(!catalog.truncated);
     for value in [
         json!({"data":[]}),
@@ -92,6 +94,43 @@ fn plan_catalog_is_account_ordered_strict_and_bounded_without_api_shape_fallback
     ));
     assert!(matches!(
         parse_catalog(&serde_json::to_vec(&json!({"models":vec![json!({});4097]})).unwrap()),
+        Err(TransportError::LimitExceeded)
+    ));
+}
+#[test]
+fn plan_catalog_preserves_only_explicit_bounded_reasoning_metadata() {
+    let entry = json!({"slug":"fixture-model","display_name":"Fixture","visibility":"list",
+        "supported_reasoning_levels":[{"effort":"low","description":"Less"},{"effort":"ultra","description":"More"}],
+        "default_reasoning_level":"low"});
+    let parse = |entry| parse_catalog(&serde_json::to_vec(&json!({"models":[entry]})).unwrap());
+    let catalog = parse(entry.clone()).unwrap();
+    assert_eq!(catalog.models[0].efforts, ["low", "ultra"]);
+    assert_eq!(catalog.models[0].default_effort.as_deref(), Some("low"));
+    for (field, invalid) in [
+        ("supported_reasoning_levels", json!("low")),
+        (
+            "supported_reasoning_levels",
+            json!([{"effort":"low"},{"effort":"low"}]),
+        ),
+        (
+            "supported_reasoning_levels",
+            json!([{"effort":"private marker\n"}]),
+        ),
+        (
+            "supported_reasoning_levels",
+            json!([{"description":"Missing"}]),
+        ),
+        ("default_reasoning_level", json!("high")),
+        ("default_reasoning_level", json!(3)),
+    ] {
+        let mut bad = entry.clone();
+        bad[field] = invalid;
+        assert!(matches!(parse(bad), Err(TransportError::InvalidCatalog)));
+    }
+    let mut too_many = entry;
+    too_many["supported_reasoning_levels"] = json!(vec![json!({"effort":"low"}); 17]);
+    assert!(matches!(
+        parse(too_many),
         Err(TransportError::LimitExceeded)
     ));
 }

@@ -195,7 +195,7 @@ export type ThreadSummary = { id: string, title: string, created_at: number, upd
 export type ThreadsResponse = { threads: Array<ThreadSummary>, };
 export type UsersResponse = { users: Array<AccountSummary>, };
 export type ApiError = { code: string, };
-export type ModelSource = "shared" | "personal_chat_gpt" | "personal_claude_code";
+export type ModelSource = "shared" | "personal_chat_gpt" | "personal_claude_code" | "personal_compatible";
 export type ProviderKind = "open_ai" | "anthropic" | "open_router" | "compatible";
 export type ProviderConfig = { kind: ProviderKind, base_url: string | null, allowed_ips: Array<string>, router_providers: Array<string>, zero_data_retention: boolean, };
 export type ModelSelection = { source?: ModelSource, provider_id: string, provider_revision: number, model: string, effort: string | null, };
@@ -207,8 +207,21 @@ function_tools: boolean, };
 export type ProviderSummary = { id: string, name: string, revision: number, config: ProviderConfig, enabled: boolean, has_credential: boolean, choices: Array<ModelChoice>, is_default: boolean, };
 export type ProvidersResponse = { providers: Array<ProviderSummary>, default_selection: ModelSelection | null, };
 export type ModelSettings = { selection: ModelSelection | null, effective: ModelChoice | null, choices: Array<ModelChoice>, };
-export type ModelCatalogEntry = { id: string, name: string, };
+export type ModelCatalogEntry = { id: string, name: string, efforts: Array<string>, default_effort: string | null, };
 export type ModelCatalog = { models: Array<ModelCatalogEntry>, truncated: boolean, };
+export type QuotaScope = "personal_subscription" | "shared_provider_key";
+export type QuotaStatus = "known" | "unsupported" | "unavailable";
+export type QuotaUnit = "usd" | "requests";
+export type QuotaMetric = { id: string, label: string, unit: QuotaUnit, used: number | null, limit: number | null, remaining: number | null,
+/**
+ * Only a timestamp explicitly reported by the provider, in Unix seconds.
+ */
+reset_at: number | null,
+/**
+ * A provider-reported interval is not a known next reset instant.
+ */
+reset_interval: string | null, };
+export type ProviderQuota = { source: ModelSource, provider_id: string, provider_revision: number, scope: QuotaScope, status: QuotaStatus, observed_at: number | null, metrics: Array<QuotaMetric>, evidence_url: string, message: string, };
 export type RunState = "queued" | "running" | "completed" | "failed" | "cancelled" | "incomplete" | "refused" | "outcome_unknown";
 export type MessagePhase = "commentary" | "final_answer";
 export type RunUsage = { input_tokens: number | null, output_tokens: number | null, cache_read_tokens: number | null, cache_write_tokens: number | null, };

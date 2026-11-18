@@ -1844,19 +1844,20 @@ async fn execute_claude_text(
             return;
         }
     };
-    let model = match store.check_run(lease).await {
-        Ok(()) => match store.claude_run_model(lease).await {
+    let selection = match store.check_run(lease).await {
+        Ok(()) => match store.claude_run_selection(lease).await {
             Ok(v) => v,
             Err(_) => return,
         },
         Err(_) => return,
     };
     let request = TextRequest {
-        model: model.clone(),
-        effort: None,
+        model: selection.model.clone(),
+        effort: selection.effort,
         max_output_tokens: 4096,
         messages: project(messages, false),
     };
+    let model = selection.model;
     // Pure local validation cannot consume a remote dispatch reservation.
     if moosuri_connectors::claude_code::protocol::input(
         &request,

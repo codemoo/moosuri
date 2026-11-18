@@ -1,5 +1,6 @@
 //! Shared provider settings. Server-managed encryption is separate from the user vault.
 use super::*;
+mod personal;
 use chacha20poly1305::{
     KeyInit, XChaCha20Poly1305, XNonce,
     aead::{Aead, Payload},
@@ -8,6 +9,7 @@ use moosuri_core::{
     ModelChoice, ModelSelection, ModelSettings, ProviderConfig, ProviderKind, ProviderSummary,
     ProvidersResponse,
 };
+use personal::*;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::{
@@ -271,6 +273,9 @@ fn credential(key: &[u8; 32], row: &Revision) -> Result<Option<Zeroizing<String>
 }
 pub(super) fn require_binding(conn: &Connection, id: &str, revision: i64) -> Result<Revision> {
     crate::recovery_budget::require_dispatch_identity(conn)?;
+    if owner(conn, id)?.is_some() {
+        return Err(StoreError::Conflict);
+    }
     require_binding_metadata(conn, id, revision)
 }
 fn require_binding_metadata(conn: &Connection, id: &str, revision: i64) -> Result<Revision> {
@@ -306,7 +311,7 @@ pub(super) fn binding(
     })
 }
 fn choices(conn: &Connection, id: Option<&str>) -> Result<Vec<ModelChoice>> {
-    let mut stmt=conn.prepare("SELECT r.provider_id,r.revision,r.name,r.config,m.model,m.effort,m.verified_at,m.function_tools FROM providers p JOIN provider_revisions r ON r.provider_id=p.id AND r.revision=p.current_revision JOIN provider_model_probes m ON m.provider_id=r.provider_id AND m.revision=r.revision WHERE r.enabled=1 AND (?1 IS NULL OR p.id=?1) ORDER BY r.name,m.model,m.effort")?;
+    let mut stmt=conn.prepare("SELECT r.provider_id,r.revision,r.name,r.config,m.model,m.effort,m.verified_at,m.function_tools FROM providers p JOIN provider_revisions r ON r.provider_id=p.id AND r.revision=p.current_revision JOIN provider_model_probes m ON m.provider_id=r.provider_id AND m.revision=r.revision WHERE r.enabled=1 AND NOT EXISTS(SELECT 1 FROM personal_compatible_providers o WHERE o.provider_id=p.id) AND (?1 IS NULL OR p.id=?1) ORDER BY r.name,m.model,m.effort")?;
     let rows = stmt.query_map([id], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -361,6 +366,12 @@ fn selected(conn: &Connection, user: Option<&UserContext>) -> Result<Option<Sele
     } else {
         conn.query_row("SELECT provider_id,revision,model,effort FROM installation_model_selection WHERE singleton=1",[],selection_row).optional()?
     };
+    let mut row = row;
+    if let Some(s) = &mut row {
+        if owner(conn, &s.value.provider_id)?.is_some() {
+            s.value.source = moosuri_core::ModelSource::PersonalCompatible;
+        }
+    }
     Ok(row)
 }
 fn selection_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Selection> {
@@ -382,6 +393,9 @@ fn selection_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Selection> {
 }
 fn verified(conn: &Connection, selection: &ModelSelection) -> Result<ModelChoice> {
     if selection.source != moosuri_core::ModelSource::Shared {
+        return Err(StoreError::Conflict);
+    }
+    if owner(conn, &selection.provider_id)?.is_some() {
         return Err(StoreError::Conflict);
     }
     let row = load_revision(conn, &selection.provider_id).map_err(|error| {
@@ -406,6 +420,7 @@ fn settings(conn: &Connection, user: &UserContext) -> Result<ModelSettings> {
     let personal = selected(conn, Some(user))?;
     if let Some(s) = subscription {
         let mut all = choices(conn, None)?;
+        all.extend(personal_choices(conn, user)?);
         all.extend(subscriptions::choices(conn, user)?);
         all.extend(crate::claude_execution::choices(conn, user)?);
         let effective = all
@@ -426,6 +441,7 @@ fn settings(conn: &Connection, user: &UserContext) -> Result<ModelSettings> {
     }
     let effective = personal.clone().or(selected(conn, None)?);
     let mut all = choices(conn, None)?;
+    all.extend(personal_choices(conn, user)?);
     all.extend(subscriptions::choices(conn, user)?);
     all.extend(crate::claude_execution::choices(conn, user)?);
     let effective = effective.and_then(|s| {
@@ -453,13 +469,17 @@ fn summary(conn: &Connection, row: Revision) -> Result<ProviderSummary> {
         config: row.config,
         enabled: row.enabled,
         has_credential: row.cipher.is_some(),
-        choices: choices(conn, Some(&row.id))?,
+        choices: if let Some((tenant, account)) = owner(conn, &row.id)? {
+            personal_choices_for(conn, &tenant, &account, Some(&row.id))?
+        } else {
+            choices(conn, Some(&row.id))?
+        },
         is_default: default.is_some_and(|s| s.value.provider_id == row.id),
     })
 }
 fn list(conn: &Connection) -> Result<ProvidersResponse> {
     let ids = conn
-        .prepare("SELECT id FROM providers ORDER BY id")?
+        .prepare("SELECT id FROM providers WHERE NOT EXISTS(SELECT 1 FROM personal_compatible_providers o WHERE o.provider_id=providers.id) ORDER BY id")?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(ProvidersResponse {
@@ -476,17 +496,34 @@ impl Store {
         user: &UserContext,
         change: ProviderChange,
     ) -> Result<ProviderSummary> {
+        self.create_provider_scoped(user, change, false).await
+    }
+    pub async fn create_personal_compatible(
+        &self,
+        user: &UserContext,
+        change: ProviderChange,
+    ) -> Result<ProviderSummary> {
+        self.create_provider_scoped(user, change, true).await
+    }
+    async fn create_provider_scoped(
+        &self,
+        user: &UserContext,
+        change: ProviderChange,
+        personal: bool,
+    ) -> Result<ProviderSummary> {
         let user = user.clone();
         self.call(move |db| {
-            validate(&db.conn,&user,true,true)?; validate_change(&change)?;
+            validate(&db.conn,&user,true,!personal)?; validate_change(&change)?;
+            if personal { personal_config(&db.conn,&user.tenant.0,&user.account.id,&change.config)?; if db.conn.query_row("SELECT count(*) FROM personal_compatible_providers WHERE tenant_id=?1 AND account_id=?2",params![user.tenant.0,user.account.id],|r|r.get::<_,i64>(0))?>=16{return Err(StoreError::Conflict)} }
             if matches!(change.credential,CredentialChange::Keep) { return Err(StoreError::InvalidInput); }
-            if db.conn.query_row("SELECT count(*) FROM providers",[],|r|r.get::<_,i64>(0))? >= 64 { return Err(StoreError::Conflict); }
+            if db.conn.query_row("SELECT count(*) FROM providers WHERE NOT EXISTS(SELECT 1 FROM personal_compatible_providers o WHERE o.provider_id=providers.id)",[],|r|r.get::<_,i64>(0))? >= 64 && !personal { return Err(StoreError::Conflict); }
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let id=Uuid::new_v4().to_string(); let revision=1;
             let cipher=match change.credential {CredentialChange::Replace(secret)=>Some(encrypt(&db.provider_key,secret.as_bytes(),&aad(&id,revision,&change.config)?)?),_=>None};
             if change.enabled && change.config.kind!=ProviderKind::Compatible && cipher.is_none() {return Err(StoreError::InvalidInput);}
             tx.execute("INSERT INTO providers(id,current_revision) VALUES (?1,1)",[&id])?;
             tx.execute("INSERT INTO provider_revisions(provider_id,revision,name,config,enabled,credential) VALUES (?1,1,?2,?3,?4,?5)",params![id,name_valid(change.name,200)?,config_bytes(&change.config)?,change.enabled,cipher])?;
+            if personal { tx.execute("INSERT INTO personal_compatible_providers VALUES(?1,?2,?3)",params![id,user.tenant.0,user.account.id])?; }
             let result=summary(&tx,load_revision(&tx,&id)?)?; tx.commit()?; Ok(result)
         }).await
     }
@@ -497,9 +534,32 @@ impl Store {
         expected_revision: i64,
         change: ProviderChange,
     ) -> Result<ProviderSummary> {
+        self.update_provider_scoped(user, id, expected_revision, change, false)
+            .await
+    }
+    pub async fn update_personal_compatible(
+        &self,
+        user: &UserContext,
+        id: String,
+        expected_revision: i64,
+        change: ProviderChange,
+    ) -> Result<ProviderSummary> {
+        self.update_provider_scoped(user, id, expected_revision, change, true)
+            .await
+    }
+    async fn update_provider_scoped(
+        &self,
+        user: &UserContext,
+        id: String,
+        expected_revision: i64,
+        change: ProviderChange,
+        personal: bool,
+    ) -> Result<ProviderSummary> {
         let user = user.clone();
         self.call(move |db| {
-            validate(&db.conn,&user,true,true)?; validate_change(&change)?;
+            validate(&db.conn,&user,true,!personal)?; validate_change(&change)?;
+            if personal { require_owner(&db.conn,&user.tenant.0,&user.account.id,&id)?; if change.enabled || load_revision(&db.conn,&id)?.config!=change.config {personal_config(&db.conn,&user.tenant.0,&user.account.id,&change.config)?;} }
+            else if owner(&db.conn,&id)?.is_some() {return Err(StoreError::NotFound)}
             let old=load_revision(&db.conn,&id)?;
             if old.revision!=expected_revision { return Err(StoreError::Conflict); }
             if matches!(change.credential,CredentialChange::Keep) && old.cipher.is_some() && old.config!=change.config { return Err(StoreError::InvalidInput); }
@@ -544,7 +604,7 @@ impl Store {
             if let Some(s)=selection {
                 if s.source==moosuri_core::ModelSource::PersonalClaudeCode {
                     let choice=crate::claude_execution::verified(&tx,&current,&s)?;
-                    tx.execute("INSERT INTO personal_claude_selections VALUES(?1,?2,?3,?4,?5) ON CONFLICT(tenant_id,account_id) DO UPDATE SET binding_id=excluded.binding_id,revision=excluded.revision,model=excluded.model",params![current.tenant.0,current.account.id,s.provider_id,choice.provider_revision,s.model])?;
+                    tx.execute("INSERT INTO personal_claude_selections(tenant_id,account_id,binding_id,revision,model,effort) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant_id,account_id) DO UPDATE SET binding_id=excluded.binding_id,revision=excluded.revision,model=excluded.model,effort=excluded.effort",params![current.tenant.0,current.account.id,s.provider_id,choice.provider_revision,s.model,s.effort])?;
                     tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;
                     tx.execute("DELETE FROM personal_subscription_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;
                     let result=settings(&tx,&current)?;tx.commit()?;return Ok(result);
@@ -555,7 +615,7 @@ impl Store {
                     tx.execute("INSERT INTO personal_subscription_selections VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant_id,account_id) DO UPDATE SET binding_id=excluded.binding_id,revision=excluded.revision,model=excluded.model,effort=excluded.effort",params![current.tenant.0,current.account.id,s.provider_id,choice.provider_revision,s.model,s.effort.unwrap_or_default()])?;
                     let result=settings(&tx,&current)?;tx.commit()?;return Ok(result);
                 }
-                let choice=verified(&tx,&s)?;
+                let choice=if s.source==moosuri_core::ModelSource::PersonalCompatible {personal_verified(&tx,&current.tenant.0,&current.account.id,&s)?}else{verified(&tx,&s)?};
                 tx.execute("INSERT INTO personal_model_selections(tenant_id,account_id,provider_id,revision,model,effort) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant_id,account_id) DO UPDATE SET provider_id=excluded.provider_id,revision=excluded.revision,model=excluded.model,effort=excluded.effort",params![current.tenant.0,current.account.id,s.provider_id,choice.provider_revision,s.model,s.effort.unwrap_or_default()])?;
             } else {tx.execute("DELETE FROM personal_claude_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;tx.execute("DELETE FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;tx.execute("DELETE FROM personal_subscription_selections WHERE tenant_id=?1 AND account_id=?2",params![current.tenant.0,current.account.id])?;}
             let result=settings(&tx,&current)?;tx.commit()?;Ok(result)
@@ -587,12 +647,7 @@ impl Store {
     ) -> Result<ProviderBinding> {
         let user = user.clone();
         self.call(move |db| {
-            validate(&db.conn, &user, true, true)?;
-            let row = if model == "catalog" {
-                require_binding_metadata(&db.conn, &id, revision)?
-            } else {
-                require_binding(&db.conn, &id, revision)?
-            };
+            let row = authorized_revision(&db.conn, &user, &id, revision, model != "catalog")?;
             binding(&db.provider_key, row, model, effort)
         })
         .await
@@ -609,10 +664,10 @@ impl Store {
     ) -> Result<(ProviderBinding, String)> {
         let user = user.clone();
         self.call(move |db| {
-            validate(&db.conn, &user, true, true)?;
-            let row = require_binding(&db.conn, &id, revision)?;
-            verified(
+            let row = authorized_revision(&db.conn, &user, &id, revision, true)?;
+            verified_for_user(
                 &db.conn,
+                &user,
                 &ModelSelection {
                     source: Default::default(),
                     provider_id: id,
@@ -643,13 +698,12 @@ impl Store {
         let user = user.clone();
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            validate(&tx,&user,true,true)?;
-            require_binding(&tx,&id,revision)?;
+            authorized_revision(&tx,&user,&id,revision,true)?;
             let selection=ModelSelection{ source: Default::default(), provider_id:id.clone(),provider_revision:revision,model:model.clone(),effort:effort.clone()};
-            verified(&tx,&selection)?;
+            verified_for_user(&tx,&user,&selection)?;
             let changed=tx.execute("UPDATE provider_model_probes SET function_tools=1 WHERE provider_id=?1 AND revision=?2 AND model=?3 AND effort=?4",params![id,revision,model,effort.unwrap_or_default()])?;
             if changed!=1{return Err(StoreError::Conflict);}
-            let result=verified(&tx,&selection)?;tx.commit()?;Ok(result)
+            let result=verified_for_user(&tx,&user,&selection)?;tx.commit()?;Ok(result)
         }).await
     }
     pub async fn validate_provider_binding(
@@ -660,8 +714,7 @@ impl Store {
     ) -> Result<()> {
         let user = user.clone();
         self.call(move |db| {
-            validate(&db.conn, &user, true, true)?;
-            require_binding(&db.conn, &id, revision)?;
+            authorized_revision(&db.conn, &user, &id, revision, true)?;
             Ok(())
         })
         .await
@@ -678,12 +731,12 @@ impl Store {
     ) -> Result<ModelChoice> {
         let user = user.clone();
         self.call(move|db|{
-            validate(&db.conn,&user,true,true)?; let row=require_binding(&db.conn,&id,revision)?;model_valid(&model,&effort,row.config.kind)?;
+            let row=authorized_revision(&db.conn,&user,&id,revision,true)?;model_valid(&model,&effort,row.config.kind)?;
             let exists=db.conn.query_row("SELECT EXISTS(SELECT 1 FROM provider_model_probes WHERE provider_id=?1 AND revision=?2 AND model=?3 AND effort=?4)",params![id,revision,model,effort.clone().unwrap_or_default()],|r|r.get::<_,bool>(0))?;
             if !exists && db.conn.query_row("SELECT count(*) FROM provider_model_probes WHERE provider_id=?1 AND revision=?2",params![id,revision],|r|r.get::<_,i64>(0))? >= 128 { return Err(StoreError::Conflict); }
             let time=now()?;
             db.conn.execute("INSERT INTO provider_model_probes(provider_id,revision,model,effort,verified_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(provider_id,revision,model,effort) DO UPDATE SET verified_at=excluded.verified_at",params![id,revision,model,effort.clone().unwrap_or_default(),time])?;
-            verified(&db.conn,&ModelSelection{ source: Default::default(), provider_id:id,provider_revision:revision,model,effort})
+            verified_for_user(&db.conn,&user,&ModelSelection{ source: Default::default(), provider_id:id,provider_revision:revision,model,effort})
         }).await
     }
     pub async fn resolve_model(&self, user: &UserContext) -> Result<ProviderBinding> {
@@ -711,6 +764,21 @@ impl Store {
             let chosen = selected(&db.conn, Some(&current))?
                 .or(selected(&db.conn, None)?)
                 .ok_or(StoreError::Unavailable)?;
+            if chosen.value.source == moosuri_core::ModelSource::PersonalCompatible {
+                let choice = personal_verified(
+                    &db.conn,
+                    &current.tenant.0,
+                    &current.account.id,
+                    &chosen.value,
+                )?;
+                return personal_binding(
+                    &db.conn,
+                    &db.provider_key,
+                    &current.tenant.0,
+                    &current.account.id,
+                    &choice,
+                );
+            }
             let row = require_binding(&db.conn, &chosen.value.provider_id, chosen.revision)?;
             // No fallback if a pinned personal/default selection is no longer verified.
             verified(&db.conn, &chosen.value)?;
@@ -768,7 +836,29 @@ pub(super) fn binding_for_owner_choice(
         crate::claude_execution::binding(conn, tenant, account, choice)
     } else if choice.source == moosuri_core::ModelSource::PersonalChatGpt {
         subscriptions::binding(conn, tenant, account, choice)
+    } else if choice.source == moosuri_core::ModelSource::PersonalCompatible {
+        personal_binding(conn, key, tenant, account, choice)
     } else {
         binding_for_choice(conn, key, choice)
     }
+}
+
+// Writer-side recheck immediately before reserving a probe call.
+pub(super) fn authorize_probe(
+    c: &Connection,
+    u: &UserContext,
+    id: &str,
+    revision: i64,
+) -> Result<()> {
+    authorized_revision(c, u, id, revision, true).map(|_| ())
+}
+
+/// Account deletion retains only opaque connection ownership tombstones. Never
+/// turn an orphaned private connection into a shared provider.
+pub(crate) fn retire_deleted_owner(c: &Connection, account: &str) -> Result<()> {
+    c.execute("DELETE FROM personal_model_selections WHERE provider_id IN(SELECT provider_id FROM personal_compatible_providers WHERE account_id=?1)",[account])?;
+    c.execute("DELETE FROM provider_model_probes WHERE provider_id IN(SELECT provider_id FROM personal_compatible_providers WHERE account_id=?1)",[account])?;
+    c.execute("DELETE FROM provider_vision_probes WHERE provider_id IN(SELECT provider_id FROM personal_compatible_providers WHERE account_id=?1)",[account])?;
+    c.execute("UPDATE provider_revisions SET name='Deleted personal connection',config='{\"kind\":\"compatible\",\"base_url\":null,\"allowed_ips\":[],\"router_providers\":[],\"zero_data_retention\":false}',enabled=0,credential=NULL WHERE provider_id IN(SELECT o.provider_id FROM personal_compatible_providers o JOIN accounts a ON a.id=o.account_id WHERE o.account_id=?1 AND a.deleted=1)",[account])?;
+    Ok(())
 }

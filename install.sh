@@ -7,6 +7,8 @@ moosuri_install() {
   case "${1-}" in -h|--help)
     cat <<'HELP'
 Moosuri / 무수리 installer
+  --workstation-model  Connect a local model / 내 컴퓨터의 모델 연결
+  --chatgpt-login    Run the ChatGPT login helper / 서버 설치 없이 ChatGPT 로그인
   --language en|ko   English / 한국어
   --plain            Numbered menus / 번호 메뉴
   --no-browser       Show the URL / 브라우저를 자동으로 열지 않음
@@ -77,7 +79,15 @@ HELP
   chmod 600 "$stage/bundle/manifest.json" "$stage/bundle/manifest.ed25519"
   printf '%s\n' "$release_key" > "$stage/pin"
   "$stage/bundle/moosuri" installation verify --bundle "$stage/bundle" --trust-key "$stage/pin"
-  "$stage/bundle/moosuri" setup --bundle "$stage/bundle" --trust-key "$stage/pin" "$@" </dev/tty
+  if [ "${1-}" = --chatgpt-login ]; then
+    shift
+    "$stage/bundle/moosuri" subscriptions chatgpt-vm "$@" </dev/tty
+  elif [ "${1-}" = --workstation-model ]; then
+    shift
+    "$stage/bundle/moosuri" models workstation "$@" </dev/tty
+  else
+    "$stage/bundle/moosuri" setup --bundle "$stage/bundle" --trust-key "$stage/pin" "$@" </dev/tty
+  fi
   rm -rf -- "$stage"
   trap - EXIT
 }

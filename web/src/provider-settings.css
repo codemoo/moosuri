@@ -218,7 +218,7 @@
 }
 .model-selection-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 2fr) minmax(110px, 1fr) auto;
   gap: 16px;
   align-items: end;
 }
@@ -408,3 +408,5 @@
     font-size: 13px;
   }
 }
+
+.login-command { white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }

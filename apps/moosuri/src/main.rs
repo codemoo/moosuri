@@ -25,6 +25,7 @@ mod legacy_relations;
 mod skills;
 mod subscriptions;
 mod work_sessions;
+mod workstation_models;
 
 #[derive(Parser)]
 #[command(
@@ -92,6 +93,11 @@ enum Command {
     Installation {
         #[command(subcommand)]
         command: installation::Command,
+    },
+    /// Discover and temporarily connect models running on this workstation.
+    Models {
+        #[command(subcommand)]
+        command: workstation_models::Command,
     },
     /// Personal model sign-in on this computer.
     Subscriptions {
@@ -375,6 +381,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::Models { command } = &cli.command {
+        return workstation_models::run(command).await;
+    }
     if let Command::Calls { command } = &cli.command {
         return calls::run(command).await;
     }
@@ -507,7 +516,8 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::Skills { .. }
+        Command::Models { .. }
+        | Command::Skills { .. }
         | Command::Subscriptions { .. }
         | Command::WorkSessions { .. }
         | Command::Calls { .. } => {

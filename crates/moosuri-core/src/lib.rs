@@ -49,6 +49,8 @@ pub use knowledge::*;
 pub use learned_skills::*;
 pub use memory_command::*;
 pub use skills::*;
+mod provider_quota;
+pub use provider_quota::*;
 mod providers;
 pub use chat::*;
 pub use providers::*;
@@ -276,6 +278,11 @@ pub fn typescript_contract() -> String {
         ModelSettings::decl(),
         ModelCatalogEntry::decl(),
         ModelCatalog::decl(),
+        QuotaScope::decl(),
+        QuotaStatus::decl(),
+        QuotaUnit::decl(),
+        QuotaMetric::decl(),
+        ProviderQuota::decl(),
         RunState::decl(),
         MessagePhase::decl(),
         RunUsage::decl(),

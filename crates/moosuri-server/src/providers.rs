@@ -1,6 +1,7 @@
 //! Admin-owned connections and user-owned model preferences. No provider body or
 //! API credential crosses this boundary in a response, trace or error.
 use super::*;
+pub(super) mod personal;
 use moosuri_connectors::model::{
     CancellationToken, ModelClient, Secret, TransportError, TransportLimits,
     protocol::{FinishOutcome, ModelEvent, TextCapabilities, TextMessage, TextRequest, TextRole},
@@ -83,7 +84,7 @@ fn validate_config(config: &ProviderConfig) -> Result<(), HttpError> {
         .map_err(|_| StoreError::InvalidInput.into())
 }
 
-fn bound_client(binding: &ProviderBinding) -> Result<ModelClient, TransportError> {
+pub(super) fn bound_client(binding: &ProviderBinding) -> Result<ModelClient, TransportError> {
     let secret = binding
         .credential
         .as_ref()
@@ -335,6 +336,8 @@ pub(super) async fn catalog(
             .map(|model| ModelCatalogEntry {
                 id: model.id,
                 name: model.name,
+                efforts: model.efforts,
+                default_effort: model.default_effort,
             })
             .collect(),
         truncated: catalog.truncated,

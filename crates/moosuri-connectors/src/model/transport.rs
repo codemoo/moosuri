@@ -34,7 +34,8 @@ impl Secret {
     }
 }
 
-/// Only an installation administrator may supply these policies. A user/model
+/// Trusted application policy code supplies these policies: an administrator's
+/// exact enrollment or server-resolved exclusively public address pins. A model
 /// selects a previously registered connection ID, never a URL or IP allowlist.
 #[derive(Clone)]
 pub enum NetworkPolicy {
@@ -145,6 +146,8 @@ struct PinnedHttp {
 pub struct CatalogModel {
     pub id: String,
     pub name: String,
+    pub efforts: Vec<String>,
+    pub default_effort: Option<String>,
 }
 pub struct Catalog {
     pub models: Vec<CatalogModel>,
@@ -407,6 +410,68 @@ impl ModelClient {
         } else {
             parse_catalog(self.protocol, &bytes)
         }
+    }
+
+    /// Official OpenRouter key metadata only. Never routes SIWC or compatible
+    /// credentials to this endpoint; all HTTP/DNS/size policies remain enforced.
+    pub async fn openrouter_quota(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<moosuri_core::QuotaMetric>, TransportError> {
+        if self.protocol != Protocol::OpenRouterChat
+            || self.dialect != ResponsesDialect::Api
+            || self.endpoint.origin().ascii_serialization() != "https://openrouter.ai"
+        {
+            return Err(TransportError::InvalidConfiguration);
+        }
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(TransportError::Cancelled),
+            result = tokio::time::timeout(self.limits.total, self.openrouter_quota_inner()) =>
+                result.map_err(|_| TransportError::Timeout)?,
+        }
+    }
+
+    async fn openrouter_quota_inner(
+        &self,
+    ) -> Result<Vec<moosuri_core::QuotaMetric>, TransportError> {
+        let mut endpoint = self.endpoint.clone();
+        endpoint.set_path("/api/v1/key");
+        endpoint.set_query(None);
+        let http = self.http_client(&endpoint).await?;
+        let mut response = self
+            .authorize(
+                http.get(endpoint)
+                    .header(header::ACCEPT, "application/json"),
+            )?
+            .send()
+            .await
+            .map_err(map_network_error)?;
+        self.check_status(&mut response).await?;
+        if !response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(';').next())
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
+        {
+            return Err(TransportError::ContentType);
+        }
+        let maximum = self.limits.response_bytes.min(128 * 1024);
+        if response
+            .content_length()
+            .is_some_and(|n| n > maximum as u64)
+        {
+            return Err(TransportError::LimitExceeded);
+        }
+        let mut body = zeroize::Zeroizing::new(Vec::new());
+        while let Some(chunk) = response.chunk().await.map_err(map_network_error)? {
+            if body.len().saturating_add(chunk.len()) > maximum {
+                return Err(TransportError::LimitExceeded);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        super::quota::parse_openrouter(&body)
     }
 
     async fn http_client(&self, endpoint: &Url) -> Result<Client, TransportError> {
@@ -792,6 +857,8 @@ fn parse_catalog(protocol: Protocol, bytes: &[u8]) -> Result<Catalog, TransportE
             models.push(CatalogModel {
                 id: id.to_owned(),
                 name: name.to_owned(),
+                efforts: Vec::new(),
+                default_effort: None,
             });
         }
     }

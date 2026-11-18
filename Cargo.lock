@@ -2569,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "async-trait",
  "axum",
@@ -2611,7 +2611,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-agent"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-connectors"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-core"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "serde",
  "ts-rs",
@@ -2674,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-credential-broker"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2699,7 +2699,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-documents"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "libc",
  "lopdf",
@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-eval"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "axum",
  "moosuri-agent",
@@ -2730,7 +2730,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-server"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-store"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "age",
  "argon2",
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-vault-core"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "aes-gcm 0.11.1",
  "argon2",
@@ -2811,7 +2811,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-vault-protocol"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "moosuri-vault-core",
  "serde",
@@ -2821,7 +2821,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-vault-service"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "age",
  "axum",
@@ -2850,7 +2850,7 @@ dependencies = [
 
 [[package]]
 name = "moosuri-vault-wasm"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "moosuri-vault-core",
  "moosuri-vault-protocol",
@@ -5323,7 +5323,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0-dev.12"
+version = "0.1.0-dev.13"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",

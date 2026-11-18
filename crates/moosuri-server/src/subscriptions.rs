@@ -137,6 +137,8 @@ pub(super) async fn catalog(
                 .map(|v| moosuri_core::ModelCatalogEntry {
                     id: v.id,
                     name: v.name,
+                    efforts: v.efforts,
+                    default_effort: v.default_effort,
                 })
                 .collect(),
             truncated: c.truncated,

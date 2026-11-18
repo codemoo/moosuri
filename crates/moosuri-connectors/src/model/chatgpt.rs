@@ -125,12 +125,15 @@ pub(super) fn parse_catalog(bytes: &[u8]) -> Result<Catalog, TransportError> {
         if !seen.insert(id) {
             return Err(TransportError::InvalidCatalog);
         }
+        let (efforts, default_effort) = reasoning_metadata(entry)?;
         if visibility == "list" {
             visible += 1;
             if models.len() < 512 {
                 models.push(CatalogModel {
                     id: id.into(),
                     name: name.into(),
+                    efforts,
+                    default_effort,
                 });
             }
         }
@@ -139,6 +142,52 @@ pub(super) fn parse_catalog(bytes: &[u8]) -> Result<Catalog, TransportError> {
         models,
         truncated: visible > 512,
     })
+}
+
+// SIWC guarantees the display fields above. Some current catalogs additionally
+// supply the public ModelInfo reasoning fields. Preserve only explicitly supplied
+// metadata; a missing list is unknown, never a hardcoded model-name inference.
+fn reasoning_metadata(entry: &Value) -> Result<(Vec<String>, Option<String>), TransportError> {
+    let mut efforts = Vec::new();
+    if let Some(levels) = entry.get("supported_reasoning_levels") {
+        let levels = levels.as_array().ok_or(TransportError::InvalidCatalog)?;
+        if levels.len() > 16 {
+            return Err(TransportError::LimitExceeded);
+        }
+        for level in levels {
+            let effort = level
+                .get("effort")
+                .and_then(Value::as_str)
+                .filter(|v| valid_effort(v))
+                .ok_or(TransportError::InvalidCatalog)?;
+            if efforts.iter().any(|v| v == effort) {
+                return Err(TransportError::InvalidCatalog);
+            }
+            efforts.push(effort.to_owned());
+        }
+    }
+    let default = match entry.get("default_reasoning_level") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .filter(|v| valid_effort(v))
+                .ok_or(TransportError::InvalidCatalog)?
+                .to_owned(),
+        ),
+    };
+    if entry.get("supported_reasoning_levels").is_some()
+        && default.as_ref().is_some_and(|v| !efforts.contains(v))
+    {
+        return Err(TransportError::InvalidCatalog);
+    }
+    Ok((efforts, default))
+}
+
+fn valid_effort(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
 }
 
 #[cfg(test)]

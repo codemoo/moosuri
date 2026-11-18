@@ -223,3 +223,7 @@ Primary evidence checked 2026-11-15: official
 Hosting/preinstalling unchanged Claude Code requires the applicable Commercial
 Terms and documented per-end-user authentication/billing conditions. The SDK/token
 relay restriction is not permission to implement a consumer OAuth HTTP adapter.
+
+### Reasoning effort
+
+Choose the model and effort separately in personal settings. A verified text model always has its default option. An exact model's official catalog can additionally expose `low`, `medium`, `high` and `xhigh`. Each new run writes the requested level to the isolated CLI settings. The CLI's session-only `max` option is outside this settings interface. Provider policies can cap the effective level. Upgrading from a default-only selection preserves it; entering settings backfills metadata for an existing verified connection without another text prompt.

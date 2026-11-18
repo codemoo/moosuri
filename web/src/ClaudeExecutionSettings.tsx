@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { QuotaPanel } from "./QuotaPanel";
 import { ClaudeSubscriptionLogin } from "./ClaudeSubscriptionLogin";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 
-type Binding = { id: string; revision: number; label: string; status: string; cleanup_state?: string };
+type Binding = { id: string; revision: number; label: string; status: string; effort_metadata_pending?: boolean; cleanup_state?: string };
 type ModelSyncStatus = "checking" | "ready" | "login_required" | "unavailable";
 type State = { runtime_configured: boolean; bindings: Binding[]; text_only: true };
 type Props = {
@@ -104,7 +105,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
       setState(value);
       if (value.runtime_configured) {
         const candidates = loginBinding ? value.bindings.filter(item => item.id === loginBinding.id && item.revision === loginBinding.revision)
-          : value.bindings.filter(item => item.status === "pending" && item.cleanup_state !== "pending");
+          : value.bindings.filter(item => (item.status === "pending" || (item.status === "active" && item.effort_metadata_pending)) && item.cleanup_state !== "pending");
         for (const binding of candidates) {
           if (binding.status === "pending" || binding.status === "active") await syncModels(binding, options.force);
         }
@@ -210,6 +211,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
         : binding.status === "active" ? "텍스트 확인됨"
         : binding.status === "pending" ? "공식 로그인과 모델 확인 대기"
         : binding.status === "disconnected" ? "로컬 연결 해제됨" : "다시 연결 필요"}</p>
+      {binding.status === "active" && <QuotaPanel key={binding.revision} accountId={accountId} id={binding.id} revision={binding.revision} kind="claude" onExpired={onExpired} />}
       {binding.status === "active" && <p className="settings-hint">다른 Claude 계정을 사용하려면 위 ‘Claude 연결’에서 새 연결을 추가하세요.</p>}
       {state.runtime_configured && (binding.status === "pending" || binding.status === "active") && <>
         {binding.status === "pending" && <ClaudeSubscriptionLogin key={`${binding.id}:${binding.revision}`} accountId={accountId} bindingId={binding.id}

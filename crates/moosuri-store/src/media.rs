@@ -314,7 +314,7 @@ impl Store {
         effort: Option<String>,
     ) -> Result<()> {
         let user = user.clone();
-        self.call(move|db|{let user=validate(&db.conn,&user,true,true)?;let _=user;let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;crate::providers::authorize_probe(&tx,&user,&id,revision)?;
    let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM providers p JOIN provider_revisions r ON r.provider_id=p.id AND r.revision=p.current_revision WHERE p.id=?1 AND p.current_revision=?2 AND r.enabled=1)",params![id,revision],|r|r.get(0))?;if !valid{return Err(StoreError::Conflict)}
    tx.execute("INSERT OR IGNORE INTO provider_vision_probes VALUES(?1,?2,?3,?4)",params![id,revision,model,effort.unwrap_or_default()])?;tx.commit()?;Ok(())
   }).await

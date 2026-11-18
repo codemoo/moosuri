@@ -91,6 +91,31 @@ pub(super) async fn probe(
     )
     .into_response())
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct UsageInput {
+    revision: i64,
+}
+pub(super) async fn usage(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(i): Json<UsageInput>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    Ok(Json(
+        s.runtime
+            .subscription_service()
+            .claude_usage(&u, id, i.revision)
+            .await?,
+    )
+    .into_response())
+}
 pub(super) async fn disconnect(
     State(s): State<AppState>,
     h: HeaderMap,

@@ -8,6 +8,7 @@ pub struct ClaudeBindingSummary {
     pub label: String,
     pub status: String,
     pub cleanup_state: String,
+    pub effort_metadata_pending: bool,
 }
 /// Native launch metadata. The environment is an opaque UUID, never a path.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -27,29 +28,56 @@ fn reference(
 ) -> Result<ClaudeExecutionRef> {
     c.query_row("SELECT environment_id,profile_digest,root_id FROM claude_code_bindings WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND revision=?4 AND status IN('pending','active')",params![tenant,account,id,revision],|r|Ok(ClaudeExecutionRef{id:id.into(),revision,environment_id:r.get(0)?,profile_digest:r.get(1)?,root_id:r.get(2)?})).optional()?.ok_or(StoreError::NotFound)
 }
+// Settings transport supports these exact levels; a model name never implies support.
+fn valid_effort(effort: &str) -> bool {
+    matches!(effort, "low" | "medium" | "high" | "xhigh")
+}
+fn reported_efforts(value: Option<String>) -> Result<Vec<String>> {
+    let values: Vec<String> = value
+        .map(|value| serde_json::from_str(&value).map_err(|_| StoreError::Corrupt))
+        .transpose()?
+        .unwrap_or_default();
+    if values.len() > 4 || values.iter().any(|value| !valid_effort(value)) {
+        return Err(StoreError::Corrupt);
+    }
+    Ok(values)
+}
 pub(super) fn choices(c: &Connection, u: &UserContext) -> Result<Vec<ModelChoice>> {
-    let mut q=c.prepare("SELECT b.id,b.revision,b.label,p.model,p.verified_at FROM claude_code_bindings b JOIN claude_code_probes p ON p.tenant_id=b.tenant_id AND p.account_id=b.account_id AND p.binding_id=b.id AND p.revision=b.revision WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.status='active' ORDER BY b.label,p.model")?;
-    q.query_map(params![u.tenant.0, u.account.id], |r| {
-        Ok(ModelChoice {
-            source: ModelSource::PersonalClaudeCode,
-            provider_id: r.get(0)?,
-            provider_revision: r.get(1)?,
-            provider_name: r.get(2)?,
-            kind: ProviderKind::Anthropic,
-            model: r.get(3)?,
-            effort: None,
-            verified_at: r.get(4)?,
-            function_tools: false,
-        })
-    })?
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(Into::into)
+    let mut q=c.prepare("SELECT b.id,b.revision,b.label,p.model,p.verified_at,p.supported_efforts FROM claude_code_bindings b JOIN claude_code_probes p ON p.tenant_id=b.tenant_id AND p.account_id=b.account_id AND p.binding_id=b.id AND p.revision=b.revision WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.status='active' ORDER BY b.label,p.model")?;
+    let rows = q
+        .query_map(params![u.tenant.0, u.account.id], |r| {
+            Ok((
+                ModelChoice {
+                    source: ModelSource::PersonalClaudeCode,
+                    provider_id: r.get(0)?,
+                    provider_revision: r.get(1)?,
+                    provider_name: r.get(2)?,
+                    kind: ProviderKind::Anthropic,
+                    model: r.get(3)?,
+                    effort: None,
+                    verified_at: r.get(4)?,
+                    function_tools: false,
+                },
+                r.get::<_, Option<String>>(5)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut choices = Vec::new();
+    for (choice, metadata) in rows {
+        let efforts = reported_efforts(metadata)?;
+        choices.push(choice.clone());
+        choices.extend(efforts.into_iter().map(|effort| ModelChoice {
+            effort: Some(effort),
+            ..choice.clone()
+        }));
+    }
+    Ok(choices)
 }
 pub(super) fn selected(c: &Connection, u: &UserContext) -> Result<Option<ModelSelection>> {
-    c.query_row("SELECT binding_id,revision,model FROM personal_claude_selections WHERE tenant_id=?1 AND account_id=?2",params![u.tenant.0,u.account.id],|r|Ok(ModelSelection{source:ModelSource::PersonalClaudeCode,provider_id:r.get(0)?,provider_revision:r.get(1)?,model:r.get(2)?,effort:None})).optional().map_err(Into::into)
+    c.query_row("SELECT binding_id,revision,model,effort FROM personal_claude_selections WHERE tenant_id=?1 AND account_id=?2",params![u.tenant.0,u.account.id],|r|Ok(ModelSelection{source:ModelSource::PersonalClaudeCode,provider_id:r.get(0)?,provider_revision:r.get(1)?,model:r.get(2)?,effort:r.get(3)?})).optional().map_err(Into::into)
 }
 pub(super) fn verified(c: &Connection, u: &UserContext, s: &ModelSelection) -> Result<ModelChoice> {
-    if s.source != ModelSource::PersonalClaudeCode || s.effort.is_some() {
+    if s.source != ModelSource::PersonalClaudeCode {
         return Err(StoreError::Conflict);
     }
     choices(c, u)?
@@ -58,6 +86,7 @@ pub(super) fn verified(c: &Connection, u: &UserContext, s: &ModelSelection) -> R
             v.provider_id == s.provider_id
                 && v.provider_revision == s.provider_revision
                 && v.model == s.model
+                && v.effort == s.effort
         })
         .ok_or(StoreError::Conflict)
 }
@@ -67,12 +96,21 @@ pub(super) fn binding(
     account: &str,
     v: &ModelChoice,
 ) -> Result<providers::ProviderBinding> {
-    if v.source != ModelSource::PersonalClaudeCode || v.function_tools || v.effort.is_some() {
+    if v.source != ModelSource::PersonalClaudeCode || v.function_tools {
         return Err(StoreError::Conflict);
     }
-    let ok:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM claude_code_bindings b JOIN claude_code_probes p ON p.tenant_id=b.tenant_id AND p.account_id=b.account_id AND p.binding_id=b.id AND p.revision=b.revision WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.id=?3 AND b.revision=?4 AND b.status='active' AND p.model=?5)",params![tenant,account,v.provider_id,v.provider_revision,v.model],|r|r.get(0))?;
-    if !ok {
+    let metadata:Option<Option<String>>=c.query_row("SELECT p.supported_efforts FROM claude_code_bindings b JOIN claude_code_probes p ON p.tenant_id=b.tenant_id AND p.account_id=b.account_id AND p.binding_id=b.id AND p.revision=b.revision WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.id=?3 AND b.revision=?4 AND b.status='active' AND p.model=?5",params![tenant,account,v.provider_id,v.provider_revision,v.model],|r|r.get(0)).optional()?;
+    let metadata = metadata.ok_or(StoreError::Conflict)?;
+    if v.effort
+        .as_ref()
+        .is_some_and(|effort| !valid_effort(effort))
+    {
         return Err(StoreError::Conflict);
+    }
+    if let Some(effort) = &v.effort {
+        if !reported_efforts(metadata)?.contains(effort) {
+            return Err(StoreError::Conflict);
+        }
     }
     Ok(providers::ProviderBinding {
         claude_code: Some(reference(
@@ -93,7 +131,7 @@ pub(super) fn binding(
             zero_data_retention: false,
         },
         model: v.model.clone(),
-        effort: None,
+        effort: v.effort.clone(),
         credential: None,
     })
 }
@@ -119,6 +157,11 @@ impl Store {
     }
 
     pub async fn claude_run_model(&self, l: &RunLease) -> Result<String> {
+        Ok(self.claude_run_selection(l).await?.model)
+    }
+
+    /// Return the exact saved run choice, even if settings changed after enqueue.
+    pub async fn claude_run_selection(&self, l: &RunLease) -> Result<ModelSelection> {
         let l = l.clone();
         self.call(move |db| {
             let r = crate::chat::guard(&db.conn, &db.provider_key, &l)?;
@@ -126,14 +169,35 @@ impl Store {
                 return Err(StoreError::Conflict);
             }
             binding(&db.conn, &r.tenant, &r.account, &r.model)?;
-            Ok(r.model.model)
+            Ok(ModelSelection {
+                source: r.model.source,
+                provider_id: r.model.provider_id,
+                provider_revision: r.model.provider_revision,
+                model: r.model.model,
+                effort: r.model.effort,
+            })
         })
         .await
     }
 
     pub async fn claude_bindings(&self, u: &UserContext) -> Result<Vec<ClaudeBindingSummary>> {
         let u = u.clone();
-        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;let mut q=db.conn.prepare("SELECT id,revision,label,status,coalesce((SELECT state FROM claude_code_retirements r WHERE r.environment_id=claude_code_bindings.environment_id),'not_requested') FROM claude_code_bindings WHERE tenant_id=?1 AND account_id=?2 ORDER BY label,id")?;q.query_map(params![u.tenant.0,u.account.id],|r|Ok(ClaudeBindingSummary{id:r.get(0)?,revision:r.get(1)?,label:r.get(2)?,status:r.get(3)?,cleanup_state:r.get(4)?}))?.collect::<std::result::Result<Vec<_>,_>>().map_err(Into::into)}).await
+        self.call(move |db| {
+            let u = validate(&db.conn, &u, true, false)?;
+            let mut q = db.conn.prepare(
+                "SELECT b.id,b.revision,b.label,b.status,
+                    coalesce((SELECT state FROM claude_code_retirements r WHERE r.environment_id=b.environment_id),'not_requested'),
+                    EXISTS(SELECT 1 FROM claude_code_probes p WHERE p.tenant_id=b.tenant_id AND p.account_id=b.account_id
+                        AND p.binding_id=b.id AND p.revision=b.revision AND p.supported_efforts IS NULL)
+                 FROM claude_code_bindings b WHERE b.tenant_id=?1 AND b.account_id=?2 ORDER BY b.label,b.id",
+            )?;
+            q.query_map(params![u.tenant.0, u.account.id], |r| {
+                Ok(ClaudeBindingSummary {
+                    id: r.get(0)?, revision: r.get(1)?, label: r.get(2)?, status: r.get(3)?,
+                    cleanup_state: r.get(4)?, effort_metadata_pending: r.get(5)?,
+                })
+            })?.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+        }).await
     }
     pub async fn create_claude_binding(
         &self,
@@ -225,7 +289,68 @@ impl Store {
         model: String,
     ) -> Result<ModelChoice> {
         let u = u.clone();
-        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let current=reference(&tx,&u.tenant.0,&u.account.id,&r.id,r.revision)?;if current.root_id!=r.root_id||current.profile_digest!=r.profile_digest||current.environment_id!=r.environment_id||model.len()>200||!model.starts_with("claude-")||!model.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.'){return Err(StoreError::Conflict)}let n:i64=tx.query_row("SELECT count(*) FROM claude_code_probes WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3",params![u.tenant.0,u.account.id,r.id],|r|r.get(0))?;if n>=32{return Err(StoreError::Conflict)}tx.execute("INSERT INTO claude_code_probes VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT DO UPDATE SET verified_at=excluded.verified_at",params![u.tenant.0,u.account.id,r.id,r.revision,model,now()?])?;tx.execute("UPDATE claude_code_bindings SET status='active' WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,r.id])?;let v=verified(&tx,&u,&ModelSelection{source:ModelSource::PersonalClaudeCode,provider_id:r.id,provider_revision:r.revision,model,effort:None})?;tx.commit()?;Ok(v)}).await
+        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let current=reference(&tx,&u.tenant.0,&u.account.id,&r.id,r.revision)?;if current.root_id!=r.root_id||current.profile_digest!=r.profile_digest||current.environment_id!=r.environment_id||model.len()>200||!model.starts_with("claude-")||!model.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.'){return Err(StoreError::Conflict)}let n:i64=tx.query_row("SELECT count(*) FROM claude_code_probes WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3",params![u.tenant.0,u.account.id,r.id],|r|r.get(0))?;if n>=32{return Err(StoreError::Conflict)}tx.execute("INSERT INTO claude_code_probes(tenant_id,account_id,binding_id,revision,model,verified_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT DO UPDATE SET verified_at=excluded.verified_at",params![u.tenant.0,u.account.id,r.id,r.revision,model,now()?])?;tx.execute("UPDATE claude_code_bindings SET status='active' WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,r.id])?;let v=verified(&tx,&u,&ModelSelection{source:ModelSource::PersonalClaudeCode,provider_id:r.id,provider_revision:r.revision,model,effort:None})?;tx.commit()?;Ok(v)}).await
+    }
+
+    /// Backfill catalog metadata without performing or admitting another inference.
+    /// Only an exact text-proven model in this owner/environment can be updated.
+    pub async fn record_claude_model_efforts(
+        &self,
+        u: &UserContext,
+        expected: ClaudeExecutionRef,
+        model: String,
+        mut efforts: Vec<String>,
+    ) -> Result<()> {
+        let u = u.clone();
+        self.call(move |db| {
+            let u = validate(&db.conn, &u, true, false)?;
+            if efforts.len() > 4 || efforts.iter().any(|value| !valid_effort(value)) {
+                return Err(StoreError::InvalidInput);
+            }
+            // Stable display order regardless of the catalog's ordering/duplicates.
+            efforts.sort_by_key(|value| match value.as_str() {
+                "low" => 0, "medium" => 1, "high" => 2, _ => 3,
+            });
+            efforts.dedup();
+            let current = reference(&db.conn, &u.tenant.0, &u.account.id, &expected.id, expected.revision)?;
+            if current.root_id != expected.root_id
+                || current.profile_digest != expected.profile_digest
+                || current.environment_id != expected.environment_id
+            {
+                return Err(StoreError::Conflict);
+            }
+            let metadata = serde_json::to_string(&efforts).map_err(|_| StoreError::InvalidInput)?;
+            let changed = db.conn.execute(
+                "UPDATE claude_code_probes SET supported_efforts=?6 WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND model=?5",
+                params![u.tenant.0, u.account.id, expected.id, expected.revision, model, metadata],
+            )?;
+            if changed != 1 { return Err(StoreError::Conflict); }
+            Ok(())
+        }).await
+    }
+
+    /// Model IDs with fetched metadata, including confirmed unsupported models.
+    /// Legacy NULL entries remain eligible for a metadata-only discovery refresh.
+    pub async fn claude_model_efforts_known(
+        &self,
+        u: &UserContext,
+        expected: &ClaudeExecutionRef,
+    ) -> Result<Vec<String>> {
+        let u = u.clone();
+        let expected = expected.clone();
+        self.call(move |db| {
+            let u = validate(&db.conn, &u, true, false)?;
+            let current = reference(&db.conn, &u.tenant.0, &u.account.id, &expected.id, expected.revision)?;
+            if current.root_id != expected.root_id
+                || current.profile_digest != expected.profile_digest
+                || current.environment_id != expected.environment_id
+            {
+                return Err(StoreError::Conflict);
+            }
+            let mut query = db.conn.prepare("SELECT model FROM claude_code_probes WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND supported_efforts IS NOT NULL ORDER BY model")?;
+            query.query_map(params![u.tenant.0, u.account.id, expected.id, expected.revision], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+        }).await
     }
     /// Commit one exact owner/environment probe before any inference subprocess.
     /// Unknown and failed requests consume their slot; settlement is not admission.
@@ -282,6 +407,234 @@ impl Store {
 mod tests {
     use super::*;
     use crate::tests::{TEST_LOCK, admin, directory, member};
+    #[tokio::test]
+    async fn model_efforts_require_exact_owner_binding_and_proof_and_pin_saved_runs() {
+        let _g = TEST_LOCK.lock().await;
+        let d = directory();
+        let s = Store::open(d.path()).unwrap();
+        let a = admin(&s).await;
+        let b = member(&s, &a.user, "effort-member@example.test").await;
+        let r = s
+            .create_claude_binding(&a.user, "Claude".into(), "a".repeat(64), "b".repeat(64))
+            .await
+            .unwrap();
+        let model = "claude-fixture-v1".to_owned();
+        assert!(
+            s.record_claude_model_efforts(&a.user, r.clone(), model.clone(), vec!["high".into()])
+                .await
+                .is_err()
+        );
+        s.record_claude_probe(&a.user, r.clone(), model.clone())
+            .await
+            .unwrap();
+        let mut selection = ModelSelection {
+            source: ModelSource::PersonalClaudeCode,
+            provider_id: r.id.clone(),
+            provider_revision: r.revision,
+            model: model.clone(),
+            effort: Some("xhigh".into()),
+        };
+        assert!(
+            s.set_model_preference(&a.user, Some(selection.clone()))
+                .await
+                .is_err()
+        );
+        assert!(
+            s.claude_model_efforts_known(&a.user, &r)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            s.record_claude_model_efforts(&b.user, r.clone(), model.clone(), vec!["high".into()])
+                .await
+                .is_err()
+        );
+        let mut wrong = r.clone();
+        wrong.environment_id = Uuid::new_v4().to_string();
+        assert!(
+            s.record_claude_model_efforts(&a.user, wrong, model.clone(), vec!["high".into()])
+                .await
+                .is_err()
+        );
+        for invalid in ["max", "", "HIGH", "unknown"] {
+            assert!(
+                s.record_claude_model_efforts(
+                    &a.user,
+                    r.clone(),
+                    model.clone(),
+                    vec![invalid.into()]
+                )
+                .await
+                .is_err()
+            );
+        }
+        s.record_claude_model_efforts(
+            &a.user,
+            r.clone(),
+            model.clone(),
+            vec!["high".into(), "xhigh".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            s.claude_model_efforts_known(&a.user, &r).await.unwrap(),
+            vec![model.clone()]
+        );
+        let other_model = "claude-other-fixture".to_owned();
+        s.record_claude_probe(&a.user, r.clone(), other_model.clone())
+            .await
+            .unwrap();
+        s.record_claude_model_efforts(&a.user, r.clone(), other_model.clone(), vec![])
+            .await
+            .unwrap();
+        let other = s
+            .create_claude_binding(
+                &a.user,
+                "Other Claude".into(),
+                "a".repeat(64),
+                "b".repeat(64),
+            )
+            .await
+            .unwrap();
+        s.record_claude_probe(&a.user, other.clone(), model.clone())
+            .await
+            .unwrap();
+        let settings = s.model_settings(&a.user).await.unwrap();
+        let values = settings
+            .choices
+            .iter()
+            .filter(|c| c.provider_id == r.id && c.model == model)
+            .map(|c| c.effort.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            vec![None, Some("high".into()), Some("xhigh".into())]
+        );
+        assert!(
+            settings
+                .choices
+                .iter()
+                .filter(|c| c.provider_id == other.id || c.model == other_model)
+                .all(|c| c.effort.is_none())
+        );
+        s.set_model_preference(&a.user, Some(selection.clone()))
+            .await
+            .unwrap();
+        let thread = s
+            .create_thread(&a.user, "Pinned effort".into())
+            .await
+            .unwrap();
+        s.submit_turn(
+            &a.user,
+            thread.id,
+            Uuid::new_v4().to_string(),
+            "Synthetic prompt".into(),
+        )
+        .await
+        .unwrap();
+        selection.effort = None;
+        s.set_model_preference(&a.user, Some(selection.clone()))
+            .await
+            .unwrap();
+        let run = s.claim_run().await.unwrap().unwrap();
+        assert_eq!(
+            s.claude_run_selection(&run.lease)
+                .await
+                .unwrap()
+                .effort
+                .as_deref(),
+            Some("xhigh")
+        );
+        assert_eq!(s.resolve_model(&a.user).await.unwrap().effort, None);
+        // Catalog withdrawal makes the saved choice unavailable, never downgrades it.
+        s.record_claude_model_efforts(&a.user, r.clone(), model.clone(), vec![])
+            .await
+            .unwrap();
+        assert!(s.claude_run_selection(&run.lease).await.is_err());
+        assert_eq!(s.resolve_model(&a.user).await.unwrap().effort, None);
+        s.disconnect_claude(&a.user, r.id.clone(), r.revision)
+            .await
+            .unwrap();
+        assert!(
+            s.record_claude_model_efforts(&a.user, r.clone(), model, vec![])
+                .await
+                .is_err()
+        );
+        assert!(s.claude_model_efforts_known(&a.user, &r).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn schema75_default_survives_upgrade_and_metadata_backfill_persists_effort() {
+        let _g = TEST_LOCK.lock().await;
+        let d = directory();
+        let s = Store::open(d.path()).unwrap();
+        let a = admin(&s).await;
+        let r = s
+            .create_claude_binding(
+                &a.user,
+                "Legacy Claude".into(),
+                "a".repeat(64),
+                "b".repeat(64),
+            )
+            .await
+            .unwrap();
+        let model = "claude-legacy-fixture".to_owned();
+        s.record_claude_probe(&a.user, r.clone(), model.clone())
+            .await
+            .unwrap();
+        let mut selection = ModelSelection {
+            source: ModelSource::PersonalClaudeCode,
+            provider_id: r.id.clone(),
+            provider_revision: r.revision,
+            model: model.clone(),
+            effort: None,
+        };
+        s.set_model_preference(&a.user, Some(selection.clone()))
+            .await
+            .unwrap();
+        s.call(|db| {
+            crate::schema::tests::replace_with_predecessor(&mut db.conn, 75);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        drop(s);
+        let s = Store::open(d.path()).unwrap();
+        assert_eq!(
+            s.model_settings(&a.user).await.unwrap().selection,
+            Some(selection.clone())
+        );
+        assert_eq!(s.resolve_model(&a.user).await.unwrap().effort, None);
+        assert!(
+            s.claude_model_efforts_known(&a.user, &r)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        s.record_claude_model_efforts(&a.user, r.clone(), model.clone(), vec!["low".into()])
+            .await
+            .unwrap();
+        selection.effort = Some("low".into());
+        s.set_model_preference(&a.user, Some(selection.clone()))
+            .await
+            .unwrap();
+        drop(s);
+        let s = Store::open(d.path()).unwrap();
+        assert_eq!(
+            s.model_settings(&a.user).await.unwrap().selection,
+            Some(selection)
+        );
+        assert_eq!(
+            s.resolve_model(&a.user).await.unwrap().effort.as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            s.claude_model_efforts_known(&a.user, &r).await.unwrap(),
+            vec![model]
+        );
+    }
+
     #[tokio::test]
     async fn owner_probe_selection_revision_and_no_shared_fallback() {
         let _g = TEST_LOCK.lock().await;

@@ -28,6 +28,7 @@ pub enum ModelSource {
     Shared,
     PersonalChatGpt,
     PersonalClaudeCode,
+    PersonalCompatible,
 }
 impl ModelSource {
     pub fn is_shared(&self) -> bool {
@@ -95,6 +96,10 @@ pub struct ModelSettings {
 pub struct ModelCatalogEntry {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    #[serde(default)]
+    pub default_effort: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

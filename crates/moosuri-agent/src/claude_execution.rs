@@ -11,6 +11,38 @@ pub struct ClaudeModelsView {
     pub models: Vec<String>,
 }
 impl crate::subscriptions::SubscriptionService {
+    pub async fn claude_usage(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+    ) -> Result<moosuri_connectors::claude_code::AccountUsage, StoreError> {
+        // Ownership/session/revision are checked before touching the runtime.
+        let r = self.store.claude_launch_ref(u, id, revision).await?;
+        let p = match self.claude_profile().await {
+            Ok(profile) => profile,
+            Err(_) => return Ok(moosuri_connectors::claude_code::AccountUsage::unavailable()),
+        };
+        if p.digest() != r.profile_digest || p.root_id() != r.root_id {
+            return Err(StoreError::Conflict);
+        }
+        let cancel = CancellationToken::new();
+        let operation = p.account_usage(&r.environment_id, &cancel);
+        tokio::pin!(operation);
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        let result = loop {
+            tokio::select! {biased;
+                _=self.signals.stopping().cancelled(),if !cancel.is_cancelled()=>cancel.cancel(),
+                _=tick.tick()=>{if self.store.claude_launch_ref(u,r.id.clone(),r.revision).await.is_err(){cancel.cancel();}},
+                result=&mut operation=>break result,
+            }
+        };
+        self.store.claude_launch_ref(u, r.id, r.revision).await?;
+        Ok(match result {
+            Ok(report) if !cancel.is_cancelled() => report,
+            _ => moosuri_connectors::claude_code::AccountUsage::unavailable(),
+        })
+    }
     pub async fn claude_profile(&self) -> Result<Arc<Profile>, StoreError> {
         let p = self.claude.clone().ok_or(StoreError::Unavailable)?;
         let ready = self
@@ -66,7 +98,10 @@ impl crate::subscriptions::SubscriptionService {
             })
             .map(|c| c.model)
             .collect::<Vec<_>>();
-        if !models.is_empty() && !force {
+        let mut seen = std::collections::HashSet::new();
+        models.retain(|model| seen.insert(model.clone()));
+        let known = self.store.claude_model_efforts_known(u, &r).await?;
+        if !models.is_empty() && !force && models.iter().all(|model| known.contains(model)) {
             return Ok(ClaudeModelsView {
                 status: "ready",
                 models,
@@ -102,10 +137,13 @@ impl crate::subscriptions::SubscriptionService {
                 models: vec![],
             });
         }
+        // An existing owner's missing capability metadata is a catalog-only
+        // repair. Discovering new tiers remains an explicit refresh operation.
+        let probe_missing = models.is_empty() || force;
         // Connector emits at most three unique standard-tier concrete IDs.
         // Failed/unknown attempts are still admitted by the durable probe budget.
         for model in catalog.models.into_iter().take(3) {
-            if models.contains(&model) {
+            if models.contains(&model) || !probe_missing {
                 continue;
             }
             if self
@@ -115,6 +153,19 @@ impl crate::subscriptions::SubscriptionService {
             {
                 models.push(model);
             }
+        }
+        // A successful full catalog is authoritative for explicit effort choices.
+        // Missing metadata/rows fail closed while retaining exact text proof.
+        for model in &models {
+            let efforts = catalog
+                .effort_metadata
+                .iter()
+                .find(|metadata| metadata.model == *model)
+                .and_then(|metadata| metadata.efforts.clone())
+                .unwrap_or_default();
+            self.store
+                .record_claude_model_efforts(u, r.clone(), model.clone(), efforts)
+                .await?;
         }
         self.store.claude_launch_ref(u, id, revision).await?;
         Ok(ClaudeModelsView {
@@ -163,6 +214,7 @@ impl crate::subscriptions::SubscriptionService {
                     && c.provider_id == r.id
                     && c.provider_revision == revision
                     && c.model == model
+                    && c.effort.is_none()
             })
         {
             return Ok(choice);
@@ -342,6 +394,205 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+    #[tokio::test]
+    async fn claude_usage_checks_owner_revision_and_discards_revoked_session_results() {
+        let _g = crate::tests::TEST_LOCK.lock().await;
+        let (_dir, store, u) = setup().await;
+        let f = moosuri_connectors::claude_code::fixture::Fixture::new();
+        let r = select(&store, &u, &f.profile).await;
+        let runtime = Runtime::start_with_google_setup_claude(
+            store.clone(),
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(f.profile.clone())),
+        );
+        let service = runtime.subscription_service();
+        let invite = store
+            .create_user(&u, "Other owner".into(), "other-usage@example.test".into())
+            .await
+            .unwrap();
+        let other = store
+            .login("other-usage@example.test".into(), invite.temporary_password)
+            .await
+            .unwrap();
+        let other = store
+            .change_password(&other.user, "Synthetic-other-usage-password-2026".into())
+            .await
+            .unwrap()
+            .user;
+        assert!(
+            service
+                .claude_usage(&other, r.id.clone(), r.revision)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .claude_usage(&u, r.id.clone(), r.revision + 1)
+                .await
+                .is_err()
+        );
+        assert_eq!(f.launches(), 0);
+        let result = service
+            .claude_usage(&u, r.id.clone(), r.revision)
+            .await
+            .unwrap();
+        assert_eq!(result.status, "available");
+        assert_eq!(result.limits[0].remaining_percent, Some(75.0));
+        assert_eq!(
+            f.launches(),
+            1,
+            "usage uses one local-command launch and no inference probe"
+        );
+        f.behavior("usage-unsupported");
+        assert_eq!(
+            service
+                .claude_usage(&u, r.id.clone(), r.revision)
+                .await
+                .unwrap()
+                .status,
+            "unavailable"
+        );
+        f.behavior("usage-hold");
+        let check = service.claude_usage(&u, r.id.clone(), r.revision);
+        let revoke = async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !f.directory.path().join("entered").exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            store
+                .disconnect_claude(&u, r.id.clone(), r.revision)
+                .await
+                .unwrap();
+        };
+        let (result, ()) = tokio::join!(check, revoke);
+        assert!(
+            result.is_err(),
+            "revoked owner must receive no previously fetched report"
+        );
+        let launches = f.launches();
+        assert!(service.claude_usage(&u, r.id, r.revision).await.is_err());
+        assert_eq!(f.launches(), launches);
+        runtime.shutdown().await;
+    }
+    #[tokio::test]
+    async fn catalog_backfills_verified_owner_without_paid_probes_and_saved_effort_runs() {
+        let _g = crate::tests::TEST_LOCK.lock().await;
+        let (_dir, store, u) = setup().await;
+        let f = moosuri_connectors::claude_code::fixture::Fixture::new();
+        let r = select(&store, &u, &f.profile).await;
+        let runtime = Runtime::start_with_google_setup_claude(
+            store.clone(),
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(f.profile.clone())),
+        );
+        let discovered = runtime
+            .subscription_service()
+            .claude_models(&u, r.id.clone(), r.revision)
+            .await
+            .unwrap();
+        assert_eq!(discovered.models, ["claude-fixture-v1"]);
+        assert_eq!(
+            f.launches(),
+            1,
+            "legacy proof gets only non-inference catalog metadata"
+        );
+        let choices = store.model_settings(&u).await.unwrap().choices;
+        let exact = choices
+            .into_iter()
+            .filter(|c| c.model == "claude-fixture-v1")
+            .collect::<Vec<_>>();
+        assert!(exact.iter().any(|c| c.effort.as_deref() == Some("xhigh")));
+        assert!(!exact.iter().any(|c| c.effort.as_deref() == Some("max")));
+        runtime
+            .subscription_service()
+            .claude_models(&u, r.id.clone(), r.revision)
+            .await
+            .unwrap();
+        assert_eq!(
+            f.launches(),
+            1,
+            "known metadata is durable and needs no repeat catalog"
+        );
+        let choice = exact
+            .into_iter()
+            .find(|c| c.effort.as_deref() == Some("xhigh"))
+            .unwrap();
+        store
+            .set_model_preference(
+                &u,
+                Some(ModelSelection {
+                    source: choice.source,
+                    provider_id: choice.provider_id,
+                    provider_revision: choice.provider_revision,
+                    model: choice.model,
+                    effort: choice.effort,
+                }),
+            )
+            .await
+            .unwrap();
+        let thread = store
+            .create_thread(&u, "Effort selection".into())
+            .await
+            .unwrap();
+        store
+            .submit_turn(
+                &u,
+                thread.id.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                "Hello".into(),
+            )
+            .await
+            .unwrap();
+        let turn = terminal(&store, &u, &thread.id).await;
+        assert_eq!(turn.run.state, RunState::Completed);
+        assert_eq!(turn.run.model.effort.as_deref(), Some("xhigh"));
+        let settings =
+            std::fs::read_to_string(f.directory.path().join("settings-history")).unwrap();
+        let last: serde_json::Value =
+            serde_json::from_str(settings.lines().last().unwrap()).unwrap();
+        assert_eq!(
+            last["effortLevel"], "xhigh",
+            "actual saved run reaches mounted settings"
+        );
+        assert_eq!(f.launches(), 2);
+        f.behavior("catalog-empty");
+        runtime
+            .subscription_service()
+            .claude_models_refresh(&u, r.id.clone(), r.revision, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            f.launches(),
+            3,
+            "successful empty catalog withdraws efforts with no inference"
+        );
+        let choices = store.model_settings(&u).await.unwrap().choices;
+        assert_eq!(choices.len(), 1);
+        assert!(
+            choices[0].effort.is_none(),
+            "missing exact catalog row retains only default text proof"
+        );
+        runtime
+            .subscription_service()
+            .claude_models(&u, r.id, r.revision)
+            .await
+            .unwrap();
+        assert_eq!(
+            f.launches(),
+            3,
+            "known unsupported metadata does not repeatedly initialize"
+        );
+        runtime.shutdown().await;
     }
     #[tokio::test]
     async fn account_models_recover_pending_and_reuse_verified_choices_without_inference() {

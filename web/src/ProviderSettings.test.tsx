@@ -142,6 +142,7 @@ function server(
         return Promise.resolve(response(state.settings));
       if (path === "/settings/claude" && call.method === "GET")
         return Promise.resolve(response({ runtime_configured: false, bindings: [], text_only: true }));
+      if (path === "/settings/compatible-providers") return Promise.resolve(response({providers:[],default_selection:null}));
       if (path === "/settings/chatgpt" && call.method === "GET")
         return Promise.resolve(response([]));
       return Promise.resolve(response({ code: "unexpected_test_route" }, 404));
@@ -304,7 +305,7 @@ describe("shared model administration", () => {
       "모델 목록의 정확한 버전 ID",
     );
     expect(
-      within(screen.getByLabelText("기본 모델과 추론 강도")).getAllByRole(
+      within(screen.getByLabelText("기본 모델")).getAllByRole(
         "option",
       ),
     ).toHaveLength(1);
@@ -390,7 +391,7 @@ describe("shared model administration", () => {
       screen.getByRole("button", { name: "모델 목록 불러오기" }),
     );
     await screen.findByText(/일부 모델만 표시됩니다/);
-    const defaultSelect = screen.getByLabelText("기본 모델과 추론 강도");
+    const defaultSelect = screen.getByLabelText("기본 모델");
     expect(within(defaultSelect).getAllByRole("option")).toHaveLength(1);
     await user.type(screen.getByLabelText("모델 ID"), choice.model);
     await user.type(screen.getByLabelText("추론 강도 (선택)"), choice.effort!);
@@ -405,7 +406,7 @@ describe("shared model administration", () => {
       probe.resolve(response(choice));
     });
     await screen.findByText(/모델과 추론 강도를 확인했습니다/);
-    await user.selectOptions(defaultSelect, key(choice));
+    await user.selectOptions(defaultSelect, key({...choice, effort: null}));
     await user.click(screen.getByRole("button", { name: "기본 모델 저장" }));
     await screen.findByText("설치 기본 모델을 저장했습니다.");
     expect(calls.find((call) => call.path.endsWith("/probe"))?.body).toEqual({
@@ -474,7 +475,7 @@ describe("shared model administration", () => {
         screen.getByRole("list", { name: `${provider.name} 확인된 모델` }),
       ).queryByText(high.model),
     ).not.toBeInTheDocument();
-    expect(screen.getByLabelText("기본 모델과 추론 강도")).toHaveDisplayValue(
+    expect(screen.getByLabelText("기본 모델")).toHaveDisplayValue(
       "현재 기본 모델 · 사용할 수 없음",
     );
   });
@@ -537,17 +538,15 @@ describe("personal model preferences", () => {
       { selection: null, effective: high, choices: [high, low] },
     );
     open("/settings/model");
-    await user.selectOptions(
-      await screen.findByLabelText("모델과 추론 강도"),
-      key(low),
-    );
+    await user.selectOptions(await screen.findByLabelText("모델"), key({...low, effort: null}));
+    await user.selectOptions(screen.getByRole("combobox", {name:"추론 강도"}), key(low));
     await user.click(screen.getByRole("button", { name: "선택 저장" }));
     await screen.findByText("내 모델을 저장했습니다.");
     expect(calls.find((call) => call.method === "PUT")?.body).toEqual({
       selection: selection(low),
     });
     expect(screen.getByText(`${provider.name} · low`)).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("모델과 추론 강도"), "");
+    await user.selectOptions(screen.getByLabelText("모델"), "");
     await user.click(screen.getByRole("button", { name: "선택 저장" }));
     await waitFor(() =>
       expect(calls.filter((call) => call.method === "PUT")).toHaveLength(2),
@@ -574,7 +573,7 @@ describe("personal model preferences", () => {
       choices: [newer],
     });
     open("/settings/model");
-    expect(await screen.findByLabelText("모델과 추론 강도")).toHaveDisplayValue(
+    expect(await screen.findByLabelText("모델")).toHaveDisplayValue(
       "현재 선택 · 사용할 수 없음",
     );
     expect(
@@ -596,10 +595,8 @@ describe("personal model preferences", () => {
       { selection: selection(high), effective: high, choices: [high, low] },
     );
     open("/settings/model");
-    await user.selectOptions(
-      await screen.findByLabelText("모델과 추론 강도"),
-      key(low),
-    );
+    await user.selectOptions(await screen.findByLabelText("모델"), key({...low, effort: null}));
+    await user.selectOptions(screen.getByRole("combobox", {name:"추론 강도"}), key(low));
     await user.click(screen.getByRole("button", { name: "선택 저장" }));
     expect(screen.getByRole("button", { name: "저장 중…" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "저장 중…" }));
@@ -710,7 +707,7 @@ describe("personal ChatGPT settings", () => {
     await screen.findByText("텍스트 연결을 확인했습니다. 사용할 모델을 선택하세요.");
     expect(fixture.calls.find((call) => call.path.endsWith("personal-a/probe"))?.body).toEqual({revision: 1, model: personal.model, effort: null});
     const targetKey = JSON.stringify(["personal_chat_gpt", personal.provider_id, 1, personal.model, null]);
-    await user.selectOptions(screen.getByRole("combobox", {name: "모델과 추론 강도"}), targetKey);
+    await user.selectOptions(screen.getByRole("combobox", {name: "모델"}), targetKey);
     await user.click(screen.getByRole("button", {name: "선택 저장"}));
     await waitFor(() => expect(settings.selection?.source).toBe("personal_chat_gpt"));
     await user.click(within(group).getByRole("button", {name: "ChatGPT 연결 해제"}));
@@ -727,15 +724,13 @@ it("guides local-helper server sign-in without requesting private launch materia
     {id:"synthetic-returning-binding",revision:7,label:"My VM connection",status:"active",remote_revoke:"not_requested"},
   ]) : undefined, member);
   open("/settings/model");
-  await user.click(await screen.findByRole("button", {name:"Continue with ChatGPT"}));
+  await user.click(await screen.findByRole("button", {name:"ChatGPT 구독 연결"}));
   expect(screen.getByRole("region",{name:"ChatGPT 로그인 안내"})).toBeInTheDocument();
   expect(screen.getByText("새 ChatGPT 연결")).toBeInTheDocument();
-  await user.click(screen.getByText("터미널 안내"));
-  expect(screen.getByText(new RegExp("moosuri subscriptions chatgpt-vm --server"))).toBeInTheDocument();
-  expect(screen.getByRole("link",{name:"도우미 빌드·실행 안내"})).toHaveAttribute("href","https://github.com/codemoo/moosuri/blob/main/docs/development.md");
+  expect(screen.getByRole("button", {name: "명령 복사"})).toBeInTheDocument();
   await user.click(screen.getByRole("button",{name:"이 연결로 다시 로그인"}));
   expect(screen.getByText("My VM connection 다시 연결")).toBeInTheDocument();
-  expect(screen.getAllByText(/--binding synthetic-returning-binding --revision 7/).length).toBe(2);
+  expect(screen.getByText(/--binding synthetic-returning-binding --revision 7/)).toBeInTheDocument();
   expect(calls.some(call=>/handoffs|local-login/.test(call.path))).toBe(false);
   const content=screen.getByRole("region",{name:"ChatGPT 로그인 안내"}).textContent ?? "";
   for (const secret of ["transfer_key","authorization_url","refresh_token","access_token","session="]) expect(content).not.toContain(secret);

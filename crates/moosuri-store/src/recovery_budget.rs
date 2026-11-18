@@ -216,8 +216,7 @@ impl Store {
                 let active:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM chatgpt_bindings b JOIN chatgpt_sessions s ON s.tenant_id=b.tenant_id AND s.account_id=b.account_id AND s.binding_id=b.id AND s.revision=b.current_revision WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.id=?3 AND b.current_revision=?4 AND b.status='active' AND s.cipher IS NOT NULL AND s.plan_enabled=1 AND s.refresh_state!='rotation_unknown')",params![reference.tenant,reference.account,id,revision],|r|r.get(0))?;
                 if !active {return Err(StoreError::Conflict)}
             } else {
-                validate(&tx,&user,true,true)?;
-                crate::providers::require_binding(&tx,&id,revision)?;
+                crate::providers::authorize_probe(&tx,&user,&id,revision)?;
             }
             let nonce=Uuid::new_v4().to_string();
             reserve(

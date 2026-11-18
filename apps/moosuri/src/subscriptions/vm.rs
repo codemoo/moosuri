@@ -19,6 +19,10 @@ use tokio::{
 };
 use zeroize::{Zeroize, Zeroizing};
 const MAX_FRAME: usize = 256 * 1024;
+// SSH's noninteractive shell usually does not read the interactive PATH block
+// installed by setup. Prefer the documented per-user launcher, then custom PATH
+// installations. This command is constant: no origin, alias or secret is shell code.
+const RECEIVER_COMMAND: &str = "/bin/sh -c 'if [ -x \"$HOME/.local/bin/moosuri\" ]; then exec \"$HOME/.local/bin/moosuri\" subscriptions chatgpt-receive --stdin; else exec moosuri subscriptions chatgpt-receive --stdin; fi'";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Journal {
@@ -234,7 +238,7 @@ async fn pipe(j: &Journal, envelope: &[u8]) -> Result<(), String> {
             "BatchMode=yes",
             "--",
             &j.ssh_alias,
-            "moosuri subscriptions chatgpt-receive --stdin",
+            RECEIVER_COMMAND,
         ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -619,6 +623,10 @@ pub async fn run(
     save(&state, &j)?;
     state.write("envelope", &envelope)?;
     let _=stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'\r\nConnection: close\r\n\r\nSign-in received. Return to the Moosuri helper to finish server transfer.").await;
+    // The response has connection-delimited framing. Close it before a bounded
+    // SSH transfer, otherwise the browser keeps loading until that transfer ends.
+    let _ = stream.shutdown().await;
+    drop(stream);
     println!("Transferring the protected connection to your server…");
     transfer(&c, &state, &mut j).await
 }
@@ -681,6 +689,25 @@ pub async fn receive(stdin: bool) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn ssh_receiver_resolves_installed_launcher_without_interactive_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let launcher = bin.join("moosuri");
+        std::fs::write(&launcher, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", RECEIVER_COMMAND])
+            .env_clear()
+            .env("HOME", dir.path())
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"subscriptions\nchatgpt-receive\n--stdin\n");
+    }
+    #[test]
     fn native_destination_and_ssh_authority_are_bounded() {
         for s in [
             "-oProxyCommand=bad",
@@ -698,12 +725,19 @@ mod tests {
             "https://user@example.com",
             "https://example.com/path",
             "https://example.com/?secret=x",
+            "https://example.com/#secret",
+            "https://example.com/%2fprivate",
+            "https://user:password@example.com/",
         ] {
             assert!(origin(s).is_err());
         }
         assert_eq!(
             origin("https://example.com").unwrap(),
             "https://example.com"
+        );
+        assert_eq!(
+            origin("https://EXAMPLE.com:8443/").unwrap(),
+            "https://example.com:8443"
         );
     }
     #[test]

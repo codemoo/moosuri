@@ -16,6 +16,7 @@ mod mail;
 mod media;
 mod missions;
 mod private_files;
+mod provider_quota;
 mod providers;
 mod push;
 mod schedules;
@@ -384,6 +385,14 @@ pub fn router_with_runtime(
         .merge(telegram::routes())
         .route("/api/v1/settings/chatgpt", get(subscriptions::list))
         .route(
+            "/api/v1/settings/chatgpt/{id}/quota",
+            get(provider_quota::personal),
+        )
+        .route(
+            "/api/v1/admin/providers/{id}/quota",
+            get(provider_quota::shared),
+        )
+        .route(
             "/api/v1/settings/chatgpt/handoffs",
             post(subscriptions::handoff_prepare),
         )
@@ -458,6 +467,10 @@ pub fn router_with_runtime(
             "/api/v1/settings/claude/{id}/probe",
             post(claude_execution::probe),
         )
+        .route(
+            "/api/v1/settings/claude/{id}/usage",
+            post(claude_execution::usage),
+        )
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
         .route("/health/ready", get(ready))
         .route("/api/v1/system", get(system))
@@ -501,6 +514,34 @@ pub fn router_with_runtime(
         )
         .route(
             "/api/v1/admin/providers/{id}/vision-probe",
+            post(providers::vision_probe),
+        )
+        .route(
+            "/api/v1/settings/compatible-providers",
+            get(providers::personal::list).post(providers::personal::create),
+        )
+        .route(
+            "/api/v1/settings/compatible-providers/discover",
+            get(providers::personal::discover),
+        )
+        .route(
+            "/api/v1/settings/compatible-providers/{id}",
+            axum::routing::put(providers::personal::update).delete(providers::personal::disconnect),
+        )
+        .route(
+            "/api/v1/settings/compatible-providers/{id}/models",
+            post(providers::catalog),
+        )
+        .route(
+            "/api/v1/settings/compatible-providers/{id}/probe",
+            post(providers::probe),
+        )
+        .route(
+            "/api/v1/settings/compatible-providers/{id}/tool-probe",
+            post(providers::tool_probe),
+        )
+        .route(
+            "/api/v1/settings/compatible-providers/{id}/vision-probe",
             post(providers::vision_probe),
         )
         .route("/api/v1/audio/settings", get(audio::settings))

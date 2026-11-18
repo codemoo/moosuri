@@ -1082,3 +1082,6 @@ mod credential_broker_tests;
 
 #[path = "cases/thread_creation.rs"]
 mod thread_creation;
+
+#[path = "cases/provider_quota.rs"]
+mod provider_quota;

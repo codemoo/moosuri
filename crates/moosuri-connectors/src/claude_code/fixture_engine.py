@@ -40,14 +40,43 @@ if mode=='login':
  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
 assert mode=='text'
 model,session=a[index+2:index+4]
+bridge=next(item.split('src=',1)[1].split(',dst=',1)[0] for item in a if 'dst=/bridge' in item)
+settings=json.loads((pathlib.Path(bridge)/'settings.json').read_text())
+assert settings['disableAllHooks'] is True and settings['autoMemoryEnabled'] is False
+with (root/'settings-history').open('a') as f:f.write(json.dumps(settings)+'\n')
 v=json.loads(sys.stdin.buffer.readline())
 behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
 if v.get('type')=='control_request':
  assert model=='default' and v['request']=={'subtype':'initialize'}
  print(json.dumps({'type':'system','subtype':'ui_invalidate'}),flush=True)
- print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':v['request_id'],'response':{'account':{} if behavior=='logged-out' else {'subscriptionType':'pro','apiProvider':'firstParty'},'models':[{'value':alias,'resolvedModel':concrete} for alias,concrete in [('default','claude-fixture-v1'),('opus','claude-fixture-v1'),('sonnet','claude-fixture-sonnet'),('haiku','claude-fixture-haiku'),('fable','claude-fixture-fable')]]}}}),flush=True)
+ print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':v['request_id'],'response':{'account':{} if behavior=='logged-out' else {'subscriptionType':'pro','apiProvider':'firstParty'},'models':[] if behavior=='catalog-empty' else [{'value':alias,'resolvedModel':concrete, 'supportsEffort': alias!='haiku' and behavior!='effort-withdrawn', 'supportedEffortLevels': ['low','medium','high','xhigh','max'] if alias!='haiku' else []} for alias,concrete in [('default','claude-fixture-v1'),('opus','claude-fixture-v1'),('sonnet','claude-fixture-sonnet'),('haiku','claude-fixture-haiku'),('fable','claude-fixture-fable')]]}}}),flush=True)
+ next_line=sys.stdin.buffer.readline()
+ if not next_line:sys.exit(0)
+ command=json.loads(next_line)
+ assert command=={'type':'user','uuid':command['uuid'],'session_id':session,'parent_tool_use_id':None,'message':{'role':'user','content':[{'type':'text','text':'/usage'}]}}
  assert sys.stdin.buffer.read()==b''
- sys.exit(0)
+ (root/'usage-command').write_text('/usage')
+ def lifecycle(state):
+  frame={'type':'command_lifecycle','session_id':session,'command_uuid':command['uuid'],'state':state}
+  if behavior=='usage-wrong-session':frame['session_id']='other-session'
+  if behavior=='usage-wrong-command':frame['command_uuid']='other-command'
+  print(json.dumps(frame),flush=True)
+ lifecycle('queued');lifecycle('started')
+ print(json.dumps({'type':'system','subtype':'init','session_id':session,'claude_code_version':'2.1.322','model':model,'cwd':'/work','tools':[],'mcp_servers':[],'plugins':[],'skills':[]}),flush=True)
+ if behavior=='usage-hold':
+  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
+ report={'session':{'secret':'never-expose-session'},'rate_limits':{'limits':[{'kind':'session','group':'session','percent':25,'resets_at':'2026-11-18T20:00:00Z','scope':None},{'kind':'weekly_scoped','group':'weekly','percent':70,'resets_at':None,'scope':{'model':{'display_name':'Opus'}}}],'extra_usage':{'secret':'never-expose-credits'}}}
+ if behavior=='usage-null':report['rate_limits']=None
+ if behavior=='usage-empty':report['rate_limits']['limits']=[]
+ if behavior=='usage-malformed':report['rate_limits']['limits'][0]['percent']=101
+ message={'type':'assistant','session_id':session,'parent_tool_use_id':None,'message':{'role':'assistant','content':[{'type':'text','text':'never-expose-free-output'}]}}
+ if behavior!='usage-unsupported':message['usage_report']=report
+ print(json.dumps(message),flush=True)
+ print(json.dumps({'type':'result','session_id':session,'subtype':'success','is_error':False,'result':'never-expose-result'}),flush=True)
+ lifecycle('completed')
+ if behavior=='usage-duplicate-ack':lifecycle('completed')
+ if behavior=='usage-after-result':print(json.dumps(message),flush=True)
+ sys.exit(2 if behavior=='usage-nonzero' else 0)
 assert v['client_composed'] is True and v['parent_tool_use_id'] is None
 assert v['message']['role']=='user' and v['session_id']==session
 behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'

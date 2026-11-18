@@ -5,6 +5,42 @@ use serde_json::{Value, json};
 pub struct AccountModels {
     pub login_required: bool,
     pub models: Vec<String>,
+    pub effort_metadata: Vec<ModelEffortMetadata>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelEffortMetadata {
+    pub model: String,
+    /// None means the official catalog omitted or contradicted capability data.
+    /// Some(empty) explicitly reports no supported effort on this transport.
+    pub efforts: Option<Vec<String>>,
+}
+fn row_efforts(row: &Value) -> Option<Vec<String>> {
+    match row.get("supportsEffort").and_then(Value::as_bool) {
+        Some(false) => Some(vec![]),
+        Some(true) => {
+            let levels = row.get("supportedEffortLevels")?.as_array()?;
+            if levels.len() > 16
+                || levels.iter().any(|v| {
+                    !matches!(
+                        v.as_str(),
+                        Some("low" | "medium" | "high" | "xhigh" | "max")
+                    )
+                })
+            {
+                return None;
+            }
+            // The pinned helper consumes settings.json. max is session-only and
+            // cannot be encoded by effortLevel, so it is never offered here.
+            Some(
+                ["low", "medium", "high", "xhigh"]
+                    .into_iter()
+                    .filter(|level| levels.iter().any(|v| v == level))
+                    .map(str::to_owned)
+                    .collect(),
+            )
+        }
+        None => None,
+    }
 }
 fn valid_model(model: &str) -> bool {
     model.starts_with("claude-")
@@ -13,7 +49,7 @@ fn valid_model(model: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
 }
-fn catalog(v: &Value, request_id: &str) -> Result<AccountModels, TransportError> {
+pub(super) fn catalog(v: &Value, request_id: &str) -> Result<AccountModels, TransportError> {
     if v["type"] != "control_response"
         || v["response"]["request_id"] != request_id
         || v["response"]["subtype"] != "success"
@@ -64,7 +100,34 @@ fn catalog(v: &Value, request_id: &str) -> Result<AccountModels, TransportError>
             models.push(value.to_owned());
         }
     }
+    let effort_metadata = models
+        .iter()
+        .map(|model| {
+            let matching = rows.iter().filter(|row| {
+                matches!(row["value"].as_str(), Some("opus" | "sonnet" | "haiku"))
+                    && row["resolvedModel"] == model.as_str()
+            });
+            let mut efforts: Option<Vec<String>> = None;
+            for row in matching {
+                let Some(reported) = row_efforts(row) else {
+                    return ModelEffortMetadata {
+                        model: model.clone(),
+                        efforts: None,
+                    };
+                };
+                match &mut efforts {
+                    None => efforts = Some(reported),
+                    Some(current) => current.retain(|level| reported.contains(level)),
+                }
+            }
+            ModelEffortMetadata {
+                model: model.clone(),
+                efforts,
+            }
+        })
+        .collect();
     Ok(AccountModels {
+        effort_metadata,
         login_required: !subscription || !first_party,
         models,
     })
@@ -170,6 +233,49 @@ impl Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_catalog_metadata_is_required_and_transport_levels_are_bounded() {
+        let response = |rows| json!({"type":"control_response","response":{"subtype":"success","request_id":"r","response":{"account":{"subscriptionType":"pro","apiProvider":"firstParty"},"models":rows}}});
+        let parsed = catalog(&response(json!([
+            {"value":"default","resolvedModel":"claude-first","supportsEffort":true,"supportedEffortLevels":["low"]},
+            {"value":"opus","resolvedModel":"claude-first","supportsEffort":true,"supportedEffortLevels":["high","xhigh","max"]},
+            {"value":"sonnet","resolvedModel":"claude-second","supportsEffort":false},
+            {"value":"haiku","resolvedModel":"claude-third"}
+        ])), "r").unwrap();
+        assert_eq!(
+            parsed.effort_metadata,
+            vec![
+                ModelEffortMetadata {
+                    model: "claude-first".into(),
+                    efforts: Some(vec!["high".into(), "xhigh".into()])
+                },
+                ModelEffortMetadata {
+                    model: "claude-second".into(),
+                    efforts: Some(vec![])
+                },
+                ModelEffortMetadata {
+                    model: "claude-third".into(),
+                    efforts: None
+                },
+            ]
+        );
+        for malformed in [
+            json!({"supportsEffort":true}),
+            json!({"supportsEffort":"true","supportedEffortLevels":["high"]}),
+            json!({"supportsEffort":true,"supportedEffortLevels":["ultra"]}),
+        ] {
+            let mut row = malformed;
+            row["value"] = json!("opus");
+            row["resolvedModel"] = json!("claude-first");
+            assert_eq!(
+                catalog(&response(json!([row])), "r")
+                    .unwrap()
+                    .effort_metadata[0]
+                    .efforts,
+                None
+            );
+        }
+    }
     #[tokio::test]
     async fn successful_text_prevents_stale_native_and_web_login_but_failed_text_does_not() {
         use crate::model::protocol::{TextMessage, TextRole};

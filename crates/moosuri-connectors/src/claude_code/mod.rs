@@ -3,7 +3,10 @@ pub mod protocol;
 #[cfg(unix)]
 mod sandbox;
 #[cfg(unix)]
-pub use sandbox::{AccountModels, LoginCode, LoginEvent, Profile, helper_main};
+pub use sandbox::{
+    AccountModels, AccountUsage, LoginCode, LoginEvent, ModelEffortMetadata, Profile, UsageLimit,
+    helper_main,
+};
 
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixture;
@@ -25,6 +28,52 @@ mod tests {
                 phase: None,
             }],
         }
+    }
+    #[tokio::test]
+    async fn selected_effort_reaches_each_actual_launch_settings_without_default_leak() {
+        let f = fixture::Fixture::new();
+        let mut request = request();
+        for effort in [Some("xhigh"), None, Some("low")] {
+            request.effort = effort.map(str::to_owned);
+            let (tx, _rx) = tokio::sync::mpsc::channel(16);
+            f.profile
+                .stream_text(
+                    "00000000-0000-4000-8000-000000000001",
+                    &request,
+                    &tx,
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+        }
+        let history = std::fs::read_to_string(f.directory.path().join("settings-history")).unwrap();
+        let settings = history
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(settings[0]["effortLevel"], "xhigh");
+        assert!(settings[1].get("effortLevel").is_none());
+        assert_eq!(settings[2]["effortLevel"], "low");
+        for invalid in ["max", "ultracode", "unknown"] {
+            request.effort = Some(invalid.into());
+            let (tx, _rx) = tokio::sync::mpsc::channel(16);
+            assert!(
+                f.profile
+                    .stream_text(
+                        "00000000-0000-4000-8000-000000000001",
+                        &request,
+                        &tx,
+                        &CancellationToken::new()
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            f.launches(),
+            3,
+            "invalid levels cannot launch or silently use defaults"
+        );
     }
     #[tokio::test]
     async fn actual_child_supervisor_requires_clean_protocol_and_os_exit() {

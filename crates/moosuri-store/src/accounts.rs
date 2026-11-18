@@ -261,6 +261,7 @@ pub(crate) fn mark_deleted(conn: &Connection, id: &str, epoch: i64) -> Result<()
     conn.execute("INSERT OR IGNORE INTO account_deletions SELECT id,tenant_id,?1,'pending' FROM accounts WHERE id=?2", params![now()?,id])?;
     conn.execute("UPDATE accounts SET deleted=1,status='suspended',recovery_required=1,role='member',name='Deleted account',email=?1,password_hash='deleted',must_change_password=0,temporary_expires_at=NULL,auth_epoch=MAX(auth_epoch,?2) WHERE id=?3",params![format!("deleted-{id}@invalid.invalid"),epoch,id])?;
     conn.execute("DELETE FROM sessions WHERE account_id=?1", [id])?;
+    crate::providers::retire_deleted_owner(conn, id)?;
     enqueue_lifecycle(conn, id, epoch, true)
 }
 
@@ -287,6 +288,9 @@ pub(crate) fn finish_deletions(conn: &mut Connection) -> Result<()> {
             "vault_lifecycle_outbox",
             "model_call_receipts",
             "claude_code_usage",
+            // Immutable opaque ownership tombstones prevent private provider IDs
+            // from becoming globally shared after owner deletion.
+            "personal_compatible_providers",
             "automatic_memory_budget",
             // Immutable forward admission lower bounds contain opaque IDs, kind,
             // counts/duration/time only; no content, credential or provider data.

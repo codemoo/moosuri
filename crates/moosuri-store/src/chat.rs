@@ -473,8 +473,10 @@ pub(super) fn binding_for_run(
     key: &[u8; 32],
     run: &Run,
 ) -> Result<ProviderBinding> {
-    if run.model.source != moosuri_core::ModelSource::Shared
-        && crate::media::has_context(conn, &run.tenant, &run.id)?
+    if !matches!(
+        run.model.source,
+        moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalCompatible
+    ) && crate::media::has_context(conn, &run.tenant, &run.id)?
     {
         return Err(StoreError::Conflict);
     }
@@ -1061,9 +1063,11 @@ pub(super) fn submit_turn_context_in(
         &user.account.id,
         &choice,
     )?;
-    if choice.source != moosuri_core::ModelSource::Shared
-        && (!attachments.is_empty()
-            || crate::media::thread_has_context(tx, &user.tenant.0, &user.account.id, &thread_id)?)
+    if !matches!(
+        choice.source,
+        moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalCompatible
+    ) && (!attachments.is_empty()
+        || crate::media::thread_has_context(tx, &user.tenant.0, &user.account.id, &thread_id)?)
     {
         // P1 excludes raw document and image history as well as current uploads.
         // Include queued/running ancestors, matching dependency inheritance.

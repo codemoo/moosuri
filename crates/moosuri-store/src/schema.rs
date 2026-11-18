@@ -307,6 +307,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 75,
         sql: include_str!("../../../migrations/assistant/0075_telegram.sql"),
     },
+    Migration {
+        version: 76,
+        sql: include_str!("../../../migrations/assistant/0076_claude_model_efforts.sql"),
+    },
+    Migration {
+        version: 77,
+        sql: include_str!("../../../migrations/assistant/0077_personal_compatible.sql"),
+    },
 ];
 
 pub(crate) const CURRENT_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].version;

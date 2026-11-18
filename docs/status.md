@@ -2,6 +2,8 @@
 
 2026-11-18. 실제 지원 범위·검증 한계·남은 작업은 이 문서가 정본이다.
 
+내 모델에서 **모델**과 **추론 강도**를 따로 고르고 다음 메시지부터 적용할 수 있다. Claude는 공식 CLI가 해당 모델에 보고한 강도 가운데 실행 설정이 지원하는 값만 표시한다. ChatGPT는 개인 공식 로그인과 검증된 모델·강도 조합을 사용한다. 계정별 호환 LLM, 로컬 모델 찾기, 워크스테이션 도우미는 [모델 연결 안내](provider-settings.md#personal-openai-compatible-models)에 정리했다. 공급자가 공개한 한도와 리셋 정보는 [사용량 안내](provider-quota.md)를 따른다.
+
 Claude 모델 설정은 로그인 완료 또는 이전에 로그인한 연결의 설정 진입 시 공식 CLI의 모델 목록을 읽는다. 계정에서 실제 텍스트 응답을 확인한 항목을 **사용할 모델**에 표시한다. [사용 방법](claude-execution.md#owner-login-and-selection).
 [dev.12 배포](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.12) 후 기존 구독 연결에서 Opus 5.5·Sonnet 5.5·Haiku 5.5 응답을 확인했고, 실제 웹 선택 목록에 세 모델이 나타나며 새로고침 후에도 유지되는 것을 확인했다.
 

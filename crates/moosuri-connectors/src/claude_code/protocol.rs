@@ -9,12 +9,42 @@ const MAX_TEXT: usize = 256 * 1024;
 fn bad() -> TransportError {
     crate::model::protocol::ProtocolError::Protocol.into()
 }
+/// Shared bookkeeping validation for inference turns and fixed local commands.
+/// A final ACK may follow result but cannot establish completion itself.
+pub(super) fn command_lifecycle(
+    v: &Value,
+    session: &str,
+    user: &str,
+    init: bool,
+    terminal: bool,
+    done: &mut bool,
+) -> Result<bool, TransportError> {
+    if v["type"] != "command_lifecycle" {
+        return Ok(false);
+    }
+    if v["session_id"] != session || !v["parent_tool_use_id"].is_null() || v["command_uuid"] != user
+    {
+        return Err(bad());
+    }
+    let expected = if terminal {
+        v["state"] == "completed" && !*done
+    } else {
+        !init && matches!(v["state"].as_str(), Some("queued" | "started"))
+    };
+    if !expected {
+        return Err(bad());
+    }
+    *done = terminal;
+    Ok(true)
+}
 pub fn input(
     r: &TextRequest,
     session: &str,
     user: &str,
 ) -> Result<(String, Vec<u8>), TransportError> {
-    if r.effort.is_some()
+    if r.effort
+        .as_deref()
+        .is_some_and(|e| !matches!(e, "low" | "medium" | "high" | "xhigh"))
         || r.messages.is_empty()
         || r.messages.len() > 128
         || r.model.len() > 200
@@ -171,16 +201,14 @@ impl Decoder {
         }
         // Official command bookkeeping surrounds one user turn. Its final ACK
         // can follow result; it never supplies content or establishes completion.
-        if v["type"] == "command_lifecycle" && v["command_uuid"] == self.user {
-            let expected = if self.terminal {
-                v["state"] == "completed" && !self.lifecycle_done
-            } else {
-                !self.init && matches!(v["state"].as_str(), Some("queued" | "started"))
-            };
-            if !expected {
-                return Err(bad());
-            }
-            self.lifecycle_done = self.terminal;
+        if command_lifecycle(
+            &v,
+            &self.session,
+            &self.user,
+            self.init,
+            self.terminal,
+            &mut self.lifecycle_done,
+        )? {
             return Ok(vec![]);
         }
         if self.terminal {

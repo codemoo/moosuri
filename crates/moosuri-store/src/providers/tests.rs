@@ -757,3 +757,164 @@ async fn tool_capability_requires_exact_text_proof_and_current_admin_binding() {
         Err(StoreError::Unauthorized)
     ));
 }
+
+#[tokio::test]
+async fn personal_compatible_destination_owner_storage_and_deleted_account_boundaries() {
+    use moosuri_core::ModelSource;
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let admin = admin(&store).await.user;
+    let own = member(&store, &admin, "private-model-owner@example.test")
+        .await
+        .user;
+    let other = member(&store, &admin, "private-model-other@example.test")
+        .await
+        .user;
+    let mut local = ProviderConfig {
+        kind: ProviderKind::Compatible,
+        base_url: Some("http://127.0.0.1:11434/v1".into()),
+        allowed_ips: vec!["127.0.0.1".into()],
+        router_providers: vec![],
+        zero_data_retention: false,
+    };
+    assert!(
+        store
+            .admit_personal_compatible_config(
+                &own,
+                local.base_url.clone().unwrap(),
+                local.allowed_ips.clone()
+            )
+            .await
+            .is_err()
+    );
+    // No member chosen metadata/link-local/private allowlist can self-enroll.
+    for base in [
+        "https://169.254.169.254/v1",
+        "https://127.0.0.1/v1",
+        "https://10.0.0.1/v1",
+        "https://[::ffff:127.0.0.1]/v1",
+    ] {
+        let ip = url::Url::parse(base)
+            .unwrap()
+            .host_str()
+            .unwrap()
+            .trim_matches(['[', ']'])
+            .to_owned();
+        assert!(
+            store
+                .admit_personal_compatible_config(&own, base.into(), vec![ip])
+                .await
+                .is_err()
+        );
+    }
+    local.base_url = Some("https://model.example.test/v1".into());
+    // An existing administrator PublicHttps provider with no exact allowlist
+    // must not replace the owner's independently resolved public address pins.
+    store
+        .create_provider(
+            &admin,
+            ProviderChange {
+                name: "Public shared fixture".into(),
+                config: ProviderConfig {
+                    allowed_ips: vec![],
+                    ..local.clone()
+                },
+                enabled: true,
+                credential: CredentialChange::Clear,
+            },
+        )
+        .await
+        .unwrap();
+    local.allowed_ips = vec!["8.8.8.8".into()];
+    let config = store
+        .admit_personal_compatible_config(
+            &own,
+            local.base_url.clone().unwrap(),
+            local.allowed_ips.clone(),
+        )
+        .await
+        .unwrap();
+    let row = store
+        .create_personal_compatible(
+            &own,
+            ProviderChange {
+                name: "Private endpoint".into(),
+                config,
+                enabled: true,
+                credential: CredentialChange::Replace(Zeroizing::new(
+                    "synthetic-private-bearer".into(),
+                )),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .list_providers(&admin)
+            .await
+            .unwrap()
+            .providers
+            .iter()
+            .any(|p| p.id == row.id)
+    );
+    assert!(
+        store
+            .personal_compatible_providers(&other)
+            .await
+            .unwrap()
+            .providers
+            .is_empty()
+    );
+    assert!(
+        store
+            .probe_binding(&other, row.id.clone(), 1, "fixture".into(), None)
+            .await
+            .is_err()
+    );
+    let choice = store
+        .record_model_probe(&own, row.id.clone(), 1, "fixture".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(choice.source, ModelSource::PersonalCompatible);
+    let s = ModelSelection {
+        source: choice.source,
+        provider_id: row.id.clone(),
+        provider_revision: 1,
+        model: choice.model.clone(),
+        effort: None,
+    };
+    assert!(
+        store
+            .set_model_preference(&other, Some(s.clone()))
+            .await
+            .is_err()
+    );
+    store
+        .set_model_preference(&own, Some(s.clone()))
+        .await
+        .unwrap();
+    assert!(store.set_default_model(&admin, Some(s)).await.is_err());
+    let id = row.id.clone();
+    let t = own.tenant.0.clone();
+    let a = own.account.id.clone();
+    let oa = other.account.id.clone();
+    let ot = other.tenant.0.clone();
+    store.call(move|db|{
+        assert!(binding_for_choice(&db.conn,&db.provider_key,&choice).is_err());
+        assert!(binding_for_owner_choice(&db.conn,&db.provider_key,&ot,&oa,&choice).is_err());
+        let binding=binding_for_owner_choice(&db.conn,&db.provider_key,&t,&a,&choice)?;
+        assert_eq!(binding.credential.as_deref().map(|s|s.as_str()),Some("synthetic-private-bearer"));
+        let cipher:Vec<u8>=db.conn.query_row("SELECT credential FROM provider_revisions WHERE provider_id=?1",[&id],|r|r.get(0))?;
+        assert!(!cipher.windows(b"synthetic-private-bearer".len()).any(|w|w==b"synthetic-private-bearer"));
+        assert!(db.conn.execute("UPDATE personal_compatible_providers SET account_id=?1 WHERE provider_id=?2",params![oa,id]).is_err());
+        crate::accounts::mark_deleted(&db.conn,&a,99)?;
+        crate::accounts::finish_deletions(&mut db.conn)?;
+        assert_eq!(db.conn.query_row("SELECT count(*) FROM provider_revisions WHERE provider_id=?1 AND credential IS NOT NULL",[&id],|r|r.get::<_,i64>(0))?,0);
+        assert_eq!(db.conn.query_row("SELECT count(*) FROM provider_model_probes WHERE provider_id=?1",[&id],|r|r.get::<_,i64>(0))?,0);
+        let (name,config,enabled):(String,String,bool)=db.conn.query_row("SELECT name,config,enabled FROM provider_revisions WHERE provider_id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+        assert_eq!(name,"Deleted personal connection");assert!(!config.contains("model.example.test"));assert!(!enabled);
+        assert!(owner(&db.conn,&id)?.is_some());assert!(!list(&db.conn)?.providers.iter().any(|p|p.id==id));
+        Ok(())
+    }).await.unwrap();
+}

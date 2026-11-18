@@ -645,3 +645,289 @@ async fn revocation_during_second_tool_probe_round_blocks_late_capability_record
     .await;
     assert!(settings["choices"].as_array().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn personal_compatible_owner_catalog_probe_history_actual_model_and_revocation() {
+    use moosuri_core::RunState;
+    let _guard = TEST_LOCK.lock().await;
+    let (_tmp, store, app) = fixture(false).await;
+    let admin = login(&app, "admin@example.test", PASSWORD).await;
+    let a = store
+        .authenticate(admin.strip_prefix("moosuri_session=").unwrap().into())
+        .await
+        .unwrap();
+    let invite = store
+        .create_user(
+            &a,
+            "Private owner".into(),
+            "compatible-owner@example.test".into(),
+        )
+        .await
+        .unwrap();
+    let restricted = store
+        .login(
+            "compatible-owner@example.test".into(),
+            invite.temporary_password,
+        )
+        .await
+        .unwrap();
+    let owner = store
+        .change_password(&restricted.user, PASSWORD.into())
+        .await
+        .unwrap();
+    let cookie = format!("moosuri_session={}", owner.token);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mock=Router::new().route("/v1/models",get(|h:HeaderMap|async move {
+        assert_eq!(h["authorization"],"Bearer synthetic-private-owner-key");
+        axum::Json(json!({"data":[{"id":"personal-fixture-model"}]}))
+    })).route("/v1/chat/completions",post(move|h:HeaderMap,axum::Json(body):axum::Json<Value>|{
+        let observed=observed.clone();async move{
+            assert_eq!(h["authorization"],"Bearer synthetic-private-owner-key");
+            assert_eq!(body["model"],"personal-fixture-model");
+            let n=observed.fetch_add(1,Ordering::SeqCst);
+            let verification=body["tools"][0]["function"]["name"]=="moosuri_verification_ping";
+            let result=body["messages"].as_array().unwrap().iter().find(|v|v["role"]=="tool");
+            if verification {
+                let (delta,stop)=if let Some(result)=result{(json!({"content":result["content"]}),"stop")}else{(json!({"tool_calls":[{"index":0,"id":"owner-proof","type":"function","function":{"name":"moosuri_verification_ping","arguments":"{}"}}]}),"tool_calls")};
+                let wire=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",json!({"id":"verify","model":"personal-fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}),json!({"id":"verify","model":"personal-fixture-model","choices":[{"index":0,"delta":{},"finish_reason":stop}]}));
+                return ([("content-type","text/event-stream")],wire)
+            }
+            if body.get("tools").is_some() {
+                assert!(body["tools"].as_array().unwrap().iter().any(|v|v["function"]["name"]=="knowledge_search"));
+                let (delta,stop)=if let Some(result)=result{
+                    let evidence=result["content"].as_str().unwrap();
+                    assert!(evidence.contains("owner_saved_token"));
+                    assert!(!evidence.contains("other_saved_token"));
+                    (json!({"content":"Owner private context verified"}),"stop")
+                }else{
+                    let args=json!({"kind":"memory","text":"compatibility owner private","match_mode":null,"collection_id":null,"subject":null,"speaker":null,"valid_at":null,"observed_from":null,"observed_until":null,"cursor":null});
+                    (json!({"tool_calls":[{"index":0,"id":"owner-memory-search","type":"function","function":{"name":"knowledge_search","arguments":args.to_string()}}]}),"tool_calls")
+                };
+                let wire=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",json!({"id":"knowledge","model":"personal-fixture-model","choices":[{"index":0,"delta":delta,"finish_reason":null}]}),json!({"id":"knowledge","model":"personal-fixture-model","choices":[{"index":0,"delta":{},"finish_reason":stop}]}));
+                return ([("content-type","text/event-stream")],wire)
+            }
+            let text=body["messages"].to_string();
+            if n>0 {assert!(text.contains("owner context marker"));}
+            if n>1 {assert!(text.contains("owner followup marker"));}
+            let stream=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",json!({"id":"p","model":"personal-fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"OK"},"finish_reason":null}]}),json!({"id":"p","model":"personal-fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}));
+            ([("content-type","text/event-stream")],stream)
+        }
+    }));
+    let upstream = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    let root = "/api/v1/settings/compatible-providers";
+    let input = json!({"name":"Private local fixture","base_url":base,"enabled":true,"credential":{"action":"replace","value":"synthetic-private-owner-key"}});
+    // No self-approved loopback access, nor hidden network activity on rejection.
+    assert_eq!(
+        send(&app, "POST", root, Some(&cookie), input.clone())
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let mut enrollment = connection(&base);
+    enrollment["credential"] = json!({"action":"clear"});
+    let shared = value(
+        send(
+            &app,
+            "POST",
+            "/api/v1/admin/providers",
+            Some(&admin),
+            enrollment,
+        )
+        .await,
+    )
+    .await;
+    let response = send(&app, "POST", root, Some(&cookie), input).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let private = value(response).await;
+    assert!(!private.to_string().contains("synthetic-private-owner-key"));
+    let id = private["id"].as_str().unwrap();
+    let route = format!("{root}/{id}");
+    let globals = value(
+        send(
+            &app,
+            "GET",
+            "/api/v1/admin/providers",
+            Some(&admin),
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert!(!globals.to_string().contains(id));
+    let other = value(send(&app, "GET", root, Some(&admin), Value::Null).await).await;
+    assert_eq!(other["providers"], json!([]));
+    let p = json!({"revision":1,"model":"personal-fixture-model","effort":null});
+    for suffix in ["/models", "/probe", "/tool-probe", "/vision-probe"] {
+        assert_eq!(
+            send(
+                &app,
+                "POST",
+                &format!("{route}{suffix}"),
+                Some(&admin),
+                if suffix == "/models" {
+                    json!({"revision":1})
+                } else {
+                    p.clone()
+                }
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    let catalog = send(
+        &app,
+        "POST",
+        &format!("{route}/models"),
+        Some(&cookie),
+        json!({"revision":1}),
+    )
+    .await;
+    assert_eq!(catalog.status(), StatusCode::OK);
+    assert_eq!(
+        value(catalog).await["models"][0]["id"],
+        "personal-fixture-model"
+    );
+    let probe = send(&app, "POST", &format!("{route}/probe"), Some(&cookie), p).await;
+    assert_eq!(probe.status(), StatusCode::OK);
+    assert_eq!(value(probe).await["source"], "personal_compatible");
+    let selection = json!({"selection":{"source":"personal_compatible","provider_id":id,"provider_revision":1,"model":"personal-fixture-model","effort":null}});
+    assert_eq!(
+        send(
+            &app,
+            "PUT",
+            "/api/v1/settings/model",
+            Some(&admin),
+            selection.clone()
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(
+            &app,
+            "POST",
+            "/api/v1/admin/providers/default",
+            Some(&admin),
+            selection.clone()
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let pref = send(
+        &app,
+        "PUT",
+        "/api/v1/settings/model",
+        Some(&cookie),
+        selection,
+    )
+    .await;
+    assert_eq!(pref.status(), StatusCode::OK);
+    assert_eq!(
+        value(pref).await["effective"]["source"],
+        "personal_compatible"
+    );
+    let binding = store.resolve_model(&owner.user).await.unwrap();
+    assert_eq!(binding.model, "personal-fixture-model");
+    let thread = store
+        .create_thread(&owner.user, "Owner chat".into())
+        .await
+        .unwrap();
+    for text in [
+        "owner context marker",
+        "owner followup marker",
+        "owner tool context",
+    ] {
+        if text == "owner tool context" {
+            for (user, token) in [
+                (&owner.user, "owner_saved_token"),
+                (&a, "other_saved_token"),
+            ] {
+                store
+                    .create_memory(
+                        user,
+                        uuid::Uuid::new_v4().to_string(),
+                        moosuri_core::MemoryDraft {
+                            text: format!("compatibility owner private {token}"),
+                            subject: "self".into(),
+                            speaker: None,
+                            valid_from: None,
+                            valid_until: None,
+                            evidence: vec![],
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+            let toolproof = send(
+                &app,
+                "POST",
+                &format!("{route}/tool-probe"),
+                Some(&cookie),
+                json!({"revision":1,"model":"personal-fixture-model","effort":null}),
+            )
+            .await;
+            assert_eq!(toolproof.status(), StatusCode::OK);
+            assert_eq!(value(toolproof).await["function_tools"], true);
+        }
+        let submitted = send(
+            &app,
+            "POST",
+            &format!("/api/v1/threads/{}/messages", thread.id),
+            Some(&cookie),
+            json!({"request_id":uuid::Uuid::new_v4().to_string(),"text":text}),
+        )
+        .await;
+        assert_eq!(submitted.status(), StatusCode::CREATED);
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let page = store
+                    .conversation(&owner.user, thread.id.clone(), None)
+                    .await
+                    .unwrap();
+                let turn = page.turns.last().unwrap();
+                if turn.run.state == RunState::Completed {
+                    break;
+                }
+                assert!(
+                    !matches!(
+                        turn.run.state,
+                        RunState::Failed | RunState::Incomplete | RunState::Cancelled
+                    ),
+                    "{:?}",
+                    turn.run.state
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 7);
+    assert!(store.conversation(&a, thread.id, None).await.is_err());
+    // Removing enrollment revokes member dispatch and cannot restore a default.
+    let mut retire = connection(&base);
+    retire["expected_revision"] = shared["revision"].clone();
+    retire["enabled"] = json!(false);
+    retire["credential"] = json!({"action":"clear"});
+    assert_eq!(
+        send(&app, "PUT", &path(&shared, ""), Some(&admin), retire)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert!(store.resolve_model(&owner.user).await.is_err());
+    // Disconnect remains available even after the exact enrollment is withdrawn.
+    let disconnected = send(&app, "DELETE", &route, Some(&cookie), json!({"revision":1})).await;
+    assert_eq!(disconnected.status(), StatusCode::OK);
+    let d = value(disconnected).await;
+    assert_eq!(d["enabled"], false);
+    assert_eq!(d["has_credential"], false);
+    upstream.abort();
+}

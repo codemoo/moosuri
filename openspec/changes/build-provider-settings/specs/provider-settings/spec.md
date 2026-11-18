@@ -42,3 +42,19 @@ Catalog and probe calls MUST use registered destinations, bounded time/body/conc
 #### Scenario: Catalog exceeds one page
 - **WHEN** discovery reaches the model/page limit
 - **THEN** the response explicitly marks the catalog as truncated and does not follow arbitrary next URLs
+
+### Requirement: Owner-scoped model selection and capacity
+
+The system SHALL present distinct model and effort controls and SHALL pin the chosen supported pair for new chat runs. It SHALL expose provider-reported capacity with its actual scope and reset time when available.
+
+#### Scenario: Personal subscription or compatible endpoint
+- **WHEN** an owner connects a personal account or verifies an OpenAI-compatible model
+- **THEN** that owner can select it, and other accounts and installation defaults cannot use its private binding
+
+#### Scenario: Discover an installed local model
+- **WHEN** the owner starts local discovery on an admitted endpoint or pairs an administrator workstation through the SSH helper
+- **THEN** discovery lists installed models, and an explicit selection verifies text before use
+
+#### Scenario: The provider omits a limit
+- **WHEN** an authenticated provider omits quota or reset information
+- **THEN** settings show that the missing information is unavailable

@@ -1,3 +1,5 @@
+import { QuotaPanel } from "./QuotaPanel";
+import { PersonalCompatibleSettings } from "./PersonalCompatibleSettings";
 import {ClaudeExecutionSettings} from "./ClaudeExecutionSettings";
 import {AudioSettingsPanel} from "./AudioSettings";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
@@ -52,9 +54,6 @@ function choiceSelection(choice: ModelChoice): ModelSelection {
     model: choice.model,
     effort: choice.effort,
   };
-}
-function choiceLabel(choice: ModelChoice) {
-  return `${choice.source === "personal_chat_gpt" ? "내 ChatGPT · " : choice.source === "personal_claude_code" ? "내 공식 Claude · " : ""}${choice.provider_name} · ${choice.model} · ${choice.effort ?? "기본 강도"}`;
 }
 function currentChoices(provider: ProviderSummary) {
   if (
@@ -115,19 +114,43 @@ function Alert({ children }: { children: string }) {
     </p>
   );
 }
-function ChoiceOptions({ choices }: { choices: ModelChoice[] }) {
-  return (
-    <>
-      {choices.map((choice) => (
-        <option
-          key={selectionKey(choiceSelection(choice))}
-          value={selectionKey(choiceSelection(choice))}
-        >
-          {choiceLabel(choice)}
-        </option>
-      ))}
-    </>
-  );
+function ModelPicker({choices, draft, unavailable, busy, edit, installation = false}: {
+  choices: ModelChoice[]; draft: string; unavailable: boolean; busy: boolean; edit: (value: string) => void; installation?: boolean;
+}) {
+  const groups = new Map<string, ModelChoice[]>();
+  for (const choice of choices) {
+    const key = selectionKey({ ...choice, effort: null });
+    const group = groups.get(key);
+    if (group) group.push(choice);
+    else groups.set(key, [choice]);
+  }
+  const selected = choices.find(choice => selectionKey(choice) === draft);
+  const modelKey = selected ? selectionKey({ ...selected, effort: null }) : draft;
+  const levels = groups.get(modelKey) ?? [];
+  return <>
+              <label>
+                {installation ? "기본 모델" : "모델"}
+                <select value={modelKey} disabled={busy} onChange={event => {
+                  const group = groups.get(event.target.value);
+                  const first = group?.find(choice => choice.effort === null)
+                    ?? group?.find(choice => choice.effort === selected?.effort) ?? group?.[0];
+                  edit(first ? selectionKey(first) : "");
+                }}>
+                  <option value="">{installation ? "기본 모델 지정 안 함" : "설치 기본값 사용"}</option>
+                  {unavailable && <option value={draft} disabled>{installation ? "현재 기본 모델 · 사용할 수 없음" : "현재 선택 · 사용할 수 없음"}</option>}
+                  {[...groups].map(([key, [choice]]) => (
+                    <option key={key} value={key}>{choice.provider_name} · {choice.model}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {installation ? "기본 추론 강도" : "추론 강도"}
+                <select disabled={busy || levels.length <= 1} value={selected ? draft : ""} onChange={event => edit(event.target.value)}>
+                  {!selected && <option value="">{unavailable ? "사용할 수 없음" : "설치 기본값 사용"}</option>}
+                  {levels.map(choice => <option key={selectionKey(choice)} value={selectionKey(choice)}>{choice.effort ?? "모델 기본값"}</option>)}
+                </select>
+              </label>
+  </>;
 }
 
 export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi }: Props & { onConnectClaudeApi?: () => void }) {
@@ -138,6 +161,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [retry, setRetry] = useState(0);
+  const dirty = useRef(false);
   const [claudeRefresh, setClaudeRefresh] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -156,7 +180,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
       .then((value) => {
         if (!active) return;
         setSettings(value);
-        setDraft(selectionKey(value.selection));
+        if (!dirty.current) setDraft(selectionKey(value.selection));
         setLoading(false);
       })
       .catch((error) => {
@@ -189,6 +213,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
       );
       setSettings(value);
       setDraft(selectionKey(value.selection));
+      dirty.current = false;
       setNotice("내 모델을 저장했습니다.");
     } catch (error) {
       fail(error);
@@ -202,6 +227,11 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
     !settings?.choices.some(
       (choice) => selectionKey(choiceSelection(choice)) === draft,
     );
+  function edit(value: string) {
+    dirty.current = value !== selectionKey(settings?.selection ?? null);
+    setDraft(value);
+    setNotice("");
+  }
   return (
     <main className="admin-scroll model-settings">
       <RecoveryBudgetNotice accountId={accountId}/>
@@ -209,7 +239,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
         <p className="eyebrow">나만의 작업 방식</p>
         <h2>내 모델</h2>
         <p>
-          설치 기본값을 따르거나, 관리자가 확인한 모델과 추론 강도를 선택하세요.
+          내 구독이나 공유 연결에서 사용할 모델과 추론 강도를 선택하세요.
         </p>
       </div>
       {error && <Alert>{error}</Alert>}
@@ -218,8 +248,6 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
           {notice}
         </p>
       )}
-      <ClaudeExecutionSettings accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} refreshKey={claudeRefresh} onConnectApi={onConnectClaudeApi} />
-      <PersonalChatGpt accountId={accountId} onExpired={onExpired} choices={settings?.choices ?? []} onVerified={()=>setRetry(v=>v+1)} />
       <section className="admin-card">
         <div className="section-heading">
           <div>
@@ -236,25 +264,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
         ) : settings ? (
           <>
             <form onSubmit={save} className="model-selection-form">
-              <label>
-                모델과 추론 강도
-                <select
-                  value={draft}
-                  disabled={busy}
-                  onChange={(event) => {
-                    setDraft(event.target.value);
-                    setNotice("");
-                  }}
-                >
-                  <option value="">설치 기본값 사용</option>
-                  {unavailableDraft && (
-                    <option value={draft} disabled>
-                      현재 선택 · 사용할 수 없음
-                    </option>
-                  )}
-                  <ChoiceOptions choices={settings.choices} />
-                </select>
-              </label>
+              <ModelPicker choices={settings.choices} draft={draft} unavailable={unavailableDraft} busy={busy} edit={edit} />
               <button
                 className="primary"
                 disabled={
@@ -308,6 +318,9 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
         모델 선택은 다음 메시지부터 적용됩니다. 다시 시도는 기존 실행의 모델
         설정을 사용합니다.
       </p>
+      <ClaudeExecutionSettings accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} refreshKey={claudeRefresh} onConnectApi={onConnectClaudeApi} />
+      <PersonalChatGpt key={"chatgpt:"+accountId} accountId={accountId} onExpired={onExpired} choices={settings?.choices ?? []} onVerified={()=>setRetry(v=>v+1)} />
+      <PersonalCompatibleSettings key={"compatible:"+accountId} accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} />
     </main>
   );
 }
@@ -636,6 +649,7 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
                   : "비활성 연결은 선택하거나 확인할 수 없습니다. 다른 연결로 자동 전환하지 않습니다."}
               </p>
             )}
+            <QuotaPanel accountId={accountId} id={provider.id} revision={provider.revision} kind="shared" onExpired={onExpired} />
             <ProbeForm
               provider={provider}
               busy={busy || !!editor}
@@ -657,22 +671,7 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
             </div>
           </div>
           <form onSubmit={saveDefault} className="model-selection-form">
-            <label>
-              기본 모델과 추론 강도
-              <select
-                value={defaultKey}
-                disabled={busy}
-                onChange={(event) => setDefaultKey(event.target.value)}
-              >
-                <option value="">기본 모델 지정 안 함</option>
-                {unavailableDefault && (
-                  <option value={defaultKey} disabled>
-                    현재 기본 모델 · 사용할 수 없음
-                  </option>
-                )}
-                <ChoiceOptions choices={choices} />
-              </select>
-            </label>
+            <ModelPicker choices={choices} draft={defaultKey} unavailable={unavailableDefault} busy={busy} edit={setDefaultKey} installation />
             <button
               className="primary"
               disabled={
@@ -1087,6 +1086,50 @@ function PersonalChatGpt({accountId, onExpired, onVerified, choices}: Props & {o
   const [model, setModel] = useState<Record<string, string>>({});
   const [effort, setEffort] = useState<Record<string, string>>({});
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
+  const [copied, setCopied] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const [baseline, setBaseline] = useState<PersonalBinding[]>([]);
+  const [pollVersion, setPollVersion] = useState(0);
+  const verified = useRef(onVerified);
+  verified.current = onVerified;
+  const remote = window.location.protocol === "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+  const origin = remote ? window.location.origin : `${window.location.protocol}//127.0.0.1${window.location.port ? ":" + window.location.port : ""}`;
+  const returning = guideBinding ? ` --binding ${guideBinding.id} --revision ${guideBinding.revision}` : "";
+  const command = remote
+    ? `curl -fsSL https://raw.githubusercontent.com/codemoo/moosuri/main/install.sh | bash -s -- --chatgpt-login --server ${origin}${returning}`
+    : `moosuri subscriptions chatgpt-login --server ${origin} --email 내주소${returning}`;
+  function beginGuide(binding: PersonalBinding | null) {
+    setGuideBinding(binding); setBaseline(items); setGuide(true); setCopied(false); setWaiting(true); setNotice("");
+  }
+  useEffect(() => {
+    if (!guide || !waiting) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const deadline = Date.now() + 10 * 60_000;
+    async function poll() {
+      try {
+        const next = await scope.request<PersonalBinding[]>("/settings/chatgpt");
+        if (!active) return;
+        setItems(next);
+        const connected = next.find(binding => binding.status === "active" && (guideBinding
+          ? binding.id === guideBinding.id && binding.revision > guideBinding.revision
+          : !baseline.some(old => old.id === binding.id && old.status === "active")));
+        if (connected) {
+          setGuide(false); setWaiting(false);
+          setNotice("ChatGPT에 연결했습니다. 아래에서 대화 모델의 텍스트 연결을 확인하세요.");
+          verified.current();
+          return;
+        }
+      } catch (e) {
+        if (!active || isAborted(e)) return;
+        if (e instanceof ApiFailure && e.status === 401) { onExpired(); return; }
+      }
+      if (active && Date.now() < deadline) timer = setTimeout(poll, 3500);
+      else if (active) setWaiting(false);
+    }
+    timer = setTimeout(poll, 1000);
+    return () => { active = false; clearTimeout(timer); };
+  }, [scope, guide, waiting, baseline, guideBinding, pollVersion]);
   function fail(error: unknown) {
     if (isAborted(error)) return;
     if (error instanceof ApiFailure && error.status === 401) onExpired();
@@ -1099,6 +1142,24 @@ function PersonalChatGpt({accountId, onExpired, onVerified, choices}: Props & {o
     }).catch((error: unknown) => { if (active) fail(error); });
     return () => { active = false; };
   }, [scope]);
+  const activeCatalogs = JSON.stringify(items.filter(b => b.status === "active").map(b => [b.id, b.revision]));
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const bindings = JSON.parse(activeCatalogs) as [string, number][];
+    void (async () => {
+      for (const [id, revision] of bindings) {
+        try {
+          const catalog = await scope.request<ModelCatalog>(`/settings/chatgpt/${encodeURIComponent(id)}/models`, "POST", {revision}, controller.signal);
+          if (active) setCatalogs(old => ({...old, [id]: catalog}));
+        } catch (e) {
+          if (!active || isAborted(e)) return;
+          if (e instanceof ApiFailure && e.status === 401) { onExpired(); return; }
+        }
+      }
+    })();
+    return () => { active = false; controller.abort(); };
+  }, [scope, activeCatalogs]);
   async function toolProbe(binding: PersonalBinding, choice: ModelChoice) {
     if (busy) return;
     setBusy(true); setNotice("");
@@ -1141,24 +1202,18 @@ function PersonalChatGpt({accountId, onExpired, onVerified, choices}: Props & {o
   return (
     <section className="admin-card">
       <h3>내 ChatGPT</h3>
-      <button onClick={() => {setGuideBinding(null); setGuide(true);}}>Continue with ChatGPT</button>
+      <button className="primary" onClick={() => beginGuide(null)}>ChatGPT 구독 연결</button>
       {guide && <div role="region" aria-label="ChatGPT 로그인 안내">
         <h4>{guideBinding ? `${guideBinding.label} 다시 연결` : "새 ChatGPT 연결"}</h4>
-        <p>로그인하는 컴퓨터에서 설치한 Moosuri 도우미를 실행하세요. 같은 컴퓨터의 서버와 개인 Linux 서버를 지원합니다.</p>
-        <ol>
-          <li>서버와 같은 버전의 도우미에서 서버 주소, Moosuri 계정과 기존 SSH 연결 이름을 입력하고, 이 컴퓨터의 브라우저에서 로그인하세요.</li>
-          <li>도우미가 서버 연결을 확인하면 여기에 돌아와 새로고침하고 모델 목록과 텍스트 연결을 확인하세요.</li>
-        </ol>
-        <p role="status">이 컴퓨터에서 로그인 · 도우미의 전송 확인을 기다리는 중</p>
-        <details><summary>터미널 안내</summary>
-          <p>개인 HTTPS 서버:</p>
-          <code>{`moosuri subscriptions chatgpt-vm --server ${window.location.origin}${guideBinding ? ` --binding ${guideBinding.id} --revision ${guideBinding.revision}` : ""}`}</code>
-          <p>서버도 이 컴퓨터에서 실행 중이라면:</p>
-          <code>{`moosuri subscriptions chatgpt-login --server ${window.location.origin} --email 내주소${guideBinding ? ` --binding ${guideBinding.id} --revision ${guideBinding.revision}` : ""}`}</code>
-          <p>미완료 전송은 같은 도우미를 다시 실행하면 확인합니다. 새 로그인이 필요한 경우 도우미 안내에 따라 <code>--restart</code>를 사용하세요.</p>
-          <a href="https://github.com/codemoo/moosuri/blob/main/docs/development.md" target="_blank" rel="noreferrer">도우미 빌드·실행 안내</a>
-        </details>
-        <button onClick={() => setGuide(false)}>안내 닫기</button>
+        <p>브라우저를 쓰는 컴퓨터의 터미널에서 아래 명령을 실행하세요. {remote ? "서버의 SSH 연결 이름과 무수리 계정으로 본인 확인 후 공식 ChatGPT 로그인 창이 열립니다." : "도우미가 공식 ChatGPT 로그인 창을 엽니다."}</p>
+        <pre className="login-command"><code>{command}</code></pre>
+        <button type="button" onClick={async () => {
+          try { await navigator.clipboard.writeText(command); setCopied(true); }
+          catch { setNotice("위 명령을 선택해 복사하세요."); }
+        }}>{copied ? "복사됨" : "명령 복사"}</button>
+        <p role="status">{waiting ? "로그인을 마치면 연결 상태가 여기에 표시됩니다." : "연결 대기가 끝났습니다."}</p>
+        {!waiting && <button onClick={() => { setWaiting(true); setPollVersion(v => v + 1); }}>연결 상태 다시 확인</button>}
+        <button onClick={() => setGuide(false)}>닫기</button>
       </div>}
       <button disabled={busy} onClick={() => {void scope.request<PersonalBinding[]>("/settings/chatgpt").then(setItems).catch(fail);}}>연결 새로고침</button>
       <p>개인 ChatGPT 연결은 내 계정에서만 사용합니다. 텍스트 연결을 확인한 뒤, 선택한 모델과 추론 강도의 도구 연결도 확인하세요.</p>
@@ -1170,11 +1225,22 @@ function PersonalChatGpt({accountId, onExpired, onVerified, choices}: Props & {o
           <strong>{binding.label}</strong>
           <p>{binding.status} · 원격 해제: {binding.remote_revoke}</p>
           <p>{binding.handoff_phase === "validating" ? "보호된 연결을 서버에서 확인하는 중" : binding.handoff_phase === "prepared" || binding.handoff_phase === "committed" ? "이 컴퓨터에서 로그인·전송 대기 중" : binding.status === "active" ? "연결됨 · 텍스트 모델 확인 가능" : "다시 연결 필요"}</p>
-          <button disabled={busy} onClick={() => {setGuideBinding(binding); setGuide(true);}}>이 연결로 다시 로그인</button>
+          <button disabled={busy} onClick={() => beginGuide(binding)}>이 연결로 다시 로그인</button>
           {binding.status === "active" && <>
+            <QuotaPanel accountId={accountId} id={binding.id} revision={binding.revision} kind="chatgpt" onExpired={onExpired} />
             <button disabled={busy} onClick={() => void act(binding, "models")}>내 모델 목록</button>
-            <label>정확한 모델<input value={model[binding.id] ?? ""} onChange={(event) => setModel((old) => ({...old, [binding.id]: event.target.value}))} list={`personal-models-${binding.id}`} disabled={busy} /></label>
-            <label>추론 강도<input value={effort[binding.id] ?? ""} onChange={(event) => setEffort((old) => ({...old, [binding.id]: event.target.value}))} disabled={busy} /></label>
+            <label>정확한 모델<input placeholder="모델 ID 선택 또는 입력" value={model[binding.id] ?? ""} onChange={event => {
+              setModel(old => ({...old, [binding.id]: event.target.value}));
+              setEffort(old => ({...old, [binding.id]: ""}));
+            }} list={`personal-models-${binding.id}`} disabled={busy} /></label>
+            <label>확인할 추론 강도
+              {catalogs[binding.id]?.models.find(m => m.id === model[binding.id])?.efforts?.length
+                ? <select value={effort[binding.id] ?? ""} onChange={event => setEffort(old => ({...old, [binding.id]: event.target.value}))} disabled={busy}>
+                    <option value="">모델 기본값</option>
+                    {catalogs[binding.id].models.find(m => m.id === model[binding.id])!.efforts.map(level => <option key={level}>{level}</option>)}
+                  </select>
+                : <input placeholder="모델 기본값" value={effort[binding.id] ?? ""} onChange={event => setEffort(old => ({...old, [binding.id]: event.target.value}))} disabled={busy} />}
+            </label>
             <button disabled={busy || !(model[binding.id] ?? "").trim()} onClick={() => void act(binding, "probe")}>텍스트 연결 확인</button>
             <datalist id={`personal-models-${binding.id}`}>{catalogs[binding.id]?.models.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</datalist>
             {catalogs[binding.id]?.truncated && <p>일부 모델만 표시합니다. 정확한 모델 ID를 입력할 수 있습니다.</p>}

@@ -1241,7 +1241,7 @@ async fn chatgpt_plan_catalog_uses_same_bearer_fixed_models_path_and_byte_limits
     let address = listener.local_addr().unwrap();
     let router=Router::new().route("/v1/models",get(|headers:HeaderMap|async move {
         assert_eq!(headers["authorization"],"Bearer synthetic-plan-access");
-        ([("content-type","application/json")],r#"{"models":[{"slug":"fixture-model","display_name":"Fixture","visibility":"list"}]}"#)
+        ([("content-type","application/json")],r#"{"models":[{"slug":"fixture-model","display_name":"Fixture","visibility":"list","supported_reasoning_levels":[{"effort":"high","description":"Thorough"}],"default_reasoning_level":"high"}]}"#)
     }));
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let mut c = ModelClient::chatgpt_plan(
@@ -1253,6 +1253,8 @@ async fn chatgpt_plan_catalog_uses_same_bearer_fixed_models_path_and_byte_limits
     c.network = NetworkPolicy::LocalExact(vec![address.ip()]);
     let catalog = c.list_models(&CancellationToken::new()).await.unwrap();
     assert_eq!(catalog.models[0].id, "fixture-model");
+    assert_eq!(catalog.models[0].efforts, ["high"]);
+    assert_eq!(catalog.models[0].default_effort.as_deref(), Some("high"));
     let c = c
         .with_limits(TransportLimits {
             response_bytes: 4,
@@ -1499,4 +1501,42 @@ async fn personal_reauthorization_reuses_transport_with_current_bearer_only() {
             )
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn quota_never_reuses_personal_or_compatible_authority() {
+    let personal = ModelClient::chatgpt_plan(
+        Secret::new("synthetic-personal-quota-token".into()).unwrap(),
+        TextCapabilities::default(),
+    )
+    .unwrap();
+    let compatible = ModelClient::compatible(
+        "https://example.com/v1",
+        NetworkPolicy::PublicHttps,
+        Some(Secret::new("synthetic-compatible-quota-key".into()).unwrap()),
+        TextCapabilities::default(),
+    )
+    .unwrap();
+    let cancelled = CancellationToken::new();
+    for client in [personal, compatible] {
+        assert!(matches!(
+            client.openrouter_quota(&cancelled).await,
+            Err(TransportError::InvalidConfiguration)
+        ));
+    }
+    let mut router = ModelClient::hosted(
+        Protocol::OpenRouterChat,
+        Secret::new("synthetic-router-quota-key".into()).unwrap(),
+        TextCapabilities::default(),
+        Some(RouterPolicy {
+            providers: vec!["fixture".into()],
+            zero_data_retention: false,
+        }),
+    )
+    .unwrap();
+    router.endpoint = Url::parse("https://example.com/api/v1/chat/completions").unwrap();
+    assert!(matches!(
+        router.openrouter_quota(&cancelled).await,
+        Err(TransportError::InvalidConfiguration)
+    ));
 }

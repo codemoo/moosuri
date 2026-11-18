@@ -155,3 +155,75 @@ it("recovers pending bindings only once through the app's StrictMode effect repl
   await screen.findByText(/Claude 모델을 준비했습니다/);
   expect(syncs).toBe(1); expect(props.onVerified).toHaveBeenCalledOnce();
 });
+
+it("force-refreshes an active binding's missing models, reloads partial success and offers a fresh connection for another account", async () => {
+  const second = { ...choice, model: "claude-synthetic-sonnet" };
+  let added = false;
+  const modelCalls: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(url);
+    if (path.endsWith("/settings/model")) return response({ ...settings(), choices: added ? [choice, second] : [choice] });
+    if (path.endsWith("/settings/claude")) return response(list("active"));
+    if (path.endsWith("/owned/models")) {
+      modelCalls.push(JSON.parse(String(init?.body)));
+      added = true;
+      // One additional tier succeeded; another remains unavailable.
+      return response({ status: "ready", models: [choice.model, second.model] });
+    }
+    return response([]);
+  }));
+  render(<PersonalModelSettings accountId="owner" onExpired={props.onExpired} />);
+  await screen.findByRole("option", { name: /claude-synthetic-v1/ });
+  expect(modelCalls).toHaveLength(0);
+  const owned = screen.getByRole("group", { name: binding.label });
+  expect(within(owned).queryByRole("button", { name: /구독 로그인/ })).not.toBeInTheDocument();
+  expect(within(owned).queryByText("터미널로 연결하기 (고급)")).not.toBeInTheDocument();
+  expect(within(owned).getByText(/다른 Claude 계정을 사용하려면/)).toBeInTheDocument();
+  await userEvent.setup().click(within(owned).getByRole("button", { name: "모델 목록 다시 확인" }));
+  expect(await screen.findByRole("option", { name: /claude-synthetic-sonnet/ })).toBeInTheDocument();
+  expect(modelCalls).toEqual([{ revision: 3, force: true }]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "새로고침" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "새로고침" })).toBeEnabled());
+  expect(modelCalls).toHaveLength(1);
+});
+
+it("retains successful pending login while a parent refresh is held and recovers once without force", async () => {
+  let reads = 0;
+  let releaseRefresh!: (value: Response) => void;
+  let releaseLogin!: (value: Response) => void;
+  let loggedIn = false;
+  const modelCalls: unknown[] = [];
+  const waiting = { attempt_id: "synthetic-queued", status: "verifying", authorization_url: null, expires_in_seconds: 290 };
+  vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const path = String(url);
+    if (path.endsWith("/settings/claude")) {
+      reads++;
+      if (reads === 2) return new Promise(resolve => { releaseRefresh = resolve; });
+      return response(list(loggedIn ? "active" : "pending"));
+    }
+    if (path.endsWith("/owned/models")) {
+      modelCalls.push(JSON.parse(String(init?.body)));
+      return response({ status: loggedIn ? "ready" : "login_required", models: loggedIn ? [choice.model] : [] });
+    }
+    if (path.endsWith("/login")) return response(waiting);
+    return new Promise(resolve => { releaseLogin = resolve; });
+  }));
+  const view = render(<ClaudeExecutionSettings {...props} />);
+  await screen.findByText(/공식 로그인이 필요합니다/);
+  await userEvent.setup().click(screen.getByRole("button", { name: "구독 로그인" }));
+  await waitFor(() => expect(releaseLogin).toBeDefined());
+  view.rerender(<ClaudeExecutionSettings {...props} refreshKey={1} />);
+  await waitFor(() => expect(releaseRefresh).toBeDefined());
+  await act(async () => {
+    loggedIn = true;
+    releaseLogin(response({ ...waiting, status: "succeeded" }));
+  });
+  await screen.findByText(/구독 로그인을 완료했습니다/);
+  // The held refresh sees this binding active, so the queued login must still
+  // trigger its own recovery after the unrelated list request completes.
+  await act(async () => releaseRefresh(response(list("active"))));
+  await screen.findByText(/Claude 모델을 준비했습니다/);
+  expect(modelCalls).toEqual([{ revision: 3 }, { revision: 3 }]);
+  expect(props.onVerified).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: /구독 로그인/ })).not.toBeInTheDocument();
+});

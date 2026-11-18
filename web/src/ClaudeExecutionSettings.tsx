@@ -71,11 +71,11 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
     }
   }
 
-  async function syncModels(binding: Binding) {
+  async function syncModels(binding: Binding, force = false) {
     setSyncStatus(old => ({ ...old, [binding.id]: "checking" }));
     try {
       const result = await scope.request<{ status: string; models: string[] }>(
-        `/settings/claude/${encodeURIComponent(binding.id)}/models`, "POST", { revision: binding.revision },
+        `/settings/claude/${encodeURIComponent(binding.id)}/models`, "POST", { revision: binding.revision, ...(force ? { force: true } : {}) },
       );
       const ready = result.status === "ready" && Array.isArray(result.models) && result.models.length > 0;
       setSyncStatus(old => ({ ...old, [binding.id]: ready ? "ready" : result.status === "login_required" ? "login_required" : "unavailable" }));
@@ -91,9 +91,9 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
     }
   }
 
-  async function refresh(loginBinding?: Binding, afterLogin = false) {
+  async function refresh(loginBinding?: Binding, options: { afterLogin?: boolean; force?: boolean } = {}) {
     if (pending.current) {
-      if (afterLogin && loginBinding) queuedLogins.current.set(loginBinding.id, loginBinding);
+      if (options.afterLogin && loginBinding) queuedLogins.current.set(loginBinding.id, loginBinding);
       return;
     }
     pending.current = true;
@@ -106,7 +106,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
         const candidates = loginBinding ? value.bindings.filter(item => item.id === loginBinding.id && item.revision === loginBinding.revision)
           : value.bindings.filter(item => item.status === "pending" && item.cleanup_state !== "pending");
         for (const binding of candidates) {
-          if (binding.status === "pending" || binding.status === "active") await syncModels(binding);
+          if (binding.status === "pending" || binding.status === "active") await syncModels(binding, options.force);
         }
       }
     } catch (error) {
@@ -210,21 +210,25 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
         : binding.status === "active" ? "텍스트 확인됨"
         : binding.status === "pending" ? "공식 로그인과 모델 확인 대기"
         : binding.status === "disconnected" ? "로컬 연결 해제됨" : "다시 연결 필요"}</p>
+      {binding.status === "active" && <p className="settings-hint">다른 Claude 계정을 사용하려면 위 ‘Claude 연결’에서 새 연결을 추가하세요.</p>}
       {state.runtime_configured && (binding.status === "pending" || binding.status === "active") && <>
-        <ClaudeSubscriptionLogin key={`${binding.id}:${binding.revision}`} accountId={accountId} bindingId={binding.id}
-          revision={binding.revision} disabled={busy || loading} onExpired={onExpired} onSucceeded={() => void refresh(binding, true)} />
+        {binding.status === "pending" && <ClaudeSubscriptionLogin key={`${binding.id}:${binding.revision}`} accountId={accountId} bindingId={binding.id}
+          revision={binding.revision} disabled={busy || loading} onExpired={onExpired} onSucceeded={() => void refresh(binding, { afterLogin: true })} />}
         <p className="settings-hint">공식 로그인 후 사용 가능한 모델을 자동으로 확인합니다. 모델 확인은 본인 구독을 사용합니다.</p>
         {syncStatus[binding.id] === "checking" && <p role="status">사용할 Claude 모델을 확인하는 중…</p>}
         {syncStatus[binding.id] === "ready" && <p role="status">Claude 모델을 준비했습니다. 아래 ‘사용할 모델’에서 선택하고 저장하세요.</p>}
-        {syncStatus[binding.id] === "login_required" && <p role="status">공식 로그인이 필요합니다. 구독 로그인을 완료하면 모델 목록을 자동으로 불러옵니다.</p>}
+        {syncStatus[binding.id] === "login_required" && <p role="status">{binding.status === "pending"
+          ? "공식 로그인이 필요합니다. 구독 로그인을 완료하면 모델 목록을 자동으로 불러옵니다."
+          : "Claude 로그인 상태를 확인할 수 없습니다. 위 ‘Claude 연결’에서 새 연결을 추가해 로그인하세요."}</p>}
         {syncStatus[binding.id] === "unavailable" && <p role="status">사용 가능한 모델을 확인하지 못했습니다. 구독 이용 상태와 서버 연결을 확인한 뒤 다시 시도하세요.</p>}
-        <button className="secondary" disabled={busy || loading} onClick={() => void refresh(binding)}>모델 목록 다시 확인</button>
-        <details className="probe-details">
+        <p className="settings-hint">모델 목록 다시 확인은 아직 확인하지 못한 모델만 구독으로 확인합니다. 이미 확인한 모델은 다시 호출하지 않습니다.</p>
+        <button className="secondary" disabled={busy || loading} onClick={() => void refresh(binding, { force: true })}>모델 목록 다시 확인</button>
+        {binding.status === "pending" && <details className="probe-details">
           <summary>터미널로 연결하기 (고급)</summary>
           <p>서버 터미널에서 아래 도우미를 실행하세요. 내주소와 프로필 경로를 자신의 무수리 이메일과 설치 관리자가 제공한 경로로 바꾸세요. 비밀번호는 도우미가 별도로 묻습니다.</p>
           <code className="claude-login-command">{`moosuri subscriptions claude-login --server ${window.location.origin} --email 내주소 --binding ${binding.id} --revision ${binding.revision} --profile-file /private/path/claude-profile.json`}</code>
           <p>터미널 연결을 선택해도 동일한 공식 로그인과 코드 입력을 사용합니다.</p>
-        </details>
+        </details>}
         <details className="probe-details">
           <summary>정확한 모델 직접 확인 (고급)</summary>
           <label>정확한 모델 ID<input aria-label={`Claude 모델 ${binding.label}`} value={models[binding.id] ?? ""} maxLength={200}

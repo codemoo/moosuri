@@ -318,7 +318,7 @@ pub(super) async fn execute(
             continuation: None,
             results: &[],
         };
-        let valid = preflight_tools(&client, wire, &tools, &capabilities);
+        let valid = preflight_tools(TextExecutor::Http(&client), wire, &tools, &capabilities);
         if valid.is_err() {
             finish(
                 &store,

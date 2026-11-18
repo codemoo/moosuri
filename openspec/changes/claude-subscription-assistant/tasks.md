@@ -1,0 +1,5 @@
+- [x] Add exact per-choice tool proof and preserve existing text runs on schema upgrade.
+- [x] Route verified Claude turns and foreground planners through the shared assistant runtime.
+- [x] Add a settings action and update owner documentation.
+- [x] Verify the complete bridge against a synthetic calculation receipt and the exact-model settings flow.
+- [ ] Verify the configured subscription after signed Linux activation.

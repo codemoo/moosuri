@@ -468,6 +468,10 @@ pub fn router_with_runtime(
             post(claude_execution::probe),
         )
         .route(
+            "/api/v1/settings/claude/{id}/tool-probe",
+            post(claude_execution::tool_probe),
+        )
+        .route(
             "/api/v1/settings/claude/{id}/usage",
             post(claude_execution::usage),
         )

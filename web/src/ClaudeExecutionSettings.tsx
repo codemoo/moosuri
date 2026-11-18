@@ -6,7 +6,7 @@ import { ApiFailure, isAborted } from "./api";
 
 type Binding = { id: string; revision: number; label: string; status: string; effort_metadata_pending?: boolean; cleanup_state?: string };
 type ModelSyncStatus = "checking" | "ready" | "login_required" | "unavailable";
-type State = { runtime_configured: boolean; bindings: Binding[]; text_only: true };
+type State = { runtime_configured: boolean; bindings: Binding[] };
 type Props = {
   accountId: string;
   onExpired: () => void;
@@ -184,7 +184,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
     {guideOpen && <div id={guideId} className="claude-connection-options" role="region" aria-label="Claude 연결 방식">
       <section className="claude-connection-option" aria-label="Claude 구독 연결">
         <h4>Claude 구독으로 연결</h4>
-        <p>본인 계정으로 공식 Claude Code에 로그인합니다. 현재 텍스트 대화를 지원하며 도구·첨부·기억 저장·일정·백그라운드 업무는 지원하지 않습니다.</p>
+        <p>본인 계정으로 공식 Claude Code에 로그인합니다. 내 모델에서 사용할 모델과 추론 강도를 선택한 뒤 도구 연결을 확인하세요.</p>
         {loading ? <p>서버 설정을 확인하고 있습니다.</p>
           : !state ? <p>서버 상태를 확인한 뒤 구독 연결을 시작할 수 있습니다. 아래에서 연결을 새로고침하세요.</p>
           : state.runtime_configured ? <form className="claude-create-form" onSubmit={create}>

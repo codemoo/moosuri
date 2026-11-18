@@ -116,13 +116,13 @@ function Alert({ children }: { children: string }) {
 }
 function toolCapability(choice: ModelChoice) {
   if (choice.function_tools) return "도구 사용 가능";
-  return choice.source === "personal_claude_code" ? "텍스트 전용" : "도구 확인 필요";
+  return "도구 확인 필요";
 }
 
 function toolProbePath(choice: ModelChoice, canManageShared: boolean) {
   const id = encodeURIComponent(choice.provider_id);
   switch (choice.source) {
-    case "personal_claude_code": return null;
+    case "personal_claude_code": return `/settings/claude/${id}/tool-probe`;
     case "personal_chat_gpt": return `/settings/chatgpt/${id}/tool-probe`;
     case "personal_compatible": return `/settings/compatible-providers/${id}/tool-probe`;
     default: return canManageShared ? `/admin/providers/${id}/tool-probe` : null;
@@ -326,9 +326,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
                     현재 모델 도구 확인
                   </button>}
                   {!settings.effective.function_tools && !probePath && <p>
-                    {settings.effective.source === "personal_claude_code"
-                      ? "메일·웹 검색·예약처럼 도구가 필요한 작업에는 도구 사용 가능 모델을 선택하세요."
-                      : "이 공용 모델의 도구 확인은 관리자가 할 수 있습니다."}
+                    이 공용 모델의 도구 확인은 관리자가 할 수 있습니다.
                   </p>}
                 </>
               ) : (

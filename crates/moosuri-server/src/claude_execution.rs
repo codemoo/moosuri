@@ -13,7 +13,7 @@ pub(super) struct Input {
 }
 pub(super) async fn list(State(s): State<AppState>, h: HeaderMap) -> HttpResult {
     let u = current(&s, &h).await?;
-    Ok(Json(serde_json::json!({"runtime_configured":s.config.claude.is_some(),"bindings":s.store.claude_bindings(&u).await?,"text_only":true})).into_response())
+    Ok(Json(serde_json::json!({"runtime_configured":s.config.claude.is_some(),"bindings":s.store.claude_bindings(&u).await?})).into_response())
 }
 pub(super) async fn create(
     State(s): State<AppState>,
@@ -91,6 +91,41 @@ pub(super) async fn probe(
     )
     .into_response())
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ToolProbeInput {
+    revision: i64,
+    model: String,
+    effort: Option<String>,
+}
+
+pub(super) async fn tool_probe(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(i): Json<ToolProbeInput>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    let result = s
+        .runtime
+        .subscription_service()
+        .claude_tool_probe(&u, id, i.revision, i.model, i.effort)
+        .await;
+    match result {
+        Ok(choice) => Ok(Json(choice).into_response()),
+        Err(StoreError::Unavailable) => Ok(failure(
+            StatusCode::BAD_GATEWAY,
+            "model_tool_probe_incomplete",
+        )),
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct UsageInput {

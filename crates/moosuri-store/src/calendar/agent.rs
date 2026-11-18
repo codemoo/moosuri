@@ -145,9 +145,15 @@ pub(crate) fn invalidate_subscription(
     account: &str,
     binding: &str,
     revision: i64,
+    source: ModelSource,
 ) -> Result<()> {
-    let runs = c.prepare("SELECT r.id FROM chat_runs r JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.state!='completed' AND e.invalidated=0 AND json_extract(r.model,'$.source')='personal_chat_gpt' AND json_extract(r.model,'$.provider_id')=?3 AND json_extract(r.model,'$.provider_revision')=?4 AND (EXISTS(SELECT 1 FROM calendar_command_plans p WHERE p.tenant_id=r.tenant_id AND p.run_id=r.id) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins o WHERE o.tenant_id=r.tenant_id AND o.run_id=r.id) OR EXISTS(SELECT 1 FROM request_continuations q WHERE q.tenant_id=r.tenant_id AND q.run_id=r.id AND (q.calendar_target IS NOT NULL OR json_extract(q.context,'$.draft.domain')='calendar')))")?
-        .query_map(params![tenant, account, binding, revision], |r| r.get::<_, String>(0))?
+    let source = match source {
+        ModelSource::PersonalChatGpt => "personal_chat_gpt",
+        ModelSource::PersonalClaudeCode => "personal_claude_code",
+        _ => return Err(StoreError::InvalidInput),
+    };
+    let runs = c.prepare("SELECT r.id FROM chat_runs r JOIN agent_execution e ON e.tenant_id=r.tenant_id AND e.run_id=r.id WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.state!='completed' AND e.invalidated=0 AND json_extract(r.model,'$.source')=?5 AND json_extract(r.model,'$.provider_id')=?3 AND json_extract(r.model,'$.provider_revision')=?4 AND (EXISTS(SELECT 1 FROM calendar_command_plans p WHERE p.tenant_id=r.tenant_id AND p.run_id=r.id) OR EXISTS(SELECT 1 FROM calendar_agent_action_origins o WHERE o.tenant_id=r.tenant_id AND o.run_id=r.id) OR EXISTS(SELECT 1 FROM request_continuations q WHERE q.tenant_id=r.tenant_id AND q.run_id=r.id AND (q.calendar_target IS NOT NULL OR json_extract(q.context,'$.draft.domain')='calendar')))")?
+        .query_map(params![tenant, account, binding, revision, source], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     for run in &runs {
         c.execute(
@@ -172,9 +178,15 @@ pub(crate) fn action_private_current(c: &Connection, t: &str, id: &str) -> Resul
     let running: Option<String> = c.query_row("SELECT r.id FROM calendar_agent_action_origins o JOIN chat_runs r ON r.tenant_id=o.tenant_id AND r.id=o.run_id WHERE o.tenant_id=?1 AND o.action_id=?2 AND r.state='running'",params![t,id],|r|r.get(0)).optional()?;
     if let Some(id) = running {
         let r = crate::chat::load_run(c, t, &id)?;
-        if r.model.source == ModelSource::PersonalChatGpt {
-            return Ok(crate::subscriptions::binding(c, &r.tenant, &r.account, &r.model).is_ok());
-        }
+        return match r.model.source {
+            ModelSource::PersonalChatGpt => {
+                Ok(crate::subscriptions::binding(c, &r.tenant, &r.account, &r.model).is_ok())
+            }
+            ModelSource::PersonalClaudeCode => {
+                Ok(crate::claude_execution::binding(c, &r.tenant, &r.account, &r.model).is_ok())
+            }
+            _ => Ok(true),
+        };
     }
     Ok(true)
 }

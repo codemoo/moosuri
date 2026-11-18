@@ -6,7 +6,7 @@ use moosuri_connectors::model::protocol::tools::FunctionDefinition;
 pub(super) struct PlanningSession<'a> {
     pub store: &'a Store,
     pub lease: &'a RunLease,
-    pub client: &'a ModelClient,
+    pub client: &'a ExecutionClient,
     pub request: &'a TextRequest,
     pub signals: &'a Signals,
     pub protocol: Protocol,
@@ -25,17 +25,18 @@ pub(super) enum Admission {
 impl PlanningSession<'_> {
     /// Refresh only before durable admission; never replay an inference.
     async fn ready_client(&self) -> Result<Option<ModelClient>, StoreError> {
-        let client = match self.subscription {
-            Some((service, reference)) => Some(
+        let client = match (self.subscription, self.client) {
+            (Some((service, reference)), ExecutionClient::Http(client)) => Some(
                 service
                     .client_for_round(
                         moosuri_store::SubscriptionAuthority::Run(self.lease.clone()),
                         reference.clone(),
-                        self.client,
+                        client,
                     )
                     .await?,
             ),
-            None => None,
+            (None, _) => None,
+            _ => return Err(StoreError::Conflict),
         };
         // Settle a dispatched rotating refresh before observing shutdown.
         if self.signals.stopping().is_cancelled() {
@@ -81,7 +82,10 @@ impl PlanningSession<'_> {
                 return None;
             }
         };
-        let client = ready.as_ref().unwrap_or(self.client);
+        let client = ready
+            .as_ref()
+            .map(TextExecutor::Http)
+            .unwrap_or_else(|| self.client.executor());
         if preflight_tools(client, self.protocol, &tools, self.capabilities).is_err() {
             self.finish(None, RunState::Incomplete, RunFailure::ContextLimit)
                 .await;

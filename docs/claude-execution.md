@@ -1,8 +1,8 @@
-# Personal official Claude Code text
+# Personal Claude subscription
 
 This optional integration executes Anthropic's unchanged official Linux CLI. It
-connects owner settings, an exact-model text probe, personal model selection and
-saved Runtime conversations. The base Rust application needs no Claude CLI,
+connects owner settings, model and reasoning selection, saved conversations,
+and foreground tools. The base Rust application needs no Claude CLI,
 Node/Python SDK, container engine or subscription. Claude.ai bearer tokens and
 session cookies are never imported into the Rust HTTP model adapter.
 
@@ -20,8 +20,19 @@ subscription. The catalog maps the default, Opus, Sonnet and Haiku choices to
 concrete IDs. Moosuri checks up to three distinct standard text models with one
 short request each and lists the models that returned verified text. Each check
 uses the owner's subscription. The owner can verify a different exact ID under
-advanced settings. Effort is unspecified for this text route. Tools, attachments,
-background tasks, memory writes and external actions remain unavailable.
+advanced settings. Text catalog verification uses the default effort. **현재 모델
+도구 확인** verifies two clean Claude rounds for the exact saved model and effort:
+one requests a synthetic function and the other returns the fresh value from its
+result. New turns on the verified combination use the foreground assistant tools.
+Existing text turns retain their original configuration.
+
+Claude selects operations from the admitted catalog. Moosuri validates each
+decision, runs its usual owner-scoped tools, and sends the resulting receipts back
+to the same model. Depending on configured connections and the request, this
+includes web and mail reads, mail drafts, Calendar commands, saved sources,
+memories, and calculations. Sending mail still requires final preview approval.
+Each round publishes the validated answer as a unit. Subscription media and
+model-driven background missions remain unavailable.
 
 Moosuri handles explicit latest-inbox questions separately before sending a request to the CLI. This account-scoped route uses an existing Gmail read connection and displays only checked message metadata. When Gmail is unavailable, it returns a connection step. The Claude process receives no Gmail metadata or credential through this route.
 
@@ -179,7 +190,8 @@ ambient local Claude login or copies a Mac keychain/credential file.
 
 After official login the web app fills **사용할 모델** automatically. Opening My
 model also recovers a previously signed-in pending connection. Choose the desired
-model and save. Refreshing the screen reuses saved verification. **모델 목록 다시
+model and reasoning level, save, and choose **현재 모델 도구 확인** to use assistant
+tools. Refreshing the screen reuses saved verification. **모델 목록 다시
 확인** checks the current catalog for missing standard tiers. Connecting a different
 Claude account uses a new binding with its own isolated login environment.
 Automatic discovery skips Fable because its use can require separate usage credits.

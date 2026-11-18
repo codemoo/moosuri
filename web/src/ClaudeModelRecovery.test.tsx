@@ -234,14 +234,19 @@ it("retains successful pending login while a parent refresh is held and recovers
 it("backfills effort for an already verified login and saves a per-model choice", async () => {
   let discovered = false;
   let saved: unknown;
+  let proof: unknown;
   vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
     if (path.endsWith("/settings/model")) {
       if (init?.method === "PUT") saved = JSON.parse(String(init.body)).selection;
-      return response({ selection: saved ?? null, effective: saved ? {...choice, effort:"high"} : null,
-        choices: discovered ? [choice, {...choice, effort:"high"}] : [choice] });
+      return response({ selection: saved ?? null, effective: saved ? {...choice, effort:"high", function_tools: Boolean(proof)} : null,
+        choices: discovered ? [choice, {...choice, effort:"high", function_tools: Boolean(proof)}] : [choice] });
     }
     if (path.endsWith("/settings/claude")) return response({...list("active"), bindings:[{...binding,status:"active",effort_metadata_pending:!discovered}]});
+    if (path.endsWith("/owned/tool-probe")) {
+      proof = JSON.parse(String(init?.body));
+      return response({...choice, effort:"high", function_tools: true});
+    }
     if (path.endsWith("/owned/models")) { discovered = true; return response({status:"ready", models:[choice.model]}); }
     if (String(url).endsWith("/settings/compatible-providers")) return response({providers:[],default_selection:null});
     return response([]);
@@ -250,8 +255,12 @@ it("backfills effort for an already verified login and saves a per-model choice"
   const user = userEvent.setup();
   await screen.findByText(/Claude 모델을 준비했습니다/);
   await user.selectOptions(screen.getByLabelText("모델"), await screen.findByRole("option", {name:/claude-synthetic-v1/}));
-  await user.selectOptions(screen.getByLabelText("추론 강도"), screen.getByRole("option", {name:"high"}));
+  await user.selectOptions(screen.getByLabelText("추론 강도"), screen.getByRole("option", {name:/^high/}));
   await user.click(screen.getByRole("button", {name:"선택 저장"}));
   await screen.findByText("내 모델을 저장했습니다.");
   expect(saved).toMatchObject({source:"personal_claude_code", model:choice.model, effort:"high"});
+  await user.click(screen.getByRole("button", {name:"현재 모델 도구 확인"}));
+  await screen.findByText(/이 모델의 도구 호출을 확인했습니다/);
+  expect(proof).toEqual({revision:3, model:choice.model, effort:"high"});
+  expect(screen.queryByRole("button", {name:"현재 모델 도구 확인"})).not.toBeInTheDocument();
 });

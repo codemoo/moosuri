@@ -19,6 +19,28 @@ pub struct ClaudeExecutionRef {
     pub profile_digest: String,
     pub root_id: String,
 }
+/// Versioned host-mediated function protocol. Native CLI tools remain disabled.
+const HOST_TOOL_HARNESS: &str = "claude-host-functions-v1";
+/// Frozen owner/model/effort proof; only Store can create its admission identity.
+pub struct ClaudeToolProbe {
+    pub binding: providers::ProviderBinding,
+    pub marker: String,
+    tenant: String,
+    account: String,
+    id: String,
+    selection: ModelSelection,
+    environment: ClaudeExecutionRef,
+}
+fn same_environment(a: &ClaudeExecutionRef, b: &ClaudeExecutionRef) -> bool {
+    a.id == b.id
+        && a.revision == b.revision
+        && a.environment_id == b.environment_id
+        && a.profile_digest == b.profile_digest
+        && a.root_id == b.root_id
+}
+fn tool_proven(c: &Connection, tenant: &str, account: &str, choice: &ModelChoice) -> Result<bool> {
+    Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM claude_code_tool_probes WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND model=?5 AND effort=?6 AND harness=?7)", params![tenant,account,choice.provider_id,choice.provider_revision,choice.model,choice.effort.as_deref().unwrap_or(""),HOST_TOOL_HARNESS], |row| row.get(0))?)
+}
 fn reference(
     c: &Connection,
     tenant: &str,
@@ -65,11 +87,15 @@ pub(super) fn choices(c: &Connection, u: &UserContext) -> Result<Vec<ModelChoice
     let mut choices = Vec::new();
     for (choice, metadata) in rows {
         let efforts = reported_efforts(metadata)?;
-        choices.push(choice.clone());
-        choices.extend(efforts.into_iter().map(|effort| ModelChoice {
+        let mut variants = vec![choice.clone()];
+        variants.extend(efforts.into_iter().map(|effort| ModelChoice {
             effort: Some(effort),
             ..choice.clone()
         }));
+        for mut variant in variants {
+            variant.function_tools = tool_proven(c, &u.tenant.0, &u.account.id, &variant)?;
+            choices.push(variant);
+        }
     }
     Ok(choices)
 }
@@ -96,7 +122,7 @@ pub(super) fn binding(
     account: &str,
     v: &ModelChoice,
 ) -> Result<providers::ProviderBinding> {
-    if v.source != ModelSource::PersonalClaudeCode || v.function_tools {
+    if v.source != ModelSource::PersonalClaudeCode {
         return Err(StoreError::Conflict);
     }
     let metadata:Option<Option<String>>=c.query_row("SELECT p.supported_efforts FROM claude_code_bindings b JOIN claude_code_probes p ON p.tenant_id=b.tenant_id AND p.account_id=b.account_id AND p.binding_id=b.id AND p.revision=b.revision WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.id=?3 AND b.revision=?4 AND b.status='active' AND p.model=?5",params![tenant,account,v.provider_id,v.provider_revision,v.model],|r|r.get(0)).optional()?;
@@ -111,6 +137,10 @@ pub(super) fn binding(
         if !reported_efforts(metadata)?.contains(effort) {
             return Err(StoreError::Conflict);
         }
+    }
+    // Old stored text-only choices remain text-only after a new proof succeeds.
+    if v.function_tools && !tool_proven(c, tenant, account, v)? {
+        return Err(StoreError::Conflict);
     }
     Ok(providers::ProviderBinding {
         claude_code: Some(reference(
@@ -136,6 +166,88 @@ pub(super) fn binding(
     })
 }
 impl Store {
+    /// Prepare an exact text-eligible choice; catalog presence alone grants no tools.
+    pub async fn claude_tool_probe_binding(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+        model: String,
+        effort: Option<String>,
+    ) -> Result<ClaudeToolProbe> {
+        let u = u.clone();
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let u = validate(&tx, &u, true, false)?;
+            let selection = ModelSelection { source: ModelSource::PersonalClaudeCode,
+                provider_id: id, provider_revision: revision, model, effort };
+            let choice = verified(&tx, &u, &selection)?;
+            let binding = binding(&tx, &u.tenant.0, &u.account.id, &choice)?;
+            let environment = binding.claude_code.clone().ok_or(StoreError::Corrupt)?;
+            let id = Uuid::new_v4().to_string();
+            let marker = format!("proof-{}", random_token()?);
+            let at = now()?;
+            tx.execute("DELETE FROM claude_code_tool_probe_attempts WHERE expires_at<=?1", [at])?;
+            let pending: i64 = tx.query_row("SELECT count(*) FROM claude_code_tool_probe_attempts WHERE tenant_id=?1 AND account_id=?2", params![u.tenant.0,u.account.id], |row|row.get(0))?;
+            if pending >= 8 { return Err(StoreError::Conflict); }
+            tx.execute("INSERT INTO claude_code_tool_probe_attempts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,0,?9)", params![u.tenant.0,u.account.id,selection.provider_id,selection.provider_revision,selection.model,selection.effort.as_deref().unwrap_or(""),HOST_TOOL_HARNESS,id,at+600])?;
+            tx.commit()?;
+            Ok(ClaudeToolProbe { binding, marker, tenant:u.tenant.0, account:u.account.id,
+                id, selection, environment })
+        }).await
+    }
+    /// Reserve each actual inference before launch, including failed/unknown rounds.
+    pub async fn reserve_claude_tool_probe(
+        &self,
+        u: &UserContext,
+        proof: &ClaudeToolProbe,
+        round: u8,
+    ) -> Result<()> {
+        let u = u.clone();
+        let (tenant, account, id, selection, environment) = (
+            proof.tenant.clone(),
+            proof.account.clone(),
+            proof.id.clone(),
+            proof.selection.clone(),
+            proof.environment.clone(),
+        );
+        self.call(move |db| {
+            if !matches!(round, 1 | 2) { return Err(StoreError::InvalidInput); }
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let u = validate(&tx, &u, true, false)?;
+            if u.tenant.0 != tenant || u.account.id != account { return Err(StoreError::NotFound); }
+            let choice = verified(&tx,&u,&selection)?;
+            let current = binding(&tx,&tenant,&account,&choice)?.claude_code.ok_or(StoreError::Corrupt)?;
+            if !same_environment(&current,&environment) { return Err(StoreError::Conflict); }
+            let changed = tx.execute("UPDATE claude_code_tool_probe_attempts SET reserved_rounds=?4 WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND reserved_rounds=?4-1 AND expires_at>?5", params![tenant,account,id,round,now()?])?;
+            if changed != 1 { return Err(StoreError::Conflict); }
+            crate::recovery_budget::reserve(&tx,&tenant,&account,&format!("{id}:{round}"),"probe",0)?;
+            tx.commit()?;
+            Ok(())
+        }).await
+    }
+    /// Trusted caller verified both complete rounds and host result consumption.
+    pub async fn record_claude_tool_probe(
+        &self,
+        u: &UserContext,
+        proof: ClaudeToolProbe,
+    ) -> Result<ModelChoice> {
+        let u = u.clone();
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let u = validate(&tx, &u, true, false)?;
+            if u.tenant.0 != proof.tenant || u.account.id != proof.account { return Err(StoreError::NotFound); }
+            let choice = verified(&tx,&u,&proof.selection)?;
+            let current = binding(&tx,&proof.tenant,&proof.account,&choice)?.claude_code.ok_or(StoreError::Corrupt)?;
+            if !same_environment(&current,&proof.environment) { return Err(StoreError::Conflict); }
+            let consumed = tx.execute("DELETE FROM claude_code_tool_probe_attempts WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND reserved_rounds=2 AND expires_at>?4", params![proof.tenant,proof.account,proof.id,now()?])?;
+            if consumed != 1 { return Err(StoreError::Conflict); }
+            tx.execute("INSERT INTO claude_code_tool_probes VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT DO UPDATE SET verified_at=excluded.verified_at", params![proof.tenant,proof.account,choice.provider_id,choice.provider_revision,choice.model,choice.effort.as_deref().unwrap_or(""),HOST_TOOL_HARNESS,now()?])?;
+            let result = verified(&tx,&u,&proof.selection)?;
+            tx.commit()?;
+            Ok(result)
+        }).await
+    }
     pub async fn claude_retirements(&self, profile: String) -> Result<Vec<String>> {
         self.call(move|db|{let mut q=db.conn.prepare("SELECT environment_id FROM claude_code_retirements WHERE root_id=?1 AND state='pending' ORDER BY environment_id LIMIT 8")?;q.query_map([profile],|r|r.get(0))?.collect::<std::result::Result<Vec<_>,_>>().map_err(Into::into)}).await
     }
@@ -399,14 +511,256 @@ impl Store {
         revision: i64,
     ) -> Result<()> {
         let u = u.clone();
-        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;let n=db.conn.execute("UPDATE claude_code_bindings SET status='disconnected',revision=revision+1 WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND revision=?4 AND status!='disconnected'",params![u.tenant.0,u.account.id,id,revision])?;if n!=1{return Err(StoreError::NotFound)}// Selection stays pinned/unavailable; no fallback.
- Ok(())}).await
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let u = validate(&tx, &u, true, false)?;
+            let changed = tx.execute(
+                "UPDATE claude_code_bindings SET status='disconnected',revision=revision+1 WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND revision=?4 AND status!='disconnected'",
+                params![u.tenant.0, u.account.id, id, revision],
+            )?;
+            if changed != 1 {
+                return Err(StoreError::NotFound);
+            }
+            crate::calendar::agent::invalidate_subscription(
+                &tx, &u.tenant.0, &u.account.id, &id, revision, ModelSource::PersonalClaudeCode,
+            )?;
+            tx.commit()?;
+            Ok(())
+        }).await
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tests::{TEST_LOCK, admin, directory, member};
+    #[tokio::test]
+    async fn host_tools_require_two_reserved_rounds_and_exact_owner_model_effort() {
+        let _g = TEST_LOCK.lock().await;
+        let d = directory();
+        let s = Store::open(d.path()).unwrap();
+        let a = admin(&s).await;
+        let b = member(&s, &a.user, "host-tools-member@example.test").await;
+        let r = s
+            .create_claude_binding(&a.user, "Claude".into(), "a".repeat(64), "b".repeat(64))
+            .await
+            .unwrap();
+        let model = "claude-fixture-v1".to_owned();
+        s.record_claude_probe(&a.user, r.clone(), model.clone())
+            .await
+            .unwrap();
+        s.record_claude_model_efforts(&a.user, r.clone(), model.clone(), vec!["high".into()])
+            .await
+            .unwrap();
+        assert!(
+            s.claude_tool_probe_binding(&b.user, r.id.clone(), r.revision, model.clone(), None)
+                .await
+                .is_err()
+        );
+        assert!(
+            s.claude_tool_probe_binding(
+                &a.user,
+                r.id.clone(),
+                r.revision,
+                model.clone(),
+                Some("low".into())
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            s.claude_tool_probe_binding(
+                &a.user,
+                r.id.clone(),
+                r.revision,
+                "claude-unproven".into(),
+                None
+            )
+            .await
+            .is_err()
+        );
+        let prepare = || {
+            s.claude_tool_probe_binding(
+                &a.user,
+                r.id.clone(),
+                r.revision,
+                model.clone(),
+                Some("high".into()),
+            )
+        };
+        let unreserved = prepare().await.unwrap();
+        assert!(
+            s.record_claude_tool_probe(&a.user, unreserved)
+                .await
+                .is_err()
+        );
+        let one_round = prepare().await.unwrap();
+        s.reserve_claude_tool_probe(&a.user, &one_round, 1)
+            .await
+            .unwrap();
+        assert!(
+            s.record_claude_tool_probe(&a.user, one_round)
+                .await
+                .is_err()
+        );
+        let proof = prepare().await.unwrap();
+        assert!(
+            s.reserve_claude_tool_probe(&a.user, &proof, 2)
+                .await
+                .is_err()
+        );
+        assert!(
+            s.reserve_claude_tool_probe(&b.user, &proof, 1)
+                .await
+                .is_err()
+        );
+        s.reserve_claude_tool_probe(&a.user, &proof, 1)
+            .await
+            .unwrap();
+        assert!(
+            s.reserve_claude_tool_probe(&a.user, &proof, 1)
+                .await
+                .is_err()
+        );
+        s.reserve_claude_tool_probe(&a.user, &proof, 2)
+            .await
+            .unwrap();
+        assert!(
+            s.reserve_claude_tool_probe(&a.user, &proof, 2)
+                .await
+                .is_err()
+        );
+        assert!(
+            s.record_claude_tool_probe(&a.user, proof)
+                .await
+                .unwrap()
+                .function_tools
+        );
+        let choices = s.model_settings(&a.user).await.unwrap().choices;
+        assert!(
+            !choices
+                .iter()
+                .find(|c| c.provider_id == r.id && c.effort.is_none())
+                .unwrap()
+                .function_tools
+        );
+        assert!(
+            choices
+                .iter()
+                .find(|c| c.provider_id == r.id && c.effort.as_deref() == Some("high"))
+                .unwrap()
+                .function_tools
+        );
+        let pending = prepare().await.unwrap();
+        s.reserve_claude_tool_probe(&a.user, &pending, 1)
+            .await
+            .unwrap();
+        s.disconnect_claude(&a.user, r.id.clone(), r.revision)
+            .await
+            .unwrap();
+        assert!(
+            s.reserve_claude_tool_probe(&a.user, &pending, 2)
+                .await
+                .is_err()
+        );
+        assert!(s.record_claude_tool_probe(&a.user, pending).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn host_proof_preserves_saved_text_runs_and_foreground_only_policy() {
+        let _g = TEST_LOCK.lock().await;
+        let d = directory();
+        let s = Store::open(d.path()).unwrap();
+        let a = admin(&s).await;
+        let r = s
+            .create_claude_binding(&a.user, "Claude".into(), "a".repeat(64), "b".repeat(64))
+            .await
+            .unwrap();
+        let model = "claude-fixture-v1".to_owned();
+        s.record_claude_probe(&a.user, r.clone(), model.clone())
+            .await
+            .unwrap();
+        let selection = ModelSelection {
+            source: ModelSource::PersonalClaudeCode,
+            provider_id: r.id.clone(),
+            provider_revision: r.revision,
+            model: model.clone(),
+            effort: None,
+        };
+        s.set_model_preference(&a.user, Some(selection))
+            .await
+            .unwrap();
+        let thread = s
+            .create_thread(&a.user, "Legacy text".into())
+            .await
+            .unwrap();
+        let old = s
+            .submit_turn(
+                &a.user,
+                thread.id.clone(),
+                Uuid::new_v4().to_string(),
+                "Synthetic text".into(),
+            )
+            .await
+            .unwrap();
+        let proof = s
+            .claude_tool_probe_binding(&a.user, r.id.clone(), r.revision, model, None)
+            .await
+            .unwrap();
+        s.reserve_claude_tool_probe(&a.user, &proof, 1)
+            .await
+            .unwrap();
+        s.reserve_claude_tool_probe(&a.user, &proof, 2)
+            .await
+            .unwrap();
+        let choice = s.record_claude_tool_probe(&a.user, proof).await.unwrap();
+        let fresh = s
+            .create_thread(&a.user, "Fresh tools".into())
+            .await
+            .unwrap();
+        let new = s
+            .submit_turn(
+                &a.user,
+                fresh.id,
+                Uuid::new_v4().to_string(),
+                "Synthetic follow-up".into(),
+            )
+            .await
+            .unwrap();
+        let u = a.user.clone();
+        let run_id = new.run.id.clone();
+        s.call(move |db| {
+            let old = crate::chat::load_run(&db.conn, &u.tenant.0, &old.run.id)?;
+            let new = crate::chat::load_run(&db.conn, &u.tenant.0, &run_id)?;
+            assert!(!old.model.function_tools);
+            assert!(old.tool_profile.is_none());
+            assert!(binding(&db.conn, &u.tenant.0, &u.account.id, &old.model).is_ok());
+            assert!(new.model.function_tools);
+            assert!(new.tool_profile.is_some());
+            assert!(!new.mission_commands_enabled);
+            assert!(!crate::missions::chat::commands_allowed(&new));
+            assert!(
+                crate::missions::require_model(
+                    &db.conn,
+                    &db.provider_key,
+                    &u.tenant.0,
+                    &u.account.id,
+                    &choice
+                )
+                .is_err()
+            );
+            assert!(
+                crate::providers::binding_for_choice(&db.conn, &db.provider_key, &choice).is_err()
+            );
+            // Revoking only the tool proof fails tool runs closed; text runs retain text eligibility.
+            db.conn.execute("DELETE FROM claude_code_tool_probes", [])?;
+            assert!(binding(&db.conn, &u.tenant.0, &u.account.id, &new.model).is_err());
+            assert!(binding(&db.conn, &u.tenant.0, &u.account.id, &old.model).is_ok());
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn model_efforts_require_exact_owner_binding_and_proof_and_pin_saved_runs() {
         let _g = TEST_LOCK.lock().await;

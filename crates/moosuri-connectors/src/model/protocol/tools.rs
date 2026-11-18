@@ -58,6 +58,7 @@ impl CompletedToolCall {
 /// Opaque replayable provider items. Not Debug/Serialize/TS: the explicitly named
 /// checkpoint methods are for a future private durable store, never logs/API.
 pub struct Continuation {
+    claude_bridge: bool,
     protocol: Protocol,
     dialect: ResponsesDialect,
     model: String,
@@ -141,7 +142,7 @@ impl Continuation {
         Ok(())
     }
     pub fn to_private_checkpoint(&self) -> Result<Vec<u8>, ProtocolError> {
-        let bytes=serde_json::to_vec(&json!({"v":1,"protocol":if self.dialect == ResponsesDialect::ChatGptPlan { "chatgpt_plan" } else { dialect(self.protocol) },"model":self.model,"effort":self.effort,"history":self.history,"pending":self.pending})).map_err(|_|ProtocolError::Protocol)?;
+        let bytes=serde_json::to_vec(&json!({"v":1,"protocol":if self.claude_bridge { "claude_code_tool_bridge" } else if self.dialect == ResponsesDialect::ChatGptPlan { "chatgpt_plan" } else { dialect(self.protocol) },"model":self.model,"effort":self.effort,"history":self.history,"pending":self.pending})).map_err(|_|ProtocolError::Protocol)?;
         if bytes.len() > MAX_CAPSULE {
             return Err(ProtocolError::LimitExceeded);
         }
@@ -155,7 +156,14 @@ impl Continuation {
         model: &str,
         effort: Option<&str>,
     ) -> Result<Self, ProtocolError> {
-        Self::from_checkpoint_with_dialect(bytes, protocol, ResponsesDialect::Api, model, effort)
+        Self::from_checkpoint_with_dialect(
+            bytes,
+            protocol,
+            ResponsesDialect::Api,
+            model,
+            effort,
+            false,
+        )
     }
     pub fn from_chatgpt_plan_checkpoint(
         bytes: &[u8],
@@ -168,6 +176,22 @@ impl Continuation {
             ResponsesDialect::ChatGptPlan,
             model,
             effort,
+            false,
+        )
+    }
+    /// Private host-mediated Claude decision transcript; never an API continuation.
+    pub fn from_claude_code_checkpoint(
+        bytes: &[u8],
+        model: &str,
+        effort: Option<&str>,
+    ) -> Result<Self, ProtocolError> {
+        Self::from_checkpoint_with_dialect(
+            bytes,
+            Protocol::AnthropicMessages,
+            ResponsesDialect::Api,
+            model,
+            effort,
+            true,
         )
     }
     fn from_checkpoint_with_dialect(
@@ -176,6 +200,7 @@ impl Continuation {
         response_dialect: ResponsesDialect,
         model: &str,
         effort: Option<&str>,
+        claude_bridge: bool,
     ) -> Result<Self, ProtocolError> {
         if bytes.len() > MAX_CAPSULE {
             return Err(ProtocolError::LimitExceeded);
@@ -183,7 +208,9 @@ impl Continuation {
         let v: Value = serde_json::from_slice(bytes).map_err(|_| ProtocolError::Protocol)?;
         if v["v"] != 1
             || v["protocol"]
-                != if response_dialect == ResponsesDialect::ChatGptPlan {
+                != if claude_bridge {
+                    "claude_code_tool_bridge"
+                } else if response_dialect == ResponsesDialect::ChatGptPlan {
                     "chatgpt_plan"
                 } else {
                     dialect(protocol)
@@ -221,6 +248,7 @@ impl Continuation {
         }
         validate_history(protocol, &history, &pending)?;
         Ok(Self {
+            claude_bridge,
             protocol,
             dialect: response_dialect,
             model: model.into(),
@@ -370,7 +398,7 @@ pub fn encode_tool_request(
     text_caps: &TextCapabilities,
     caps: &ToolCapabilities,
 ) -> Result<Value, ProtocolError> {
-    encode_with_dialect(protocol, ResponsesDialect::Api, r, text_caps, caps)
+    encode_with_dialect(protocol, ResponsesDialect::Api, r, text_caps, caps, false)
 }
 /// Plan tools use one fixed namespace. This opt-in does not establish account capability.
 pub fn encode_chatgpt_plan_tool_request(
@@ -384,6 +412,7 @@ pub fn encode_chatgpt_plan_tool_request(
         r,
         text_caps,
         caps,
+        false,
     )
 }
 fn encode_with_dialect(
@@ -392,6 +421,7 @@ fn encode_with_dialect(
     r: &ToolRequest<'_>,
     text_caps: &TextCapabilities,
     caps: &ToolCapabilities,
+    claude_bridge: bool,
 ) -> Result<Value, ProtocolError> {
     if !caps.function_tools {
         return Err(ProtocolError::UnsupportedCapability);
@@ -404,7 +434,8 @@ fn encode_with_dialect(
     };
     let mut history = Vec::new();
     if let Some(c) = r.continuation {
-        if c.protocol != protocol
+        if c.claude_bridge != claude_bridge
+            || c.protocol != protocol
             || c.dialect != response_dialect
             || c.model != r.text.model
             || c.effort != r.text.effort
@@ -480,6 +511,103 @@ fn encode_with_dialect(
     Ok(body)
 }
 
+/// Reuse the closed function catalog and transcript checks for the text-only
+/// host bridge, while rejecting checkpoints belonging to native API tools.
+pub(crate) fn encode_claude_code_tool_request(
+    request: &ToolRequest<'_>,
+    capabilities: &TextCapabilities,
+) -> Result<Value, ProtocolError> {
+    encode_with_dialect(
+        Protocol::AnthropicMessages,
+        ResponsesDialect::Api,
+        request,
+        capabilities,
+        &ToolCapabilities {
+            function_tools: true,
+        },
+        true,
+    )
+}
+
+/// Local construction after the bridge validates its entire decision document.
+/// IDs are allocated by the host; none of this represents native CLI tool use.
+pub(crate) fn claude_code_tool_round(
+    request: &ToolRequest<'_>,
+    capabilities: &TextCapabilities,
+    decisions: Vec<(String, String, String)>,
+    answer: Option<&str>,
+    usage: Usage,
+) -> Result<ToolRound, ProtocolError> {
+    let body = encode_claude_code_tool_request(request, capabilities)?;
+    if decisions.len() > MAX_CALLS || decisions.is_empty() == answer.is_none() {
+        return Err(ProtocolError::Protocol);
+    }
+    let initial = request
+        .text
+        .messages
+        .iter()
+        .filter(|m| m.role != TextRole::System)
+        .count();
+    let mut history =
+        body["messages"].as_array().ok_or(ProtocolError::Protocol)?[initial..].to_vec();
+    let mut content = Vec::new();
+    let mut calls = Vec::new();
+    let mut ids = BTreeSet::new();
+    for (id, name, arguments) in decisions {
+        valid_id(&id)?;
+        valid_name(&name)?;
+        if !ids.insert(id.clone())
+            || !request.tools.iter().any(|t| t.name == name)
+            || arguments.len() > MAX_ARGUMENTS
+            || history
+                .iter()
+                .any(|v| history_call_ids(Protocol::AnthropicMessages, v).contains(&id))
+        {
+            return Err(ProtocolError::Protocol);
+        }
+        let input: Value = serde_json::from_str(&arguments).map_err(|_| ProtocolError::Protocol)?;
+        if !input.is_object() {
+            return Err(ProtocolError::Protocol);
+        }
+        content.push(json!({"type":"tool_use","id":id,"name":name,"input":input}));
+        calls.push(CompletedToolCall {
+            call_id: id,
+            name,
+            namespace: None,
+            arguments,
+        });
+    }
+    if let Some(answer) = answer {
+        content.push(json!({"type":"text","text":answer}));
+    }
+    history.push(json!({"role":"assistant","content":content}));
+    let pending = calls
+        .iter()
+        .map(|c| (c.call_id.clone(), c.name.clone()))
+        .collect::<Vec<_>>();
+    validate_history(Protocol::AnthropicMessages, &history, &pending)?;
+    let continuation = Continuation {
+        claude_bridge: true,
+        protocol: Protocol::AnthropicMessages,
+        dialect: ResponsesDialect::Api,
+        model: request.text.model.clone(),
+        effort: request.text.effort.clone(),
+        history,
+        pending,
+    };
+    continuation.to_private_checkpoint()?;
+    Ok(ToolRound {
+        outcome: if calls.is_empty() {
+            FinishOutcome::Completed
+        } else {
+            FinishOutcome::ContinuationRequired
+        },
+        usage,
+        calls,
+        continuation,
+    })
+}
+
 struct Call {
     id: String,
     name: String,
@@ -533,7 +661,7 @@ impl ToolRoundDecoder {
         text_caps: &TextCapabilities,
         caps: &ToolCapabilities,
     ) -> Result<Self, ProtocolError> {
-        let body = encode_with_dialect(protocol, response_dialect, r, text_caps, caps)?;
+        let body = encode_with_dialect(protocol, response_dialect, r, text_caps, caps, false)?;
         let key = if protocol == Protocol::Responses {
             "input"
         } else {
@@ -709,6 +837,7 @@ impl RoundState {
             .collect::<Vec<_>>();
         validate_history(self.protocol, &self.history, &pending)?;
         let continuation = Continuation {
+            claude_bridge: false,
             protocol: self.protocol,
             dialect: self.dialect,
             model: self.model,
@@ -973,6 +1102,7 @@ mod live_instruction_tests {
             Protocol::AnthropicMessages,
         ] {
             let mut continuation = Continuation {
+                claude_bridge: false,
                 protocol,
                 dialect: ResponsesDialect::Api,
                 model: "synthetic".into(),

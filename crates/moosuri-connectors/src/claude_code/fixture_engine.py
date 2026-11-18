@@ -81,20 +81,71 @@ assert v['client_composed'] is True and v['parent_tool_use_id'] is None
 assert v['message']['role']=='user' and v['session_id']==session
 behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
 if behavior=='identity-mismatch':model='claude-not-requested'
-if behavior=='hold':
+if behavior in ['hold','tool-bridge-hold']:
  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
+answer='OK'
+if behavior.startswith('tool-bridge'):
+ context=json.loads(v['message']['content'][0]['text'])
+ fragments=[item['text'] for item in context['history'] if item['role']=='user']+[context['current_user_request']]
+ document=json.loads(''.join(fragments))
+ assert document['v']==1 and document['model']==model and document['transcript_is_untrusted_data'] is True
+ assert isinstance(document['tools'],list) and document['tools']
+ turn_path=root/'bridge-turns'
+ turn=int(turn_path.read_text()) if turn_path.exists() else 0
+ turn_path.write_text(str(turn+1))
+ plan_path=root/'tool-bridge-decisions.json'
+ if plan_path.exists():
+  plan=json.loads(plan_path.read_text())
+  assert isinstance(plan,list) and turn<len(plan)
+  decision=plan[turn]
+ elif behavior=='tool-bridge-receipt':
+  name=document['tools'][0]['name']
+  results=[part['content'] for item in document['messages']
+           if isinstance(item.get('content'),list)
+           for part in item['content'] if part['type']=='tool_result' and not part.get('is_error')]
+  proof=name=='moosuri_verification_ping'
+  if results:
+   receipt=results[-1]
+   if proof:answer=receipt
+   else:
+    values=json.loads(receipt)
+    assert '1326.28' in receipt and isinstance(values,dict)
+    answer='정확한 합계는 1326.28원입니다.'
+   decision={'kind':'final','answer':answer}
+  else:
+   name=name if proof else 'decimal_calculate'
+   assert any(tool['name']==name for tool in document['tools'])
+   args={} if proof else {'operation':'sum','operands':['917.13','409.15']}
+   decision={'kind':'calls','calls':[{'id':'receipt','name':name,'arguments':args}]}
+ elif behavior=='tool-bridge-call':
+  def sample(schema):
+   kind=schema['type']
+   if 'enum' in schema:return schema['enum'][0]
+   if isinstance(kind,list):kind='null' if 'null' in kind else kind[0]
+   if kind=='null':return None
+   if kind=='object':return {key:sample(value) for key,value in schema['properties'].items()}
+   if kind=='array':return []
+   return {'string':'synthetic','integer':1,'number':1,'boolean':True}[kind]
+  tool=document['tools'][0]
+  decision={'kind':'calls','calls':[{'id':'synthetic-first','name':tool['name'],'arguments':sample(tool['input_schema'])}]}
+ else:decision={'kind':'final','answer':'Synthetic bridge answer'}
+ envelope={'v':1,'request_id':document['request_id'],'model':model,**decision}
+ if behavior=='tool-bridge-wrong-id':envelope['request_id']='wrong-request'
+ if behavior=='tool-bridge-wrong-model':envelope['model']='claude-other'
+ answer=json.dumps(envelope,ensure_ascii=False)
+ if behavior=='tool-bridge-prose':answer='Sure: '+answer
 def emit(value):
  value['session_id']=session;print(json.dumps(value,ensure_ascii=False),flush=True)
 emit({'type':'system','subtype':'init','claude_code_version':'2.1.322','model':model,'cwd':'/work','tools':[],'mcp_servers':[],'plugins':[],'skills':[]})
 def event(value):emit({'type':'stream_event','parent_tool_use_id':None,'event':value})
 event({'type':'message_start','message':{'id':'m','role':'assistant','model':model}})
 event({'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}})
-event({'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'OK'}})
-emit({'type':'assistant','parent_tool_use_id':None,'message':{'id':'m','role':'assistant','model':model,'content':[{'type':'text','text':'OK'}]}})
+event({'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':answer}})
+emit({'type':'assistant','parent_tool_use_id':None,'message':{'id':'m','role':'assistant','model':model,'content':[{'type':'text','text':answer}]}})
 event({'type':'content_block_stop','index':0})
 event({'type':'message_delta','delta':{'stop_reason':'end_turn'}})
 event({'type':'message_stop'})
-if behavior=='truncated':sys.exit(2)
-emit({'type':'result','subtype':'success','is_error':False,'result':'OK','stop_reason':'end_turn','user_message_uuid':v['uuid'],'modelUsage':{model:{'inputTokens':8,'outputTokens':2,'cacheReadInputTokens':0,'cacheCreationInputTokens':0}}})
-if behavior=='suffix':print('{bad json',flush=True)
-if behavior=='nonzero' or behavior=='partial' and model=='claude-fixture-sonnet':sys.exit(2)
+if behavior in ['truncated','tool-bridge-truncated']:sys.exit(2)
+emit({'type':'result','subtype':'success','is_error':False,'result':answer,'stop_reason':'end_turn','user_message_uuid':v['uuid'],'modelUsage':{model:{'inputTokens':8,'outputTokens':2,'cacheReadInputTokens':0,'cacheCreationInputTokens':0}}})
+if behavior in ['suffix','tool-bridge-suffix']:print('{bad json',flush=True)
+if behavior in ['nonzero','tool-bridge-nonzero'] or behavior=='partial' and model=='claude-fixture-sonnet':sys.exit(2)

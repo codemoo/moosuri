@@ -572,25 +572,34 @@ fn store_failure(error: &StoreError) -> (RunState, RunFailure) {
     };
     (local_failure(reason), reason)
 }
-fn preflight_tools(
-    client: &ModelClient,
+fn preflight_tools<'a>(
+    client: impl Into<TextExecutor<'a>>,
     protocol: Protocol,
     request: &ToolRequest<'_>,
     capabilities: &TextCapabilities,
-) -> Result<serde_json::Value, ProtocolError> {
+) -> Result<(), TransportError> {
     let tools = ToolCapabilities {
         function_tools: true,
     };
-    if client.responses_dialect()
-        == moosuri_connectors::model::chatgpt::ResponsesDialect::ChatGptPlan
-    {
-        moosuri_connectors::model::protocol::tools::encode_chatgpt_plan_tool_request(
-            request,
-            capabilities,
-            &tools,
-        )
-    } else {
-        encode_tool_request(protocol, request, capabilities, &tools)
+    match client.into() {
+        TextExecutor::Claude(..) => {
+            moosuri_connectors::claude_code::tool_bridge::preflight(request, capabilities)
+        }
+        TextExecutor::Http(client)
+            if client.responses_dialect()
+                == moosuri_connectors::model::chatgpt::ResponsesDialect::ChatGptPlan =>
+        {
+            moosuri_connectors::model::protocol::tools::encode_chatgpt_plan_tool_request(
+                request,
+                capabilities,
+                &tools,
+            )?;
+            Ok(())
+        }
+        TextExecutor::Http(_) => {
+            encode_tool_request(protocol, request, capabilities, &tools)?;
+            Ok(())
+        }
     }
 }
 
@@ -598,9 +607,46 @@ struct Observation {
     round: Option<ToolRound>,
     pending: Pending,
 }
+#[derive(Clone, Copy)]
 enum TextExecutor<'a> {
     Http(&'a ModelClient),
     Claude(&'a moosuri_connectors::claude_code::Profile, &'a str),
+}
+impl TextExecutor<'_> {
+    fn restore(
+        self,
+        bytes: &[u8],
+        protocol: Protocol,
+        model: &str,
+        effort: Option<&str>,
+    ) -> Result<Continuation, ProtocolError> {
+        match self {
+            Self::Claude(..) => Continuation::from_claude_code_checkpoint(bytes, model, effort),
+            Self::Http(client)
+                if client.responses_dialect()
+                    == moosuri_connectors::model::chatgpt::ResponsesDialect::ChatGptPlan =>
+            {
+                Continuation::from_chatgpt_plan_checkpoint(bytes, model, effort)
+            }
+            Self::Http(_) => Continuation::from_private_checkpoint(bytes, protocol, model, effort),
+        }
+    }
+}
+
+enum ExecutionClient {
+    Http(ModelClient),
+    Claude(
+        std::sync::Arc<moosuri_connectors::claude_code::Profile>,
+        String,
+    ),
+}
+impl ExecutionClient {
+    fn executor(&self) -> TextExecutor<'_> {
+        match self {
+            Self::Http(client) => TextExecutor::Http(client),
+            Self::Claude(profile, environment) => TextExecutor::Claude(profile, environment),
+        }
+    }
 }
 impl<'a> From<&'a ModelClient> for TextExecutor<'a> {
     fn from(client: &'a ModelClient) -> Self {
@@ -636,7 +682,18 @@ async fn stream_round<'a>(
                 .stream_text(environment, request, &tx, &cancellation)
                 .await
                 .map(|()| None),
-            _ => Err(TransportError::InvalidConfiguration),
+            (TextExecutor::Claude(profile, environment), Some(tools)) => profile
+                .stream_tool_round(
+                    environment,
+                    tools,
+                    &TextCapabilities {
+                        efforts: request.effort.iter().cloned().collect(),
+                    },
+                    &tx,
+                    &cancellation,
+                )
+                .await
+                .map(Some),
         }
     };
     tokio::pin!(operation);
@@ -782,7 +839,9 @@ pub(crate) async fn execute_with_calendar(
         .await
         .unwrap_or(false);
     let personal = binding.subscription.is_some();
-    if personal && (media_context || !images.is_empty() || !documents.is_empty()) {
+    if (personal || binding.claude_code.is_some())
+        && (media_context || !images.is_empty() || !documents.is_empty())
+    {
         // Defense after claim: no unsupported raw attachment may enter plan IO.
         finish(
             &store,
@@ -842,19 +901,42 @@ pub(crate) async fn execute_with_calendar(
         .await;
         return;
     }
+    let mut claude_client = None;
     if let Some(reference) = binding.claude_code.take() {
-        execute_claude_text(
-            &store,
-            &lease,
-            &signals,
-            &subscriptions,
-            reference,
-            messages,
-            context,
-            media_context || !images.is_empty() || !documents.is_empty(),
-        )
-        .await;
-        return;
+        if !model.function_tools {
+            execute_claude_text(
+                &store,
+                &lease,
+                &signals,
+                &subscriptions,
+                reference,
+                messages,
+                context,
+                false,
+            )
+            .await;
+            return;
+        }
+        match subscriptions.claude_profile().await {
+            Ok(profile)
+                if profile.digest() == reference.profile_digest
+                    && profile.root_id() == reference.root_id =>
+            {
+                claude_client = Some(ExecutionClient::Claude(profile, reference.environment_id));
+            }
+            _ => {
+                finish(
+                    &store,
+                    &lease,
+                    None,
+                    RunState::Failed,
+                    Some(RunFailure::ProviderUnavailable),
+                    &signals,
+                )
+                .await;
+                return;
+            }
+        }
     }
     if !native_resume {
         match calendar.chat(&lease).await {
@@ -972,13 +1054,16 @@ pub(crate) async fn execute_with_calendar(
         .take()
         .map(|v| Secret::new(v.to_string()))
         .transpose();
-    let built_client = if let Some(reference) = binding.subscription.clone() {
+    let built_client = if let Some(client) = claude_client {
+        Ok(client)
+    } else if let Some(reference) = binding.subscription.clone() {
         subscriptions
             .client(
                 moosuri_store::SubscriptionAuthority::Run(lease.clone()),
                 reference,
             )
             .await
+            .map(ExecutionClient::Http)
             .map_err(|_| TransportError::InvalidConfiguration)
     } else {
         credential.and_then(|credential| {
@@ -990,6 +1075,7 @@ pub(crate) async fn execute_with_calendar(
                 },
             )
             .and_then(|client| client.with_images(images))
+            .map(ExecutionClient::Http)
         })
     };
     let mut client = match built_client {
@@ -1067,8 +1153,11 @@ pub(crate) async fn execute_with_calendar(
             .text
             .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
     }
-    if personal && model.function_tools {
+    if (personal || matches!(&client, ExecutionClient::Claude(..))) && model.function_tools {
         request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. One explicit current-user solo-event Calendar command uses its separate typed action and actual receipt. Background work requires an original explicit owner mission delegation and its durable grant; foreground tools alone grant none. Media attachments remain unavailable.");
+        if matches!(&client, ExecutionClient::Claude(..)) {
+            request.messages[0].text.push_str(" The Claude subscription binding can execute foreground tools only. Never claim it registered or will run a background task.");
+        }
     }
     let artifact_write = artifact_profile.as_ref().is_some_and(|p| p.write);
     let external_report = artifact_profile.as_ref().is_some_and(|p| {
@@ -1220,20 +1309,12 @@ pub(crate) async fn execute_with_calendar(
         let Some(saved) = context.checkpoint.as_ref() else {
             return;
         };
-        continuation = match if personal {
-            Continuation::from_chatgpt_plan_checkpoint(
-                &saved.bytes,
-                &request.model,
-                request.effort.as_deref(),
-            )
-        } else {
-            Continuation::from_private_checkpoint(
-                &saved.bytes,
-                protocol,
-                &request.model,
-                request.effort.as_deref(),
-            )
-        } {
+        continuation = match client.executor().restore(
+            &saved.bytes,
+            protocol,
+            &request.model,
+            request.effort.as_deref(),
+        ) {
             Ok(v) => Some(v),
             Err(_) => {
                 finish(
@@ -1288,11 +1369,15 @@ pub(crate) async fn execute_with_calendar(
             results: &results,
         };
         let valid = if model.function_tools {
-            preflight_tools(&client, protocol, &tool_request, &capabilities)
+            preflight_tools(client.executor(), protocol, &tool_request, &capabilities)
         } else if personal {
             moosuri_connectors::model::chatgpt::encode_text_request(&request, &capabilities)
+                .map(|_| ())
+                .map_err(TransportError::from)
         } else {
             encode_request(protocol, &request, &capabilities)
+                .map(|_| ())
+                .map_err(TransportError::from)
         };
         if valid.is_err() {
             finish(
@@ -1308,12 +1393,14 @@ pub(crate) async fn execute_with_calendar(
         }
         // Each personal continuation resolves current token readiness through the same
         // durable RunLease/refresh CAS. This never retries an inference dispatch.
-        if let Some(reference) = binding.subscription.clone() {
-            client = match subscriptions
+        if let (Some(reference), ExecutionClient::Http(http)) =
+            (binding.subscription.clone(), &mut client)
+        {
+            *http = match subscriptions
                 .client_for_round(
                     moosuri_store::SubscriptionAuthority::Run(lease.clone()),
                     reference,
-                    &client,
+                    http,
                 )
                 .await
             {
@@ -1352,7 +1439,7 @@ pub(crate) async fn execute_with_calendar(
             expected_model: &request.model,
         };
         let observed = match stream_round(
-            TextExecutor::Http(&client),
+            client.executor(),
             &request,
             model.function_tools.then_some(&tool_request),
             &checkpoint,
@@ -1505,20 +1592,12 @@ pub(crate) async fn execute_with_calendar(
             .await;
             return;
         };
-        let restored = if personal {
-            Continuation::from_chatgpt_plan_checkpoint(
-                &saved.bytes,
-                &request.model,
-                request.effort.as_deref(),
-            )
-        } else {
-            Continuation::from_private_checkpoint(
-                &saved.bytes,
-                protocol,
-                &request.model,
-                request.effort.as_deref(),
-            )
-        };
+        let restored = client.executor().restore(
+            &saved.bytes,
+            protocol,
+            &request.model,
+            request.effort.as_deref(),
+        );
         continuation = match restored {
             Ok(value) => Some(value),
             Err(_) => {

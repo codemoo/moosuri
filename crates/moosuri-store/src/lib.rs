@@ -78,7 +78,7 @@ pub use browser::{BrowserAccess, BrowserProfileLease};
 pub use mail::*;
 mod claude_execution;
 mod providers;
-pub use claude_execution::{ClaudeBindingSummary, ClaudeExecutionRef};
+pub use claude_execution::{ClaudeBindingSummary, ClaudeExecutionRef, ClaudeToolProbe};
 mod subscriptions;
 pub use subscriptions::*;
 mod recovery;

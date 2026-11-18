@@ -2,6 +2,7 @@
 pub mod protocol;
 #[cfg(unix)]
 mod sandbox;
+pub mod tool_bridge;
 #[cfg(unix)]
 pub use sandbox::{
     AccountModels, AccountUsage, LoginCode, LoginEvent, ModelEffortMetadata, Profile, UsageLimit,

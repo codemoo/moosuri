@@ -1,8 +1,11 @@
 //! Official CLI text setup/probe. No credentials are read by this service.
 use crate::*;
 use moosuri_connectors::{
-    claude_code::Profile,
-    model::protocol::{FinishOutcome, ModelEvent, TextMessage, TextRequest, TextRole},
+    claude_code::{Profile, tool_bridge},
+    model::protocol::{
+        FinishOutcome, ModelEvent, TextCapabilities, TextMessage, TextRequest, TextRole,
+        tools::{FunctionDefinition, ToolRequest, ToolResult, ToolRound},
+    },
 };
 use moosuri_store::{ClaudeExecutionRef, UserContext};
 #[derive(serde::Serialize)]
@@ -264,6 +267,144 @@ impl crate::subscriptions::SubscriptionService {
         }
         self.store.record_claude_probe(u, r.clone(), model).await
     }
+    pub async fn claude_tool_probe(
+        &self,
+        u: &UserContext,
+        id: String,
+        revision: i64,
+        model: String,
+        effort: Option<String>,
+    ) -> Result<moosuri_core::ModelChoice, StoreError> {
+        let _sync = self
+            .claude_model_sync
+            .try_lock()
+            .map_err(|_| StoreError::Busy)?;
+        let proof = self
+            .store
+            .claude_tool_probe_binding(u, id, revision, model, effort)
+            .await?;
+        let reference = proof
+            .binding
+            .claude_code
+            .as_ref()
+            .ok_or(StoreError::Conflict)?;
+        let profile = self.claude_profile().await?;
+        if profile.digest() != reference.profile_digest || profile.root_id() != reference.root_id {
+            return Err(StoreError::Conflict);
+        }
+        let text = TextRequest {
+            model: proof.binding.model.clone(),
+            effort: proof.binding.effort.clone(),
+            max_output_tokens: 2048,
+            messages: vec![TextMessage {
+                role: TextRole::User,
+                text: "Call moosuri_verification_ping exactly once with empty arguments. After the tool result arrives, output exactly the returned string as your final answer.".into(),
+                phase: None,
+            }],
+        };
+        let definitions = [FunctionDefinition {
+            name: "moosuri_verification_ping".into(),
+            description: "Returns a short verification string.".into(),
+            parameters: serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+        }];
+        let capabilities = TextCapabilities {
+            efforts: text.effort.iter().cloned().collect(),
+        };
+        let request = ToolRequest {
+            text: &text,
+            tools: &definitions,
+            continuation: None,
+            results: &[],
+        };
+        tool_bridge::preflight(&request, &capabilities).map_err(|_| StoreError::InvalidInput)?;
+        self.store.reserve_claude_tool_probe(u, &proof, 1).await?;
+        let (first, answer) = self
+            .claude_tool_probe_round(u, &profile, reference, &request, &capabilities)
+            .await?;
+        let [call] = first.calls.as_slice() else {
+            return Err(StoreError::Unavailable);
+        };
+        if first.outcome != FinishOutcome::ContinuationRequired
+            || !answer.is_empty()
+            || call.name() != definitions[0].name
+            || serde_json::from_str::<serde_json::Value>(call.arguments())
+                .ok()
+                .as_ref()
+                != Some(&serde_json::json!({}))
+        {
+            return Err(StoreError::Unavailable);
+        }
+        let result = [ToolResult {
+            call_id: call.call_id().into(),
+            output: proof.marker.clone(),
+            is_error: false,
+        }];
+        let request = ToolRequest {
+            continuation: Some(&first.continuation),
+            results: &result,
+            ..request
+        };
+        tool_bridge::preflight(&request, &capabilities).map_err(|_| StoreError::Unavailable)?;
+        self.store.reserve_claude_tool_probe(u, &proof, 2).await?;
+        let (last, answer) = self
+            .claude_tool_probe_round(u, &profile, reference, &request, &capabilities)
+            .await?;
+        if last.outcome != FinishOutcome::Completed
+            || !last.calls.is_empty()
+            || answer.trim() != proof.marker
+        {
+            return Err(StoreError::Unavailable);
+        }
+        self.store.record_claude_tool_probe(u, proof).await
+    }
+
+    async fn claude_tool_probe_round(
+        &self,
+        u: &UserContext,
+        profile: &Profile,
+        reference: &ClaudeExecutionRef,
+        request: &ToolRequest<'_>,
+        capabilities: &TextCapabilities,
+    ) -> Result<(ToolRound, String), StoreError> {
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let operation = profile.stream_tool_round(
+            &reference.environment_id,
+            request,
+            capabilities,
+            &tx,
+            &cancel,
+        );
+        tokio::pin!(operation);
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut model_verified = false;
+        let mut answer = String::new();
+        let mut observe = |event| match event {
+            ModelEvent::Started { model, .. } => {
+                model_verified = model.as_ref() == Some(&request.text.model)
+            }
+            ModelEvent::TextDelta { text, .. } => answer.push_str(&text),
+            _ => {}
+        };
+        let result = loop {
+            tokio::select! { biased;
+                _ = self.signals.stopping().cancelled(), if !cancel.is_cancelled() => cancel.cancel(),
+                _ = tick.tick(), if !cancel.is_cancelled() => {
+                    if self.store.claude_launch_ref(u, reference.id.clone(), reference.revision).await.is_err() { cancel.cancel(); }
+                }
+                Some(event) = rx.recv() => observe(event),
+                result = &mut operation => break result,
+            }
+        };
+        while let Ok(event) = rx.try_recv() {
+            observe(event);
+        }
+        if !model_verified || cancel.is_cancelled() {
+            return Err(StoreError::Unavailable);
+        }
+        Ok((result.map_err(|_| StoreError::Unavailable)?, answer))
+    }
     pub async fn claude_disconnect(
         &self,
         u: &UserContext,
@@ -395,6 +536,71 @@ mod tests {
         .await
         .unwrap()
     }
+    #[tokio::test]
+    async fn selected_claude_consumes_a_real_calculation_receipt() {
+        let _guard = crate::tests::TEST_LOCK.lock().await;
+        let (_dir, store, user) = setup().await;
+        let fixture = moosuri_connectors::claude_code::fixture::Fixture::new();
+        let reference = select(&store, &user, &fixture.profile).await;
+        let runtime = Runtime::start_with_google_setup_claude(
+            store.clone(),
+            None,
+            None,
+            None,
+            "https://example.test/callback".into(),
+            Some(Arc::new(fixture.profile.clone())),
+        );
+        fixture.behavior("tool-bridge-wrong-id");
+        let service = runtime.subscription_service();
+        let verify = || {
+            service.claude_tool_probe(
+                &user,
+                reference.id.clone(),
+                reference.revision,
+                "claude-fixture-v1".into(),
+                None,
+            )
+        };
+        assert!(verify().await.is_err());
+        assert!(
+            !store
+                .model_settings(&user)
+                .await
+                .unwrap()
+                .effective
+                .unwrap()
+                .function_tools
+        );
+        fixture.behavior("tool-bridge-receipt");
+        let model = verify().await.unwrap();
+        assert!(model.function_tools);
+        assert_eq!(model.source, ModelSource::PersonalClaudeCode);
+        let thread = store
+            .create_thread(&user, "Synthetic receipt".into())
+            .await
+            .unwrap()
+            .id;
+        store
+            .submit_turn(
+                &user,
+                thread.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                "917.13원과 409.15원의 합계를 계산기로 구해줘.".into(),
+            )
+            .await
+            .unwrap();
+        runtime.wake();
+        let done = terminal(&store, &user, &thread).await;
+        assert_eq!(done.run.state, RunState::Completed, "{:?}", done.run.error);
+        assert!(
+            done.assistant
+                .iter()
+                .any(|answer| answer.text == "정확한 합계는 1326.28원입니다.")
+        );
+        assert_eq!(fixture.launches(), 5);
+        runtime.shutdown().await;
+    }
+
     #[tokio::test]
     async fn latest_gmail_bypasses_selected_claude_but_conversation_still_uses_it() {
         let _guard = crate::tests::TEST_LOCK.lock().await;

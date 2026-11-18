@@ -28,7 +28,6 @@ import type {
   ChatPage,
   ChatTurn,
   ModelSettings,
-  RunUsage,
   RunView,
   ScheduleChatContext,
   ScheduleChatReceipt,
@@ -158,12 +157,6 @@ function chatError(error: unknown) {
   }
   return "서버 응답을 확인하지 못했습니다. 기록을 다시 확인해 주세요.";
 }
-export function usageLabel(usage: RunUsage) {
-  if (usage.input_tokens === null && usage.output_tokens === null)
-    return "사용량 미보고";
-  return `입력 ${usage.input_tokens === null ? "미보고" : usage.input_tokens.toLocaleString()} · 출력 ${usage.output_tokens === null ? "미보고" : usage.output_tokens.toLocaleString()}`;
-}
-
 export function ChatPanel(props: Props) {
   const { accountId, threadId, memory } = props;
   const callbacks = useRef(props);
@@ -1206,14 +1199,6 @@ export function ChatPanel(props: Props) {
                 {turn.run.mission_receipt&&<div><a href="/app/missions">맡긴 일 · {missionReceiptLabel(turn.run.mission_receipt.state)} ↗</a>{turn.run.mission_receipt.target&&<button onClick={()=>{props.clearArtifactTarget?.();setScheduleTarget(null);setMissionTarget(turn.run.mission_receipt!.target!)}}>이 업무 선택</button>}{turn.run.mission_receipt.next_local_slot&&<p>다음 실행: {turn.run.mission_receipt.next_local_slot}</p>}{turn.run.mission_receipt.candidates.map(c=><button key={c.target.id} onClick={()=>{props.clearArtifactTarget?.();setScheduleTarget(null);setMissionTarget(c.target)}}>{c.title} 선택</button>)}</div>}
                 {turn.run.schedule_receipts?.map(r=><div key={r.request_id}><a href={r.url}>알림 · {r.title} ↗</a>{r.state!=="revoked"&&<button onClick={()=>{props.clearArtifactTarget?.();setMissionTarget(null);setScheduleTarget(r)}}>이 알림 선택</button>}</div>)}
                 <WebEvidence observations={turn.run.web_evidence}/>
-                <details className="run-model">
-                  <summary>실행 정보</summary>
-                  <p>
-                    {turn.run.model.provider_name} · {turn.run.model.model} ·{" "}
-                    {turn.run.model.effort ?? "기본 강도"}
-                  </p>
-                  <p>{usageLabel(turn.run.usage)}</p>
-                </details>
               </div>
             </article>
           ))}

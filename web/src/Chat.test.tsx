@@ -373,7 +373,8 @@ describe("durable text chat", () => {
     ).not.toBeInTheDocument();
     expect(screen.getAllByText("Synthetic question")).toHaveLength(1);
     expect(postCalls(test.calls)).toHaveLength(1);
-    expect(screen.getByText("사용량 미보고")).toBeInTheDocument();
+    expect(screen.queryByText("실행 정보")).not.toBeInTheDocument();
+    expect(screen.queryByText("사용량 미보고")).not.toBeInTheDocument();
     expect(
       test.calls
         .filter(

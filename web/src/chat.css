@@ -148,21 +148,6 @@
   margin-top: 9px;
   max-width: 650px;
 }
-.run-model {
-  margin-top: 10px;
-  font-size: 10px;
-  color: var(--muted);
-  line-height: 1.8;
-}
-.run-model summary {
-  cursor: pointer;
-  width: fit-content;
-}
-.run-model p {
-  font-size: 11px;
-  margin: 6px 0;
-  overflow-wrap: anywhere;
-}
 .older-button {
   display: block;
   margin: 0 auto 22px;
@@ -456,10 +441,6 @@
   }
   .run-explanation {
     font-size: 12px;
-  }
-  .run-model summary {
-    font-size: 11px;
-    min-height: 28px;
   }
   .chat-composer-area {
     padding: 0 16px max(15px, env(safe-area-inset-bottom));

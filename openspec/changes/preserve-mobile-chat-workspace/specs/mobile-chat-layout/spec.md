@@ -13,6 +13,15 @@ pinch, double tap, and text-field focus. Single-finger panning SHALL remain avai
 - **WHEN** the user pinches or double taps a scrollable area of the chat
 - **THEN** the page remains at its initial scale, and a one-finger drag still scrolls the chat
 
+#### Scenario: Resume an installed app after editing
+- **WHEN** the app goes into the background while the composer is focused and then resumes
+- **THEN** the old keyboard geometry is cleared and full workspace height returns
+- **AND** the unsent text remains available and a newly opened keyboard can resize the frame
+
+#### Scenario: Reach either edge of a conversation
+- **WHEN** the user drags past the top or bottom of a conversation
+- **THEN** the document and app frame stay fixed while a long message list remains scrollable
+
 ### Requirement: Stable conversation position
 The conversation SHALL retain bottom following or the visible older run position
 when composer height, viewport size or asynchronous content changes.

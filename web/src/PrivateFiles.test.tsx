@@ -12,7 +12,7 @@ class Upload{
  constructor(){Upload.jobs.push(this);}open(_method:string,url:string){this.url=url;}setRequestHeader(k:string,v:string){this.headers[k]=v;}send(blob:Blob){this.body=blob;}abort(){this.onabort?.();}finish(){this.onload?.();}
 }
 beforeEach(()=>{Upload.jobs=[];vi.stubGlobal("XMLHttpRequest",Upload);vi.stubGlobal("fetch",vi.fn());vi.stubGlobal("URL",Object.assign(URL,{createObjectURL:vi.fn(()=>"blob:synthetic-file"),revokeObjectURL:vi.fn()}));vi.mocked(prepareImage).mockReset();});
-function Harness({account="account-a"}:{account?:string}){const uploads=useMediaUploads(account,"thread-a");const[text,setText]=useState("");return <>{uploads.view}<input aria-label="Message" value={text} onChange={e=>setText(e.target.value)}/><button onClick={()=>uploads.sent(uploads.readySelections)}>Send {uploads.ready.length} ready attachments</button><output>{JSON.stringify(uploads.ready)}</output></>;}
+function Harness({account="account-a"}:{account?:string}){const uploads=useMediaUploads(account,"thread-a");const[text,setText]=useState("");return <>{uploads.picker}{uploads.previews}<input aria-label="Message" value={text} onChange={e=>setText(e.target.value)}/><button onClick={()=>uploads.sent(uploads.readySelections)}>Send {uploads.ready.length} ready attachments</button><output>{JSON.stringify(uploads.ready)}</output></>;}
 it("uploads a document independently of pending image preparation and sending text retains pending file",async()=>{
  vi.mocked(prepareImage).mockImplementation(()=>new Promise(()=>{}));render(<Harness/>);
  fireEvent.change(screen.getByLabelText("이미지 첨부"),{target:{files:[new File(["image"],"photo.png",{type:"image/png"})]}});

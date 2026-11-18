@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./test-workspace";
 import { StrictMode } from "react";
 import {
   act,
@@ -409,8 +410,9 @@ describe("private source material", () => {
         return response({ connections: [], gmail_configured: false });
     });
     open();
+    await screen.findByRole("button", { name: "Open conversations" });
     await userEvent.click(
-      await screen.findByRole("button", { name: /자료 수집 연결/ }),
+      await openWorkspaceMenu().findByRole("button", { name: /자료 수집 연결/ }),
     );
     await screen.findByRole("heading", { level: 2, name: "자료 수집 연결" });
     expect(window.location.pathname).toBe("/settings/sources");
@@ -489,8 +491,8 @@ describe("private source material", () => {
     await screen.findByRole("button", { name: "모음 생성 결과 확인" });
     const request = writes(test.calls, "/knowledge/collections")[0];
     expect(request.body?.scope).toMatch(/^[0-9a-f-]{36}$/);
-    await user.click(screen.getByRole("button", { name: "기억" }));
-    await user.click(screen.getByRole("button", { name: "자료" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "기억" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "자료" }));
     expect(await screen.findByLabelText("모음 이름")).toBeDisabled();
     await user.click(
       screen.getByRole("button", { name: "모음 생성 결과 확인" }),
@@ -553,8 +555,8 @@ describe("private source material", () => {
       await screen.findByRole("button", { name: "생성 초안 버리기" });
       expect(screen.getByLabelText("모음 이름")).toBeDisabled();
       expect(writes(test.calls, "/knowledge/collections")).toHaveLength(1);
-      await user.click(screen.getByRole("button", { name: "기억" }));
-      await user.click(screen.getByRole("button", { name: "자료" }));
+      await user.click(openWorkspaceMenu().getByRole("button", { name: "기억" }));
+      await user.click(openWorkspaceMenu().getByRole("button", { name: "자료" }));
       await user.click(
         await screen.findByRole("button", { name: "모음 만들기" }),
       );
@@ -608,9 +610,9 @@ describe("private source material", () => {
       "Preserved source draft",
     );
     await user.click(screen.getByRole("button", { name: "자료 저장" }));
-    await user.click(screen.getByRole("button", { name: "기억" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "기억" }));
     expect(writes(test.calls, "/batches")[0].init.signal?.aborted).toBe(true);
-    await user.click(screen.getByRole("button", { name: "자료" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "자료" }));
     const retry = await screen.findByRole("button", {
       name: "같은 자료 요청 다시 확인",
     });
@@ -750,7 +752,7 @@ describe("private source material", () => {
         expect(
           screen.queryByRole("button", { name: /합성 원문/ }),
         ).not.toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "기억" }));
+      await user.click(openWorkspaceMenu().getByRole("button", { name: "기억" }));
       await screen.findByRole("button", { name: /Independent assertion/ });
       expect(
         screen.queryByRole("button", { name: /Original subject/ }) !== null,
@@ -806,7 +808,7 @@ describe("private source material", () => {
       connected: false,
       deleted: true,
     });
-    await user.click(screen.getByRole("button", { name: "기억" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "기억" }));
     await screen.findByRole("button", { name: /Independent assertion/ });
     expect(
       screen.queryByRole("button", { name: /Original subject/ }),
@@ -852,7 +854,7 @@ describe("private source material", () => {
     const action = test.calls.find((call) => call.method === "DELETE")!;
     expect(action.path).toBe(`/knowledge/sources/${source.source.id}`);
     expect(action.body).toEqual({ expected_revision: 1 });
-    await user.click(screen.getByRole("button", { name: "기억" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "기억" }));
     await screen.findByRole("button", { name: /Independent assertion/ });
     expect(
       screen.queryByRole("button", { name: /Original subject/ }),
@@ -991,7 +993,7 @@ describe("assertion editing and forgetting", () => {
         .filter((call) => call.method === "DELETE")
         .map((call) => call.path),
     ).toEqual([`/knowledge/memories/${direct.id}`]);
-    await user.click(screen.getByRole("button", { name: "자료" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "자료" }));
     await user.click(await screen.findByRole("button", { name: /합성 원문/ }));
     expect(await screen.findByLabelText("원문 텍스트")).toHaveValue(
       source.text.replace(/\r\n?/g, "\n"),
@@ -1143,12 +1145,12 @@ describe("knowledge lifetime boundaries", () => {
     const request = test.calls.find(
       (call) => call.path === "/knowledge/memories" && call.method === "POST",
     )!;
-    await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
     await user.type(await screen.findByLabelText("Email"), other.user.email);
     await user.type(screen.getByLabelText("Password"), "synthetic-password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
-    await user.click(screen.getByRole("button", { name: "기억" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "기억" }));
     expect(request.init.signal?.aborted).toBe(true);
     await act(async () => {
       late.resolve(response({ ...direct, draft: request.body?.draft }, 201));

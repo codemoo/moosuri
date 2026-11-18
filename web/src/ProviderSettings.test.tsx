@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./test-workspace";
 import { StrictMode } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -517,7 +518,7 @@ describe("personal model preferences", () => {
     expect(calls.some((call) => call.path.startsWith("/admin/providers"))).toBe(
       false,
     );
-    await user.click(screen.getByRole("button", { name: "내 모델" }));
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "내 모델" }));
     await screen.findByRole("heading", { name: "내 모델", level: 2 });
     expect(screen.getByRole("combobox", { name: "모델" })).toBeInTheDocument();
   });
@@ -633,7 +634,7 @@ it("discards a late administrator save and clears its key before another account
   const pending = calls.find(
     (call) => call.path === "/admin/providers" && call.method === "POST",
   )!;
-  await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+  await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
   await user.type(await screen.findByLabelText("Email"), member.user.email);
   await user.type(screen.getByLabelText("Password"), "synthetic-password");
   await user.click(screen.getByRole("button", { name: "Sign in" }));

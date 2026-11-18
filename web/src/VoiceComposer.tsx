@@ -1,3 +1,4 @@
+import { WorkspaceIcon } from "./WorkspaceNavigation";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AudioJob, AudioSettings } from "../shared/api-types";
 import { useScope } from "./account-scope";
@@ -121,10 +122,10 @@ export const VoiceComposer = forwardRef<VoiceComposerHandle, {
         return;
     } clear(); inserted.current = true; setOpen(false); setNotice(origin.current === slot ? "초안에 넣었습니다. 내용을 확인하고 전송하세요." : "녹음을 시작한 대화의 초안에 넣었습니다."); }
     return <section className="voice-composer" aria-label="음성 입력">
-  <button type="button" className="voice-toggle" aria-label={capturing && !open ? `녹음 중 · ${time(state.seconds)}` : "음성으로 입력"} aria-expanded={open} onClick={() => setOpen(v => !v)}><span aria-hidden="true">◉</span> {capturing && !open ? `녹음 중 · ${time(state.seconds)}` : "음성"}</button>
+  <button type="button" className="voice-toggle" aria-label={capturing && !open ? `녹음 중 · ${time(state.seconds)}` : "음성으로 입력"} aria-expanded={open} onClick={() => setOpen(v => !v)}><WorkspaceIcon name="mic"/>{capturing && !open && <time>{time(state.seconds)}</time>}</button>
   {!open && notice && <p className="voice-help" role="status">{notice}</p>}
   {open && <div className="voice-card">
-   <div className="voice-header"><strong>{capturing ? state.phase === "paused" ? "잠시 멈춤" : state.phase === "permission" ? "마이크 권한 확인 중" : state.phase === "stopping" ? "녹음 마무리 중" : "듣고 있어요" : state.blob ? "녹음을 확인하세요" : "말을 글로, 내 속도로"}</strong><time aria-label={`녹음 시간 ${time(state.seconds)}`}>{time(state.seconds)}</time></div>
+   <div className="voice-header"><strong>{capturing ? state.phase === "paused" ? "잠시 멈춤" : state.phase === "permission" ? "마이크 권한 확인 중" : state.phase === "stopping" ? "녹음 마무리 중" : "듣고 있어요" : state.blob ? "녹음을 확인하세요" : "음성 녹음"}</strong><time aria-label={`녹음 시간 ${time(state.seconds)}`}>{time(state.seconds)}</time></div>
    {capturing && <div className="voice-meter" role="meter" aria-label="마이크 입력" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(state.level * 100)}><span style={{ width: `${Math.max(3, state.level * 100)}%` }}/></div>}
    {state.interrupted && <p role="status">녹음이 중단되었습니다. 남은 소리를 확인하거나 다시 녹음하세요.</p>}
    {url && <audio ref={preview} controls src={url} aria-label="녹음 미리 듣기" preload="metadata" onLoadedMetadata={e=>{const seconds=e.currentTarget.duration;if(Number.isFinite(seconds))setState(v=>({...v,seconds}));}}/>}

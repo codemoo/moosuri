@@ -3,7 +3,7 @@ import { TextInput } from "@astryxdesign/core/TextInput";
 import { useState } from "react";
 import type { ThreadSummary } from "../shared/api-types";
 
-type IconName = "chat" | "feed" | "idea" | "goal" | "library" | "search" | "new" | "menu";
+type IconName = "chat" | "feed" | "idea" | "goal" | "library" | "search" | "new" | "mic" | "refresh";
 const paths: Record<IconName, string> = {
   chat: "M4 5h16v11H9l-5 4z",
   feed: "M5 6h2m4 0h8M5 12h2m4 0h8M5 18h2m4 0h8",
@@ -12,7 +12,8 @@ const paths: Record<IconName, string> = {
   library: "M3 6h7l2 2h9v11H3z",
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm5 12 4 4",
   new: "M12 5v14M5 12h14",
-  menu: "M4 6h16M4 12h16M4 18h11",
+  mic: "M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM6 11a6 6 0 0 0 12 0m-6 6v4m-3 0h6",
+  refresh: "M19 8a8 8 0 1 0 .8 6M19 3v5h-5",
 };
 export function WorkspaceIcon({name}: {name: IconName}) {
   return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]}/></svg>;

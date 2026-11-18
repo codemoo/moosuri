@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./test-workspace";
 import { StrictMode } from "react";
 import {
   act,
@@ -120,14 +121,15 @@ it("bypasses long navigation, marks only the destination and leaves draft focus 
   render(<StrictMode><App/></StrictMode>);
   const composer = await screen.findByRole("textbox", {name:"메시지"});
   await user.tab();
-  expect(screen.getByRole("link",{name:"작업 영역으로 건너뛰기"})).toHaveFocus();
+  expect(screen.getByTestId("skip-to-content")).toHaveFocus();
   await user.keyboard("{Enter}");
-  expect(screen.getByRole("heading",{level:1,name:thread.title})).toHaveFocus();
+  expect(screen.getByRole("main")).toHaveFocus();
   await user.type(composer,"Keep this unsent draft");
-  await user.click(screen.getByRole("button",{name:/내 Calendar/}));
+  await user.click(openWorkspaceMenu().getByRole("button", { name: /내 Calendar/ }));
   expect(await screen.findByRole("heading",{level:1,name:"내 Calendar"})).toHaveFocus();
-  expect(screen.getByRole("button",{name:thread.title})).not.toHaveAttribute("aria-current");
-  expect(screen.getByRole("button",{name:/내 Calendar/})).toHaveAttribute("aria-current","page");
+  expect(openWorkspaceMenu().getByRole("button",{name:thread.title})).not.toHaveAttribute("aria-current");
+  expect(openWorkspaceMenu().getByRole("button", { name: /내 Calendar/ })).toHaveAttribute("aria-current","page");
+  await user.click(screen.getByRole("button",{name:"Close dialog"}));
   await user.click(await screen.findByRole("button",{name:"← 대화로"}));
   expect(screen.getByRole("heading",{level:1,name:thread.title})).toHaveFocus();
   const restored=await screen.findByRole("textbox",{name:"메시지"});
@@ -142,7 +144,7 @@ it("moves mobile drawer navigation and deleted dialog controls to a visible dest
   server((path,init)=>path==="/threads"?response({threads:removed?[]:[thread]})
     :init.method==="DELETE"?(removed=true,response({},204)):response({},204));
   render(<App/>);
-  await screen.findByRole("button",{name:thread.title});
+  await screen.findByRole("heading",{level:1,name:thread.title});
   await user.click(screen.getByRole("button",{name:"Open conversations"}));
   await user.click(within(screen.getByRole("dialog")).getByRole("button",{name:thread.title}));
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -151,7 +153,7 @@ it("moves mobile drawer navigation and deleted dialog controls to a visible dest
   await user.click(within(screen.getByRole("dialog")).getByRole("button",{name:`Delete ${thread.title}`}));
   await user.click(screen.getByRole("button",{name:"Keep conversation"}));
   expect(screen.getByRole("heading",{level:1,name:thread.title})).toHaveFocus();
-  await user.click(screen.getByRole("button",{name:`Delete ${thread.title}`}));
+  await user.click(openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }));
   await user.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Delete conversation"}));
   await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.getByRole("heading",{level:1,name:"새 대화"})).toHaveFocus();
@@ -195,7 +197,7 @@ it("finishes the old cookie transition before accepting a new account login", as
     </StrictMode>,
   );
   await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
-  await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+  await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
   expect(await screen.findByText("Finishing sign-out…")).toBeInTheDocument();
   expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
   expect(screen.queryByText(alice.user.email)).not.toBeInTheDocument();
@@ -344,7 +346,7 @@ describe("account and session boundaries", () => {
       </StrictMode>,
     );
     await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
-    await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
     await signIn(user);
     expect(
       await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" }),
@@ -356,7 +358,7 @@ describe("account and session boundaries", () => {
     expect(screen.queryByText(thread.title)).not.toBeInTheDocument();
     expect(screen.queryByText("alice@example.test")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Manage installation/ }),
+      openWorkspaceMenu().queryByRole("button", { name: /Manage installation/ }),
     ).not.toBeInTheDocument();
   });
   it("keeps the signed-in workspace after a network failure and preserves a failed deletion", async () => {
@@ -373,9 +375,9 @@ describe("account and session boundaries", () => {
         <App />
       </StrictMode>,
     );
-    await screen.findByRole("button", { name: `Delete ${thread.title}` });
+    await screen.findByRole("heading", { name: thread.title, level: 1 });
     await user.click(
-      screen.getByRole("button", { name: `Delete ${thread.title}` }),
+      openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }),
     );
     await user.click(
       within(screen.getByRole("dialog")).getByRole("button", {
@@ -386,10 +388,10 @@ describe("account and session boundaries", () => {
       "삭제 접수를 확인하지 못했습니다",
     );
     expect(
-      screen.getByRole("button", { name: `Delete ${thread.title}` }),
+      openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
-    expect(screen.getByText(alice.user.email)).toBeInTheDocument();
+    expect(openWorkspaceMenu().getByText(alice.user.email)).toBeInTheDocument();
   });
   it("keeps members out of the admin UI even at a direct admin URL", async () => {
     window.history.replaceState(null, "", "/admin");
@@ -457,7 +459,7 @@ describe("local invitations", () => {
     await user.click(screen.getByRole("button", { name: /Create invitation/ }));
     await screen.findByLabelText("Temporary password");
     // Programmatic sign-out can occur in another app control while a modal is open.
-    await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
     await screen.findByRole("button", { name: "Sign in" });
     expect(screen.queryByDisplayValue(temporary)).not.toBeInTheDocument();
     expect(localStorage.length).toBe(0);
@@ -500,7 +502,7 @@ describe("local invitations", () => {
     await user.type(screen.getByLabelText("Name"), "Synthetic Member");
     await user.type(screen.getByLabelText("Email"), "member@example.test");
     await user.click(screen.getByRole("button", { name: /Create invitation/ }));
-    await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
     await signIn(user);
     await screen.findByRole("heading", { name: "Bob님, 무엇을 도와드릴까요?" });
     await act(async () => {
@@ -538,22 +540,21 @@ it("creates and deletes an empty thread only after server success", async () => 
   );
   await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
   await user.click(screen.getByRole("button", { name: "새 대화" }));
-  await screen.findByRole("button", { name: `Delete ${thread.title}` });
+  await openWorkspaceMenu().findByRole("button", { name: `Delete ${thread.title}` });
   await user.click(
-    screen.getByRole("button", { name: `Delete ${thread.title}` }),
+    openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }),
   );
   await user.click(screen.getByRole("button", { name: "Delete conversation" }));
-  expect(
-    screen.getByRole("button", { name: `Delete ${thread.title}` }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Deleting…" })).toBeDisabled();
   await act(async () => {
     deletion.resolve(response({}, 204));
   });
   await waitFor(() =>
     expect(
-      screen.queryByRole("button", { name: `Delete ${thread.title}` }),
+      screen.queryByRole("dialog"),
     ).not.toBeInTheDocument(),
   );
+  expect(openWorkspaceMenu().queryByRole("button", { name: `Delete ${thread.title}` })).not.toBeInTheDocument();
   expect(
     calls.find((call) => call.init.method === "POST")?.init.headers,
   ).toEqual({ "Content-Type": "application/json", "X-Moosuri-Account": "a" });
@@ -670,7 +671,7 @@ describe("shared-cookie account changes", () => {
     });
     expect(screen.queryByText(thread.title)).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Manage installation/ }),
+      openWorkspaceMenu().queryByRole("button", { name: /Manage installation/ }),
     ).not.toBeInTheDocument();
     expect(
       new Headers(
@@ -747,7 +748,7 @@ describe("shared-cookie account changes", () => {
       </StrictMode>,
     );
     await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
-    await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
     await screen.findByRole("button", { name: "Retry sign-out" });
     cookie = bob;
     await user.click(screen.getByRole("button", { name: "Retry sign-out" }));
@@ -833,7 +834,7 @@ describe("authentication mutation overlap", () => {
       </StrictMode>,
     );
     await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" });
-    await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+    await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
     await screen.findByRole("button", { name: "Retry sign-out" });
     await signIn(user);
     expect(
@@ -890,21 +891,21 @@ it("opens explicit missions and returns without sending or losing the chat draft
  const user=userEvent.setup();render(<App/>);
  const composer=await screen.findByRole("textbox",{name:"메시지"});
  await user.type(composer,"확인 중인 채팅 초안");
- await user.click(screen.getByRole("button",{name:/맡긴 일/}));
+ await user.click(openWorkspaceMenu().getByRole("button", { name: /맡긴 일/ }));
  await screen.findByRole("heading",{name:"맡긴 일",level:2});
  await user.click(screen.getByRole("button",{name:"← 대화로"}));
  expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("확인 중인 채팅 초안");
  expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);
 });
 
-it("opens Calendar and returns with the unsent chat draft intact",async()=>{const calls=server(path=>path==="/calendar/connections"?response({configured:false,connections:[]}):path==="/calendar/actions"?response([]):response({threads:[]}));const user=userEvent.setup();render(<App/>);const composer=await screen.findByRole("textbox",{name:"메시지"});await user.type(composer,"달력 확인 전 초안");await user.click(screen.getByRole("button",{name:/내 Calendar/}));await screen.findByRole("heading",{name:"내 Google Calendar"});await user.click(screen.getByRole("button",{name:"← 대화로"}));expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("달력 확인 전 초안");expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);});
+it("opens Calendar and returns with the unsent chat draft intact",async()=>{const calls=server(path=>path==="/calendar/connections"?response({configured:false,connections:[]}):path==="/calendar/actions"?response([]):response({threads:[]}));const user=userEvent.setup();render(<App/>);const composer=await screen.findByRole("textbox",{name:"메시지"});await user.type(composer,"달력 확인 전 초안");await user.click(openWorkspaceMenu().getByRole("button", { name: /내 Calendar/ }));await screen.findByRole("heading",{name:"내 Google Calendar"});await user.click(screen.getByRole("button",{name:"← 대화로"}));expect(await screen.findByRole("textbox",{name:"메시지"})).toHaveValue("달력 확인 전 초안");expect(calls.filter(c=>c.init.method==="POST")).toHaveLength(0);});
 
 it("opens a typed inbox mission link in the app without losing the chat draft",async()=>{
  const id="00000000-0000-4000-8000-000000000001";
  const calls=server(path=>path.startsWith("/notifications?")?response({items:[{id:"notice",title:"예약한 일의 실행 기록",message:"실행 상태: achieved",mission_id:id,scheduled_for:1,delivered_at:1,read:false,dismissed:false,quiet:false,delayed:false}],next_cursor:null}):path==="/notifications/settings"?response({revision:1,enabled:false,timezone:"UTC",start_minute:1320,end_minute:420}):["/missions","/recurring-missions","/schedules","/notifications/sources"].includes(path)?response([]):response({threads:[]}));
  const user=userEvent.setup();render(<App/>);
  await user.type(await screen.findByRole("textbox",{name:"메시지"}),"소식함 확인 후 이어 쓸 초안");
- await user.click(screen.getByRole("button",{name:/예약 · 소식/}));
+ await user.click(openWorkspaceMenu().getByRole("button", { name: /예약 · 소식/ }));
  await user.click(await screen.findByRole("link",{name:"맡긴 일의 실행 기록"}));
  await screen.findByRole("heading",{name:"맡긴 일",level:2});
  expect(window.location.pathname).toBe("/app/missions");expect(window.location.hash).toBe(`#mission-${id}`);
@@ -937,7 +938,7 @@ it("opens the original conversation through title search and lazily loads the li
     return response({}, 204);
   });
   render(<App />);
-  await screen.findByRole("button", {name:thread.title});
+  await screen.findByRole("heading", {name:thread.title,level:1});
   expect(calls.some(call => call.path.startsWith("/notifications") || call.path === "/media")).toBe(false);
   await user.keyboard("{Control>}k{/Control}");
   const search = screen.getByRole("dialog", {name:"대화 검색"});
@@ -964,8 +965,8 @@ it("a hung thread deletion settles through inventory without replay and releases
     return response({}, 204);
   });
   render(<StrictMode><App /></StrictMode>);
-  await screen.findByRole("button", { name: thread.title });
-  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  await screen.findByRole("heading", { name: thread.title, level: 1 });
+  await user.click(openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }));
   vi.useFakeTimers();
   try {
     await act(async () => {
@@ -973,7 +974,7 @@ it("a hung thread deletion settles through inventory without replay and releases
       await vi.advanceTimersByTimeAsync(30000);
     });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
+    expect(openWorkspaceMenu().queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
     const deletes = calls.filter(call => call.init.method === "DELETE");
     expect(deletes).toHaveLength(1);
     expect(deletes[0].init.signal?.aborted).toBe(true);
@@ -991,8 +992,8 @@ it.each(["present", "inventory stalled"])("unknown deletion with target %s unloc
     return response({}, 204);
   });
   render(<StrictMode><App /></StrictMode>);
-  await screen.findByRole("button", { name: thread.title });
-  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  await screen.findByRole("heading", { name: thread.title, level: 1 });
+  await user.click(openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }));
   vi.useFakeTimers();
   try {
     await act(async () => {
@@ -1000,11 +1001,11 @@ it.each(["present", "inventory stalled"])("unknown deletion with target %s unloc
       await vi.advanceTimersByTimeAsync(mode === "present" ? 30000 : 60000);
     });
     expect(screen.getByRole("button", { name: "Keep conversation" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: thread.title })).toBeInTheDocument();
     expect(screen.getByText(mode === "present" ? /삭제 접수를 확인하지 못했습니다/ : /삭제 결과와 대화 목록을 확인하지 못했습니다/)).toBeInTheDocument();
     expect(calls.filter(call => call.init.method === "DELETE")).toHaveLength(1);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Keep conversation" })); });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(openWorkspaceMenu().getByRole("button", { name: thread.title })).toBeInTheDocument();
     const cancel = vi.fn();
     await act(async () => { deletion.resolve(new Response(new ReadableStream({ cancel }))); });
     expect(cancel).toHaveBeenCalledOnce();

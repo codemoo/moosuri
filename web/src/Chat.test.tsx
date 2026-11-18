@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./test-workspace";
 import { StrictMode } from "react";
 import {
   act,
@@ -988,7 +989,7 @@ describe("durable text chat", () => {
       await user.type(screen.getByLabelText("메시지"), "Private unsent draft");
       if (kind === "delete") {
         await user.click(
-          screen.getByRole("button", { name: `Delete ${thread.title}` }),
+          openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }),
         );
         await user.click(
           within(screen.getByRole("dialog")).getByRole("button", {
@@ -996,13 +997,11 @@ describe("durable text chat", () => {
           }),
         );
         await waitFor(() =>
-          expect(
-            screen.queryByRole("button", { name: `Delete ${thread.title}` }),
-          ).not.toBeInTheDocument(),
+          expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
         );
       } else {
         await user.click(
-          screen.getAllByRole("button", { name: "Sign out" })[0],
+          openWorkspaceMenu().getByRole("button", { name: "Sign out" }),
         );
         await user.type(await screen.findByLabelText("Email"), bob.user.email);
         await user.type(
@@ -1254,7 +1253,7 @@ it("opens only the exact backend evidence revision from a chat reference",async(
 it("attaches an exact private file from the library and keeps its original refs through lost ACK retry",async()=>{
  const user=userEvent.setup();const id="11111111-1111-4111-8111-111111111111";const original={id,revision:1,filename:"synthetic-receipt.json",media_type:"application/json",digest:"a".repeat(64),state:"ready",width:0,height:0,bytes:15,created_at:1};let attempts=0;
  const test=fixture({extra:call=>{if(call.path==="/media")return response({items:[original],used_bytes:30,quota_bytes:67108864});if(call.path===`/files/${id}/preview`)return response('{"quantity":37}');},post:call=>{if(++attempts===1)return Promise.reject(new TypeError("Synthetic lost ACK"));const accepted={...turn({request_id:String(call.body?.request_id)},String(call.body?.text)),attachments:[original]};test.state.page={thread_id:thread.id,cursor:1,turns:[accepted],next_before:null};return response(accepted,201);}});
- open();await ready(test.streams);await user.click(screen.getByLabelText("내 이미지·파일 보관함"));await user.click(await screen.findByRole("button",{name:"대화에 첨부"}));await user.type(screen.getByLabelText("메시지"),"What is quantity in my exact selected file?");await user.click(screen.getByRole("button",{name:"메시지 전송"}));await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(1));await user.type(screen.getByLabelText("메시지"),"Next draft remains");
+ open();await ready(test.streams);await user.click(screen.getByRole("button",{name:"첨부 추가"}));await user.click(screen.getByLabelText("내 이미지·파일 보관함"));await user.click(await screen.findByRole("button",{name:"대화에 첨부"}));await user.type(screen.getByLabelText("메시지"),"What is quantity in my exact selected file?");await user.click(screen.getByRole("button",{name:"메시지 전송"}));await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(1));await user.type(screen.getByLabelText("메시지"),"Next draft remains");
  const retry=await screen.findByRole("button",{name:/같은 요청 다시 제출/});await user.click(retry);await waitFor(()=>expect(postCalls(test.calls)).toHaveLength(2));expect(postCalls(test.calls)[0].body?.attachments).toEqual([{id,revision:1}]);expect(postCalls(test.calls)[1].body).toEqual(postCalls(test.calls)[0].body);expect(screen.getByLabelText("메시지")).toHaveValue("Next draft remains");expect(screen.getAllByText("synthetic-receipt.json").length).toBeGreaterThan(0);
 });
 
@@ -1389,7 +1388,7 @@ it("logout fences a pending streamed receipt before its delayed GET fallback", a
   const accepted = turn({ request_id: String(postCalls(test.calls)[0].body?.request_id) }, "Do not restore this account after logout");
   await act(async () => { ack.resolve(response(accepted, 201)); });
   const histories = test.calls.filter(call => call.path.endsWith("/messages") && call.method === "GET").length;
-  await user.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+  await user.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
   await screen.findByRole("button", { name: "Sign in" });
   vi.useFakeTimers();
   try {
@@ -1553,7 +1552,7 @@ it.each(["composer", "button"])("a timed-out first creation and immutable messag
     });
     expect(screen.getByLabelText("메시지")).toHaveValue("Separate next draft");
     expect(screen.getByText(/새 대화 생성 결과를 확인하지 못했습니다/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Synthetic conversation" })).toBeInTheDocument();
+    expect(openWorkspaceMenu().getByRole("button", { name: "Synthetic conversation" })).toBeInTheDocument();
     expect(creates).toBe(1);
     expect(postCalls(test.calls)).toHaveLength(0);
     const encoded = JSON.parse(sessionStorage.getItem("moosuri.chat-drafts.v1")!);
@@ -1675,7 +1674,7 @@ it("a late explicit new-conversation receipt preserves the thread and draft sele
   open();
   await ready(test.streams);
   await user.click(screen.getByRole("button", { name: "새 대화" }));
-  await user.click(screen.getByRole("button", { name: "Other conversation" }));
+  await user.click(openWorkspaceMenu().getByRole("button", { name: "Other conversation" }));
   await screen.findByRole("heading", { name: "Other conversation" });
   await user.type(screen.getByLabelText("메시지"), "Other thread draft stays here");
   await act(async () => { held.resolve(response(created, 201)); });
@@ -1705,8 +1704,9 @@ it("creation recovery preserves both drafts when its admitted thread was selecte
       fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Original separate next draft" } });
       await vi.advanceTimersByTimeAsync(30000);
     });
+    const admitted = openWorkspaceMenu().getByRole("button", { name: thread.title });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: thread.title }));
+      fireEvent.click(admitted);
       await vi.advanceTimersByTimeAsync(0);
       fireEvent.change(screen.getByLabelText("메시지"), { target: { value: "Draft written in admitted thread" } });
     });
@@ -1816,14 +1816,14 @@ it("deletion preserves refreshed inventory and fences an older inventory respons
   }});
   open();
   await ready(test.streams);
-  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  await user.click(openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }));
   await user.click(screen.getByRole("button", { name: "Delete conversation" }));
   test.state.threads = [thread, other, newest];
   await act(async () => {
     test.emit({ sequence: 2, change: { kind: "state", run: { ...initial.run, state: "completed", version: 2, can_cancel: false } } });
     await new Promise(resolve => setTimeout(resolve, 40));
   });
-  await screen.findByRole("button", { name: newest.title });
+  await waitFor(() => expect(test.calls.filter(call => call.path === "/threads" && call.method === "GET").length).toBeGreaterThan(1));
   holdInventory = true;
   await act(async () => {
     test.emit({ sequence: 3, change: { kind: "state", run: { ...initial.run, state: "completed", version: 3, can_cancel: false } } });
@@ -1831,14 +1831,14 @@ it("deletion preserves refreshed inventory and fences an older inventory respons
   });
   const stale = test.calls.filter(call => call.path === "/threads" && call.method === "GET").at(-1)!;
   await act(async () => { deletion.resolve(response(null, 204)); });
-  expect(screen.getByRole("button", { name: newest.title })).toBeInTheDocument();
+  expect(openWorkspaceMenu().getByRole("button", { name: newest.title })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: other.title })).toBeInTheDocument();
   expect(stale.init.signal?.aborted).toBe(true);
   const cancel = vi.fn();
   await act(async () => { inventory.resolve(new Response(new ReadableStream({ cancel }))); });
   expect(cancel).toHaveBeenCalledOnce();
-  expect(screen.queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: newest.title })).toBeInTheDocument();
+  expect(openWorkspaceMenu().queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
+  expect(openWorkspaceMenu().getByRole("button", { name: newest.title })).toBeInTheDocument();
 });
 
 it("a rejected background admission cannot restore a deleted conversation's draft", async () => {
@@ -1856,18 +1856,18 @@ it("a rejected background admission cannot restore a deleted conversation's draf
   await screen.findByText("Alice님, 무엇을 도와드릴까요?");
   await waitFor(() => expect(screen.getByRole("button", { name: "메시지 전송" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "메시지 전송" }));
-  await user.click(screen.getByRole("button", { name: other.title }));
+  await user.click(openWorkspaceMenu().getByRole("button", { name: other.title }));
   test.state.threads = [thread, other];
   await act(async () => { creation.resolve(response(thread, 201)); });
   await waitFor(() => expect(postCalls(test.calls)).toHaveLength(1));
   await user.type(screen.getByLabelText("메시지"), "Other conversation draft remains");
-  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  await user.click(openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }));
   await user.click(screen.getByRole("button", { name: "Delete conversation" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   await act(async () => { admission.resolve(response({ code: "conflict" }, 409)); });
   expect(screen.getByLabelText("메시지")).toHaveValue("Other conversation draft remains");
   expect(sessionStorage.getItem("moosuri.chat-drafts.v1")).not.toContain("Private text from removed background conversation");
-  expect(screen.queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
+  expect(openWorkspaceMenu().queryByRole("button", { name: thread.title })).not.toBeInTheDocument();
 });
 
 it("canonical cancellation releases a lost HTTP receipt before the next explicit message", async () => {
@@ -1905,16 +1905,16 @@ it("authoritative thread absence releases its held DELETE without unlocking a ne
   }});
   open();
   await ready(test.streams);
-  await user.click(screen.getByRole("button", { name: `Delete ${thread.title}` }));
+  await user.click(openWorkspaceMenu().getByRole("button", { name: `Delete ${thread.title}` }));
   await user.click(screen.getByRole("button", { name: "Delete conversation" }));
   const original = test.calls.find(call => call.method === "DELETE")!;
   await act(async () => {
     test.streams.at(-1)!.controller.enqueue(new TextEncoder().encode('event: closed\ndata: {"code":"not_found"}\n\n'));
   });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: `Delete ${other.title}` })).toBeEnabled();
+  expect(openWorkspaceMenu().getByRole("button", { name: `Delete ${other.title}` })).toBeEnabled();
   expect(original.init.signal?.aborted).toBe(true);
-  await user.click(screen.getByRole("button", { name: `Delete ${other.title}` }));
+  await user.click(openWorkspaceMenu().getByRole("button", { name: `Delete ${other.title}` }));
   await user.click(screen.getByRole("button", { name: "Delete conversation" }));
   expect(test.calls.filter(call => call.method === "DELETE")).toHaveLength(2);
   const cancel = vi.fn();

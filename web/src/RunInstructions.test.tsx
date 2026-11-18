@@ -40,7 +40,7 @@ it("one main composer acknowledges received before canonical applied without cre
  fireEvent.click(screen.getByRole("button",{name:"다음 메시지 준비"}));expect(screen.getByLabelText("메시지")).toHaveValue("Next normal question");
 });
 it("selected media stays for the next message with an explicit text-only choice",async()=>{
- const t=fixture();render(<Harness/>);await ready();fireEvent.click(screen.getByLabelText("내 이미지·파일 보관함"));fireEvent.click(await screen.findByRole("button",{name:"대화에 첨부"}));
+ const t=fixture();render(<Harness/>);await ready();fireEvent.click(screen.getByRole("button",{name:"첨부 추가"}));fireEvent.click(screen.getByLabelText("내 이미지·파일 보관함"));fireEvent.click(await screen.findByRole("button",{name:"대화에 첨부"}));
  fireEvent.change(screen.getByLabelText("작업에 추가 지시"),{target:{value:"Use documented totals"}});expect(screen.getByRole("button",{name:"작업에 추가 지시 전송"})).toBeDisabled();fireEvent.click(screen.getByLabelText("첨부는 다음 메시지에 남기고 글만 추가 지시로 보내기"));fireEvent.click(screen.getByRole("button",{name:"작업에 추가 지시 전송"}));await screen.findByText("추가 지시 접수됨 · 아직 반영 전");expect(writes(t)[0].body).not.toHaveProperty("attachments");expect(screen.getByRole("button",{name:"선택 해제"})).toBeInTheDocument();fireEvent.click(screen.getByRole("button",{name:"다음 메시지 준비"}));expect(screen.getByLabelText("메시지")).toHaveValue("Next normal question");
 });
 it("uncertain admission retains the UUID and payload and only explicitly replays an absent receipt",async()=>{

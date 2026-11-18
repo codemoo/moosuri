@@ -1,4 +1,6 @@
 import { Button } from "@astryxdesign/core/Button";
+import { ChatComposer } from "@astryxdesign/core/Chat";
+import { WorkspaceIcon } from "./WorkspaceNavigation";
 import { MailReplyWatches } from "./MailReplyWatches";
 import { TaskMonitors } from "./TaskMonitors";
 import { InstructionReceipts, useRunInstructions } from "./RunInstructions";
@@ -101,8 +103,6 @@ type Props = {
   onThreadMissing: (id: string) => void;
   onThreadUpdated: () => void;
   openSettings: () => void;
-  openIdeas?: () => void;
-  openWork?: () => void;
   openCredentials?:()=>void;
   onOpenEvidence?: (reference: ChatEvidence) => void;
   artifactTarget?:{id:string;revision:number;title:string}|null;
@@ -236,6 +236,8 @@ export function ChatPanel(props: Props) {
   const [keepMedia, setKeepMedia] = useState(false);
   useEffect(() => setKeepMedia(false), [accountId, threadId, media.selectionKey]);
   const instructionMode = instructions.mode === "instructions";
+  const [attachmentsOpen, setAttachmentsOpen] = useState(false);
+  const attachmentsToggle = useRef<HTMLButtonElement>(null);
   const composerText = instructionMode ? instructions.text : draft;
   const composerBytes = new TextEncoder().encode(composerText).byteLength;
   const composerLimit = instructionMode ? 2000 : 8192;
@@ -1054,15 +1056,11 @@ export function ChatPanel(props: Props) {
             내 모델 설정
           </button>
         )}
-        <button
-          className="text-button"
+        <Button variant="ghost" isIconOnly label="기록 새로고침" icon={<WorkspaceIcon name="refresh"/>}
           onClick={() => {
             void refreshSnapshot();
             setModelRefresh((value) => value + 1);
-          }}
-        >
-          기록 새로고침
-        </button>
+          }}/>
       </div>
       {props.artifactTarget&&<p>선택한 기록: {props.artifactTarget.title} · v{props.artifactTarget.revision} <button onClick={props.clearArtifactTarget}>선택 해제</button></p>}
       {missionTarget&&!props.artifactTarget&&<p>선택한 {missionTarget.kind==="recurring"?"반복 업무":"맡긴 일"} <button onClick={()=>setMissionTarget(null)}>업무 선택 해제</button></p>}
@@ -1102,10 +1100,6 @@ export function ChatPanel(props: Props) {
           <div className="chat-welcome">
             <img src="/moosuri-icon-192.png" width="52" height="52" alt="" />
             <h2>{props.name.split(" ")[0]}님, 무엇을 도와드릴까요?</h2>
-            {model?.effective && (props.openIdeas || props.openWork) && <div className="chat-welcome-actions">
-              {props.openIdeas && <Button label="할 수 있는 일 둘러보기" variant="secondary" onClick={props.openIdeas}/>}
-              {props.openWork && <Button label="맡긴 일 확인" variant="secondary" onClick={props.openWork}/>}
-            </div>}
             {!modelLoading && !model?.effective && (
               <div className="chat-model-missing">
                 <strong>사용할 모델을 먼저 선택해 주세요</strong>
@@ -1282,8 +1276,8 @@ export function ChatPanel(props: Props) {
         </div>
       )}
       <footer className="chat-composer-area">
-        <div className="chat-compose-dock">
-        <VoiceComposer ref={voice} accountId={accountId} slot={slot} onExpired={props.onExpired} onInsert={(origin,text)=>{flushRef.current();const current=callbacks.current.memory.drafts[origin]??"";const next=current?`${current}\n${text}`:text;if(new TextEncoder().encode(next).byteLength>8192)return false;callbacks.current.onDraft(origin,next);if(origin===slot)instructions.chooseMode("next");requestAnimationFrame(()=>{if(origin===(currentThread.current??"new"))textarea.current?.focus();});return true;}}/>
+        <ChatComposer className="chat-compose-dock" density="compact" elevation="none" sendButton={false}
+          onSubmit={submitComposer} input={<div className="chat-compose-grid">
         <IncomingShare accountId={accountId} sessionScope={props.shareScope ?? null} slot={slot} moveSlot={shareSlotMove}
           draft={() => callbacks.current.memory.drafts[slot] ?? ""}
           canInsertFiles={(original, files) => {
@@ -1300,8 +1294,30 @@ export function ChatPanel(props: Props) {
             if(!media.addShared(attachments,original))return false;
             callbacks.current.onDraft(original, text);if(original===slot)instructions.chooseMode("next");requestAnimationFrame(()=>{if(original===(currentThread.current??"new"))textarea.current?.focus();});return true;
           }}/>
-        {media.view}
-        <MediaLibraryView accountId={accountId} onSelect={media.select}/>
+        {media.previews}
+        <Button variant="ghost" isIconOnly label="첨부 추가" icon={<WorkspaceIcon name="new"/>}
+          className="chat-attachment-toggle" ref={attachmentsToggle} aria-expanded={attachmentsOpen}
+          aria-controls="chat-attachment-options" onClick={() => setAttachmentsOpen(open => !open)}/>
+        <div className="chat-attachment-options" id="chat-attachment-options" hidden={!attachmentsOpen}
+          onClick={event => event.stopPropagation()}
+          onChange={event => {
+            if (!(event.target instanceof HTMLInputElement) || event.target.type !== "file") return;
+            setAttachmentsOpen(false);
+            attachmentsToggle.current?.focus();
+          }}
+          onKeyDown={event => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            setAttachmentsOpen(false);
+            attachmentsToggle.current?.focus();
+          }}>
+          {media.picker}
+          <MediaLibraryView accountId={accountId} onSelect={item => {
+            media.select(item);
+            setAttachmentsOpen(false);
+            attachmentsToggle.current?.focus();
+          }}/>
+        </div>
         {modelError && (
           <p className="composer-help">
             {modelError}{" "}
@@ -1353,29 +1369,19 @@ export function ChatPanel(props: Props) {
             aria-describedby={composerBytes > composerLimit ? "chat-composer-help" : undefined}
             aria-keyshortcuts="Enter Shift+Enter"
           />
-          <div className="chat-composer-bottom">
-            <span>
-              {instructionMode ? "같은 작업에 글만 추가합니다 · 접수와 반영은 별도로 표시됩니다" : hasActive
-                ? "응답 중에도 다음 초안을 작성할 수 있습니다"
-                : modelLoading
-                  ? "모델 확인 중…"
-                  : !model?.effective
-                    ? "내 모델 설정에서 사용할 모델을 선택하세요"
-                    : ""}
-            </span>
-            <button className="chat-send primary" type="submit"
+          <VoiceComposer ref={voice} accountId={accountId} slot={slot} onExpired={props.onExpired} onInsert={(origin,text)=>{flushRef.current();const current=callbacks.current.memory.drafts[origin]??"";const next=current?`${current}\n${text}`:text;if(new TextEncoder().encode(next).byteLength>8192)return false;callbacks.current.onDraft(origin,next);if(origin===slot)instructions.chooseMode("next");requestAnimationFrame(()=>{if(origin===(currentThread.current??"new"))textarea.current?.focus();});return true;}}/>
+          <button className="chat-send primary" type="submit"
               aria-label={instructionMode ? "작업에 추가 지시 전송" : "메시지 전송"}
               disabled={instructionMode ? !instructions.canSubmit || (!!media.selectionKey && !keepMedia) : !canSend}>
               <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
-            </button>
-          </div>
+          </button>
         </form>
         {composerBytes > composerLimit && (
           <p id="chat-composer-help" className="composer-help input-limit">
             {instructionMode ? "추가 지시는 UTF-8 기준 2,000바이트까지 전송할 수 있습니다." : "메시지는 UTF-8 기준 8,192바이트까지 전송할 수 있습니다."}
           </p>
         )}
-        </div>
+        </div>}/>
       </footer>
     </section>
   );

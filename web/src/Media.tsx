@@ -336,11 +336,9 @@ export function useMediaUploads(accountId: string, slot: string) {
     sent,
     select,
     moveSlot,
-    view: (
-      <div className="media-composer">
-        <div className="media-attach-actions">
+    picker: (
+      <div className="media-attach-actions">
         <label className="media-file-button">
-          <span aria-hidden="true">＋</span>
           사진
           <input
             aria-label="이미지 첨부"
@@ -355,14 +353,13 @@ export function useMediaUploads(accountId: string, slot: string) {
           />
         </label>
         <label className="media-file-button">
-          <span aria-hidden="true">＋</span>
           파일
           <input aria-label="파일 첨부" type="file" accept={documentAccept} multiple disabled={visible.length>=4} onChange={e=>{add(e.target.files,true);e.target.value="";}}/>
         </label>
-        </div>
-        <span className="media-limit">
-          이미지 · PDF · 텍스트 파일
-        </span>
+      </div>
+    ),
+    previews: visible.length > 0 && (
+      <div className="media-composer">
         <div className="media-upload-list">
           {visible.map((item) => (
             <div className="media-upload" key={item.selection}>

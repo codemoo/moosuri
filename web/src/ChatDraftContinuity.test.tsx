@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./test-workspace";
 import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
@@ -240,10 +241,10 @@ describe("session-bound refresh recovery through real App/ChatPanel", () => {
         srv.failLogout();
         mount();
         expect(await composer()).toHaveValue("selected next draft");
-        fireEvent.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+        fireEvent.click(openWorkspaceMenu().getByRole("button", { name: "Sign out" }));
         await screen.findByText(/Sign-out could not be confirmed/);
         expect(window.sessionStorage.getItem(CHAT_DRAFT_KEY)).toBeNull();
     });
     it("clears expired/restricted sessions without displaying drafts", async () => { seed(); const srv = setup(); srv.setSession(null); const view = mount(); await screen.findByRole("button", { name: "Sign in" }); expect(window.sessionStorage.getItem(CHAT_DRAFT_KEY)).toBeNull(); view.unmount(); seed(); srv.setSession({ ...alice, password_change_required: true, user: { ...alice.user, must_change_password: true } }); mount(); await screen.findByRole("heading", { name: "비밀번호 변경" }); expect(window.sessionStorage.getItem(CHAT_DRAFT_KEY)).toBeNull(); expect(screen.queryByRole("textbox", { name: "메시지" })).toBeNull(); });
-    it("deleting a conversation purges its draft without affecting the other slot", async () => { seed(); setup(); mount(); expect(await composer()).toHaveValue("selected next draft"); fireEvent.click(screen.getByRole("button", { name: `Delete ${t2.title}` })); const dialog = await screen.findByRole("dialog"); const buttons = Array.from(dialog.querySelectorAll('button')); const confirm = buttons.find(b => b.textContent?.includes("Delete") && !b.getAttribute('aria-label'))!; fireEvent.click(confirm); await waitFor(() => expect(screen.queryByRole("button", { name: `Delete ${t2.title}` })).toBeNull()); expect(window.sessionStorage.getItem(CHAT_DRAFT_KEY) ?? "").not.toContain("selected next draft"); expect(window.sessionStorage.getItem(CHAT_DRAFT_KEY)).toContain("first draft"); });
+    it("deleting a conversation purges its draft without affecting the other slot", async () => { seed(); setup(); mount(); expect(await composer()).toHaveValue("selected next draft"); fireEvent.click(openWorkspaceMenu().getByRole("button", { name: `Delete ${t2.title}` })); const dialog = await screen.findByRole("dialog"); const buttons = Array.from(dialog.querySelectorAll('button')); const confirm = buttons.find(b => b.textContent?.includes("Delete") && !b.getAttribute('aria-label'))!; fireEvent.click(confirm); await waitFor(() => expect(screen.queryByRole("button", { name: `Delete ${t2.title}` })).toBeNull()); expect(window.sessionStorage.getItem(CHAT_DRAFT_KEY) ?? "").not.toContain("selected next draft"); expect(window.sessionStorage.getItem(CHAT_DRAFT_KEY)).toContain("first draft"); });
 });

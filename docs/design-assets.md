@@ -1,17 +1,26 @@
-# 공개 자산 제작 기록
+# 무수리의 화면과 아이콘
 
-현재 아이콘은 2026-11-18 내장 ImageGen으로 제작했다. 기존 무수리 시종의 쪽진 머리,
-녹색 댕기, 한복 깃을 유지하고, 화면에서 작게 쓸 수 있도록 얼굴과 어깨를 중심으로
-재구성했다. 공개 [Muse 파비콘](https://muse.ai/favicon.ico)의 간결한 윤곽과
-[Pickle 캐릭터](https://pickle.com/og/main_thumbnail_agent.jpg)의 표정이 시각 참고였다.
-ImageGen에는 무수리 원본만 입력했다.
+## 조선 왕실 색상
 
-- [192px 아이콘](../web/public/moosuri-icon-192.png)은 파비콘, 채팅, Apple touch icon, 데스크톱 메뉴에서 사용한다.
-- [512px 아이콘](../web/public/moosuri-icon-512.png)은 PWA 설치에서 사용한다.
-- [기존 픽셀 시종 원본](moosuri-attendant-original.png)은 제작 참고용이다.
+| 화면 역할 | 색상 | 참고 유물 |
+| --- | --- | --- |
+| 화면 바탕과 카드 | `#111514`, `#1B211E` | 검은 옻칠로 마감한 왕실 문방구 [흑칠나전연상](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=438958&menuNo=800065)과 영조·정조의 글씨를 인쇄한 [영은경희록](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=366176&menuNo=800065) |
+| 선택 상태와 주요 버튼 | `#ADDCC2`, `#233C32` | 청·홍·녹·백·흑 단청 안료를 쓴 어좌 뒤 [일월오봉도](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=363400&menuNo=800070)와 산의 맑은 청록이 두드러지는 [청록산수도병풍](https://www.gogung.go.kr/gogung/pgm/psgudMng/view.do?psgudSn=360183&menuNo=800070) |
+| 본문과 제목 | `#F0EBDE` | 조선 백자의 따뜻한 유백색 [백자 달항아리](https://www.museum.go.kr/MUSEUM/contents/M0502000000.do?schM=view&relicId=941) |
+| 삭제와 오류 | `#EDA394`, `#3A2522` | 일월오봉도의 홍색 안료 |
 
-> Use case: identity-preserve. Generate a square production favicon and app avatar for Moosuri, a Korean personal assistant. Use the attached original Moosuri sprite as an identity reference. Reinterpret her as a compact friendly head-and-shoulders icon, keeping dark top bun, ivory hair tie, muted jade ribbon tucked to the right, warm peach face, two immediately legible eyes, small smile, jade Korean attendant hanbok and broad diagonal ivory collar. Borrow only high-level principles of modern AI companion branding: one decisive readable silhouette, a sweeping expressive hair line and instantly readable pair of eyes. Handheld-console pixel art with intentional chunky stepped edges and at most 10 flat colors. Center the icon on a perfectly flat solid dark pine charcoal #162725 tile that fills the square to all four edges. Use even breathing room: avatar around 68 percent of canvas height, 65 percent width, head and shoulders. Keep the figure visible on the dark background using a small jade edge highlight around dark hair. Palette jade, pine-charcoal, ivory and peach. No words, letters, decorative stars, gradient, noise, grain, glossy shading, outer border or white tile. The original human character stays distinct. Crisp, cute and unmistakable even at 28 pixels.
+표의 HEX는 국립고궁박물관과 국립중앙박물관의 유물 해설을 바탕으로 다크 UI에서 읽기 쉽게 조정한 화면용 색상이다. 색상 토큰은 [workspace.css](../web/src/workspace.css)에서 관리한다.
 
-## 2026-11-13 원본 제작 프롬프트
+## 화면 배치
 
-> Create an original app icon for moosuri, a self-hosted personal assistant. Use case: logo-brand. Cute pixel-art Korean palace attendant (musuri), a small friendly chibi female attendant in simple muted jade-green and cream hanbok, dark tidy hair bun with a small ribbon, warm peach face, two tiny dark eyes and gentle smile, holding a small folded cloth. No text, letters, logos, watermarks or existing characters. Square flat warm cream background matching #f6f4ed, restrained dark forest green #264b40 outlines with clean stepped pixels, not painterly, no gradients. Strong readable silhouette on a logical 32-by-32 pixel grid; crisp large pixels rendered cleanly. Center the entire character inside the central 70% of the canvas so circular/maskable app cropping preserves it. One character only, simple polished icon, no device mockup, no decorative UI.
+Muse의 데스크톱 화면(1440×900)에서 72px 탐색 레일, 중앙에 가까운 탐색 항목, 아래쪽 768×58px 한 줄 입력창을 확인했다. 모바일(390×844)은 좌우 12px 여백에서 한 줄 입력을 유지했다. 무수리는 Astryx의 `AppShell`, `TopNav`, `SideNav`, `SideNavItem`, `Dialog`, `ChatComposer`로 이 배치를 구현했다. 모바일은 왼쪽 위의 무수리 아이콘에서 탐색·이전 대화·설정을 열고, 아래쪽에는 입력창을 둔다. 입력창의 본문 슬롯에서 한국어 조합 입력과 계정별 초안 저장을 처리한다. [Muse](https://muse.ai/) · [Astryx v0.7.16](https://github.com/meta/astryx/tree/v0.7.16)
+
+## 아이콘
+
+2026-11-18 ImageGen으로 접힌 옷깃을 추상화했다. Muse 파비콘의 간결한 윤곽과 Pickle의 작고 둥근 브랜드 형태를 참고했다. 그림에는 넓은 청록 띠 두 줄과 안쪽으로 접히는 선 하나만 들어간다. [Muse 파비콘](https://muse.ai/favicon.ico) · [Pickle 앱 소개](https://pickle.com/og/main_thumbnail_agent.jpg)
+
+제작 지시 요약. 정사각형 안에서 접힌 한복 깃을 넓은 띠 두 줄과 작은 접힘으로 표현한다. 옅은 청록 `#ADDCC2`과 먹에 가까운 `#101719`를 사용한다. 파비콘 크기에서도 윤곽이 남도록 중앙 여백을 넉넉히 두고 글자와 장식을 생략한다.
+
+- [192px 아이콘](../web/public/moosuri-icon-192.png)은 웹, Apple touch icon, 데스크톱 메뉴에서 쓴다.
+- [512px 아이콘](../web/public/moosuri-icon-512.png)은 PWA 설치에 쓴다.
+- [픽셀 시종 원본](moosuri-attendant-original.png)은 초기 디자인 기록으로 보관한다.

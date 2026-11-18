@@ -1,3 +1,6 @@
+import { AppShell } from "@astryxdesign/core/AppShell";
+import { SideNav, SideNavItem } from "@astryxdesign/core/SideNav";
+import { TopNav } from "@astryxdesign/core/TopNav";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog } from "@astryxdesign/core/Dialog";
 import { ConversationSearch, WorkspaceIcon } from "./WorkspaceNavigation";
@@ -82,12 +85,14 @@ function Modal({
   close,
   returnFocus,
   fallbackFocus,
+  side = false,
 }: {
   title: string;
   children: ReactNode;
   close: () => void;
   returnFocus?: HTMLElement | null;
   fallbackFocus?: HTMLElement | null;
+  side?: boolean;
 }) {
   const titleId = useId();
   useEffect(() => {
@@ -98,7 +103,8 @@ function Modal({
     };
   }, [returnFocus, fallbackFocus]);
   return (
-    <Dialog isOpen purpose="form" className="workspace-dialog" width={520} aria-labelledby={titleId}
+    <Dialog isOpen purpose="form" className={side ? "workspace-dialog workspace-drawer" : "workspace-dialog"} width={side ? 360 : 520}
+      position={side ? {start: 0, top: 0, bottom: 0} : undefined} aria-labelledby={titleId}
       onOpenChange={open => { if (!open) close(); }}>
       <div className="dialog-top">
         <h2 id={titleId}>{title}</h2>
@@ -725,7 +731,7 @@ function Workspace({
   const creationInFlight = useRef<Promise<ThreadSummary> | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const searchOpener = useRef<HTMLButtonElement | null>(null);
+  const searchOpener = useRef<HTMLElement | null>(null);
   const [deleting, setDeleting] = useState<ThreadSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const deletePending = useRef<{ id: string; controller: AbortController } | null>(null);
@@ -963,8 +969,8 @@ function Workspace({
     setSelected(id);
     openDestination("/app");
   }
-  function openSearch(event: React.MouseEvent<HTMLButtonElement>) {
-    searchOpener.current = drawer ? historyOpener.current : event.currentTarget;
+  function openSearch(event: React.MouseEvent) {
+    searchOpener.current = drawer ? historyOpener.current : event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     setDrawer(false);
     setSearchOpen(true);
   }
@@ -972,14 +978,14 @@ function Workspace({
     function shortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k" && !deleting) {
         event.preventDefault();
-        searchOpener.current = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+        searchOpener.current = drawer ? historyOpener.current : document.activeElement instanceof HTMLElement ? document.activeElement : null;
         setDrawer(false);
         setSearchOpen(value => !value);
       }
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [deleting]);
+  }, [deleting, drawer]);
   const primary = [
     {label:"채팅", path:"/app", active:chatPage, icon:"chat"},
     {label:"소식함", path:"/app/feed", active:feedPage, icon:"feed"},
@@ -1011,8 +1017,7 @@ function Workspace({
   }
   const history = (
     <>
-      <div className="sidebar-heading"><Brand /></div>
-      <div className="workspace-shortcuts">
+        <div className="workspace-shortcuts">
         <button className="new-chat" onClick={createThread} disabled={creating || loading}>
           <WorkspaceIcon name="new"/>
           {creating ? "만드는 중…" : chatMemory.threadCreation ? "새 대화 다시 확인" : "새 대화"}
@@ -1020,8 +1025,8 @@ function Workspace({
         <Button variant="ghost" className="workspace-search-button" onClick={openSearch} label="대화 검색" icon={<WorkspaceIcon name="search"/>} isIconOnly/>
       </div>
       {chatMemory.threadCreation?.status === "uncertain" && <p className="sidebar-hint" role="status">새 대화 생성 접수를 확인하지 못했습니다. 다시 확인할 때 같은 요청을 사용합니다.</p>}
-      <nav className="workspace-primary" aria-label="주 메뉴">
-        {primary.map(item => <Button key={item.path} label={item.label} variant="ghost" aria-current={item.active ? "page" : undefined}
+      <nav className="workspace-mobile-destinations" aria-label="주 메뉴">
+        {primary.map(item => <SideNavItem key={item.path} label={item.label} isSelected={item.active}
           icon={<WorkspaceIcon name={item.icon}/>} onClick={() => openDestination(item.path)}/>)}
       </nav>
       <div className="workspace-sidebar-scroll">
@@ -1057,22 +1062,24 @@ function Workspace({
   );
   return (
     <div className="workspace" ref={workspace}>
-      <a className="workspace-skip" href="#workspace-heading" onClick={event => {
-        event.preventDefault();
-        pageHeading.current?.focus({ preventScroll: true });
-      }}>작업 영역으로 건너뛰기</a>
-      <aside className="sidebar">{history}</aside>
-      <section className="work-area">
-        <header className="work-header">
-          <button
-            className="icon-button mobile-only"
-            ref={historyOpener}
-            aria-label="Open conversations"
-            onClick={() => setDrawer(true)}
-          >
-            <WorkspaceIcon name="menu"/>
-          </button>
-          <div className="work-title">
+      <AppShell className="workspace-shell" variant="wash" height="fill" contentPadding={0}
+        mobileNav={{hasToggle: false, isOpen: false}}
+        sideNav={<SideNav className="workspace-rail" aria-label="주 메뉴">
+          <div className="workspace-rail-items">
+            {primary.map((item, index) => <div className="workspace-rail-entry" key={item.path}>
+              {index === 1 && <SideNavItem className="workspace-rail-item" label="대화 검색"
+                icon={<WorkspaceIcon name="search"/>} onClick={openSearch}/>}
+              <SideNavItem className="workspace-rail-item" label={item.label} isSelected={item.active}
+                icon={<WorkspaceIcon name={item.icon}/>} onClick={() => openDestination(item.path)}/>
+            </div>)}
+          </div>
+        </SideNav>}
+        topNav={<TopNav className="work-header" label="대화와 계정"
+          heading={<div className="work-title">
+            <button className="icon-button workspace-account-toggle" ref={historyOpener} aria-label="Open conversations"
+              aria-expanded={drawer} title="대화 및 설정" onClick={() => setDrawer(true)}>
+              <img src="/moosuri-icon-192.png" width="32" height="32" alt="" />
+            </button>
             <h1 id="workspace-heading" ref={pageHeading} tabIndex={-1}>
               {personalTelegram ? "내 Telegram" : personalMail ? "내 Gmail" : nativeCredentials ? "신뢰 기기 연결" : calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : feedPage ? "소식함" : schedulesPage ? "예약 · 소식" : libraryPage ? "보관함" : goalPage ? "목표" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "아이디어" : personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
@@ -1094,12 +1101,15 @@ function Workspace({
                       ? "내 모델"
                       : (current?.title ?? "새 대화")}
             </h1>
-          </div>
-          <div className="work-header-actions">
-            <button className="icon-button mobile-only" aria-label="대화 검색" onClick={openSearch}><WorkspaceIcon name="search"/></button>
-            <button className="icon-button mobile-only" aria-label="새 대화 시작" disabled={creating || loading} onClick={createThread}><WorkspaceIcon name="new"/></button>
-          </div>
-        </header>
+          </div>}
+          endContent={<div className="work-header-actions">
+            <Button variant="ghost" className="workspace-mobile-search" label="대화 검색" isIconOnly
+              icon={<WorkspaceIcon name="search"/>} onClick={openSearch}/>
+            <Button variant="ghost" label={chatMemory.threadCreation ? "새 대화 다시 확인" : "새 대화"} isIconOnly
+              icon={<WorkspaceIcon name="new"/>} isDisabled={creating || loading} onClick={createThread}/>
+          </div>}/>}
+      >
+      <section className="work-area">
         {error && (
           <div className="workspace-error">
             <Notice>{error}</Notice>
@@ -1313,8 +1323,6 @@ function Workspace({
             onThreadMissing={threadMissing}
             onThreadUpdated={() => setRetry((value) => value + 1)}
             openSettings={() => navigate("/settings/model")}
-            openIdeas={() => navigate("/app/skills")}
-            openWork={() => navigate("/app/missions")}
             onOpenEvidence={(reference) => {
               setKnowledgeTarget(reference);
               navigate(reference.kind === "source" ? "/app/knowledge" : "/app/memory");
@@ -1323,13 +1331,15 @@ function Workspace({
         )}
         </DeferredPage>
       </section>
+      </AppShell>
       {drawer && (
         <Modal
           title="무수리"
+          side
           returnFocus={historyOpener.current}
           close={() => setDrawer(false)}
         >
-          <div className="mobile-history">{history}</div>
+          <div className="workspace-history">{history}</div>
         </Modal>
       )}
       {searchOpen && <Modal title="대화 검색" returnFocus={searchOpener.current} fallbackFocus={pageHeading.current} close={() => setSearchOpen(false)}>
@@ -1478,7 +1488,7 @@ function Admin({
     }
   }
   return (
-    <main className="admin-scroll">
+    <section className="admin-scroll">
       <div className="admin-intro">
         <h2>사용자 관리</h2>
 
@@ -1640,7 +1650,7 @@ function Admin({
           </span>
         </Modal>
       )}
-    </main>
+    </section>
   );
 }
 

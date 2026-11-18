@@ -77,7 +77,7 @@ function Harness() {
   const [text, setText] = __state("");
   return (
     <>
-      {media.view}
+      {media.picker}{media.previews}
       <input
         aria-label="text"
         value={text}
@@ -203,7 +203,7 @@ function SelectionRace() {
   const captured = __ref<string[]>([]);
   return (
     <>
-      {media.view}
+      {media.picker}{media.previews}
       <button onClick={() => media.select(summary)}>
         Select library image
       </button>
@@ -248,7 +248,7 @@ it("an older ACK preserves a later deselect/reselect instance of the same image"
 function SharedFiles() {
   const media=useMediaUploads("account-a","original");
   const mixed=[new File(["raw"],"photo.png",{type:"image/png"}),new File(["synthetic"],"note.txt",{type:"text/plain"})];
-  return <>{media.view}<button onClick={()=>{expect(media.addShared(mixed,"original")).toBe(true);expect(media.addShared([...mixed,...mixed],"original")).toBe(false);}}>Import shared files</button><button onClick={()=>media.sent(media.readySelections)}>Ordinary send</button></>;
+  return <>{media.picker}{media.previews}<button onClick={()=>{expect(media.addShared(mixed,"original")).toBe(true);expect(media.addShared([...mixed,...mixed],"original")).toBe(false);}}>Import shared files</button><button onClick={()=>media.sent(media.readySelections)}>Ordinary send</button></>;
 }
 it("mixed shared files use the existing account upload queue and reserve capacity without blocking text",async()=>{
   render(<SharedFiles/>);fireEvent.click(screen.getByText("Import shared files"));

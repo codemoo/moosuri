@@ -94,11 +94,11 @@ async fn latest_inbox_unconfigured_turn_finishes_without_any_model_call() {
             .iter()
             .map(|m| m.text.as_str())
             .collect::<String>();
-        assert!(text.contains("Google 앱이 아직 준비되지"));
+        assert!(text.contains("GWS 받은편지함 도우미"));
         assert!(text.contains("관리자인 본인"));
         assert!(matches!(
             done.run.mail_connection_recovery,
-            Some(moosuri_core::MailConnectionRecovery::AdminSetup)
+            Some(moosuri_core::MailConnectionRecovery::GwsSetup)
         ));
         assert_eq!(
             store.usage_summary(&user).await.unwrap().dispatched_calls,
@@ -128,7 +128,7 @@ async fn unconnected_inbox_request_recovers_before_unverified_model_tools_error(
     assert_eq!(blocked.run.state, RunState::Completed);
     assert!(matches!(
         blocked.run.mail_connection_recovery,
-        Some(moosuri_core::MailConnectionRecovery::AdminSetup)
+        Some(moosuri_core::MailConnectionRecovery::GwsSetup)
     ));
     assert!(
         blocked
@@ -380,21 +380,13 @@ async fn inbox_recovery_uses_actual_google_setup_and_current_members_own_connect
             .iter()
             .map(|m| m.text.as_str())
             .collect::<String>();
-        if configured {
-            assert!(matches!(
-                turn.run.mail_connection_recovery,
-                Some(MailConnectionRecovery::Connect)
-            ));
-            assert!(text.contains("현재 로그인한 계정에"));
-            assert!(!text.contains("설치 관리자"));
-        } else {
-            assert!(matches!(
-                turn.run.mail_connection_recovery,
-                Some(MailConnectionRecovery::MemberSetup)
-            ));
-            assert!(text.contains("설치 관리자에게 Google 앱 설정"));
-            assert!(!text.contains("관리자인 본인"));
-        }
+        assert!(matches!(
+            turn.run.mail_connection_recovery,
+            Some(MailConnectionRecovery::GwsSetup)
+        ));
+        assert!(text.contains("GWS 받은편지함 도우미"));
+        assert!(text.contains("설치 관리자"));
+        assert!(!text.contains("관리자인 본인"));
         assert_eq!(turn.run.state, RunState::Completed);
         assert_eq!(
             store.usage_summary(&member).await.unwrap().dispatched_calls,

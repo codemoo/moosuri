@@ -237,6 +237,28 @@ impl Runtime {
             Some(redirect_uri),
             claude,
             pdf_extractor,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_google_setup_claude_pdf_gws(
+        store: Store,
+        oauth: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+        web: Option<Arc<moosuri_connectors::web::WebClient>>,
+        browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
+        redirect_uri: String,
+        claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
+        pdf_extractor: Option<std::path::PathBuf>,
+        gws_inbox: Option<Arc<moosuri_connectors::gws_inbox::GwsInboxRegistry>>,
+    ) -> Self {
+        Self::start_with_services_pdf(
+            store,
+            oauth,
+            web::Service::new(web).with_browser(browser),
+            Some(redirect_uri),
+            claude,
+            pdf_extractor,
+            gws_inbox,
         )
     }
     fn start_with_services(
@@ -246,7 +268,7 @@ impl Runtime {
         redirect_uri: Option<String>,
         claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
     ) -> Self {
-        Self::start_with_services_pdf(store, oauth, web, redirect_uri, claude, None)
+        Self::start_with_services_pdf(store, oauth, web, redirect_uri, claude, None, None)
     }
     fn start_with_services_pdf(
         store: Store,
@@ -255,6 +277,7 @@ impl Runtime {
         redirect_uri: Option<String>,
         claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
         pdf_extractor: Option<std::path::PathBuf>,
+        gws_inbox: Option<Arc<moosuri_connectors::gws_inbox::GwsInboxRegistry>>,
     ) -> Self {
         let (changes, _) = watch::channel(0);
         let (done_tx, done) = watch::channel(false);
@@ -271,7 +294,8 @@ impl Runtime {
             .map(|u| u.origin().ascii_serialization());
         let mail = mail::MailService::new(store.clone(), oauth, signals.clone())
             .with_managed_google(redirect_uri)
-            .with_pdf_extractor(pdf_extractor);
+            .with_pdf_extractor(pdf_extractor)
+            .with_gws_inbox(gws_inbox);
         let browser =
             browser::BrowserService::new(store.clone(), web.reader(), signals.stop.clone());
         web.set_workspaces(browser.clone());

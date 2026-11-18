@@ -4,6 +4,7 @@ pub mod calendar;
 pub mod github_catalog;
 pub mod github_skills;
 pub mod gmail;
+pub mod gws_inbox;
 pub mod model;
 pub mod parcel;
 pub mod source;

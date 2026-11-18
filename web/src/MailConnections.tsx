@@ -16,6 +16,9 @@ import { MailAttachments, type MailAttachment } from "./MailAttachments";
 import { GmailDrafts } from "./GmailDrafts";
 import { MailTiming } from "./MailTiming";
 import { MailApproval } from "./MailApproval";
+import { GoogleLoginHelp } from "./GoogleLoginHelp";
+import { rememberMailReturn } from "./mail-return";
+import { GwsInboxHelp } from "./GwsInboxHelp";
 import "./mail.css";
 type ReadMessage = {
   id: string;
@@ -67,6 +70,7 @@ export function MailConnections({
   const [editing, setEditing] = useState<MailAction | null>(null);
   const [recipients, setRecipients] = useState({ to: "", cc: "", bcc: "" });
   const [error, setError] = useState("");
+  const [connectionNotice, setConnectionNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("in:inbox");
   const [pageToken, setPageToken] = useState<string | null>(null);
@@ -110,8 +114,12 @@ export function MailConnections({
     const params = new URLSearchParams(window.location.search);
     const handle = params.get("oauth");
     const denied = params.get("oauth_error");
-    if (handle || denied)
-      window.history.replaceState(null, "", window.location.pathname);
+    if (handle || denied) {
+      params.delete("oauth");
+      params.delete("oauth_error");
+      const query = params.toString();
+      window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : "") + window.location.hash);
+    }
     if (denied)
       setError("Google 연결을 허락하지 않았습니다. 원할 때 다시 연결하세요.");
     if (handle && !oauthStarted.current) {
@@ -120,6 +128,7 @@ export function MailConnections({
       void scope
         .request("/mail/oauth/complete", "POST", { handle })
         .then(reload)
+        .then(() => setConnectionNotice("Google 연결을 마쳤습니다. 연결된 계정을 확인한 뒤 대화로 돌아가 원래 요청을 다시 보내세요."))
         .catch(fail)
         .finally(() => setBusy(false));
     }
@@ -158,6 +167,7 @@ export function MailConnections({
   }, [actions]);
   const action = actions.find((a) => a.id === selected) ?? null;
   async function connect(compose = false) {
+    rememberMailReturn(accountId, originThreadId);
     setBusy(true);
     setError("");
     try {
@@ -289,12 +299,15 @@ export function MailConnections({
           {error}
         </p>
       )}
+      {connectionNotice && <p role="status">{connectionNotice}</p>}
       <button onClick={() => void reload().catch(fail)}>상태 새로고침</button>
+      <GwsInboxHelp key={accountId} accountId={accountId} />
+      <h3>다른 연결: Google 웹 OAuth</h3>
       {!connections ? (
         <p role="status">연결 상태 확인 중…</p>
       ) : (
         <section className="admin-card">
-          <h3>개인 연결</h3>
+          <h3>웹 OAuth 개인 연결</h3>
           {!connections.configured && !connections.connections.some(c=>c.native_send) && (
             <div><p>{openGoogleSetup ? "설치의 Google 앱 설정을 먼저 준비하세요. 설정 후 각 회원이 자신의 계정으로 연결합니다." : "설치자에게 Google 연결 설정을 요청하세요. 준비가 끝나면 여기서 본인 Google 계정으로 로그인할 수 있습니다."} 다른 기능은 계속 사용할 수 있습니다.</p>{openGoogleSetup && <button onClick={openGoogleSetup}>Google 설치 설정 열기</button>}</div>
           )}
@@ -302,6 +315,7 @@ export function MailConnections({
             Google 로그인으로 만든 연결 토큰은 서버에서 관리합니다. 연결 해제는 새 작업을 막지만
             이미 요청된 메일을 회수하지 않습니다.
           </p>
+          <GoogleLoginHelp key={accountId} accountId={accountId} />
           <button
             disabled={busy || !connections.configured}
             onClick={() => void connect()}

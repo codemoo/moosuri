@@ -19,6 +19,7 @@ include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 mod backup_live;
 mod backup_snapshots;
 mod calls;
+mod gws_inbox;
 mod import_private;
 mod installation;
 mod legacy_relations;
@@ -48,6 +49,8 @@ enum RecoveryRole {
 // One startup value, never a collection or hot-path allocation. Keep clap's flat CLI.
 #[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Serve a bounded local Gmail INBOX metadata bridge using existing gws authentication.
+    GwsInbox(gws_inbox::Options),
     /// Guided installation (English / 한국어), or resume an existing setup.
     Setup(installation::setup::Options),
     /// Show the desktop menu. Closing it leaves the server running.
@@ -164,6 +167,9 @@ enum Command {
         /// Owner-only Google OAuth web client JSON file; never pass a secret on the CLI.
         #[arg(long)]
         google_client_file: Option<PathBuf>,
+        /// Owner-only per-account metadata-only GWS inbox helper registry JSON.
+        #[arg(long)]
+        gws_inbox_file: Option<PathBuf>,
         /// Explicit native gws binary for system invitations; no ambient authentication.
         #[arg(long,requires_all=["invitation_gws_credentials","invitation_gws_config","invitation_from"])]
         invitation_gws: Option<PathBuf>,
@@ -381,6 +387,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::GwsInbox(options) = &cli.command {
+        return gws_inbox::run(options).await;
+    }
     if let Command::Models { command } = &cli.command {
         return workstation_models::run(command).await;
     }
@@ -516,7 +525,8 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::Models { .. }
+        Command::GwsInbox(_)
+        | Command::Models { .. }
         | Command::Skills { .. }
         | Command::Subscriptions { .. }
         | Command::WorkSessions { .. }
@@ -730,6 +740,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             trusted_proxy,
             client_ip_header,
             google_client_file,
+            gws_inbox_file,
             invitation_gws,
             invitation_gws_credentials,
             invitation_gws_config,
@@ -803,6 +814,9 @@ async fn run(cli: Cli) -> Result<(), String> {
                         .transpose()?,
                 )
                 .map_err(str::to_owned)?;
+            if let Some(path) = gws_inbox_file {
+                config = config.with_gws_inbox_file(path).map_err(str::to_owned)?;
+            }
             if let Some(path) = claude_profile_file {
                 let json = read_browser_capsule_file(&path)?;
                 config = config

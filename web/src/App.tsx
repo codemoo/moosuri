@@ -16,6 +16,7 @@ import {ChatDraftRecovery,draftScope,type ChatDraftSession} from "./chat-drafts"
 import {activatePushAccount,clearBrowserPushBinding} from "./push-binding";
 
 import {VaultLaunch,lockVaultWindows} from "./VaultLaunch";
+import { clearMailReturn, mailReturnThread, rememberMailReturn } from "./mail-return";
 import {
   lazy,
   useEffect,
@@ -744,6 +745,17 @@ function Workspace({
     setNavigationFocus(value => value + 1);
     navigateParent(destination);
   }
+  function returnFromMail() {
+    const mission = new URLSearchParams(window.location.search).get("mission_return");
+    if (mission && /^[a-f0-9-]{36}$/i.test(mission)) {
+      navigate(`/app/missions#mission-${mission}`);
+      return;
+    }
+    const thread = mailReturnThread(session.user.id);
+    clearMailReturn(session.user.id);
+    if (thread && threads.some(value => value.id === thread)) setSelected(thread);
+    navigate("/app");
+  }
   useEffect(() => {
     if (navigationFocus > 0) pageHeading.current?.focus({ preventScroll: true });
   }, [navigationFocus]);
@@ -793,7 +805,8 @@ function Workspace({
         if(!recoveryReady.current) {
           const recovered=draftSession?.load(threadIds.current);
           recoveryReady.current=true;
-          const linkedThread=new URLSearchParams(window.location.search).get("thread");
+          const linkedThread=new URLSearchParams(window.location.search).get("thread")
+            ?? ((window.location.pathname === "/settings/mail" || window.location.pathname === "/admin/google") ? mailReturnThread(session.user.id) : null);
           if(linkedThread && threadIds.current.includes(linkedThread)) {
             if(recovered?.restored)setChatMemory(recovered.memory);
             setSelected(linkedThread);
@@ -1209,7 +1222,7 @@ function Workspace({
             },
           }));
           navigate("/app");
-        }}/> : nativeCredentials ? <NativeCredentials key={session.user.id} accountId={session.user.id} onExpired={onExpired} back={()=>{const id=new URLSearchParams(window.location.search).get("mission_return");navigate(id&&/^[a-f0-9-]{36}$/i.test(id)?`/app/missions#mission-${id}`:"/app")}}/> : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={()=>{const id=new URLSearchParams(window.location.search).get("mission_return");navigate(id&&/^[a-f0-9-]{36}$/i.test(id)?`/app/missions#mission-${id}`:"/app")}} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => navigate("/admin/google") : undefined}/> : knowledgeOpen ? (
+        }}/> : nativeCredentials ? <NativeCredentials key={session.user.id} accountId={session.user.id} onExpired={onExpired} back={()=>{const id=new URLSearchParams(window.location.search).get("mission_return");navigate(id&&/^[a-f0-9-]{36}$/i.test(id)?`/app/missions#mission-${id}`:"/app")}}/> : personalMail ? <MailConnections accountId={session.user.id} onExpired={onExpired} back={returnFromMail} originThreadId={selected} openGoogleSetup={allowedAdmin ? () => { rememberMailReturn(session.user.id, selected); navigate("/admin/google"); } : undefined}/> : knowledgeOpen ? (
           <KnowledgeView
             accountId={session.user.id}
             mode={memoryPage ? "memory" : "source"}
@@ -1232,7 +1245,7 @@ function Workspace({
             telegramAdmin ? (
               <TelegramSettings accountId={session.user.id} admin onExpired={onExpired} />
             ) : googleAdmin ? (
-              <GoogleSetup accountId={session.user.id} onExpired={onExpired} />
+              <GoogleSetup accountId={session.user.id} onExpired={onExpired} back={returnFromMail} />
             ) : adminUsage ? (
               <UsageView
                 accountId={session.user.id}

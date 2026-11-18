@@ -239,7 +239,7 @@ pub(crate) fn recovery_view(
     tenant: &str,
     run: &str,
 ) -> Result<Option<MailConnectionRecovery>> {
-    let item: Option<String> = conn.query_row("SELECT item FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item IN('mail-recovery-admin_setup','mail-recovery-member_setup','mail-recovery-connect','mail-recovery-reconnect','mail-recovery-choose_account') LIMIT 1", params![tenant,run], |r|r.get(0)).optional()?;
+    let item: Option<String> = conn.query_row("SELECT item FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item IN('mail-recovery-gws_setup','mail-recovery-admin_setup','mail-recovery-member_setup','mail-recovery-connect','mail-recovery-reconnect','mail-recovery-choose_account') LIMIT 1", params![tenant,run], |r|r.get(0)).optional()?;
     item.map(|item| {
         parse(&format!(
             "\"{}\"",

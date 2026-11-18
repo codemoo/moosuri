@@ -165,7 +165,7 @@ temporary_password: string | null, };
 export type InvitationApproval = { digest: string, };
 export type InvitationSenderStatus = { configured: boolean, from: string | null, };
 export type MailConnection = { native_send?: boolean, compose_enabled: boolean, id: string, email: string, epoch: number, status: string, };
-export type MailConnectionRecovery = "admin_setup" | "member_setup" | "connect" | "reconnect" | "choose_account";
+export type MailConnectionRecovery = "gws_setup" | "admin_setup" | "member_setup" | "connect" | "reconnect" | "choose_account";
 export type MailConnections = { configured: boolean, connections: Array<MailConnection>, };
 export type MailReply = { thread_id: string, in_reply_to: string, references: Array<string>, };
 export type MailDraftContent = { from: string, to: Array<string>, cc: Array<string>, bcc: Array<string>, subject: string, text: string, reply: MailReply | null, };

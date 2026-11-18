@@ -13,7 +13,10 @@ use std::{
 };
 use tokio::sync::Mutex;
 mod attachments;
+mod connection_help;
+pub(crate) use connection_help::{CONNECTION_HELP, connection_help_definition};
 mod drafts;
+mod gws;
 mod latest;
 mod model_context;
 mod projection;
@@ -23,6 +26,7 @@ type MailLocks = Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>;
 #[derive(Clone)]
 pub struct MailService {
     store: Store,
+    gws_inbox: Option<Arc<moosuri_connectors::gws_inbox::GwsInboxRegistry>>,
     pdf_extractor: Option<std::path::PathBuf>,
     client: GmailClient,
     oauth: Option<Arc<OAuthClient>>,
@@ -40,6 +44,7 @@ impl MailService {
     ) -> Self {
         Self {
             store,
+            gws_inbox: None,
             pdf_extractor: None,
             #[cfg(test)]
             synthetic_google: None,
@@ -49,6 +54,13 @@ impl MailService {
             locks: Arc::new(Mutex::new(HashMap::new())),
             signals,
         }
+    }
+    pub(crate) fn with_gws_inbox(
+        mut self,
+        registry: Option<Arc<moosuri_connectors::gws_inbox::GwsInboxRegistry>>,
+    ) -> Self {
+        self.gws_inbox = registry;
+        self
     }
     pub(crate) fn with_managed_google(mut self, redirect_uri: Option<String>) -> Self {
         self.managed_redirect = redirect_uri;

@@ -38,6 +38,7 @@ pub(super) struct Read {
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/connections", get(connections))
+        .route("/gws-inbox", get(gws_inbox))
         .route(
             "/reply-watches",
             get(reply_watches).post(create_reply_watch),
@@ -66,6 +67,10 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/actions/{id}/reject", post(reject))
         .route("/actions/{id}/check-sent", post(check_sent))
         .layer(DefaultBodyLimit::max(64 * 1024))
+}
+async fn gws_inbox(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
+    let user = current(&s, &headers).await?;
+    Ok(Json(s.mail.gws_inbox_status(&user)?).into_response())
 }
 async fn connections(State(s): State<AppState>, headers: HeaderMap) -> HttpResult {
     let u = current(&s, &headers).await?;

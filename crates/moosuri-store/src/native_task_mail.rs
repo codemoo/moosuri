@@ -76,6 +76,12 @@ pub(crate) fn current_model_read_admitted(c: &Connection, run: &crate::chat::Run
         .iter()
         .any(|grant| scope.candidate_binding_ids.contains(&grant.choice())))
 }
+/// Setup UI must also notice a connection added after this run's frozen scope.
+/// This observation does not grant that connection to the run.
+pub(crate) fn current_model_read_connected(c: &Connection, run: &crate::chat::Run) -> Result<bool> {
+    Ok(cfg!(feature = "credential-broker-chat")
+        && !grants(c, &run.tenant, &run.account, run.epoch, false)?.is_empty())
+}
 pub(crate) fn admit_profile(
     c: &Connection,
     u: &UserContext,

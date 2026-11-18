@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { GoogleConnectionCheck, GoogleSetupStatus, GoogleSetupValidation, MailConnection } from "../shared/api-types";
 import { useScope } from "./account-scope";
 import { ApiFailure, errorText, isAborted } from "./api";
+import { GoogleLoginHelp } from "./GoogleLoginHelp";
 import "./google-setup.css";
 
 const maximumBytes = 16384;
@@ -29,10 +30,10 @@ function setupError(error: unknown) {
 }
 
 // An account switch remounts all state, including browser-owned file inputs.
-export function GoogleSetup(props: { accountId: string; onExpired: () => void }) {
+export function GoogleSetup(props: { accountId: string; onExpired: () => void; back?: () => void }) {
   return <GoogleSetupAccount key={props.accountId} {...props} />;
 }
-function GoogleSetupAccount({ accountId, onExpired }: { accountId: string; onExpired: () => void }) {
+function GoogleSetupAccount({ accountId, onExpired, back }: { accountId: string; onExpired: () => void; back?: () => void }) {
   const scope = useScope(accountId);
   const [status, setStatus] = useState<GoogleSetupStatus | null>(null);
   const [error, setError] = useState("");
@@ -189,6 +190,8 @@ function GoogleSetupAccount({ accountId, onExpired }: { accountId: string; onExp
   const operator = status?.mode === "operator_file";
   const ready = !!status?.configured && status.redirect_matches;
   return <main className="google-setup-scroll">
+    {back && <button className="text-button" onClick={back}>← 대화로 돌아가기</button>}
+    <p>이 화면은 다른 연결 방식인 Google 웹 OAuth의 설치 설정입니다. 최근 받은메일만 읽으려면 <a href="/settings/mail">기기 GWS 연결 안내</a>를 먼저 확인하세요.</p>
     <div className="google-setup-intro"><p className="eyebrow">GOOGLE · 설치 설정</p><h2>한 번 준비하고, 각자 연결하세요.</h2><p>설치자가 Google 앱 하나를 준비합니다. 가족과 친구는 각자의 Google 계정으로 로그인해 개인 Gmail 또는 Calendar를 각각 연결합니다. Calendar는 별도 동의를 받고 Gmail 권한을 확장하지 않습니다.</p></div>
     {error && <p className="notice" role="alert">{error}</p>}
     {notice && <p className="google-setup-success" role="status">{notice}</p>}
@@ -209,6 +212,7 @@ function GoogleSetupAccount({ accountId, onExpired }: { accountId: string; onExp
         <p>설치 설정: {status.mode === "unconfigured" ? "아직 저장하지 않음" : !status.redirect_matches ? "콜백 갱신 필요" : ready ? "저장됨 · 현재 콜백과 일치" : "설정 확인 필요"}</p>
       </section>
       <section className="admin-card google-setup-step" aria-labelledby="google-step-3"><span className="pill">3 · 내 계정으로 확인</span><h3 id="google-step-3">본인 Google 계정 연결</h3><p>각 회원도 자신의 설정에서 직접 로그인합니다. 여기서는 본인 연결의 Google 프로필만 확인하며, 메일을 보내거나 자동으로 수집하지 않습니다.</p>
+        <GoogleLoginHelp key={accountId} accountId={accountId} />
         <button className="primary" disabled={busy || !ready} onClick={() => void connect()}>내 Google 계정 연결</button>
         {status.personal_connections.some(c => c.status === "active") && <><label>확인할 내 계정<select value={selected} disabled={busy} onChange={e => { setSelected(e.target.value); setChecked(""); }}>{status.personal_connections.filter(c => c.status === "active").map(c => <option key={c.id} value={c.id}>{c.email}</option>)}</select></label><button disabled={busy || !ready || !selected} onClick={() => void check()}>내 연결 프로필 확인</button></>}
         {checked && <p className="google-setup-success" role="status">Google 프로필 확인 성공 · {checked}</p>}

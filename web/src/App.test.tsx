@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { RequestScope } from "./api";
+import { rememberMailReturn } from "./mail-return";
 import type { CommunitySkillCard, SessionView, ThreadSummary } from "../shared/api-types";
 
 const alice: SessionView = {
@@ -112,6 +113,24 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+it("returns an OAuth callback to the original owned conversation without sending its request again", async () => {
+  const original = { ...thread, id: "11111111-1111-4111-8111-111111111111", title: "Original Gmail request" };
+  rememberMailReturn(alice.user.id, original.id);
+  window.history.replaceState(null, "", "/settings/mail?oauth=synthetic-single-use-handle");
+  const calls = server((path) => path === "/threads" ? response({threads:[thread, original]})
+    : path === "/mail/connections" ? response({configured:true,connections:[]})
+    : path === "/mail/actions" ? response({actions:[]})
+    : path === "/mail/oauth/complete" ? response({}) : response({}, 204));
+  render(<App />);
+  await screen.findByText(/Google 연결을 마쳤습니다/);
+  expect(window.location.search).toBe("");
+  await userEvent.click(screen.getByRole("button", {name: "← 대화로 돌아가기"}));
+  await screen.findByRole("heading", {name: original.title, level:1});
+  expect(calls.filter(call => call.path === "/mail/oauth/complete")).toHaveLength(1);
+  expect(calls.filter(call => call.init.method === "POST").map(call => call.path)).toEqual(["/mail/oauth/complete"]);
+  expect(sessionStorage.getItem("moosuri.gmail-return.v1." + alice.user.id)).toBeNull();
+});
 
 it("bypasses long navigation, marks only the destination and leaves draft focus alone on refresh", async () => {
   const user = userEvent.setup();

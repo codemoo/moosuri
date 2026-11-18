@@ -73,7 +73,7 @@ export function validRun(value: unknown): value is RunView {
     (value.error === null ||
       (typeof value.error === "string" && value.error.length <= 128)) &&
     validUsage(value.usage) &&
-    (value.mail_connection_recovery === undefined || ["admin_setup", "member_setup", "connect", "reconnect", "choose_account"].includes(String(value.mail_connection_recovery))) &&
+    (value.mail_connection_recovery === undefined || ["gws_setup", "admin_setup", "member_setup", "connect", "reconnect", "choose_account"].includes(String(value.mail_connection_recovery))) &&
     (value.calendar_receipt===undefined || value.calendar_receipt===null ||
       (object(value.calendar_receipt) &&
         (value.calendar_receipt.action_id===null || id(value.calendar_receipt.action_id)) &&

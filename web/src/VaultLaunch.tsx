@@ -4,10 +4,11 @@ const windows=new Set<{window:Window;origin:string;account:string}>();
 export function lockVaultWindows(account?:string|null){
   for(const value of windows){if(account&&value.account!==account)continue;try{value.window.postMessage({kind:"moosuri-vault-lock",account:value.account},value.origin)}catch{}windows.delete(value)}
 }
-export function VaultLaunch({accountId}:{accountId:string}){
-  const scope=useScope(accountId),[available,setAvailable]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  useEffect(()=>{let live=true;void scope.request<{available:boolean}>("/vault").then(v=>{if(live)setAvailable(v.available===true)}).catch(()=>{});return()=>{live=false}},[scope]);
-  if(!available)return null;
+export function VaultLaunch({accountId,label="볼트 열기",unavailable}:{accountId:string;label?:string;unavailable?:string}){
+  const scope=useScope(accountId),[available,setAvailable]=useState<boolean|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  useEffect(()=>{let live=true;setAvailable(null);void scope.request<{available:boolean}>("/vault").then(v=>{if(live)setAvailable(v.available===true)}).catch(()=>{if(live)setAvailable(false)});return()=>{live=false}},[scope]);
+  if(available===null)return unavailable?<p role="status">내 볼트 연결 확인 중…</p>:null;
+  if(!available)return unavailable?<p role="status">{unavailable}</p>:null;
   async function open(){
     if(busy)return;setBusy(true);setError("");
     const target=`moosuri-vault-${crypto.randomUUID()}`;const popup=window.open("about:blank",target);
@@ -23,5 +24,5 @@ export function VaultLaunch({accountId}:{accountId:string}){
     }catch{popup.close();setError("볼트 연결을 확인하지 못했습니다. 다시 열어 주세요.")}
     finally{setBusy(false)}
   }
-  return <span><button className="text-button" disabled={busy} onClick={()=>void open()}>볼트 열기</button>{error&&<small role="status">{error}</small>}</span>;
+  return <span><button className="text-button" disabled={busy} onClick={()=>void open()}>{label}</button>{error&&<small role="status">{error}</small>}</span>;
 }

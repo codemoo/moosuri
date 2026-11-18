@@ -1090,3 +1090,6 @@ mod thread_creation;
 
 #[path = "cases/provider_quota.rs"]
 mod provider_quota;
+
+#[path = "cases/gws_inbox.rs"]
+mod gws_inbox;

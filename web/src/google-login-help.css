@@ -1,0 +1,12 @@
+.google-login-help { margin-block: 12px; }
+.google-login-help p { line-height: 1.6; }
+.google-login-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.google-login-choices button { white-space: normal; text-align: left; }
+.google-login-instructions { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; overflow-wrap: anywhere; }
+.google-login-instructions ol { padding-left: 22px; }
+.google-login-instructions li { margin-block: 8px; }
+.mail-connection-recovery { margin-block: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+.mail-connection-recovery h4 { margin-top: 0; }
+.gws-inbox-help { padding: 12px; border: 1px solid var(--line); border-radius: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+.gws-inbox-help h4 { margin-top: 0; }
+.gws-inbox-help ol { padding-left: 22px; }

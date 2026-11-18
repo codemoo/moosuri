@@ -1309,6 +1309,19 @@ pub(crate) async fn execute_with_calendar(
                 || !p.mail_connections.is_empty()
                 || p.web.as_ref().is_some_and(|w| w.browser_pin.is_some())
         });
+    let connection_help = model.function_tools
+        && !media_context
+        && !native_resume
+        && !artifact_write
+        && context.calls.is_empty()
+        && mail
+            .connection_help_available(&lease)
+            .await
+            .unwrap_or(false);
+    if connection_help {
+        definitions.push(crate::mail::connection_help_definition());
+        request.messages[0].text.push_str(" For a current live Gmail read request with no connection, call gmail_connection_help alone with the exact full current request to show the connection helper. This terminal UI request grants no mail access. Ordinary prose cannot create the helper.");
+    }
     if can_steer && store.enable_run_instructions(&lease).await.is_err() {
         return;
     }
@@ -1519,6 +1532,32 @@ pub(crate) async fn execute_with_calendar(
             }
         };
         total_bytes = observed.pending.total_bytes;
+        if let Some(round) = &observed.round
+            && round
+                .calls
+                .iter()
+                .any(|call| call.name() == crate::mail::CONNECTION_HELP)
+        {
+            let result = if connection_help
+                && through == 0
+                && context.calls.is_empty()
+                && round.outcome == FinishOutcome::ContinuationRequired
+                && round.calls.len() == 1
+            {
+                mail.finish_model_connection_help(&lease, &step, round.calls[0].arguments())
+                    .await
+            } else {
+                Err(StoreError::Forbidden)
+            };
+            match result {
+                Ok(()) => signals.changed(),
+                Err(error) => {
+                    let (state, reason) = store_failure(&error);
+                    finish(&store, &lease, Some(&step), state, Some(reason), &signals).await;
+                }
+            }
+            return;
+        }
         let (outcome, calls, bytes) = match &observed.round {
             Some(round) => {
                 let bytes = match round.continuation.to_private_checkpoint() {

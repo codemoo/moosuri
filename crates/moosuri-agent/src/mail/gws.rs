@@ -1,0 +1,111 @@
+//! Original-owner literal metadata route. Results never enter model history.
+use super::*;
+impl MailService {
+    pub fn gws_inbox_status(&self, user: &UserContext) -> Result<serde_json::Value, StoreError> {
+        let mailbox = self
+            .gws_inbox
+            .as_ref()
+            .map(|r| r.mailbox(&user.account().id))
+            .transpose()
+            .map_err(|_| StoreError::Unavailable)?
+            .flatten();
+        Ok(match mailbox {
+            Some(mailbox) => serde_json::json!({"configured":true,"mailbox":mailbox}),
+            None => serde_json::json!({"configured":false}),
+        })
+    }
+    pub(crate) async fn gws_model_context(
+        &self,
+        lease: &moosuri_store::RunLease,
+    ) -> Result<&'static str, StoreError> {
+        let owner = self.store.mail_run_owner(lease).await?;
+        match &self.gws_inbox {
+            Some(registry) => match registry.mailbox(&owner.account().id) {
+                Ok(Some(_)) => Ok(
+                    "Owner GWS inbox helper is configured (availability not probed). It supports only an explicit latest-INBOX metadata request, up to20 recent messages, literal subject/from/date display with no body/model access. Do not claim the owner lacks all Gmail access. General search, body, attachments, summaries, sending and writes are unsupported by this helper; do not claim them done. For those requests explain the metadata-only limit and offer a supported latest inbox request or the separate existing official Gmail read connection. No need to show a missing-connection card merely because this helper cannot answer a broader query.",
+                ),
+                Err(_) => Ok(
+                    "Owner GWS helper configuration could not be checked. Do not claim it is absent or usable. Direct the owner to /settings/mail to check their GWS helper setup; no mail was read.",
+                ),
+                Ok(None) => Ok(
+                    "No GWS inbox helper is configured for the current owner. For missing live Gmail access, the default connection helper is /settings/mail → GWS. Authentication stays with the owner's GWS device helper, separate from the vault. The existing web OAuth connection is an optional alternative; do not require an installation Google app as the default.",
+                ),
+            },
+            None => Ok(
+                "No GWS inbox helper registry is configured. For missing live Gmail access, the default connection helper is /settings/mail → GWS. Authentication stays with the owner's GWS device helper, separate from the vault. The existing web OAuth connection is an optional alternative; do not require an installation Google app as the default.",
+            ),
+        }
+    }
+    /// Some(bool) means this explicit route owned the turn, even on failure.
+    /// An offline/misconfigured selected helper cannot silently fall back to OAuth.
+    pub(super) async fn gws_latest_chat(
+        &self,
+        lease: &moosuri_store::RunLease,
+        user: &UserContext,
+        latest: bool,
+    ) -> Result<Option<bool>, StoreError> {
+        let Some(registry) = &self.gws_inbox else {
+            return Ok(None);
+        };
+        match registry.mailbox(&user.account().id) {
+            Ok(None) => return Ok(None),
+            Ok(Some(_)) => {}
+            Err(_) => {
+                if !latest {
+                    return Ok(Some(false));
+                }
+                self.finish_gws_unavailable(lease).await?;
+                return Ok(Some(true));
+            }
+        }
+        if !latest {
+            return Ok(Some(false));
+        }
+        let result = async {
+            let binding = registry.binding(&user.account().id).map_err(|_|StoreError::Unavailable)?.ok_or(StoreError::Conflict)?;
+            self.store.check_run(lease).await?;
+            let cancel = self.signals.stopping().child_token();
+            let operation = registry.latest(&binding, &cancel);
+            tokio::pin!(operation);
+            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            let messages = loop {
+                tokio::select! { biased;
+                    _=self.signals.stopping().cancelled()=>return Err(StoreError::Unavailable),
+                    _=tick.tick()=> {
+                        self.store.check_run(lease).await?;
+                        registry.check(&binding).map_err(|_|StoreError::Conflict)?;
+                    },
+                    result=&mut operation=>break result.map_err(|_|StoreError::Unavailable)?,
+                }
+            };
+            // Owner revocation, cancellation and original-request authorization
+            // are checked after helper IO, before any literal output is stored.
+            let current = self.store.latest_inbox_request(lease).await?.ok_or(StoreError::Forbidden)?;
+            if !current.2 || current.0.account().id != user.account().id { return Err(StoreError::Forbidden); }
+            let count = messages.len();
+            let newest = messages.iter().max_by_key(|m|(m.internal_date,&m.id));
+            let text = match newest {
+                Some(m) => format!("GWS 연결 · {}\n받은편지함 최근 최대 20통 중 {count}통을 확인했고, 아래는 제공된 범위에서 가장 최근에 받은 메일이에요. 받은편지함 전체의 최신 메일인지는 확인하지 못했어요.\n제목: {}\n보낸 사람: {}\n메일 날짜: {}\n본문은 읽지 않았어요.",binding.mailbox(),m.subject,m.from,m.date),
+                None => format!("GWS 연결 · {}\n도우미가 제공한 받은편지함 최근 메일 목록이 비어 있어요. 받은편지함 전체가 비었다고 확인한 것은 아니에요. 본문은 읽지 않았어요.",binding.mailbox()),
+            };
+            let _delivery = self.signals.delivery.write().await;
+            registry.check(&binding).map_err(|_|StoreError::Conflict)?;
+            self.store.finish_latest_inbox(lease,text,None).await
+        }.await;
+        match result {
+            Ok(()) => {}
+            Err(StoreError::Unauthorized | StoreError::Forbidden | StoreError::BudgetExhausted) => {
+                return result.map(|_| Some(true));
+            }
+            Err(_) => self.finish_gws_unavailable(lease).await?,
+        }
+        Ok(Some(true))
+    }
+    async fn finish_gws_unavailable(
+        &self,
+        lease: &moosuri_store::RunLease,
+    ) -> Result<(), StoreError> {
+        let _delivery = self.signals.delivery.write().await;
+        self.store.finish_mail_connection_guidance(lease,"설정된 GWS 받은편지함 도우미에서 현재 메일을 확인하지 못했어요. Gmail 설정에서 본인의 GWS 연결, 기기 실행 상태와 인증을 확인한 뒤 다시 요청해 주세요. 다른 계정이나 웹 OAuth로 자동 전환하지 않았고, 메일이나 빈 받은편지함을 확인한 것은 아니에요.".into(),moosuri_core::MailConnectionRecovery::GwsSetup).await
+    }
+}

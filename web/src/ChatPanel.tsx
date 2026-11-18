@@ -1163,7 +1163,7 @@ export function ChatPanel(props: Props) {
                       {turn.run.credential?.status==="waiting" ? "연결된 기기의 응답을 기다리는 중" : labels[turn.run.state]}…
                     </p>
                   )}
-                {turn.run.state === "completed" && <MailConnectionRecovery action={turn.run.mail_connection_recovery} />}
+                {turn.run.state === "completed" && <MailConnectionRecovery action={turn.run.mail_connection_recovery} accountId={accountId} threadId={threadId} />}
                 {turn.run.connection_wait&&<NativeMailWait accountId={accountId} runId={turn.run.id} revision={turn.run.version} wait={turn.run.connection_wait} openSettings={()=>props.openCredentials?.()} onExpired={props.onExpired}/>}
                 {turn.run.credential && <section className="run-explanation" aria-label="볼트 작업 상태">
                   <p>{turn.run.credential.service==='google'?'Gmail':'GitHub'} {turn.run.credential.repository} · {({waiting:"연결 대기",complete:"조회 완료",outcome_unknown:"결과 확인 필요",not_completed:"조회하지 못했어요",cancelled:"취소됨"} as Record<string,string>)[turn.run.credential.status]??"상태 확인"}</p>

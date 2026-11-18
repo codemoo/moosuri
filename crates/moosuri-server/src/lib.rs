@@ -127,6 +127,7 @@ pub struct ServerConfig {
     secure: bool,
     trusted_proxy: Option<(IpAddr, header::HeaderName)>,
     google: Option<Arc<moosuri_connectors::gmail::OAuthClient>>,
+    gws_inbox: Option<Arc<moosuri_connectors::gws_inbox::GwsInboxRegistry>>,
     web: Option<Arc<moosuri_connectors::web::WebClient>>,
     browser: Option<Arc<moosuri_connectors::browser::capsule::CapsuleReader>>,
     claude: Option<Arc<moosuri_connectors::claude_code::Profile>>,
@@ -173,6 +174,7 @@ impl ServerConfig {
             secure,
             trusted_proxy: None,
             google: None,
+            gws_inbox: None,
             web: None,
             browser: None,
             claude: None,
@@ -331,8 +333,14 @@ impl ServerConfig {
         ));
         Ok(self)
     }
+    pub fn with_gws_inbox_file(mut self, path: std::path::PathBuf) -> Result<Self, &'static str> {
+        self.gws_inbox = Some(Arc::new(
+            moosuri_connectors::gws_inbox::GwsInboxRegistry::from_file(path)?,
+        ));
+        Ok(self)
+    }
     pub fn start_runtime(&self, store: Store) -> moosuri_agent::Runtime {
-        moosuri_agent::Runtime::start_with_google_setup_claude_pdf(
+        moosuri_agent::Runtime::start_with_google_setup_claude_pdf_gws(
             store,
             self.google.clone(),
             self.web.clone(),
@@ -340,6 +348,7 @@ impl ServerConfig {
             self.google_redirect_uri(),
             self.claude.clone(),
             self.pdf_extractor.clone(),
+            self.gws_inbox.clone(),
         )
     }
     pub fn with_trusted_proxy(

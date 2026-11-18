@@ -6,7 +6,10 @@ use moosuri_connectors::gmail::{FrozenMail, MailContent, ReplyContext, SecretStr
 
 use moosuri_core::*;
 
+mod connection_help;
 mod external;
+mod gws;
+pub use connection_help::MailConnectionHelpIntent;
 pub(crate) mod latest;
 mod model_context;
 pub use model_context::MailModelConnectionContext;

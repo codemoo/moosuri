@@ -1,0 +1,461 @@
+//! Local, fixed Gmail metadata reader. The server receives neither OAuth credentials
+//! nor general command authority; authentication remains with this device's gws.
+use axum::{
+    Router,
+    body::to_bytes,
+    extract::{Request, State},
+    http::{Method, StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use clap::Args;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    fs::OpenOptions,
+    io::Read,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{io::AsyncReadExt, sync::Semaphore};
+use zeroize::Zeroizing;
+
+const OUTPUT_LIMIT: usize = 131072;
+#[derive(Args)]
+pub struct Options {
+    /// Only loopback listeners are accepted. Tunnel this endpoint separately if required.
+    #[arg(long, default_value = "127.0.0.1:3221")]
+    bind: SocketAddr,
+    /// Absolute, owner-only regular file containing a random 64-character hex shared key.
+    #[arg(long)]
+    key_file: PathBuf,
+    /// Exact Google mailbox identity; every provider request is pinned to it.
+    #[arg(long)]
+    mailbox: String,
+    /// Explicit absolute gws executable; otherwise GWS_PATH, then PATH discovery.
+    #[arg(long)]
+    gws_path: Option<PathBuf>,
+}
+struct Bridge {
+    executable: PathBuf,
+    mailbox: String,
+    key_digest: [u8; 32],
+    gate: Semaphore,
+    directory: tempfile::TempDir,
+}
+#[derive(Serialize)]
+struct Inbox {
+    mailbox: String,
+    messages: Vec<Message>,
+}
+#[derive(Serialize)]
+struct Message {
+    id: String,
+    from: String,
+    subject: String,
+    date: String,
+    internal_date: i64,
+}
+#[derive(Deserialize)]
+struct Empty {}
+
+pub async fn run(options: &Options) -> Result<(), String> {
+    if !options.bind.ip().is_loopback() || !valid_mailbox(&options.mailbox) {
+        return Err("gws_inbox_requires_loopback_and_exact_mailbox".into());
+    }
+    let key = read_key(&options.key_file)?;
+    let executable = resolve_executable(options.gws_path.as_deref())?;
+    let bridge = Arc::new(Bridge {
+        executable,
+        mailbox: options.mailbox.clone(),
+        key_digest: Sha256::digest(key.as_bytes()).into(),
+        gate: Semaphore::new(1),
+        directory: tempfile::tempdir().map_err(|_| "gws_inbox_private_directory_failed")?,
+    });
+    let version = bridge.command(&["--version"], None).await?;
+    if !std::str::from_utf8(&version)
+        .ok()
+        .and_then(|s| s.lines().next())
+        .is_some_and(|line| line.starts_with("gws 0.22."))
+    {
+        return Err("gws_inbox_requires_gws_0_22".into());
+    }
+    let listener = tokio::net::TcpListener::bind(options.bind)
+        .await
+        .map_err(|_| "gws_inbox_bind_failed")?;
+    // No mailbox, key, provider response or diagnostic is printed.
+    println!("Local gws INBOX metadata bridge ready.");
+    axum::serve(listener, router(bridge))
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
+        .map_err(|_| "gws_inbox_server_failed".into())
+}
+fn router(bridge: Arc<Bridge>) -> Router {
+    Router::new().fallback(endpoint).with_state(bridge)
+}
+async fn endpoint(State(bridge): State<Arc<Bridge>>, request: Request) -> Response {
+    let mut response = endpoint_inner(bridge, request).await;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+async fn endpoint_inner(bridge: Arc<Bridge>, request: Request) -> Response {
+    // Never expose a browser-operable or arbitrary local HTTP proxy.
+    if request.headers().contains_key(header::ORIGIN)
+        || request.headers().contains_key(header::COOKIE)
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(key) = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let digest: [u8; 32] = Sha256::digest(key.as_bytes()).into();
+    if key.len() != 64
+        || ring::hmac::verify(
+            &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"moosuri/gws-inbox-key/v1"),
+            &digest,
+            ring::hmac::sign(
+                &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"moosuri/gws-inbox-key/v1"),
+                &bridge.key_digest,
+            )
+            .as_ref(),
+        )
+        .is_err()
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if request.method() != Method::POST
+        || request.uri().path() != "/v1/inbox/latest"
+        || request.uri().query().is_some()
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Ok(_permit) = bridge.gate.try_acquire() else {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    };
+    let bytes =
+        match tokio::time::timeout(Duration::from_secs(3), to_bytes(request.into_body(), 64)).await
+        {
+            Ok(Ok(bytes)) => bytes,
+            _ => return StatusCode::BAD_REQUEST.into_response(),
+        };
+    // serde's ordinary empty struct permits unknown fields; explicitly require {}.
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if !value.as_object().is_some_and(|o| o.is_empty())
+        || serde_json::from_value::<Empty>(value).is_err()
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match tokio::time::timeout(Duration::from_secs(45), bridge.latest()).await {
+        Ok(Ok(inbox)) => axum::Json(inbox).into_response(),
+        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
+}
+impl Bridge {
+    async fn command(
+        &self,
+        args: &[&str],
+        params: Option<Value>,
+    ) -> Result<Zeroizing<Vec<u8>>, String> {
+        let mut cmd = tokio::process::Command::new(&self.executable);
+        // Preserve only local gws auth/config choices. Do not load cwd .env, log
+        // private API output to files, run sanitizers, or inherit request headers.
+        cmd.env_clear();
+        for name in [
+            "HOME",
+            "PATH",
+            "XDG_CONFIG_HOME",
+            "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+            "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE",
+            "GOOGLE_WORKSPACE_CLI_TOKEN",
+            "GOOGLE_WORKSPACE_CLI_CLIENT_ID",
+            "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
+            "GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                cmd.env(name, value);
+            }
+        }
+        cmd.env("GOOGLE_WORKSPACE_CLI_LOG", "off")
+            .current_dir(self.directory.path())
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        if let Some(params) = params {
+            cmd.arg("--params")
+                .arg(params.to_string())
+                .args(["--format", "json"]);
+        }
+        #[cfg(unix)]
+        cmd.process_group(0);
+        let mut child = cmd.spawn().map_err(|_| "gws_inbox_command_failed")?;
+        let _group = ProcessGroup(child.id());
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut bytes = Zeroizing::new(Vec::new());
+            child
+                .stdout
+                .take()
+                .ok_or("gws_inbox_command_failed")?
+                .take((OUTPUT_LIMIT + 1) as u64)
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(|_| "gws_inbox_command_failed")?;
+            if bytes.len() > OUTPUT_LIMIT
+                || !child
+                    .wait()
+                    .await
+                    .map_err(|_| "gws_inbox_command_failed")?
+                    .success()
+            {
+                return Err("gws_inbox_command_failed".into());
+            }
+            Ok(bytes)
+        })
+        .await
+        .map_err(|_| "gws_inbox_command_timeout")?
+    }
+    async fn api(&self, args: &[&str], mut params: Value) -> Result<Value, String> {
+        params["userId"] = Value::String(self.mailbox.clone());
+        let bytes = self.command(args, Some(params)).await?;
+        serde_json::from_slice(&bytes).map_err(|_| "gws_inbox_invalid_response".into())
+    }
+    async fn latest(self: &Arc<Self>) -> Result<Inbox, String> {
+        let profile = self
+            .api(
+                &["gmail", "users", "getProfile"],
+                json!({"fields":"emailAddress"}),
+            )
+            .await?;
+        if profile.get("emailAddress").and_then(Value::as_str) != Some(self.mailbox.as_str()) {
+            return Err("gws_inbox_mailbox_mismatch".into());
+        }
+        let list = self.api(&["gmail", "users", "messages", "list"], json!({"labelIds":["INBOX"], "maxResults":20,"includeSpamTrash":false,"fields":"messages(id)"})).await?;
+        let items = match list.get("messages") {
+            Some(Value::Array(items)) if items.len() <= 20 => items.as_slice(),
+            None if list.is_object() => &[],
+            _ => return Err("gws_inbox_invalid_response".into()),
+        };
+        let mut messages = Vec::new();
+        let mut ids = std::collections::HashSet::new();
+        let mut selected = Vec::new();
+        for item in items {
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|s| valid_id(s))
+                .ok_or("gws_inbox_invalid_response")?;
+            if !ids.insert(id) {
+                return Err("gws_inbox_invalid_response".into());
+            }
+            selected.push(id.to_owned());
+        }
+        for batch in selected.chunks(4) {
+            let mut jobs = tokio::task::JoinSet::new();
+            for id in batch {
+                let bridge = self.clone();
+                let id = id.clone();
+                jobs.spawn(async move {
+                    let message = bridge.api(&["gmail", "users", "messages", "get"], json!({"id":id,"format":"metadata","metadataHeaders":["From","Subject","Date"],"fields":"id,labelIds,internalDate,payload(headers)"})).await?;
+                    parse_message(&message, &id)
+                });
+            }
+            while let Some(result) = jobs.join_next().await {
+                messages.push(result.map_err(|_| "gws_inbox_command_failed")??);
+            }
+        }
+        messages.sort_by(|a, b| {
+            b.internal_date
+                .cmp(&a.internal_date)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(Inbox {
+            mailbox: self.mailbox.clone(),
+            messages,
+        })
+    }
+}
+struct ProcessGroup(Option<u32>);
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.0 {
+            let _ = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+        }
+    }
+}
+fn valid_mailbox(value: &str) -> bool {
+    value.len() <= 254
+        && value.split('@').count() == 2
+        && value.split('@').all(|s| !s.is_empty())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".!#$%&'*+-/=?^_`{|}~@".contains(&b))
+}
+fn valid_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+fn parse_message(value: &Value, expected_id: &str) -> Result<Message, String> {
+    let invalid = || "gws_inbox_invalid_response".to_owned();
+    if value.get("id").and_then(Value::as_str) != Some(expected_id)
+        || !value
+            .get("labelIds")
+            .and_then(Value::as_array)
+            .is_some_and(|v| v.iter().any(|x| x.as_str() == Some("INBOX")))
+    {
+        return Err(invalid());
+    }
+    let internal_date = value
+        .get("internalDate")
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|n| *n >= 0)
+        .ok_or_else(invalid)?;
+    let headers = value
+        .pointer("/payload/headers")
+        .and_then(Value::as_array)
+        .filter(|a| a.len() <= 128)
+        .ok_or_else(invalid)?;
+    let get = |name: &str| -> Result<String, String> {
+        let matching: Vec<_> = headers
+            .iter()
+            .filter(|h| {
+                h.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
+            })
+            .collect();
+        if matching.len() > 1 {
+            return Err(invalid());
+        }
+        let Some(header) = matching.first() else {
+            return Ok(String::new());
+        };
+        let text = header
+            .get("value")
+            .and_then(Value::as_str)
+            .filter(|s| s.len() <= 16384)
+            .ok_or_else(invalid)?;
+        let mut clean = String::new();
+        for c in text.chars().filter(|c| {
+            !c.is_control() && !matches!(*c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        }) {
+            if clean.len() + c.len_utf8() > if name == "Date" { 512 } else { 1024 } {
+                break;
+            }
+            clean.push(c);
+        }
+        Ok(clean)
+    };
+    Ok(Message {
+        id: expected_id.into(),
+        from: get("From")?,
+        subject: get("Subject")?,
+        date: get("Date")?,
+        internal_date,
+    })
+}
+fn read_key(path: &Path) -> Result<Zeroizing<String>, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let invalid = || "gws_inbox_requires_private_key_file".to_owned();
+    if !path.is_absolute() {
+        return Err(invalid());
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|_| invalid())?;
+    let meta = file.metadata().map_err(|_| invalid())?;
+    if !meta.is_file()
+        || meta.uid() != unsafe { libc::geteuid() }
+        || meta.nlink() != 1
+        || meta.permissions().mode() & 0o077 != 0
+        || meta.len() > 66
+    {
+        return Err(invalid());
+    }
+    let mut value = Zeroizing::new(String::new());
+    file.take(67)
+        .read_to_string(&mut value)
+        .map_err(|_| invalid())?;
+    let value = Zeroizing::new(value.trim_end_matches(['\r', '\n']).to_owned());
+    if value.len() != 64 || !value.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err(invalid());
+    }
+    Ok(value)
+}
+fn resolve_executable(explicit: Option<&Path>) -> Result<PathBuf, String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let invalid = || "gws_inbox_executable_unavailable".to_owned();
+    let selected = explicit
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os("GWS_PATH").map(PathBuf::from));
+    let candidate = if let Some(selected) = selected {
+        if !selected.is_absolute() {
+            return Err(invalid());
+        }
+        selected
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH").ok_or_else(invalid)?)
+            .filter(|p| p.is_absolute())
+            .map(|p| p.join("gws"))
+            .find(|p| p.is_file())
+            .ok_or_else(invalid)?
+    };
+    let mut canonical = candidate.canonicalize().map_err(|_| invalid())?;
+    // npm's shim can auto-install binaries. Use its already installed native
+    // sibling instead; starting this reader must never install software.
+    if canonical.file_name().is_some_and(|name| name == "run.js") {
+        canonical = canonical
+            .parent()
+            .ok_or_else(invalid)?
+            .join("bin/gws")
+            .canonicalize()
+            .map_err(|_| invalid())?;
+    }
+    let meta = canonical.metadata().map_err(|_| invalid())?;
+    if !meta.is_file()
+        || ![0, unsafe { libc::geteuid() }].contains(&meta.uid())
+        || meta.permissions().mode() & 0o022 != 0
+        || meta.permissions().mode() & 0o111 == 0
+    {
+        return Err(invalid());
+    }
+    let mut magic = [0; 4];
+    std::fs::File::open(&canonical)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .map_err(|_| invalid())?;
+    if ![
+        [0x7f, b'E', b'L', b'F'],
+        [0xcf, 0xfa, 0xed, 0xfe],
+        [0xfe, 0xed, 0xfa, 0xcf],
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0xca, 0xfe, 0xba, 0xbf],
+    ]
+    .contains(&magic)
+    {
+        return Err("gws_inbox_requires_native_gws".into());
+    }
+    Ok(canonical)
+}
+
+#[cfg(test)]
+#[path = "gws_inbox/tests.rs"]
+mod tests;

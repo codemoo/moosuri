@@ -1,0 +1,201 @@
+use super::knowledge::tool_configured;
+use super::*;
+use moosuri_connectors::gws_inbox::GwsInboxRegistry;
+use std::os::unix::fs::PermissionsExt;
+
+fn private(path: &std::path::Path, text: &str) {
+    std::fs::write(path, text).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+fn registry(
+    dir: &std::path::Path,
+    owner: &str,
+    endpoint: &str,
+) -> (Arc<GwsInboxRegistry>, std::path::PathBuf) {
+    let key = dir.join("gws.key");
+    private(&key, &"a".repeat(64));
+    let config = dir.join("gws.json");
+    private(&config,&json!([{"account_id":owner,"mailbox":"owner@example.test","endpoint":endpoint,"key_file":key}]).to_string());
+    (
+        Arc::new(GwsInboxRegistry::from_file(config.clone()).unwrap()),
+        config,
+    )
+}
+fn service(store: &Store, registry: Arc<GwsInboxRegistry>) -> crate::mail::MailService {
+    let (changes, _) = watch::channel(0);
+    crate::mail::MailService::new(
+        store.clone(),
+        None,
+        Signals {
+            stop: CancellationToken::new(),
+            wake: Arc::new(Notify::new()),
+            changes,
+            delivery: Arc::new(tokio::sync::RwLock::new(())),
+        },
+    )
+    .with_gws_inbox(Some(registry))
+}
+async fn claim(
+    store: &Store,
+    user: &UserContext,
+    thread: &str,
+    text: &str,
+) -> moosuri_store::AgentClaim {
+    store
+        .submit_turn(
+            user,
+            thread.into(),
+            uuid::Uuid::new_v4().to_string(),
+            text.into(),
+        )
+        .await
+        .unwrap();
+    store.claim_agent_run().await.unwrap().unwrap()
+}
+#[tokio::test]
+async fn gws_latest_metadata_is_owner_bound_literal_and_general_context_has_no_mail() {
+    let _g = TEST_LOCK.lock().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1/inbox/latest", listener.local_addr().unwrap());
+    let app=Router::new().route("/v1/inbox/latest",post(move |headers:axum::http::HeaderMap,axum::Json(body):axum::Json<Value>|{let counted=counted.clone();async move {
+        assert_eq!(headers["authorization"],format!("Bearer {}","a".repeat(64)));
+        assert!(!headers.contains_key("cookie"));assert!(!headers.contains_key("origin"));assert_eq!(body,json!({}));
+        counted.fetch_add(1,Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_secs(9)).await;
+        axum::Json(json!({"mailbox":"owner@example.test","messages":[{"id":"older","from":"old@example.test","subject":"SYNTHETIC_OLDER","date":"2026-11-17","internal_date":1000},{"id":"newer","from":"new@example.test","subject":"SYNTHETIC_NEWEST_METADATA","date":"2026-11-18","internal_date":2000}]}))
+    }}));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
+    let (r, _) = registry(dir.path(), &user.account().id, &endpoint);
+    let mail = service(&store, r.clone());
+    let semantic = claim(
+        &store,
+        &user,
+        &thread,
+        "새로 도착한 항목부터 정리해 줄래? 받은편지함 얘기야.",
+    )
+    .await;
+    let context = mail
+        .model_connection_context(&semantic.lease)
+        .await
+        .unwrap();
+    assert!(context.contains("\"run_read_route\":\"gws_latest_metadata\""));
+    assert!(context.contains("metadata-only") || context.contains("메타데이터만"));
+    assert!(context.contains("내 최신 메일 보여줘"));
+    assert!(!context.contains("SYNTHETIC_NEWEST_METADATA"));
+    assert!(
+        !mail
+            .connection_help_available(&semantic.lease)
+            .await
+            .unwrap()
+    );
+    store
+        .finish_agent_execution(&semantic.lease, RunState::Cancelled, None)
+        .await
+        .unwrap();
+    let latest = claim(&store, &user, &thread, "내 최신 메일 보여줘").await;
+    assert!(mail.latest_inbox_chat(&latest.lease).await.unwrap());
+    let turn = store
+        .conversation(&user, thread.clone(), None)
+        .await
+        .unwrap()
+        .turns
+        .pop()
+        .unwrap();
+    assert_eq!(turn.run.state, RunState::Completed);
+    assert!(turn.run.mail_connection_recovery.is_none());
+    let text = turn
+        .assistant
+        .iter()
+        .map(|m| m.text.as_str())
+        .collect::<String>();
+    assert!(text.contains("GWS 연결"));
+    assert!(text.contains("SYNTHETIC_NEWEST_METADATA"));
+    assert!(!text.contains("SYNTHETIC_OLDER"));
+    assert!(text.contains("최근 최대 20통 중"));
+    let next = claim(&store, &user, &thread, "그림 그리는 방법을 설명해 줘").await;
+    assert!(
+        !next
+            .messages
+            .iter()
+            .any(|m| m.text.contains("SYNTHETIC_NEWEST_METADATA"))
+    );
+    store
+        .finish_agent_execution(&next.lease, RunState::Cancelled, None)
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        0
+    );
+    assert!(store.mail_actions(&user).await.unwrap().is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn gws_offline_wrong_mailbox_and_revoked_binding_never_deliver_metadata_or_fall_back() {
+    let _g = TEST_LOCK.lock().await;
+    let mode = Arc::new(AtomicU8::new(0));
+    let shared = mode.clone();
+    let entered = Arc::new(Semaphore::new(0));
+    let enter = entered.clone();
+    let release = Arc::new(Semaphore::new(0));
+    let released = release.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1/inbox/latest", listener.local_addr().unwrap());
+    let app=Router::new().route("/v1/inbox/latest",post(move ||{let shared=shared.clone();let enter=enter.clone();let released=released.clone();async move {
+        let m=shared.load(Ordering::SeqCst);
+        if m==0{return (axum::http::StatusCode::SERVICE_UNAVAILABLE,axum::Json(json!({})));}
+        if m==2 {enter.add_permits(1);let _=released.acquire().await.unwrap();}
+        (axum::http::StatusCode::OK,axum::Json(json!({"mailbox":if m==1{"foreign@example.test"}else{"owner@example.test"},"messages":[{"id":"one","from":"sender@example.test","subject":"MUST_NOT_DELIVER","date":"today","internal_date":1000}]})))
+    }}));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
+    let (r, path) = registry(dir.path(), &user.account().id, &endpoint);
+    let mail = service(&store, r);
+    for m in 0..3 {
+        mode.store(m, Ordering::SeqCst);
+        let run = claim(&store, &user, &thread, "내 최신 메일 보여줘").await;
+        if m == 2 {
+            let service = mail.clone();
+            let lease = run.lease.clone();
+            let work = tokio::spawn(async move { service.latest_inbox_chat(&lease).await });
+            let _ = entered.acquire().await.unwrap();
+            private(&path, "[]");
+            release.add_permits(1);
+            assert!(work.await.unwrap().unwrap());
+        } else {
+            assert!(mail.latest_inbox_chat(&run.lease).await.unwrap());
+        }
+        let turn = store
+            .conversation(&user, thread.clone(), None)
+            .await
+            .unwrap()
+            .turns
+            .pop()
+            .unwrap();
+        assert_eq!(turn.run.state, RunState::Completed);
+        assert!(matches!(
+            turn.run.mail_connection_recovery,
+            Some(moosuri_core::MailConnectionRecovery::GwsSetup)
+        ));
+        assert!(
+            turn.assistant
+                .iter()
+                .all(|m| !m.text.contains("MUST_NOT_DELIVER"))
+        );
+        assert!(
+            turn.assistant
+                .iter()
+                .any(|m| m.text.contains("확인하지 못했어요"))
+        );
+    }
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        0
+    );
+    server.abort();
+}

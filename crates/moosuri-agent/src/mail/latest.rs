@@ -55,6 +55,9 @@ impl MailService {
         else {
             return Ok(false);
         };
+        if let Some(handled) = self.gws_latest_chat(lease, &user, latest).await? {
+            return Ok(handled);
+        }
         if !latest
             && connections
                 .iter()
@@ -63,6 +66,18 @@ impl MailService {
             return Ok(false);
         }
         let configured = self.configured().await;
+        if !connections
+            .iter()
+            .any(|c| !c.native_send && (c.status == "active" || c.status == "needs_reconnect"))
+        {
+            let _delivery = self.signals.delivery.write().await;
+            self.store.finish_mail_connection_guidance(lease, if user.account().role == moosuri_core::Role::Admin {
+                "Gmail을 확인하려면 Gmail 설정에서 본인 기기의 GWS 받은편지함 도우미를 연결해 주세요. GWS 인증은 별도 기기에 유지되며 볼트 연결은 필요하지 않아요. 웹 OAuth를 원하면 관리자인 본인이 Google 앱을 설정하는 기존 방식도 선택할 수 있어요. 아직 메일은 읽지 않았어요."
+            } else {
+                "Gmail을 확인하려면 Gmail 설정에서 본인 기기의 GWS 받은편지함 도우미를 연결해 주세요. GWS 인증은 별도 기기에 유지되며 볼트 연결은 필요하지 않아요. 웹 OAuth를 원하면 설치 관리자에게 Google 앱 준비를 요청하는 기존 방식도 선택할 수 있어요. 아직 메일은 읽지 않았어요."
+            }.into(), moosuri_core::MailConnectionRecovery::GwsSetup).await?;
+            return Ok(true);
+        }
         if let Some((guidance, recovery)) = connection_guidance(
             configured,
             user.account().role == moosuri_core::Role::Admin,

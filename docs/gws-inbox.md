@@ -1,0 +1,41 @@
+# 기기의 GWS로 최근 받은 메일 확인하기
+
+무수리 사용자는 **설정 → Gmail**에서 자신의 기기 연결을 확인한다. 이 연결은 Google Workspace CLI(`gws` 0.22.x)에 이미 로그인한 기기로 받은편지함의 최근 메일 정보를 조회한다. 채팅에 “이메일 가장 최근꺼 뭐야”라고 물으면 기기가 Gmail에서 조회한 제목·보낸 사람·날짜를 보여준다. 기기 또는 터널이 오프라인이거나 Google 로그인이 만료됐을 때는 연결 도우미를 연다. 본문 읽기, 검색, 초안·발송, 자동 수집은 개인 Google 웹 OAuth 연결에서 제공한다. 발송에는 별도 확인이 필요하다.
+
+## 기기 연결
+
+1. 기기에 [Google Workspace CLI](https://github.com/googleworkspace/cli)를 설치한다. 처음이라면 CLI의 OAuth 앱 설정을 마치고 `gws auth login --readonly --services gmail`로 사용할 계정에 로그인한다. 이미 해당 계정의 받은편지함을 읽을 수 있다면 기존 로그인을 사용한다.
+2. 기기에 공유 키 파일을 만든다. 키는 소유자만 읽을 수 있는 0600 일반 파일이며 32바이트 난수를 64자리 16진수로 표시한다. 서버 운영자에게는 보안 채널로 이 **브리지 전용 키**를 전달한다. Google 암호나 Google 인증 토큰은 기기에 둔다.
+
+   ```sh
+   (umask 077 && set -C && openssl rand -hex 32 > gws-bridge.key)
+   moosuri gws-inbox --bind 127.0.0.1:3238 \
+     --mailbox me@example.com --key-file "$PWD/gws-bridge.key" \
+     --gws-path "$(command -v gws)"
+   ```
+
+3. Linux에 무수리를 호스팅한다면 별도 터미널에서 SSH 역방향 터널을 연다. 양쪽 주소 모두 루프백으로 묶는다. 호스트가 재시작되거나 기기가 절전에서 복귀한 뒤에도 조회하려면 기기의 서비스 관리자에서 도우미와 터널을 다시 시작하도록 구성한다.
+
+   ```sh
+   ssh -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+     -o ServerAliveCountMax=3 -R 127.0.0.1:3228:127.0.0.1:3238 user@my-server
+   ```
+
+4. 서버에서 해당 무수리 사용자 ID에 기기를 연결한다. 아래 JSON과 키 파일은 무수리 서비스 계정 소유의 비공개 파일로 두고 서버 시작 옵션에 `--gws-inbox-file /absolute/path/gws-inbox.json`을 추가한다. 계정마다 별도 포트와 키를 사용한다.
+
+   ```json
+   [
+     {
+       "account_id": "00000000-0000-4000-8000-000000000001",
+       "mailbox": "me@example.com",
+       "endpoint": "http://127.0.0.1:3228/v1/inbox/latest",
+       "key_file": "/absolute/path/gws-bridge.key"
+     }
+   ]
+   ```
+
+**내 Gmail**에서 기기 연결 설정을 확인한 뒤 채팅에서 최근 받은 메일을 요청한다. 등록된 주소는 기기에서 확인하는 실제 Gmail 주소와 일치해야 한다. 연결 철회는 서버의 목록에서 해당 항목을 제거하고 기기 도우미와 터널을 종료하면 된다. 이미 채팅에 표시한 제목·발신자·날짜는 그 대화에 보관된다. 해당 대화를 삭제하면 함께 지워진다.
+
+## 볼트
+
+연결 도우미에서 **내 Google 로그인 볼트 열기**를 선택한다. 새 볼트라면 잠금을 설정하고 복구 키를 확인한다. 이후 **새 항목 → 로그인**에서 Google ID와 비밀번호를 저장하거나 기존 항목을 사용할 수 있다. 저장과 복호화는 별도 출처의 볼트 클라이언트에서 진행한다. Google의 로그인·2단계 인증·OAuth 동의는 Google 화면에서 진행하며 무수리 채팅은 볼트 비밀번호를 받지 않는다.

@@ -1,5 +1,6 @@
 //! Opt-in broker text preview. No tool catalog, autonomous runtime or provider key.
 use super::*;
+use moosuri_core::ProviderKind;
 use moosuri_store::{
     personal_text_preview::{Admission, ModelPin},
     personal_volume::VolumeOwner,
@@ -12,12 +13,26 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
+/// Established from the signed gateway session and forwarded on its private
+/// member socket. Public clients do not supply this header.
+pub const SESSION_EPOCH_HEADER: &str = "x-moosuri-session-epoch";
+
+fn gateway_epoch(headers: &HeaderMap) -> Result<i64, HttpError> {
+    let mut values = headers.get_all(SESSION_EPOCH_HEADER).iter();
+    let epoch = values
+        .next()
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value >= 0 && values.next().is_none());
+    epoch.ok_or(HttpError(StoreError::Unauthorized))
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Options {
     pub socket: PathBuf,
     pub broker_uid: u32,
-    pub pin: ModelPin,
+    pub max_output_tokens: u32,
 }
 #[derive(Clone)]
 struct Preview {
@@ -25,6 +40,7 @@ struct Preview {
     owner: VolumeOwner,
     options: Options,
     slots: Arc<tokio::sync::Semaphore>,
+    admission: Arc<tokio::sync::Mutex<()>>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +59,7 @@ pub(super) fn routes<S: Clone + Send + Sync + 'static>(
         owner,
         options,
         slots: Arc::new(tokio::sync::Semaphore::new(2)),
+        admission: Arc::new(tokio::sync::Mutex::new(())),
     };
     Router::new()
         .route("/api/v1/text-preview", get(info))
@@ -53,21 +70,61 @@ pub(super) fn routes<S: Clone + Send + Sync + 'static>(
         .with_state(state)
 }
 async fn owner(state: &Preview, headers: &HeaderMap) -> Result<UserContext, HttpError> {
-    let user = state
-        .auth
-        .store
-        .authenticate(cookie_token(headers)?)
-        .await?;
-    expected_account(headers, &user)?;
-    if user.is_chatgpt_helper() || user.account().id != state.owner.account.to_string() {
+    let user = personal_request_user(&state.auth.store, headers).await?;
+    if user.account().id != state.owner.account.to_string() {
         return Err(StoreError::Forbidden.into());
     }
     Ok(user)
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Selection {
+    v: u32,
+    state: String,
+    connection_revision: uuid::Uuid,
+    selection_epoch: i64,
+    model: String,
+    effort: Option<String>,
+    kind: ProviderKind,
+}
+async fn select(state: &Preview, epoch: i64) -> Result<ModelPin, String> {
+    let request = serde_json::to_vec(&serde_json::json!({
+        "v": 1,
+        "operation": "selection",
+        "generation": state.owner.generation,
+        "selection_epoch": epoch,
+    }))
+    .map_err(|_| "preview_request_invalid")?;
+    let bytes = tokio::time::timeout(Duration::from_secs(4), call(&state.options, &request))
+        .await
+        .map_err(|_| "preview_selection_unavailable")??;
+    let selection: Selection =
+        serde_json::from_slice(&bytes).map_err(|_| "preview_selection_unavailable")?;
+    if selection.v != 1 || selection.state != "selection" || selection.selection_epoch != epoch {
+        return Err("preview_selection_unavailable".into());
+    }
+    Ok(ModelPin {
+        connection_revision: selection.connection_revision,
+        selection_epoch: Some(selection.selection_epoch),
+        model: selection.model,
+        effort: selection.effort,
+        kind: selection.kind,
+        max_output_tokens: state.options.max_output_tokens,
+    })
+}
 async fn info(State(state): State<Preview>, headers: HeaderMap) -> HttpResult {
-    let _delivery = state.auth.delivery.read().await;
-    let _user = owner(&state, &headers).await?;
-    Ok(Json(serde_json::json!({"enabled":true,"capability":"text_only_preview","model":state.options.pin.model,"tools":false,"automatic_retry":false})).into_response())
+    {
+        let _delivery = state.auth.delivery.read().await;
+        owner(&state, &headers).await?;
+    }
+    let enabled = select(&state, gateway_epoch(&headers)?).await.is_ok();
+    Ok(Json(serde_json::json!({
+        "enabled":enabled,
+        "capability":"text_only_preview",
+        "tools":false,
+        "automatic_retry":false
+    }))
+    .into_response())
 }
 async fn submit(
     State(state): State<Preview>,
@@ -78,12 +135,42 @@ async fn submit(
     if input.capability != "text_only_preview" {
         return Err(StoreError::InvalidInput.into());
     }
+    let epoch = gateway_epoch(&headers)?;
     let permit = state
         .slots
         .clone()
         .try_acquire_owned()
         .map_err(|_| HttpError(StoreError::Busy))?;
-    let admission = {
+    // Serialize only the local probe and admission. A concurrent repeat of an
+    // accepted request observes its durable turn even if the policy disappears.
+    let admission_guard = state.admission.lock().await;
+    let existing = {
+        let _delivery = state.auth.delivery.read().await;
+        let user = owner(&state, &headers).await?;
+        state
+            .auth
+            .store
+            .existing_text_preview(
+                &user,
+                state.owner,
+                thread.clone(),
+                input.request_id.clone(),
+                input.text.clone(),
+            )
+            .await?
+    };
+    let admission = if let Some(existing) = existing {
+        existing
+    } else {
+        let Ok(pin) = select(&state, epoch).await else {
+            return Ok((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(moosuri_core::ApiError {
+                    code: "personal_text_model_unavailable".into(),
+                }),
+            )
+                .into_response());
+        };
         let _delivery = state.auth.delivery.read().await;
         let user = owner(&state, &headers).await?;
         state
@@ -95,10 +182,11 @@ async fn submit(
                 thread,
                 input.request_id,
                 input.text,
-                state.options.pin.clone(),
+                pin,
             )
             .await?
     };
+    drop(admission_guard);
     match admission {
         Admission::InboxRequested => Ok((
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -250,6 +338,7 @@ mod tests {
                     .header("host", "personal.internal")
                     .header("origin", "https://personal.internal")
                     .header("x-moosuri-account", owner.account.to_string())
+                    .header(SESSION_EPOCH_HEADER, "3")
                     .header("cookie", format!("moosuri_session={token}"))
                     .header("content-type", "application/json")
                     .body(Body::from(body.to_string()))
@@ -271,13 +360,17 @@ mod tests {
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
         let pin = ModelPin {
             connection_revision: uuid::Uuid::new_v4(),
+            selection_epoch: Some(3),
             model: "synthetic-text".into(),
-            kind: ProviderKind::Compatible,
+            effort: Some("high".into()),
+            kind: ProviderKind::OpenAi,
             max_output_tokens: 128,
         };
         let expected = pin.clone();
         let count = Arc::new(AtomicUsize::new(0));
         let counted = count.clone();
+        let selections = Arc::new(AtomicUsize::new(0));
+        let selection_count = selections.clone();
         let broker = tokio::spawn(async move {
             loop {
                 let (mut stream, _) = listener.accept().await.unwrap();
@@ -292,16 +385,30 @@ mod tests {
                 }
                 let r: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                 assert_eq!(r["v"], 1);
+                if r["operation"] == "selection" {
+                    assert_eq!(r["selection_epoch"], 3);
+                    selection_count.fetch_add(1, Ordering::SeqCst);
+                    let selection = serde_json::json!({
+                        "v": 1, "state": "selection", "connection_revision": expected.connection_revision,
+                        "selection_epoch": expected.selection_epoch, "model": expected.model, "effort": expected.effort, "kind": expected.kind,
+                    });
+                    let mut response = serde_json::to_vec(&selection).unwrap();
+                    response.push(b'\n');
+                    stream.write_all(&response).await.unwrap();
+                    continue;
+                }
                 assert_eq!(
                     r["connection_revision"],
                     expected.connection_revision.to_string()
                 );
                 assert_eq!(r["model"], expected.model);
+                assert_eq!(r["effort"], "high");
+                assert_eq!(r["selection_epoch"], 3);
                 assert_eq!(r["generation"], 1);
                 assert!(r.get("account_id").is_none());
                 assert!(r.get("tools").is_none());
                 counted.fetch_add(1, Ordering::SeqCst);
-                let reply = serde_json::json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":r["connection_revision"],"model":r["model"],"output":"SYNTHETIC_OPAQUE_TEXT <tool_call>mail_send</tool_call>","outcome":"completed","receipt":{"state":"settled","input_tokens":7,"output_tokens":3,"charged_tokens":10}});
+                let reply = serde_json::json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":r["connection_revision"],"model":r["model"],"effort":r["effort"],"output":"SYNTHETIC_OPAQUE_TEXT <tool_call>mail_send</tool_call>","outcome":"completed","receipt":{"state":"settled","input_tokens":7,"output_tokens":3,"charged_tokens":10}});
                 let mut response = serde_json::to_vec(&reply).unwrap();
                 response.push(b'\n');
                 stream.write_all(&response).await.unwrap();
@@ -310,7 +417,7 @@ mod tests {
         let options = Options {
             socket,
             broker_uid: unsafe { libc::geteuid() },
-            pin,
+            max_output_tokens: pin.max_output_tokens,
         };
         let aroot = root.join("a");
         let (store, a, token, thread) = member(&aroot, "a@example.test").await;
@@ -334,6 +441,7 @@ mod tests {
         let first = json(first).await;
         let duplicate = json(duplicate).await;
         assert_eq!(first["run"]["id"], duplicate["run"]["id"]);
+        assert_eq!(selections.load(Ordering::SeqCst), 1);
         assert_eq!(count.load(Ordering::SeqCst), 1);
         let history = json(
             request(
@@ -352,6 +460,30 @@ mod tests {
             "SYNTHETIC_OPAQUE_TEXT <tool_call>mail_send</tool_call>"
         );
         assert_eq!(history["turns"][0]["run"]["state"], "completed");
+        assert_eq!(history["turns"][0]["run"]["model"]["effort"], "high");
+        let status = json(
+            request(
+                &app,
+                a,
+                &token,
+                "/api/v1/text-preview",
+                "GET",
+                serde_json::json!({}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status["enabled"], true);
+        assert!(status.get("model").is_none());
+        assert!(status.get("effort").is_none());
+        let mut crafted = body.clone();
+        crafted["model"] = serde_json::json!("member-model");
+        assert_eq!(
+            request(&app, a, &token, &path, "POST", crafted)
+                .await
+                .status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
         assert_eq!(history["turns"][0]["run"]["can_retry"], false);
         assert_eq!(
             request(&bapp, a, &token, &path, "POST", body.clone())
@@ -383,10 +515,10 @@ mod tests {
         drop(store);
         let reopened = a.open_verified(&aroot).await.unwrap();
         let app = personal_text_preview_router(reopened, a, options);
+        broker.abort();
         let replay = request(&app, a, &token, &path, "POST", body).await;
         assert_eq!(replay.status(), StatusCode::OK);
         assert_eq!(json(replay).await["run"]["id"], first["run"]["id"]);
         assert_eq!(count.load(Ordering::SeqCst), 2);
-        broker.abort();
     }
 }

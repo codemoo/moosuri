@@ -285,7 +285,7 @@ impl Gateway {
     }
     async fn proxy(
         &self,
-        a: &Allocation,
+        a: &SessionAllocation,
         method: Method,
         path: &str,
         body: Option<&[u8]>,
@@ -336,6 +336,12 @@ impl Gateway {
                 .header("X-Moosuri-Account", &a.account_id);
             if let Some(token) = session {
                 req = req.header(header::COOKIE, format!("{SESSION}={token}"));
+                if path.ends_with("/text-preview") {
+                    req = req.header(
+                        moosuri_server::personal_text::SESSION_EPOCH_HEADER,
+                        a.epoch.to_string(),
+                    );
+                }
             }
             if body.is_some() {
                 req = req.header(header::CONTENT_TYPE, "application/json");
@@ -1915,6 +1921,17 @@ mod tests {
                     assert!(bytes.len() < 64 * 1024);
                 }
                 let r: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(r["selection_epoch"], 0);
+                if r["operation"] == "selection" {
+                    let selection = serde_json::json!({
+                        "v": 1, "state": "selection", "connection_revision": Uuid::from_u128(1),
+                        "selection_epoch": 0, "model": "synthetic-text", "kind": "compatible",
+                    });
+                    let mut bytes = serde_json::to_vec(&selection).unwrap();
+                    bytes.push(b'\n');
+                    stream.write_all(&bytes).await.unwrap();
+                    continue;
+                }
                 counted.fetch_add(1, Ordering::SeqCst);
                 let reply = serde_json::json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":r["connection_revision"],"model":r["model"],"output":"Synthetic bounded text answer","outcome":"completed","receipt":{"state":"settled","input_tokens":7,"output_tokens":3,"charged_tokens":10}});
                 let mut bytes = serde_json::to_vec(&reply).unwrap();
@@ -1934,12 +1951,7 @@ mod tests {
             moosuri_server::personal_text::Options {
                 socket: model,
                 broker_uid: unsafe { libc::geteuid() },
-                pin: moosuri_store::personal_text_preview::ModelPin {
-                    connection_revision: Uuid::new_v4(),
-                    model: "synthetic-text".into(),
-                    kind: moosuri_core::ProviderKind::Compatible,
-                    max_output_tokens: 128,
-                },
+                max_output_tokens: 128,
             },
         );
         let listener = tokio::net::UnixListener::bind(&personal).unwrap();
@@ -1957,7 +1969,11 @@ mod tests {
         )
         .await;
         assert_eq!(login.status(), StatusCode::OK);
-        let h = authenticated(&cookies(&login), &a);
+        let mut h = authenticated(&cookies(&login), &a);
+        h.insert(
+            moosuri_server::personal_text::SESSION_EPOCH_HEADER,
+            HeaderValue::from_static("999"),
+        );
         assert_eq!(
             json(request(&g, "/api/v1/text-preview", Method::GET, h.clone(), "").await).await["tools"],
             false
@@ -2166,6 +2182,138 @@ mod tests {
             member.abort();
         }
     }
+    async fn check_engine_administration(
+        g: &Gateway,
+        registry: &std::path::Path,
+        a: &Allocation,
+        b: &Allocation,
+        admin: &HeaderMap,
+        member: &HeaderMap,
+    ) {
+        use moosuri_store::runtime_registry::engine::{self, ModelChoice};
+        let engine_url = "/api/v1/personal/admin/engine";
+        let member_url = "/api/v1/personal/admin/engine/member";
+        let engine_id = Uuid::new_v4();
+        let default = ModelChoice {
+            model: "model-a".into(),
+            effort: None,
+        };
+        let selected = ModelChoice {
+            model: "model-b".into(),
+            effort: Some("high".into()),
+        };
+        let aid = a.account_id.parse().unwrap();
+        let bid = b.account_id.parse().unwrap();
+        let publish = |connection| {
+            engine::publish_models(
+                registry,
+                connection,
+                moosuri_core::ProviderKind::OpenAi,
+                &default,
+                &[default.clone(), selected.clone()],
+                &[aid, bid],
+            )
+            .unwrap()
+        };
+        publish(engine_id);
+        let state = json(request(g, engine_url, Method::GET, admin.clone(), "").await).await;
+        assert_eq!(state["configured"], true);
+        let assignment = serde_json::json!({"revision":state["revision"],"connection_revision":engine_id,"account_id":bid,"generation":b.generation,"choice":selected});
+        let submit = |headers, value: serde_json::Value| {
+            let g = g.clone();
+            async move { request(&g, member_url, Method::POST, headers, &value.to_string()).await }
+        };
+        assert_eq!(
+            submit(member.clone(), assignment.clone()).await.status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            request(g, engine_url, Method::GET, member.clone(), "")
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let mut unsupported = assignment.clone();
+        unsupported["choice"]["effort"] = "unsupported".into();
+        assert_eq!(
+            submit(admin.clone(), unsupported).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        let saved = submit(admin.clone(), assignment.clone()).await;
+        assert_eq!(saved.status(), StatusCode::OK);
+        let revision = json(saved).await["revision"].clone();
+        assert_eq!(
+            submit(admin.clone(), assignment).await.status(),
+            StatusCode::CONFLICT
+        );
+        publish(engine_id);
+        assert_eq!(
+            engine::member_model_policy(registry, bid)
+                .unwrap()
+                .unwrap()
+                .effort
+                .as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            engine::member_model_policy(registry, aid)
+                .unwrap()
+                .unwrap()
+                .model,
+            "model-a"
+        );
+        let pause = serde_json::json!({"revision":revision,"connection_revision":engine_id,"enabled":false,"default_choice":null});
+        let paused = request(
+            &g,
+            engine_url,
+            Method::POST,
+            admin.clone(),
+            &pause.to_string(),
+        )
+        .await;
+        assert_eq!(paused.status(), StatusCode::OK);
+        assert!(engine::member_model_policy(registry, bid).is_err());
+        let new_connection = Uuid::new_v4();
+        publish(new_connection);
+        assert!(
+            engine::publish_models(
+                registry,
+                engine_id,
+                moosuri_core::ProviderKind::OpenAi,
+                &default,
+                &[default.clone(), selected.clone()],
+                &[aid, bid]
+            )
+            .is_err()
+        );
+        let state = json(request(g, engine_url, Method::GET, admin.clone(), "").await).await;
+        assert_eq!(state["enabled"], false);
+        let resume = serde_json::json!({"revision":state["revision"],"connection_revision":new_connection,"enabled":true,"default_choice":selected});
+        let state = json(
+            request(
+                g,
+                engine_url,
+                Method::POST,
+                admin.clone(),
+                &resume.to_string(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            engine::member_model_policy(registry, bid).is_err(),
+            "old connection assignment must be reviewed"
+        );
+        let reset = serde_json::json!({"revision":state["revision"],"connection_revision":new_connection,"account_id":bid,"generation":b.generation,"choice":null});
+        assert_eq!(submit(admin.clone(), reset).await.status(), StatusCode::OK);
+        assert_eq!(
+            engine::member_model_policy(registry, bid)
+                .unwrap()
+                .unwrap()
+                .model,
+            "model-b"
+        );
+    }
     #[tokio::test]
     async fn private_member_session_and_host_role_control_web_admin_even_after_demotion() {
         use moosuri_store::runtime_registry::admin as control;
@@ -2203,6 +2351,7 @@ mod tests {
                 .status(),
             StatusCode::FORBIDDEN
         );
+        check_engine_administration(&g, &options.registry, &a, &b, &auth[0].0, &auth[1].0).await;
         let rows = json(list).await;
         let row = |id: &str| {
             rows["members"]

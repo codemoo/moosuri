@@ -170,6 +170,85 @@ function ModelPicker({choices, draft, unavailable, busy, edit, installation = fa
   </>;
 }
 
+export function MemberModelSettings({ accountId, memberId, onExpired }: Props & { memberId: string }) {
+  const scope = useScope(accountId, `member-model:${memberId}`);
+  const path = `/admin/accounts/${encodeURIComponent(memberId)}/model`;
+  const [settings, setSettings] = useState<ModelSettings | null>(null);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  const pending = useRef(false);
+  function accept(value: ModelSettings) {
+    setSettings(value);
+    setDraft(selectionKey(value.selection));
+  }
+  function fail(error: unknown) {
+    if (error instanceof ApiFailure && error.status === 401) onExpired();
+    else if (!isAborted(error)) setError(settingsError(error));
+  }
+  useEffect(() => {
+    const controller = new AbortController();
+    setBusy(true);
+    setSettings(null);
+    void scope.request<ModelSettings>(path, "GET", undefined, controller.signal)
+      .then(accept).catch(fail).finally(() => {
+        if (!controller.signal.aborted) setBusy(false);
+      });
+    return () => controller.abort();
+  }, [scope, path, refresh]);
+  const selected = settings?.choices.find(choice => selectionKey(choice) === draft);
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (pending.current || busy || !settings || (draft && !selected)) return;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      accept(await scope.request<ModelSettings>(path, "PUT", {
+        selection: selected ? choiceSelection(selected) : null,
+      }));
+      setNotice("회원의 모델 설정을 저장했습니다.");
+    } catch (error) {
+      fail(error);
+      if (!isAborted(error)) setRefresh(value => value + 1);
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="model-settings">
+      {error && <Alert>{error}</Alert>}
+      {notice && <p role="status">{notice}</p>}
+      {settings ? (
+        <>
+          <form aria-label="회원 모델 설정" className="model-selection-form" onSubmit={save}>
+            <ModelPicker choices={settings.choices} draft={draft} unavailable={!!draft && !selected} busy={busy} edit={setDraft} />
+            <button className="primary" disabled={busy || (!!draft && !selected) || draft === selectionKey(settings.selection)}>
+              회원 모델 저장
+            </button>
+          </form>
+          <p>
+            {settings.effective
+              ? `현재 적용 · ${settings.effective.provider_name} · ${settings.effective.model} · ${settings.effective.effort ?? "모델 기본값"}`
+              : "현재 사용할 수 있는 모델이 없습니다."}
+          </p>
+        </>
+      ) : busy ? <p role="status">회원 모델 확인 중…</p> : null}
+      <button className="text-button" disabled={busy} onClick={() => {
+        setError("");
+        setNotice("");
+        setRefresh(value => value + 1);
+      }}>
+        회원 모델 새로고침
+      </button>
+    </div>
+  );
+}
+
 export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi }: Props & { onConnectClaudeApi?: () => void }) {
   const scope = useScope(accountId);
   const [settings, setSettings] = useState<ModelSettings | null>(null);

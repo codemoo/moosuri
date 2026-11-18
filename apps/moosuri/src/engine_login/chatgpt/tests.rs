@@ -38,6 +38,7 @@ const MODULUS: &str = "qz_j6Fsqd5usp23J5PcA5s5MYVXGUAO58aWgw8J4RRcEylrPcaR7xTet7
 struct Counters {
     refreshes: AtomicUsize,
     responses: AtomicUsize,
+    high_effort_responses: AtomicUsize,
     refresh_entered: Notify,
 }
 struct Fixture {
@@ -116,6 +117,10 @@ async fn responses(
     counts.responses.fetch_add(1, Ordering::SeqCst);
     assert_eq!(headers["authorization"], "Bearer synthetic-rotated-access");
     assert_eq!(body["model"], MODEL);
+    if let Some(reasoning) = body.get("reasoning") {
+        assert_eq!(reasoning, &json!({"effort":"high"}));
+        counts.high_effort_responses.fetch_add(1, Ordering::SeqCst);
+    }
     assert_eq!(body["store"], false);
     assert_eq!(body["stream"], true);
     assert_eq!(body["input"][0]["role"], "developer");
@@ -246,11 +251,24 @@ async fn enroll(settings: &Enrollment, fixture: &Fixture) -> SubscriptionRef {
         .record_subscription_probe(&session.user, binding.clone())
         .await
         .unwrap();
+    let mut high = binding.clone();
+    high.effort = Some("high".into());
+    store
+        .record_subscription_probe(&session.user, high)
+        .await
+        .unwrap();
     store
         .expire_subscription_fixture(&session.user, binding.id.clone(), binding.revision)
         .await
         .unwrap();
     binding
+}
+
+fn choices(model: &str) -> Vec<ModelChoice> {
+    vec![ModelChoice {
+        model: model.to_owned(),
+        effort: None,
+    }]
 }
 
 fn request(model: &str) -> TextRequest {
@@ -272,10 +290,12 @@ fn request(model: &str) -> TextRequest {
     }
 }
 
-async fn infer(adapter: &Adapter) {
+async fn infer(adapter: &Adapter, effort: Option<&str>) {
     let (tx, mut rx) = mpsc::channel(32);
+    let mut request = request(MODEL);
+    request.effort = effort.map(str::to_owned);
     adapter
-        .stream(&request(MODEL), &tx, &CancellationToken::new())
+        .stream(&request, &tx, &CancellationToken::new())
         .await
         .unwrap();
     drop(tx);
@@ -320,33 +340,38 @@ async fn exact_owner_and_model_fence_and_concurrent_streams_use_one_rotating_ref
         revision: enrolled.revision,
     };
     assert_eq!(
-        Adapter::open(config(&other_settings, &owner.id), MODEL)
+        Adapter::open(config(&other_settings, &owner.id), &choices(MODEL))
             .await
             .err()
             .as_deref(),
         Some("chatgpt_engine_owner_mismatch")
     );
     assert_eq!(
-        Adapter::open(config(&other_settings, &other_owner.id), MODEL)
+        Adapter::open(config(&other_settings, &other_owner.id), &choices(MODEL))
             .await
             .err()
             .as_deref(),
         Some("chatgpt_engine_model_unverified")
     );
     assert_eq!(
-        Adapter::open(config(&settings, &owner.id), "unverified")
+        Adapter::open(config(&settings, &owner.id), &choices("unverified"))
             .await
             .err()
             .as_deref(),
         Some("chatgpt_engine_model_unverified")
     );
 
-    let mut adapter = Adapter::open(config(&settings, &owner.id), MODEL)
+    let mut models = choices(MODEL);
+    models.push(ModelChoice {
+        model: MODEL.into(),
+        effort: Some("high".into()),
+    });
+    let mut adapter = Adapter::open(config(&settings, &owner.id), &models)
         .await
         .unwrap();
     adapter.fixture = Some(fixture.origin.clone());
     assert!(
-        Adapter::open(config(&settings, &owner.id), MODEL)
+        Adapter::open(config(&settings, &owner.id), &choices(MODEL))
             .await
             .is_err()
     );
@@ -360,16 +385,20 @@ async fn exact_owner_and_model_fence_and_concurrent_streams_use_one_rotating_ref
     assert_eq!(fixture.counts.refreshes.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.counts.responses.load(Ordering::SeqCst), 0);
 
-    tokio::join!(infer(&adapter), infer(&adapter));
+    tokio::join!(infer(&adapter, None), infer(&adapter, Some("high")));
     assert_eq!(fixture.counts.refreshes.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.counts.responses.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        fixture.counts.high_effort_responses.load(Ordering::SeqCst),
+        1
+    );
     drop(adapter);
 
-    let mut restarted = Adapter::open(config(&settings, &owner.id), MODEL)
+    let mut restarted = Adapter::open(config(&settings, &owner.id), &choices(MODEL))
         .await
         .unwrap();
     restarted.fixture = Some(fixture.origin.clone());
-    infer(&restarted).await;
+    infer(&restarted, None).await;
     assert_eq!(fixture.counts.refreshes.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.counts.responses.load(Ordering::SeqCst), 3);
 }
@@ -387,7 +416,7 @@ async fn cancellation_during_provider_refresh_persists_rotation_and_fences_infer
             binding: Uuid::parse_str(&enrolled.id).unwrap(),
             revision: enrolled.revision,
         },
-        MODEL,
+        &choices(MODEL),
     )
     .await
     .unwrap();
@@ -410,7 +439,7 @@ async fn cancellation_during_provider_refresh_persists_rotation_and_fences_infer
     assert_eq!(result, Err("chatgpt_engine_cancelled".into()));
     assert_eq!(fixture.counts.refreshes.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.counts.responses.load(Ordering::SeqCst), 0);
-    infer(&adapter).await;
+    infer(&adapter, None).await;
     assert_eq!(fixture.counts.refreshes.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.counts.responses.load(Ordering::SeqCst), 1);
 }

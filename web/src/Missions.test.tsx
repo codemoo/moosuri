@@ -14,7 +14,7 @@ it.each([
   if(init?.method==="POST"){posts.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({code}),{status:400})}
   return new Response("[]");
  }));
- render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ render(<Missions accountId="owner" canManageModel onExpired={vi.fn()} back={vi.fn()}/>);
  const recurring=kind==="recurring";
  if(recurring)fireEvent.click(screen.getByText("예약해서 맡기기"));
  const input=screen.getByLabelText(recurring?"예약할 일":"맡길 일");

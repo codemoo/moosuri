@@ -65,8 +65,8 @@ fn environment(b: &providers::ProviderBinding) -> Result<Option<String>> {
         .transpose()
 }
 fn current(c: &Connection, u: &UserContext, p: &PersonalVisionProbe) -> Result<ModelChoice> {
-    let u = validate(c, u, true, false)?;
-    validate(c, &p.user, true, false)?;
+    let u = validate(c, u, true, true)?;
+    validate(c, &p.user, true, true)?;
     if u.tenant.0 != p.user.tenant.0
         || u.account.id != p.user.account.id
         || u.digest != p.user.digest
@@ -88,7 +88,7 @@ impl Store {
     ) -> Result<bool> {
         let (u, s) = (u.clone(), selection.clone());
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             let v = choice(&db.conn, &u, &s)?;
             binding(&db.conn, &u, &v)?;
             proven(&db.conn, &u.tenant.0, &u.account.id, &v)
@@ -103,7 +103,7 @@ impl Store {
         let u = u.clone();
         self.call(move |db| {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let u=validate(&tx,&u,true,false)?;
+            let u=validate(&tx,&u,true,true)?;
             let v=choice(&tx,&u,&selection)?;
             let b=binding(&tx,&u,&v)?;
             let env=environment(&b)?;

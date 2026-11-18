@@ -311,17 +311,33 @@ fn read_preview(path: &std::path::Path) -> Result<moosuri_server::personal_text:
     if bytes.len() > 8192 {
         return Err("preview_config_invalid".into());
     }
-    let options: moosuri_server::personal_text::Options =
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PreviewConfig {
+        socket: std::path::PathBuf,
+        broker_uid: u32,
+        max_output_tokens: Option<u32>,
+        pin: Option<moosuri_store::personal_text_preview::ModelPin>,
+    }
+    let config: PreviewConfig =
         serde_json::from_slice(&bytes).map_err(|_| "preview_config_invalid")?;
+    // Existing images may include a legacy model pin. Retain its local output
+    // bound, while obtaining the live model and effort from the host broker.
+    let max_output_tokens = match (config.max_output_tokens, config.pin) {
+        (Some(max), None) => max,
+        (None, Some(pin)) => pin.max_output_tokens,
+        _ => return Err("preview_config_invalid".into()),
+    };
     if (fixed
-        && (options.socket != std::path::Path::new("/model/model.sock") || options.broker_uid != 0))
-        || !options.socket.is_absolute()
-        || options.pin.connection_revision.is_nil()
-        || options.pin.model.is_empty()
-        || options.pin.model.len() > 200
-        || !(1..=2048).contains(&options.pin.max_output_tokens)
+        && (config.socket != std::path::Path::new("/model/model.sock") || config.broker_uid != 0))
+        || !config.socket.is_absolute()
+        || !(1..=2048).contains(&max_output_tokens)
     {
         return Err("preview_config_invalid".into());
     }
-    Ok(options)
+    Ok(moosuri_server::personal_text::Options {
+        socket: config.socket,
+        broker_uid: config.broker_uid,
+        max_output_tokens,
+    })
 }

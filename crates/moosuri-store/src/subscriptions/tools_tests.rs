@@ -1,5 +1,5 @@
 use super::*;
-use crate::tests::{TEST_LOCK, admin, member};
+use crate::tests::{TEST_LOCK, additional_admin, admin, member};
 
 async fn seeded(store: &Store, u: &UserContext) -> SubscriptionRef {
     let login = store
@@ -151,12 +151,12 @@ async fn schema35_personal_probes_migrate_with_disabled_tool_capability() {
 }
 
 #[tokio::test]
-async fn member_owner_can_verify_own_tools_and_logout_fences_late_proof() {
+async fn admin_owner_can_verify_own_tools_and_logout_fences_late_proof() {
     let _g = TEST_LOCK.lock().await;
     let d = tempfile::tempdir().unwrap();
     let s = Store::open(d.path()).unwrap();
-    let a = admin(&s).await;
-    let m = member(&s, &a.user, "own-tools@example.test").await;
+    admin(&s).await;
+    let m = additional_admin(&s, "own-tools@example.test").await;
     let b = seeded(&s, &m.user).await;
     s.record_subscription_probe(&m.user, b.clone())
         .await

@@ -468,7 +468,7 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
     let a = allocate(r, "a@example.test");
     {
         let (_lock, c) = open(r, false).unwrap();
-        c.execute_batch("ALTER TABLE allocations DROP COLUMN session_epoch;DROP TABLE installation_members;DROP TABLE installation_admin_bootstrap;DROP TABLE installation_admin_operations;PRAGMA user_version=1;").unwrap();
+        c.execute_batch("DROP TABLE engine_connections; DROP TABLE engine_bindings; DROP TABLE engine_settings; ALTER TABLE allocations DROP COLUMN session_epoch;DROP TABLE installation_members;DROP TABLE installation_admin_bootstrap;DROP TABLE installation_admin_operations;PRAGMA user_version=1;").unwrap();
     }
     assert_eq!(lookup_ready(r, "a@example.test".into()).unwrap(), a);
     {
@@ -476,9 +476,9 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            3
+            4
         );
-        c.execute_batch("PRAGMA user_version=4").unwrap();
+        c.execute_batch("PRAGMA user_version=5").unwrap();
     }
     assert!(lookup(r, "a@example.test".into()).is_err());
 }

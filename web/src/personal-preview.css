@@ -168,8 +168,8 @@ small {
 .preview-capability p {
   margin: 7px 0;
 }
-.preview-capability span {
-  font-size: 0.75rem;
+.preview-capability button {
+  margin-top: 7px;
 }
 .preview-thread-header {
   display: flex;
@@ -393,4 +393,45 @@ small {
   display: flex;
   flex-wrap: wrap;
   gap: .5rem;
+}
+.preview-engine {
+  width: min(560px, calc(100% - 40px));
+}
+.preview-engine form {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid #454545;
+  border-radius: 9px;
+  gap: 12px;
+}
+.preview-engine form h2,
+.preview-engine form p {
+  margin: 0;
+}
+.preview-engine select {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+  padding: 9px 11px;
+  border: 1px solid #454545;
+  border-radius: 8px;
+  background: #202020;
+  color: inherit;
+  font: inherit;
+}
+.preview-engine select:focus-visible {
+  outline: 2px solid #a8c4ff;
+  outline-offset: 3px;
+}
+.preview-engine-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.preview-engine-toggle input {
+  width: auto;
+  margin: 0;
+}
+.preview-engine-members {
+  margin-bottom: 20px;
 }

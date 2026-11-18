@@ -48,7 +48,7 @@ async fn provider_quota_is_owner_scoped_admin_only_and_unknown_is_not_zero() {
         send(&app, "GET", &personal, Some(&other), Value::Null)
             .await
             .status(),
-        StatusCode::NOT_FOUND
+        StatusCode::FORBIDDEN
     );
     let result = value(send(&app, "GET", &personal, Some(&owner), Value::Null).await).await;
     assert_eq!(result["status"], "unsupported");

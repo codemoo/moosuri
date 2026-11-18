@@ -15,6 +15,7 @@ fn pin() -> Hello {
         },
         revision: Uuid::from_u128(4),
         model: "synthetic-test".into(),
+        effort: None,
     }
 }
 fn prompt(text: &str) -> TextRequest {
@@ -78,6 +79,7 @@ pub(super) async fn fixture(
 async fn validated_channel_preserves_usage_and_rejects_wrong_owner_or_broken_terminal() {
     let fixture = Arc::new(Worker {
         pin: pin(),
+        models: model_catalog(&pin().model, None, &[]).unwrap(),
         adapter: Adapter::Fixture,
     });
     let stop = CancellationToken::new();
@@ -91,7 +93,9 @@ async fn validated_channel_preserves_usage_and_rejects_wrong_owner_or_broken_ter
         if scenario == "different_member" {
             caller.account_id = Uuid::from_u128(9);
         }
-        let connected = peer.authorize(h.route, caller, h.revision, &h.model).await;
+        let connected = peer
+            .authorize(h.route, caller, h.revision, &h.model, h.effort.as_deref())
+            .await;
         if scenario == "different_member" {
             assert!(connected.is_err());
             worker.await.unwrap().unwrap();
@@ -144,6 +148,7 @@ async fn dedicated_service_identity_child() {
         0,
         Arc::new(Worker {
             pin: pin(),
+            models: model_catalog(&pin().model, None, &[]).unwrap(),
             adapter: Adapter::Fixture,
         }),
         CancellationToken::new(),
@@ -202,7 +207,7 @@ fn linux_root_engine_and_separate_service_uid_use_one_verified_socket() {
             let (tx, mut rx) = mpsc::channel(8);
             Connection::connect(&endpoint)
                 .await?
-                .authorize(h.route, h.owner, h.revision, &h.model)
+                .authorize(h.route, h.owner, h.revision, &h.model, h.effort.as_deref())
                 .await?
                 .stream(
                     h.route,

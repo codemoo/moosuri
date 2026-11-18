@@ -37,7 +37,10 @@ async fn stream_rechecks_account_and_model_before_user_input() {
         fixture.profile.clone(),
         environment.clone(),
         expected_email.clone(),
-        "claude-unverified",
+        &[ModelChoice {
+            model: "claude-unverified".into(),
+            effort: None,
+        }],
     )
     .await;
     assert_eq!(
@@ -45,9 +48,17 @@ async fn stream_rechecks_account_and_model_before_user_input() {
         "claude_worker_model_unavailable"
     );
     let model = "claude-fixture-v1";
-    let adapter = Adapter::bind(fixture.profile.clone(), environment, expected_email, model)
-        .await
-        .unwrap();
+    let adapter = Adapter::bind(
+        fixture.profile.clone(),
+        environment,
+        expected_email,
+        &[ModelChoice {
+            model: model.into(),
+            effort: Some("xhigh".into()),
+        }],
+    )
+    .await
+    .unwrap();
     let request = TextRequest {
         model: model.into(),
         messages: vec![TextMessage {
@@ -56,7 +67,7 @@ async fn stream_rechecks_account_and_model_before_user_input() {
             phase: None,
         }],
         max_output_tokens: 128,
-        effort: None,
+        effort: Some("xhigh".into()),
     };
     let user_input_marker = fixture.directory.path().join("bound-user");
     for behavior in [
@@ -86,4 +97,7 @@ async fn stream_rechecks_account_and_model_before_user_input() {
         }
     }
     assert_eq!(fixture.launches(), 9);
+    let history = fs::read_to_string(fixture.directory.path().join("settings-history")).unwrap();
+    let last: serde_json::Value = serde_json::from_str(history.lines().last().unwrap()).unwrap();
+    assert_eq!(last["effortLevel"], "xhigh");
 }

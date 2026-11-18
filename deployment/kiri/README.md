@@ -71,17 +71,10 @@ Linux Kiri 안의 두 실제 클라이언트에서 무수리 Rust 모델 서비�
 
 ### 개인 대화에 텍스트 답변 저장하기
 
-텍스트 시험 경로를 켜려면 고정 이미지의 `/etc/moosuri/text-preview.json`에 아래 공개 모델 선택을 넣는다. 파일은 root 소유·0444이며 공급자 주소나 인증 값은 넣지 않는다. 모델 이름과 연결 버전은 설치 모델 서비스의 설정과 일치해야 한다.
+텍스트 시험 경로를 켜려면 고정 이미지에 root 소유·0444인 `/etc/moosuri/text-preview.json`을 둔다. 개인 런타임은 새 대화를 실행할 때 전용 소켓에서 자기 계정에 적용되는 선택을 조회한다. 이전 설정 파일에 모델 값이 있어도 관리자 배정이 우선한다. 게이트웨이·개인 런타임 이미지·브로커·로그인 워커는 이 프로토콜을 지원하는 같은 버전으로 업데이트한다.
 
 ```json
-{
-  "socket": "/model/model.sock",
-  "broker_uid": 0,
-  "pin": {
-    "connection_revision": "1fc91be7-8a93-4ef1-a1cb-eee7660a601b",
-    "model": "example-local-model", "kind": "compatible", "max_output_tokens": 256
-  }
-}
+{"socket": "/model/model.sock", "broker_uid": 0, "max_output_tokens": 256}
 ```
 
 회원 프로비저닝에 `--model-sockets-root "$MODEL_SOCKETS" --enable-text-preview`를 지정한다. 로그인한 클라이언트는 `GET /api/v1/text-preview`로 지원 여부를 확인하고, `POST /api/v1/threads/{id}/text-preview`로 `request_id`, `text`, `capability: "text_only_preview"`를 보낸다. 답변은 기존 대화 이력에서 조회한다. 응답을 잃었다면 동일 요청 ID로 기존 상태를 조회한다. 동일한 요청으로 새 호출이 발생하지 않는다. 이 API가 제공하는 기능은 텍스트 대화이며 메일 발송·웹 탐색·예약·도구가 필요한 정규 비서 요청은 기존 운영 경로를 사용한다.

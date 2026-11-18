@@ -46,7 +46,7 @@ pub(super) async fn personal(
     Path(id): Path<String>,
     Query(q): Query<QuotaQuery>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     // List itself applies full authentication and owner scope, including helper exclusion.
     let binding = s
         .store
@@ -88,7 +88,7 @@ pub(super) async fn shared(
     Path(id): Path<String>,
     Query(q): Query<QuotaQuery>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let provider = shared_metadata(&s, &u, &id, q.revision).await?;
     let (evidence, message) = match provider.config.kind {
         ProviderKind::OpenRouter => (

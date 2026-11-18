@@ -74,7 +74,7 @@ async fn config(s: &AppState, u: &UserContext, base: String) -> Result<ProviderC
     Ok(c)
 }
 pub(crate) async fn list(State(s): State<AppState>, h: HeaderMap) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(Json(s.store.personal_compatible_providers(&u).await?).into_response())
 }
 pub(crate) async fn create(
@@ -82,7 +82,7 @@ pub(crate) async fn create(
     h: HeaderMap,
     Json(i): Json<PersonalInput>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     if i.expected_revision.is_some() {
         return Err(StoreError::InvalidInput.into());
     }
@@ -111,7 +111,7 @@ pub(crate) async fn update(
     Path(id): Path<String>,
     Json(i): Json<PersonalInput>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let revision = i.expected_revision.ok_or(StoreError::InvalidInput)?;
     // Disabling the unchanged destination must remain possible while DNS or
     // local enrollment is unavailable. Store repeats ownership/revision checks.
@@ -146,7 +146,7 @@ pub(crate) async fn update(
     .into_response())
 }
 pub(crate) async fn discover(State(s): State<AppState>, h: HeaderMap) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let _permit = s
         .probes
         .clone()
@@ -189,7 +189,7 @@ pub(crate) async fn disconnect(
     Path(id): Path<String>,
     Json(i): Json<CatalogInput>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(Json(
         s.store
             .disconnect_personal_compatible(&u, id, i.revision)

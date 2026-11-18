@@ -3,7 +3,7 @@ import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
 
 export const adminBase = "/personal/admin";
-type Member = {
+export type Member = {
   account_id: string;
   email: string;
   generation: number;

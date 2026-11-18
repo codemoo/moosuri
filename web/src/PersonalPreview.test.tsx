@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, render, screen, waitFor, cleanup } from "@testing-library/react";
+import { act, render, screen, waitFor, cleanup, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import PersonalPreview, { PREVIEW_DRAFT_KEY } from "./PersonalPreview";
@@ -18,7 +18,7 @@ const session = (id = aid, restricted = false) => ({
   password_change_required: restricted,
   chat_draft_scope: (id === aid ? "a" : "b").repeat(64),
 });
-let current: ReturnType<typeof session> | null,
+let current: (ReturnType<typeof session> & { installation_admin?: boolean }) | null,
   threads: any[],
   turns: any[],
   calls: { path: string; method: string; body: any; account: string | null }[],
@@ -35,6 +35,9 @@ let restrictLogin: boolean,
   completeSend: ((value: Response) => void) | null,
   capEnabled: boolean;
 let pendingCapability: Promise<Response> | undefined;
+let adminEngine: ((path: string, method: string, body: any) => Response) | undefined;
+let previewRefused: boolean;
+let obsoleteCapabilityFields: boolean;
 const turn = (id: string, text: string, state = "completed") => ({
   sequence: 1,
   user_text: text,
@@ -80,6 +83,9 @@ beforeEach(() => {
   completeSend = null;
   capEnabled = true;
   pendingCapability = undefined;
+  adminEngine = undefined;
+  previewRefused = false;
+  obsoleteCapabilityFields = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -107,6 +113,8 @@ beforeEach(() => {
         current = null;
         return new Response(null, { status: 204 });
       }
+      if (path.startsWith("/personal/admin/") && adminEngine)
+        return adminEngine(path, method, body);
       if (path === "/knowledge/memories")
         return Response.json({ items: [], next_after: null, generation: 1 });
       if (path === "/personal/google")
@@ -162,15 +170,13 @@ beforeEach(() => {
       if (path === "/text-preview" && pendingCapability)
         return pendingCapability;
       if (path === "/text-preview")
-        return capEnabled
-          ? Response.json({
-              enabled: true,
-              capability: "text_only_preview",
-              model: "synthetic-text",
-              tools: false,
-              automatic_retry: false,
-            })
-          : Response.json({ code: "not_found" }, { status: 404 });
+        return Response.json({
+          enabled: capEnabled,
+          capability: "text_only_preview",
+          tools: false,
+          automatic_retry: false,
+          ...(obsoleteCapabilityFields ? { model: "synthetic-admin-model", effort: "synthetic-effort" } : {}),
+        });
       if (path === "/threads" && method === "GET")
         return Response.json({ threads });
       if (path === "/threads" && method === "POST") {
@@ -194,6 +200,8 @@ beforeEach(() => {
           next_before: paginate && !path.includes("?before=") ? 1 : null,
         });
       if (path.match(/^\/threads\/[^/]+\/text-preview$/) && method === "POST") {
+        if (previewRefused)
+          return Response.json({ code: "personal_text_model_unavailable" }, { status: 422 });
         if (body.text === "show my latest email")
           return Response.json(
             { code: "personal_inbox_requested" },
@@ -241,6 +249,91 @@ function mount() {
 async function composer() {
   return await screen.findByRole("textbox", { name: "메시지" });
 }
+
+it("keeps a member's draft on an engine refusal and exposes no settings entry", async () => {
+  previewRefused = true;
+  obsoleteCapabilityFields = true;
+  const user = userEvent.setup();
+  mount();
+  const draft = await composer();
+  await waitFor(() => expect(draft).toBeEnabled());
+  await user.type(draft, "A personal request");
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("입력을 유지했습니다.");
+  expect(draft).toHaveValue("A personal request");
+  expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "관리" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "엔진 설정 열기" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/synthetic-admin-model|synthetic-effort/)).not.toBeInTheDocument();
+  expect(calls.some(call => call.path.startsWith("/personal/admin/"))).toBe(false);
+});
+
+it("lets an installation administrator recover a stale engine choice and assign a bound member after a revision conflict", async () => {
+  current = { ...session(), installation_admin: true };
+  const path = "/personal/admin/engine";
+  const high = { model: "synthetic-model", effort: "high" };
+  const low = { ...high, effort: "low" };
+  let memberChoice: typeof high | null = null;
+  let revision = 4;
+  let generation = 1;
+  let connection = "connection-four";
+  let stale = true;
+  let enabled = false;
+  adminEngine = (request, method, body) => {
+    if (request === "/personal/admin/members")
+      return Response.json({
+        members: [{ account_id: bid, generation, email: "guest@example.test", ready: false, suspended: false }],
+      });
+    if (method === "POST") {
+      if (request === path + "/member" && generation === 1) {
+        generation++;
+        revision++;
+        connection = "connection-five";
+        return Response.json({ code: "conflict" }, { status: 409 });
+      }
+      revision++;
+      if (request === path) {
+        enabled = body.enabled;
+        stale = false;
+      } else memberChoice = body.choice;
+    }
+    return Response.json({
+      configured: true, enabled, revision, connection_revision: connection, kind: "chatgpt",
+      host_default: low, choices: [low, high], default_choice: high, default_stale: stale,
+      members: [{ account_id: bid, generation, choice: memberChoice, stale: false }],
+    });
+  };
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "관리" }));
+  await user.click(screen.getByRole("button", { name: "어시스턴트 엔진" }));
+  const installation = within(await screen.findByRole("form", { name: "설치 기본 설정" }));
+  expect(installation.getByRole("status")).toHaveTextContent("엔진 연결이 바뀌었습니다.");
+  await user.click(installation.getByRole("checkbox", { name: "어시스턴트 사용" }));
+  await user.click(installation.getByRole("button", { name: "설치 설정 저장" }));
+  await screen.findByText("엔진 설정을 저장했습니다.");
+  expect(calls.find(call => call.path === path && call.method === "POST")?.body).toEqual({
+    revision: 4, connection_revision: "connection-four", enabled: true, default_choice: high,
+  });
+
+  await user.selectOptions(screen.getByLabelText("회원"), bid);
+  async function assign() {
+    const editor = within(await screen.findByRole("form", { name: "회원 설정" }));
+    await user.selectOptions(editor.getByLabelText("모델"), high.model);
+    await user.selectOptions(editor.getByLabelText("추론 강도"), "high");
+    await user.click(editor.getByRole("button", { name: "회원 설정 저장" }));
+  }
+  await assign();
+  expect(await screen.findByRole("alert")).toHaveTextContent("회원 정보가 변경되었습니다.");
+  await assign();
+  await screen.findByText("엔진 설정을 저장했습니다.");
+  const writes = calls.filter(call => call.path === path + "/member");
+  expect(writes.map(call => call.body)).toEqual([
+    { revision: 5, connection_revision: "connection-four", account_id: bid, generation: 1, choice: high },
+    { revision: 6, connection_revision: "connection-five", account_id: bid, generation: 2, choice: high },
+  ]);
+  expect(writes.every(call => call.account === aid)).toBe(true);
+});
 it("logs in, replaces a temporary password and sends through the explicit text-only route", async () => {
   current = null;
   restrictLogin = true;
@@ -638,7 +731,7 @@ it("opens a saved conversation while model discovery stalls and keeps it when di
     finish(Response.json({ code: "unavailable" }, { status: 503 }));
   });
   expect(
-    await screen.findByText("모델 연결 상태를 확인할 수 없습니다."),
+    await screen.findByText("대화 가능 상태를 확인하지 못했습니다. 상태를 새로고침해 주세요."),
   ).toBeInTheDocument();
   expect(screen.getByText("Existing conversation")).toBeInTheDocument();
 });

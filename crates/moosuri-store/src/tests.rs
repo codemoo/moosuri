@@ -39,6 +39,24 @@ pub(super) async fn member(store: &Store, admin: &UserContext, email: &str) -> L
         .await
         .unwrap()
 }
+pub(super) async fn additional_admin(store: &Store, email: &str) -> LoginResult {
+    let email = email.to_owned();
+    let account_email = email.clone();
+    store
+        .call(move |db| {
+            insert_account(
+                &db.conn,
+                "Synthetic co-administrator".into(),
+                account_email,
+                hash_sync(PASSWORD)?,
+                Role::Admin,
+                false,
+            )
+        })
+        .await
+        .unwrap();
+    store.login(email, PASSWORD.into()).await.unwrap()
+}
 // The global KDF limit is intentionally exercised by a race within its own test.
 // Serializing fixtures keeps unrelated tests from spending each other's two permits.
 pub(super) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

@@ -8,6 +8,7 @@ use moosuri_connectors::{
         protocol::{ModelEvent, TextRequest},
     },
 };
+use moosuri_store::runtime_registry::engine::ModelChoice;
 use serde::Deserialize;
 use std::{
     fs::{self, OpenOptions},
@@ -45,11 +46,11 @@ pub(super) struct Adapter {
     profile: Profile,
     environment: String,
     expected_email: Zeroizing<String>,
-    model: String,
+    choices: Vec<ModelChoice>,
 }
 
 impl Adapter {
-    pub(super) async fn open(config: Config, model: &str) -> Result<Self, String> {
+    pub(super) async fn open(config: Config, choices: &[ModelChoice]) -> Result<Self, String> {
         if config.environment_id.is_nil() {
             return Err("claude_worker_environment_invalid".into());
         }
@@ -62,7 +63,7 @@ impl Adapter {
             profile,
             config.environment_id.to_string(),
             expected_email,
-            model,
+            choices,
         )
         .await
     }
@@ -71,7 +72,7 @@ impl Adapter {
         profile: Profile,
         environment: String,
         expected_email: Zeroizing<String>,
-        model: &str,
+        choices: &[ModelChoice],
     ) -> Result<Self, String> {
         profile
             .cleanup_stale_environment(&environment)
@@ -81,19 +82,36 @@ impl Adapter {
         if models.login_required {
             return Err("claude_worker_account_unavailable".into());
         }
-        if !models.models.iter().any(|id| id == model) {
-            return Err("claude_worker_model_unavailable".into());
+        for choice in choices {
+            if !models.models.contains(&choice.model)
+                || choice.effort.as_ref().is_some_and(|effort| {
+                    !models.effort_metadata.iter().any(|metadata| {
+                        metadata.model == choice.model
+                            && metadata
+                                .efforts
+                                .as_ref()
+                                .is_some_and(|levels| levels.contains(effort))
+                    })
+                })
+            {
+                return Err("claude_worker_model_unavailable".into());
+            }
         }
         Ok(Self {
             profile,
             environment,
             expected_email,
-            model: model.to_owned(),
+            choices: choices.to_vec(),
         })
     }
 
     pub(super) fn validate(&self, request: &TextRequest) -> Result<(), String> {
-        if !(1..=2048).contains(&request.max_output_tokens) || self.model != request.model {
+        if !(1..=2048).contains(&request.max_output_tokens)
+            || !self
+                .choices
+                .iter()
+                .any(|choice| choice.model == request.model && choice.effort == request.effort)
+        {
             return Err("claude_worker_request_invalid".into());
         }
         self.profile
@@ -148,6 +166,10 @@ pub(crate) async fn login(options: &LoginOptions) -> Result<(), String> {
             "profile_digest": profile.digest(),
             "environment_id": options.environment_id,
             "models": models.models,
+            "effort_metadata": models.effort_metadata.iter().map(|metadata| serde_json::json!({
+                "model": metadata.model,
+                "efforts": metadata.efforts,
+            })).collect::<Vec<_>>(),
         })
     );
     Ok(())

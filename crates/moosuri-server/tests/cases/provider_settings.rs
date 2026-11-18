@@ -104,7 +104,7 @@ fn selection(profile: &Value) -> Value {
 }
 
 #[tokio::test]
-async fn administrator_connects_catalog_probes_defaults_and_member_keeps_own_selection() {
+async fn administrator_connects_probes_and_assigns_exact_verified_model_to_member() {
     let _guard = TEST_LOCK.lock().await;
     let (_tmp, store, app) = fixture(false).await;
     let admin = login(&app, "admin@example.test", PASSWORD).await;
@@ -217,7 +217,11 @@ async fn administrator_connects_catalog_probes_defaults_and_member_keeps_own_sel
         selection(&profile),
     )
     .await;
-    assert_eq!(chosen.status(), StatusCode::OK);
+    assert_eq!(chosen.status(), StatusCode::FORBIDDEN);
+    let assignment = format!("/api/v1/admin/accounts/{}/model", member.user.account().id);
+    let assigned = send(&app, "PUT", &assignment, Some(&admin), selection(&profile)).await;
+    assert_eq!(assigned.status(), StatusCode::OK);
+    assert_eq!(value(assigned).await["selection"]["model"], "fixture-model");
     let administrator = value(
         send(
             &app,
@@ -251,8 +255,11 @@ async fn administrator_connects_catalog_probes_defaults_and_member_keeps_own_sel
         .await,
     )
     .await;
-    assert_eq!(unavailable["selection"]["model"], "fixture-model");
+    assert!(unavailable["selection"].is_null());
     assert!(unavailable["effective"].is_null());
+    let stale = value(send(&app, "GET", &assignment, Some(&admin), Value::Null).await).await;
+    assert_eq!(stale["selection"]["model"], "fixture-model");
+    assert!(stale["effective"].is_null());
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
 }
 
@@ -671,11 +678,32 @@ async fn personal_compatible_owner_catalog_probe_history_actual_model_and_revoca
         )
         .await
         .unwrap();
-    let owner = store
+    let member = store
         .change_password(&restricted.user, PASSWORD.into())
         .await
         .unwrap();
-    let cookie = format!("moosuri_session={}", owner.token);
+    let member_cookie = format!("moosuri_session={}", member.token);
+    let account = store
+        .managed_accounts(&a)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.user.id == member.user.account().id)
+        .unwrap();
+    let promotion = store
+        .prepare_account_management(
+            &a,
+            account.user.id,
+            moosuri_core::AccountManagementInput {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                expected_revision: account.revision,
+                action: moosuri_core::AccountManagementAction::ChangeRole {
+                    role: moosuri_core::Role::Admin,
+                },
+            },
+        )
+        .await
+        .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let calls = Arc::new(AtomicUsize::new(0));
@@ -719,7 +747,19 @@ async fn personal_compatible_owner_catalog_probe_history_actual_model_and_revoca
     let upstream = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
     let root = "/api/v1/settings/compatible-providers";
     let input = json!({"name":"Private local fixture","base_url":base,"enabled":true,"credential":{"action":"replace","value":"synthetic-private-owner-key"}});
-    // No self-approved loopback access, nor hidden network activity on rejection.
+    assert_eq!(
+        send(&app, "POST", root, Some(&member_cookie), input.clone())
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    store.apply_account_management(promotion).await.unwrap();
+    let owner = store
+        .login("compatible-owner@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap();
+    let cookie = format!("moosuri_session={}", owner.token);
+    // The administrator still requires exact enrollment for this loopback endpoint.
     assert_eq!(
         send(&app, "POST", root, Some(&cookie), input.clone())
             .await
@@ -911,7 +951,7 @@ async fn personal_compatible_owner_catalog_probe_history_actual_model_and_revoca
     }
     assert_eq!(calls.load(Ordering::SeqCst), 7);
     assert!(store.conversation(&a, thread.id, None).await.is_err());
-    // Removing enrollment revokes member dispatch and cannot restore a default.
+    // Removing enrollment revokes private dispatch and cannot restore a default.
     let mut retire = connection(&base);
     retire["expected_revision"] = shared["revision"].clone();
     retire["enabled"] = json!(false);

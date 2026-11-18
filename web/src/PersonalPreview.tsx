@@ -25,6 +25,7 @@ import PersonalGoogle, {
   type ThreadGoogleRead,
 } from "./PersonalGoogle";
 import PersonalAdmin from "./PersonalAdmin";
+import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
 type SessionView = BaseSessionView & { installation_admin?: boolean };
 export const PREVIEW_DRAFT_KEY = "moosuri.personal-preview-drafts.v1";
@@ -341,7 +342,6 @@ function Credentials({
 type Capability = {
   enabled: boolean;
   capability: string;
-  model: string;
   tools: boolean;
   automatic_retry: boolean;
 };
@@ -380,6 +380,7 @@ function Workspace({
     ),
     [refresh, setRefresh] = useState(0);
   const [admin, setAdmin] = useState(session.installation_admin === true);
+  const [adminTab, setAdminTab] = useState<"members" | "engine">("members");
   const [openInbox, setOpenInbox] = useState<
     (GoogleReadIntent & { draft: string }) | null
   >(null);
@@ -454,7 +455,7 @@ function Workspace({
           return;
         }
         if (e instanceof ApiFailure && e.status === 401) expired();
-        else setError("모델 연결 상태를 확인할 수 없습니다.");
+        else setError("대화 가능 상태를 확인하지 못했습니다. 상태를 새로고침해 주세요.");
       });
     void scope
       .request<ThreadsResponse>("/threads")
@@ -760,6 +761,9 @@ function Workspace({
               request_id: value.request_id,
             };
             setView("mail");
+          } else if (e.code === "personal_text_model_unavailable") {
+            setCap(null);
+            setError("답변을 받을 수 없어 메시지를 보내지 못했습니다. 입력을 유지했습니다.");
           } else fail(e);
         } else {
           change((m) => ({
@@ -809,10 +813,17 @@ function Workspace({
       setMutating(false);
     }
   }
+  function leaveManagement() {
+    setAdmin(false);
+    setView("chat");
+  }
   return (
     <>
       <nav className="preview-view-nav" aria-label="개인 공간">
-        <button aria-pressed={view === "chat"} onClick={() => setView("chat")}>
+        <button aria-pressed={view === "chat"} onClick={() => {
+          if (view === "admin") setRefresh(value => value + 1);
+          setView("chat");
+        }}>
           대화
         </button>
         <button
@@ -834,7 +845,7 @@ function Workspace({
           disabled={mutating || loading}
           onClick={() => setRefresh((v) => v + 1)}
         >
-          연결 새로고침
+          상태 새로고침
         </button>
         {admin && (
           <button
@@ -846,14 +857,17 @@ function Workspace({
         )}
       </nav>
       {view === "admin" && admin ? (
-        <PersonalAdmin
-          account={session.user.id}
-          expired={expired}
-          unavailable={() => {
-            setAdmin(false);
-            setView("chat");
-          }}
-        />
+        <>
+          <nav className="preview-view-nav" aria-label="설치 관리">
+            <button aria-pressed={adminTab === "members"} onClick={() => setAdminTab("members")}>회원 관리</button>
+            <button aria-pressed={adminTab === "engine"} onClick={() => setAdminTab("engine")}>어시스턴트 엔진</button>
+          </nav>
+          {adminTab === "members" ? (
+            <PersonalAdmin account={session.user.id} expired={expired} unavailable={leaveManagement} />
+          ) : (
+            <PersonalEngineSettings account={session.user.id} expired={expired} unavailable={leaveManagement} />
+          )}
+        </>
       ) : view === "mail" ? (
         <PersonalGoogle
           session={session}
@@ -937,9 +951,17 @@ function Workspace({
                 메일 확인 결과는 이 대화에 별도로 표시되며 모델에 전달되지
                 않습니다. 발송·예약은 지원하지 않습니다.
               </p>
-              {cap && <span>모델: {cap.model}</span>}
-              {!loading && cap === null && (
-                <p>이 설치에 텍스트 미리보기가 연결되어 있지 않습니다.</p>
+              {!loading && cap !== undefined && !ready && (
+                <>
+                  <p role="status">
+                    {admin ? "어시스턴트 엔진의 연결과 설정을 확인해 주세요."
+                      : "지금 답변을 받을 수 없습니다. 관리자에게 문의해 주세요."}
+                  </p>
+                  {admin && <button onClick={() => {
+                    setAdminTab("engine");
+                    setView("admin");
+                  }}>엔진 설정 열기</button>}
+                </>
               )}
             </div>
             {error && (

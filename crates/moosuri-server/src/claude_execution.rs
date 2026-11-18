@@ -12,7 +12,7 @@ pub(super) struct Input {
     model: Option<String>,
 }
 pub(super) async fn list(State(s): State<AppState>, h: HeaderMap) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(Json(serde_json::json!({"runtime_configured":s.config.claude.is_some(),"bindings":s.store.claude_bindings(&u).await?})).into_response())
 }
 pub(super) async fn create(
@@ -20,7 +20,7 @@ pub(super) async fn create(
     h: HeaderMap,
     Json(i): Json<Create>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let p = s.runtime.subscription_service().claude_profile().await?;
     Ok(Json(
         s.store
@@ -35,7 +35,7 @@ pub(super) async fn native(
     Path(id): Path<String>,
     Json(i): Json<Input>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(Json(
         s.runtime
             .subscription_service()
@@ -57,7 +57,7 @@ pub(super) async fn models(
     Path(id): Path<String>,
     Json(i): Json<ModelsInput>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let _permit = s
         .probes
         .clone()
@@ -77,7 +77,7 @@ pub(super) async fn probe(
     Path(id): Path<String>,
     Json(i): Json<Input>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let _permit = s
         .probes
         .clone()
@@ -105,7 +105,7 @@ pub(super) async fn tool_probe(
     Path(id): Path<String>,
     Json(i): Json<ToolProbeInput>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let _permit = s
         .probes
         .clone()
@@ -137,7 +137,7 @@ pub(super) async fn usage(
     Path(id): Path<String>,
     Json(i): Json<UsageInput>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let _permit = s
         .probes
         .clone()
@@ -157,7 +157,7 @@ pub(super) async fn disconnect(
     Path(id): Path<String>,
     Json(i): Json<Input>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     s.runtime
         .subscription_service()
         .claude_disconnect(&u, id, i.revision)
@@ -179,7 +179,7 @@ pub(super) async fn login_start(
     Path(id): Path<String>,
     Json(i): Json<Input>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(Json(
         s.runtime
             .subscription_service()
@@ -193,7 +193,7 @@ pub(super) async fn login_status(
     h: HeaderMap,
     Path((id, attempt)): Path<(String, String)>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(Json(
         s.runtime
             .subscription_service()
@@ -208,7 +208,7 @@ pub(super) async fn login_code(
     Path((id, attempt)): Path<(String, String)>,
     Json(i): Json<Code>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let code = moosuri_connectors::claude_code::LoginCode::new(i.code)
         .map_err(|_| StoreError::InvalidInput)?;
     Ok(Json(
@@ -224,7 +224,7 @@ pub(super) async fn login_cancel(
     h: HeaderMap,
     Path((id, attempt)): Path<(String, String)>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(Json(
         s.runtime
             .subscription_service()
@@ -240,7 +240,7 @@ pub(super) async fn vision_probe(
     Path(id): Path<String>,
     Json(i): Json<ToolProbeInput>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let _permit = s
         .probes
         .clone()

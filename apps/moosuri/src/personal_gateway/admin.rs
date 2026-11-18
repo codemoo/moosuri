@@ -2,6 +2,7 @@
 //! locates the private service that can validate the current member login.
 use super::*;
 use moosuri_core::SessionView;
+use moosuri_store::runtime_registry::engine;
 use moosuri_store::{StoreError, runtime_registry::admin as control};
 use serde_json::json;
 
@@ -67,6 +68,8 @@ struct Invite {
 }
 enum Operation {
     List,
+    Engine,
+    Configure(engine::Change),
     Change(ChangeRequest),
     Invite(Invite),
 }
@@ -76,6 +79,11 @@ fn member(m: control::Member) -> serde_json::Value {
 }
 pub(super) fn routes() -> Router<Gateway> {
     Router::new()
+        .route(
+            "/api/v1/personal/admin/engine",
+            get(endpoint).post(endpoint),
+        )
+        .route("/api/v1/personal/admin/engine/member", post(endpoint))
         .route("/api/v1/personal/admin/members", get(endpoint))
         .route("/api/v1/personal/admin/members/change", post(endpoint))
         .route("/api/v1/personal/admin/invitations", post(endpoint))
@@ -103,20 +111,29 @@ async fn endpoint(
             {
                 return Err(StatusCode::BAD_REQUEST);
             }
-            if uri.path().ends_with("/invitations") {
-                Operation::Invite(
-                    serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?,
-                )
-            } else {
-                Operation::Change(
-                    serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?,
-                )
+            fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, StatusCode> {
+                serde_json::from_slice(bytes).map_err(|_| StatusCode::BAD_REQUEST)
+            }
+            match uri.path() {
+                "/api/v1/personal/admin/invitations" => Operation::Invite(decode(&body)?),
+                "/api/v1/personal/admin/members/change" => Operation::Change(decode(&body)?),
+                "/api/v1/personal/admin/engine" => {
+                    Operation::Configure(engine::Change::Installation(decode(&body)?))
+                }
+                "/api/v1/personal/admin/engine/member" => {
+                    Operation::Configure(engine::Change::Member(decode(&body)?))
+                }
+                _ => return Err(StatusCode::NOT_FOUND),
             }
         } else {
             if !body.is_empty() {
                 return Err(StatusCode::BAD_REQUEST);
             }
-            Operation::List
+            match uri.path() {
+                "/api/v1/personal/admin/engine" => Operation::Engine,
+                "/api/v1/personal/admin/members" => Operation::List,
+                _ => return Err(StatusCode::NOT_FOUND),
+            }
         };
         let (a, session) = authenticated_allocation(&g, &headers, true).await?;
         let (status, bytes, _) = g
@@ -134,8 +151,14 @@ async fn endpoint(
         let view = private_view(&bytes, &a)?;
         let root = g.registry.clone();
         let out = tokio::task::spawn_blocking(move || {
-            let pin = control::checked_session(&root, &a, &view).map_err(error)?;
+            let pin = control::checked_session(&root, &a, &view)
+                .and_then(|proof| proof.at_epoch(a.epoch))
+                .map_err(error)?;
             match input {
+                Operation::Engine => engine::read(&root, &pin).map(|s| json!(s)).map_err(error),
+                Operation::Configure(c) => engine::change(&root, &pin, c)
+                    .map(|s| json!(s))
+                    .map_err(error),
                 Operation::Change(r) => {
                     let change = match r.action {
                         Action::Promote => control::Change::Promote,

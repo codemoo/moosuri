@@ -1,9 +1,8 @@
 # Shared model connections
 
 The administrator manages installation API/local connections at `/admin/providers`.
-Each member chooses a verified model and effort at `/settings/model`, or explicitly
-uses the installation default. Verified choices are connected to saved conversations.
-Personal ChatGPT text connections use the separate owner-scoped flow below.
+Administrators choose the installation default and can assign a verified shared model and reasoning effort to an individual member. A member inherits the installation default until assigned an override. Ordinary members go directly to their assistant and have no model settings or provider login controls. The personal login and connection instructions below apply to administrators managing their own account. [Kiri engine administration](../deployment/kiri/admin.md)
+
 The **Claude 연결** button in My model also leads administrators directly to a
 new Anthropic API connection. The form starts with Anthropic selected and makes
 the shared connection and separate API billing explicit. The adjacent personal
@@ -158,7 +157,7 @@ Open **내 모델 → ChatGPT 구독 연결** in your signed-in Moosuri account.
 
 In **내 모델 → 개인 LLM → 주소로 연결**, enter a name, the server's API base (for example `https://models.example.test/v1`), and an optional Bearer key. The server reads `GET /models` and sends text via `POST /chat/completions` relative to this base. Verify a model, then select it under **모델** and save. The current compatible transport uses the provider's default reasoning setting. Keys and choices belong to the account that added them. Updating the destination requires a new key when a saved key exists. Disconnect removes the stored credential. Personal compatible models with verified tools can run chat, one-off and scheduled work. Enabling automatic memory extraction for a collection pins its owner’s current provider, model and effort. Changing the chat selection later keeps that collection on its original connection. Disconnecting the connection prevents new extraction calls and discards late results. In personal LLM settings, each verified model also has an image check. A successful check admits images for that exact provider revision, model and effort.
 
-For a model on the same computer as Moosuri, choose **서버에서 로컬 모델 찾기**. Discovery reads the catalog at the standard Ollama and LM Studio loopback addresses. Select a candidate to save it and verify a short text response. The administrator can discover these local services. Other members can access a local destination after the administrator has enabled that exact destination in shared provider settings. Personal public HTTPS addresses are resolved and checked by the server.
+For a model on the same computer as Moosuri, choose **서버에서 로컬 모델 찾기**. Discovery reads the catalog at the standard Ollama and LM Studio loopback addresses. Select a candidate to save it and verify a short text response. The administrator can discover these local services. Members use a verified shared local model when the administrator assigns it. Personal public HTTPS addresses are resolved and checked by the server.
 
 For a model on your own workstation and Moosuri on a Linux server you administer:
 

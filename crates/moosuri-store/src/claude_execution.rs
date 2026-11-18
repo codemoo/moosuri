@@ -178,7 +178,7 @@ impl Store {
         let u = u.clone();
         self.call(move |db| {
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let u = validate(&tx, &u, true, false)?;
+            let u = validate(&tx, &u, true, true)?;
             let selection = ModelSelection { source: ModelSource::PersonalClaudeCode,
                 provider_id: id, provider_revision: revision, model, effort };
             let choice = verified(&tx, &u, &selection)?;
@@ -214,7 +214,7 @@ impl Store {
         self.call(move |db| {
             if !matches!(round, 1 | 2) { return Err(StoreError::InvalidInput); }
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let u = validate(&tx, &u, true, false)?;
+            let u = validate(&tx, &u, true, true)?;
             if u.tenant.0 != tenant || u.account.id != account { return Err(StoreError::NotFound); }
             let choice = verified(&tx,&u,&selection)?;
             let current = binding(&tx,&tenant,&account,&choice)?.claude_code.ok_or(StoreError::Corrupt)?;
@@ -235,7 +235,7 @@ impl Store {
         let u = u.clone();
         self.call(move |db| {
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let u = validate(&tx, &u, true, false)?;
+            let u = validate(&tx, &u, true, true)?;
             if u.tenant.0 != proof.tenant || u.account.id != proof.account { return Err(StoreError::NotFound); }
             let choice = verified(&tx,&u,&proof.selection)?;
             let current = binding(&tx,&proof.tenant,&proof.account,&choice)?.claude_code.ok_or(StoreError::Corrupt)?;
@@ -295,7 +295,7 @@ impl Store {
     pub async fn claude_bindings(&self, u: &UserContext) -> Result<Vec<ClaudeBindingSummary>> {
         let u = u.clone();
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             let mut q = db.conn.prepare(
                 "SELECT b.id,b.revision,b.label,b.status,
                     coalesce((SELECT state FROM claude_code_retirements r WHERE r.environment_id=b.environment_id),'not_requested'),
@@ -320,7 +320,7 @@ impl Store {
     ) -> Result<ClaudeExecutionRef> {
         let u = u.clone();
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             if label.trim().is_empty()
                 || label.len() > 80
                 || root_id.len() != 64
@@ -370,7 +370,7 @@ impl Store {
     ) -> Result<ClaudeExecutionRef> {
         let u = u.clone();
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             reference(&db.conn, &u.tenant.0, &u.account.id, &id, revision)
         })
         .await
@@ -385,7 +385,7 @@ impl Store {
     ) -> Result<ClaudeExecutionRef> {
         let u = u.clone();
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             let r = reference(&db.conn, &u.tenant.0, &u.account.id, &id, revision)?;
             let pending: bool = db.conn.query_row(
                 "SELECT status='pending' FROM claude_code_bindings WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND revision=?4",
@@ -401,7 +401,7 @@ impl Store {
         model: String,
     ) -> Result<ModelChoice> {
         let u = u.clone();
-        self.call(move|db|{let u=validate(&db.conn,&u,true,false)?;let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let current=reference(&tx,&u.tenant.0,&u.account.id,&r.id,r.revision)?;if current.root_id!=r.root_id||current.profile_digest!=r.profile_digest||current.environment_id!=r.environment_id||model.len()>200||!model.starts_with("claude-")||!model.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.'){return Err(StoreError::Conflict)}let n:i64=tx.query_row("SELECT count(*) FROM claude_code_probes WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3",params![u.tenant.0,u.account.id,r.id],|r|r.get(0))?;if n>=32{return Err(StoreError::Conflict)}tx.execute("INSERT INTO claude_code_probes(tenant_id,account_id,binding_id,revision,model,verified_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT DO UPDATE SET verified_at=excluded.verified_at",params![u.tenant.0,u.account.id,r.id,r.revision,model,now()?])?;tx.execute("UPDATE claude_code_bindings SET status='active' WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,r.id])?;let v=verified(&tx,&u,&ModelSelection{source:ModelSource::PersonalClaudeCode,provider_id:r.id,provider_revision:r.revision,model,effort:None})?;tx.commit()?;Ok(v)}).await
+        self.call(move|db|{let u=validate(&db.conn,&u,true,true)?;let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let current=reference(&tx,&u.tenant.0,&u.account.id,&r.id,r.revision)?;if current.root_id!=r.root_id||current.profile_digest!=r.profile_digest||current.environment_id!=r.environment_id||model.len()>200||!model.starts_with("claude-")||!model.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.'){return Err(StoreError::Conflict)}let n:i64=tx.query_row("SELECT count(*) FROM claude_code_probes WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3",params![u.tenant.0,u.account.id,r.id],|r|r.get(0))?;if n>=32{return Err(StoreError::Conflict)}tx.execute("INSERT INTO claude_code_probes(tenant_id,account_id,binding_id,revision,model,verified_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT DO UPDATE SET verified_at=excluded.verified_at",params![u.tenant.0,u.account.id,r.id,r.revision,model,now()?])?;tx.execute("UPDATE claude_code_bindings SET status='active' WHERE tenant_id=?1 AND account_id=?2 AND id=?3",params![u.tenant.0,u.account.id,r.id])?;let v=verified(&tx,&u,&ModelSelection{source:ModelSource::PersonalClaudeCode,provider_id:r.id,provider_revision:r.revision,model,effort:None})?;tx.commit()?;Ok(v)}).await
     }
 
     /// Backfill catalog metadata without performing or admitting another inference.
@@ -415,7 +415,7 @@ impl Store {
     ) -> Result<()> {
         let u = u.clone();
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             if efforts.len() > 4 || efforts.iter().any(|value| !valid_effort(value)) {
                 return Err(StoreError::InvalidInput);
             }
@@ -451,7 +451,7 @@ impl Store {
         let u = u.clone();
         let expected = expected.clone();
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             let current = reference(&db.conn, &u.tenant.0, &u.account.id, &expected.id, expected.revision)?;
             if current.root_id != expected.root_id
                 || current.profile_digest != expected.profile_digest
@@ -477,7 +477,7 @@ impl Store {
             let tx = db
                 .conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let u = validate(&tx, &u, true, false)?;
+            let u = validate(&tx, &u, true, true)?;
             let current = reference(
                 &tx,
                 &u.tenant.0,
@@ -513,7 +513,7 @@ impl Store {
         let u = u.clone();
         self.call(move |db| {
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let u = validate(&tx, &u, true, false)?;
+            let u = validate(&tx, &u, true, true)?;
             let changed = tx.execute(
                 "UPDATE claude_code_bindings SET status='disconnected',revision=revision+1 WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND revision=?4 AND status!='disconnected'",
                 params![u.tenant.0, u.account.id, id, revision],
@@ -1055,14 +1055,14 @@ mod tests {
 #[cfg(test)]
 mod deletion_tests {
     use super::*;
-    use crate::tests::{TEST_LOCK, admin, directory, member};
+    use crate::tests::{TEST_LOCK, additional_admin, admin, directory};
     #[tokio::test]
     async fn account_deletion_keeps_local_cleanup_pending_until_owned_environment_ack() {
         let _g = TEST_LOCK.lock().await;
         let dir = directory();
         let store = Store::open(dir.path()).unwrap();
         let a = admin(&store).await;
-        let b = member(&store, &a.user, "claude-delete@example.test").await;
+        let b = additional_admin(&store, "claude-delete@example.test").await;
         let r = store
             .create_claude_binding(
                 &b.user,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::tests::{PASSWORD, TEST_LOCK, admin, directory, member};
+use crate::tests::{PASSWORD, TEST_LOCK, additional_admin, admin, directory, member};
 fn config() -> ProviderConfig {
     ProviderConfig {
         kind: ProviderKind::OpenAi,
@@ -201,7 +201,7 @@ async fn persistence_encrypted_secret_revision_probe_and_no_fallback() {
     ));
 }
 #[tokio::test]
-async fn role_restrictions_revocation_personal_selection_and_safe_retarget() {
+async fn admin_assignment_replaces_stale_member_preference_and_revokes_old_dispatch() {
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
@@ -239,22 +239,154 @@ async fn role_restrictions_revocation_personal_selection_and_safe_retarget() {
         .create_provider(&admin.user, change("key-two"))
         .await
         .unwrap();
-    for id in [&p.id, &q.id] {
+    let legacy = store
+        .record_model_probe(&admin.user, p.id.clone(), 1, "legacy-model".into(), None)
+        .await
+        .unwrap();
+    let default = store
+        .record_model_probe(&admin.user, p.id.clone(), 1, "shared-default".into(), None)
+        .await
+        .unwrap();
+    store
+        .set_default_model(&admin.user, Some(selection(&p.id, "shared-default")))
+        .await
+        .unwrap();
+    let member = a.user.clone();
+    let stale_provider = p.id.clone();
+    store
+        .call(move |db| {
+            // Simulate the schema-85 member preference preserved by migration.
+            db.conn.execute(
+                "INSERT INTO personal_model_selections VALUES(?1,?2,?3,1,'legacy-model','')",
+                params![member.tenant.0, member.account.id, stale_provider],
+            )?;
+            assert!(
+                binding_for_owner_choice(
+                    &db.conn,
+                    &db.provider_key,
+                    &member.tenant.0,
+                    &member.account.id,
+                    &legacy
+                )
+                .is_err()
+            );
+            assert!(
+                binding_for_owner_choice(
+                    &db.conn,
+                    &db.provider_key,
+                    &member.tenant.0,
+                    &member.account.id,
+                    &default
+                )
+                .is_ok()
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        store.resolve_model(&a.user).await.unwrap().model,
+        "shared-default"
+    );
+    let mut assigned = selection(&q.id, "assigned-model");
+    assigned.effort = Some("high".into());
+    let pinned = store
+        .record_model_probe(
+            &admin.user,
+            q.id.clone(),
+            1,
+            assigned.model.clone(),
+            assigned.effort.clone(),
+        )
+        .await
+        .unwrap();
+    let account = a.user.account.id.clone();
+    assert!(matches!(
         store
-            .record_model_probe(&admin.user, id.clone(), 1, "fixture-model".into(), None)
-            .await
-            .unwrap();
-    }
-    store
-        .set_default_model(&admin.user, Some(selection(&p.id, "fixture-model")))
+            .set_model_preference(&a.user, Some(assigned.clone()))
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        store
+            .set_account_model_assignment(&a.user, account.clone(), Some(assigned.clone()))
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    let wrong_effort = ModelSelection {
+        effort: Some("medium".into()),
+        ..assigned.clone()
+    };
+    assert!(matches!(
+        store
+            .set_account_model_assignment(&admin.user, account.clone(), Some(wrong_effort))
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let result = store
+        .set_account_model_assignment(&admin.user, account.clone(), Some(assigned.clone()))
         .await
         .unwrap();
-    store
-        .set_model_preference(&a.user, Some(selection(&q.id, "fixture-model")))
-        .await
-        .unwrap();
-    assert_eq!(store.resolve_model(&a.user).await.unwrap().id, q.id);
+    assert_eq!(result.selection, Some(assigned.clone()));
+    let effective = store.resolve_model(&a.user).await.unwrap();
+    assert_eq!(effective.id, q.id);
+    assert_eq!(effective.model, assigned.model);
+    assert_eq!(effective.effort, assigned.effort);
     assert_eq!(store.resolve_model(&admin.user).await.unwrap().id, p.id);
+    let status = store.model_settings(&a.user).await.unwrap();
+    assert!(status.selection.is_none() && status.choices.is_empty());
+    assert_eq!(status.effective.unwrap().effort, assigned.effort);
+
+    let member = a.user.clone();
+    let prior_pin = pinned.clone();
+    store
+        .call(move |db| {
+            let current = selected_mission_model(&db.conn, &member)?;
+            assert_eq!(current.effort, prior_pin.effort);
+            assert!(
+                binding_for_owner_choice(
+                    &db.conn,
+                    &db.provider_key,
+                    &member.tenant.0,
+                    &member.account.id,
+                    &prior_pin
+                )
+                .is_ok()
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let thread = store
+        .create_thread(&a.user, "Assignment fixture".into())
+        .await
+        .unwrap();
+    store
+        .submit_turn(
+            &a.user,
+            thread.id,
+            Uuid::new_v4().to_string(),
+            "Synthetic prompt".into(),
+        )
+        .await
+        .unwrap();
+    let claimed = store.claim_run().await.unwrap().unwrap();
+    assert_eq!(claimed.binding.model, assigned.model);
+    assert_eq!(claimed.binding.effort, assigned.effort);
+    store
+        .set_account_model_assignment(&admin.user, account.clone(), None)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.check_run(&claimed.lease).await,
+        Err(StoreError::Conflict)
+    ));
+    store
+        .set_account_model_assignment(&admin.user, account.clone(), Some(assigned.clone()))
+        .await
+        .unwrap();
+
     store
         .update_provider(
             &admin.user,
@@ -278,8 +410,36 @@ async fn role_restrictions_revocation_personal_selection_and_safe_retarget() {
             .effective
             .is_none()
     );
-    store.set_model_preference(&a.user, None).await.unwrap();
-    assert_eq!(store.resolve_model(&a.user).await.unwrap().id, p.id);
+
+    store
+        .set_account_model_assignment(&admin.user, account, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.resolve_model(&a.user).await.unwrap().model,
+        "shared-default"
+    );
+    let member = a.user.clone();
+    store
+        .call(move |db| {
+            assert!(
+                binding_for_owner_choice(
+                    &db.conn,
+                    &db.provider_key,
+                    &member.tenant.0,
+                    &member.account.id,
+                    &pinned
+                )
+                .is_err()
+            );
+            assert_eq!(
+                selected(&db.conn, Some(&member))?.unwrap().model,
+                "legacy-model"
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
     let mut edited = config();
     edited.kind = ProviderKind::Anthropic;
     assert!(matches!(
@@ -765,7 +925,7 @@ async fn personal_compatible_destination_owner_storage_and_deleted_account_bound
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
     let admin = admin(&store).await.user;
-    let own = member(&store, &admin, "private-model-owner@example.test")
+    let own = additional_admin(&store, "private-model-owner@example.test")
         .await
         .user;
     let other = member(&store, &admin, "private-model-other@example.test")
@@ -781,7 +941,7 @@ async fn personal_compatible_destination_owner_storage_and_deleted_account_bound
     assert!(
         store
             .admit_personal_compatible_config(
-                &own,
+                &other,
                 local.base_url.clone().unwrap(),
                 local.allowed_ips.clone()
             )
@@ -858,20 +1018,24 @@ async fn personal_compatible_destination_owner_storage_and_deleted_account_bound
             .iter()
             .any(|p| p.id == row.id)
     );
+    assert!(matches!(
+        store.personal_compatible_providers(&other).await,
+        Err(StoreError::Forbidden)
+    ));
     assert!(
         store
-            .personal_compatible_providers(&other)
+            .personal_compatible_providers(&admin)
             .await
             .unwrap()
             .providers
             .is_empty()
     );
-    assert!(
+    assert!(matches!(
         store
-            .probe_binding(&other, row.id.clone(), 1, "fixture".into(), None)
-            .await
-            .is_err()
-    );
+            .probe_binding(&admin, row.id.clone(), 1, "fixture".into(), None)
+            .await,
+        Err(StoreError::NotFound)
+    ));
     let choice = store
         .record_model_probe(&own, row.id.clone(), 1, "fixture".into(), None)
         .await

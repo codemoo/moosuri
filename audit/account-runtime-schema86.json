@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "schema": 86,
+  "base_schema": 85,
+  "migrations": [
+    {
+      "name": "0086_admin_model_assignments.sql",
+      "sha256": "9ff5b0d7fcfa5fe09b92c13fb3b2470c0f754cc2eddbf2a49bf646041ef833e2"
+    }
+  ],
+  "tables": [
+    {
+      "name": "admin_model_assignments",
+      "kind": "table",
+      "sql_sha256": "f743eb69034d91b14a1ecbffc58fb5bc7ca31a7670d7891dfbd54f3d4cf6e805",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM admin_model_assignments",
+      "key_transition": "Installation authority over a verified shared connection. Exclude this row from personal knowledge archives and clear it on quarantined restore.",
+      "verification": "Check the account and exact verified provider revision/model/effort foreign keys. Require a current administrator to reassign after migration.",
+      "on_failure": "Keep the assignment unavailable until an administrator reviews it.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "provider_id",
+        "revision",
+        "model",
+        "effort"
+      ]
+    }
+  ],
+  "schema_sha256": "0451f5b5b72f8c3945881f25c9eab9da3a0e04c9976d3a5471e037b7113fc589"
+}

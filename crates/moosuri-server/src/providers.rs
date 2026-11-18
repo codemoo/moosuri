@@ -1,4 +1,4 @@
-//! Admin-owned connections and user-owned model preferences. No provider body or
+//! Admin-owned connections and model assignments. No provider body or
 //! API credential crosses this boundary in a response, trace or error.
 use super::*;
 pub(super) mod personal;
@@ -59,6 +59,7 @@ pub(super) struct UpdateInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SelectionInput {
+    #[serde(deserialize_with = "Option::deserialize")]
     selection: Option<ModelSelection>,
 }
 #[derive(Deserialize)]
@@ -108,7 +109,7 @@ pub(super) fn bound_client(binding: &ProviderBinding) -> Result<ModelClient, Tra
 }
 
 pub(super) async fn list(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     Ok(Json(state.store.list_providers(&user).await?).into_response())
 }
 pub(super) async fn create(
@@ -116,7 +117,7 @@ pub(super) async fn create(
     headers: HeaderMap,
     Json(input): Json<ProviderInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     let provider = state
         .store
         .create_provider(&user, input.into_change()?)
@@ -129,7 +130,7 @@ pub(super) async fn update(
     Path(id): Path<String>,
     Json(input): Json<UpdateInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     let revision = input.expected_revision;
     let change = ProviderInput {
         name: input.name,
@@ -151,7 +152,7 @@ pub(super) async fn set_default(
     headers: HeaderMap,
     Json(input): Json<SelectionInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     Ok(Json(
         state
             .store
@@ -169,11 +170,41 @@ pub(super) async fn set_preference(
     headers: HeaderMap,
     Json(input): Json<SelectionInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     Ok(Json(
         state
             .store
             .set_model_preference(&user, input.selection)
+            .await?,
+    )
+    .into_response())
+}
+
+pub(super) async fn account_assignment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(account): Path<String>,
+) -> HttpResult {
+    let actor = current_admin(&state, &headers).await?;
+    Ok(Json(
+        state
+            .store
+            .account_model_assignment(&actor, account)
+            .await?,
+    )
+    .into_response())
+}
+pub(super) async fn set_account_assignment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(account): Path<String>,
+    Json(input): Json<SelectionInput>,
+) -> HttpResult {
+    let actor = current_admin(&state, &headers).await?;
+    Ok(Json(
+        state
+            .store
+            .set_account_model_assignment(&actor, account, input.selection)
             .await?,
     )
     .into_response())
@@ -203,7 +234,7 @@ pub(super) async fn probe(
     Path(id): Path<String>,
     Json(input): Json<ProbeInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     let binding = state
         .store
         .probe_binding(
@@ -297,7 +328,7 @@ pub(super) async fn catalog(
     Path(id): Path<String>,
     Json(input): Json<CatalogInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     let binding = state
         .store
         .probe_binding(&user, id.clone(), input.revision, "catalog".into(), None)
@@ -356,7 +387,7 @@ pub(super) async fn tool_probe(
     Path(id): Path<String>,
     Json(input): Json<ProbeInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     let (binding, challenge) = state
         .store
         .tool_probe_binding(
@@ -633,7 +664,7 @@ pub(super) async fn vision_probe(
     Path(id): Path<String>,
     Json(input): Json<ProbeInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
+    let user = current_admin(&state, &headers).await?;
     let binding = state
         .store
         .probe_binding(
@@ -849,7 +880,6 @@ mod plan_tool_probe_tests {
         let state = AppState {
             store,
             config,
-            logins: Arc::new(Mutex::new(HashMap::new())),
             probes: Arc::new(tokio::sync::Semaphore::new(2)),
             invitation_sends: Arc::new(tokio::sync::Semaphore::new(1)),
             delivery: runtime.delivery_gate(),

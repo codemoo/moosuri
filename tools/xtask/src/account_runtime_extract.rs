@@ -1177,7 +1177,7 @@ mod tests {
     }
     #[test]
     fn owner_graph_is_copied_exactly_and_verifies_without_the_source() {
-        for version in [81, 82, 83, 84, 85] {
+        for version in [81, 82, 83, 84, 85, 86] {
             let f = fixture(version);
             let before = file_hash(&f.source.join("assistant.sqlite")).unwrap();
             let result = extract(&root(), &f.source, &f.output, &owner()).unwrap();
@@ -1234,7 +1234,7 @@ mod tests {
             ] {
                 assert!(!bytes.windows(canary.len()).any(|w| w == canary.as_bytes()));
             }
-            if version == 85 {
+            if version >= 85 {
                 let report: Value =
                     serde_json::from_slice(&fs::read(f.output.join("manifest.json")).unwrap())
                         .unwrap();

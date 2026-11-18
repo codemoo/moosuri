@@ -9,7 +9,11 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct ModelPin {
     pub connection_revision: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_epoch: Option<i64>,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub kind: ProviderKind,
     pub max_output_tokens: u32,
 }
@@ -43,9 +47,13 @@ struct Request {
     run_id: Uuid,
     ordinal: u32,
     generation: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection_epoch: Option<i64>,
     max_output_tokens: u32,
     connection_revision: Uuid,
     model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
     messages: Vec<Message>,
 }
 #[derive(Deserialize)]
@@ -56,6 +64,7 @@ struct Reply {
     call_id: Option<Uuid>,
     connection_revision: Option<Uuid>,
     model: Option<String>,
+    effort: Option<String>,
     output: Option<String>,
     outcome: Option<String>,
     receipt: Option<Receipt>,
@@ -130,19 +139,88 @@ fn authority(
     }
     Ok(user)
 }
+fn request_id(value: &str, text: &str) -> Result<String> {
+    if text.trim().is_empty() || text.len() > 8192 {
+        return Err(StoreError::InvalidInput);
+    }
+    Uuid::parse_str(value)
+        .map(|id| id.to_string())
+        .map_err(|_| StoreError::InvalidInput)
+}
+
+fn existing(
+    conn: &Connection,
+    user: &UserContext,
+    owner: personal_volume::VolumeOwner,
+    thread: &str,
+    request_id: &str,
+    text: &str,
+) -> Result<Option<Admission>> {
+    chat::thread_exists(conn, user, thread)?;
+    let previous: Option<String> = conn
+        .query_row(
+            "SELECT id FROM chat_runs WHERE tenant_id=?1 AND request_id=?2",
+            params![user.tenant.0, request_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(id) = previous {
+        let run = chat::load_run(conn, &user.tenant.0, &id)?;
+        let same_volume = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM personal_text_previews WHERE tenant_id=?1 AND run_id=?2 AND volume_id=?3 AND generation=?4)",
+            params![user.tenant.0, id, owner.volume.to_string(), owner.generation as i64],
+            |r| r.get::<_, bool>(0),
+        )?;
+        if !same_volume
+            || run.thread != thread
+            || run.text != text
+            || run.account != user.account.id
+        {
+            return Err(StoreError::Conflict);
+        }
+        return Ok(Some(Admission::Existing(chat::turn(conn, &run)?)));
+    }
+    let active = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND state IN ('queued','running'))",
+        params![user.tenant.0, thread],
+        |r| r.get::<_, bool>(0),
+    )?;
+    if active {
+        return Err(StoreError::Conflict);
+    }
+    Ok(Store::latest_inbox_intent(text).then_some(Admission::InboxRequested))
+}
+
 impl Store {
+    /// Resolve already accepted requests before contacting the installation
+    /// broker. An assignment change cannot alter an existing personal turn.
+    pub async fn existing_text_preview(
+        &self,
+        user: &UserContext,
+        owner: personal_volume::VolumeOwner,
+        thread: String,
+        request: String,
+        text: String,
+    ) -> Result<Option<Admission>> {
+        let request = request_id(&request, &text)?;
+        let user = user.clone();
+        self.call(move |db| {
+            let user = authority(&db.conn, &user, owner)?;
+            existing(&db.conn, &user, owner, &thread, &request, &text)
+        })
+        .await
+    }
+
     pub async fn begin_text_preview(
         &self,
         user: &UserContext,
         owner: personal_volume::VolumeOwner,
         thread: String,
-        request_id: String,
+        request: String,
         text: String,
         pin: ModelPin,
     ) -> Result<Admission> {
-        if text.trim().is_empty()
-            || text.len() > 8192
-            || pin.connection_revision.is_nil()
+        if pin.connection_revision.is_nil()
             || pin.model.is_empty()
             || pin.model.len() > 200
             || pin.max_output_tokens == 0
@@ -150,20 +228,15 @@ impl Store {
         {
             return Err(StoreError::InvalidInput);
         }
-        let request_id = Uuid::parse_str(&request_id)
-            .map_err(|_| StoreError::InvalidInput)?
-            .to_string();
+        let request_id = request_id(&request, &text)?;
         let user = user.clone();
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let user=authority(&tx,&user,owner)?;
-            chat::thread_exists(&tx,&user,&thread)?;
+            if let Some(admission) = existing(&tx, &user, owner, &thread, &request_id, &text)? {
+                return Ok(admission);
+            }
             let digest:[u8;32]=Sha256::digest(serde_json::to_vec(&("personal-text-preview-v1",owner.account,owner.tenant,owner.volume,owner.generation,&thread,&text,&pin)).map_err(|_|StoreError::InvalidInput)?).into();
-            let previous:Option<(String,Vec<u8>)>=tx.query_row("SELECT id,payload_digest FROM chat_runs WHERE tenant_id=?1 AND request_id=?2",params![user.tenant.0,request_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-            if let Some((id,previous))=previous {if previous!=digest||!has(&tx,&user.tenant.0,&id)?{return Err(StoreError::Conflict);}return Ok(Admission::Existing(chat::turn(&tx,&chat::load_run(&tx,&user.tenant.0,&id)?)?));}
-            let active:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND state IN ('queued','running'))",params![user.tenant.0,thread],|r|r.get(0))?;
-            if active{return Err(StoreError::Conflict);}
-            if Store::latest_inbox_intent(&text) { return Ok(Admission::InboxRequested); }
             let stable=|label:&str|->Result<Uuid>{let hash:[u8;32]=Sha256::digest(serde_json::to_vec(&(label,owner.account,owner.tenant,&request_id)).map_err(|_|StoreError::Corrupt)?).into();let mut bytes:[u8;16]=hash[..16].try_into().map_err(|_|StoreError::Corrupt)?;bytes[6]=(bytes[6]&0x0f)|0x50;bytes[8]=(bytes[8]&0x3f)|0x80;Ok(Uuid::from_bytes(bytes))};
             let id=stable("personal-text-preview-run-v1")?;let call_id=stable("personal-text-preview-call-v1")?;let mut nonce=[0u8;32];OsRng.try_fill_bytes(&mut nonce).map_err(|_|StoreError::Unavailable)?;
             // Only prior successful preview turns may enter this deliberately
@@ -174,9 +247,9 @@ impl Store {
             let mut used=POLICY.len()+text.len();let mut history=Vec::new();for (u,a) in previous {if used+u.len()+a.len()>48*1024{break;}used+=u.len()+a.len();history.push((u,a));}
             for (u,a) in history.into_iter().rev(){messages.push(Message {role:"user",text:u});messages.push(Message {role:"assistant",text:a});}
             messages.push(Message {role:"user",text:text.clone()});
-            let request=serde_json::to_vec(&Request {v:1,call_id,run_id:id,ordinal:0,generation:owner.generation as i64,max_output_tokens:pin.max_output_tokens,connection_revision:pin.connection_revision,model:pin.model.clone(),messages}).map_err(|_|StoreError::Corrupt)?;
+            let request=serde_json::to_vec(&Request {v:1,call_id,run_id:id,ordinal:0,generation:owner.generation as i64,selection_epoch:pin.selection_epoch,max_output_tokens:pin.max_output_tokens,connection_revision:pin.connection_revision,model:pin.model.clone(),effort:pin.effort.clone(),messages}).map_err(|_|StoreError::Corrupt)?;
             if request.len()+1>64*1024{return Err(StoreError::InvalidInput);}
-            let model=ModelChoice {source:Default::default(),provider_id:pin.connection_revision.to_string(),provider_revision:1,provider_name:"Deployment text-only preview".into(),kind:pin.kind,model:pin.model.clone(),effort:None,verified_at:0,function_tools:false};
+            let model=ModelChoice {source:Default::default(),provider_id:pin.connection_revision.to_string(),provider_revision:1,provider_name:"Deployment text-only preview".into(),kind:pin.kind,model:pin.model.clone(),effort:pin.effort.clone(),verified_at:0,function_tools:false};
             tx.execute("UPDATE threads SET chat_turn_seq=chat_turn_seq+1,updated_at=unixepoch() WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,thread])?;
             let sequence:i64=tx.query_row("SELECT chat_turn_seq FROM threads WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,thread],|r|r.get(0))?;
             let order=chat::next_order(&tx)?;
@@ -232,6 +305,7 @@ impl Store {
                     && r.connection_revision.map(|id| id.to_string()).as_deref()
                         == Some(run.model.provider_id.as_str())
                     && r.model.as_deref() == Some(run.model.model.as_str())
+                    && r.effort == run.model.effort
                     && r.output
                         .as_ref()
                         .is_some_and(|s| !s.is_empty() && s.len() <= 64 * 1024)
@@ -268,12 +342,19 @@ impl Store {
                 tx.execute("UPDATE chat_runs SET model=json_set(model,'$.verified_at',unixepoch()) WHERE tenant_id=?1 AND id=?2",params![run.tenant,run.id])?;
                 chat::transition(&tx, &run, state, None)?;
             } else {
-                chat::transition(
-                    &tx,
-                    &run,
-                    RunState::OutcomeUnknown,
-                    Some(RunFailure::ProtocolFailed),
-                )?;
+                let known_failure = reply.as_ref().filter(|r| {
+                    r.v == 1 && r.call_id.is_none() && r.output.is_none() && r.receipt.is_none()
+                }).and_then(|r| match r.state.as_str() {
+                    "model_selection_changed" | "model_worker_unavailable" | "model_credential_unavailable" => Some(RunFailure::ProviderUnavailable),
+                    "account_fenced" => Some(RunFailure::AuthorityRevoked),
+                    "quota_exhausted" => Some(RunFailure::BudgetExhausted),
+                    _ => None,
+                });
+                let (state, failure) = match known_failure {
+                    Some(failure) => (RunState::Failed, failure),
+                    None => (RunState::OutcomeUnknown, RunFailure::ProtocolFailed),
+                };
+                chat::transition(&tx, &run, state, Some(failure))?;
             }
             let result = chat::turn(&tx, &chat::load_run(&tx, &user.tenant.0, &work.run)?)?;
             tx.commit()?;
@@ -326,7 +407,9 @@ mod tests {
         let thread = s.create_thread(&user, "Preview".into()).await.unwrap().id;
         let pin = ModelPin {
             connection_revision: Uuid::new_v4(),
+            selection_epoch: None,
             model: "synthetic-text".into(),
+            effort: None,
             kind: ProviderKind::Compatible,
             max_output_tokens: 128,
         };

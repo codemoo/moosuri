@@ -47,11 +47,13 @@ export function KnowledgeView({
   onExpired,
   target,
   onTargetConsumed,
+  canManageModel = false,
   manualMemoriesOnly = false,
 }: {
   accountId: string;
   mode: Mode;
   manualMemoriesOnly?: boolean;
+  canManageModel?: boolean;
   drafts: KnowledgeDrafts;
   updateDrafts: DraftSetter;
   onExpired: () => void;
@@ -615,7 +617,7 @@ export function KnowledgeView({
       </div>
       {mode === "source" && currentCollection && (
         <div className="collection-context">
-          <MemoryExtraction accountId={accountId} collectionId={currentCollection.id} connected={currentCollection.connected} onExpired={onExpired}/>
+          <MemoryExtraction accountId={accountId} collectionId={currentCollection.id} connected={currentCollection.connected} onExpired={onExpired} canManageModel={canManageModel}/>
 
           {!currentCollection.connected && (
             <p>자료 추가가 중단된 모음입니다.</p>
@@ -942,6 +944,7 @@ export function KnowledgeView({
           accountId={accountId}
           resource={source}
           onExpired={onExpired}
+          canManageModel={canManageModel}
           close={() => setSource(null)}
           evidence={addEvidence}
           destroy={(document) => {
@@ -994,6 +997,7 @@ function SourceDetail({
   accountId,
   resource,
   onExpired,
+  canManageModel,
   close,
   evidence,
   destroy,
@@ -1001,6 +1005,7 @@ function SourceDetail({
   accountId: string;
   resource: Resource;
   onExpired: () => void;
+  canManageModel: boolean;
   close: () => void;
   evidence: (evidence: EvidenceRef, title: string) => void;
   destroy: (source: SourceDocument) => void;
@@ -1061,7 +1066,7 @@ function SourceDetail({
               onExpired={onExpired}
             />
           )}
-          <MemoryExtraction accountId={accountId} collectionId={document.source.collection_id} connected={true} onExpired={onExpired} source={{id:document.source.id,revision:document.source.revision}}/>
+          <MemoryExtraction accountId={accountId} collectionId={document.source.collection_id} connected={true} onExpired={onExpired} canManageModel={canManageModel} source={{id:document.source.id,revision:document.source.revision}}/>
           <label>
             원문 텍스트
             <textarea

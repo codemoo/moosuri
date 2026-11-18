@@ -133,8 +133,10 @@ async fn suspension_lost_reply_and_cold_volume_restore_charge_one_model_call() {
     let id = Uuid::new_v4().to_string();
     let example = request(member);
     let pin = ModelPin {
+        selection_epoch: None,
         connection_revision: example.connection_revision,
         model: example.model,
+        effort: None,
         kind: ProviderKind::Compatible,
         max_output_tokens: 32,
     };

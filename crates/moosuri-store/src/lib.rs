@@ -626,6 +626,9 @@ impl Store {
             {
                 return Err(StoreError::Unauthorized);
             }
+            if helper && current.summary.role != Role::Admin {
+                return Err(StoreError::Forbidden);
+            }
             let result = issue_session_for(&tx, current, helper)?;
             tx.commit()?;
             Ok(result)
@@ -899,7 +902,7 @@ fn validate_handoff(conn: &Connection, user: &UserContext) -> Result<UserContext
     {
         return Err(StoreError::Unauthorized);
     }
-    if current.restricted {
+    if current.restricted || current.account.role != Role::Admin {
         return Err(StoreError::Forbidden);
     }
     Ok(current)

@@ -2,7 +2,7 @@
 //! One configured Unix socket per owner, with subscription sessions held by
 //! dedicated host workers. No tools, prompt/answer persistence, fallback, retry,
 //! or private Store opening in the broker.
-use crate::engine_login::{Connection, Endpoint, Owner, Route};
+use crate::engine_login::{Connection, Endpoint, Owner, Route, model_catalog};
 use clap::Args;
 use fs2::FileExt;
 use moosuri_connectors::model::{
@@ -15,7 +15,10 @@ use moosuri_core::{ProviderConfig, ProviderKind};
 use moosuri_store::{
     StoreError,
     runtime_model_ledger::{Admission, Budget, CallKey, Ledger, Receipt},
-    runtime_registry,
+    runtime_registry::{
+        self,
+        engine::{self, MemberModelPolicy, ModelChoice},
+    },
 };
 use ring::hmac;
 use serde::{Deserialize, Serialize};
@@ -52,7 +55,7 @@ pub struct Options {
     /// Private host directory; mount only each exact socket into its runtime.
     #[arg(long)]
     pub socket_dir: PathBuf,
-    /// Owner-only JSON with one pinned provider/model/revision and exact bindings.
+    /// Owner-only JSON with the installation model catalog and exact account bindings.
     #[arg(long)]
     pub config: PathBuf,
     /// Existing owner-only 32-byte random HMAC key; retained across broker restarts.
@@ -66,6 +69,10 @@ struct Config {
     connection_revision: Uuid,
     provider: ProviderConfig,
     model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    models: Vec<ModelChoice>,
     /// API/local endpoint credential only. No personal subscription auth HOME.
     key_file: Option<PathBuf>,
     /// Use a host worker instead of an API credential for every binding.
@@ -116,10 +123,42 @@ struct Request {
     run_id: Uuid,
     ordinal: u32,
     generation: i64,
+    // An admission fence, excluded from the canonical fingerprint so an
+    // otherwise exact request can recover its receipt after relogin.
+    #[serde(default, skip_serializing)]
+    selection_epoch: Option<i64>,
     connection_revision: Uuid,
     model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
     max_output_tokens: u32,
     messages: Vec<Message>,
+}
+impl Request {
+    fn matches(&self, policy: &MemberModelPolicy) -> bool {
+        self.connection_revision == policy.connection_revision
+            && self.model == policy.model
+            && self.effort == policy.effort
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectionRequest {
+    v: u32,
+    operation: SelectionOperation,
+    generation: i64,
+    selection_epoch: i64,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SelectionOperation {
+    Selection,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Command {
+    Call(Request),
+    Selection(SelectionRequest),
 }
 #[derive(Serialize, Deserialize)]
 struct Reply {
@@ -137,6 +176,12 @@ struct Reply {
     connection_revision: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<ProviderKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection_epoch: Option<i64>,
 }
 impl Reply {
     fn error(code: &str) -> Self {
@@ -149,6 +194,9 @@ impl Reply {
             receipt: None,
             connection_revision: None,
             model: None,
+            effort: None,
+            kind: None,
+            selection_epoch: None,
         }
     }
     fn receipt(id: Uuid, r: Receipt) -> Self {
@@ -168,6 +216,9 @@ impl Reply {
             receipt: serde_json::to_value(r).ok(),
             connection_revision: None,
             model: None,
+            effort: None,
+            kind: None,
+            selection_epoch: None,
         }
     }
     fn admission_error(error: StoreError, unavailable: &str) -> Self {
@@ -226,7 +277,12 @@ struct ClientCache {
     client: Arc<ModelClient>,
 }
 impl ClientCache {
-    fn load(config: &Config, key: &hmac::Key, previous: Option<&Self>) -> Result<Self, String> {
+    fn load(
+        config: &Config,
+        caps: &TextCapabilities,
+        key: &hmac::Key,
+        previous: Option<&Self>,
+    ) -> Result<Self, String> {
         let bytes = config
             .key_file
             .as_deref()
@@ -259,16 +315,21 @@ impl ClientCache {
                     .map_err(|_| "model_key_invalid")
             })
             .transpose()?;
-        let client =
-            moosuri_agent::model_client(&config.provider, credential, TextCapabilities::default())
-                .map_err(|_| "model_config_invalid")?
-                .with_limits(TransportLimits {
-                    connect: Duration::from_secs(5),
-                    idle: Duration::from_secs(20),
-                    total: Duration::from_secs(60),
-                    response_bytes: 512 * 1024,
-                })
-                .map_err(|_| "model_config_invalid")?;
+        let client = moosuri_agent::model_client(
+            &config.provider,
+            credential,
+            TextCapabilities {
+                efforts: caps.efforts.clone(),
+            },
+        )
+        .map_err(|_| "model_config_invalid")?
+        .with_limits(TransportLimits {
+            connect: Duration::from_secs(5),
+            idle: Duration::from_secs(20),
+            total: Duration::from_secs(60),
+            response_bytes: 512 * 1024,
+        })
+        .map_err(|_| "model_config_invalid")?;
         Ok(Self {
             tag,
             client: Arc::new(client),
@@ -278,6 +339,8 @@ impl ClientCache {
 struct Broker {
     registry: PathBuf,
     config: Config,
+    models: Vec<ModelChoice>,
+    caps: TextCapabilities,
     key: hmac::Key,
     client: Mutex<Option<ClientCache>>,
     ledger: Mutex<Ledger>,
@@ -317,8 +380,26 @@ impl Broker {
         if config.version != 1
             || config.bindings.is_empty()
             || config.bindings.len() > 128
-            || config.model.is_empty()
-            || config.model.len() > 200
+            || config.connection_revision.is_nil()
+        {
+            return Err("model_config_invalid".into());
+        }
+        let models = model_catalog(&config.model, config.effort.as_deref(), &config.models)
+            .ok_or("model_config_invalid")?;
+        let caps = TextCapabilities {
+            efforts: models
+                .iter()
+                .filter_map(|choice| choice.effort.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+        };
+        if (config.provider.kind == ProviderKind::Compatible && !caps.efforts.is_empty())
+            || (config.subscription == Some(Route::ClaudeCode)
+                && caps
+                    .efforts
+                    .iter()
+                    .any(|effort| !matches!(effort.as_str(), "low" | "medium" | "high" | "xhigh")))
         {
             return Err("model_config_invalid".into());
         }
@@ -327,14 +408,12 @@ impl Broker {
                 Route::ChatgptPlan => ProviderKind::OpenAi,
                 Route::ClaudeCode => ProviderKind::Anthropic,
             };
-            if config.connection_revision.is_nil()
-                || config.key_file.is_some()
+            if config.key_file.is_some()
                 || config.provider.kind != kind
                 || config.provider.base_url.is_some()
                 || !config.provider.allowed_ips.is_empty()
                 || !config.provider.router_providers.is_empty()
                 || config.provider.zero_data_retention
-                || !config.model.bytes().all(|b| b.is_ascii_graphic())
             {
                 return Err("model_config_invalid".into());
             }
@@ -384,7 +463,7 @@ impl Broker {
         }
         let key = hmac::Key::new(hmac::HMAC_SHA256, &key);
         let client = if config.subscription.is_none() {
-            Some(ClientCache::load(&config, &key, None)?)
+            Some(ClientCache::load(&config, &caps, &key, None)?)
         } else {
             None
         };
@@ -392,6 +471,8 @@ impl Broker {
         Ok(Arc::new(Self {
             registry: options.registry.clone(),
             config,
+            models,
+            caps,
             key,
             client: Mutex::new(client),
             ledger: Mutex::new(ledger),
@@ -399,11 +480,19 @@ impl Broker {
             stop,
         }))
     }
+    fn publish_models(&self) -> Result<(), String> {
+        let members: Vec<_> = self.config.bindings.iter().map(|b| b.account_id).collect();
+        engine::publish_models(
+            &self.registry,
+            self.config.connection_revision,
+            self.config.provider.kind,
+            &self.models[0],
+            &self.models,
+            &members,
+        )
+        .map_err(|_| "model_policy_unavailable".into())
+    }
     fn request(&self, b: &Binding, r: &Request) -> Result<TextRequest, String> {
-        if r.connection_revision != self.config.connection_revision || r.model != self.config.model
-        {
-            return Err("model_selection_changed".into());
-        }
         if r.v != 1
             || r.generation != b.generation
             || r.ordinal > 1_000_000
@@ -441,37 +530,95 @@ impl Broker {
             return Err("request_exceeds_reservation".into());
         }
         let request = TextRequest {
-            model: self.config.model.clone(),
+            model: r.model.clone(),
             messages,
             max_output_tokens: r.max_output_tokens,
-            effort: None,
+            effort: r.effort.clone(),
         };
         Ok(request)
     }
-    /// Local acceptance point: account/generation validation, quota admission
-    /// and the one durable dispatch intent serialize against registry fencing.
-    /// The registry lock is released on return, before any provider IO.
-    fn admit(
+    fn effective(&self, policy: Option<MemberModelPolicy>) -> Option<MemberModelPolicy> {
+        let policy = policy?;
+        if policy.connection_revision != self.config.connection_revision
+            || !self
+                .models
+                .iter()
+                .any(|choice| choice.model == policy.model && choice.effort == policy.effort)
+        {
+            return None;
+        }
+        Some(policy)
+    }
+    fn selected(&self, b: &Binding, start_epoch: i64) -> moosuri_store::Result<MemberModelPolicy> {
+        engine::with_ready_epoch_and_model_policy(
+            &self.registry,
+            b.account_id,
+            start_epoch,
+            |a, policy| {
+                if self.stop.is_cancelled() || !binding_matches(&a, b) {
+                    return Err(StoreError::Forbidden);
+                }
+                self.effective(policy).ok_or(StoreError::ModelRequired)
+            },
+        )
+    }
+    fn selection(&self, b: &Binding, query: SelectionRequest) -> Reply {
+        if query.v != 1 || query.generation != b.generation {
+            return Reply::error("request_invalid");
+        }
+        let SelectionOperation::Selection = query.operation;
+        let Ok(policy) = self.selected(b, query.selection_epoch) else {
+            return Reply::error("model_selection_unavailable");
+        };
+        Reply {
+            connection_revision: Some(policy.connection_revision),
+            model: Some(policy.model),
+            effort: policy.effort,
+            kind: Some(self.config.provider.kind),
+            selection_epoch: Some(query.selection_epoch),
+            ..Reply::error("selection")
+        }
+    }
+    fn ledger_admission(
         &self,
         b: &Binding,
         key: &CallKey,
         provider_ready: bool,
-        start_epoch: i64,
     ) -> moosuri_store::Result<Admission> {
-        runtime_registry::with_ready_epoch(&self.registry, b.account_id, start_epoch, |a| {
-            if self.stop.is_cancelled() || !binding_matches(&a, b) {
-                return Err(moosuri_store::StoreError::Forbidden);
-            }
-            let mut ledger = self
-                .ledger
-                .lock()
-                .map_err(|_| moosuri_store::StoreError::Unavailable)?;
-            let admission = ledger.admit_if_ready(key, b.budget, provider_ready)?;
-            if let Admission::Fresh(permit) = &admission {
-                ledger.dispatch(permit)?;
-            }
-            Ok(admission)
-        })
+        let mut ledger = self.ledger.lock().map_err(|_| StoreError::Unavailable)?;
+        let admission = ledger.admit_if_ready(key, b.budget, provider_ready)?;
+        if let Admission::Fresh(permit) = &admission {
+            ledger.dispatch(permit)?;
+        }
+        Ok(admission)
+    }
+    /// Check the current assignment again under the registry lock before the
+    /// durable dispatch intent. No provider IO takes place under this lock.
+    fn admit(
+        &self,
+        b: &Binding,
+        r: &Request,
+        key: &CallKey,
+        provider_ready: bool,
+        start_epoch: i64,
+    ) -> moosuri_store::Result<Option<Admission>> {
+        engine::with_ready_epoch_and_model_policy(
+            &self.registry,
+            b.account_id,
+            start_epoch,
+            |a, policy| {
+                if self.stop.is_cancelled() || !binding_matches(&a, b) {
+                    return Err(StoreError::Forbidden);
+                }
+                if !self
+                    .effective(policy)
+                    .is_some_and(|policy| r.matches(&policy))
+                {
+                    return Ok(None);
+                }
+                self.ledger_admission(b, key, provider_ready).map(Some)
+            },
+        )
     }
     fn call_key(
         &self,
@@ -489,7 +636,7 @@ impl Broker {
             b.generation,
             self.config.connection_revision,
             &self.config.provider,
-            &self.config.model,
+            &r.model,
             r,
         );
         let canonical = Zeroizing::new(match login {
@@ -521,41 +668,42 @@ impl Broker {
         let Ok(key) = self.call_key(b, &r, login) else {
             return Reply::error("request_invalid");
         };
-        let mut executor = None;
-        if login.is_none() {
-            let client = match self.client.lock() {
-                Ok(mut cached) => {
-                    *cached = ClientCache::load(&self.config, &self.key, cached.as_ref()).ok();
-                    cached.as_ref().map(|c| c.client.clone())
-                }
-                Err(_) => None,
-            };
-            if let Some(client) = client {
-                if client.validate_text_request(&request).is_err() {
-                    return Reply::error("request_invalid");
-                }
-                executor = Some(Executor::Api(client));
-            }
-        }
         let Ok(start_epoch) = epoch(&self.registry, b) else {
             return Reply::error("account_fenced");
         };
-        let unavailable = if let Some((route, worker)) = login {
-            // Check for a prior receipt before attempting any worker IO. Fresh
-            // calls must authorize routing metadata before budget admission.
-            let unavailable = "model_worker_unavailable";
-            match self.admit(b, &key, false, start_epoch) {
-                Ok(Admission::Existing(receipt)) => return Reply::receipt(r.call_id, receipt),
-                Ok(Admission::Fresh(_)) => unreachable!("a fresh admission requires an executor"),
-                Err(StoreError::ModelRequired) => (),
-                Err(error) => return Reply::admission_error(error, unavailable),
+        let unavailable = if login.is_some() {
+            "model_worker_unavailable"
+        } else {
+            "model_credential_unavailable"
+        };
+        // Exact prior requests can retrieve their receipt through a policy
+        // change. A different model or effort changes the request fingerprint.
+        match runtime_registry::with_ready_epoch(&self.registry, b.account_id, start_epoch, |a| {
+            if self.stop.is_cancelled() || !binding_matches(&a, b) {
+                return Err(StoreError::Forbidden);
             }
+            self.ledger_admission(b, &key, false)
+        }) {
+            Ok(Admission::Existing(receipt)) => return Reply::receipt(r.call_id, receipt),
+            Ok(Admission::Fresh(_)) => unreachable!("receipt lookup cannot dispatch"),
+            Err(StoreError::ModelRequired) => (),
+            Err(error) => return Reply::admission_error(error, unavailable),
+        }
+        if r.selection_epoch.is_some_and(|epoch| epoch != start_epoch) {
+            return Reply::error("account_fenced");
+        }
+        if !self
+            .selected(b, start_epoch)
+            .is_ok_and(|policy| r.matches(&policy))
+        {
+            return Reply::error("model_selection_changed");
+        }
+        let executor = if let Some((route, worker)) = login {
             let valid = match route {
-                Route::ChatgptPlan => moosuri_connectors::model::chatgpt::encode_text_request(
-                    &request,
-                    &TextCapabilities::default(),
-                )
-                .is_ok(),
+                Route::ChatgptPlan => {
+                    moosuri_connectors::model::chatgpt::encode_text_request(&request, &self.caps)
+                        .is_ok()
+                }
                 Route::ClaudeCode => {
                     use moosuri_connectors::claude_code::protocol::{ids, input};
                     let (session, user) = ids();
@@ -570,21 +718,37 @@ impl Broker {
                 _ = self.stop.cancelled() => None,
                 result = async {
                     Connection::connect(worker).await?
-                        .authorize(route, owner, r.connection_revision, &request.model).await
+                        .authorize(route, owner, r.connection_revision, &request.model, request.effort.as_deref()).await
                 } => result.ok(),
             };
-            executor = connection.map(|connection| Executor::Login {
+            connection.map(|connection| Executor::Login {
                 route,
                 owner,
                 connection,
-            });
-            unavailable
+            })
         } else {
-            "model_credential_unavailable"
+            let client = match self.client.lock() {
+                Ok(mut cached) => {
+                    *cached =
+                        ClientCache::load(&self.config, &self.caps, &self.key, cached.as_ref())
+                            .ok();
+                    cached.as_ref().map(|c| c.client.clone())
+                }
+                Err(_) => None,
+            };
+            if let Some(client) = client {
+                if client.validate_text_request(&request).is_err() {
+                    return Reply::error("request_invalid");
+                }
+                Some(Executor::Api(client))
+            } else {
+                None
+            }
         };
-        let permit = match self.admit(b, &key, executor.is_some(), start_epoch) {
-            Ok(Admission::Existing(receipt)) => return Reply::receipt(r.call_id, receipt),
-            Ok(Admission::Fresh(p)) => p,
+        let permit = match self.admit(b, &r, &key, executor.is_some(), start_epoch) {
+            Ok(Some(Admission::Existing(receipt))) => return Reply::receipt(r.call_id, receipt),
+            Ok(Some(Admission::Fresh(p))) => p,
+            Ok(None) => return Reply::error("model_selection_changed"),
             Err(error) => return Reply::admission_error(error, unavailable),
         };
         // Already admitted calls may reach the provider after fencing. They are
@@ -670,7 +834,10 @@ impl Broker {
             ),
             receipt: serde_json::to_value(receipt).ok(),
             connection_revision: Some(self.config.connection_revision),
-            model: Some(self.config.model.clone()),
+            model: Some(request.model),
+            effort: request.effort,
+            kind: None,
+            selection_epoch: None,
         }
     }
 }
@@ -710,8 +877,9 @@ async fn handle(mut stream: UnixStream, broker: Arc<Broker>, binding: Binding) {
             Err(_) => Reply::error("broker_busy"),
             Ok(_slot) => match frame(&mut stream, MAX_FRAME, Duration::from_secs(10)).await {
                 Err(e) => Reply::error(&e),
-                Ok(bytes) => match serde_json::from_slice::<Request>(&bytes) {
-                    Ok(r) => broker.call(&binding, r).await,
+                Ok(bytes) => match serde_json::from_slice::<Command>(&bytes) {
+                    Ok(Command::Call(r)) => broker.call(&binding, r).await,
+                    Ok(Command::Selection(query)) => broker.selection(&binding, query),
                     Err(_) => Reply::error("request_invalid"),
                 },
             },
@@ -823,11 +991,15 @@ async fn serve(options: &Options, stop: CancellationToken) -> Result<(), String>
     let broker = Broker::new(options, stop.clone())?;
     let mut listeners = JoinSet::new();
     let mut guards = Vec::new();
+    let mut bindings = Vec::new();
     for b in &broker.config.bindings {
         let (listener, guard) = listener(&options.socket_dir, b).await?;
         guards.push(guard);
+        bindings.push((b.clone(), listener));
+    }
+    broker.publish_models()?;
+    for (binding, listener) in bindings {
         let broker = broker.clone();
-        let binding = b.clone();
         let stop = stop.clone();
         listeners.spawn(async move {
             let mut requests=JoinSet::new();
@@ -866,6 +1038,8 @@ pub struct ClientOptions {
     pub connection_revision: Uuid,
     #[arg(long)]
     pub model: String,
+    #[arg(long)]
+    pub effort: Option<String>,
     #[arg(long, default_value_t = 256)]
     pub max_output_tokens: u32,
 }
@@ -889,8 +1063,10 @@ pub async fn run_client(options: &ClientOptions) -> Result<(), String> {
         run_id: options.run_id,
         ordinal: options.ordinal,
         generation: options.generation,
+        selection_epoch: None,
         connection_revision: options.connection_revision,
         model: options.model.clone(),
+        effort: options.effort.clone(),
         max_output_tokens: options.max_output_tokens,
         messages: vec![Message {
             role: Role::User,
@@ -950,6 +1126,7 @@ mod tests {
         count: AtomicUsize,
         mode: AtomicUsize,
         rotated_calls: AtomicUsize,
+        alternative_calls: AtomicUsize,
         entered: Notify,
         release: Notify,
     }
@@ -966,7 +1143,14 @@ mod tests {
             }
             _ => panic!("unexpected synthetic credential"),
         }
-        assert_eq!(body["model"], "synthetic-model");
+        let model = body["model"].as_str().unwrap();
+        match model {
+            "synthetic-model" => (),
+            "synthetic-alternative" => {
+                p.alternative_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            _ => panic!("unexpected synthetic model"),
+        }
         if p.mode.load(Ordering::SeqCst) == 2 {
             p.entered.notify_one();
             p.release.notified().await;
@@ -979,6 +1163,7 @@ mod tests {
             "data: {\"id\":\"fixture-id\",\"model\":\"synthetic-model\",\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3}}\n\n",
             "data: [DONE]\n\n").to_owned()
         };
+        let body = body.replace("synthetic-model", model);
         ([("content-type", "text/event-stream")], body)
     }
     async fn upstream() -> (String, Arc<Provider>, tokio::task::JoinHandle<()>) {
@@ -986,6 +1171,7 @@ mod tests {
             count: AtomicUsize::new(0),
             mode: AtomicUsize::new(0),
             rotated_calls: AtomicUsize::new(0),
+            alternative_calls: AtomicUsize::new(0),
             entered: Notify::new(),
             release: Notify::new(),
         });
@@ -1047,6 +1233,8 @@ mod tests {
                     zero_data_retention: false,
                 },
                 model: "synthetic-model".into(),
+                effort: None,
+                models: vec![],
                 key_file: Some(key_file),
                 subscription: None,
                 // Native tests have one real OS uid. Never publish two sockets
@@ -1069,6 +1257,171 @@ mod tests {
             bindings,
         )
     }
+    fn ready_broker(options: &Options) -> Arc<Broker> {
+        let broker = Broker::new(options, CancellationToken::new()).unwrap();
+        broker.publish_models().unwrap();
+        broker
+    }
+    fn operator(
+        options: &Options,
+        binding: &Binding,
+        email: &str,
+    ) -> runtime_registry::admin::AdminSession {
+        use moosuri_core::{AccountSummary, Role, SessionView};
+        let allocation =
+            runtime_registry::lookup_id(&options.registry, binding.account_id).unwrap();
+        let view = SessionView {
+            user: AccountSummary {
+                id: allocation.account_id.clone(),
+                name: "Synthetic operator".into(),
+                email: email.into(),
+                role: Role::Member,
+                must_change_password: false,
+            },
+            password_change_required: false,
+            chat_draft_scope: None,
+        };
+        runtime_registry::admin::bootstrap(&options.registry, Uuid::new_v4(), &allocation, &view)
+            .unwrap();
+        runtime_registry::admin::checked_session(&options.registry, &allocation, &view).unwrap()
+    }
+    fn settings_revision(
+        options: &Options,
+        operator: &runtime_registry::admin::AdminSession,
+    ) -> i64 {
+        let settings = engine::read(&options.registry, operator).unwrap();
+        serde_json::to_value(settings).unwrap()["revision"]
+            .as_i64()
+            .unwrap()
+    }
+    #[tokio::test]
+    async fn member_policy_reaches_local_provider_and_mismatch_cannot_dispatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let (url, provider, upstream) = upstream().await;
+        let (options, mut bindings) = fixture(&root, url);
+        bindings[1].peer_uid = bindings[0].peer_uid + 1;
+        let (member, other) = (&bindings[0], &bindings[1]);
+        let mut config: Config =
+            serde_json::from_slice(&fs::read(&options.config).unwrap()).unwrap();
+        let choice = ModelChoice {
+            model: "synthetic-alternative".into(),
+            effort: None,
+        };
+        config.models = vec![choice.clone()];
+        config.bindings = bindings.clone();
+        file(&options.config, &serde_json::to_vec(&config).unwrap());
+        let unready = Broker::new(&options, CancellationToken::new()).unwrap();
+        assert_eq!(
+            unready.call(member, request(member)).await.state,
+            "model_selection_changed"
+        );
+        drop(unready);
+        let broker = ready_broker(&options);
+        let operator = operator(&options, member, "a@example.invalid");
+        let mut stored = request(member);
+        let prior = serde_json::to_vec(&stored).unwrap();
+        assert_eq!(
+            broker
+                .call(member, serde_json::from_slice(&prior).unwrap())
+                .await
+                .state,
+            "settled"
+        );
+        engine::change(
+            &options.registry,
+            &operator,
+            engine::Change::Member(engine::MemberChange {
+                revision: settings_revision(&options, &operator),
+                connection_revision: config.connection_revision,
+                account_id: member.account_id,
+                generation: member.generation,
+                choice: Some(choice.clone()),
+            }),
+        )
+        .unwrap();
+        let selection = |b: &Binding| {
+            broker.selection(
+                b,
+                SelectionRequest {
+                    v: 1,
+                    operation: SelectionOperation::Selection,
+                    generation: b.generation,
+                    selection_epoch: epoch(&options.registry, b).unwrap(),
+                },
+            )
+        };
+        assert_eq!(selection(member).model, Some(choice.model.clone()));
+        assert_eq!(
+            selection(other).model.as_deref(),
+            Some(config.model.as_str())
+        );
+        let mut previously_settled: Request = serde_json::from_slice(&prior).unwrap();
+        let old_epoch = selection(member).selection_epoch.unwrap();
+        previously_settled.selection_epoch = Some(old_epoch);
+        let old = broker.call(member, previously_settled).await;
+        assert_eq!(old.state, "settled_response_unavailable");
+        assert_eq!(old.receipt.unwrap()["charged_tokens"], 10);
+        stored.model = choice.model.clone();
+        assert_eq!(broker.call(member, stored).await.state, "call_conflict");
+        assert_eq!(
+            broker.call(member, request(member)).await.state,
+            "model_selection_changed"
+        );
+        let mut unauthorized = request(other);
+        unauthorized.model = choice.model.clone();
+        assert_eq!(
+            broker.call(other, unauthorized).await.state,
+            "model_selection_changed"
+        );
+        let mut authorized = request(member);
+        authorized.model = choice.model;
+        let mut forged =
+            serde_json::from_slice::<Request>(&serde_json::to_vec(&authorized).unwrap()).unwrap();
+        forged.effort = Some("high".into());
+        assert_eq!(
+            broker.call(member, forged).await.state,
+            "model_selection_changed"
+        );
+        assert_eq!(broker.call(member, authorized).await.state, "settled");
+        assert_eq!(broker.call(other, request(other)).await.state, "settled");
+        let stale = selection(other).selection_epoch.unwrap();
+        use runtime_registry::admin;
+        for change in [admin::Change::Suspend, admin::Change::Resume] {
+            let member = admin::status(&options.registry, other.account_id).unwrap();
+            admin::change_member(
+                &options.registry,
+                &operator,
+                Uuid::new_v4(),
+                other.account_id,
+                member.generation,
+                member.role_revision,
+                change,
+            )
+            .unwrap();
+        }
+        assert_ne!(selection(other).selection_epoch, Some(stale));
+        assert_eq!(
+            broker
+                .selection(
+                    other,
+                    SelectionRequest {
+                        v: 1,
+                        operation: SelectionOperation::Selection,
+                        generation: other.generation,
+                        selection_epoch: stale,
+                    }
+                )
+                .state,
+            "model_selection_unavailable"
+        );
+        let mut stale_call = request(other);
+        stale_call.selection_epoch = Some(stale);
+        assert_eq!(broker.call(other, stale_call).await.state, "account_fenced");
+        assert_eq!(provider.count.load(Ordering::SeqCst), 3);
+        assert_eq!(provider.alternative_calls.load(Ordering::SeqCst), 1);
+        upstream.abort();
+    }
     fn select_binding(options: &Options, binding: &Binding) {
         let mut config: Config =
             serde_json::from_slice(&fs::read(&options.config).unwrap()).unwrap();
@@ -1082,8 +1435,10 @@ mod tests {
             run_id: Uuid::new_v4(),
             ordinal: 0,
             generation: binding.generation,
+            selection_epoch: None,
             connection_revision: Uuid::from_u128(0x123456781234423482341234567890ab),
             model: "synthetic-model".into(),
+            effort: None,
             max_output_tokens: 32,
             messages: vec![Message {
                 role: Role::User,
@@ -1221,7 +1576,7 @@ mod tests {
         let root_path = root.path().canonicalize().unwrap();
         let (url, p, upstream) = upstream().await;
         let (options, b) = fixture(&root_path, url);
-        let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+        let broker = ready_broker(&options);
         p.mode.store(1, Ordering::SeqCst);
         let r = request(&b[0]);
         let request_bytes = serde_json::to_vec(&r).unwrap();
@@ -1235,7 +1590,7 @@ mod tests {
         );
         assert_eq!(p.count.load(Ordering::SeqCst), 1);
         drop(broker);
-        let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+        let broker = ready_broker(&options);
         assert_eq!(
             broker
                 .call(&b[0], serde_json::from_slice(&request_bytes).unwrap())
@@ -1329,7 +1684,7 @@ mod tests {
             serde_json::from_slice(&fs::read(&options.config).unwrap()).unwrap();
         config.bindings = bindings.clone();
         file(&options.config, &serde_json::to_vec(&config).unwrap());
-        let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+        let broker = ready_broker(&options);
         let a = request(&bindings[0]);
         let previous: Request = serde_json::from_value(serde_json::to_value(&a).unwrap()).unwrap();
         let (worker, first) = (broker.clone(), bindings[0].clone());
@@ -1378,7 +1733,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let root_path = root.path().canonicalize().unwrap();
         let (options, bindings) = fixture(&root_path, "http://127.0.0.1:65531/v1".into());
-        let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+        let broker = ready_broker(&options);
         let binding = bindings[0].clone();
         let allocation =
             runtime_registry::lookup_id(&options.registry, binding.account_id).unwrap();
@@ -1406,8 +1761,10 @@ mod tests {
         let held = broker.ledger.lock().unwrap();
         let admitted_broker = broker.clone();
         let admitted_binding = binding.clone();
-        let accepted =
-            std::thread::spawn(move || admitted_broker.admit(&admitted_binding, &key, true, 0));
+        let admitted_request = request(&binding);
+        let accepted = std::thread::spawn(move || {
+            admitted_broker.admit(&admitted_binding, &admitted_request, &key, true, 0)
+        });
         let probe = File::open(&options.registry).unwrap();
         let mut locked = false;
         for _ in 0..100 {
@@ -1437,7 +1794,7 @@ mod tests {
         ));
         drop(held);
         let permit = match accepted.join().unwrap().unwrap() {
-            Admission::Fresh(p) => p,
+            Some(Admission::Fresh(p)) => p,
             _ => panic!("expected one admission"),
         };
         fenced.join().unwrap().unwrap();
@@ -1470,7 +1827,7 @@ mod tests {
             fingerprint: [10; 32],
         };
         assert!(matches!(
-            broker.admit(&binding, &later, true, 0),
+            broker.admit(&binding, &request(&binding), &later, true, 0),
             Err(moosuri_store::StoreError::NotFound)
         ));
     }
@@ -1480,7 +1837,7 @@ mod tests {
         let root_path = root.path().canonicalize().unwrap();
         let (url, p, upstream) = upstream().await;
         let (options, b) = fixture(&root_path, url);
-        let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+        let broker = ready_broker(&options);
         let (server, mut client) = UnixStream::pair().unwrap();
         let mut wrong = b[0].clone();
         wrong.peer_uid = wrong.peer_uid.wrapping_add(1);

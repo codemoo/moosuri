@@ -204,7 +204,7 @@ fn authorize(
 ) -> Result<i64> {
     match a {
         SubscriptionAuthority::User(u) => {
-            let u = validate(c, u, true, false)?;
+            let u = validate(c, u, true, true)?;
             if u.tenant.0 != b.tenant || u.account.id != b.account {
                 return Err(StoreError::NotFound);
             }
@@ -364,7 +364,7 @@ impl Store {
     pub async fn subscriptions(&self, u: &UserContext) -> Result<Vec<SubscriptionSummary>> {
         let u = u.clone();
         self.call(move|db|{
-            validate(&db.conn,&u,true,false)?;
+            validate(&db.conn,&u,true,true)?;
             let mut q=db.conn.prepare("SELECT b.id,b.current_revision,r.label,b.status,b.remote_revoke,(SELECT h.phase FROM chatgpt_handoffs h WHERE h.tenant_id=b.tenant_id AND h.account_id=b.account_id AND h.binding_id=b.id ORDER BY h.issued_at DESC,h.rowid DESC LIMIT 1) FROM chatgpt_bindings b JOIN chatgpt_binding_revisions r ON r.tenant_id=b.tenant_id AND r.account_id=b.account_id AND r.binding_id=b.id AND r.revision=b.current_revision WHERE b.tenant_id=?1 AND b.account_id=?2 ORDER BY r.label,b.id")?;
             Ok(q.query_map(params![u.tenant.0,u.account.id],|r|Ok(SubscriptionSummary{
                 id:r.get(0)?,revision:r.get(1)?,label:r.get(2)?,status:r.get(3)?,remote_revoke:r.get(4)?,handoff_phase:r.get(5)?}
@@ -379,7 +379,7 @@ impl Store {
     ) -> Result<SubscriptionLogin> {
         let u = u.clone();
         self.call(move|db|{
-            let u=validate(&db.conn,&u,true,false)?;
+            let u=validate(&db.conn,&u,true,true)?;
             let label=name_valid(label,100)?;
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let (runtime,host):(String,String)=tx.query_row("SELECT runtime_id,host_id FROM subscription_runtime WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
@@ -489,7 +489,7 @@ impl Store {
     pub async fn subscription_attempt(&self, u: &UserContext, id: String) -> Result<String> {
         let u = u.clone();
         self.call(move|db|{
-            let u=validate(&db.conn,&u,true,false)?;
+            let u=validate(&db.conn,&u,true,true)?;
             db.conn.query_row("SELECT phase FROM chatgpt_auth_attempts WHERE id=?1 AND tenant_id=?2 AND account_id=?3 AND session_digest=?4 AND auth_epoch=?5",params![id,u.tenant.0,u.account.id,u.digest.as_slice(),u.epoch],|r|r.get(0)).optional()?.ok_or(StoreError::NotFound)}
         ).await
     }
@@ -503,7 +503,7 @@ impl Store {
     ) -> Result<SubscriptionRef> {
         let u = u.clone();
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             if model.len() > 256
                 || model.is_empty()
                 || effort.as_ref().is_some_and(|v| v.len() > 32)
@@ -682,7 +682,7 @@ impl Store {
     ) -> Result<()> {
         let u = u.clone();
         self.call(move|db| {
-            let u=validate(&db.conn,&u,true,false)?;
+            let u=validate(&db.conn,&u,true,true)?;
             let b=SubscriptionRef{tenant:u.tenant.0,account:u.account.id,id,revision,model:"fixture-model".into(),effort:None};
             if owned(&db.conn,&b)?!="active" {return Err(StoreError::Conflict)}
             db.conn.execute("UPDATE chatgpt_sessions SET expires_at=0 WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4",params![b.tenant,b.account,b.id,b.revision])?;
@@ -700,7 +700,7 @@ impl Store {
     ) -> Result<(providers::ProviderBinding, String)> {
         let u = u.clone();
         self.call(move |db| {
-            let u = validate(&db.conn, &u, true, false)?;
+            let u = validate(&db.conn, &u, true, true)?;
             let reference = SubscriptionRef {
                 tenant: u.tenant.0.clone(),
                 account: u.account.id.clone(),
@@ -758,7 +758,7 @@ impl Store {
     ) -> Result<Option<TokenBundle>> {
         let u = u.clone();
         self.call(move|db|{
-            let u=validate(&db.conn,&u,true,false)?;
+            let u=validate(&db.conn,&u,true,true)?;
             let b=SubscriptionRef{
                 tenant:u.tenant.0,account:u.account.id,id,revision,model:String::new(),effort:None}
             ;
@@ -800,7 +800,7 @@ fn validate_attempt(
     b: &SubscriptionRef,
     phase: &str,
 ) -> Result<()> {
-    validate(c, u, true, false)?;
+    validate(c, u, true, true)?;
     if owned(c, b)? != "connecting" {
         return Err(StoreError::Conflict);
     }

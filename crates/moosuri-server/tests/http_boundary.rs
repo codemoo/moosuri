@@ -15,7 +15,7 @@ const HOST: &str = "assistant.example.test";
 const ORIGIN: &str = "https://assistant.example.test";
 
 #[tokio::test]
-async fn claude_settings_require_owner_and_keep_unconfigured_runtime_unavailable() {
+async fn claude_settings_require_admin_and_keep_unconfigured_runtime_unavailable() {
     let _g = TEST_LOCK.lock().await;
     let (_tmp, store, app) = fixture(false).await;
     let admin = store
@@ -65,8 +65,10 @@ async fn claude_settings_require_owner_and_keep_unconfigured_runtime_unavailable
     let listed = value(send(&app, "GET", base, Some(&a), json!({})).await).await;
     assert_eq!(listed["runtime_configured"], false);
     assert_eq!(listed["bindings"][0]["id"], binding.id);
-    let other = value(send(&app, "GET", base, Some(&b), json!({})).await).await;
-    assert_eq!(other["bindings"], json!([]));
+    assert_eq!(
+        send(&app, "GET", base, Some(&b), json!({})).await.status(),
+        StatusCode::FORBIDDEN
+    );
     for (method, suffix) in [
         ("POST", "/native"),
         ("POST", "/probe"),
@@ -84,7 +86,7 @@ async fn claude_settings_require_owner_and_keep_unconfigured_runtime_unavailable
             )
             .await
             .status(),
-            StatusCode::NOT_FOUND
+            StatusCode::FORBIDDEN
         );
     }
     assert_eq!(
@@ -117,6 +119,137 @@ async fn claude_settings_require_owner_and_keep_unconfigured_runtime_unavailable
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn member_model_management_is_forbidden_but_chat_uses_exact_admin_assignment() {
+    let _g = TEST_LOCK.lock().await;
+    let (_tmp, store, app) = fixture(false).await;
+    let admin = store
+        .login("admin@example.test".into(), PASSWORD.into())
+        .await
+        .unwrap();
+    let invite = store
+        .create_user(&admin.user, "Member".into(), "member@example.test".into())
+        .await
+        .unwrap();
+    let member = store
+        .login("member@example.test".into(), invite.temporary_password)
+        .await
+        .unwrap();
+    let member = store
+        .change_password(&member.user, PASSWORD.into())
+        .await
+        .unwrap();
+    let a = login(&app, "admin@example.test", PASSWORD).await;
+    let b = login(&app, "member@example.test", PASSWORD).await;
+    let provider = store
+        .create_provider(
+            &admin.user,
+            moosuri_store::ProviderChange {
+                name: "Synthetic shared provider".into(),
+                config: moosuri_core::ProviderConfig {
+                    kind: moosuri_core::ProviderKind::OpenAi,
+                    base_url: None,
+                    allowed_ips: vec![],
+                    router_providers: vec![],
+                    zero_data_retention: false,
+                },
+                enabled: true,
+                credential: moosuri_store::CredentialChange::Replace(
+                    "synthetic-api-key".to_owned().into(),
+                ),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .record_model_probe(
+            &admin.user,
+            provider.id.clone(),
+            1,
+            "fixture-model".into(),
+            Some("high".into()),
+        )
+        .await
+        .unwrap();
+    let assignment = format!("/api/v1/admin/accounts/{}/model", member.user.account().id);
+    let selection = json!({"provider_id":provider.id,"provider_revision":1,"model":"fixture-model","effort":"high"});
+    for (method, path, body) in [
+        ("GET", assignment.as_str(), Value::Null),
+        ("PUT", assignment.as_str(), json!({"selection":selection})),
+        (
+            "PUT",
+            "/api/v1/settings/model",
+            json!({"selection":selection}),
+        ),
+        (
+            "POST",
+            "/api/v1/settings/chatgpt/local-login",
+            json!({"label":"Synthetic"}),
+        ),
+        (
+            "POST",
+            "/api/v1/settings/chatgpt/handoffs",
+            json!({"label":"Synthetic"}),
+        ),
+        ("GET", "/api/v1/settings/chatgpt", Value::Null),
+        (
+            "GET",
+            "/api/v1/settings/compatible-providers/discover",
+            Value::Null,
+        ),
+        (
+            "POST",
+            "/api/v1/settings/compatible-providers",
+            json!({"name":"Synthetic","base_url":"https://model.invalid/v1","enabled":true,"credential":{"action":"clear"}}),
+        ),
+        (
+            "POST",
+            "/api/v1/settings/claude",
+            json!({"label":"Synthetic"}),
+        ),
+    ] {
+        assert_eq!(
+            send(&app, method, path, Some(&b), body).await.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {path}"
+        );
+    }
+    let assigned = send(
+        &app,
+        "PUT",
+        &assignment,
+        Some(&a),
+        json!({"selection":selection}),
+    )
+    .await;
+    assert_eq!(assigned.status(), StatusCode::OK);
+    assert_eq!(value(assigned).await["selection"], selection);
+
+    let read = send(&app, "GET", &assignment, Some(&a), Value::Null).await;
+    assert_eq!(read.status(), StatusCode::OK);
+    assert_eq!(value(read).await["effective"]["effort"], "high");
+
+    let model = send(&app, "GET", "/api/v1/settings/model", Some(&b), Value::Null).await;
+    assert_eq!(model.status(), StatusCode::OK);
+    let model = value(model).await;
+    assert_eq!(model["effective"]["model"], "fixture-model");
+    assert_eq!(model["effective"]["effort"], "high");
+    assert_eq!(model["selection"], Value::Null);
+    assert_eq!(model["choices"], json!([]));
+    assert!(!model.to_string().contains("synthetic-api-key"));
+
+    let cleared = send(
+        &app,
+        "PUT",
+        &assignment,
+        Some(&a),
+        json!({"selection":null}),
+    )
+    .await;
+    assert_eq!(cleared.status(), StatusCode::OK);
+    assert_eq!(value(cleared).await["effective"], Value::Null);
 }
 
 async fn fixture(temporary: bool) -> (tempfile::TempDir, Store, Router) {

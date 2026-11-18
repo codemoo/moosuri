@@ -16,11 +16,11 @@ cargo run --locked -p xtask -- account-runtime-inventory --schema 81 --snapshot 
 
 The default schema follows the newest source migration; unknown versions fail.
 An explicit supported `--schema` replays only that pinned baseline. Schema81 has
-202 application tables, including virtual FTS, schema82 has 203, schema83 has 204, schema84 has 207 and schema85 has 208. All five have 34
+202 application tables, including virtual FTS, schema82 has 203, schema83 has 204, schema84 has 207, schema85 has 208 and schema86 has 209. All six have 34
 tables with neither `tenant_id` nor `account_id`. SQLite internal tables and the
 five FTS shadow tables are excluded using SQLite's actual table kinds, rather
 than a name-prefix guess. Schema82 extends the frozen 81 classification with its
-one exact Gmail server-resume table and migration hash. Schema83 adds the per-run private model-preview binding and receipt. Schema84 records the private Google app history, encrypted read-only grant and pending consent. Schema85 adds the encrypted thread-specific inbox result and its durable dispatch status. The manual knowledge archive excludes the grants, consent records and inbox results.
+one exact Gmail server-resume table and migration hash. Schema83 adds the per-run private model-preview binding and receipt. Schema84 records the private Google app history, encrypted read-only grant and pending consent. Schema85 adds the encrypted thread-specific inbox result and its durable dispatch status. Schema86 adds administrator-assigned member models. A quarantined restore clears those assignments. The manual knowledge archive excludes the grants, consent records and inbox results.
 
 The manifests pin every migration SHA-256, every application table SQL shape and
 the complete non-shadow table/index/trigger/view fingerprint. Each table has an

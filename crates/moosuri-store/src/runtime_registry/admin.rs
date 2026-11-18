@@ -32,6 +32,7 @@ pub struct AdminSession {
     generation: i64,
     revision: i64,
     issued: Instant,
+    epoch: i64,
 }
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -140,7 +141,11 @@ pub fn observe_session(root: &Path, a: &Allocation, view: &SessionView) -> Resul
     Ok(m)
 }
 pub fn checked_session(root: &Path, a: &Allocation, view: &SessionView) -> Result<AdminSession> {
-    let m = observe_session(root, a, view)?;
+    let (_lock, mut db) = open(root, false)?;
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let m = observe(&tx, a, view)?;
+    let epoch = session_epoch(&tx, &m.account_id)?;
+    tx.commit()?;
     if !usable(&m) {
         return Err(StoreError::Forbidden);
     }
@@ -151,9 +156,28 @@ pub fn checked_session(root: &Path, a: &Allocation, view: &SessionView) -> Resul
         generation: m.generation,
         revision: m.role_revision,
         issued: Instant::now(),
+        epoch,
     })
 }
-fn check(c: &Connection, s: &AdminSession) -> Result<()> {
+fn session_epoch(c: &Connection, account: &str) -> Result<i64> {
+    Ok(c.query_row(
+        "SELECT session_epoch FROM allocations WHERE account_id=?1",
+        [account],
+        |r| r.get(0),
+    )?)
+}
+
+impl AdminSession {
+    /// Bind the private IPC proof to the epoch from the gateway's signed cookie.
+    pub fn at_epoch(self, expected: i64) -> Result<Self> {
+        if self.epoch != expected {
+            return Err(StoreError::Unauthorized);
+        }
+        Ok(self)
+    }
+}
+
+pub(super) fn check(c: &Connection, s: &AdminSession) -> Result<()> {
     let m = member(c, &s.account)?;
     if s.issued.elapsed() > Duration::from_secs(5)
         || !usable(&m)
@@ -161,6 +185,7 @@ fn check(c: &Connection, s: &AdminSession) -> Result<()> {
         || m.volume_id != s.volume
         || m.generation != s.generation
         || m.role_revision != s.revision
+        || session_epoch(c, &s.account)? != s.epoch
     {
         return Err(StoreError::Forbidden);
     }

@@ -103,7 +103,7 @@ type Props = {
   onExpired: () => void;
   onThreadMissing: (id: string) => void;
   onThreadUpdated: () => void;
-  openSettings: () => void;
+  openSettings?: () => void;
   openCredentials?:()=>void;
   onOpenEvidence?: (reference: ChatEvidence) => void;
   artifactTarget?:{id:string;revision:number;title:string}|null;
@@ -123,9 +123,11 @@ const labels: Record<RunView["state"], string> = {
 function personalConnectionFailed(run: RunView) {
   return run.state === "failed" && run.error === "credentials_rejected" && !!run.model.source && run.model.source !== "shared";
 }
-function runExplanation(run: RunView) {
+function runExplanation(run: RunView, canManageModel: boolean) {
   if (run.error === "tools_required")
-    return "이 요청에는 도구가 필요합니다. 내 모델에서 도구를 확인하거나 ‘도구 사용 가능’ 모델을 선택한 다음 다시 보내 주세요.";
+    return canManageModel
+      ? "이 요청에는 도구가 필요합니다. 내 모델에서 도구를 확인하거나 ‘도구 사용 가능’ 모델을 선택한 다음 다시 보내 주세요."
+      : "이 요청에 필요한 도구를 사용할 수 없습니다. 관리자에게 문의해 주세요.";
   if (run.error === "knowledge_invalidated")
     return "참고한 자료가 변경되거나 삭제되어 관련 답변을 지웠습니다. 현재 자료로 다시 질문해 주세요.";
   if (run.error === "recovery_forward_allowance_exhausted") return "복원 후 새 요청 허용량을 모두 사용했습니다. 운영자가 중지된 서버에서 새 허용량을 배정해야 합니다. 과거 사용량은 계속 알 수 없습니다.";
@@ -137,21 +139,21 @@ function runExplanation(run: RunView) {
   if (run.state === "cancelled")
     return "중지했습니다. 이미 전송된 요청의 사용량은 청구될 수 있습니다.";
   if (run.state === "incomplete") return "응답이 끝까지 완료되지 않았습니다.";
-  if (run.state === "refused") return "모델이 답변을 제공하지 않았습니다.";
+  if (run.state === "refused") return "이 요청에는 답변을 제공할 수 없습니다.";
   if (run.state === "failed") {
     if (run.error === "timed_out")
-      return "모델 응답을 기다리는 시간이 초과되었습니다.";
+      return "응답을 기다리는 시간이 초과되었습니다.";
     if (run.error === "credentials_rejected")
-      return personalConnectionFailed(run)
+      return canManageModel && personalConnectionFailed(run)
         ? "개인 모델 연결 인증에 실패했습니다. 내 모델에서 연결을 다시 확인해 주세요."
-        : "모델 연결 인증에 실패했습니다. 관리자에게 연결 확인을 요청하세요.";
+        : "지금 답변을 받을 수 없습니다. 관리자에게 문의해 주세요.";
     if (run.error === "protocol_failed")
-      return "모델의 응답 형식을 확인하지 못했습니다.";
+      return "응답을 확인하지 못했습니다.";
     if (run.error === "rate_limited")
-      return "모델 제공업체의 요청 한도에 도달했습니다. 잠시 뒤 다시 시도해 주세요.";
+      return "요청 한도에 도달했습니다. 잠시 뒤 다시 시도해 주세요.";
     if (run.error === "connection_failed")
-      return "모델 제공업체에 연결하지 못했습니다.";
-    return "응답을 완료하지 못했습니다. 아래에서 같은 설정으로 다시 시도할 수 있습니다.";
+      return "지금 답변을 받을 수 없습니다. 잠시 뒤 다시 시도해 주세요.";
+    return "응답을 완료하지 못했습니다.";
   }
   return "";
 }
@@ -160,20 +162,31 @@ const modelSendErrors:Record<string,string>={
   attachment_reselection_required:"이 대화에는 다른 연결로 보낸 첨부가 있습니다. 현재 구독 연결로 보낼 자료를 새 대화에 첨부하거나, 이 대화에서 이전 첨부를 다시 선택해 보내세요. 입력과 첨부는 유지됩니다.",
   vision_required:"현재 모델의 이미지 읽기가 확인되지 않았습니다. 내 모델에서 현재 모델의 이미지 읽기를 확인하거나 이미지 읽기가 확인된 모델로 바꾼 뒤 직접 다시 보내세요. 공용 연결은 관리자에게 이미지 확인을 요청하세요. 이번 이미지 선택을 해제하고 글만 보낼 수도 있습니다. 이전 메시지에도 이미지가 있으면 확인된 모델을 사용하거나 새 대화를 시작하세요. 입력과 첨부는 유지됩니다.",
 };
-function chatError(error: unknown) {
+const memberSendErrors: Record<string, string> = {
+  model_required: "지금 답변을 받을 수 없습니다. 관리자에게 문의해 주세요. 입력과 첨부는 유지됩니다.",
+  attachment_reselection_required: "이전 첨부를 다시 선택하거나 새 대화에 필요한 자료를 첨부해 주세요. 입력과 첨부는 유지됩니다.",
+  vision_required: "현재 이미지 읽기를 사용할 수 없습니다. 이미지 선택을 해제하고 글만 보내거나 관리자에게 문의해 주세요. 입력과 첨부는 유지됩니다.",
+};
+function chatError(error: unknown, canManageModel: boolean) {
   if (error instanceof ApiFailure) {
-    if (modelSendErrors[error.code]) return modelSendErrors[error.code];
+    const sendError = (canManageModel ? modelSendErrors : memberSendErrors)[error.code];
+    if (sendError) return sendError;
     if (error.status === 409)
-      return "대화 상태나 모델 설정이 변경되었습니다. 기록과 내 모델 설정을 다시 확인해 주세요.";
+      return canManageModel
+        ? "대화 상태나 모델 설정이 변경되었습니다. 기록과 내 모델 설정을 다시 확인해 주세요."
+        : "대화 상태가 변경되었습니다. 기록을 새로고침한 뒤 다시 시도해 주세요.";
     if (error.status === 429)
       return "요청이 많습니다. 잠시 뒤 다시 시도해 주세요.";
     if (error.status === 400)
-      return "메시지를 접수하지 못했습니다. 첨부 이미지는 현재 모델의 이미지 연결 확인이 필요합니다. 관리자 설정에서 확인하거나 선택을 해제하세요. 입력과 첨부는 유지됩니다.";
+      return canManageModel
+        ? "메시지를 접수하지 못했습니다. 첨부 이미지 사용 여부를 관리자 설정에서 확인하거나 선택을 해제하세요. 입력과 첨부는 유지됩니다."
+        : "메시지를 접수하지 못했습니다. 입력과 첨부를 확인해 주세요.";
   }
   return "서버 응답을 확인하지 못했습니다. 기록을 다시 확인해 주세요.";
 }
 export function ChatPanel(props: Props) {
   const { accountId, threadId, memory } = props;
+  const canManageModel = !!props.openSettings;
   const callbacks = useRef(props);
   callbacks.current = props;
   const currentThread = useRef(threadId);
@@ -374,7 +387,8 @@ export function ChatPanel(props: Props) {
       .catch((error) => {
         if (!isAborted(error)) {
           boundary(error);
-          setModelError("모델 설정을 확인하지 못했습니다.");
+          setModel(null);
+          setModelError("대화 가능 상태를 확인하지 못했습니다.");
           setModelLoading(false);
         }
       });
@@ -451,7 +465,7 @@ export function ChatPanel(props: Props) {
       setNextBefore(null);
     }
     // Admission guidance must survive the snapshot refresh triggered by a rejection.
-    setError(current=>changed||!Object.values(modelSendErrors).includes(current)?"":current);
+    setError(current=>changed||!Object.values(canManageModel ? modelSendErrors : memberSendErrors).includes(current)?"":current);
     setConnection("");
     setLoading(!!thread);
     setHistoryReady(!thread);
@@ -895,7 +909,7 @@ export function ChatPanel(props: Props) {
         callbacks.current.onPending(thread, null, value.request_id);
         callbacks.current.onRestoreDraft(thread, value.text);
         if (currentThread.current === thread) {
-          setError(chatError(error));
+          setError(chatError(error, !!callbacks.current.openSettings));
           void refreshSnapshot();
           setModelRefresh((value) => value + 1);
         }
@@ -1065,7 +1079,7 @@ export function ChatPanel(props: Props) {
   return (
     <section className="chat-panel" aria-label="대화">
       <div className="chat-status-row">
-        {model?.effective ? (
+        {canManageModel && (model?.effective ? (
           <button className="text-button chat-model-chip" onClick={props.openSettings} title={model.effective.model}>
             {model.effective.model} · {model.effective.effort ?? "기본 강도"}
           </button>
@@ -1073,8 +1087,8 @@ export function ChatPanel(props: Props) {
           <button className="text-button" onClick={props.openSettings}>
             내 모델 설정
           </button>
-        )}
-        <Button variant="ghost" isIconOnly label="기록 새로고침" icon={<WorkspaceIcon name="refresh"/>}
+        ))}
+        <Button className="chat-refresh" variant="ghost" isIconOnly label="기록 새로고침" icon={<WorkspaceIcon name="refresh"/>}
           onClick={() => {
             void refreshSnapshot();
             setModelRefresh((value) => value + 1);
@@ -1092,7 +1106,14 @@ export function ChatPanel(props: Props) {
       {error && (
         <p className="notice chat-notice" role="alert">
           {error}
-          {Object.values(modelSendErrors).includes(error)&&<> <a href="/settings/model" target="_blank" rel="noreferrer">내 모델 확인 ↗</a></>}
+          {canManageModel && Object.values(modelSendErrors).includes(error) && <> <a href="/settings/model" target="_blank" rel="noreferrer">내 모델 확인 ↗</a></>}
+        </p>
+      )}
+      {!modelLoading && !model?.effective && !modelError && (
+        <p className="notice chat-notice" role="status">
+          {canManageModel
+            ? "대화를 시작하려면 내 모델에서 사용할 모델을 확인해 주세요."
+            : "지금 답변을 받을 수 없습니다. 관리자에게 문의해 주세요."}
         </p>
       )}
       <div
@@ -1119,18 +1140,6 @@ export function ChatPanel(props: Props) {
           <div className="chat-welcome">
             <img src="/moosuri-icon-192.png" width="52" height="52" alt="" />
             <h2>{props.name.split(" ")[0]}님, 무엇을 도와드릴까요?</h2>
-            {!modelLoading && !model?.effective && (
-              <div className="chat-model-missing">
-                <strong>사용할 모델을 먼저 선택해 주세요</strong>
-                <p>
-                  관리자가 확인한 모델이나 설치 기본값을 내 모델 설정에서 선택할
-                  수 있습니다.
-                </p>
-                <button className="text-button" onClick={props.openSettings}>
-                  내 모델 설정 열기 ↗
-                </button>
-              </div>
-            )}
           </div>
         )}
         <div className="chat-turns" ref={scrollContent}>
@@ -1200,17 +1209,17 @@ export function ChatPanel(props: Props) {
                     >
                       {actionBusy === turn.run.id
                         ? "처리 중…"
-                        : "같은 설정으로 다시 시도"}
+                        : canManageModel ? "같은 설정으로 다시 시도" : "다시 시도"}
                     </button>
                   )}
                 </div>
-                {runExplanation(turn.run) && (
-                  <p className="run-explanation">{runExplanation(turn.run)}</p>
+                {runExplanation(turn.run, canManageModel) && (
+                  <p className="run-explanation">{runExplanation(turn.run, canManageModel)}</p>
                 )}
-                {turn.run.error === "tools_required" && (
+                {canManageModel && turn.run.error === "tools_required" && (
                   <button className="text-button" onClick={props.openSettings}>내 모델에서 도구 확인</button>
                 )}
-                {personalConnectionFailed(turn.run) && (
+                {canManageModel && personalConnectionFailed(turn.run) && (
                   <button className="text-button" onClick={props.openSettings}>내 모델 연결 확인</button>
                 )}
                 {turn.assistant.some((message) => message.text) && turn.run.evidence.length > 0 && (
@@ -1339,9 +1348,9 @@ export function ChatPanel(props: Props) {
         {modelError && (
           <p className="composer-help">
             {modelError}{" "}
-            <button className="text-button" onClick={props.openSettings}>
+            {canManageModel && <button className="text-button" onClick={props.openSettings}>
               설정 확인
-            </button>
+            </button>}
           </p>
         )}
         {instructions.controls}

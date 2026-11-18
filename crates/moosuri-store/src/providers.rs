@@ -1,13 +1,15 @@
 //! Shared provider settings. Server-managed encryption is separate from the user vault.
 use super::*;
+mod assignments;
 mod personal;
+use assignments::{member_selection, require_member_choice};
 use chacha20poly1305::{
     KeyInit, XChaCha20Poly1305, XNonce,
     aead::{Aead, Payload},
 };
 use moosuri_core::{
-    ModelChoice, ModelSelection, ModelSettings, ProviderConfig, ProviderKind, ProviderSummary,
-    ProvidersResponse,
+    ModelChoice, ModelSelection, ModelSettings, ModelSource, ProviderConfig, ProviderKind,
+    ProviderSummary, ProvidersResponse,
 };
 use personal::*;
 #[cfg(unix)]
@@ -355,41 +357,39 @@ fn choices(conn: &Connection, id: Option<&str>) -> Result<Vec<ModelChoice>> {
     })
     .collect()
 }
-#[derive(Clone)]
-struct Selection {
-    value: ModelSelection,
-    revision: i64,
-}
-fn selected(conn: &Connection, user: Option<&UserContext>) -> Result<Option<Selection>> {
-    let row = if let Some(user) = user {
+fn selected(conn: &Connection, user: Option<&UserContext>) -> Result<Option<ModelSelection>> {
+    let mut row = if let Some(user) = user {
         conn.query_row("SELECT provider_id,revision,model,effort FROM personal_model_selections WHERE tenant_id=?1 AND account_id=?2",params![user.tenant.0,user.account.id],selection_row).optional()?
     } else {
         conn.query_row("SELECT provider_id,revision,model,effort FROM installation_model_selection WHERE singleton=1",[],selection_row).optional()?
     };
-    let mut row = row;
-    if let Some(s) = &mut row {
-        if owner(conn, &s.value.provider_id)?.is_some() {
-            s.value.source = moosuri_core::ModelSource::PersonalCompatible;
+    if let Some(selection) = &mut row {
+        if owner(conn, &selection.provider_id)?.is_some() {
+            selection.source = ModelSource::PersonalCompatible;
         }
     }
     Ok(row)
 }
-fn selection_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Selection> {
+fn selection_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ModelSelection> {
     let effort: String = r.get(3)?;
-    Ok(Selection {
-        value: ModelSelection {
-            source: Default::default(),
-            provider_id: r.get(0)?,
-            provider_revision: r.get(1)?,
-            model: r.get(2)?,
-            effort: if effort.is_empty() {
-                None
-            } else {
-                Some(effort)
-            },
+    Ok(ModelSelection {
+        source: ModelSource::Shared,
+        provider_id: r.get(0)?,
+        provider_revision: r.get(1)?,
+        model: r.get(2)?,
+        effort: if effort.is_empty() {
+            None
+        } else {
+            Some(effort)
         },
-        revision: r.get(1)?,
     })
+}
+fn matches_selection(choice: &ModelChoice, selection: &ModelSelection) -> bool {
+    choice.source == selection.source
+        && choice.provider_id == selection.provider_id
+        && choice.provider_revision == selection.provider_revision
+        && choice.model == selection.model
+        && choice.effort == selection.effort
 }
 fn verified(conn: &Connection, selection: &ModelSelection) -> Result<ModelChoice> {
     if selection.source != moosuri_core::ModelSource::Shared {
@@ -414,49 +414,59 @@ fn verified(conn: &Connection, selection: &ModelSelection) -> Result<ModelChoice
         .find(|c| c.model == selection.model && c.effort == selection.effort)
         .ok_or(StoreError::Conflict)
 }
+fn admin_selection(conn: &Connection, user: &UserContext) -> Result<Option<ModelSelection>> {
+    Ok(crate::claude_execution::selected(conn, user)?
+        .or(subscriptions::selected(conn, user)?)
+        .or(selected(conn, Some(user))?))
+}
+fn effective_selection(conn: &Connection, user: &UserContext) -> Result<Option<ModelSelection>> {
+    let selection = match user.account.role {
+        Role::Admin => admin_selection(conn, user)?,
+        Role::Member => member_selection(conn, &user.tenant.0, &user.account.id)?,
+    };
+    Ok(selection.or(selected(conn, None)?))
+}
+fn selection_choice(
+    conn: &Connection,
+    user: &UserContext,
+    selection: &ModelSelection,
+) -> Result<ModelChoice> {
+    match selection.source {
+        ModelSource::Shared => verified(conn, selection),
+        ModelSource::PersonalCompatible => {
+            personal_verified(conn, &user.tenant.0, &user.account.id, selection)
+        }
+        ModelSource::PersonalClaudeCode => crate::claude_execution::verified(conn, user, selection),
+        ModelSource::PersonalChatGpt => subscriptions::verified(conn, user, selection),
+    }
+}
+fn available_choice(conn: &Connection, user: &UserContext) -> Result<Option<ModelChoice>> {
+    let Some(selection) = effective_selection(conn, user)? else {
+        return Ok(None);
+    };
+    match selection_choice(conn, user, &selection) {
+        Ok(choice) => Ok(Some(choice)),
+        Err(StoreError::Conflict | StoreError::NotFound) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
 fn settings(conn: &Connection, user: &UserContext) -> Result<ModelSettings> {
-    let subscription =
-        crate::claude_execution::selected(conn, user)?.or(subscriptions::selected(conn, user)?);
-    let personal = selected(conn, Some(user))?;
-    if let Some(s) = subscription {
-        let mut all = choices(conn, None)?;
-        all.extend(personal_choices(conn, user)?);
-        all.extend(subscriptions::choices(conn, user)?);
-        all.extend(crate::claude_execution::choices(conn, user)?);
-        let effective = all
-            .iter()
-            .find(|c| {
-                c.source == s.source
-                    && c.provider_id == s.provider_id
-                    && c.provider_revision == s.provider_revision
-                    && c.model == s.model
-                    && c.effort == s.effort
-            })
-            .cloned();
+    if user.account.role == Role::Member {
         return Ok(ModelSettings {
-            selection: Some(s),
-            effective,
-            choices: all,
+            selection: None,
+            effective: available_choice(conn, user)?,
+            choices: Vec::new(),
         });
     }
-    let effective = personal.clone().or(selected(conn, None)?);
+    let selection = admin_selection(conn, user)?;
+    let effective = selection.clone().or(selected(conn, None)?);
     let mut all = choices(conn, None)?;
     all.extend(personal_choices(conn, user)?);
     all.extend(subscriptions::choices(conn, user)?);
     all.extend(crate::claude_execution::choices(conn, user)?);
-    let effective = effective.and_then(|s| {
-        all.iter()
-            .find(|c| {
-                c.provider_id == s.value.provider_id
-                    && c.provider_revision == s.revision
-                    && c.model == s.value.model
-                    && c.effort == s.value.effort
-            })
-            .cloned()
-    });
     Ok(ModelSettings {
-        selection: personal.map(|s| s.value),
-        effective,
+        selection,
+        effective: effective.and_then(|s| all.iter().find(|c| matches_selection(c, &s)).cloned()),
         choices: all,
     })
 }
@@ -474,7 +484,7 @@ fn summary(conn: &Connection, row: Revision) -> Result<ProviderSummary> {
         } else {
             choices(conn, Some(&row.id))?
         },
-        is_default: default.is_some_and(|s| s.value.provider_id == row.id),
+        is_default: default.is_some_and(|s| s.provider_id == row.id),
     })
 }
 fn list(conn: &Connection) -> Result<ProvidersResponse> {
@@ -487,7 +497,7 @@ fn list(conn: &Connection) -> Result<ProvidersResponse> {
             .into_iter()
             .map(|id| summary(conn, load_revision(conn, &id)?))
             .collect::<Result<_>>()?,
-        default_selection: selected(conn, None)?.map(|s| s.value),
+        default_selection: selected(conn, None)?,
     })
 }
 impl Store {
@@ -513,7 +523,7 @@ impl Store {
     ) -> Result<ProviderSummary> {
         let user = user.clone();
         self.call(move |db| {
-            validate(&db.conn,&user,true,!personal)?; validate_change(&change)?;
+            validate(&db.conn,&user,true,true)?; validate_change(&change)?;
             if personal { personal_config(&db.conn,&user.tenant.0,&user.account.id,&change.config)?; if db.conn.query_row("SELECT count(*) FROM personal_compatible_providers WHERE tenant_id=?1 AND account_id=?2",params![user.tenant.0,user.account.id],|r|r.get::<_,i64>(0))?>=16{return Err(StoreError::Conflict)} }
             if matches!(change.credential,CredentialChange::Keep) { return Err(StoreError::InvalidInput); }
             if db.conn.query_row("SELECT count(*) FROM providers WHERE NOT EXISTS(SELECT 1 FROM personal_compatible_providers o WHERE o.provider_id=providers.id)",[],|r|r.get::<_,i64>(0))? >= 64 && !personal { return Err(StoreError::Conflict); }
@@ -557,7 +567,7 @@ impl Store {
     ) -> Result<ProviderSummary> {
         let user = user.clone();
         self.call(move |db| {
-            validate(&db.conn,&user,true,!personal)?; validate_change(&change)?;
+            validate(&db.conn,&user,true,true)?; validate_change(&change)?;
             if personal { require_owner(&db.conn,&user.tenant.0,&user.account.id,&id)?; if change.enabled || load_revision(&db.conn,&id)?.config!=change.config {personal_config(&db.conn,&user.tenant.0,&user.account.id,&change.config)?;} }
             else if owner(&db.conn,&id)?.is_some() {return Err(StoreError::NotFound)}
             let old=load_revision(&db.conn,&id)?;
@@ -604,7 +614,7 @@ impl Store {
     ) -> Result<ModelSettings> {
         let user = user.clone();
         self.call(move|db|{
-            let current=validate(&db.conn,&user,true,false)?;
+            let current=validate(&db.conn,&user,true,true)?;
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             if let Some(s)=selection {
                 if s.source==moosuri_core::ModelSource::PersonalClaudeCode {
@@ -748,50 +758,15 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             let current = validate(&db.conn, &user, true, false)?;
-            if let Some(s) = crate::claude_execution::selected(&db.conn, &current)? {
-                let choice = crate::claude_execution::verified(&db.conn, &current, &s)?;
-                return crate::claude_execution::binding(
-                    &db.conn,
-                    &current.tenant.0,
-                    &current.account.id,
-                    &choice,
-                );
-            }
-            if let Some(s) = subscriptions::selected(&db.conn, &current)? {
-                let choice = subscriptions::verified(&db.conn, &current, &s)?;
-                return subscriptions::binding(
-                    &db.conn,
-                    &current.tenant.0,
-                    &current.account.id,
-                    &choice,
-                );
-            }
-            let chosen = selected(&db.conn, Some(&current))?
-                .or(selected(&db.conn, None)?)
-                .ok_or(StoreError::Unavailable)?;
-            if chosen.value.source == moosuri_core::ModelSource::PersonalCompatible {
-                let choice = personal_verified(
-                    &db.conn,
-                    &current.tenant.0,
-                    &current.account.id,
-                    &chosen.value,
-                )?;
-                return personal_binding(
-                    &db.conn,
-                    &db.provider_key,
-                    &current.tenant.0,
-                    &current.account.id,
-                    &choice,
-                );
-            }
-            let row = require_binding(&db.conn, &chosen.value.provider_id, chosen.revision)?;
-            // No fallback if a pinned personal/default selection is no longer verified.
-            verified(&db.conn, &chosen.value)?;
-            binding(
+            let selection =
+                effective_selection(&db.conn, &current)?.ok_or(StoreError::Unavailable)?;
+            let choice = selection_choice(&db.conn, &current, &selection)?;
+            binding_for_owner_choice(
+                &db.conn,
                 &db.provider_key,
-                row,
-                chosen.value.model,
-                chosen.value.effort,
+                &current.tenant.0,
+                &current.account.id,
+                &choice,
             )
         })
         .await
@@ -828,14 +803,10 @@ pub(super) fn binding_for_choice(
     )
 }
 pub(super) fn selected_mission_model(conn: &Connection, user: &UserContext) -> Result<ModelChoice> {
-    settings(conn, user)?
-        .effective
-        .ok_or(StoreError::ModelRequired)
+    available_choice(conn, user)?.ok_or(StoreError::ModelRequired)
 }
 pub(super) fn selected_choice(conn: &Connection, user: &UserContext) -> Result<ModelChoice> {
-    settings(conn, user)?
-        .effective
-        .ok_or(StoreError::ModelRequired)
+    available_choice(conn, user)?.ok_or(StoreError::ModelRequired)
 }
 
 pub(super) fn binding_for_owner_choice(
@@ -845,7 +816,7 @@ pub(super) fn binding_for_owner_choice(
     account: &str,
     choice: &ModelChoice,
 ) -> Result<ProviderBinding> {
-    use moosuri_core::ModelSource;
+    require_member_choice(conn, tenant, account, choice)?;
     match choice.source {
         ModelSource::Shared => binding_for_choice(conn, key, choice),
         ModelSource::PersonalChatGpt => subscriptions::binding(conn, tenant, account, choice),

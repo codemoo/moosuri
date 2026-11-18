@@ -10,6 +10,7 @@ use moosuri_connectors::model::{
     CancellationToken,
     protocol::{ModelEvent, TextRequest},
 };
+use moosuri_store::runtime_registry::engine::ModelChoice;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -27,6 +28,38 @@ use tokio::{
 };
 use uuid::Uuid;
 use wire::{Event, Hello, Prompt};
+
+pub(crate) fn model_catalog(
+    default_model: &str,
+    default_effort: Option<&str>,
+    additional: &[ModelChoice],
+) -> Option<Vec<ModelChoice>> {
+    if additional.len() >= 128 {
+        return None;
+    }
+    let mut choices = vec![ModelChoice {
+        model: default_model.to_owned(),
+        effort: default_effort.map(str::to_owned),
+    }];
+    choices.extend_from_slice(additional);
+    let mut seen = std::collections::BTreeSet::new();
+    if choices.iter().any(|choice| {
+        choice.model.is_empty()
+            || choice.model.len() > 200
+            || !choice.model.bytes().all(|b| b.is_ascii_graphic())
+            || choice.effort.as_ref().is_some_and(|effort| {
+                effort.is_empty()
+                    || effort.len() > 32
+                    || !effort
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+            })
+            || !seen.insert((&choice.model, &choice.effort))
+    }) {
+        return None;
+    }
+    Some(choices)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -108,6 +141,7 @@ impl Connection {
         owner: Owner,
         revision: Uuid,
         model: &str,
+        effort: Option<&str>,
     ) -> Result<Self, String> {
         let pin = Hello {
             version: 1,
@@ -115,6 +149,7 @@ impl Connection {
             owner,
             revision,
             model: model.to_owned(),
+            effort: effort.map(str::to_owned),
         };
         tokio::time::timeout(Duration::from_secs(3), async {
             wire::send(&mut self.stream, &pin, wire::HEADER_LIMIT).await?;
@@ -142,6 +177,7 @@ impl Connection {
                 && h.owner == owner
                 && h.revision == revision
                 && h.model == request.model
+                && h.effort == request.effort
         }) {
             return Err("engine_worker_pin_rejected".into());
         }
@@ -212,6 +248,10 @@ struct Config {
     owner: Owner,
     connection_revision: Uuid,
     model: String,
+    #[serde(default)]
+    effort: Option<String>,
+    #[serde(default)]
+    models: Vec<ModelChoice>,
     adapter: Settings,
 }
 #[derive(Deserialize)]
@@ -248,6 +288,7 @@ impl Adapter {
 }
 struct Worker {
     pin: Hello,
+    models: Vec<ModelChoice>,
     adapter: Adapter,
 }
 async fn handle(
@@ -270,7 +311,14 @@ async fn handle(
     )
     .await
     .map_err(|_| "engine_broker_timeout")??;
-    let admitted = hello == worker.pin;
+    let admitted = hello.version == worker.pin.version
+        && hello.route == worker.pin.route
+        && hello.owner == worker.pin.owner
+        && hello.revision == worker.pin.revision
+        && worker
+            .models
+            .iter()
+            .any(|choice| choice.model == hello.model && choice.effort == hello.effort);
     wire::send(&mut stream, &admitted, wire::HEADER_LIMIT).await?;
     if !admitted {
         return Ok(());
@@ -281,7 +329,7 @@ async fn handle(
     )
     .await
     .map_err(|_| "engine_broker_timeout")??;
-    let req = prompt.into_request(&hello.model)?;
+    let req = prompt.into_request(hello.model, hello.effort)?;
     let (mut inbound, mut outbound) = stream.into_split();
     let cancel = stop.child_token();
     let (tx, mut rx) = mpsc::channel(16);
@@ -461,21 +509,20 @@ pub(crate) async fn run(o: &Options) -> Result<(), String> {
         ]
         .iter()
         .any(Uuid::is_nil)
-        || config.model.is_empty()
-        || config.model.len() > 200
-        || !config.model.bytes().all(|c| c.is_ascii_graphic())
     {
         return Err("engine_config_invalid".into());
     }
+    let models = model_catalog(&config.model, config.effort.as_deref(), &config.models)
+        .ok_or("engine_config_invalid")?;
     let (listener, _socket) = bind(&config.socket_directory, uid).await?;
     let (route, adapter) = match config.adapter {
         Settings::ChatgptPlan(c) => (
             Route::ChatgptPlan,
-            Adapter::Chatgpt(chatgpt::Adapter::open(c, &config.model).await?),
+            Adapter::Chatgpt(chatgpt::Adapter::open(c, &models).await?),
         ),
         Settings::ClaudeCode(c) => (
             Route::ClaudeCode,
-            Adapter::Claude(claude::Adapter::open(c, &config.model).await?),
+            Adapter::Claude(claude::Adapter::open(c, &models).await?),
         ),
     };
     let worker = Arc::new(Worker {
@@ -485,7 +532,9 @@ pub(crate) async fn run(o: &Options) -> Result<(), String> {
             owner: config.owner,
             revision: config.connection_revision,
             model: config.model,
+            effort: config.effort,
         },
+        models,
         adapter,
     });
     let stop = CancellationToken::new();

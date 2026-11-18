@@ -1,5 +1,5 @@
 use super::*;
-use crate::tests::{TEST_LOCK, admin, directory, member};
+use crate::tests::{TEST_LOCK, additional_admin, admin, directory, member};
 use moosuri_core::*;
 async fn configured(store: &Store) -> UserContext {
     let u = admin(store).await.user;
@@ -845,10 +845,10 @@ async fn personal_compatible_grants_pin_owner_destination_and_fence_revoked_work
     let _g = TEST_LOCK.lock().await;
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
-    // The shared loopback fixture enrolls this destination for members. It also
-    // remains a valid default so an accidental fallback would be observable.
+    // The shared loopback fixture is a valid default so accidental fallback
+    // would be observable.
     let admin = configured(&store).await;
-    let u = member(&store, &admin, "extraction-owner@example.test")
+    let u = additional_admin(&store, "extraction-owner@example.test")
         .await
         .user;
     let other = member(&store, &admin, "extraction-other@example.test")

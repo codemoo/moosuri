@@ -6,6 +6,7 @@ use moosuri_connectors::model::{
     protocol::{ModelEvent, TextCapabilities, TextRequest},
 };
 use moosuri_core::ModelSource;
+use moosuri_store::runtime_registry::engine::ModelChoice;
 use moosuri_store::{LoginResult, Store, StoreError, SubscriptionAuthority, SubscriptionRef};
 use serde::Deserialize;
 use std::{
@@ -121,12 +122,20 @@ pub(crate) async fn inspect(options: &InspectOptions) -> Result<(), String> {
                 "revision": binding.revision,
                 "status": binding.status,
             })).collect::<Vec<_>>(),
-            "models": choices.into_iter().filter(|choice|
+            "models": choices.iter().filter(|choice|
                 choice.source == ModelSource::PersonalChatGpt && choice.effort.is_none()
             ).map(|choice| serde_json::json!({
                 "binding": choice.provider_id,
                 "revision": choice.provider_revision,
                 "model": choice.model,
+            })).collect::<Vec<_>>(),
+            "choices": choices.iter().filter(|choice| {
+                choice.source == ModelSource::PersonalChatGpt
+            }).map(|choice| serde_json::json!({
+                "binding": choice.provider_id,
+                "revision": choice.provider_revision,
+                "model": choice.model,
+                "effort": choice.effort,
             })).collect::<Vec<_>>(),
         }))
     }
@@ -143,26 +152,20 @@ pub(super) struct Adapter {
     store: Store,
     enrollment: Enrollment,
     session: Mutex<Session>,
-    binding: SubscriptionRef,
+    bindings: Vec<SubscriptionRef>,
     #[cfg(all(test, feature = "test-fixtures"))]
     fixture: Option<String>,
 }
 
 impl Adapter {
-    pub(super) async fn open(config: Config, model: &str) -> Result<Self, String> {
-        if config.revision < 1
-            || model == "catalog"
-            || model.is_empty()
-            || model.len() > 200
-            || model.chars().any(|c| c.is_control() || c.is_whitespace())
-        {
+    pub(super) async fn open(config: Config, choices: &[ModelChoice]) -> Result<Self, String> {
+        if config.revision < 1 || choices.iter().any(|choice| choice.model == "catalog") {
             return Err("chatgpt_engine_model_invalid".into());
         }
         let store = config.enrollment.open_store()?;
         let session = config.enrollment.login(&store).await?;
-        let binding = Self::owned_model(&store, &session, &config, model).await;
-        let binding = match binding {
-            Ok(binding) => binding,
+        let bindings = match Self::owned_models(&store, &session, &config, choices).await {
+            Ok(bindings) => bindings,
             Err(error) => {
                 let _ = store.logout(&session.user).await;
                 return Err(error);
@@ -172,18 +175,18 @@ impl Adapter {
             store,
             enrollment: config.enrollment,
             session: Mutex::new(session),
-            binding,
+            bindings,
             #[cfg(all(test, feature = "test-fixtures"))]
             fixture: None,
         })
     }
 
-    async fn owned_model(
+    async fn owned_models(
         store: &Store,
         session: &Session,
         config: &Config,
-        model: &str,
-    ) -> Result<SubscriptionRef, String> {
+        configured: &[ModelChoice],
+    ) -> Result<Vec<SubscriptionRef>, String> {
         if session.user.account().id != config.enrollment_account.to_string() {
             return Err("chatgpt_engine_owner_mismatch".into());
         }
@@ -193,25 +196,30 @@ impl Adapter {
             .await
             .map_err(|_| "chatgpt_engine_binding_unavailable")?
             .choices;
-        if !choices.iter().any(|choice| {
-            choice.source == ModelSource::PersonalChatGpt
-                && choice.provider_id == binding_id
-                && choice.provider_revision == config.revision
-                && choice.model == model
-                && choice.effort.is_none()
-        }) {
-            return Err("chatgpt_engine_model_unverified".into());
+        let mut bindings = Vec::with_capacity(configured.len());
+        for configured in configured {
+            if !choices.iter().any(|choice| {
+                choice.source == ModelSource::PersonalChatGpt
+                    && choice.provider_id == binding_id
+                    && choice.provider_revision == config.revision
+                    && choice.model == configured.model
+                    && choice.effort == configured.effort
+            }) {
+                return Err("chatgpt_engine_model_unverified".into());
+            }
+            let binding = store
+                .subscription_ref(
+                    &session.user,
+                    binding_id.clone(),
+                    config.revision,
+                    configured.model.clone(),
+                    configured.effort.clone(),
+                )
+                .await
+                .map_err(|_| "chatgpt_engine_binding_unavailable")?;
+            bindings.push(binding);
         }
-        store
-            .subscription_ref(
-                &session.user,
-                binding_id,
-                config.revision,
-                model.to_owned(),
-                None,
-            )
-            .await
-            .map_err(|_| "chatgpt_engine_binding_unavailable".into())
+        Ok(bindings)
     }
 
     async fn authority(&self) -> Result<SubscriptionAuthority, String> {
@@ -225,7 +233,7 @@ impl Adapter {
                 // open a fresh local login using its private service password.
                 Err(StoreError::Unauthorized) => {
                     let fresh = self.enrollment.login(&self.store).await?;
-                    if fresh.user.account().id != self.binding.account {
+                    if fresh.user.account().id != session.user.account().id {
                         let _ = self.store.logout(&fresh.user).await;
                         return Err("chatgpt_engine_owner_mismatch".into());
                     }
@@ -238,19 +246,22 @@ impl Adapter {
         Ok(SubscriptionAuthority::User(session.user.clone()))
     }
 
-    async fn client(&self, authority: SubscriptionAuthority) -> Result<ModelClient, StoreError> {
+    async fn client(
+        &self,
+        authority: SubscriptionAuthority,
+        binding: SubscriptionRef,
+    ) -> Result<ModelClient, StoreError> {
         #[cfg(all(test, feature = "test-fixtures"))]
         if let Some(origin) = &self.fixture {
             return moosuri_agent::subscriptions::personal_client_fixture(
                 &self.store,
                 authority,
-                self.binding.clone(),
+                binding,
                 origin,
             )
             .await;
         }
-        moosuri_agent::subscriptions::personal_client(&self.store, authority, self.binding.clone())
-            .await
+        moosuri_agent::subscriptions::personal_client(&self.store, authority, binding).await
     }
 
     pub(super) async fn stream(
@@ -262,10 +273,15 @@ impl Adapter {
         if cancel.is_cancelled() || tx.is_closed() {
             return Err("chatgpt_engine_cancelled".into());
         }
-        if request.model != self.binding.model
-            || request.effort.is_some()
-            || encode_text_request(request, &TextCapabilities::default()).is_err()
-        {
+        let binding = self
+            .bindings
+            .iter()
+            .find(|binding| binding.model == request.model && binding.effort == request.effort)
+            .ok_or("chatgpt_engine_request_invalid")?;
+        let caps = TextCapabilities {
+            efforts: binding.effort.iter().cloned().collect(),
+        };
+        if encode_text_request(request, &caps).is_err() {
             return Err("chatgpt_engine_request_invalid".into());
         }
         let authority = self.authority().await?;
@@ -276,7 +292,7 @@ impl Adapter {
         // to completion. Caller cancellation fences inference below rather than
         // abandoning a refresh that may already have rotated at OpenAI.
         let client = self
-            .client(authority)
+            .client(authority, binding.clone())
             .await
             .map_err(|_| "chatgpt_engine_credential_unavailable")?
             .with_limits(TransportLimits {

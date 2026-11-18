@@ -526,6 +526,10 @@ pub fn router_with_runtime(
         .route("/api/v1/admin/users", get(users).post(create_user))
         .route("/api/v1/admin/users/{id}/manage", post(accounts::manage))
         .route(
+            "/api/v1/admin/accounts/{id}/model",
+            get(providers::account_assignment).put(providers::set_account_assignment),
+        )
+        .route(
             "/api/v1/admin/providers",
             get(providers::list).post(providers::create),
         )
@@ -805,6 +809,15 @@ async fn current(state: &AppState, headers: &HeaderMap) -> Result<UserContext, H
         return Err(StoreError::Forbidden.into());
     }
     Ok(user)
+}
+fn require_admin(user: UserContext) -> Result<UserContext, HttpError> {
+    if user.account().role != moosuri_core::Role::Admin || user.password_change_required() {
+        return Err(StoreError::Forbidden.into());
+    }
+    Ok(user)
+}
+async fn current_admin(state: &AppState, headers: &HeaderMap) -> Result<UserContext, HttpError> {
+    require_admin(current(state, headers).await?)
 }
 async fn current_handoff(state: &AppState, headers: &HeaderMap) -> Result<UserContext, HttpError> {
     let user = state.store.authenticate(cookie_token(headers)?).await?;

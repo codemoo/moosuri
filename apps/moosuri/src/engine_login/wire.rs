@@ -56,6 +56,8 @@ pub(super) struct Hello {
     pub owner: Owner,
     pub revision: Uuid,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,7 +80,7 @@ pub(super) struct Prompt {
 }
 impl Prompt {
     pub(super) fn from_request(r: &TextRequest) -> Result<Self, String> {
-        if r.effort.is_some() || r.messages.iter().any(|m| m.phase.is_some()) {
+        if r.messages.iter().any(|m| m.phase.is_some()) {
             return Err("engine_request_unsupported".into());
         }
         let messages = r
@@ -111,10 +113,14 @@ impl Prompt {
         }
         Ok(())
     }
-    pub(super) fn into_request(self, model: &str) -> Result<TextRequest, String> {
+    pub(super) fn into_request(
+        self,
+        model: String,
+        effort: Option<String>,
+    ) -> Result<TextRequest, String> {
         self.validate()?;
         Ok(TextRequest {
-            model: model.to_owned(),
+            model,
             messages: self
                 .messages
                 .into_iter()
@@ -128,7 +134,7 @@ impl Prompt {
                     phase: None,
                 })
                 .collect(),
-            effort: None,
+            effort,
             max_output_tokens: self.max_output_tokens,
         })
     }

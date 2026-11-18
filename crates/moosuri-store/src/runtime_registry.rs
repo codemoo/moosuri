@@ -7,6 +7,7 @@ use std::{fs, os::unix::fs::MetadataExt, path::Path, time::Duration};
 use uuid::Uuid;
 
 pub mod admin;
+pub mod engine;
 
 const REGISTRY: &str = "account-runtimes.sqlite";
 const APP_ID: i64 = 0x4d535252;
@@ -84,7 +85,7 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
     }
     let id: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if id != APP_ID || !(1..=3).contains(&version) {
+    if id != APP_ID || !(1..=4).contains(&version) {
         return Err(StoreError::InvalidInput);
     }
     if version == 1 {
@@ -98,6 +99,13 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!(
             "../../../migrations/installation_registry/0003_web_session_epoch.sql"
+        ))?;
+        tx.commit()?;
+    }
+    if version <= 3 {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!(
+            "../../../migrations/installation_registry/0004_engine_policy.sql"
         ))?;
         tx.commit()?;
     }
@@ -212,11 +220,16 @@ fn with_session_route<T>(
     destination: SessionDestination,
     action: impl FnOnce(Allocation, i64) -> Result<T>,
 ) -> Result<T> {
+    let (_lock, db) = open(root, false)?;
+    let (a, epoch) = ready_session(&db, destination)?;
+    action(a, epoch)
+}
+
+fn ready_session(db: &Connection, destination: SessionDestination) -> Result<(Allocation, i64)> {
     let (column, value) = match destination {
         SessionDestination::Account(id) => ("account_id", id.to_string()),
         SessionDestination::Email(email) => ("email", email_valid(email)?),
     };
-    let (_lock, db) = open(root, false)?;
     let sql = format!(
         "SELECT account_id,tenant_id,volume_id,generation,session_epoch FROM allocations WHERE {column}=?1 AND route_state='ready'"
     );
@@ -224,8 +237,8 @@ fn with_session_route<T>(
         .query_row(&sql, [value], |r| Ok((decode(r)?, r.get(4)?)))
         .optional()?
         .ok_or(StoreError::NotFound)?;
-    admin::unsuspended(&db, &a)?;
-    action(a, epoch)
+    admin::unsuspended(db, &a)?;
+    Ok((a, epoch))
 }
 
 /// Installation-only identity lookup for preparing an inert socket or mount.

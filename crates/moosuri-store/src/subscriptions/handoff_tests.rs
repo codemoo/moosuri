@@ -194,71 +194,102 @@ async fn helper_issued_session_is_absolute_and_cannot_create_lasting_authority()
     let s = Store::open(d.path()).unwrap();
     let admin = admin(&s).await;
     let member = member(&s, &admin.user, "helper-member@example.test").await;
-    for email in ["admin@example.test", "helper-member@example.test"] {
-        let helper = s
-            .login_chatgpt_helper(email.into(), crate::tests::PASSWORD.into())
-            .await
-            .unwrap();
-        assert!(helper.user.is_chatgpt_helper());
-        assert!(helper.user.chat_draft_scope().is_none());
-        assert!(matches!(
-            s.change_password(&helper.user, "Synthetic-forbidden-password-42".into())
-                .await,
-            Err(StoreError::Forbidden)
-        ));
-        assert!(matches!(
-            s.create_user(
-                &helper.user,
-                "forbidden".into(),
-                "forbidden@example.test".into()
-            )
+    assert!(matches!(
+        s.login_chatgpt_helper(
+            "helper-member@example.test".into(),
+            crate::tests::PASSWORD.into()
+        )
+        .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        s.prepare_chatgpt_handoff(&member.user, None, "Forbidden".into())
             .await,
-            Err(StoreError::Forbidden)
-        ));
-        assert!(matches!(
-            s.create_thread(&helper.user, "forbidden".into()).await,
-            Err(StoreError::Forbidden)
-        ));
-        // Even if internal memory were relabelled, persisted session purpose is
-        // authoritative at the default operational loader.
-        let mut relabelled = helper.user.clone();
-        relabelled.helper = false;
-        relabelled.absolute_deadline = None;
-        assert!(matches!(
-            s.create_thread(&relabelled, "forged label".into()).await,
-            Err(StoreError::Forbidden)
-        ));
+        Err(StoreError::Forbidden)
+    ));
+    let helper = s
+        .login_chatgpt_helper("admin@example.test".into(), crate::tests::PASSWORD.into())
+        .await
+        .unwrap();
+    assert!(helper.user.is_chatgpt_helper());
+    assert!(helper.user.chat_draft_scope().is_none());
+    assert!(matches!(
+        s.change_password(&helper.user, "Synthetic-forbidden-password-42".into())
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        s.create_user(
+            &helper.user,
+            "forbidden".into(),
+            "forbidden@example.test".into()
+        )
+        .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        s.create_thread(&helper.user, "forbidden".into()).await,
+        Err(StoreError::Forbidden)
+    ));
+    // Even if internal memory were relabelled, persisted session purpose is
+    // authoritative at the default operational loader.
+    let mut relabelled = helper.user.clone();
+    relabelled.helper = false;
+    relabelled.absolute_deadline = None;
+    assert!(matches!(
+        s.create_thread(&relabelled, "forged label".into()).await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(
+        s.begin_subscription_login(&helper.user, None, "P1 forbidden".into())
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        s.vault_handoff(&helper.user, "https://vault.example.test".into())
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        s.issue_source_token(&helper.user, "guess".into(), 3600)
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(s.source_connections(&helper.user).await.is_err());
+    assert!(s.managed_accounts(&helper.user).await.is_err());
+    let id = helper.user.digest;
+    let deadline = helper.user.absolute_deadline.unwrap();
+    s.authenticate(helper.token.clone()).await.unwrap();
+    s.call(move |db| {
+        let (purpose, cap, expiry): (String, i64, i64) = db.conn.query_row(
+            "SELECT purpose,absolute_deadline,expires_at FROM sessions WHERE digest=?1",
+            [id.as_slice()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(purpose, "chatgpt_helper");
+        assert_eq!(cap, deadline);
+        assert_eq!(expiry, cap);
         assert!(
-            s.begin_subscription_login(&helper.user, None, "P1 forbidden".into())
-                .await
+            db.conn
+                .execute(
+                    "UPDATE sessions SET absolute_deadline=absolute_deadline+3600 WHERE digest=?1",
+                    [id.as_slice()]
+                )
                 .is_err()
         );
-        assert!(matches!(
-            s.vault_handoff(&helper.user, "https://vault.example.test".into())
-                .await,
-            Err(StoreError::Forbidden)
-        ));
-        assert!(matches!(
-            s.issue_source_token(&helper.user, "guess".into(), 3600)
-                .await,
-            Err(StoreError::Forbidden)
-        ));
-        assert!(s.source_connections(&helper.user).await.is_err());
-        assert!(s.managed_accounts(&helper.user).await.is_err());
-        let id = helper.user.digest;
-        let deadline = helper.user.absolute_deadline.unwrap();
-        s.authenticate(helper.token.clone()).await.unwrap();
-        s.call(move|db|{let (purpose,cap,expiry):(String,i64,i64)=db.conn.query_row("SELECT purpose,absolute_deadline,expires_at FROM sessions WHERE digest=?1",[id.as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;assert_eq!(purpose,"chatgpt_helper");assert_eq!(cap,deadline);assert_eq!(expiry,cap);assert!(db.conn.execute("UPDATE sessions SET absolute_deadline=absolute_deadline+3600 WHERE digest=?1",[id.as_slice()]).is_err());Ok(())}).await.unwrap();
-        let p = s
-            .prepare_chatgpt_handoff(&helper.user, None, "Allowed".into())
-            .await
-            .unwrap();
-        s.cancel_chatgpt_handoff(&helper.user, p.context.ticket.clone())
-            .await
-            .unwrap();
-        s.logout(&helper.user).await.unwrap();
-        assert!(s.authenticate(helper.token).await.is_err());
-    }
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let p = s
+        .prepare_chatgpt_handoff(&helper.user, None, "Allowed".into())
+        .await
+        .unwrap();
+    s.cancel_chatgpt_handoff(&helper.user, p.context.ticket.clone())
+        .await
+        .unwrap();
+    s.logout(&helper.user).await.unwrap();
+    assert!(s.authenticate(helper.token).await.is_err());
     assert!(
         s.create_thread(&member.user, "Normal member remains usable".into())
             .await

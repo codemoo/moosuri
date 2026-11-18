@@ -186,10 +186,10 @@ describe("shared model administration", () => {
   });
 
   it("does not expose shared credential creation to a member through the Claude entry or a direct link", async () => {
-    const user = userEvent.setup();
     const { calls } = server(undefined, member);
     open("/settings/model");
-    await user.click(await screen.findByRole("button", { name: "Claude 연결" }));
+    await screen.findByRole("heading", {name: "This page is for administrators."});
+    expect(screen.queryByRole("button", { name: "Claude 연결" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Claude API 연결" })).not.toBeInTheDocument();
     await act(async () => {
       window.history.pushState(null, "", "/admin/providers?connect=anthropic");
@@ -504,23 +504,42 @@ describe("shared model administration", () => {
   });
 });
 
-describe("personal model preferences", () => {
-  it("blocks members from shared connection editing while providing their own settings", async () => {
+describe("model assignments", () => {
+  it("keeps a member's assistant available without exposing the assigned model or configuration", async () => {
+    server(undefined, member, undefined, { selection: null, effective: high, choices: [] });
+    open("/app");
+    await screen.findByRole("heading", {name: "Member님, 무엇을 도와드릴까요?"});
+    expect(screen.queryByText(high.model, {exact: false})).not.toBeInTheDocument();
+    expect(openWorkspaceMenu().queryByRole("button", {name: "내 모델"})).not.toBeInTheDocument();
+    expect(openWorkspaceMenu().queryByRole("button", {name: "Manage installation"})).not.toBeInTheDocument();
+  });
+
+  it("lets an administrator select and reset the member's exact model and effort", async () => {
     const user = userEvent.setup();
-    const { calls } = server(undefined, member);
-    open("/admin/providers");
-    await screen.findByRole("heading", {
-      name: "This page is for administrators.",
+    const memberPath = `/admin/accounts/${member.user.id}/model`;
+    const { calls } = server(call => {
+      if (call.path === "/admin/users") return response({ users: [admin.user, member.user] });
+      if (call.path !== memberPath) return undefined;
+      return response({
+        selection: call.body?.selection ?? null,
+        effective: call.body?.selection ? low : high,
+        choices: [high, low],
+      });
     });
-    expect(
-      screen.queryByRole("button", { name: /연결 추가/ }),
-    ).not.toBeInTheDocument();
-    expect(calls.some((call) => call.path.startsWith("/admin/providers"))).toBe(
-      false,
-    );
-    await user.click(openWorkspaceMenu().getByRole("button", { name: "내 모델" }));
-    await screen.findByRole("heading", { name: "내 모델", level: 2 });
-    expect(screen.getByRole("combobox", { name: "모델" })).toBeInTheDocument();
+    open("/admin");
+    const picker = await screen.findByText("사용할 모델 · 추론 강도");
+    expect(calls.some(call => call.path === memberPath)).toBe(false);
+    await user.click(picker);
+    await user.selectOptions(await screen.findByLabelText("모델"), key({...low, effort: null}));
+    await user.selectOptions(screen.getByLabelText("추론 강도"), key(low));
+    await user.click(screen.getByRole("button", {name: "회원 모델 저장"}));
+    await screen.findByText(`현재 적용 · ${provider.name} · ${low.model} · low`);
+    await user.selectOptions(screen.getByLabelText("모델"), "");
+    await user.click(screen.getByRole("button", {name: "회원 모델 저장"}));
+    await screen.findByText(`현재 적용 · ${provider.name} · ${high.model} · high`);
+    const writes = calls.filter(call => call.path === memberPath && call.method === "PUT");
+    expect(writes.map(call => call.body)).toEqual([{selection: selection(low)}, {selection: null}]);
+    expect(writes.every(call => new Headers(call.init.headers).get("X-Moosuri-Account") === admin.user.id)).toBe(true);
   });
 
   it("saves an exact verified provider/revision/model/effort pair and can return to the installation default", async () => {
@@ -534,7 +553,7 @@ describe("personal model preferences", () => {
               choices: [high, low],
             })
           : undefined,
-      member,
+      admin,
       undefined,
       { selection: null, effective: high, choices: [high, low] },
     );
@@ -561,14 +580,14 @@ describe("personal model preferences", () => {
         .every(
           (call) =>
             new Headers(call.init.headers).get("X-Moosuri-Account") ===
-            member.user.id,
+            admin.user.id,
         ),
     ).toBe(true);
   });
 
   it("does not upgrade a saved revision or silently fall back when the selected connection changed", async () => {
     const newer = { ...high, provider_revision: 2 };
-    server(undefined, member, undefined, {
+    server(undefined, admin, undefined, {
       selection: selection(high),
       effective: null,
       choices: [newer],
@@ -591,7 +610,7 @@ describe("personal model preferences", () => {
         call.path === "/settings/model" && call.method === "PUT"
           ? late.promise
           : undefined,
-      member,
+      admin,
       undefined,
       { selection: selection(high), effective: high, choices: [high, low] },
     );
@@ -699,7 +718,7 @@ describe("personal ChatGPT settings", () => {
         return response({remote_revocation_confirmed: false});
       }
       return undefined;
-    }, member, {providers: [], default_selection: null}, settings);
+    }, admin, {providers: [], default_selection: null}, settings);
     open("/settings/model");
     const group = await screen.findByRole("group", {name: "나의 구독"});
     await user.click(within(group).getByRole("button", {name: "내 모델 목록"}));
@@ -723,7 +742,7 @@ it("guides local-helper server sign-in without requesting private launch materia
   const user = userEvent.setup();
   const {calls} = server((call) => call.path === "/settings/chatgpt" ? response([
     {id:"synthetic-returning-binding",revision:7,label:"My VM connection",status:"active",remote_revoke:"not_requested"},
-  ]) : undefined, member);
+  ]) : undefined, admin);
   open("/settings/model");
   await user.click(await screen.findByRole("button", {name:"ChatGPT 구독 연결"}));
   expect(screen.getByRole("region",{name:"ChatGPT 로그인 안내"})).toBeInTheDocument();
@@ -753,7 +772,7 @@ describe("personal foreground tool verification", () => {
       settings.effective = {...choice, function_tools:true};
       settings.choices = [settings.effective];
       return response(settings.effective);
-    }, member, undefined, settings);
+    }, admin, undefined, settings);
     open("/settings/model");
     const probe = await screen.findByRole("button", {name:"현재 모델 도구 확인"});
     expect(await screen.findByText("도구 확인 필요")).toBeInTheDocument();
@@ -779,7 +798,7 @@ describe("personal foreground tool verification", () => {
         settings.effective = other;
       }
       return response({...choice,function_tools:true});
-    }, member, undefined, settings);
+    }, admin, undefined, settings);
     open("/settings/model");
     await user.click(await screen.findByRole("button", {name:"현재 모델 도구 확인"}));
     await screen.findByText(/모델 설정이 변경되었거나 도구 확인을 적용하지 못했습니다/);
@@ -792,7 +811,7 @@ describe("personal foreground tool verification", () => {
     const user = userEvent.setup();
     const noProof: ModelChoice = {...high, effort:null, function_tools:false};
     const proved: ModelChoice = {...high, function_tools:true};
-    server(undefined, member, undefined, {selection:null, effective:null, choices:[noProof, proved]});
+    server(undefined, admin, undefined, {selection:null, effective:null, choices:[noProof, proved]});
     open("/settings/model");
     await user.selectOptions(await screen.findByLabelText("모델"), key(noProof));
     expect(screen.getByLabelText("추론 강도")).toHaveValue(key(proved));
@@ -807,7 +826,7 @@ describe("personal foreground tool verification", () => {
       if(call.path==="/settings/chatgpt")return response([{id:"personal-tools",revision:1,label:"개인 도구 연결",status:"active",remote_revoke:"not_requested"}]);
       if(call.path==="/settings/chatgpt/personal-tools/tool-probe") {settings.choices=[{...choice,function_tools:true}];return response(settings.choices[0]);}
       return undefined;
-    },member,{providers:[],default_selection:null},settings);
+    },admin,{providers:[],default_selection:null},settings);
     open("/settings/model");
     const group=await screen.findByRole("group",{name:"개인 도구 연결"});
     await user.click(await within(group).findByRole("button",{name:`도구 연결 확인 · ${choice.model} · ${choice.effort}`}));
@@ -818,7 +837,7 @@ describe("personal foreground tool verification", () => {
   it("failed tool verification leaves exact text capability available without success", async () => {
     const user=userEvent.setup();
     const choice:ModelChoice={...high,source:"personal_chat_gpt",provider_id:"personal-tools",provider_name:"개인 도구 연결",effort:null,function_tools:false};
-    server(call=>call.path==="/settings/chatgpt"?response([{id:"personal-tools",revision:1,label:"개인 도구 연결",status:"active",remote_revoke:"not_requested"}]):call.path.endsWith("personal-tools/tool-probe")?response({code:"model_tool_probe_incomplete"},502):undefined,member,{providers:[],default_selection:null},{selection:null,effective:null,choices:[choice]});
+    server(call=>call.path==="/settings/chatgpt"?response([{id:"personal-tools",revision:1,label:"개인 도구 연결",status:"active",remote_revoke:"not_requested"}]):call.path.endsWith("personal-tools/tool-probe")?response({code:"model_tool_probe_incomplete"},502):undefined,admin,{providers:[],default_selection:null},{selection:null,effective:null,choices:[choice]});
     open("/settings/model");const group=await screen.findByRole("group",{name:"개인 도구 연결"});
     await user.click(await within(group).findByRole("button",{name:`도구 연결 확인 · ${choice.model} · 기본 강도`}));
     await screen.findByText(/개인 ChatGPT 요청을 완료하지 못했습니다/);
@@ -829,7 +848,7 @@ describe("personal foreground tool verification", () => {
 
 
 it("explains personal tools, delegated reads and the remaining external-work limits", async () => {
-  server(call => call.path === "/settings/chatgpt" ? response([]) : undefined,member,{providers:[],default_selection:null},{selection:null,effective:null,choices:[]});
+  server(call => call.path === "/settings/chatgpt" ? response([]) : undefined,admin,{providers:[],default_selection:null},{selection:null,effective:null,choices:[]});
   open("/settings/model");
   const tools = await screen.findByText(/자료·메일·일정 조회, 계산, 기억과 기록 관리/);
   expect(tools).toHaveTextContent("맡긴 업무는 로그아웃한 뒤에도 실행됩니다.");
@@ -843,7 +862,7 @@ describe("personal image verification", () => {
     const choice:ModelChoice={...high,source,provider_id:"vision-owner"};
     const settings:ModelSettings={selection:{...selection(choice),source},effective:choice,choices:[choice]};
     const endpoint=`/settings/${route}/vision-owner/vision-probe`;
-    const {calls}=server(call=>call.path===endpoint?response({vision:true}):undefined,member,undefined,settings);
+    const {calls}=server(call=>call.path===endpoint?response({vision:true}):undefined,admin,undefined,settings);
     open("/settings/model");
     const button=await screen.findByRole("button",{name:"현재 모델 이미지 확인"});
     expect(calls.some(call=>call.path===endpoint)).toBe(false);
@@ -854,7 +873,7 @@ describe("personal image verification", () => {
   });
   it("keeps a failed image proof unavailable and permits retry",async()=>{
     const choice:ModelChoice={...high,source:"personal_chat_gpt",provider_id:"vision-owner"};
-    server(call=>call.path.endsWith("/vision-probe")?response({code:"vision_probe_failed"},502):undefined,member,undefined,{selection:null,effective:choice,choices:[choice]});
+    server(call=>call.path.endsWith("/vision-probe")?response({code:"vision_probe_failed"},502):undefined,admin,undefined,{selection:null,effective:choice,choices:[choice]});
     open("/settings/model");
     await userEvent.click(await screen.findByRole("button",{name:"현재 모델 이미지 확인"}));
     expect(await screen.findByRole("alert")).toHaveTextContent("이미지 픽셀을 정확히 읽는지 확인하지 못했습니다");

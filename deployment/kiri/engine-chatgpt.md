@@ -42,8 +42,8 @@ sudo -u moosuri-engine-chatgpt /usr/local/bin/moosuri \
 
    등록용 무수리 암호를 입력하고 브라우저에서 실제로 이 Kiri 계정을 사용할 ChatGPT 사용자와 워크스페이스로 동의한다. 브라우저 컴퓨터가 OAuth를 완료하며 Linux 저장소에는 Linux 호스트 ID가 보존된다. [개인 VM 인계 절차](../../docs/chatgpt-authentication.md#personal-self-hosted-linux-transfer) · [공식 VM 안내](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms)
 
-4. 같은 HTTPS 주소에 등록용 무수리 계정으로 로그인한다. 설정의 **내 ChatGPT**에서 모델 목록을 불러오고, 엔진에 연결할 모델을 선택해 **텍스트 연결 확인**을 실행한다. 이 워커는 기본 추론 수준으로 확인한 정확한 모델을 사용한다. 확인이 끝나면 등록 서버를 중지하고 프록시 경로를 닫는다.
-5. Linux 호스트에서 아래 명령으로 계정·등록 리비전·모델을 확인한다. 출력의 `models`가 비어 있으면 등록 서버에서 텍스트 연결을 확인한다. 검사는 로컬에 저장된 검증 결과를 출력한다.
+4. 같은 HTTPS 주소에 등록용 무수리 계정으로 로그인한다. 설정의 **내 ChatGPT**에서 모델 목록을 불러오고, 엔진에 연결할 모델을 선택해 **텍스트 연결 확인**을 실행한다. 사용할 모델과 추론 강도 조합마다 텍스트 연결을 확인한다. 확인이 끝나면 등록 서버를 중지하고 프록시 경로를 닫는다.
+5. Linux 호스트에서 아래 명령으로 계정·등록 리비전·모델을 확인한다. 출력의 `choices`에서 사용할 모델과 추론 강도를 함께 확인한다. 조합이 없으면 등록 서버에서 해당 모델·강도의 텍스트 연결을 확인한다. `models`는 기본 강도로 확인한 모델 목록이다. 검사는 로컬에 저장된 검증 결과를 출력한다.
 
    ```sh
    sudo -u moosuri-engine-chatgpt /usr/local/bin/moosuri engine-chatgpt-inspect \

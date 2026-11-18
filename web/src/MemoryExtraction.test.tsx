@@ -86,7 +86,7 @@ it.each([
  ["extraction_model_unsupported","이 연결로 자동 기억을 시작할 수 없어요."],
 ])("explains %s and links model recovery without losing attribution or enabling extraction",async(code,message)=>{
  const fetch=vi.fn(async(_path:string,init?:RequestInit)=>init?.method==="PUT"?new Response(JSON.stringify({code}),{status:409,headers:{"content-type":"application/json"}}):response(status()));vi.stubGlobal("fetch",fetch);
- render(<MemoryExtraction accountId="a" collectionId="c" connected onExpired={vi.fn()}/>);
+ render(<MemoryExtraction accountId="a" collectionId="c" connected canManageModel onExpired={vi.fn()}/>);
  await screen.findByRole("button",{name:"자동 기억 켜기"});
  fireEvent.change(screen.getByLabelText("작성자 기준"),{target:{value:"specified"}});
  fireEvent.change(screen.getByLabelText("기억에 표시할 사람"),{target:{value:"Mina"}});

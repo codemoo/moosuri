@@ -62,6 +62,7 @@ import { initialKnowledgeDrafts } from "./KnowledgeState";
 import { DeferredPage } from "./DeferredPage";
 const AdminProviderSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.AdminProviderSettings})));
 const PersonalModelSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.PersonalModelSettings})));
+const MemberModelSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.MemberModelSettings})));
 
 function Brand() {
   return <span className="brand"><img className="brand-icon" src="/moosuri-icon-192.png" width="32" height="32" alt="" />Moosuri</span>;
@@ -784,8 +785,8 @@ function Workspace({
     return () => { live = false; window.removeEventListener(GWS_CONNECTED, resumed); };
   }, [scope, session.user.id, navigateParent]);
   const deleteOpener = useRef<HTMLButtonElement | null>(null);
-  const admin =
-    path === "/admin" || path === "/admin/providers" || path === "/admin/usage" || path === "/admin/google" || path === "/admin/telegram";
+  const allowedAdmin = session.user.role === "admin";
+  const admin = path === "/admin" || path.startsWith("/admin/");
   const telegramAdmin = path === "/admin/telegram";
   const personalTelegram = path === "/settings/telegram";
   const googleAdmin = path === "/admin/google";
@@ -795,7 +796,8 @@ function Workspace({
   const memoryPage = path === "/app/memory";
   const knowledgeOpen = knowledgePage || memoryPage;
   const providerAdmin = path === "/admin/providers";
-  const personalModel = path === "/settings/model";
+  const personalModel = /^\/settings\/(model|claude|chatgpt|compatible-providers)(?:\/|$)/.test(path);
+  const denied = !allowedAdmin && (admin || personalModel);
   const calendarPage = path === "/settings/calendar";
   const nativeCredentials = path === "/settings/credentials";
   const personalMail = path === "/settings/mail";
@@ -810,7 +812,6 @@ function Workspace({
   const chatPage = ![admin, personalUsage, knowledgeOpen, personalModel, calendarPage,
     nativeCredentials, personalMail, personalSources, personalTelegram, communitySkills, artifactPage,
     missionsPage, schedulesPage, libraryPage].some(Boolean);
-  const allowedAdmin = session.user.role === "admin";
   function fail(e: unknown) {
     if (isAborted(e)) return;
     if (e instanceof ApiFailure && e.status === 401) onExpired();
@@ -1038,7 +1039,7 @@ function Workspace({
     {label:"기억", path:"/app/memory", active:memoryPage},
   ];
   const connections = [
-    {label:"내 모델", path:"/settings/model", active:personalModel},
+    ...(allowedAdmin ? [{label:"내 모델", path:"/settings/model", active:personalModel}] : []),
     {label:"내 Calendar", path:"/settings/calendar", active:calendarPage},
     {label:"내 Gmail · 발송 확인", path:"/settings/mail", active:personalMail},
     {label:"내 Telegram", path:"/settings/telegram", active:personalTelegram},
@@ -1118,7 +1119,7 @@ function Workspace({
               <img src="/moosuri-icon-192.png" width="32" height="32" alt="" />
             </button>
             <h1 id="workspace-heading" ref={pageHeading} tabIndex={-1}>
-              {personalTelegram ? "내 Telegram" : personalMail ? "내 Gmail" : nativeCredentials ? "신뢰 기기 연결" : calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : feedPage ? "소식함" : schedulesPage ? "예약 · 소식" : libraryPage ? "보관함" : goalPage ? "목표" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "아이디어" : personalSources ? "자료 수집 연결" : knowledgeOpen
+              {denied ? "관리자 전용" : personalTelegram ? "내 Telegram" : personalMail ? "내 Gmail" : nativeCredentials ? "신뢰 기기 연결" : calendarPage ? "내 Calendar" : missionsPage ? "맡긴 일" : feedPage ? "소식함" : schedulesPage ? "예약 · 소식" : libraryPage ? "보관함" : goalPage ? "목표" : artifactPage ? "문서 · 목표 · 요청" : communitySkills ? "아이디어" : personalSources ? "자료 수집 연결" : knowledgeOpen
                 ? memoryPage
                   ? "기억"
                   : "자료"
@@ -1186,8 +1187,16 @@ function Workspace({
           </nav>
         )}
         <DeferredPage key={path} back={() => navigate("/app")}>
-        {missionsPage ? (
-          <Missions accountId={session.user.id} onExpired={onExpired} back={() => navigate("/app")}
+        {denied ? (
+          <div className="empty-state">
+            <h2>This page is for administrators.</h2>
+            <p>You can continue in your own space.</p>
+            <button className="primary" onClick={() => navigate("/app")}>
+              Back to conversations
+            </button>
+          </div>
+        ) : missionsPage ? (
+          <Missions accountId={session.user.id} onExpired={onExpired} canManageModel={allowedAdmin} back={() => navigate("/app")}
             instructionDrafts={chatMemory.missionInstructions}
             onInstruction={(id, change) => setChatMemory(current => ({
               ...current, missionInstructions: {
@@ -1255,6 +1264,7 @@ function Workspace({
             drafts={knowledgeDrafts}
             updateDrafts={setKnowledgeDrafts}
             onExpired={onExpired}
+            canManageModel={allowedAdmin}
           />
         ) : personalUsage ? (
           <UsageView accountId={session.user.id} onExpired={onExpired} />
@@ -1262,36 +1272,26 @@ function Workspace({
           <PersonalModelSettings
             accountId={session.user.id}
             onExpired={onExpired}
-            onConnectClaudeApi={allowedAdmin ? () => navigate("/admin/providers?connect=anthropic") : undefined}
+            onConnectClaudeApi={() => navigate("/admin/providers?connect=anthropic")}
           />
         ) : admin ? (
-          allowedAdmin ? (
-            telegramAdmin ? (
-              <TelegramSettings accountId={session.user.id} admin onExpired={onExpired} />
-            ) : googleAdmin ? (
-              <GoogleSetup accountId={session.user.id} onExpired={onExpired} back={returnFromMail} />
-            ) : adminUsage ? (
-              <UsageView
-                accountId={session.user.id}
-                admin
-                onExpired={onExpired}
-              />
-            ) : providerAdmin ? (
-              <AdminProviderSettings
-                accountId={session.user.id}
-                onExpired={onExpired}
-              />
-            ) : (
-              <Admin accountId={session.user.id} onExpired={onExpired} />
-            )
+          telegramAdmin ? (
+            <TelegramSettings accountId={session.user.id} admin onExpired={onExpired} />
+          ) : googleAdmin ? (
+            <GoogleSetup accountId={session.user.id} onExpired={onExpired} back={returnFromMail} />
+          ) : adminUsage ? (
+            <UsageView
+              accountId={session.user.id}
+              admin
+              onExpired={onExpired}
+            />
+          ) : providerAdmin ? (
+            <AdminProviderSettings
+              accountId={session.user.id}
+              onExpired={onExpired}
+            />
           ) : (
-            <div className="empty-state">
-              <h2>This page is for administrators.</h2>
-              <p>You can continue in your own space.</p>
-              <button className="primary" onClick={() => navigate("/app")}>
-                Back to conversations
-              </button>
-            </div>
+            <Admin accountId={session.user.id} onExpired={onExpired} />
           )
         ) : !chatReady ? <p role="status">Checking your conversations…</p> : (
           <ChatPanel
@@ -1359,7 +1359,7 @@ function Workspace({
             onExpired={onExpired}
             onThreadMissing={threadMissing}
             onThreadUpdated={() => setRetry((value) => value + 1)}
-            openSettings={() => navigate("/settings/model")}
+            openSettings={allowedAdmin ? () => navigate("/settings/model") : undefined}
             onOpenEvidence={(reference) => {
               setKnowledgeTarget(reference);
               navigate(reference.kind === "source" ? "/app/knowledge" : "/app/memory");
@@ -1428,6 +1428,7 @@ function Admin({
   const invitationOpener = useRef<HTMLButtonElement>(null);
   const [users, setUsers] = useState<AccountSummary[]>([]);
   const [management, setManagement] = useState<ManagedAccount[]>([]);
+  const [modelMember, setModelMember] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState("");
@@ -1629,6 +1630,20 @@ function Admin({
                     ? "Password change needed"
                     : "Active"}
                 </span>
+                {user.role === "member" && !management.find((m) => m.user.id === user.id)?.deletion && (
+                  <details className="account-controls" open={modelMember === user.id}
+                    onToggle={(event) => {
+                      const open = event.currentTarget.open;
+                      setModelMember(current => open ? user.id : current === user.id ? null : current);
+                    }}>
+                    <summary>사용할 모델 · 추론 강도</summary>
+                    {modelMember === user.id && (
+                      <DeferredPage back={() => setModelMember(null)}>
+                        <MemberModelSettings accountId={accountId} memberId={user.id} onExpired={onExpired} />
+                      </DeferredPage>
+                    )}
+                  </details>
+                )}
                 {management.filter((m)=>m.user.id===user.id).map((target)=><AccountControls key={target.user.id} accountId={accountId} target={target} onExpired={onExpired} onChanged={()=>setRetry(n=>n+1)} onPassword={(password,receipt)=>{setInvitation({user,temporary_password:password,owner_id:accountId,revision:receipt.revision,request_id:receipt.request_id,reset:true});setCopied(false);setCopyError("");}}/>)}
               </li>
             ))}

@@ -3,9 +3,9 @@ import type {MemoryExtractionStatus} from "../shared/api-types";
 import {useScope} from "./account-scope";
 import {ApiFailure,isAborted} from "./api";
 import "./memory-extraction.css";
-type Props={accountId:string;collectionId:string;connected:boolean;onExpired:()=>void;source?:{id:string;revision:number}};
+type Props={accountId:string;collectionId:string;connected:boolean;onExpired:()=>void;canManageModel?:boolean;source?:{id:string;revision:number}};
 export function MemoryExtraction(props:Props){return <Controls key={`${props.accountId}:${props.collectionId}:${props.source?.id??"collection"}:${props.source?.revision??""}`} {...props}/>}
-function Controls({accountId,collectionId,connected,onExpired,source}:Props){
+function Controls({accountId,collectionId,connected,onExpired,canManageModel,source}:Props){
  const scope=useScope(accountId,`extraction:${collectionId}:${source?.id??""}`);
  const [status,setStatus]=useState<MemoryExtractionStatus|null>(null);const [mode,setMode]=useState("reported");const [speaker,setSpeaker]=useState("");const [busy,setBusy]=useState(false);const [error,setError]=useState("");const [modelRecovery,setModelRecovery]=useState(false);
  const generation=useRef(0);
@@ -15,7 +15,9 @@ function Controls({accountId,collectionId,connected,onExpired,source}:Props){
   if(isAborted(e))return;
   if(e instanceof ApiFailure&&e.status===401){onExpired();return}
   const message=e instanceof ApiFailure?({model_required:"사용할 모델이 없어요. 내 모델에서 연결과 모델 선택을 확인해 주세요.",tools_required:"자동 기억에는 도구가 필요해요. 내 모델에서 도구 연결을 확인하거나 도구 사용 가능한 모델을 저장해 주세요.",extraction_model_unsupported:"이 연결로 자동 기억을 시작할 수 없어요. 내 모델에서 연결 상태와 도구 확인 결과를 확인해 주세요."} as Record<string,string>)[e.code]:undefined;
-  setModelRecovery(!!message);setError(message??"기억 추출 상태를 확인하지 못했습니다. 다시 열어 확인해 주세요.");
+  setModelRecovery(!!message);setError(message
+   ? canManageModel ? message : "지금은 자료에서 기억을 만들 수 없습니다. 관리자에게 문의해 주세요."
+   : "기억 추출 상태를 확인하지 못했습니다. 다시 열어 확인해 주세요.");
  }
  async function request(kind:"read"|"mutation",path:string,method="GET",body?:unknown,initialize=false){
   // Ref ownership is synchronous: two handlers can run before busy is rendered.
@@ -40,7 +42,7 @@ function Controls({accountId,collectionId,connected,onExpired,source}:Props){
  async function extract(){if(!source||!status?.enabled)return;await request("mutation",statusPath,"POST",{expected_revision:source.revision})}
  const reason=status?.reason;
  const notice=reason==="partial_input"?`이번에는 자료 일부를 확인해 기억 ${status?.saved_count??0}개를 저장했습니다. 큰 문단이나 나머지 구간은 처리하지 않았습니다.`:reason==="daily_budget"?"오늘의 추출 한도에 도달했습니다. 한도가 초기화되면 다시 확인합니다.":reason==="unknown_attribution"?"작성자를 하나로 확인할 수 없어 이 자료는 건너뛰었습니다.":reason==="no_new_facts"?"이번 자료에서 새로 저장할 사실을 찾지 못했습니다.":reason==="provider_changed"||reason==="authority_changed"?"연결이나 계정 설정이 바뀌었습니다. 필요하면 다시 켜 주세요.":status?.state==="completed"?`근거가 연결된 기억 ${status.saved_count}개를 저장했습니다.`:status?.state==="queued"||status?.state==="acquired"||status?.state==="dispatched"?"자료를 확인하고 있습니다. 이 화면을 다시 열어 결과를 확인해 주세요.":reason?"이번 자료의 추출을 마치지 못했습니다. 원문과 연결 상태를 확인해 주세요.":"";
- return <section className="memory-extraction" aria-label="자료에서 기억 만들기"><h4>자료에서 기억 만들기</h4>{error&&<p role="alert">{error}{modelRecovery&&<> <a href="/settings/model">내 모델 열기</a></>}</p>}
+ return <section className="memory-extraction" aria-label="자료에서 기억 만들기"><h4>자료에서 기억 만들기</h4>{error&&<p role="alert">{error}{canManageModel&&modelRecovery&&<> <a href="/settings/model">내 모델 열기</a></>}</p>}
  {status&&<><p>켜면 앞으로 추가되거나 바뀐 자료에서 작성자가 직접 말한 사실을 원문 근거와 함께 기억합니다. 과거 자료 전체를 읽지는 않습니다.</p>
  {!source&&<><label>작성자 기준<select aria-label="작성자 기준" value={mode} onChange={e=>setMode(e.target.value)} disabled={busy}><option value="reported">자료에 표시된 작성자</option><option value="specified">지정한 사람</option></select></label>
  {mode==="specified"&&<label>기억에 표시할 사람<input aria-label="기억에 표시할 사람" value={speaker} onChange={e=>setSpeaker(e.target.value)} disabled={busy}/></label>}

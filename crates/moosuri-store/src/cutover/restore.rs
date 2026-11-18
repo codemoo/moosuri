@@ -466,7 +466,7 @@ fn quarantine(
     UPDATE browser_workspaces SET state='closed',reason='restore_quarantine',revision=revision+1,control_hash=NULL,control_session=NULL,control_until=NULL,resume_request=NULL,resumed_request=NULL;
     UPDATE source_connections SET state='needs_reconnect',sync_enabled=0,token_hash=NULL,token_expires=NULL,credential=NULL,credential_epoch=credential_epoch+1,run_generation=run_generation+1,error='restore_quarantine'; UPDATE source_sync_runs SET state='unknown',error='restore_quarantine' WHERE state='running';
     UPDATE automatic_memory_grants SET enabled=0,revision=revision+1; UPDATE automatic_memory_jobs SET state=CASE WHEN state='queued' THEN 'cancelled' ELSE 'outcome_unknown' END,reason='restore_quarantine',nonce=NULL,dispatch_nonce=NULL,deadline=NULL WHERE state IN('queued','acquired','dispatched');
-    DELETE FROM personal_model_selections; DELETE FROM installation_model_selection; DELETE FROM provider_model_probes; DELETE FROM google_setup;")?;
+    DELETE FROM personal_model_selections; DELETE FROM installation_model_selection; DELETE FROM admin_model_assignments; DELETE FROM provider_model_probes; DELETE FROM google_setup;")?;
     tx.execute(
         "DELETE FROM personal_artifact_command_plans WHERE used=0",
         [],

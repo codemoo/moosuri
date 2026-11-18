@@ -149,7 +149,7 @@ async fn unavailable_worker_preserves_budget_and_replays_only_its_own_receipt() 
     let mut config = login_config(&options, Route::ChatgptPlan);
     config.bindings[0].budget.max_calls = 1;
     file(&options.config, &serde_json::to_vec(&config).unwrap());
-    let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+    let broker = ready_broker(&options);
     let b = &config.bindings[0];
     let r = request(b);
     let bytes = serde_json::to_vec(&r).unwrap();
@@ -177,7 +177,8 @@ async fn unavailable_worker_preserves_budget_and_replays_only_its_own_receipt() 
             .fingerprint
     );
     let start_epoch = epoch(&options.registry, b).unwrap();
-    let Admission::Fresh(permit) = broker.admit(b, &key, true, start_epoch).unwrap() else {
+    let Some(Admission::Fresh(permit)) = broker.admit(b, &r, &key, true, start_epoch).unwrap()
+    else {
         panic!("failed worker connection must not consume a call");
     };
     broker
@@ -188,7 +189,7 @@ async fn unavailable_worker_preserves_budget_and_replays_only_its_own_receipt() 
         .unwrap();
     drop(broker);
 
-    let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+    let broker = ready_broker(&options);
     let reply = broker
         .call(b, serde_json::from_slice(&bytes).unwrap())
         .await;
@@ -199,7 +200,7 @@ async fn unavailable_worker_preserves_budget_and_replays_only_its_own_receipt() 
 
     config.bindings[0].worker.as_mut().unwrap().socket = root.join("other").join("engine.sock");
     file(&options.config, &serde_json::to_vec(&config).unwrap());
-    let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+    let broker = ready_broker(&options);
     let reply = broker
         .call(&config.bindings[0], serde_json::from_slice(&bytes).unwrap())
         .await;
@@ -217,7 +218,7 @@ async fn login_route_validates_fresh_request_shape_and_preserves_existing_receip
         let (options, _) = fixture(&root, "http://127.0.0.1:65531/v1".into());
         let config = login_config(&options, route);
         file(&options.config, &serde_json::to_vec(&config).unwrap());
-        let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+        let broker = ready_broker(&options);
         let binding = &config.bindings[0];
         let mut invalid = request(binding);
         invalid.model = config.model.clone();
@@ -236,7 +237,9 @@ async fn login_route_validates_fresh_request_shape_and_preserves_existing_receip
             )
             .unwrap();
         let start_epoch = epoch(&options.registry, binding).unwrap();
-        let Admission::Fresh(permit) = broker.admit(binding, &key, true, start_epoch).unwrap()
+        let Some(Admission::Fresh(permit)) = broker
+            .admit(binding, &invalid, &key, true, start_epoch)
+            .unwrap()
         else {
             panic!("invalid request must leave the ledger unchanged");
         };
@@ -282,10 +285,15 @@ async fn worker_acknowledgement_precedes_one_durable_dispatch_and_epoch_recheck(
     }
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let (options, _) = fixture(&root, "http://127.0.0.1:65531/v1".into());
-    let config = login_config(&options, Route::ChatgptPlan);
+    let (options, members) = fixture(&root, "http://127.0.0.1:65531/v1".into());
+    let mut config = login_config(&options, Route::ChatgptPlan);
+    config.effort = Some("high".into());
+    config.models.push(ModelChoice {
+        model: config.model.clone(),
+        effort: None,
+    });
     file(&options.config, &serde_json::to_vec(&config).unwrap());
-    let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+    let broker = ready_broker(&options);
     // A native test has one non-root OS identity. Use the real wire and peer
     // checks with a test binding after startup validates production UID rules.
     let mut binding = config.bindings[0].clone();
@@ -294,11 +302,12 @@ async fn worker_acknowledgement_precedes_one_durable_dispatch_and_epoch_recheck(
     fs::set_permissions(&endpoint.socket, fs::Permissions::from_mode(0o600)).unwrap();
     endpoint.worker_uid = uid;
 
-    let first = request(&binding);
+    let mut first = request(&binding);
+    first.effort = config.effort.clone();
     let duplicate = serde_json::from_slice(&serde_json::to_vec(&first).unwrap()).unwrap();
     let hello = json!({
         "version": 1, "route": "chatgpt_plan", "owner": binding.owner(),
-        "revision": first.connection_revision, "model": first.model,
+        "revision": first.connection_revision, "model": first.model, "effort": "high",
     });
     let worker = async {
         let (mut a, _) = listener.accept().await.unwrap();
@@ -333,10 +342,42 @@ async fn worker_acknowledgement_precedes_one_durable_dispatch_and_epoch_recheck(
     .unwrap();
     let (settled, replay) = if a.state == "settled" { (a, b) } else { (b, a) };
     assert_eq!(settled.output.as_deref(), Some("SYNTHETIC-WORKER-ANSWER"));
+    assert_eq!(settled.effort.as_deref(), Some("high"));
     assert_eq!(settled.receipt.unwrap()["charged_tokens"], 10);
     assert_eq!(replay.state, "in_progress");
 
+    let actor = operator(&options, &members[1], "b@example.invalid");
+    let mut changed = request(&binding);
+    changed.effort = config.effort.clone();
+    let worker = async {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        assert_eq!(worker_receive(&mut stream).await, Some(hello.clone()));
+        engine::change(
+            &options.registry,
+            &actor,
+            engine::Change::Member(engine::MemberChange {
+                revision: settings_revision(&options, &actor),
+                connection_revision: config.connection_revision,
+                account_id: binding.account_id,
+                generation: binding.generation,
+                choice: Some(config.models[0].clone()),
+            }),
+        )
+        .unwrap();
+        worker_send(&mut stream, json!(true)).await;
+        assert!(worker_receive(&mut stream).await.is_none());
+    };
+    let (reply, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(broker.call(&binding, changed), worker)
+    })
+    .await
+    .unwrap();
+    assert_eq!(reply.state, "model_selection_changed");
+    assert!(reply.receipt.is_none());
+
     let fenced = request(&binding);
+    let mut hello = hello;
+    hello.as_object_mut().unwrap().remove("effort");
     let worker = async {
         let (mut stream, _) = listener.accept().await.unwrap();
         assert_eq!(worker_receive(&mut stream).await, Some(hello));

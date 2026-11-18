@@ -20,7 +20,7 @@ pub(super) struct Input {
     effort: Option<String>,
 }
 pub(super) async fn list(State(s): State<AppState>, h: HeaderMap) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(Json(s.store.subscriptions(&u).await?).into_response())
 }
 pub(super) async fn login(
@@ -28,7 +28,7 @@ pub(super) async fn login(
     h: HeaderMap,
     Json(i): Json<LoginInput>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let origin = url::Url::parse(&s.config.origin).map_err(|_| StoreError::InvalidInput)?;
     if origin
         .host_str()
@@ -55,7 +55,7 @@ pub(super) async fn attempt(
     h: HeaderMap,
     Path(id): Path<String>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     Ok(
         Json(serde_json::json!({"phase":s.store.subscription_attempt(&u,id).await?}))
             .into_response(),
@@ -67,7 +67,7 @@ pub(super) async fn disconnect(
     Path(id): Path<String>,
     Json(i): Json<Input>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let confirmed = s
         .runtime
         .subscription_service()
@@ -109,7 +109,7 @@ pub(super) async fn catalog(
     Path(id): Path<String>,
     Json(i): Json<Input>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let b = binding(&s, &u, id, &i).await?;
     let _permit = s
         .probes
@@ -156,7 +156,7 @@ pub(super) async fn probe(
     if i.model.is_none() {
         return Err(StoreError::InvalidInput.into());
     }
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let b = binding(&s, &u, id, &i).await?;
     let _permit = s
         .probes
@@ -229,7 +229,7 @@ pub(super) async fn tool_probe(
     Path(id): Path<String>,
     Json(i): Json<Input>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let (binding, challenge) = s
         .store
         .subscription_tool_probe_binding(
@@ -291,7 +291,7 @@ pub(super) async fn handoff_prepare(
     h: HeaderMap,
     Json(i): Json<LoginInput>,
 ) -> HttpResult {
-    let u = current_handoff(&s, &h).await?;
+    let u = require_admin(current_handoff(&s, &h).await?)?;
     let origin = url::Url::parse(&s.config.origin).map_err(|_| StoreError::InvalidInput)?;
     let allowed = origin.scheme() == "https";
     #[cfg(feature = "test-fixtures")]
@@ -332,7 +332,7 @@ pub(super) async fn handoff_nonce(
     Path(id): Path<String>,
     Json(i): Json<NonceInput>,
 ) -> HttpResult {
-    let u = current_handoff(&s, &h).await?;
+    let u = require_admin(current_handoff(&s, &h).await?)?;
     s.store
         .commit_chatgpt_handoff_nonce(&u, id, i.commitment, i.source_host)
         .await?;
@@ -349,7 +349,7 @@ pub(super) async fn handoff_registration(
     Path(id): Path<String>,
     Json(i): Json<RegistrationInput>,
 ) -> HttpResult {
-    let u = current_handoff(&s, &h).await?;
+    let u = require_admin(current_handoff(&s, &h).await?)?;
     s.store
         .save_chatgpt_handoff_registration(&u, id, i.client_id)
         .await?;
@@ -361,7 +361,7 @@ pub(super) async fn handoff_import(
     Path(id): Path<String>,
     body: axum::body::Bytes,
 ) -> HttpResult {
-    let u = current_handoff(&s, &h).await?;
+    let u = require_admin(current_handoff(&s, &h).await?)?;
     Ok(Json(
         s.runtime
             .subscription_service()
@@ -375,7 +375,7 @@ pub(super) async fn handoff_status(
     h: HeaderMap,
     Path(id): Path<String>,
 ) -> HttpResult {
-    let u = current_handoff(&s, &h).await?;
+    let u = require_admin(current_handoff(&s, &h).await?)?;
     Ok(Json(s.store.chatgpt_handoff_status(&u, id).await?).into_response())
 }
 pub(super) async fn handoff_cancel(
@@ -383,7 +383,7 @@ pub(super) async fn handoff_cancel(
     h: HeaderMap,
     Path(id): Path<String>,
 ) -> HttpResult {
-    let u = current_handoff(&s, &h).await?;
+    let u = require_admin(current_handoff(&s, &h).await?)?;
     s.store.cancel_chatgpt_handoff(&u, id).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -394,7 +394,7 @@ pub(super) async fn vision_probe(
     Path(id): Path<String>,
     Json(i): Json<Input>,
 ) -> HttpResult {
-    let u = current(&s, &h).await?;
+    let u = current_admin(&s, &h).await?;
     let _permit = s
         .probes
         .clone()

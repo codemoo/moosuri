@@ -250,12 +250,35 @@ async fn configured() -> Setup {
         )
         .await
         .unwrap();
-    let u = store
+    let member = store
         .change_password(&member.user, PASSWORD.into())
+        .await
+        .unwrap();
+    let account = store
+        .managed_accounts(&admin.user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|v| v.user.id == member.user.account().id)
+        .unwrap();
+    let promotion = store
+        .prepare_account_management(
+            &admin.user,
+            account.user.id,
+            AccountManagementInput {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                expected_revision: account.revision,
+                action: AccountManagementAction::ChangeRole { role: Role::Admin },
+            },
+        )
+        .await
+        .unwrap();
+    store.apply_account_management(promotion).await.unwrap();
+    let u = store
+        .login("calendar-member@example.test".into(), PASSWORD.into())
         .await
         .unwrap()
         .user;
-    assert_eq!(u.account().role, Role::Member);
     let s = service(store.clone(), &f);
     let l = login(&s, &u).await;
     let c = proof(&s, &u, l.binding_id.clone(), l.revision).await;

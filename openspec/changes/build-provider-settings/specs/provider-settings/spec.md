@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Shared provider ownership
-Only an authenticated unrestricted administrator MUST create or edit shared connections. Every personal preference MUST be scoped to the current authenticated user.
+Only an authenticated unrestricted administrator MUST create or edit shared connections. Only an authenticated unrestricted administrator MUST be able to change the installation default, manage a personal model connection, or assign a verified shared model and reasoning effort to a member. Ordinary members SHALL use their assignment or the installation default.
 
 #### Scenario: Member attempts to replace a shared key
 - **WHEN** a member sends a provider mutation
@@ -47,12 +47,16 @@ Catalog and probe calls MUST use registered destinations, bounded time/body/conc
 
 The system SHALL present distinct model and effort controls and SHALL pin the chosen supported pair for new chat runs. It SHALL expose provider-reported capacity with its actual scope and reset time when available.
 
+#### Scenario: Member has a historical self-selected model
+- **WHEN** the member signs in, chats, or calls a model preference or provider management API directly
+- **THEN** new inference uses the administrator policy and the member cannot create or modify model connections or preferences
+
 #### Scenario: Personal subscription or compatible endpoint
-- **WHEN** an owner connects a personal account or verifies an OpenAI-compatible model
+- **WHEN** an administrator connects their personal account or verifies an OpenAI-compatible model
 - **THEN** that owner can select it, and other accounts and installation defaults cannot use its private binding
 
 #### Scenario: Discover an installed local model
-- **WHEN** the owner starts local discovery on an admitted endpoint or pairs an administrator workstation through the SSH helper
+- **WHEN** the administrator starts local discovery on an admitted endpoint or pairs an administrator workstation through the SSH helper
 - **THEN** discovery lists installed models, and an explicit selection verifies text before use
 
 #### Scenario: The provider omits a limit

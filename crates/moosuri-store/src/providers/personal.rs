@@ -60,7 +60,7 @@ pub(super) fn authorized_revision(
     revision: i64,
     dispatch: bool,
 ) -> Result<Revision> {
-    let current = validate(c, u, true, false)?;
+    let current = validate(c, u, true, true)?;
     if owner(c, id)?.is_some() {
         require_owner(c, &current.tenant.0, &current.account.id, id)?;
         let row = require_binding_metadata(c, id, revision)?;
@@ -70,7 +70,6 @@ pub(super) fn authorized_revision(
         }
         Ok(row)
     } else {
-        validate(c, &current, true, true)?;
         if dispatch {
             require_binding(c, id, revision)
         } else {
@@ -179,7 +178,7 @@ impl Store {
         let copy = id.clone();
         let config = self
             .call(move |db| {
-                validate(&db.conn, &u, true, false)?;
+                validate(&db.conn, &u, true, true)?;
                 require_owner(&db.conn, &u.tenant.0, &u.account.id, &copy)?;
                 load_revision(&db.conn, &copy)
             })
@@ -203,7 +202,7 @@ impl Store {
     ) -> Result<ProvidersResponse> {
         let u = user.clone();
         self.call(move|db|{
-            validate(&db.conn,&u,true,false)?;
+            validate(&db.conn,&u,true,true)?;
             let ids=db.conn.prepare("SELECT provider_id FROM personal_compatible_providers WHERE tenant_id=?1 AND account_id=?2 ORDER BY provider_id")?.query_map(params![u.tenant.0,u.account.id],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(ProvidersResponse{providers:ids.into_iter().map(|id|summary(&db.conn,load_revision(&db.conn,&id)?)).collect::<Result<_>>()?,default_selection:None})
         }).await
@@ -217,7 +216,7 @@ impl Store {
     ) -> Result<ProviderConfig> {
         let u = user.clone();
         self.call(move|db|{
-            validate(&db.conn,&u,true,false)?;
+            validate(&db.conn,&u,true,true)?;
             let mut config=ProviderConfig{kind:ProviderKind::Compatible,base_url:Some(base_url),allowed_ips:ips,router_providers:vec![],zero_data_retention:false};
             // Explicit administrator enrollment supplies the exact local address
             // set; member input can never choose a private allowlist.

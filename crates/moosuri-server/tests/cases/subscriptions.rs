@@ -222,7 +222,7 @@ async fn password_issued_helper_sessions_allow_only_handoff_session_status_and_l
         assert_eq!(r.status(), StatusCode::FORBIDDEN, "{method} {path}");
         assert!(r.headers().get("set-cookie").is_none());
     }
-    // A member helper has the identical narrow purpose; role does not widen it.
+    // Helper issuance is restricted to administrators.
     let admin = store
         .login("admin@example.test".into(), PASSWORD.into())
         .await
@@ -247,32 +247,8 @@ async fn password_issued_helper_sessions_allow_only_handoff_session_status_and_l
         .await
         .unwrap();
     let member=send(&app,"POST","/api/v1/auth/login",None,json!({"email":"helper-member@example.test","password":PASSWORD,"purpose":"chatgpt_helper"})).await;
-    assert_eq!(member.status(), StatusCode::OK);
-    let member_cookie = session_cookie(&member);
-    for (method, path, input) in [
-        (
-            "POST",
-            "/api/v1/auth/password",
-            json!({"password":"Synthetic-forbidden-password-42"}),
-        ),
-        ("GET", "/api/v1/admin/users", Value::Null),
-        ("GET", "/api/v1/vault", Value::Null),
-        ("GET", "/api/v1/source-connections", Value::Null),
-        (
-            "POST",
-            "/api/v1/settings/chatgpt/guessed/tool-probe",
-            json!({"revision":1,"model":"fixture-model","effort":null}),
-        ),
-        ("GET", "/api/v1/threads", Value::Null),
-    ] {
-        assert_eq!(
-            send(&app, method, path, Some(&member_cookie), input)
-                .await
-                .status(),
-            StatusCode::FORBIDDEN,
-            "member {path}"
-        );
-    }
+    assert_eq!(member.status(), StatusCode::FORBIDDEN);
+    assert!(member.headers().get("set-cookie").is_none());
     let prepared = send(
         &app,
         "POST",

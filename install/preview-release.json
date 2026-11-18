@@ -1,47 +1,47 @@
 {
   "format": 1,
   "channel": "preview",
-  "version": "0.1.0-dev.9",
-  "source_commit": "2f480e45ef28b3a93525b17419914a675c62a053",
+  "version": "0.1.0-dev.10",
+  "source_commit": "e4f4f65825ab87528191ce32faf536bfd6c3fb4d",
   "public_key": "71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e",
   "packages": {
     "aarch64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.9-aarch64-apple-darwin.tar.gz",
-      "sha256": "6ac62ce096f4d7f87b159868602ccc7e4a52038b5b4b933e368567cb96175d03",
-      "bytes": 20542520,
-      "binary_sha256": "ca5ac0fce07f3ce7922948b26e17d89d0effcc1c01441e1b3ee5ca79fba01201",
-      "manifest_sha256": "03efcaf02bac2a021fb27fb1a814cb9798f1ba1b9f6b7ef47e2bd2ca2bf18d87"
+      "file": "moosuri-0.1.0-dev.10-aarch64-apple-darwin.tar.gz",
+      "sha256": "96f1f9cc766b8ab789a0b673261ffd1ddc5f971db0c268e5e1d4ae95d5bc3f1b",
+      "bytes": 20549524,
+      "binary_sha256": "ae4b015eddcc8ab2b05ce63628973caa452bda46aabd94bacb3023b98359bd4c",
+      "manifest_sha256": "f868759d9e37867cb50193aaff3d9f100b6c2a53d2482f8d4eee763d31a5432f"
     },
     "x86_64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.9-x86_64-apple-darwin.tar.gz",
-      "sha256": "ffdd519cd4a18204760bb256cee8cf44319f9e9e643dd6f8c112036c07cc0dc5",
-      "bytes": 22448240,
-      "binary_sha256": "9e9e27684d350759748a5ed9a153c8dceecac8826eb44adaa171d3b414fba895",
-      "manifest_sha256": "4c11d1a5132c540bc0a814498a6870cdac0cc6bab6e6fed25bfd6442cd069fe7"
+      "file": "moosuri-0.1.0-dev.10-x86_64-apple-darwin.tar.gz",
+      "sha256": "25c179e5769cb43229445ea579a72d2ee147f8ab3f98024f510645c0677087a9",
+      "bytes": 22450609,
+      "binary_sha256": "94b7f1f077721d8c0fc4edb723c3c19087c6ebf10bc5b2adbeee50c88e1b551a",
+      "manifest_sha256": "54ba9195e710c47ae4a2715bec9de087ba1b774bf0169a0afc0e09cc96e0ec45"
     },
     "x86_64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.9-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "d07123956bd52c82328db55ccfc37a4b01d867e88b823407947be0757cc9bec7",
-      "bytes": 24146261,
-      "binary_sha256": "97494a6049ec404c9fa74547db9beee935738706d2545a580f1dd706bcce3815",
-      "manifest_sha256": "6330d3a931227f372f28c6ebe4f1118fd0b29ab3aeaebeed55214a72078bd8ac"
+      "file": "moosuri-0.1.0-dev.10-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "c56c1c0c003357e09d9d24eeb0868621e8db3ea54d26045cfd0c22e34c313f6a",
+      "bytes": 24130384,
+      "binary_sha256": "9210133c8b26f8453dbf85b63b85673c44d14991fc0e9ad7ab9f70751928ab47",
+      "manifest_sha256": "751bc04e42beb510eab45e76fbf8f2298f2a0929e5780a223b36fe98fafd5e59"
     },
     "aarch64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.9-aarch64-unknown-linux-gnu.tar.gz",
-      "sha256": "f40dcf29cb44f9dc7100f8728f687260859b86868c6b86f1683978a38987e916",
-      "bytes": 22987110,
-      "binary_sha256": "44f315d499b7fdd3f49d8a1964e0dc4255ca6501989db3fbdf8545ad2990e05c",
-      "manifest_sha256": "c8cdef078ab3f6c6f3f2ed72b5ca73d54dad45414d2f53f8292bb81da3fcb397"
+      "file": "moosuri-0.1.0-dev.10-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "3217247ba536aa44ded13732a350210c5f3b6da8858b7803cc27901665179b61",
+      "bytes": 22987095,
+      "binary_sha256": "abfd63c1139c82d43e4574bb482e5b26736734c0e1a7ab76d862c99dd420d160",
+      "manifest_sha256": "6f174f172f25b49c1e4fdd81faf186cd5fa7bb5e80924b8497f4d83dbc58c3de"
     }
   },
   "runtime": "Rust + embedded React + SQLite + native desktop menu",
   "linux_glibc_minimum": "2.34",
   "ci_enabled": false,
   "acceptance": {
-    "macos_arm64": "native password-policy/session regression, Clippy, packaged exact-eight account init/login/web/shutdown",
+    "macos_arm64": "packaged login/web/Claude settings smoke; UI/account-scope regression and production web build",
     "macos_x64": "cross-built; physical Intel/Rosetta host unverified",
-    "linux_x64": "isolated password-policy/session regression and packaged exact-eight account init/login/web/shutdown",
-    "linux_arm64": "QEMU packaged exact-eight account runtime; physical hardware unverified",
+    "linux_x64": "isolated packaged login/web/Claude settings smoke",
+    "linux_arm64": "QEMU packaged login/web/Claude settings smoke; physical hardware unverified",
     "wsl2": "Linux installer; physical WSL2 host unverified"
   }
 }

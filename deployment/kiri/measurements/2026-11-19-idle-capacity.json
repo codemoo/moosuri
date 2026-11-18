@@ -1,0 +1,210 @@
+{
+  "format": 1,
+  "measured_date_kst": "2026-11-19",
+  "scope": "Synthetic account setup, idle auth/health, prepared-store process starts, and reboot isolation; no provider/model workload.",
+  "environment": {
+    "guest": "Ubuntu24.04.5 x86_64 disposable QEMU/KVM",
+    "vcpus": 2,
+    "memory_total_kib": 2014852,
+    "swap_kib": 0,
+    "kernel": "6.8.0-147-generic",
+    "kiri_version": "0.2.1",
+    "kiri_api": "1.47"
+  },
+  "artifacts": {
+    "public_dev30_source_commit": "9111a00304e25c7a3a0c96ed3f11ccbb27592500",
+    "public_dev30_binary_sha256": "17421cbf4d22b1832fdfbb6b885093aa54f6f86858c772d66e446af061bac219",
+    "experimental_host_control_sha256": "66c9b050408126ed131a8d92f33d0981f9deff005b76ebe098d380c3b13685ed",
+    "experimental_member_binary_sha256": "7c23b03515cd3be5fc794b68c6bd3cf54b658c85b69244ca97320e853213f05d",
+    "member_image_config_sha256": "f72cb5d122e23ab5645eb20d7b1c724d4e7fd0490e3618bd3dbbb96ecb6e0d2a"
+  },
+  "method": {
+    "samples_per_cohort": 1,
+    "cohorts": [
+      1,
+      5,
+      20
+    ],
+    "process_cold": "Prepared persisted Store, stopped process/container, timed start through ready; OS caches were not flushed.",
+    "warm_reconcile": "Same running Kiri members, one lifecycle pass, all PIDs preserved.",
+    "warm_health": "One sequential ready request per configured account; not authenticated login p95.",
+    "memory_accounting": "Kiri service tree includes member cgroups and cache; parent and child memory/tasks must not be added. RSS sums are omitted because shared executable pages would be counted repeatedly.",
+    "comparability": "Public dev.30 is a release build with shared Store/full server; isolated member binary is an unoptimized development build and a narrower private runtime. Timings are descriptive, not a speed or full-function ranking.",
+    "member_memory_limit_bytes": 67108864,
+    "member_pids_limit": 128,
+    "member_backing_capacity_bytes": 67108864,
+    "memory_reserve_bytes": 268435456,
+    "disk_reserve_bytes": 536870912,
+    "initial_guest_available_bytes": 1707864064,
+    "admission": "Require sum of requested member memory caps plus reserve <= initial available memory; stop at reserve breach, OOM or member memory.max event. No cap increase/retry after cold-boot pressure."
+  },
+  "isolated_idle_cohorts": [
+    {
+      "users": 1,
+      "new_users_prepared": 1,
+      "new_storage_prepare_ms": 786.4,
+      "new_private_init_and_first_start_ms": 2731.789,
+      "process_cold_cohort_ms": 257.316,
+      "warm_reconcile_cohort_ms": 35.313,
+      "warm_health_cohort_ms": 1.575,
+      "warm_pid_preserved": true,
+      "member_cgroup_memory_current_bytes": 9080832,
+      "member_tasks": 3,
+      "kiri_service_tree_memory_current_bytes": 417288192,
+      "kiri_service_tree_tasks": 32,
+      "guest_available_bytes": 1673900032,
+      "member_filesystem_used_bytes": 2314240,
+      "backing_preallocated_bytes": 67112960,
+      "memory_max_events": 0,
+      "oom_events": 0,
+      "guest_oom_kills": 0
+    },
+    {
+      "users": 5,
+      "new_users_prepared": 4,
+      "new_storage_prepare_ms": 3212.414,
+      "new_private_init_and_first_start_ms": 11049.017,
+      "process_cold_cohort_ms": 1191.174,
+      "warm_reconcile_cohort_ms": 52.956,
+      "warm_health_cohort_ms": 2.702,
+      "warm_pid_preserved": true,
+      "member_cgroup_memory_current_bytes": 45379584,
+      "member_tasks": 15,
+      "kiri_service_tree_memory_current_bytes": 454864896,
+      "kiri_service_tree_tasks": 44,
+      "guest_available_bytes": 1661698048,
+      "member_filesystem_used_bytes": 11571200,
+      "backing_preallocated_bytes": 335564800,
+      "memory_max_events": 0,
+      "oom_events": 0,
+      "guest_oom_kills": 0
+    },
+    {
+      "users": 20,
+      "new_users_prepared": 15,
+      "new_storage_prepare_ms": 13416.323,
+      "new_private_init_and_first_start_ms": 43351.568,
+      "process_cold_cohort_ms": 4498.145,
+      "warm_reconcile_cohort_ms": 111.136,
+      "warm_health_cohort_ms": 9.819,
+      "warm_pid_preserved": true,
+      "member_cgroup_memory_current_bytes": 181489664,
+      "member_tasks": 60,
+      "kiri_service_tree_memory_current_bytes": 596049920,
+      "kiri_service_tree_tasks": 89,
+      "guest_available_bytes": 1521029120,
+      "member_filesystem_used_bytes": 46284800,
+      "backing_preallocated_bytes": 1342259200,
+      "memory_max_events": 0,
+      "oom_events": 0,
+      "guest_oom_kills": 0
+    }
+  ],
+  "cohort_cutoff": null,
+  "public_dev30_shared_store_cohorts": [
+    {
+      "process_rss_bytes": 28811264,
+      "users": 1,
+      "process_cold_ms": 117.523,
+      "warm_health_cohort_ms": 0.406,
+      "cgroup_memory_current_bytes": 9146368,
+      "pids_current": 5,
+      "private_files_logical_bytes": 2224360,
+      "memory_events": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      }
+    },
+    {
+      "process_rss_bytes": 27865088,
+      "users": 5,
+      "process_cold_ms": 66.035,
+      "warm_health_cohort_ms": 0.839,
+      "cgroup_memory_current_bytes": 7761920,
+      "pids_current": 4,
+      "private_files_logical_bytes": 2211968,
+      "memory_events": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      }
+    },
+    {
+      "process_rss_bytes": 27815936,
+      "users": 20,
+      "process_cold_ms": 60.086,
+      "warm_health_cohort_ms": 4.58,
+      "cgroup_memory_current_bytes": 7839744,
+      "pids_current": 4,
+      "private_files_logical_bytes": 2224312,
+      "memory_events": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      }
+    }
+  ],
+  "reboot": {
+    "boot_id_changed": true,
+    "configured_users": 20,
+    "ready_users": 19,
+    "fenced_users_not_started": 1,
+    "own_cookies_after_boot_http": 200,
+    "cross_cookies_after_boot_http": 401,
+    "cross_uid_private_file_read_denied": true,
+    "unique_capped_filesystems": 20,
+    "ipc_same_owner_filesystem": true,
+    "readiness_wall_time_not_measured": true,
+    "strict_no_pressure_gate": "stopped",
+    "stop_reason": "cold_boot_member_memory_max_events",
+    "members_with_memory_max_events": 1,
+    "max_single_member_peak_bytes": 67108864,
+    "guest_oom_kill_count": 0,
+    "runtime_memory_min_bytes": 15929344,
+    "runtime_memory_max_bytes": 66871296,
+    "member_filesystem_capacity_bytes": 1114828800,
+    "member_filesystem_used_bytes": 44097536,
+    "private_file_logical_bytes": 43146496,
+    "all_preallocated_backing_allocated_bytes": 1342259200,
+    "guest_available_bytes": 1538334720,
+    "oom_events": 0,
+    "memory_max_events": 42,
+    "kiri_service_tree_memory_current_bytes": 371712000,
+    "kiri_service_tree_tasks": 82,
+    "member_cgroup_memory_current_bytes": 358744064,
+    "member_tasks": 57
+  },
+  "storage_reboot": {
+    "storage_members": 2,
+    "active_enabled_mount_units": 4,
+    "ipc_source_inode_preserved": true,
+    "retained_canaries_preserved": true,
+    "preallocated_image_size_inode_blocks_preserved": true,
+    "fenced_route_unchanged_by_check": true
+  },
+  "cleanup": {
+    "running_synthetic_containers": 0,
+    "capacity_worker_disabled_stopped": true,
+    "prior_lifecycle_enabled_restored_without_start": true,
+    "normal_guest_poweroff": true,
+    "lab_qemu_process_absent": true
+  },
+  "open_performance_gates": [
+    "login_p95",
+    "first_response_latency",
+    "concurrent_streams",
+    "scheduler_latency",
+    "representative_model_workloads",
+    "full_performance_and_adoption_gate"
+  ]
+}

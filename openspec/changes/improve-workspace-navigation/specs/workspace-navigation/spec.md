@@ -39,3 +39,9 @@ new-chat entry points SHALL remain visible at the top.
 #### Scenario: Open a destination without loading unrelated forms
 - **WHEN** the owner opens notices, goals, or the library directly
 - **THEN** the app shows the corresponding records, with schedule editing kept in its own screen
+
+#### Scenario: Compact screens and consistent app identity
+- **WHEN** the user opens sign-in, conversation search, model settings or the PWA installer
+- **THEN** these surfaces use Moosuri’s shared Astryx dark theme
+- **AND** the app icon represents the same pixel-art attendant in the shell and install surfaces
+- **AND** necessary input, status and confirmation text remains available

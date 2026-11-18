@@ -1,4 +1,5 @@
 import { Button } from "@astryxdesign/core/Button";
+import { Dialog } from "@astryxdesign/core/Dialog";
 import { ConversationSearch, WorkspaceIcon } from "./WorkspaceNavigation";
 import { MediaLibraryView } from "./Media";
 import { emptyInstructions } from "./run-instructions";
@@ -57,22 +58,8 @@ import { DeferredPage } from "./DeferredPage";
 const AdminProviderSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.AdminProviderSettings})));
 const PersonalModelSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.PersonalModelSettings})));
 
-function Mark({ large = false }: { large?: boolean }) {
-  return (
-    <span className={`mark ${large ? "mark-large" : ""}`} aria-hidden="true">
-      <svg viewBox="0 0 40 40">
-        <path d="M9 28V17c0-8 11-8 11 0v11m0-11c0-8 11-8 11 0v11" />
-      </svg>
-    </span>
-  );
-}
 function Brand() {
-  return (
-    <span className="brand">
-      <Mark />
-      moosuri<span className="brand-dot">.</span>
-    </span>
-  );
+  return <span className="brand"><img className="brand-icon" src="/moosuri-icon-192.png" width="32" height="32" alt="" />무수리</span>;
 }
 function Notice({ children }: { children: ReactNode }) {
   return (
@@ -84,12 +71,8 @@ function Notice({ children }: { children: ReactNode }) {
 function Gate({ children }: { children: ReactNode }) {
   return (
     <div className="gate">
-      <header>
-        <Brand />
-        <span className="quiet-label">YOUR OWN SPACE</span>
-      </header>
+      <header><Brand /></header>
       <main className="gate-main">{children}</main>
-      <footer>Self-hosted. A little more yours.</footer>
     </div>
   );
 }
@@ -106,41 +89,23 @@ function Modal({
   returnFocus?: HTMLElement | null;
   fallbackFocus?: HTMLElement | null;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
-    const element = ref.current!;
-    const previous =
-      returnFocus ?? (document.activeElement as HTMLElement | null);
-    element.showModal();
     return () => {
-      element.close();
-      if (previous?.isConnected) previous.focus();
-      else if (fallbackFocus?.isConnected) fallbackFocus.focus({ preventScroll: true });
+      // The action which opened deletion may have disappeared with its row.
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+      else fallbackFocus?.focus({ preventScroll: true });
     };
   }, [returnFocus, fallbackFocus]);
   return (
-    <dialog
-      ref={ref}
-      onCancel={(e) => {
-        e.preventDefault();
-        close();
-      }}
-      aria-labelledby={titleId}
-    >
+    <Dialog isOpen purpose="form" className="workspace-dialog" width={520} aria-labelledby={titleId}
+      onOpenChange={open => { if (!open) close(); }}>
       <div className="dialog-top">
         <h2 id={titleId}>{title}</h2>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={close}
-          aria-label="Close dialog"
-        >
-          ×
-        </button>
+        <Button variant="ghost" label="Close dialog" icon={<span aria-hidden="true">×</span>} isIconOnly onClick={close}/>
       </div>
       {children}
-    </dialog>
+    </Dialog>
   );
 }
 
@@ -409,13 +374,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     return (
       <Gate>
         <div className="gate-card">
-          <p className="eyebrow">WELCOME TO MOOSURI</p>
-          <h1>
-            Opening your space<span className="brand-dot">.</span>
-          </h1>
-          <p className="muted" role="status">
-            Checking this installation and your session…
-          </p>
+          <p role="status">무수리 연결 중…</p>
         </div>
       </Gate>
     );
@@ -423,7 +382,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     return (
       <Gate>
         <div className="gate-card">
-          <h1>Let’s reconnect.</h1>
+          <h1>연결을 확인해 주세요</h1>
           <Notice>{error}</Notice>
           <button
             className="primary"
@@ -438,8 +397,7 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     return (
       <Gate>
         <div className="gate-card">
-          <p className="eyebrow">A FRESH START</p>
-          <h1>A space, ready to become yours.</h1>
+          <h1>설치 설정</h1>
           <p className="muted">
             This installation needs its first administrator. Ask the server
             operator to initialize moosuri in a private terminal.
@@ -463,7 +421,6 @@ function Application({ scopes }: { scopes: Set<RequestScope> }) {
     return (
       <Gate>
         <div className="gate-card">
-          <h1>See you soon.</h1>
           <p role="status">Finishing sign-out…</p>
         </div>
       </Gate>
@@ -548,11 +505,7 @@ function Login({
   return (
     <Gate>
       <div className="gate-card">
-        <p className="eyebrow">A LITTLE ROOM TO THINK</p>
-        <h1>
-          Welcome back<span className="brand-dot">.</span>
-        </h1>
-        <p className="muted">Sign in to your own moosuri space.</p>
+        <h1>로그인</h1>
         <IncomingShareNotice/>
         {(error || message) && <Notice>{error || message}</Notice>}
         {onRetryLogout && (
@@ -597,21 +550,7 @@ function Login({
             <span aria-hidden="true">↗</span>
           </button>
         </form>
-        <p className="fine">
-          New here? Your administrator can create a local invitation for you.
-          Temporary passwords must be changed after sign-in.
-        </p>
-      </div>
-      <div className="gate-aside" aria-hidden="true">
-        <div className="orbit">
-          <Mark large />
-        </div>
-        <p>
-          Make room
-          <br />
-          for what matters.
-        </p>
-        <span>YOUR ASSISTANT. YOUR SPACE.</span>
+        <p className="fine">계정이 필요하면 관리자에게 초대를 요청하세요.</p>
       </div>
     </Gate>
   );
@@ -672,11 +611,9 @@ function PasswordChange({
   return (
     <Gate>
       <div className="gate-card">
-        <p className="eyebrow">ONE STEP BEFORE YOU SETTLE IN</p>
-        <h1>A password of your own.</h1>
+        <h1>비밀번호 변경</h1>
         <p className="muted">
-          Hi {session.user.name}. Replace your temporary password to open your
-          space. Until then, only password change and sign-out are available.
+          계속하려면 임시 비밀번호를 바꿔 주세요.
         </p>
         {error && <Notice>{error}</Notice>}
         <form onSubmit={submit}>
@@ -1027,7 +964,7 @@ function Workspace({
     openDestination("/app");
   }
   function openSearch(event: React.MouseEvent<HTMLButtonElement>) {
-    searchOpener.current = event.currentTarget;
+    searchOpener.current = drawer ? historyOpener.current : event.currentTarget;
     setDrawer(false);
     setSearchOpen(true);
   }
@@ -1068,8 +1005,9 @@ function Workspace({
     ...(allowedAdmin ? [{label:admin ? "← Back to your space" : "Manage installation", path:admin ? "/app" : "/admin", active:admin}] : []),
   ];
   function links(items: typeof workLinks) {
-    return items.map(item => <button key={item.label} className={`nav-link ${item.active ? "chosen" : ""}`}
-      aria-current={item.active ? "page" : undefined} onClick={() => openDestination(item.path)}>{item.label}</button>);
+    return items.map(item => <Button key={item.label} label={item.label} variant="ghost" width="100%"
+      className={`nav-link ${item.active ? "chosen" : ""}`} aria-current={item.active ? "page" : undefined}
+      onClick={() => openDestination(item.path)}/>);
   }
   const history = (
     <>
@@ -1542,12 +1480,8 @@ function Admin({
   return (
     <main className="admin-scroll">
       <div className="admin-intro">
-        <p className="eyebrow">A SHARED INSTALLATION. SEPARATE SPACES.</p>
-        <h2>A place for your people.</h2>
-        <p>
-          Manage local accounts. Each person has their own conversations and
-          private workspace.
-        </p>
+        <h2>사용자 관리</h2>
+
       </div>
       {error && (
         <>

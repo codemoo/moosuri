@@ -1,3 +1,5 @@
+import { Button } from "@astryxdesign/core/Button";
+import { TextInput } from "@astryxdesign/core/TextInput";
 import { useState } from "react";
 import type { ThreadSummary } from "../shared/api-types";
 
@@ -25,17 +27,18 @@ export function ConversationSearch({threads, openThread, openSources}: {
   const normalized = query.trim().normalize("NFKC").toLocaleLowerCase();
   const results = threads.filter(thread => thread.title.normalize("NFKC").toLocaleLowerCase().includes(normalized));
   return <div className="workspace-search">
-    <label>대화 제목<input autoFocus type="search" autoComplete="off" maxLength={200} placeholder="제목으로 찾기" value={query}
-      onChange={event => setQuery(event.target.value)}
+    <TextInput label="대화 제목" isLabelHidden type="search" placeholder="대화 제목 검색" size="lg" width="100%"
+      value={query} hasAutoFocus startIcon={<WorkspaceIcon name="search"/>}
+      onChange={value => setQuery(value.slice(0, 200))}
       onKeyDown={event => {
         if (event.key === "Enter" && !event.nativeEvent.isComposing && results.length === 1) openThread(results[0].id);
-      }} /></label>
+      }} />
     <div role="status" className="workspace-search-status">{normalized ? `${results.length}개 대화` : "최근 대화"}</div>
     <ul>{results.slice(0, 30).map(thread => <li key={thread.id}>
       <button onClick={() => openThread(thread.id)}><WorkspaceIcon name="chat"/>{thread.title}</button>
     </li>)}</ul>
     {results.length === 0 && <p>일치하는 대화가 없습니다.</p>}
     {results.length > 30 && <p>제목을 더 입력해 범위를 좁혀 보세요.</p>}
-    <button className="text-button" onClick={openSources}>저장한 자료 검색 열기</button>
+    <Button variant="ghost" label="자료 검색" onClick={openSources}/>
   </div>;
 }

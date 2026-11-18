@@ -14,21 +14,15 @@ export default defineConfig({
     generateBundle: {
       order: "post",
       async handler(_options, bundle) {
-        // Package the original raster in a scalable SVG without changing its pixels.
-        // Chromium rejects manifest raster sizes above its supported icon bound.
-        const raster = readFileSync(resolve(root, "public/moosuri-attendant.png"));
-        const icon = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 1254 1254"><image width="1254" height="1254" href="data:image/png;base64,${raster.toString("base64")}"/></svg>`;
-        this.emitFile({ type: "asset", fileName: "moosuri-app-icon.svg", source: icon });
         const hash = createHash("sha256");
-        hash.update("moosuri-app-icon.svg").update(icon);
-        const paths: string[] = ["/moosuri-app-icon.svg"];
+        const paths: string[] = [];
         for (const name of Object.keys(bundle).sort()) {
           if (name !== "index.html" && !/^assets\/[\w.-]+\.(?:js|css|woff2)$/.test(name)) continue;
           const item = bundle[name];
           hash.update(name).update(item.type === "chunk" ? item.code : item.source);
           paths.push(`/${name}`);
         }
-        for (const name of ["manifest.webmanifest", "icon.svg", "moosuri-attendant.png"]) {
+        for (const name of ["manifest.webmanifest", "moosuri-icon-192.png", "moosuri-icon-512.png"]) {
           hash.update(name).update(readFileSync(resolve(root, "public", name)));
           paths.push(`/${name}`);
         }

@@ -353,7 +353,7 @@ pub fn run(location: &Location) -> Result<()> {
 // Reuse the published product artwork; decode once when the menu is created.
 fn icon_rgba() -> Vec<u8> {
     use std::io::Cursor;
-    let bytes = include_bytes!("../../../../../web/public/moosuri-attendant.png");
+    let bytes = include_bytes!("../../../../../web/public/moosuri-icon-192.png");
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().expect("embedded icon metadata");

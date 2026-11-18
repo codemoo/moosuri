@@ -129,11 +129,9 @@ function Cards({ accountId, onExpired, back, connect, start }: Props) {
   }
   return (
     <main className="admin-scroll community-skills">
-      <header className="admin-intro">
-        <button onClick={back}>채팅으로</button>
-        <h2>제안 · 할 수 있는 일</h2>
-        <p>공개 저장소에서 함께 만든 절차입니다. 추가한 절차는 새 대화 요청에서 사용할 수 있습니다.</p>
-        <p>추가만으로 메시지를 보내거나 예약을 만들지 않습니다. 기존 연결과 도구 범위에서 작업합니다.</p>
+      <header className="section-heading">
+        <h2>할 수 있는 일</h2>
+        <button className="text-button" onClick={back}>채팅으로</button>
       </header>
       {error && <p role="alert">{error}</p>}
       {cards?.some(card=>card.catalog?.stale) && <p role="status">최근 공개 목록을 확인하지 못했거나 오래된 목록입니다. 마지막 확인한 제안과 설치본을 유지합니다.</p>}

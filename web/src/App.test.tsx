@@ -259,7 +259,7 @@ describe("account and session boundaries", () => {
     );
     await signIn(user, alice.user.email);
     expect(
-      await screen.findByRole("heading", { name: "A password of your own." }),
+      await screen.findByRole("heading", { name: "비밀번호 변경" }),
     ).toBeInTheDocument();
     expect(
       calls.some(
@@ -302,7 +302,7 @@ describe("account and session boundaries", () => {
       </StrictMode>,
     );
     expect(
-      await screen.findByRole("heading", { name: "Let’s reconnect." }),
+      await screen.findByRole("heading", { name: "연결을 확인해 주세요" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
   });
@@ -323,7 +323,7 @@ describe("account and session boundaries", () => {
     act(() => { window.dispatchEvent(new Event("online")); });
     await act(async () => { late.resolve(response({ code: "unavailable" }, 503)); });
     expect(await screen.findByRole("heading", { name: "Alice님, 무엇을 도와드릴까요?" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Let’s reconnect." })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "연결을 확인해 주세요" })).toBeNull();
   });
   it("discards A’s late response after logout and B login", async () => {
     const user = userEvent.setup();
@@ -437,7 +437,7 @@ describe("local invitations", () => {
         <App />
       </StrictMode>,
     );
-    await screen.findByRole("heading", { name: "A place for your people." });
+    await screen.findByRole("heading", { name: "사용자 관리" });
     await user.type(screen.getByLabelText("Name"), bob.user.name);
     await user.type(screen.getByLabelText("Email"), bob.user.email);
     await user.click(screen.getByRole("button", { name: /Create invitation/ }));

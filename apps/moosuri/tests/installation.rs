@@ -88,8 +88,10 @@ fn request(port: u16, method: &str, path: &str, cookie: &str, body: Option<Value
     };
     let body = body.map(|v| v.to_string()).unwrap_or_default();
     write!(socket,"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nCookie: {cookie}\r\n{expected}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
-    let mut raw = String::new();
-    socket.read_to_string(&mut raw).unwrap();
+    // Binary responses such as the installed app icon share this test client.
+    let mut bytes = Vec::new();
+    socket.read_to_end(&mut bytes).unwrap();
+    let raw = String::from_utf8_lossy(&bytes);
     let (headers, body) = raw.split_once("\r\n\r\n").unwrap();
     Reply {
         status: headers.split_whitespace().nth(1).unwrap().parse().unwrap(),
@@ -169,16 +171,15 @@ fn cli_init_embedded_app_http_session_and_restart_work_together() {
     let manifest: Value = serde_json::from_str(&manifest.body).unwrap();
     assert_eq!(manifest["start_url"], "/app");
     assert_eq!(manifest["display"], "standalone");
-    let icon = request(
-        port,
-        "GET",
-        manifest["icons"][0]["src"].as_str().unwrap(),
-        "",
-        None,
-    );
-    assert_eq!(icon.status, 200);
-    assert!(icon.headers.contains("image/svg+xml"));
-    assert!(icon.body.contains("data:image/png;base64,"));
+    let icons = manifest["icons"].as_array().unwrap();
+    assert_eq!(icons.len(), 2);
+    for (icon, size) in icons.iter().zip(["192x192", "512x512"]) {
+        assert_eq!(icon["sizes"], size);
+        let response = request(port, "GET", icon["src"].as_str().unwrap(), "", None);
+        assert_eq!(response.status, 200);
+        assert!(response.headers.contains("image/png"));
+        assert!(response.body.starts_with("\u{fffd}PNG"));
+    }
     let worker = request(port, "GET", "/service-worker.js", "", None);
     assert_eq!(worker.status, 200);
     assert!(worker.headers.contains("text/javascript"));

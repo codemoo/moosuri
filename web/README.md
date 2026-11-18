@@ -38,6 +38,6 @@ share remain separate implementation work.
 ## Workspace theme
 
 The workspace uses the Astryx Neutral dark theme and its React navigation buttons.
-Moosuri defines the indigo accent and surfaces in `src/workspace.css`. Desktop and
+The jade accent and surfaces in `src/workspace.css` use Astryx theme tokens. Desktop and
 mobile use the same destinations, and conversation-title search uses the current
 account's thread list. [Astryx source](https://github.com/meta/astryx/tree/v0.7.16)

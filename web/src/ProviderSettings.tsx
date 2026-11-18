@@ -235,13 +235,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
   return (
     <main className="admin-scroll model-settings">
       <RecoveryBudgetNotice accountId={accountId}/>
-      <div className="admin-intro">
-        <p className="eyebrow">나만의 작업 방식</p>
-        <h2>내 모델</h2>
-        <p>
-          내 구독이나 공유 연결에서 사용할 모델과 추론 강도를 선택하세요.
-        </p>
-      </div>
+      <h2 className="sr-only">내 모델</h2>
       {error && <Alert>{error}</Alert>}
       {notice && (
         <p className="settings-success" role="status">
@@ -250,12 +244,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
       )}
       <section className="admin-card">
         <div className="section-heading">
-          <div>
-            <h3>사용할 모델</h3>
-            <p>
-              설정은 내 계정에만 적용됩니다. 공유 연결은 관리자가 관리합니다.
-            </p>
-          </div>
+          <h3>사용할 모델</h3>
         </div>
         {loading ? (
           <p className="muted" role="status">
@@ -297,11 +286,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
                 </>
               )}
             </div>
-            {settings.choices.length === 0 && (
-              <p className="fine">
-                확인된 모델이 추가되면 이 목록에서 선택할 수 있습니다.
-              </p>
-            )}
+
           </>
         ) : (
           <p className="muted">모델 설정을 불러오지 못했습니다.</p>
@@ -527,14 +512,7 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
   return (
     <main className="admin-scroll model-settings">
       <RecoveryBudgetNotice accountId={accountId}/>
-      <div className="admin-intro">
-        <p className="eyebrow">함께 쓰는 연결, 각자의 대화</p>
-        <h2>모델 연결</h2>
-        <p>
-          연결을 저장하고 모델을 확인한 뒤 기본값을 선택하세요. 개인 대화와 API
-          키는 이 목록에 표시하지 않습니다.
-        </p>
-      </div>
+      <h2 className="sr-only">모델 연결</h2>
       {error && <Alert>{error}</Alert>}
       {notice && (
         <p className="settings-success" role="status">
@@ -1216,9 +1194,12 @@ function PersonalChatGpt({accountId, onExpired, onVerified, choices}: Props & {o
         <button onClick={() => setGuide(false)}>닫기</button>
       </div>}
       <button disabled={busy} onClick={() => {void scope.request<PersonalBinding[]>("/settings/chatgpt").then(setItems).catch(fail);}}>연결 새로고침</button>
-      <p>개인 ChatGPT 연결은 내 계정에서만 사용합니다. 텍스트 연결을 확인한 뒤, 선택한 모델과 추론 강도의 도구 연결도 확인하세요.</p>
-      <p>자료·메일·일정 조회, 계산, 기억과 기록 관리, 로컬 메일 초안을 지원합니다. 대화나 맡긴 일 화면에서 일회성·반복 읽기 업무를 등록할 수 있고, 맡긴 업무는 로그아웃한 뒤에도 실행됩니다. 메일 발송은 최종 내용을 보고 매번 허락해야 합니다.</p>
-      <p>현재 요청으로 기본 캘린더의 단일 시간 일정을 만들거나, 같은 날짜 안에서 수정하거나 삭제할 수 있습니다. 참석자·반복·종일 일정과 첨부, 예약 업무의 메일·일정 변경 및 브라우저·볼트 사용은 아직 지원하지 않습니다. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">ChatGPT 사용량</a></p>
+      <details className="connection-capabilities">
+        <summary>지원 범위</summary>
+        <p>자료·메일·일정 조회, 계산, 기억과 기록 관리, 로컬 메일 초안을 지원합니다. 맡긴 업무는 로그아웃한 뒤에도 실행됩니다. 메일 발송은 최종 내용을 보고 매번 허락해야 합니다.</p>
+        <p>현재 요청으로 기본 캘린더의 단일 시간 일정을 만들거나 같은 날짜 안에서 수정·삭제할 수 있습니다. 예약 업무의 메일·일정 변경 및 브라우저·볼트 사용은 아직 지원하지 않습니다.</p>
+        <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">ChatGPT 사용량</a>
+      </details>
       {notice && <p role="status">{notice}</p>}
       {items.map((binding) => (
         <div key={binding.id} role="group" aria-label={binding.label}>

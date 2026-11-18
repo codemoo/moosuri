@@ -1,32 +1,47 @@
-/* Workspace surfaces extend the Astryx neutral theme with Moosuri's indigo accent. */
-:root[data-theme="dark"] {
+/* Astryx Neutral dark, with Moosuri’s jade accent. */
+:root[data-theme="dark"],
+[data-astryx-theme="neutral"][data-theme="dark"] {
   --color-background-body: #101113;
-  --color-background-surface: #17181c;
-  --color-background-card: #1b1c21;
-  --color-background-popover: #24252c;
-  --color-text-primary: #f2f1f5;
-  --color-text-secondary: #afafb9;
+  --color-background-muted: #151719;
+  --color-background-card: #191b1e;
+  --color-background-surface: #1e2123;
+  --color-background-popover: #24272a;
+  --color-text-primary: #f2f2f3;
+  --color-text-secondary: #b1b6b8;
+  --color-icon-secondary: #b1b6b8;
+  --color-border: #34383a;
+  --color-border-emphasized: #51595b;
+  --color-accent: #addbc1;
+  --color-text-accent: #addbc1;
+  --color-icon-accent: #addbc1;
+  --color-on-accent: #15241d;
+  --color-accent-muted: #20382e;
+  --radius-element: 10px;
+  --radius-container: 14px;
+  --radius-chat: 20px;
 }
 
-:root {
-  --paper: #101113;
-  --ink: #f2f1f5;
-  --muted: #afafb9;
-  --line: #32333c;
-  --green: #bcb1ff;
-  --surface: #18191d;
-  --raised: #202127;
-  --hover: #2b2c34;
-  --accent: #bcb1ff;
-  --accent-bg: #292344;
-  --accent-ink: #161024;
+/* Shared semantic aliases for the rest of the product. */
+:root,
+[data-astryx-theme="neutral"][data-theme="dark"] {
+  --paper: var(--color-background-body);
+  --ink: var(--color-text-primary);
+  --muted: var(--color-text-secondary);
+  --line: var(--color-border);
+  --green: var(--color-accent);
+  --surface: var(--color-background-card);
+  --raised: var(--color-background-surface);
+  --hover: var(--color-background-popover);
+  --accent: var(--color-accent);
+  --accent-bg: var(--color-accent-muted);
+  --accent-ink: var(--color-on-accent);
   --notice-paper: #30241c;
   --notice-line: #624332;
-  --notice-ink: #ffd0a5;
+  --notice-ink: var(--color-text-orange);
   --danger-paper: #341e24;
-  --danger-ink: #ffb7c1;
+  --danger-ink: var(--color-text-error);
   --success-paper: #1a2c28;
-  --success-ink: #a3e1c9;
+  --success-ink: var(--color-text-success);
 }
 
 html { color-scheme: dark; }
@@ -44,16 +59,14 @@ body { background: var(--paper); color: var(--ink); }
 .workspace .sidebar {
   width: clamp(232px, 20vw, 272px);
   padding: max(18px, env(safe-area-inset-top)) 12px 0;
-  background: #151619;
+  background: var(--color-background-muted);
   overflow: hidden;
 }
 .workspace .sidebar-heading {
   margin: 0 7px 19px;
 }
 .workspace .brand { font-size: 19px; letter-spacing: -.05em; gap: 8px; }
-.workspace .mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent-bg); }
-.workspace .mark svg { stroke: var(--accent); }
-.workspace .brand-dot { display: none; }
+.brand-icon { display: block; width: 32px; height: 32px; border-radius: var(--radius-element); }
 .workspace-shortcuts {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px;
@@ -63,7 +76,7 @@ body { background: var(--paper); color: var(--ink); }
 .workspace .workspace-shortcuts button,
 .workspace .workspace-primary button {
   height: 44px;
-  border-radius: 11px;
+  border-radius: var(--radius-element);
   font: inherit;
   font-size: 13px;
 }
@@ -77,13 +90,13 @@ body { background: var(--paper); color: var(--ink); }
   font-weight: 650;
 }
 .workspace .workspace-shortcuts .new-chat:hover:enabled,
-.workspace .chat-send:hover:enabled { background: #d0c8ff; }
+.workspace .chat-send:hover:enabled { background: color-mix(in srgb, var(--accent) 84%, white); }
 .workspace .workspace-search-button { border: 1px solid var(--line); color: var(--ink); }
 .workspace .workspace-search-button:hover { background: var(--hover); }
 .workspace .workspace-primary { display: grid; gap: 2px; flex: none; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .workspace .workspace-primary button { width: 100%; justify-content: flex-start; gap: 11px; padding: 0 12px; color: var(--muted); }
 .workspace .workspace-primary button:hover { background: var(--hover); color: var(--ink); }
-.workspace .workspace-primary button[aria-current="page"] { background: var(--accent-bg); color: #ded6ff; font-weight: 650; }
+.workspace .workspace-primary button[aria-current="page"] { background: var(--accent-bg); color: var(--color-text-accent); font-weight: 650; }
 .workspace .workspace-sidebar-scroll {
   flex: 1;
   min-height: 0;
@@ -103,7 +116,7 @@ body { background: var(--paper); color: var(--ink); }
 .workspace .account { padding-top: 8px; gap: 6px; }
 .workspace .account-name, .workspace .nav-link { font-size: 13px; }
 .workspace .avatar { background: var(--accent-bg); color: var(--accent); }
-.workspace .nav-link { min-height: 42px; padding: 8px 9px; margin: 0; color: var(--muted); }
+.workspace .nav-link { min-height: 42px; padding: 8px 9px; margin: 0; color: var(--muted); justify-content: flex-start; }
 .workspace .nav-link:hover, .workspace .nav-link.chosen { background: var(--raised); color: var(--ink); }
 .workspace .work-header { background: var(--paper); height: auto; min-height: 59px; padding: max(8px, env(safe-area-inset-top)) 23px 8px; gap: 8px; }
 .workspace .work-header h1 { margin: 0; color: var(--ink); font-size: 15px; font-weight: 650; max-width: 62vw; }
@@ -133,9 +146,9 @@ body { background: var(--paper); color: var(--ink); }
   padding: 3px 12px 8px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 21px;
+  border-radius: var(--radius-chat);
 }
-.chat-compose-dock:focus-within { border-color: #7e73af; }
+.chat-compose-dock:focus-within { border-color: var(--color-border-emphasized); }
 .workspace .chat-composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -153,7 +166,7 @@ body { background: var(--paper); color: var(--ink); }
 .workspace .chat-send { grid-column: 2; grid-row: 1; }
 .workspace .chat-composer textarea { min-height: 44px; font-size: 16px; color: var(--ink); }
 .workspace .chat-composer textarea::placeholder { color: var(--muted); }
-.workspace .chat-send { flex: none; height: 44px; width: 44px; border-radius: 13px; background: var(--accent); color: var(--accent-ink); }
+.workspace .chat-send { flex: none; height: 44px; width: 44px; border-radius: var(--radius-container); background: var(--accent); color: var(--accent-ink); }
 .workspace .user-message { background: var(--accent-bg); color: var(--ink); border-radius: 17px 17px 5px 17px; }
 
 .workspace-search { width: min(100%, 460px); }
@@ -189,9 +202,19 @@ body { background: var(--paper); color: var(--ink); }
   .workspace .mobile-history .workspace-primary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-.primary:hover:enabled { background: #d0c8ff; color: var(--accent-ink); }
+.primary:hover:enabled { background: color-mix(in srgb, var(--accent) 84%, white); color: var(--accent-ink); }
 .danger { background: var(--danger-paper); color: var(--danger-ink); border: 1px solid #743e4c; }
 .notice { background: var(--notice-paper); color: var(--notice-ink); border-color: var(--notice-line); }
 dialog::backdrop { background: #09090bb3; }
-dialog { background: var(--surface); border-color: var(--line); }
+dialog { background: var(--color-background-popover); border-color: var(--line); }
 .workspace-skip { background: var(--raised); color: var(--ink); }
+
+.gate .gate-main { padding-block: clamp(24px, 8vh, 74px); }
+.gate-card h1 { font-family: inherit; font-size: 29px; font-weight: 650; letter-spacing: -.04em; }
+.gate-card > .muted { margin-bottom: 20px; }
+
+.connection-capabilities { margin-block: 8px 12px; font-size: 13px; color: var(--muted); }
+.connection-capabilities summary { width: fit-content; cursor: pointer; }
+.connection-capabilities p, .connection-capabilities a { margin-top: 8px; }
+.workspace-dialog { border-radius: var(--radius-container); }
+.workspace-dialog .dialog-top button { min-width: 44px; min-height: 44px; font-size: 21px; }

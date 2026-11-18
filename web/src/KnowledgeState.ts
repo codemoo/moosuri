@@ -44,7 +44,6 @@ export type PasteState = {
   issue: "uncertain" | "conflict" | null;
 };
 export type KnowledgeDrafts = {
-  noticeHidden: boolean;
   collection: {
     open: boolean;
     name: string;
@@ -56,7 +55,6 @@ export type KnowledgeDrafts = {
   memory: MemoryEditorState | null;
 };
 export const initialKnowledgeDrafts = (): KnowledgeDrafts => ({
-  noticeHidden: false,
   collection: null,
   paste: null,
   memory: null,

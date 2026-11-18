@@ -117,7 +117,7 @@ function Contents({ accountId, admin = false, onExpired }: Props) {
   const binding = configuration?.binding;
   return <main className="admin-scroll model-settings" aria-labelledby="telegram-title">
     <div className="section-heading"><h2 id="telegram-title">{admin ? "설치의 Telegram 봇" : "내 Telegram"}</h2></div>
-    <p>Telegram 개인 채팅에서 무수리와 대화합니다. 대화는 Telegram 서버를 거쳐 전달되며 무수리 웹에서도 이어서 볼 수 있습니다.</p>
+    <p className="fine">대화는 Telegram 서버를 거쳐 무수리 웹과 동기화됩니다.</p>
     {error && <p className="notice" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!configuration ? <p role="status">Telegram 설정을 불러오고 있습니다…</p> : <>

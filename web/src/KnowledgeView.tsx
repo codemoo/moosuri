@@ -503,32 +503,6 @@ export function KnowledgeView({
   }
   return (
     <main className="admin-scroll knowledge-view">
-      <div className="admin-intro">
-        <p className="eyebrow">내 계정의 자료와 기억</p>
-        <h2>{mode === "source" ? "자료" : "기억"}</h2>
-        <p>
-          {mode === "source"
-            ? "텍스트 자료를 모으고, 필요한 원문 구간을 기억의 근거로 연결하세요."
-            : "직접 기록하거나 자료를 근거로 만든 기억을 읽고 고칠 수 있습니다."}
-        </p>
-      </div>
-      {!drafts.noticeHidden && (
-        <div className="knowledge-stage">
-          <p>
-            도구 사용이 확인된 모델에서는 채팅 중 필요한 자료와 기억을 찾아볼 수
-            있습니다. “기억해 줘”, “수정해 줘”, “잊어 줘”라고 요청해도 됩니다.
-            요청하지 않은 내용을 자동으로 기억하지는 않습니다.
-          </p>
-          <button
-            className="text-button"
-            onClick={() =>
-              updateDrafts((current) => ({ ...current, noticeHidden: true }))
-            }
-          >
-            알겠습니다
-          </button>
-        </div>
-      )}
       {error && !danger && (
         <p className="notice knowledge-alert" role="alert">
           {error}

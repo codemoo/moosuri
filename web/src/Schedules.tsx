@@ -61,7 +61,7 @@ function Contents({accountId,onExpired,back,openMission,openArtifact,feedOnly=fa
  function saveQuiet(){if(!quietForm)return;void perform("write",signal=>scope.request<QuietHours>("/notifications/settings","PUT",{expected_revision:quietForm.revision,enabled:quietForm.enabled,timezone:quietForm.timezone,start_minute:quietForm.start_minute,end_minute:quietForm.end_minute},signal),value=>{setQuiet(value);settings(value);setNotice("조용한 시간을 저장했습니다. 소식함에서는 계속 확인할 수 있습니다.");});}
  function updateQuiet(patch:Partial<QuietHours>){if(quietForm)settings({...quietForm,...patch});}
  return <main className={feedOnly ? "schedule-page workspace-feed" : "schedule-page"} aria-label={feedOnly ? "내 소식" : "예약 · 소식"}><header aria-label={feedOnly ? "소식함 관리" : "예약 관리"}>{feedOnly ? <button onClick={manageSchedules}>예약 관리</button> : <button onClick={back}>채팅으로</button>}<button disabled={writing} onClick={()=>load(true)}>새로고침</button></header>
- {!feedOnly && <p>예약한 업무의 결과와 알림을 소식함에서 확인할 수 있습니다.</p>}{error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{!ready&&!busy&&<button onClick={()=>load(true)}>다시 불러오기</button>}
+ {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{!ready&&!busy&&<button onClick={()=>load(true)}>다시 불러오기</button>}
  {!feedOnly && <PushSettings accountId={accountId} onExpired={onExpired}/>}
  <div className="schedule-columns">{!feedOnly && <section aria-label="로컬 알림 예약"><h2>{editing?"예약 편집":"새 로컬 알림"}</h2><form onSubmit={save}>
  <label>제목<input required maxLength={160} aria-label="알림 제목" value={form.title} disabled={writing} onChange={e=>change("title",e.target.value)}/></label>

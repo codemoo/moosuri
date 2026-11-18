@@ -519,7 +519,7 @@ describe("personal model preferences", () => {
     );
     await user.click(screen.getByRole("button", { name: "내 모델" }));
     await screen.findByRole("heading", { name: "내 모델", level: 2 });
-    expect(screen.getByText(/내 계정에만 적용됩니다/)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "모델" })).toBeInTheDocument();
   });
 
   it("saves an exact verified provider/revision/model/effort pair and can return to the installation default", async () => {

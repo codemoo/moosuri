@@ -10,12 +10,8 @@
   "theme_color": "#101113",
   "lang": "ko",
   "icons": [
-    {
-      "src": "/moosuri-app-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    }
+    { "src": "/moosuri-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/moosuri-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ],
   "share_target": {
     "action": "/share-target",

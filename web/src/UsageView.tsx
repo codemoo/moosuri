@@ -128,7 +128,6 @@ export function UsageView({
   return (
     <main className="admin-scroll usage-view">
       <div className="admin-intro">
-        <p className="eyebrow">보고된 사용량</p>
         <h2>{admin ? "계정별 사용량" : "내 사용량"}</h2>
         <p>
           {admin

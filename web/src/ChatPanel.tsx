@@ -1100,7 +1100,7 @@ export function ChatPanel(props: Props) {
         )}
         {!loading && turns.length === 0 && !optimistic && (
           <div className="chat-welcome">
-            <img src="/moosuri-attendant.png" width="52" height="52" alt="" />
+            <img src="/moosuri-icon-192.png" width="52" height="52" alt="" />
             <h2>{props.name.split(" ")[0]}님, 무엇을 도와드릴까요?</h2>
             {model?.effective && (props.openIdeas || props.openWork) && <div className="chat-welcome-actions">
               {props.openIdeas && <Button label="할 수 있는 일 둘러보기" variant="secondary" onClick={props.openIdeas}/>}

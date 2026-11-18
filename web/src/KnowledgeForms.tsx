@@ -330,7 +330,7 @@ export function MemoryForm({
   update: DraftSetter;
   saved: (document: MemoryDocument) => void;
   onExpired: () => void;
-  openEvidence: (sourceId: string, revision: number) => void;
+  openEvidence?: (sourceId: string, revision: number) => void;
 }) {
   const scope = useScope(accountId, `memory-editor:${state.id ?? "new"}`);
   const [busy, setBusy] = useState(false);
@@ -527,7 +527,7 @@ export function MemoryForm({
               >
                 <blockquote>{item.quote}</blockquote>
                 <div className="knowledge-actions">
-                  <button
+                  {openEvidence && <button
                     type="button"
                     className="text-button"
                     onClick={() =>
@@ -535,7 +535,7 @@ export function MemoryForm({
                     }
                   >
                     원문 구간 확인
-                  </button>
+                  </button>}
                   <button
                     type="button"
                     className="text-button"

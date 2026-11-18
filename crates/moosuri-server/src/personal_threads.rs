@@ -14,14 +14,6 @@ pub(super) fn routes<S: Clone + Send + Sync + 'static>(state: AuthState) -> Rout
         .route("/api/v1/threads/{id}/messages", get(history))
         .with_state(state)
 }
-async fn owner(state: &AuthState, headers: &HeaderMap) -> Result<UserContext, HttpError> {
-    let user = state.store.authenticate(cookie_token(headers)?).await?;
-    expected_account(headers, &user)?;
-    if user.is_chatgpt_helper() {
-        return Err(StoreError::Forbidden.into());
-    }
-    Ok(user)
-}
 // Bound encoding as well as transport. A valid 20-turn page retains the existing
 // DTO and pagination; an oversized result fails without returning a partial page.
 struct Limited(Vec<u8>);
@@ -49,7 +41,7 @@ fn encoded(status: StatusCode, value: &impl Serialize) -> HttpResult {
 }
 async fn list(State(state): State<AuthState>, headers: HeaderMap) -> HttpResult {
     let _delivery = state.delivery.read().await;
-    let user = owner(&state, &headers).await?;
+    let user = state.member(&headers).await?;
     encoded(
         StatusCode::OK,
         &ThreadsResponse {
@@ -63,7 +55,7 @@ async fn create(
     Json(input): Json<CreateThreadRequest>,
 ) -> HttpResult {
     let _delivery = state.delivery.read().await;
-    let user = owner(&state, &headers).await?;
+    let user = state.member(&headers).await?;
     let created = state
         .store
         .create_thread_with_request_id(&user, input.title, input.request_id)
@@ -82,7 +74,7 @@ async fn history(
     Query(page): Query<Page>,
 ) -> HttpResult {
     let _delivery = state.delivery.read().await;
-    let user = owner(&state, &headers).await?;
+    let user = state.member(&headers).await?;
     encoded(
         StatusCode::OK,
         &state.store.conversation(&user, id, page.before).await?,
@@ -94,7 +86,7 @@ async fn remove(
     Path(id): Path<String>,
 ) -> HttpResult {
     let _delivery = state.delivery.write().await;
-    let user = owner(&state, &headers).await?;
+    let user = state.member(&headers).await?;
     state.store.delete_thread(&user, id).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }

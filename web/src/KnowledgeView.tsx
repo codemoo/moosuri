@@ -47,9 +47,11 @@ export function KnowledgeView({
   onExpired,
   target,
   onTargetConsumed,
+  manualMemoriesOnly = false,
 }: {
   accountId: string;
   mode: Mode;
+  manualMemoriesOnly?: boolean;
   drafts: KnowledgeDrafts;
   updateDrafts: DraftSetter;
   onExpired: () => void;
@@ -501,8 +503,9 @@ export function KnowledgeView({
       setSource({ id: hit.id, revision: hit.revision });
     else setMemory({ id: hit.id, revision: hit.revision });
   }
+  const Container = manualMemoriesOnly ? "section" : "main";
   return (
-    <main className="admin-scroll knowledge-view">
+    <Container className="admin-scroll knowledge-view">
       {error && !danger && (
         <p className="notice knowledge-alert" role="alert">
           {error}
@@ -739,10 +742,10 @@ export function KnowledgeView({
             setNotice("기억을 저장했습니다.");
             refreshLists();
           }}
-          openEvidence={(id, revision) => setSource({ id, revision })}
+          openEvidence={manualMemoriesOnly ? undefined : (id, revision) => setSource({ id, revision })}
         />
       )}
-      <form
+      {!manualMemoriesOnly && <form
         className="knowledge-search admin-card"
         onSubmit={(event: FormEvent) => {
           event.preventDefault();
@@ -821,7 +824,7 @@ export function KnowledgeView({
             />
           </label>
         </details>
-      </form>
+      </form>}
       {search ? (
         <section className="admin-card knowledge-list" aria-label="검색 결과">
           <div className="section-heading">
@@ -960,7 +963,7 @@ export function KnowledgeView({
           onExpired={onExpired}
           close={() => setMemory(null)}
           edit={startAssertion}
-          evidence={(id, revision) => setSource({ id, revision })}
+          evidence={manualMemoriesOnly ? undefined : (id, revision) => setSource({ id, revision })}
           forget={(document) => {
             setError("");
             setDanger({
@@ -983,7 +986,7 @@ export function KnowledgeView({
           confirm={destroy}
         />
       )}
-    </main>
+    </Container>
   );
 }
 
@@ -1141,7 +1144,7 @@ function MemoryDetail({
   close: () => void;
   edit: (document: MemoryDocument) => void;
   forget: (document: MemoryDocument) => void;
-  evidence: (id: string, revision: number) => void;
+  evidence?: (id: string, revision: number) => void;
 }) {
   const scope = useScope(
     accountId,
@@ -1222,12 +1225,12 @@ function MemoryDetail({
               key={`${item.source_id}:${item.start_byte}:${item.end_byte}`}
             >
               <blockquote>{item.quote}</blockquote>
-              <button
+              {evidence && <button
                 className="text-button"
                 onClick={() => evidence(item.source_id, item.source_revision)}
               >
                 근거 원문 보기
-              </button>
+              </button>}
             </div>
           ))}
           <div className="knowledge-actions">

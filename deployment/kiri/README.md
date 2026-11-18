@@ -19,10 +19,16 @@
    moosuri account-runtime --registry "$REGISTRY" activate --email "$EMAIL" --ipc-root "$IPC"
    ```
 
-6. 게이트웨이를 `moosuri personal-gateway --public-origin "$ORIGIN" --registry "$REGISTRY" --ipc-root "$IPC" --socket-dir "$GATEWAY_DIR"`로 시작한다. HTTPS 종단은 설치의 로컬 프록시가 담당한다. 시험용 프록시는 허용된 개인 API 경로만 전용 `gateway.sock`로 전달하고 Host·Origin을 보존한다. 클라이언트가 보낸 X-Real-IP를 버리고 관측한 클라이언트 IP로 덮어쓴다. 게이트웨이와 운영자가 개인 소켓을 열 수 있도록 실행 계정과 상위 디렉터리를 구성한다.
-7. 일반 회원은 원래 로그인·비밀번호 변경 API를 사용한다. 첫 로그인은 임시 비밀번호 변경을 요구한다. 라우팅 쿠키는 게이트웨이가 서명하고 개인 서비스가 본인의 실제 세션을 검증한다. `account-runtime … fence --email "$EMAIL"`은 해당 세대의 게이트웨이 접근을 차단한다. 실행 중인 외부 작업을 중단하거나 새 세대로 복구하는 수명주기는 후속 통합 범위다.
+6. 웹 배포물을 포함하는 바이너리를 빌드한다. 저장소의 `web/`에서 `npm ci && npm run build` 후 저장소 루트에서 `cargo build --locked --release -p moosuri`를 실행한다. 게이트웨이를 `moosuri personal-gateway --public-origin "$ORIGIN" --registry "$REGISTRY" --ipc-root "$IPC" --socket-dir "$GATEWAY_DIR"`로 시작한다. HTTPS 종단은 설치의 로컬 프록시가 담당한다. 회원 전용 HTTPS 호스트의 요청을 `gateway.sock`으로 전달하고 Host·Origin을 보존한다. 지원하는 화면과 API는 게이트웨이가 결정한다. 클라이언트가 보낸 X-Real-IP를 버리고 관측한 클라이언트 IP로 덮어쓴다. 게이트웨이와 운영자가 개인 소켓을 열 수 있도록 실행 계정과 상위 디렉터리를 구성한다.
+7. 일반 회원은 전용 HTTPS 주소의 `/`를 연다. 이메일과 임시 비밀번호로 로그인해 비밀번호를 바꾼다. 모델이 연결된 설치에서는 첫 메시지를 보내면 대화가 만들어진다. 기억 탭에서 직접 작성한 기억과 수정 이력을 관리할 수 있다. 첫 로그인은 임시 비밀번호 변경을 요구한다. 라우팅 쿠키는 게이트웨이가 서명하고 개인 서비스가 본인의 실제 세션을 검증한다. `account-runtime … fence --email "$EMAIL"`은 해당 세대의 게이트웨이 접근을 차단한다. 실행 중인 외부 작업을 중단하거나 새 세대로 복구하는 수명주기는 후속 통합 범위다.
 
 로그인한 회원은 개인 소켓과 게이트웨이에서 기존 API로 대화를 만들고 목록·메시지 이력을 조회하거나 대화를 삭제할 수 있다. 생성의 요청 ID 재사용, 이전 페이지 조회, 삭제 후 접근 차단과 다른 계정의 접근 거부를 합성 계정으로 확인했다.
+
+### 비루트 HTTPS 프록시 연결
+
+서명 키·잠금 파일은 운영자 전용 0700 디렉터리인 `--socket-dir`에 둔다. nginx 워커가 다른 사용자로 실행되면 전용 프록시 그룹을 할당하고, 게이트웨이 서비스 소유·그룹 소유권이 해당 그룹인 0710 디렉터리 `/run/moosuri-member-proxy`를 준비한다. 게이트웨이에 `--proxy-socket-dir /run/moosuri-member-proxy --proxy-gid "$PROXY_GID"`를 추가한다. 프록시는 그 안의 `gateway.sock`에만 연결한다. registry, 개인 IPC, 설치 모델 인증 파일이 있는 디렉터리는 계속 0700으로 둔다.
+
+회원 전용 도메인의 기존 TLS server 블록에 [nginx 위치 설정](member-proxy.nginx.conf)을 포함한다. 이 예시는 nginx가 클라이언트 연결을 직접 받는 배치용이다. 로드 밸런서가 앞에 있으면 신뢰하는 프록시에서 온 주소만 nginx real-IP 모듈로 복원한다. 텍스트 응답은 최대 85초 걸릴 수 있어 예시의 upstream 대기 시간은 100초다.
 
 ## 공용 모델 개발판
 

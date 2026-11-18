@@ -30,6 +30,8 @@ use std::{
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+mod memory;
+
 const ROUTER: &str = "__Host-moosuri_route";
 const SESSION: &str = "moosuri_session";
 const MAX_BODY: usize = 64 * 1024;
@@ -52,6 +54,12 @@ pub struct Options {
     /// Existing service-owner-only directory for gateway.sock and its persistent key.
     #[arg(long)]
     socket_dir: PathBuf,
+    /// Optional separate service-owned mode 0710 directory for a dedicated HTTPS proxy group.
+    #[arg(long, requires = "proxy_gid")]
+    proxy_socket_dir: Option<PathBuf>,
+    /// Only this trusted Unix group can connect to the public HTTP gateway socket.
+    #[arg(long, requires = "proxy_socket_dir")]
+    proxy_gid: Option<u32>,
 }
 #[derive(Clone)]
 struct Gateway {
@@ -323,7 +331,9 @@ impl Gateway {
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
         {
             if result.len() + chunk.len()
-                > if path.starts_with("/api/v1/threads") {
+                > if path.starts_with("/api/v1/threads")
+                    || path.starts_with("/api/v1/knowledge/memories")
+                {
                     MAX_THREAD_BODY
                 } else {
                     MAX_BODY
@@ -458,6 +468,23 @@ struct CreateThread {
     title: String,
     request_id: Option<String>,
 }
+fn api_error(status: StatusCode, body: &[u8]) -> Result<Response, StatusCode> {
+    let error: moosuri_core::ApiError =
+        serde_json::from_slice(body).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if error.code.is_empty()
+        || error.code.len() > 80
+        || !error
+            .code
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b == b'_')
+    {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    Ok(response(
+        status,
+        serde_json::to_vec(&error).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+    ))
+}
 fn thread_response(
     endpoint: Endpoint,
     method: &Method,
@@ -465,21 +492,7 @@ fn thread_response(
     body: Vec<u8>,
 ) -> Result<Response, StatusCode> {
     if !status.is_success() {
-        let error: moosuri_core::ApiError =
-            serde_json::from_slice(&body).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        if error.code.is_empty()
-            || error.code.len() > 80
-            || !error
-                .code
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b == b'_')
-        {
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
-        }
-        return Ok(response(
-            status,
-            serde_json::to_vec(&error).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
-        ));
+        return api_error(status, &body);
     }
     match endpoint {
         Endpoint::PreviewInfo => {
@@ -690,6 +703,29 @@ async fn recheck(g: &Gateway, allocation: &Allocation) -> Result<(), StatusCode>
     };
     active(g, &route).await.map(|_| ())
 }
+async fn authenticated_allocation(
+    g: &Gateway,
+    headers: &HeaderMap,
+    require_account_header: bool,
+) -> Result<(Allocation, String), StatusCode> {
+    let session = cookie(headers, SESSION, 128)?;
+    if !opaque(&session) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let route = g.route(headers, &session)?;
+    if headers.contains_key("x-moosuri-account") && one(headers, "x-moosuri-account").is_none() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if let Some(account) = one(headers, "x-moosuri-account") {
+        if account != route.account.to_string() {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    } else if require_account_header {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let a = active(g, &route).await?;
+    Ok((a, session))
+}
 async fn handler(
     State(g): State<Gateway>,
     method: Method,
@@ -764,22 +800,8 @@ async fn handle(
             set.ok_or(StatusCode::SERVICE_UNAVAILABLE)?,
         );
     }
-    let session = cookie(headers, SESSION, 128)?;
-    if !opaque(&session) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    let route = g.route(headers, &session)?;
-    if headers.contains_key("x-moosuri-account") && one(headers, "x-moosuri-account").is_none() {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    if let Some(account) = one(headers, "x-moosuri-account") {
-        if account != route.account.to_string() {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-    } else if method != Method::GET || endpoint.threads() {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    let a = active(g, &route).await?;
+    let (a, session) =
+        authenticated_allocation(g, headers, method != Method::GET || endpoint.threads()).await?;
     if endpoint.threads() {
         let payload = if matches!(endpoint, Endpoint::TextPreview(_)) {
             #[derive(Deserialize, Serialize)]
@@ -897,6 +919,52 @@ fn issued(
     }
     Ok(response)
 }
+// This shell is public, immutable build output. It never selects a personal
+// runtime, authenticates a cookie, caches private JSON or forwards a URL.
+async fn public_shell(
+    State(g): State<Gateway>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    if one(&headers, "host") != Some(g.host.as_str()) {
+        return failure(StatusCode::BAD_REQUEST);
+    }
+    if headers.contains_key("origin") && one(&headers, "origin") != Some(g.origin.as_str()) {
+        return failure(StatusCode::FORBIDDEN);
+    }
+    if uri.path().starts_with("/api/") {
+        return failure(StatusCode::NOT_FOUND);
+    }
+    if !matches!(method, Method::GET | Method::HEAD) {
+        return failure(StatusCode::METHOD_NOT_ALLOWED);
+    }
+    if uri.query().is_some() {
+        return failure(StatusCode::NOT_FOUND);
+    }
+    let path = uri.path();
+    let asset = if matches!(
+        path,
+        "/" | "/preview" | "/app" | "/login" | "/personal.html"
+    ) {
+        "/personal.html"
+    } else if matches!(path, "/moosuri-icon-192.png" | "/moosuri-icon-512.png") {
+        path
+    } else if path.strip_prefix("/assets/").is_some_and(|name| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+    }) {
+        path
+    } else {
+        return failure(StatusCode::NOT_FOUND);
+    };
+    let Ok(uri) = asset.parse() else {
+        return failure(StatusCode::NOT_FOUND);
+    };
+    super::static_asset(uri).await
+}
 fn router(g: Gateway) -> Router {
     Router::new()
         .route("/api/v1/auth/login", post(handler))
@@ -911,8 +979,66 @@ fn router(g: Gateway) -> Router {
             "/api/v1/threads/{id}/text-preview",
             post(handler).layer(DefaultBodyLimit::max(64 * 1024)),
         )
+        .fallback(public_shell)
         .layer(DefaultBodyLimit::max(4096))
+        .merge(memory::routes())
         .with_state(g)
+}
+async fn bind_public_socket(options: &Options) -> Result<(File, tokio::net::UnixListener), String> {
+    let (dir, mode) = match (&options.proxy_socket_dir, options.proxy_gid) {
+        (None, None) => (&options.socket_dir, 0o600),
+        (Some(dir), Some(gid)) => {
+            let meta = fs::symlink_metadata(dir).map_err(|_| "proxy_socket_directory_invalid")?;
+            if gid == 0
+                || !dir.is_absolute()
+                || fs::canonicalize(dir).ok().as_ref() != Some(dir)
+                || !meta.is_dir()
+                || meta.uid() != unsafe { libc::geteuid() }
+                || meta.gid() != gid
+                || meta.mode() & 0o7777 != 0o710
+            {
+                return Err("proxy_socket_directory_invalid".into());
+            }
+            (dir, 0o660)
+        }
+        _ => return Err("proxy_socket_directory_invalid".into()),
+    };
+    let lock = File::open(dir).map_err(|_| "gateway_socket_unavailable")?;
+    lock.try_lock_exclusive()
+        .map_err(|_| "gateway_socket_directory_busy")?;
+    let socket = dir.join("gateway.sock");
+    match fs::symlink_metadata(&socket) {
+        Ok(meta) => {
+            if !meta.file_type().is_socket()
+                || meta.uid() != unsafe { libc::geteuid() }
+                || meta.nlink() != 1
+            {
+                return Err("gateway_socket_invalid".into());
+            }
+            match tokio::time::timeout(
+                Duration::from_secs(1),
+                tokio::net::UnixStream::connect(&socket),
+            )
+            .await
+            {
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                    fs::remove_file(&socket).map_err(|_| "gateway_socket_unavailable")?;
+                }
+                _ => return Err("gateway_socket_active".into()),
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(_) => return Err("gateway_socket_unavailable".into()),
+    }
+    let listener =
+        tokio::net::UnixListener::bind(&socket).map_err(|_| "gateway_socket_unavailable")?;
+    if let Some(gid) = options.proxy_gid {
+        std::os::unix::fs::chown(&socket, None, Some(gid))
+            .map_err(|_| "gateway_socket_group_unavailable")?;
+    }
+    fs::set_permissions(&socket, fs::Permissions::from_mode(mode))
+        .map_err(|_| "gateway_socket_unavailable")?;
+    Ok((lock, listener))
 }
 pub async fn run(options: &Options) -> Result<(), String> {
     private_dir(&options.socket_dir)?;
@@ -920,24 +1046,7 @@ pub async fn run(options: &Options) -> Result<(), String> {
     lock.try_lock_exclusive()
         .map_err(|_| "gateway_already_running")?;
     let g = Gateway::new(options)?;
-    let socket = options.socket_dir.join("gateway.sock");
-    match fs::symlink_metadata(&socket) {
-        Ok(meta) => {
-            if !meta.file_type().is_socket()
-                || meta.uid() != unsafe { libc::geteuid() }
-                || meta.mode() & 0o077 != 0
-            {
-                return Err("gateway_socket_invalid".into());
-            }
-            fs::remove_file(&socket).map_err(|_| "gateway_socket_unavailable")?;
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-        Err(_) => return Err("gateway_socket_unavailable".into()),
-    }
-    let listener =
-        tokio::net::UnixListener::bind(&socket).map_err(|_| "gateway_socket_unavailable")?;
-    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))
-        .map_err(|_| "gateway_socket_unavailable")?;
+    let (_socket_directory, listener) = bind_public_socket(options).await?;
     axum::serve(listener, router(g))
         .await
         .map_err(|_| "gateway_stopped".into())
@@ -960,7 +1069,37 @@ mod tests {
             registry: directory(parent, "registry"),
             ipc_root: directory(parent, "ipc"),
             socket_dir: directory(parent, "gateway"),
+            proxy_socket_dir: None,
+            proxy_gid: None,
         }
+    }
+    #[tokio::test]
+    async fn proxy_group_can_only_reach_the_socket_and_an_active_listener_is_preserved() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mut options = options(&root);
+        let proxy = directory(&root, "proxy");
+        // Use the current effective group where available (CI may execute as root).
+        let gid = match unsafe { libc::getegid() } {
+            0 => 65534,
+            other => other,
+        };
+        std::os::unix::fs::chown(&proxy, None, Some(gid)).unwrap();
+        options.proxy_socket_dir = Some(proxy.clone());
+        options.proxy_gid = Some(gid);
+        assert!(bind_public_socket(&options).await.is_err());
+        fs::set_permissions(&proxy, fs::Permissions::from_mode(0o710)).unwrap();
+        let (lock, listener) = bind_public_socket(&options).await.unwrap();
+        let socket = proxy.join("gateway.sock");
+        let meta = fs::symlink_metadata(&socket).unwrap();
+        assert_eq!(meta.mode() & 0o777, 0o660);
+        assert_eq!(meta.gid(), gid);
+        assert!(!proxy.join("routing.key").exists());
+        drop(lock);
+        assert!(bind_public_socket(&options).await.is_err());
+        assert_eq!(fs::symlink_metadata(&socket).unwrap().ino(), meta.ino());
+        drop(listener);
+        let _new_listener = bind_public_socket(&options).await.unwrap();
     }
     fn headers() -> HeaderMap {
         let mut h = HeaderMap::new();
@@ -1385,6 +1524,69 @@ mod tests {
         );
         h
     }
+    async fn check_memory_lifecycle(g: &Gateway, a: &HeaderMap, b: &HeaderMap) {
+        const BASE: &str = "/api/v1/knowledge/memories";
+        let draft = |text: &str| {
+            serde_json::json!({"text":text, "subject":"Synthetic schedule",
+            "speaker":"Synthetic owner", "valid_from":null,"valid_until":null,"evidence":[]})
+        };
+        let create =
+            serde_json::json!({"request_id":Uuid::new_v4(),"draft":draft("Synthetic Friday")})
+                .to_string();
+        let response = request(g, BASE, Method::POST, a.clone(), &create).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let memory = json(response).await;
+        let path = format!("{BASE}/{}", memory["id"].as_str().unwrap());
+        assert_eq!(
+            json(request(g, BASE, Method::POST, a.clone(), &create).await).await["id"],
+            memory["id"]
+        );
+        assert_eq!(
+            json(request(g, BASE, Method::GET, b.clone(), "").await).await["items"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            request(g, &path, Method::GET, b.clone(), "").await.status(),
+            StatusCode::NOT_FOUND
+        );
+        let correction = serde_json::json!({"request_id":Uuid::new_v4(),"expected_revision":1,
+            "draft":draft("Synthetic Monday")})
+        .to_string();
+        let corrected = request(g, &path, Method::PUT, a.clone(), &correction).await;
+        assert_eq!(corrected.status(), StatusCode::OK);
+        assert_eq!(json(corrected).await["revision"], 2);
+        let history =
+            json(request(g, &format!("{path}/history"), Method::GET, a.clone(), "").await).await;
+        assert_eq!(history["items"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            request(
+                g,
+                &path,
+                Method::DELETE,
+                a.clone(),
+                r#"{"expected_revision":1}"#
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            request(
+                g,
+                &path,
+                Method::DELETE,
+                a.clone(),
+                r#"{"expected_revision":2}"#
+            )
+            .await
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            request(g, &path, Method::GET, a.clone(), "").await.status(),
+            StatusCode::NOT_FOUND
+        );
+    }
     #[tokio::test]
     async fn actual_member_sockets_keep_cookie_locator_and_thread_history_private() {
         let temp = tempfile::tempdir().unwrap();
@@ -1415,6 +1617,7 @@ mod tests {
         }
         let a_headers = authenticated(&sessions[0], &a);
         let b_headers = authenticated(&sessions[1], &b);
+        check_memory_lifecycle(&g, &a_headers, &b_headers).await;
         let key = Uuid::new_v4().to_string();
         let body = serde_json::json!({"title":"Only A history","request_id":key}).to_string();
         let created = request(
@@ -1757,5 +1960,64 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         broker.abort();
         member.abort();
+    }
+    #[tokio::test]
+    async fn public_preview_entry_serves_built_dependencies_without_a_session_or_api_fallback() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let options = options(&root);
+        let gateway = Gateway::new(&options).unwrap();
+        let mut h = headers();
+        h.remove("origin");
+        h.remove("x-real-ip");
+        let response = request(&gateway, "/", Method::GET, h.clone(), "").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key(header::SET_COOKIE));
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        assert!(
+            response.headers()[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .contains("connect-src 'self'")
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 512 * 1024)
+            .await
+            .unwrap();
+        let html = std::str::from_utf8(&bytes).unwrap();
+        assert!(html.contains("텍스트 미리보기"));
+        let script = html
+            .split("src=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        assert!(script.starts_with("/assets/"));
+        let dependency = request(&gateway, script, Method::GET, h.clone(), "").await;
+        assert_eq!(dependency.status(), StatusCode::OK);
+        assert!(
+            dependency.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .contains("javascript")
+        );
+        for path in [
+            "/api/v1/admin/users",
+            "/api/v1/unavailable",
+            "/assets/../personal.html",
+            "/settings/mail",
+        ] {
+            assert_eq!(
+                request(&gateway, path, Method::GET, h.clone(), "")
+                    .await
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+        h.insert("host", HeaderValue::from_static("foreign.example.test"));
+        assert_eq!(
+            request(&gateway, "/", Method::GET, h, "").await.status(),
+            StatusCode::BAD_REQUEST
+        );
     }
 }

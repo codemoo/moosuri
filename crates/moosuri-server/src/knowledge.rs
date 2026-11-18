@@ -61,6 +61,25 @@ pub(super) fn routes() -> Router<AppState> {
         )
         .route("/sources/{id}", get(source).delete(delete_source))
         .route("/search", post(search))
+}
+
+#[derive(Clone)]
+struct MemoryState {
+    auth: AuthState,
+    runtime: Option<moosuri_agent::Runtime>,
+}
+impl MemoryState {
+    fn wake(&self) {
+        if let Some(runtime) = &self.runtime {
+            runtime.wake();
+        }
+    }
+}
+pub(super) fn memory_routes<S: Clone + Send + Sync + 'static>(
+    auth: AuthState,
+    runtime: Option<moosuri_agent::Runtime>,
+) -> Router<S> {
+    Router::new()
         .route(
             "/memories",
             get(memories)
@@ -75,6 +94,7 @@ pub(super) fn routes() -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(128 * 1024)),
         )
         .route("/memories/{id}/history", get(memory_history))
+        .with_state(MemoryState { auth, runtime })
 }
 async fn collections(State(state): State<AppState>, headers: HeaderMap) -> HttpResult {
     let user = current(&state, &headers).await?;
@@ -179,61 +199,70 @@ async fn search(
     Ok(Json(state.store.search_knowledge(&user, query).await?).into_response())
 }
 async fn memories(
-    State(state): State<AppState>,
+    State(state): State<MemoryState>,
     headers: HeaderMap,
     Query(query): Query<PageQuery>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
-    Ok(Json(state.store.memories(&user, query.after).await?).into_response())
+    let user = state.auth.member(&headers).await?;
+    Ok(Json(state.auth.store.memories(&user, query.after).await?).into_response())
 }
 async fn memory(
-    State(state): State<AppState>,
+    State(state): State<MemoryState>,
     headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<RevisionQuery>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
-    Ok(Json(state.store.memory(&user, id, query.revision).await?).into_response())
+    let user = state.auth.member(&headers).await?;
+    Ok(Json(state.auth.store.memory(&user, id, query.revision).await?).into_response())
 }
 async fn memory_history(
-    State(state): State<AppState>,
+    State(state): State<MemoryState>,
     headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
-    Ok(Json(state.store.memory_history(&user, id, query.before).await?).into_response())
+    let user = state.auth.member(&headers).await?;
+    Ok(Json(
+        state
+            .auth
+            .store
+            .memory_history(&user, id, query.before)
+            .await?,
+    )
+    .into_response())
 }
 async fn create_memory(
-    State(state): State<AppState>,
+    State(state): State<MemoryState>,
     headers: HeaderMap,
     Json(input): Json<NewMemory>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
-    let _delivery = state.delivery.write().await;
+    let user = state.auth.member(&headers).await?;
+    let _delivery = state.auth.delivery.write().await;
     let response = Ok((
         StatusCode::CREATED,
         Json(
             state
+                .auth
                 .store
                 .create_memory(&user, input.request_id, input.draft)
                 .await?,
         ),
     )
         .into_response());
-    state.runtime.wake();
+    state.wake();
     response
 }
 async fn correct_memory(
-    State(state): State<AppState>,
+    State(state): State<MemoryState>,
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<MemoryCorrection>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
-    let _delivery = state.delivery.write().await;
+    let user = state.auth.member(&headers).await?;
+    let _delivery = state.auth.delivery.write().await;
     let response = Ok(Json(
         state
+            .auth
             .store
             .correct_memory(
                 &user,
@@ -245,21 +274,22 @@ async fn correct_memory(
             .await?,
     )
     .into_response());
-    state.runtime.wake();
+    state.wake();
     response
 }
 async fn forget_memory(
-    State(state): State<AppState>,
+    State(state): State<MemoryState>,
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<RevisionInput>,
 ) -> HttpResult {
-    let user = current(&state, &headers).await?;
-    let _delivery = state.delivery.write().await;
+    let user = state.auth.member(&headers).await?;
+    let _delivery = state.auth.delivery.write().await;
     state
+        .auth
         .store
         .forget_memory(&user, id, input.expected_revision)
         .await?;
-    state.runtime.wake();
+    state.wake();
     Ok(StatusCode::NO_CONTENT.into_response())
 }

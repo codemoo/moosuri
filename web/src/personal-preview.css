@@ -1,0 +1,374 @@
+:root {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: #eee;
+  background: #151515;
+  color-scheme: dark;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  border: 1px solid #484848;
+  border-radius: 9px;
+  padding: 9px 13px;
+  color: inherit;
+  background: #292929;
+}
+button:hover:not(:disabled) {
+  background: #353535;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #a8c4ff;
+  outline-offset: 3px;
+}
+input,
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+  padding: 11px;
+  border: 1px solid #454545;
+  border-radius: 8px;
+  background: #202020;
+  color: inherit;
+}
+label {
+  display: block;
+  font-size: 0.9rem;
+  color: #cfcfcf;
+}
+p {
+  line-height: 1.6;
+}
+h1,
+h2 {
+  font-size: 1.15rem;
+}
+small {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #aaa;
+}
+.preview-header {
+  min-height: 70px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #333;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+}
+.preview-header > div {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 0.85rem;
+}
+.preview-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 650;
+}
+.preview-gate {
+  width: min(420px, calc(100% - 40px));
+  margin: 72px auto;
+  padding: 28px;
+  border: 1px solid #333;
+  border-radius: 16px;
+  background: #1c1c1c;
+}
+.preview-gate form {
+  display: grid;
+  gap: 20px;
+}
+.preview-gate > p {
+  color: #aaa;
+  font-size: 0.9rem;
+}
+.preview-error {
+  color: #ffc4bb;
+  background: #3b2423;
+  padding: 12px 16px;
+  border-radius: 9px;
+  font-size: 0.9rem;
+}
+.preview-shell > main > p {
+  margin: 24px;
+}
+.preview-workspace {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: calc(100dvh - 70px);
+}
+.preview-workspace > aside {
+  padding: 22px 18px;
+  border-right: 1px solid #333;
+}
+.preview-workspace > aside > button {
+  width: 100%;
+  margin-top: 12px;
+}
+.preview-workspace ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+.preview-workspace li > button {
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  background: transparent;
+  border-color: transparent;
+}
+.preview-workspace li > button[aria-current="page"] {
+  background: #303030;
+  border-color: #555;
+}
+.preview-conversation {
+  width: min(900px, 100%);
+  padding: 24px 32px;
+  margin: 0 auto;
+}
+.preview-capability {
+  padding: 16px 20px;
+  background: #222;
+  border: 1px solid #383838;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  color: #bfbfbf;
+}
+.preview-capability strong {
+  color: #eee;
+}
+.preview-capability p {
+  margin: 7px 0;
+}
+.preview-capability span {
+  font-size: 0.75rem;
+}
+.preview-thread-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin: 24px 0;
+}
+.preview-thread-header button {
+  font-size: 0.8rem;
+}
+.preview-turns {
+  display: grid;
+  gap: 22px;
+}
+.preview-turns article {
+  display: grid;
+  gap: 14px;
+}
+.preview-user {
+  background: #272727;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-left: 12%;
+  overflow-wrap: anywhere;
+}
+.preview-user strong,
+.preview-assistant strong {
+  font-size: 0.8rem;
+  color: #aaa;
+}
+.preview-user p {
+  white-space: pre-wrap;
+  margin: 8px 0 0;
+}
+.preview-assistant {
+  padding: 8px 4px;
+}
+.preview-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.preview-run-state {
+  display: block;
+  color: #999;
+  font-size: 0.75rem;
+}
+.preview-composer {
+  display: grid;
+  gap: 10px;
+  margin: 28px 0 14px;
+}
+.preview-composer textarea {
+  resize: vertical;
+  min-height: 110px;
+}
+.preview-composer button {
+  justify-self: end;
+  min-width: 94px;
+}
+.preview-pending {
+  background: #292c34;
+  border: 1px solid #454c61;
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-size: 0.85rem;
+}
+.preview-pending button {
+  margin: 0 8px 4px 0;
+}
+.preview-empty {
+  padding: 56px 0;
+  color: #aaa;
+  text-align: center;
+}
+@media (max-width: 700px) {
+  .preview-header {
+    padding: 12px 16px;
+  }
+  .preview-brand small {
+    display: none;
+  }
+  .preview-header > div > span {
+    display: none;
+  }
+  .preview-workspace {
+    grid-template-columns: 1fr;
+  }
+  .preview-workspace > aside {
+    border-right: 0;
+    border-bottom: 1px solid #333;
+    padding: 14px 16px;
+  }
+  .preview-workspace > aside h1 {
+    margin-top: 0;
+  }
+  .preview-workspace ul {
+    display: flex;
+    overflow: auto;
+    max-width: calc(100vw - 32px);
+    margin-bottom: 0;
+  }
+  .preview-workspace li > button {
+    white-space: nowrap;
+  }
+  .preview-conversation {
+    padding: 18px 16px;
+  }
+  .preview-user {
+    margin-left: 6%;
+  }
+  .preview-gate {
+    margin: 40px auto;
+  }
+  .preview-thread-header {
+    align-items: start;
+  }
+}
+.preview-view-nav {
+  display: flex;
+  gap: 8px;
+  padding: 10px 24px;
+  border-bottom: 1px solid #333;
+}
+.preview-view-nav button {
+  background: transparent;
+  border-color: transparent;
+}
+.preview-view-nav button[aria-pressed="true"] {
+  background: #303030;
+  border-color: #555;
+}
+:root {
+  --ink: #eee;
+  --paper: #151515;
+  --surface: #202020;
+  --raised: #272727;
+  --line: #444;
+  --muted: #aaa;
+  --accent: #a8c4ff;
+  --green: #a8c4ff;
+  --accent-ink: #151515;
+  --notice-paper: #462b28;
+  --notice-ink: #ffc4bb;
+  --notice-line: #8a534c;
+  --hover: #343434;
+}
+.preview-shell .knowledge-view {
+  max-width: 1100px;
+  margin: auto;
+  padding: 28px 24px;
+}
+.preview-shell .admin-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: 22px;
+  border-radius: 12px;
+  margin: 18px 0;
+}
+.preview-shell .section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.preview-shell .fine {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.preview-shell dialog {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 24px;
+  width: min(740px, calc(100% - 32px));
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+}
+.preview-shell dialog::backdrop {
+  background: #000a;
+}
+.preview-shell .dialog-top,
+.preview-shell .dialog-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  align-items: center;
+}
+.preview-shell .dialog-actions {
+  margin-top: 20px;
+}
+.preview-shell .danger {
+  background: var(--notice-paper);
+}
+.preview-memory-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 20px 24px 0;
+  max-width: 1100px;
+  margin: auto;
+}

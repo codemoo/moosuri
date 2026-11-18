@@ -44,6 +44,11 @@ export default defineConfig({
       },
     },
   }],
+  build: {
+    rollupOptions: {
+      input: { main: resolve(root, "index.html"), personal: resolve(root, "personal.html") },
+    },
+  },
   server: { port: 5173, strictPort: true, proxy: { "/api": { target: "http://127.0.0.1:3210", changeOrigin: false } } },
   test: {
     environment: "jsdom",

@@ -636,7 +636,13 @@ pub fn router_with_runtime(
         )
         .nest("/api/v1/community-skills", community_skills::routes())
         .nest("/api/v1/artifacts", artifacts::routes())
-        .nest("/api/v1/knowledge", knowledge::routes())
+        .nest(
+            "/api/v1/knowledge",
+            knowledge::routes().merge(knowledge::memory_routes(
+                store_auth_state(&state),
+                Some(state.runtime.clone()),
+            )),
+        )
         .nest("/api/v1/mail", mail::routes())
         .nest("/api/v1/admin/google", google_setup::routes())
         .nest("/api/v1/source-connections", source_connections::routes())
@@ -900,6 +906,16 @@ struct AuthState {
     logins: Arc<Mutex<LoginBuckets>>,
     delivery: Arc<tokio::sync::RwLock<()>>,
 }
+impl AuthState {
+    async fn member(&self, headers: &HeaderMap) -> Result<UserContext, HttpError> {
+        let user = self.store.authenticate(cookie_token(headers)?).await?;
+        expected_account(headers, &user)?;
+        if user.is_chatgpt_helper() {
+            return Err(StoreError::Forbidden.into());
+        }
+        Ok(user)
+    }
+}
 fn store_auth_state(state: &AppState) -> AuthState {
     AuthState {
         store: state.store.clone(),
@@ -944,7 +960,12 @@ fn personal_router(
         logins: Default::default(),
         delivery: Default::default(),
     };
-    let routes = auth_routes(state.clone()).merge(personal_threads::routes(state.clone()));
+    let routes = auth_routes(state.clone())
+        .merge(personal_threads::routes(state.clone()))
+        .nest(
+            "/api/v1/knowledge",
+            knowledge::memory_routes(state.clone(), None),
+        );
     let routes = if let Some((owner, options)) = preview {
         routes.merge(personal_text::routes(state, owner, options))
     } else {

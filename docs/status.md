@@ -14,6 +14,8 @@
 
 대화·일회성 업무·반복 업무가 같은 모델 실행기를 사용한다. 도구 연결을 확인한 Claude 구독과 개인 OpenAI 호환 모델도 업무 등록 당시의 모델·추론 강도로 실행한다. 모델 연결이 철회되면 해당 업무는 중단되며, 업무 결과는 실제 도구 기록으로 검증한다. [실행 계약](../openspec/changes/unify-mission-engine/specs/mission-engine/spec.md)
 
+[dev.23](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.23) 운영 Linux에서 Claude Sonnet 5.5 · medium으로 한국어 채팅 요청이 활성 반복 업무로 등록되는 것을 확인했다. 별도의 일회 예약이 같은 모델로 실행되어 계산 도구의 결과 607.52를 저장하고 완료 조건을 충족했다. 개인 호환 모델은 로컬 시험 서버에서 반복 업무 등록과 등록 후 모델을 바꾼 경우의 실행을 검증했다.
+
 Claude 구독의 **현재 모델 도구 확인**은 선택한 모델과 추론 강도로 도구 호출과 결과 활용을 검증한다. 검증된 Claude는 새 요청부터 무수리의 웹·메일·일정·기억 도구를 선택하고 실제 실행 결과를 받아 이어서 답변한다. 필요한 서비스 연결과 메일 발송 미리보기 승인은 그대로 적용된다. [Claude 구독 연결과 사용 범위](claude-execution.md#supported-boundary)
 [dev.22](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.22)는 운영 Linux에서 기존 로그인·대화·모델 선택을 보존하며 SQLite 77에서 78로 업데이트했다. 기존 구독의 Sonnet 5.5 · medium으로 도구 확인을 통과했고, 별도 합성 대화에서 계산 호출·결과 저장·후속 답변을 실제로 확인했다.
 

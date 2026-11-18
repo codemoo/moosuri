@@ -1,0 +1,21 @@
+[Unit]
+Description=Moosuri configured personal runtime recovery (experimental)
+Documentation=https://github.com/codemoo/moosuri/tree/main/deployment/kiri/lifecycle
+After=kiri.service
+Wants=kiri.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+StateDirectory=moosuri-kiri-lifecycle
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/moosuri kiri-lifecycle --experimental --config /etc/moosuri/kiri-members.json --state-directory /var/lib/moosuri-kiri-lifecycle
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -156,12 +156,17 @@ impl Expected {
 /// Reconciles one already-initialized member; never creates identity or private DBs.
 /// The caller must perform runtime health/auth checks before declaring readiness.
 pub async fn run(args: &Options) -> Result<(), String> {
+    println!("{}", reconcile_member(args).await?);
+    Ok(())
+}
+/// Same guarded operation without emitting per-poll output for the lifecycle worker.
+pub(crate) async fn reconcile_member(args: &Options) -> Result<Value, String> {
     let args = args.clone();
     tokio::task::spawn_blocking(move || run_blocking(&args))
         .await
         .map_err(|_| "kiri_provision_worker_failed".to_owned())?
 }
-fn run_blocking(args: &Options) -> Result<(), String> {
+fn run_blocking(args: &Options) -> Result<Value, String> {
     if !cfg!(target_os = "linux") || !args.experimental {
         return Err("kiri_provision_explicit_experimental_linux_only".into());
     }
@@ -291,14 +296,12 @@ fn run_blocking(args: &Options) -> Result<(), String> {
         .map_err(|_| "kiri_provision_allocation_lock_failed")?;
     reserve_host(args, &expected)?;
     let state = reconcile(&engine, &expected, args.start)?;
-    println!(
-        "{}",
+    Ok(
         json!({"profile":PROFILE,"container":expected.name,"account":expected.account,"generation":expected.generation,"state":state,
-        "readiness":"unverified-private-auth-only","production":false})
-    );
-    Ok(())
+        "readiness":"unverified-private-auth-only","production":false}),
+    )
 }
-fn validate_limits(a: &Options) -> Result<(), String> {
+pub(crate) fn validate_limits(a: &Options) -> Result<(), String> {
     if a.uid < 10000
         || a.uid > 2_000_000_000
         || !config_id(&a.image)

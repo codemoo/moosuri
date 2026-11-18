@@ -7,6 +7,16 @@ The installation SHALL allocate at most one active runtime for each account and 
 - **WHEN** a member's container is replaced or the host restarts
 - **THEN** that member resumes from their own volume with one writer and other members cannot read their state
 
+#### Scenario: Recover configured active members after host restart
+- **WHEN** an operator explicitly enables the Linux recovery worker for pinned account generations and the host restarts
+- **THEN** only configured registry-ready members are reconciled through the guarded Kiri profile and reported ready after owner/generation and kernel peer-UID checks
+- **AND** a missing mount or stale generation for one member does not prevent another valid member from recovering
+- **AND** reserved or offline fenced accounts are not initialized, activated or restarted by that worker
+
+#### Scenario: Readiness socket names another process
+- **WHEN** a configured recovery socket is replaced by a process with another host UID
+- **THEN** the worker sends no HTTP health request to that process and does not report the member ready
+
 ### Requirement: Shared model capacity
 The installation SHALL supply read-only shared modules and model availability, and broker model calls using installation credentials while isolating user history, external actions, and provider sessions.
 

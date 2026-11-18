@@ -23,6 +23,7 @@ mod calls;
 mod gws_inbox;
 mod import_private;
 mod installation;
+mod kiri_lifecycle;
 mod kiri_provision;
 mod legacy_relations;
 mod personal_gateway;
@@ -61,6 +62,8 @@ enum Command {
     PersonalGateway(personal_gateway::Options),
     /// Reconcile a prepared member's Linux Kiri container.
     KiriProvision(kiri_provision::Options),
+    /// Restore configured active member runtimes after host or engine restart.
+    KiriLifecycle(kiri_lifecycle::Options),
     /// Serve an installation-owned, pinned model to allocated members over Unix sockets.
     RuntimeModel(runtime_model::Options),
     /// Make one text call using the member broker socket and private standard input.
@@ -412,6 +415,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::PersonalGateway(options) = &cli.command {
         return personal_gateway::run(options).await;
     }
+    if let Command::KiriLifecycle(options) = &cli.command {
+        return kiri_lifecycle::run(options).await;
+    }
     if let Command::KiriProvision(options) = &cli.command {
         return kiri_provision::run(options).await;
     }
@@ -562,6 +568,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::RuntimeModel(_)
         | Command::RuntimeModelCall(_)
         | Command::PersonalGateway(_)
+        | Command::KiriLifecycle(_)
         | Command::KiriProvision(_)
         | Command::PersonalVolume(_)
         | Command::AccountRuntime(_)

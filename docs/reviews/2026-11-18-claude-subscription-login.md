@@ -27,3 +27,17 @@ retain artifact hashes and fixed statuses only.
 User-completed official authentication and real exact-model inference remain
 pending. These tests do not claim subscription eligibility or broad assistant
 capabilities. See [operator setup and owner flow](../claude-execution.md).
+
+The signed dev.11 packages were built for four platforms; Linux x64 and ARM64
+QEMU passed initialized account, web, settings and shutdown checks. A dedicated
+synthetic browser verified desktop/mobile link, code entry, completion and cancel
+without horizontal overflow. The live initialized Linux service was backed up and
+updated without changing existing data, sessions or personal model preferences.
+The runtime is configured there: real official URL/code waiting and subsequent
+container cleanup were verified through the owner API. The test session logged
+out. Official account authentication and inference were deliberately not claimed.
+
+The host uses a dedicated rootless daemon, delegated cgroup limits and mounted
+bounded auth filesystem. Its app retains system protection and sees only its own
+runtime directory through a read-only bind on an otherwise empty home/run-user
+tmpfs. A pinned-helper parent-lease test confirmed descendant/container cleanup.

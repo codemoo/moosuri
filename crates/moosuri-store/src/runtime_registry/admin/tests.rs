@@ -476,3 +476,61 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
     }
     assert!(lookup(r, "a@example.test".into()).is_err());
 }
+
+#[test]
+fn concurrent_first_setup_has_one_identity_and_retries_preserve_it() {
+    let root = root();
+    let ids = [Uuid::new_v4(), Uuid::new_v4()];
+    let barrier = std::sync::Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let root = root.path();
+        let barrier = &barrier;
+        let workers = ids.map(|id| {
+            scope.spawn(move || {
+                barrier.wait();
+                reserve_first_invitation(root, id, "First".into(), "first@example.test".into())
+            })
+        });
+        workers.map(|w| w.join().unwrap())
+    });
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    let first = results
+        .into_iter()
+        .find_map(std::result::Result::ok)
+        .unwrap();
+    let replay = reserve_first_invitation(
+        root.path(),
+        first.request_id,
+        "First".into(),
+        "FIRST@example.test".into(),
+    )
+    .unwrap();
+    assert_eq!(replay.account_id, first.account_id);
+    assert!(
+        reserve_first_invitation(
+            root.path(),
+            first.request_id,
+            "Other".into(),
+            "first@example.test".into()
+        )
+        .is_err()
+    );
+    assert_eq!(
+        operator_invitation(root.path(), first.request_id)
+            .unwrap()
+            .unwrap()
+            .account_id,
+        first.account_id
+    );
+    assert_eq!(
+        status(root.path(), Uuid::parse_str(&first.account_id).unwrap())
+            .unwrap()
+            .role,
+        "member"
+    );
+    let other = super::tests::root();
+    reserve(other.path(), first.request_id, first.email.clone()).unwrap();
+    assert!(
+        reserve_first_invitation(other.path(), first.request_id, first.name, first.email).is_err()
+    );
+}

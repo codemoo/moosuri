@@ -404,7 +404,19 @@ pub fn reserve_invitation(
     )? {
         return Err(StoreError::Conflict);
     }
-    let a = reserve_in(&tx, request, email.clone())?;
+    let invitation = insert_invitation(&tx, request, name, email, fingerprint)?;
+    tx.commit()?;
+    Ok(invitation)
+}
+
+fn insert_invitation(
+    tx: &Connection,
+    request: Uuid,
+    name: String,
+    email: String,
+    fingerprint: String,
+) -> Result<Invitation> {
+    let a = reserve_in(tx, request, email.clone())?;
     let invitation = Invitation {
         request_id: request,
         account_id: a.account_id,
@@ -419,7 +431,46 @@ pub fn reserve_invitation(
         "INSERT INTO installation_admin_operations VALUES(?1,?2,?3)",
         params![request.to_string(), fingerprint, result],
     )?;
+    Ok(invitation)
+}
+
+/// Installation CLI only. Atomically elect one first identity on a fresh registry.
+/// This creates the same recoverable invitation as web administration and grants no role.
+pub fn reserve_first_invitation(
+    root: &Path,
+    request: Uuid,
+    name: String,
+    email: String,
+) -> Result<Invitation> {
+    if request.is_nil() {
+        return Err(StoreError::InvalidInput);
+    }
+    let name = crate::name_valid(name, 200)?;
+    let email = email_valid(email)?;
+    let fingerprint = serde_json::to_string(&("first-member-v1", request, &name, &email))
+        .map_err(|_| StoreError::InvalidInput)?;
+    let (_lock, mut c) = open(root, true)?;
+    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let used: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM allocations) OR EXISTS(SELECT 1 FROM installation_admin_bootstrap)", [], |r| r.get(0))?;
+    let invitation = if used {
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT o.result FROM installation_admin_operations o
+            JOIN allocations a ON a.request_id=o.request_id
+            WHERE o.request_id=?1 AND o.fingerprint=?2 AND a.email=?3",
+                params![request.to_string(), fingerprint, email],
+                |r| r.get(0),
+            )
+            .optional()?;
+        serde_json::from_str(&existing.ok_or(StoreError::Conflict)?)
+            .map_err(|_| StoreError::Corrupt)?
+    } else {
+        insert_invitation(&tx, request, name, email, fingerprint)?
+    };
     tx.commit()?;
+    std::fs::File::open(root)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|_| StoreError::Unavailable)?;
     Ok(invitation)
 }
 /// Operator-only planned invitation metadata. Manual reservations have no plan.

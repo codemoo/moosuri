@@ -15,6 +15,11 @@ pub struct Options {
     /// Stable request ID displayed in the member administration page.
     #[arg(long)]
     pub request_id: Uuid,
+    /// Only for the first account on a fresh installation. Later users are invited on the web.
+    #[arg(long, requires = "first_email")]
+    pub first_name: Option<String>,
+    #[arg(long, requires = "first_name")]
+    pub first_email: Option<String>,
     /// Dedicated host UID/GID selected for this member.
     #[arg(long)]
     pub uid: u32,
@@ -134,22 +139,6 @@ pub async fn run(o: &Options) -> Result<(), String> {
         return Err("onboard_root_linux_only".into());
     }
     let mut config = load(&o.config, &o.operations_root)?;
-    let invite = admin::operator_invitation(&config.registry_directory, o.request_id)
-        .map_err(|_| "onboard_invitation_invalid")?
-        .ok_or("onboard_web_invitation_required")?;
-    let m = Member {
-        account_id: Uuid::parse_str(&invite.account_id)
-            .map_err(|_| "onboard_invitation_invalid")?,
-        generation: invite.generation,
-        email: invite.email.clone(),
-        uid: o.uid,
-        enable_text_preview: o.enable_text_preview,
-        enable_google_readonly: o.enable_google_readonly,
-    };
-    if !matching(&config, &m)? {
-        config.members.push(m.clone());
-        config.validate()?;
-    }
     let root = config
         .mounts_root
         .parent()
@@ -166,6 +155,31 @@ pub async fn run(o: &Options) -> Result<(), String> {
         .ok_or("onboard_enrollment_directory_required")?;
     separate(enrollment, root)?;
     trusted_path(&o.operations_root, true)?;
+    if let (Some(name), Some(email)) = (&o.first_name, &o.first_email) {
+        admin::reserve_first_invitation(
+            &config.registry_directory,
+            o.request_id,
+            name.clone(),
+            email.clone(),
+        )
+        .map_err(|_| "onboard_first_invitation_conflicts_with_installation")?;
+    }
+    let invite = admin::operator_invitation(&config.registry_directory, o.request_id)
+        .map_err(|_| "onboard_invitation_invalid")?
+        .ok_or("onboard_web_invitation_required")?;
+    let m = Member {
+        account_id: Uuid::parse_str(&invite.account_id)
+            .map_err(|_| "onboard_invitation_invalid")?,
+        generation: invite.generation,
+        email: invite.email.clone(),
+        uid: o.uid,
+        enable_text_preview: o.enable_text_preview,
+        enable_google_readonly: o.enable_google_readonly,
+    };
+    if !matching(&config, &m)? {
+        config.members.push(m.clone());
+        config.validate()?;
+    }
     let allocation = runtime_registry::lookup(&config.registry_directory, invite.email.clone())
         .map_err(|_| "onboard_allocation_unavailable")?;
     let storage = kiri_storage::Options {

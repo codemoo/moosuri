@@ -4,11 +4,21 @@
 
 ## 첫 관리자
 
-첫 관리자는 [최초 회원 준비 절차](README.md#새-시험-회원의-로그인)로 개인 런타임을 만든 뒤 웹에서 임시 비밀번호를 변경한다. 설치자가 같은 회원의 현재 비밀번호로 아래 명령을 실행한다. UID는 설치자가 이 회원에게 배정한 호스트 UID다. 요청 번호는 해당 작업의 재시도를 위해 보관한다.
+새 설치는 아래의 저장공간·수명주기 설정을 먼저 준비하고 `members`를 빈 배열로 둔다. 설치자는 첫 회원의 이름과 이메일을 지정해 해당 회원의 볼륨과 로그인 화면을 준비한다. 웹 초대 접수 전이므로 이 단계에서 설치 레지스트리가 최초 회원을 예약한다. 동시에 두 설치 명령을 실행해도 한 회원만 예약된다.
+
+```sh
+sudo /usr/local/bin/moosuri kiri-onboard --experimental \
+  --config /etc/moosuri/kiri-members.json \
+  --request-id "$FIRST_MEMBER_REQUEST_ID" --uid "$MEMBER_UID" \
+  --first-name "$ADMIN_NAME" --first-email "$ADMIN_EMAIL" \
+  --operations-root /var/lib/moosuri-control/invitations
+```
+
+첫 회원이 웹에서 임시 비밀번호를 변경하면 설치자가 같은 회원의 현재 비밀번호로 아래 명령을 실행한다. `REGISTRY`와 `IPC_ROOT`는 위 설정의 `registry_directory`와 `ipc_root` 값이다. 회원 준비와 관리자 지정에는 각각 다른 UUID를 발급하고 같은 작업을 재시도할 때는 처음 사용한 UUID를 재사용한다.
 
 ```sh
 moosuri installation-admin --registry "$REGISTRY" bootstrap \
-  --request-id "$REQUEST_ID" --email "$ADMIN_EMAIL" \
+  --request-id "$ADMIN_ROLE_REQUEST_ID" --email "$ADMIN_EMAIL" \
   --ipc-root "$IPC_ROOT" --member-uid "$MEMBER_UID"
 ```
 

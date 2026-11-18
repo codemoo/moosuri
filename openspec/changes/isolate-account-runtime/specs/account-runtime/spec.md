@@ -27,3 +27,24 @@ The installation SHALL move each account with owner-specific evidence, forward-o
 #### Scenario: Worker interrupted after external dispatch
 - **WHEN** the runtime is recovered while a sent operation has an unknown result
 - **THEN** the new owner reconciles the existing receipt and does not automatically send the operation again
+
+### Requirement: Authoritative administration
+The installation SHALL serialize account management decisions against current actor authority, target revision and usable administrator eligibility. A runtime SHALL apply the recorded command idempotently. A restored volume SHALL NOT grant an earlier privilege.
+
+#### Scenario: An administrator is demoted while another command is pending
+- **WHEN** an administrator retries a management request after demotion or two administrators concurrently demote one another
+- **THEN** current installation authority is enforced, at least one usable administrator remains, and an unacknowledged local change remains pending
+
+### Requirement: Route callbacks without granting authentication
+The gateway SHALL route a provider callback only to its original purpose, account, and active generation. Completing consent SHALL require the original member session within that runtime.
+
+#### Scenario: The active browser account changes during Google login
+- **WHEN** member A starts Google consent and returns after switching the web app to B
+- **THEN** neither B's session nor B's mail connection changes, and the callback alone does not resume A's request
+
+### Requirement: Independently recoverable personal state
+The migration SHALL establish an authenticated child backup baseline from a fenced parent checkpoint before enabling writes. Account deletion and vault revocation SHALL remain deliverable after the account runtime is removed.
+
+#### Scenario: Source-free recovery after an interleaved deletion
+- **WHEN** a migrated account is restored without the original server after both accounts have modified or deleted data
+- **THEN** its receiver verifies the new lineage, deleted state stays deleted, no other member's records appear, and installation-wide spending cannot roll back

@@ -647,15 +647,7 @@ pub async fn run(options: &Options) -> Result<(), String> {
     let stop = CancellationToken::new();
     let signal = stop.clone();
     tokio::spawn(async move {
-        let ctrl_c = tokio::signal::ctrl_c();
-        let terminate = async {
-            if let Ok(mut signal) =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            {
-                signal.recv().await;
-            }
-        };
-        tokio::select! {_=ctrl_c=>(),_=terminate=>()}
+        crate::shutdown_signal().await;
         signal.cancel();
     });
     serve(options, stop, None).await
@@ -687,16 +679,35 @@ async fn serve_broker(
         let broker = broker.clone();
         let stop = stop.clone();
         let slots = Arc::new(Semaphore::new(1));
-        tasks.spawn(async move{let mut clients=JoinSet::new();loop{tokio::select!{_=stop.cancelled()=>break,accepted=listener.accept()=>match accepted{Ok((stream,_))=>{clients.spawn(handle(stream,broker.clone(),b,slots.clone()));},Err(_)=>break},Some(_)=clients.join_next(),if !clients.is_empty()=>()}}clients.abort_all();});
+        tasks.spawn(async move {
+            let mut clients = JoinSet::new();
+            loop {
+                tokio::select! {
+                    _ = stop.cancelled() => break,
+                    accepted = listener.accept() => {
+                        let (stream, _) = accepted.map_err(|_| "google_listener_unavailable".to_string())?;
+                        clients.spawn(handle(stream, broker.clone(), b, slots.clone()));
+                    }
+                    Some(_) = clients.join_next(), if !clients.is_empty() => {}
+                }
+            }
+            Ok::<(), String>(())
+        });
     }
     if let Some(started) = started {
         let _ = started.send(());
     }
-    stop.cancelled().await;
-    tasks.abort_all();
+    let result = tokio::select! {
+        _ = stop.cancelled() => Ok(()),
+        ended = tasks.join_next() => match ended {
+            Some(Ok(result)) => result,
+            _ => Err("google_listener_stopped".into()),
+        }
+    };
+    stop.cancel();
     while tasks.join_next().await.is_some() {}
     drop(guards);
-    Ok(())
+    result
 }
 #[derive(Args)]
 pub struct ClientOptions {

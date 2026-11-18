@@ -665,7 +665,7 @@ pub async fn run(options: &Options) -> Result<(), String> {
     let stop = CancellationToken::new();
     let signal = stop.clone();
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        crate::shutdown_signal().await;
         signal.cancel();
     });
     serve(options, stop).await

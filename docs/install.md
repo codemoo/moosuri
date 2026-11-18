@@ -5,6 +5,8 @@ React dashboard and SQLite support. Rust, Node, Python and Docker are not requir
 to run it. The separate encrypted vault and credential companion remain optional,
 separate deployments; this installer does not claim to install them.
 
+Linux per-member Kiri isolation is available from the development source on a separate installation. Its host and storage setup is documented in the [Linux operator guide](../deployment/kiri/README.md). 현재 한 줄 설치로 받는 배포판과 개인 컨테이너 개발판의 설치 절차는 다릅니다.
+
 ## One command / 한 줄 설치
 
 Run in Terminal on macOS, a Linux terminal, or a **WSL2 distribution's terminal**:

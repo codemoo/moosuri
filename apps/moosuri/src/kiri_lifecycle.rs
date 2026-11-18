@@ -1,6 +1,7 @@
 //! Opt-in restart recovery for preconfigured, already-active personal runtimes.
 //! This worker never reserves identity, initializes data/passwords, activates a
 //! route, replaces a conflicting image or changes administrator-managed mounts.
+pub(crate) mod onboard;
 use crate::kiri_provision;
 use clap::Args;
 use fs2::FileExt;
@@ -57,9 +58,10 @@ struct Config {
     pids: u32,
     #[serde(default = "disk")]
     max_volume_bytes: u64,
+    enrollment_directory: Option<PathBuf>,
     members: Vec<Member>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Member {
     account_id: Uuid,
@@ -212,7 +214,7 @@ fn trusted_path(p: &Path, directory: bool) -> Result<fs::Metadata, String> {
     }
     Ok(m)
 }
-fn load(path: &Path) -> Result<Config, String> {
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     trusted_path(path, false)?;
     let file = OpenOptions::new()
         .read(true)
@@ -232,9 +234,11 @@ fn load(path: &Path) -> Result<Config, String> {
     if bytes.len() as u64 > LIMIT {
         return Err("kiri_lifecycle_config_too_large".into());
     }
-    let config: Config =
-        serde_json::from_slice(&bytes).map_err(|_| "kiri_lifecycle_invalid_config")?;
-    config.validate()?;
+    serde_json::from_slice(&bytes).map_err(|_| "kiri_lifecycle_invalid_config".into())
+}
+fn load(path: &Path, private_directory: &Path) -> Result<Config, String> {
+    let mut config: Config = read_json(path)?;
+    onboard::include(&mut config, path, private_directory)?;
     Ok(config)
 }
 fn lock_state(root: &Path) -> Result<File, String> {
@@ -399,7 +403,7 @@ pub async fn run(options: &Options) -> Result<(), String> {
         signal.cancel();
     });
     loop {
-        let config = load(&options.config)?;
+        let config = load(&options.config, &options.state_directory)?;
         let states = cycle(&config, &stop).await;
         if stop.is_cancelled() {
             return Ok(());

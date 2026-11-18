@@ -27,6 +27,7 @@ mod installation_admin;
 mod kiri_invite;
 mod kiri_lifecycle;
 mod kiri_provision;
+mod kiri_storage;
 mod legacy_relations;
 mod personal_gateway;
 mod personal_google;
@@ -70,6 +71,10 @@ enum Command {
     KiriProvision(kiri_provision::Options),
     /// Invite a new member through a private, recoverable Linux installer flow.
     KiriInvite(kiri_invite::Options),
+    /// Prepare persistent member storage from a reserved Linux allocation.
+    KiriStorage(kiri_storage::Options),
+    /// Fulfill a web invitation with managed storage and restart recovery.
+    KiriOnboard(kiri_lifecycle::onboard::Options),
     /// Restore configured active member runtimes after host or engine restart.
     KiriLifecycle(kiri_lifecycle::Options),
     /// Serve an installation-owned, pinned model to allocated members over Unix sockets.
@@ -436,6 +441,12 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::KiriLifecycle(options) = &cli.command {
         return kiri_lifecycle::run(options).await;
     }
+    if let Command::KiriStorage(o) = &cli.command {
+        return kiri_storage::run(o).await;
+    }
+    if let Command::KiriOnboard(o) = &cli.command {
+        return kiri_lifecycle::onboard::run(o).await;
+    }
     if let Command::KiriInvite(options) = &cli.command {
         return kiri_invite::run(options).await;
     }
@@ -596,6 +607,8 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::PersonalGateway(_)
         | Command::KiriLifecycle(_)
         | Command::KiriInvite(_)
+        | Command::KiriStorage(_)
+        | Command::KiriOnboard(_)
         | Command::KiriProvision(_)
         | Command::PersonalVolume(_)
         | Command::InstallationAdmin(_)

@@ -30,7 +30,8 @@ RUN set -eu; \
     asset="google-workspace-cli-$target"; \
     curl -fLSs "https://github.com/googleworkspace/cli/releases/download/v0.22.0/$asset.tar.gz" -o gws.tar.gz; \
     printf '%s  %s\n' "$digest" gws.tar.gz | sha256sum -c -; \
-    tar -xzf gws.tar.gz --strip-components=1 "$asset/gws" "$asset/LICENSE"; \
+    tar -xzf gws.tar.gz --no-same-owner --strip-components=1 "$asset/gws" "$asset/LICENSE"; \
+    test "$(stat -c %u:%g gws)" = 0:0; \
     version="$(./gws --version)"; \
     test "$(printf '%s\n' "$version" | sed -n '1p')" = 'gws 0.22.0'; \
     discovery_source='https://raw.githubusercontent.com/googleapis/google-api-go-client/a1b2b18eba794c7d9f8e86b7db1d12a69c081002'; \

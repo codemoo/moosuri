@@ -58,12 +58,12 @@ struct Config {
 }
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Binding {
-    account_id: Uuid,
-    tenant_id: Uuid,
-    volume_id: Uuid,
-    generation: i64,
-    peer_uid: u32,
+pub(super) struct Binding {
+    pub(super) account_id: Uuid,
+    pub(super) tenant_id: Uuid,
+    pub(super) volume_id: Uuid,
+    pub(super) generation: i64,
+    pub(super) peer_uid: u32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -175,7 +175,7 @@ struct Correlation<'a> {
     owner: Option<Binding>,
     app_revision: Option<Uuid>,
 }
-fn private_dir(path: &Path) -> Result<(), String> {
+pub(super) fn private_dir(path: &Path) -> Result<(), String> {
     let m = fs::symlink_metadata(path).map_err(|_| "google_directory_unavailable")?;
     if !path.is_absolute()
         || !m.is_dir()
@@ -187,7 +187,7 @@ fn private_dir(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-fn private_bytes(path: &Path, cap: usize) -> Result<Zeroizing<Vec<u8>>, String> {
+pub(super) fn private_bytes(path: &Path, cap: usize) -> Result<Zeroizing<Vec<u8>>, String> {
     if !path.is_absolute() || fs::canonicalize(path).ok().as_deref() != Some(path) {
         return Err("google_file_invalid".into());
     }
@@ -231,13 +231,13 @@ fn provider(error: GmailError) -> &'static str {
         _ => "google_result_unavailable",
     }
 }
-fn same_owner(a: &runtime_registry::Allocation, b: Binding) -> bool {
+pub(super) fn same_owner(a: &runtime_registry::Allocation, b: Binding) -> bool {
     a.account_id == b.account_id.to_string()
         && a.tenant_id == b.tenant_id.to_string()
         && a.volume_id == b.volume_id.to_string()
         && a.generation == b.generation
 }
-fn epoch(registry: &Path, b: Binding) -> Result<i64, &'static str> {
+pub(super) fn epoch(registry: &Path, b: Binding) -> Result<i64, &'static str> {
     let (a, epoch) = runtime_registry::session_route(
         registry,
         runtime_registry::SessionDestination::Account(b.account_id),
@@ -572,7 +572,7 @@ async fn handle(
     })
     .await;
 }
-struct SocketGuard {
+pub(super) struct SocketGuard {
     path: PathBuf,
     dev: u64,
     ino: u64,
@@ -586,7 +586,10 @@ impl Drop for SocketGuard {
         }
     }
 }
-async fn listener(root: &Path, b: Binding) -> Result<(UnixListener, SocketGuard), String> {
+pub(super) async fn listener(
+    root: &Path,
+    b: Binding,
+) -> Result<(UnixListener, SocketGuard), String> {
     let leaf = root.join(b.account_id.to_string());
     match fs::create_dir(&leaf) {
         Ok(()) => {
@@ -627,21 +630,19 @@ async fn listener(root: &Path, b: Binding) -> Result<(UnixListener, SocketGuard)
         }
     }
     let listener = UnixListener::bind(&path).map_err(|_| "google_socket_unavailable")?;
+    let m = fs::symlink_metadata(&path).map_err(|_| "google_socket_unavailable")?;
+    let guard = SocketGuard {
+        path: path.clone(),
+        dev: m.dev(),
+        ino: m.ino(),
+    };
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
         .map_err(|_| "google_socket_unavailable")?;
     if b.peer_uid != unsafe { libc::geteuid() } {
         std::os::unix::fs::chown(&path, Some(b.peer_uid), None)
             .map_err(|_| "google_socket_uid_unavailable")?;
     }
-    let m = fs::symlink_metadata(&path).map_err(|_| "google_socket_unavailable")?;
-    Ok((
-        listener,
-        SocketGuard {
-            path,
-            dev: m.dev(),
-            ino: m.ino(),
-        },
-    ))
+    Ok((listener, guard))
 }
 pub async fn run(options: &Options) -> Result<(), String> {
     let stop = CancellationToken::new();

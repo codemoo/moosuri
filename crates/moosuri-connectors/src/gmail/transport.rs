@@ -21,6 +21,7 @@ pub(crate) enum Body<'a> {
 }
 #[derive(Clone)]
 pub(crate) struct Transport {
+    token_proxy: Option<SocketAddr>,
     #[cfg(any(test, feature = "test-fixtures"))]
     test_base: Option<String>,
     #[cfg(any(test, feature = "test-fixtures"))]
@@ -29,15 +30,26 @@ pub(crate) struct Transport {
 impl Transport {
     pub(crate) fn google() -> Self {
         Self {
+            token_proxy: None,
             #[cfg(any(test, feature = "test-fixtures"))]
             test_base: None,
             #[cfg(any(test, feature = "test-fixtures"))]
             test_limit: None,
         }
     }
+    pub(crate) fn google_oauth_proxy(address: SocketAddr) -> Result<Self, GmailError> {
+        if !address.ip().is_loopback() || address.port() == 0 {
+            return Err(GmailError::DestinationDenied);
+        }
+        Ok(Self {
+            token_proxy: Some(address),
+            ..Self::google()
+        })
+    }
     #[cfg(any(test, feature = "test-fixtures"))]
     pub(crate) fn fixture(base: String, limit: usize) -> Self {
         Self {
+            token_proxy: None,
             test_base: Some(base),
             test_limit: Some(limit),
         }
@@ -88,6 +100,25 @@ impl Transport {
         {
             return Err(GmailError::DestinationDenied);
         }
+        let builder = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .connect_timeout(Duration::from_secs(5))
+            .read_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(25))
+            .pool_max_idle_per_host(0);
+        if let Some(address) = self.token_proxy {
+            if url.as_str() != "https://oauth2.googleapis.com/token" {
+                return Err(GmailError::DestinationDenied);
+            }
+            let proxy = reqwest::Proxy::https(format!("http://{address}"))
+                .map_err(|_| GmailError::DestinationDenied)?;
+            return builder
+                .proxy(proxy)
+                .build()
+                .map_err(|_| GmailError::Transport);
+        }
         let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
             .await
             .map_err(|_| GmailError::Transport)?
@@ -101,14 +132,7 @@ impl Transport {
         {
             return Err(GmailError::DestinationDenied);
         }
-        Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .connect_timeout(Duration::from_secs(5))
-            .read_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(25))
-            .pool_max_idle_per_host(0)
+        builder
             .resolve_to_addrs(host, &addresses)
             .build()
             .map_err(|_| GmailError::Transport)

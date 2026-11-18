@@ -22,6 +22,7 @@ mod backup_snapshots;
 mod calls;
 mod engine_login;
 mod gws_inbox;
+mod gws_relay;
 mod import_private;
 mod installation;
 mod installation_admin;
@@ -88,6 +89,8 @@ enum Command {
     EngineChatgptInspect(engine_login::ChatGptInspectOptions),
     /// Make one text call using the member broker socket and private standard input.
     RuntimeModelCall(runtime_model::ClientOptions),
+    /// Forward opaque TLS from an allocated member to allowed Google endpoints.
+    RuntimeGwsRelay(gws_relay::Options),
     /// Serve fixed read-only Google OAuth/Gmail egress to isolated members.
     RuntimeGoogle(runtime_google::Options),
     /// Read public Google broker configuration or build a consent URL.
@@ -430,6 +433,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::RuntimeGwsRelay(options) = &cli.command {
+        return gws_relay::run(options).await;
+    }
     if let Command::RuntimeGoogle(options) = &cli.command {
         return runtime_google::run(options).await;
     }
@@ -616,7 +622,8 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::RuntimeGoogle(_)
+        Command::RuntimeGwsRelay(_)
+        | Command::RuntimeGoogle(_)
         | Command::RuntimeGoogleCall(_)
         | Command::EngineLoginWorker(_)
         | Command::ClaudeEngineLogin(_)

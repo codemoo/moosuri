@@ -1,4 +1,5 @@
 //! Private member Google adapter. Browser DTOs never carry broker grants.
+mod local_gws;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -6,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+pub(crate) use local_gws::registered_client;
 use moosuri_connectors::gmail::{READ_SCOPE, SecretString};
 use moosuri_store::{Store, StoreError, UserContext, personal_volume::VolumeOwner};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -220,6 +222,13 @@ pub fn public_response(
 }
 
 struct Failure(StatusCode, &'static str);
+fn configuration_failure(code: &'static str) -> Failure {
+    if code == "google_setup_required" {
+        Failure(StatusCode::NOT_FOUND, code)
+    } else {
+        Failure(StatusCode::SERVICE_UNAVAILABLE, "google_unavailable")
+    }
+}
 impl From<StoreError> for Failure {
     fn from(error: StoreError) -> Self {
         match error {
@@ -257,11 +266,21 @@ fn response(status: StatusCode, bytes: Vec<u8>) -> Response {
 struct Google {
     store: Store,
     owner: VolumeOwner,
-    socket: PathBuf,
-    broker_uid: u32,
+    backend: Backend,
     serial: Arc<tokio::sync::Mutex<()>>,
+}
+#[derive(Clone)]
+enum Backend {
+    Broker {
+        socket: PathBuf,
+        uid: u32,
+    },
+    Local {
+        config: PathBuf,
+        proxy: Arc<crate::gws_relay::MemberProxy>,
+    },
     #[cfg(test)]
-    transport: Option<TestTransport>,
+    Fixture(TestTransport),
 }
 #[cfg(test)]
 pub(crate) type TestTransport = Arc<
@@ -345,7 +364,7 @@ struct BrokerRequest<'a> {
     owner: Owner,
     generation: u64,
     app_revision: Option<Uuid>,
-    operation: Operation<'a>,
+    operation: &'a Operation<'a>,
 }
 impl Google {
     async fn user(&self, headers: &HeaderMap) -> Result<UserContext, Failure> {
@@ -361,7 +380,7 @@ impl Google {
         revision: Option<Uuid>,
         operation: Operation<'_>,
     ) -> Result<Zeroizing<Vec<u8>>, Failure> {
-        let request = Zeroizing::new(
+        let broker_request = |operation| {
             serde_json::to_vec(&BrokerRequest {
                 v: 1,
                 request_id: id,
@@ -374,19 +393,30 @@ impl Google {
                 app_revision: revision,
                 operation,
             })
-            .map_err(|_| Failure(StatusCode::SERVICE_UNAVAILABLE, "unavailable"))?,
-        );
-        #[cfg(test)]
-        let reply = if let Some(call) = &self.transport {
-            call(request.to_vec()).await
-        } else {
-            crate::runtime_google::personal_call(&self.socket, self.broker_uid, &request).await
+            .map(Zeroizing::new)
+            .map_err(|_| Failure(StatusCode::SERVICE_UNAVAILABLE, "unavailable"))
         };
-        #[cfg(not(test))]
-        let reply =
-            crate::runtime_google::personal_call(&self.socket, self.broker_uid, &request).await;
-        let reply =
-            reply.map_err(|_| Failure(StatusCode::SERVICE_UNAVAILABLE, "google_unavailable"))?;
+        let unavailable = |_| Failure(StatusCode::SERVICE_UNAVAILABLE, "google_unavailable");
+        let reply = match &self.backend {
+            Backend::Local { config, proxy } => {
+                let local = local_gws::LocalGws::load(
+                    config,
+                    std::path::Path::new("/usr/local/bin/gws"),
+                    proxy.address(),
+                )
+                .map_err(configuration_failure)?;
+                local.raw(self.owner, id, revision, operation).await?
+            }
+            Backend::Broker { socket, uid } => {
+                crate::runtime_google::personal_call(socket, *uid, &broker_request(&operation)?)
+                    .await
+                    .map_err(unavailable)?
+            }
+            #[cfg(test)]
+            Backend::Fixture(call) => call(broker_request(&operation)?.to_vec())
+                .await
+                .map_err(unavailable)?,
+        };
         let carrier: BrokerReply<serde::de::IgnoredAny> = decode(&reply)
             .map_err(|_| Failure(StatusCode::SERVICE_UNAVAILABLE, "google_unavailable"))?;
         if carrier.v != 1
@@ -487,11 +517,27 @@ pub fn routes(store: Store, owner: VolumeOwner, socket: PathBuf, broker_uid: u32
     router(Google {
         store,
         owner,
-        socket,
-        broker_uid,
+        backend: Backend::Broker {
+            socket,
+            uid: broker_uid,
+        },
         serial: Default::default(),
-        #[cfg(test)]
-        transport: None,
+    })
+}
+pub fn local_routes(
+    store: Store,
+    owner: VolumeOwner,
+    config: PathBuf,
+    proxy: crate::gws_relay::MemberProxy,
+) -> Router {
+    router(Google {
+        store,
+        owner,
+        backend: Backend::Local {
+            config,
+            proxy: Arc::new(proxy),
+        },
+        serial: Default::default(),
     })
 }
 #[cfg(test)]
@@ -503,10 +549,8 @@ pub(crate) fn routes_with_test_transport(
     router(Google {
         store,
         owner,
-        socket: PathBuf::from(crate::runtime_google::PERSONAL_SOCKET),
-        broker_uid: unsafe { libc::geteuid() },
+        backend: Backend::Fixture(transport),
         serial: Default::default(),
-        transport: Some(transport),
     })
 }
 /// Deterministic private broker fixture for gateway/session acceptance only.
@@ -539,7 +583,14 @@ fn browser<T: Serialize>(path: &str, value: &T) -> Result<Response, Failure> {
 }
 async fn status(State(g): State<Google>, headers: HeaderMap) -> Result<Response, Failure> {
     let user = g.user(&headers).await?;
-    let status = g.store.member_google_status_local(&user, g.owner).await?;
+    let status = if let Backend::Local { config, .. } = &g.backend {
+        let (revision, _, _) = registered_client(config).map_err(configuration_failure)?;
+        g.store
+            .member_google_status(&user, g.owner, revision)
+            .await?
+    } else {
+        g.store.member_google_status_local(&user, g.owner).await?
+    };
     browser(
         BASE,
         &Status {
@@ -1140,6 +1191,37 @@ mod tests {
         let v = value(reply).await;
         assert_eq!(v["continuation"], *read);
         v
+    }
+    #[tokio::test]
+    async fn unregistered_member_can_open_chat_and_sees_setup_status_only_after_login() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("member");
+        let (store, owner, token) = member(&root).await;
+        let config = owner
+            .verified_member_directory(&root.canonicalize().unwrap())
+            .unwrap()
+            .join(moosuri_store::personal_volume::GWS_DIRECTORY)
+            .join("gws-client.json");
+        let proxy = crate::gws_relay::start_member("/unused-fixture.sock".into(), 0)
+            .await
+            .unwrap();
+        let app = local_routes(store.clone(), owner, config, proxy);
+        let user = store.authenticate(token.clone()).await.unwrap();
+        assert!(
+            store
+                .create_thread(&user, "First chat".into())
+                .await
+                .is_ok()
+        );
+        let result = request(&app, owner, &token, BASE, "GET", json!({})).await;
+        assert_eq!(result.status(), StatusCode::NOT_FOUND);
+        assert_eq!(value(result).await["code"], "google_setup_required");
+        assert_eq!(
+            request(&app, owner, "other-session", BASE, "GET", json!({}))
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
     }
     #[tokio::test]
     async fn thread_read_is_encrypted_durable_idempotent_and_outside_model_history() {

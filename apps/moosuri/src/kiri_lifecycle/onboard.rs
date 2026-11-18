@@ -29,6 +29,9 @@ pub struct Options {
     pub enable_text_preview: bool,
     #[arg(long)]
     pub enable_google_readonly: bool,
+    /// Enable member-local GWS using the installation's Google egress relay.
+    #[arg(long, conflicts_with = "enable_google_readonly")]
+    pub enable_local_gws: bool,
     #[arg(long)]
     pub password_stdin: bool,
 }
@@ -175,6 +178,7 @@ pub async fn run(o: &Options) -> Result<(), String> {
         uid: o.uid,
         enable_text_preview: o.enable_text_preview,
         enable_google_readonly: o.enable_google_readonly,
+        enable_local_gws: o.enable_local_gws,
     };
     if !matching(&config, &m)? {
         config.members.push(m.clone());

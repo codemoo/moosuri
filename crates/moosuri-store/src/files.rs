@@ -50,6 +50,7 @@ pub(crate) fn unprepared_dir(path: &Path) -> Result<PathBuf> {
     }
     // Never turn an unrelated home, source tree or system directory into private app data.
     let unfinished_names = [
+        crate::personal_volume::GWS_DIRECTORY,
         "provider-secrets.key",
         crate::push::KEY_FILE,
         "knowledge-invalidations.journal",

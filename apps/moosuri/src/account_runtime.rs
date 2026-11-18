@@ -1,4 +1,5 @@
 //! Local installation operator interface for stable provisioning identities.
+mod gws_setup;
 use clap::{Args, Subcommand};
 use moosuri_store::runtime_registry;
 use std::path::PathBuf;
@@ -122,6 +123,11 @@ enum PersonalOperation {
     },
     /// Check the owner, generation and persisted account before accepting traffic.
     Verify,
+    /// Register a Google web OAuth client inside this member. Read its downloaded JSON from stdin.
+    ConfigureGws {
+        #[arg(long)]
+        redirect_uri: String,
+    },
     /// Accept private member login, password change, session and logout over Unix HTTP.
     Serve {
         #[arg(long)]
@@ -132,6 +138,9 @@ enum PersonalOperation {
         /// Mount the member-scoped Google egress socket at /google/google.sock.
         #[arg(long)]
         google_readonly: bool,
+        /// Run Google OAuth and the installed gws command inside this member.
+        #[arg(long, conflicts_with = "google_readonly")]
+        local_gws: bool,
     },
 }
 pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
@@ -153,10 +162,19 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
             println!("{}", serde_json::json!({"initialized":initialized}));
             return Ok(());
         }
+        PersonalOperation::ConfigureGws { redirect_uri } => {
+            let directory = owner
+                .verified_member_directory(&options.root)
+                .map_err(|_| "invalid_member_volume")?;
+            gws_setup::configure(&directory, redirect_uri, std::io::stdin().lock())?;
+            println!("ok");
+            return Ok(());
+        }
         PersonalOperation::Serve {
             socket,
             text_preview_config,
             google_readonly,
+            local_gws,
         } => {
             let store = owner
                 .open_verified(&options.root)
@@ -166,7 +184,30 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
                 .as_ref()
                 .map(|p| read_preview(p))
                 .transpose()?;
-            return serve_member(socket, store, owner, preview, *google_readonly).await;
+            let extensions = if *local_gws {
+                let directory = owner
+                    .verified_member_directory(&options.root)
+                    .map_err(|_| "invalid_member_volume")?;
+                let proxy = crate::gws_relay::start_member("/google/google.sock".into(), 0).await?;
+                crate::personal_google::local_routes(
+                    store.clone(),
+                    owner,
+                    directory
+                        .join(moosuri_store::personal_volume::GWS_DIRECTORY)
+                        .join("gws-client.json"),
+                    proxy,
+                )
+            } else if *google_readonly {
+                crate::personal_google::routes(
+                    store.clone(),
+                    owner,
+                    "/google/google.sock".into(),
+                    0,
+                )
+            } else {
+                axum::Router::new()
+            };
+            return serve_member(socket, store, owner, preview, extensions).await;
         }
         PersonalOperation::Initialize {
             name,
@@ -206,7 +247,7 @@ async fn serve_member(
     store: moosuri_store::Store,
     owner: moosuri_store::personal_volume::VolumeOwner,
     preview: Option<moosuri_server::personal_text::Options>,
-    google_readonly: bool,
+    extensions: axum::Router,
 ) -> Result<(), String> {
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use tokio::net::UnixListener;
@@ -251,11 +292,6 @@ async fn serve_member(
             ],
         )
     });
-    let extensions = if google_readonly {
-        crate::personal_google::routes(store.clone(), owner, "/google/google.sock".into(), 0)
-    } else {
-        axum::Router::new()
-    };
     axum::serve(
         listener,
         moosuri_server::personal_service_router(

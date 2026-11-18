@@ -147,6 +147,13 @@ pub enum GmailError {
 pub struct MailboxProfile {
     pub email_address: String,
 }
+impl MailboxProfile {
+    pub fn from_gmail_json(bytes: &[u8]) -> Result<Self, GmailError> {
+        let profile: Self = decode(bytes)?;
+        mime::validate_address(&profile.email_address).map_err(|_| GmailError::InvalidResponse)?;
+        Ok(profile)
+    }
+}
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageRef {
@@ -195,6 +202,13 @@ impl GmailClient {
         Self {
             transport: transport::Transport::google(),
         }
+    }
+    /// Route only the fixed Google OAuth token endpoint via the member-local
+    /// HTTPS CONNECT proxy. Gmail requests are denied in this mode.
+    pub fn google_oauth_proxy(address: std::net::SocketAddr) -> Result<Self, GmailError> {
+        Ok(Self {
+            transport: transport::Transport::google_oauth_proxy(address)?,
+        })
     }
     /// Synthetic cross-crate acceptance only. Not part of the default build.
     #[cfg(feature = "test-fixtures")]
@@ -355,9 +369,7 @@ impl GmailClient {
         let bytes = self
             .get("profile?fields=emailAddress", token, cancel)
             .await?;
-        let p: MailboxProfile = decode(&bytes)?;
-        mime::validate_address(&p.email_address).map_err(|_| GmailError::InvalidResponse)?;
-        Ok(p)
+        MailboxProfile::from_gmail_json(&bytes)
     }
     pub async fn list_messages(
         &self,

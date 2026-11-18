@@ -48,7 +48,7 @@ fn runtime_inner(
     // Create missing directories without chmod of any existing root. Even an
     // initially absent/empty path needs a fresh admission under its writer lock.
     let root = crate::files::unprepared_dir(root).map_err(|_| Error::InvalidInput)?;
-    let root = runtime_directory(&root)?;
+    let root = runtime_directory(&root, personal.is_some())?;
     let lock_path = root.join("writer.lock");
     let lock = match fs::symlink_metadata(&lock_path) {
         Ok(_) => inspection_file(&lock_path, 0)?,
@@ -160,7 +160,7 @@ fn allow_empty_store(
     Ok(())
 }
 
-fn runtime_directory(path: &Path) -> Result<PathBuf> {
+fn runtime_directory(path: &Path, personal: bool) -> Result<PathBuf> {
     use std::path::Component;
     let path = if path.is_absolute() {
         path.to_path_buf()
@@ -196,6 +196,16 @@ fn runtime_directory(path: &Path) -> Result<PathBuf> {
     ];
     for entry in fs::read_dir(&current).map_err(|_| Error::Unavailable)? {
         let entry = entry.map_err(|_| Error::Unavailable)?;
+        if personal && entry.file_name() == crate::personal_volume::GWS_DIRECTORY {
+            let meta = fs::symlink_metadata(entry.path()).map_err(|_| Error::InvalidInput)?;
+            if !meta.is_dir()
+                || meta.uid() != unsafe { libc::geteuid() }
+                || meta.mode() & 0o077 != 0
+            {
+                return Err(Error::InvalidInput);
+            }
+            continue;
+        }
         if !NAMES.iter().any(|n| entry.file_name() == *n) {
             return Err(Error::InvalidInput);
         }

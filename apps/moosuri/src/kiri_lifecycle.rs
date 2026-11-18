@@ -72,6 +72,8 @@ struct Member {
     enable_text_preview: bool,
     #[serde(default)]
     enable_google_readonly: bool,
+    #[serde(default)]
+    enable_local_gws: bool,
 }
 fn engine_socket() -> PathBuf {
     "/run/kiri/docker.sock".into()
@@ -98,11 +100,12 @@ impl Config {
             ipc_root: self.ipc_root.clone(),
             allocations_root: self.allocations_root.clone(),
             model_sockets_root: self.model_sockets_root.clone(),
-            google_sockets_root: if m.enable_google_readonly {
+            google_sockets_root: if m.enable_google_readonly || m.enable_local_gws {
                 self.google_sockets_root.clone()
             } else {
                 None
             },
+            enable_local_gws: m.enable_local_gws,
             enable_text_preview: m.enable_text_preview,
             uid: m.uid,
             image: self.image.clone(),
@@ -146,6 +149,7 @@ impl Config {
                 || !emails.insert(m.email.to_ascii_lowercase())
                 || (m.enable_text_preview && self.model_sockets_root.is_none())
                 || (m.enable_google_readonly && self.google_sockets_root.is_none())
+                || (m.enable_google_readonly && m.enable_local_gws)
             {
                 return Err("kiri_lifecycle_invalid_or_duplicate_member".into());
             }
@@ -450,6 +454,7 @@ mod tests {
                 uid: 10001,
                 enable_text_preview: false,
                 enable_google_readonly: false,
+                enable_local_gws: false,
             },
             Member {
                 account_id: Uuid::new_v4(),
@@ -458,6 +463,7 @@ mod tests {
                 uid: 10001,
                 enable_text_preview: false,
                 enable_google_readonly: false,
+                enable_local_gws: false,
             },
         ];
         assert!(c.validate().is_err());
@@ -476,6 +482,27 @@ mod tests {
                 .is_err()
         );
     }
+    #[test]
+    fn local_gws_is_member_scoped_and_requires_an_egress_root() {
+        let mut c = configuration(Path::new("/srv/registry"));
+        c.members = serde_json::from_value(json!([
+            {"account_id":Uuid::new_v4(),"generation":1,"email":"a@example.invalid","uid":10001,"enable_local_gws":true},
+            {"account_id":Uuid::new_v4(),"generation":1,"email":"b@example.invalid","uid":10002}
+        ]))
+        .unwrap();
+        assert!(c.validate().is_err());
+        let relay = PathBuf::from("/srv/google-relay");
+        c.google_sockets_root = Some(relay.clone());
+        assert!(c.validate().is_ok());
+        let enabled = c.provision(&c.members[0]);
+        assert!(enabled.enable_local_gws);
+        assert_eq!(enabled.google_sockets_root, Some(relay));
+        let disabled = c.provision(&c.members[1]);
+        assert!(!disabled.enable_local_gws);
+        assert_eq!(disabled.google_sockets_root, None);
+        c.members[0].enable_google_readonly = true;
+        assert!(c.validate().is_err());
+    }
     #[tokio::test]
     async fn reserved_fenced_or_stale_generation_cannot_be_autoactivated() {
         let temp = tempfile::tempdir().unwrap();
@@ -491,6 +518,7 @@ mod tests {
             uid: 10001,
             enable_text_preview: false,
             enable_google_readonly: false,
+            enable_local_gws: false,
         });
         let states = cycle(&c, &CancellationToken::new()).await;
         assert_eq!(states[0].state, "not_active");

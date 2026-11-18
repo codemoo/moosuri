@@ -2,37 +2,40 @@
 
 설치 관리자가 Google Cloud에서 Gmail API를 켜고 웹 애플리케이션 유형의 OAuth 클라이언트를 한 번 만든다. 리디렉션 URI는 개인 게이트웨이의 HTTPS origin 뒤에 `/api/v1/mail/oauth/callback`을 붙인 값이다. Google 앱이 테스트 모드면 사용할 Google 계정을 테스트 사용자에 등록한다.
 
-## Linux 설치자 설정
+## 회원별 GWS 설정
 
-기존 [개인 서비스와 HTTPS 게이트웨이](README.md)를 준비한다. 다음 항목은 호스트의 Google 브로커가 사용한다.
+웹 OAuth 앱은 설치자가 한 번 준비해 여러 회원에게 제공할 수 있다. 각 회원의 Google 계정 선택, 동의 코드 교환, 토큰 갱신과 Gmail 조회는 그 회원의 컨테이너에서 처리한다. 회원이 Google Cloud 콘솔을 열거나 로컬 컴퓨터에서 로그인할 필요가 없다.
 
-- Google에서 내려받은 웹 클라이언트 JSON, 브로커 구성 JSON, 서명용 난수 키를 관리자 전용 디렉터리에 보관한다. 파일은 브로커 소유, 모드 0600으로 둔다. 키 파일에는 최초 생성한 32바이트 난수를 보존한다. 키를 교체하면 기존 영수증을 사용할 수 없어 회원이 다시 연결해야 한다.
-- 설치 레지스트리와 Google 소켓 루트는 각각 브로커가 접근할 수 있는 정규 절대 경로를 사용한다. 이 프로필의 브로커는 호스트 UID 0으로 실행한다. 소켓 루트는 0700으로 준비한다.
-- 아래 구성에서 웹 클라이언트 경로와 공개 URI, 앱 개정 UUID, 회원의 실제 예약 값과 전용 Linux UID를 입력한다. 회원마다 서로 다른 UID를 사용한다. Google 클라이언트나 콜백을 바꿀 때는 새 앱 개정 UUID를 발급한다.
+1. [Linux 개인 런타임](README.md)을 준비한다. 저장소 루트에서 `docker build -f deployment/kiri/Dockerfile -t moosuri-kiri-member .`로 Linux 이미지를 만든다. `docker save moosuri-kiri-member -o member.tar`와 `DOCKER_API_VERSION=1.47 docker --host unix:///run/kiri/docker.sock load -i member.tar`로 Kiri에 적재한 뒤 Kiri에서 확인한 이미지 ID(`sha256:…`)를 프로비저닝에 쓴다. 이미지에는 CA 인증서와 배포 파일의 SHA-256을 확인한 Google Workspace CLI 0.22.0과 고정된 Gmail API 정의 파일이 들어간다.
+2. 설치 레지스트리에서 각 회원의 예약 값과 전용 Linux UID를 확인한다. 릴레이 구성 파일에 다음처럼 등록한다. 레지스트리와 전용 소켓 루트는 별개의 root 소유 0700 디렉터리, 구성은 root 소유 0600 파일로 준비한다. 상위 디렉터리도 root가 관리해야 한다.
 
 ```json
-{
-  "app_revision": "11111111-1111-4111-8111-111111111111",
-  "client_file": "/etc/moosuri/private/google-web-client.json",
-  "redirect_uri": "https://assistant.example.test/api/v1/mail/oauth/callback",
-  "bindings": [{
-    "account_id": "22222222-2222-4222-8222-222222222222",
-    "tenant_id": "33333333-3333-4333-8333-333333333333",
-    "volume_id": "44444444-4444-4444-8444-444444444444",
-    "generation": 1,
-    "peer_uid": 10001
-  }]
-}
+{"bindings":[{
+  "account_id":"22222222-2222-4222-8222-222222222222",
+  "tenant_id":"33333333-3333-4333-8333-333333333333",
+  "volume_id":"44444444-4444-4444-8444-444444444444",
+  "generation":1, "peer_uid":10001
+}]}
 ```
+
+3. 호스트에서 릴레이를 시작한다. 서비스는 회원 소켓에서 `gmail.googleapis.com`과 `oauth2.googleapis.com`의 443 포트로 TLS 바이트를 중계한다. 회원별 로그인 정보는 개인 컨테이너와 Google 사이의 TLS 연결 안에서 전달된다. 게이트웨이의 Google 콜백에는 일회성 인증 코드가 들어오므로 HTTPS 프록시의 URI 로깅을 끈다. 제공하는 nginx 구성은 접근 로그를 끈다.
 
 ```sh
-moosuri runtime-google \
-  --registry "$REGISTRY" --socket-dir "$GOOGLE_SOCKETS" \
-  --config /etc/moosuri/private/google.json \
-  --capability-key /etc/moosuri/private/google-receipts.key
+moosuri runtime-gws-relay --registry "$REGISTRY" --socket-dir "$GOOGLE_SOCKETS" \
+  --config /etc/moosuri/private/gws-bindings.json
 ```
 
-브로커가 회원별 소켓을 만든 뒤 개인 컨테이너 프로비저닝에 `--google-sockets-root "$GOOGLE_SOCKETS"`를 지정한다. 프로비저너가 해당 회원의 디렉터리 하나를 `/google:ro`로 붙이고 개인 서비스에 `--google-readonly`를 전달한다. 수명주기 구성에는 최상위 `google_sockets_root`와 해당 회원의 `enable_google_readonly`를 지정한다. 이미 실행 중인 컨테이너와 요청한 마운트가 다르면 재조정이 중단된다. 해당 회원의 프로필 교체 시점을 별도로 잡는다. Google 콜백의 쿼리에는 일시적인 인증 코드가 들어가므로 HTTPS 프록시의 요청 URI 로깅도 끈다. 제공하는 nginx 설정은 접근 로그를 끈다.
+4. 초대 또는 프로비저닝에 `--enable-local-gws --google-sockets-root "$GOOGLE_SOCKETS"`를 지정한다. 수명주기 설정에는 최상위 `google_sockets_root`와 각 회원의 `enable_local_gws: true`를 저장한다. 컨테이너는 전용 소켓을 `/google:ro`로 마운트하고 네트워크 격리를 유지한다. 기존 컨테이너 프로필을 바꿀 때는 해당 회원의 볼륨을 보존한 채 프로필을 교체한다.
+5. 각 회원 컨테이너에 해당 웹 클라이언트를 한 번 등록한다. 아래 환경 변수에는 그 회원의 예약값과 공개 HTTPS origin을 넣는다. Google에서 받은 JSON 파일은 비공개 표준 입력으로 전달한다.
+
+```sh
+docker --host unix:///run/kiri/docker.sock exec -i --user "$MEMBER_UID:$MEMBER_UID" \
+  "moosuri-member-$ACCOUNT" /usr/local/bin/moosuri personal-volume --root /data \
+  --account "$ACCOUNT" --tenant "$TENANT" --volume "$VOLUME" --generation "$GENERATION" \
+  configure-gws --redirect-uri "$PUBLIC_ORIGIN/api/v1/mail/oauth/callback" < "$WEB_CLIENT_FILE"
+```
+
+같은 클라이언트를 다시 등록하면 기존 연결을 유지한다. ID·secret·콜백을 바꾸면 해당 회원만 다시 동의해야 한다. `gws auth login`의 데스크톱 루프백 대신 배포된 HTTPS 콜백과 PKCE를 사용한다. 개인 볼륨 전체를 재시작하면 등록과 동의가 유지된다. DB만 복구해 등록 파일이 빠진 경우에는 같은 회원에게 웹 클라이언트를 등록하고 다시 동의한다. 조회 시 컨테이너의 무수리가 현재 액세스 토큰을 짧게 실행하는 `gws` 프로세스에 전달한다. 기존 `--google-readonly` 프로필은 이전 호스트 브로커를 쓰므로 새 프로필과 서로 다른 소켓 루트를 사용한다.
 
 ## 회원이 보는 흐름
 

@@ -62,4 +62,4 @@ sudo /usr/local/bin/moosuri kiri-onboard --experimental \
 
 명령은 웹 초대에서 이름·이메일을 읽고, 해당 회원의 볼륨과 IPC를 마운트한 뒤 재부팅 복구 목록에 등록한다. 터미널에서 요청할 때 임시 비밀번호를 입력한다. `ready`는 지정한 회원 프로세스의 소켓으로 준비 상태를 확인하고 라우팅을 활성화했다는 뜻이다. 중단되면 같은 요청 번호·UID·설정으로 재실행한다. 처음 설정한 비밀번호가 이미 저장됐으면 다시 입력할 필요가 없다.
 
-설치에서 회원의 모델·Google 브로커 바인딩까지 준비했다면 최초 실행에 각각 `--enable-text-preview`, `--enable-google-readonly`를 지정하고 재시도에도 같은 값을 쓴다. 직접 준비한 마운트를 계속 사용하는 설치에는 [개별 초대 명령](../../docs/kiri-invite.md)이 있다.
+설치에서 회원의 모델 브로커와 [회원별 GWS 릴레이](google.md) 바인딩까지 준비했다면 최초 실행에 각각 `--enable-text-preview`, `--enable-local-gws`를 지정하고 재시도에도 같은 값을 쓴다. 직접 준비한 마운트를 계속 사용하는 설치에는 [개별 초대 명령](../../docs/kiri-invite.md)이 있다.

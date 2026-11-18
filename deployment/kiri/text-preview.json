@@ -1,0 +1,5 @@
+{
+  "socket": "/model/model.sock",
+  "broker_uid": 0,
+  "max_output_tokens": 256
+}

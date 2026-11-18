@@ -49,6 +49,11 @@ The assistant SHALL support personal Google sign-in, mail lookup, and scheduled 
 - **WHEN** a signed-in member grants Google access from a pending latest-mail request
 - **THEN** the same member's runtime stores the grant and resumes the eligible read once while the member's computer is off
 
+#### Scenario: Register GWS independently for two members
+- **WHEN** two allocated members connect different Google accounts to their respective runtimes
+- **THEN** each member runtime conducts its own OAuth exchange and refresh, and invokes the local GWS executable for the selected mailbox
+- **AND** the installation relay forwards TLS to approved Google destinations using the active allocation and kernel peer identity without receiving OAuth tokens as application data
+
 ### Requirement: Fenced migration and recovery
 The installation SHALL move each account with owner-specific evidence, forward-only handling of uncertain external effects, and a verified recovery procedure.
 

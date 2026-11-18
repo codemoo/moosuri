@@ -15,6 +15,12 @@ impl GmailClient {
         cancel: &CancellationToken,
     ) -> Result<InboxMetadata, GmailError> {
         validate_id(id)?;
+        let bytes = self.get(&format!("messages/{id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&fields=id,labelIds,internalDate,payload(headers)"), token, cancel).await?;
+        InboxMetadata::from_gmail_json(id, &bytes)
+    }
+}
+impl InboxMetadata {
+    pub fn from_gmail_json(id: &str, bytes: &[u8]) -> Result<Self, GmailError> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Wire {
@@ -33,13 +39,13 @@ impl GmailClient {
             name: String,
             value: String,
         }
-        let bytes = self.get(&format!("messages/{id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&fields=id,labelIds,internalDate,payload(headers)"), token, cancel).await?;
-        let wire: Wire = decode(&bytes)?;
+        let wire: Wire = decode(bytes)?;
         let received_at_ms = wire
             .internal_date
             .parse::<i64>()
             .map_err(|_| GmailError::InvalidResponse)?;
         if wire.id != id
+            || validate_id(id).is_err()
             || received_at_ms < 0
             || wire.label_ids.len() > 256
             || !wire.label_ids.iter().any(|v| v == "INBOX")
@@ -65,7 +71,7 @@ impl GmailClient {
                 .take(512)
                 .collect())
         };
-        Ok(InboxMetadata {
+        Ok(Self {
             subject: header("subject")?,
             from: header("from")?,
             date: header("date")?,

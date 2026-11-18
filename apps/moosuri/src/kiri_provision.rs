@@ -47,9 +47,12 @@ pub struct Options {
     /// Optional root-owned private broker parent; only the registry account child is mounted.
     #[arg(long)]
     pub model_sockets_root: Option<PathBuf>,
-    /// Optional dedicated Google broker parent; mount only this owner’s socket directory.
+    /// Mount this owner's socket directory from the dedicated Google broker or relay root.
     #[arg(long)]
     pub google_sockets_root: Option<PathBuf>,
+    /// Use GWS inside the member runtime and the mounted socket for Google egress.
+    #[arg(long, requires = "google_sockets_root")]
+    pub enable_local_gws: bool,
     /// Enable the image-pinned member text preview on its read-only broker mount.
     #[arg(long, requires = "model_sockets_root")]
     pub enable_text_preview: bool,
@@ -89,6 +92,7 @@ struct Expected {
     scratch: PathBuf,
     model: Option<PathBuf>,
     google: Option<PathBuf>,
+    local_gws: bool,
     text_preview: bool,
     memory: u64,
     nano_cpus: u64,
@@ -124,7 +128,9 @@ impl Expected {
                 "/etc/moosuri/text-preview.json".to_owned(),
             ]);
         }
-        if self.google.is_some() {
+        if self.local_gws {
+            command.push("--local-gws".into());
+        } else if self.google.is_some() {
             command.push("--google-readonly".into());
         }
         json!(command)
@@ -300,6 +306,7 @@ fn expected_member(args: &Options, initialized: bool) -> Result<(Expected, Engin
         scratch,
         google,
         model,
+        local_gws: args.enable_local_gws,
         text_preview: args.enable_text_preview,
         memory: args.memory_bytes,
         nano_cpus: args.nano_cpus,
@@ -398,6 +405,9 @@ fn validate_member_data(
 }
 
 pub(crate) fn validate_limits(a: &Options) -> Result<(), String> {
+    if a.enable_local_gws && a.google_sockets_root.is_none() {
+        return Err("kiri_provision_local_gws_requires_google_sockets_root".into());
+    }
     if a.uid < 10000
         || a.uid > 2_000_000_000
         || !config_id(&a.image)
@@ -892,6 +902,7 @@ mod tests {
             scratch: "/srv/synthetic/scratch".into(),
             model: None,
             google: None,
+            local_gws: false,
             text_preview: false,
             memory: 67108864,
             nano_cpus: 500000000,
@@ -934,6 +945,30 @@ mod tests {
         let (_dir, engine, worker) = fake(vec![(200, writable)]);
         assert!(reconcile(&engine, &e, true).is_err());
         worker.join().unwrap();
+    }
+    #[test]
+    fn local_gws_uses_only_the_member_relay_mount_and_its_own_startup_mode() {
+        let mut e = expected();
+        e.google = Some("/srv/google/member".into());
+        let legacy = inspect(&e, false);
+        e.local_gws = true;
+        assert!(verify_inspect(&legacy, &e).is_err());
+        let create = e.create();
+        assert_eq!(
+            create["Cmd"].as_array().unwrap().last().unwrap(),
+            "--local-gws"
+        );
+        assert_eq!(create["HostConfig"]["NetworkMode"], "none");
+        assert_eq!(
+            create["HostConfig"]["Binds"],
+            json!([
+                "/srv/synthetic/data:/data:rw",
+                "/srv/synthetic/ipc:/ipc:rw",
+                "/srv/synthetic/scratch:/tmp:rw",
+                "/srv/google/member:/google:ro"
+            ])
+        );
+        assert!(verify_inspect(&inspect(&e, true), &e).is_ok());
     }
     fn fake(
         responses: Vec<(u16, Value)>,

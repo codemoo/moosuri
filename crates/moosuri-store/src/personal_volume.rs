@@ -2,8 +2,10 @@
 //! supplies these identifiers independently of the volume (never from HTTP).
 use super::*;
 use fs2::FileExt;
-use std::fs;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+use std::{fs, path::PathBuf};
+
+pub const GWS_DIRECTORY: &str = "member-gws";
 
 #[derive(Clone, Copy)]
 pub struct VolumeOwner {
@@ -26,6 +28,36 @@ impl VolumeOwner {
             "{}-{}-{}-g{}",
             self.volume, self.account, self.tenant, self.generation
         ))
+    }
+
+    /// Locate this initialized allocation without taking the running service's writer lock.
+    pub fn verified_member_directory(self, root: &Path) -> Result<PathBuf> {
+        let child = root.join(self.directory()?);
+        for path in [root, child.as_path()] {
+            let meta = fs::symlink_metadata(path).map_err(|_| StoreError::InvalidInput)?;
+            if !meta.is_dir()
+                || meta.uid() != unsafe { libc::geteuid() }
+                || meta.mode() & 0o077 != 0
+                || fs::canonicalize(path).map_err(|_| StoreError::InvalidInput)? != path
+            {
+                return Err(StoreError::InvalidInput);
+            }
+        }
+        let path = child.join("assistant.sqlite");
+        let meta = fs::symlink_metadata(&path).map_err(|_| StoreError::NotFound)?;
+        if !meta.is_file()
+            || meta.uid() != unsafe { libc::geteuid() }
+            || meta.nlink() != 1
+            || meta.mode() & 0o077 != 0
+        {
+            return Err(StoreError::InvalidInput);
+        }
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        self.check_identity(&conn, None)?;
+        Ok(child)
     }
 
     fn open(self, root: &Path, initialize: bool) -> Result<Store> {
@@ -198,6 +230,10 @@ mod tests {
                 Err(StoreError::AlreadyInitialized)
             ));
             let store = owner.open(&root, false).unwrap();
+            assert_eq!(
+                owner.verified_member_directory(&root).unwrap(),
+                root.join(owner.directory().unwrap())
+            );
             let first = store
                 .login(email, "temporary-example".into())
                 .await

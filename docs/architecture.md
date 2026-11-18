@@ -2,6 +2,8 @@
 
 Rust 서버·에이전트·CLI, React/TypeScript 웹, SQLite가 최종 결정이다. 아래 구조는 최종 구현 목표다. 실행 가능한 account/store/server/CLI와 React의 현재 범위는 [개발 안내](development.md)에 둔다. 사용자 지시의 추적은 [requirements](requirements.md), 개별 동작은 [features](features.md), 근거는 [references](references.md)에 둔다.
 
+사용자별 컨테이너로 전환하는 제안은 [Kiri 기반 사용자별 무수리 설계](../openspec/changes/isolate-account-runtime/design.md)에 있다. 현행 dev.30의 단일 DB 구조와 전환 순서를 함께 기록했다.
+
 ## 언어와 배포 경계
 
 | 대상 | 결정 |

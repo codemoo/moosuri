@@ -11,3 +11,7 @@ serde_json.workspace = true
 sha2 = "0.10"
 toml = "0.5.11"
 rusqlite = { version = "0.41", default-features = false, features = ["bundled", "backup"] }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true

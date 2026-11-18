@@ -32,7 +32,7 @@ fn quoted(s: &str) -> String {
 fn scalar(c: &Connection, query: &str) -> Check<i64> {
     sql(c.query_row(query, [], |r| r.get(0)))
 }
-fn load(root: &Path, schema: i64) -> Check<Value> {
+pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
         (81..=83).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
@@ -95,7 +95,7 @@ fn migration_files(root: &Path) -> Check<BTreeMap<i64, PathBuf>> {
     }
     Ok(paths)
 }
-fn replay(root: &Path, manifest: &Value) -> Check<Connection> {
+pub(super) fn replay(root: &Path, manifest: &Value) -> Check<Connection> {
     let schema = manifest["schema"]
         .as_i64()
         .ok_or("invalid manifest schema")?;
@@ -136,7 +136,7 @@ fn replay(root: &Path, manifest: &Value) -> Check<Connection> {
     }
     Ok(c)
 }
-fn schema_tables(c: &Connection) -> Check<(BTreeMap<String, String>, BTreeSet<String>)> {
+pub(super) fn schema_tables(c: &Connection) -> Check<(BTreeMap<String, String>, BTreeSet<String>)> {
     let mut tables = BTreeMap::new();
     let mut shadows = BTreeSet::new();
     let mut stmt = sql(c.prepare("PRAGMA main.table_list"))?;
@@ -164,7 +164,7 @@ fn schema_tables(c: &Connection) -> Check<(BTreeMap<String, String>, BTreeSet<St
     }
     Ok((tables, shadows))
 }
-fn schema_digest(c: &Connection, shadows: &BTreeSet<String>) -> Check<String> {
+pub(super) fn schema_digest(c: &Connection, shadows: &BTreeSet<String>) -> Check<String> {
     let mut raw = String::new();
     let mut stmt = sql(c.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT GLOB 'sqlite_*' ORDER BY name,type"))?;
     let rows = sql(stmt.query_map([], |r| {
@@ -381,7 +381,7 @@ fn check_relationships(c: &Connection, tables: &[Value]) -> Check<usize> {
     )?;
     Ok(checked)
 }
-fn inspect(c: &Connection, manifest: &Value) -> Check<Value> {
+pub(super) fn inspect(c: &Connection, manifest: &Value) -> Check<Value> {
     let shadows = verify_schema(c, manifest)?;
     ensure(
         sql(c.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0)))? == "ok",
@@ -525,7 +525,7 @@ fn snapshot_files(root: &Path, artifacts: &Value) -> Check<Value> {
     )?;
     Ok(json!(present))
 }
-fn open_snapshot(path: &Path) -> Check<Connection> {
+pub(super) fn open_snapshot(path: &Path) -> Check<Connection> {
     // immutable URI prevents SQLite from ever creating SHM/WAL or writing the
     // source. Only an explicitly supplied stable offline snapshot is accepted.
     let path = path

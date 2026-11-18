@@ -48,3 +48,19 @@ The migration SHALL establish an authenticated child backup baseline from a fenc
 #### Scenario: Source-free recovery after an interleaved deletion
 - **WHEN** a migrated account is restored without the original server after both accounts have modified or deleted data
 - **THEN** its receiver verifies the new lineage, deleted state stays deleted, no other member's records appear, and installation-wide spending cannot roll back
+
+
+### Requirement: Explicitly scoped offline extraction
+A partial extraction SHALL name its supported data scope, preserve the exact AccountId and TenantId with intended volume/generation metadata, and identify every excluded classified table. It SHALL NOT produce runnable authentication or claim cutover readiness before authenticated recovery lineage and complete reconciliation exist.
+
+#### Scenario: Extract manual knowledge from a mixed-owner snapshot
+- **WHEN** an operator rehearses the manual-knowledge scope using an explicit stopped synthetic snapshot and owner pair
+- **THEN** the new private SQLite archive contains only that owner's retained knowledge graph, preserves evidence and deletion/temporal barriers, projects no authentication or role authority, rebuilds FTS without copying source shadow pages, and leaves the source unchanged
+
+#### Scenario: Unsupported or ambiguous knowledge provenance
+- **WHEN** the snapshot has an unknown schema, an invalid owner path, unsupported connected/automatic provenance, a foreign embedded evidence reference or deleted plaintext
+- **THEN** extraction fails closed, reports only counts/fingerprints/reasons, preserves any existing destination, and publishes no valid archive
+
+#### Scenario: Inspect the archive without the original source
+- **WHEN** the original synthetic source is unavailable
+- **THEN** verification can reconcile the archive's owner binding, exact retained rows, foreign keys, evidence, deletion state and rebuilt index while explicitly withholding runtime/cutover and authenticated-lineage claims

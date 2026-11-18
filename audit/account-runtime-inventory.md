@@ -71,3 +71,5 @@ Validation on isolated synthetic data (2026-11-19):
 - Schema81, schema82 and schema83 CLI runs passed against pinned public migrations.
   Source-only replay contains 10 bootstrap rows; these are not user data acceptance.
 - Formatting check passed. No production data, credentials or services were used.
+
+[Offline manual-knowledge extraction](account-runtime-extraction.md) preserves one owner’s manual knowledge in an inert archive for synthetic restore rehearsals.

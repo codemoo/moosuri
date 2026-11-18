@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod account_runtime_extract;
 mod account_runtime_inventory;
 mod notice_supplements;
 mod notices;
@@ -403,12 +404,13 @@ fn main() {
                 "rust-notices",
                 "web-notices",
                 "account-runtime-inventory",
+                "account-runtime-extract",
             ]
             .contains(&s.as_str())
         })
     {
         eprintln!(
-            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|account-runtime-inventory [--schema 81|82] [--snapshot DIRECTORY]|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY|component-provenance --bundle DIRECTORY|verify-component-provenance --bundle DIRECTORY>"
+            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|account-runtime-extract --scope manual-knowledge-v1 --snapshot DIRECTORY --output DIRECTORY --account UUID --tenant UUID --volume UUID --generation N|account-runtime-extract --verify DIRECTORY|account-runtime-inventory [--schema 81|82] [--snapshot DIRECTORY]|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY|component-provenance --bundle DIRECTORY|verify-component-provenance --bundle DIRECTORY>"
         );
         std::process::exit(2);
     }
@@ -417,7 +419,9 @@ fn main() {
         .canonicalize()
         .map_err(|e| e.to_string())
         .and_then(|root| {
-            if args[0] == "account-runtime-inventory" {
+            if args[0] == "account-runtime-extract" {
+                account_runtime_extract::run(&root, &args[1..])
+            } else if args[0] == "account-runtime-inventory" {
                 account_runtime_inventory::run(&root, &args[1..])
             } else if args == ["sbom"] {
                 sbom::print(&root)

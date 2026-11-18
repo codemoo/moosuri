@@ -17,9 +17,16 @@ when composer height, viewport size or asynchronous content changes.
 - **THEN** the same visible run remains at the same relative scrollport position.
 
 ### Requirement: Compact and reachable tools
-Idle voice, photo, file and library controls SHALL share a compact wrapping row
-with accessible names. Expanded tools and long navigation SHALL remain scrollable.
+The idle composer SHALL put the attachment trigger, message field, voice
+trigger and send button on one row with accessible names. The attachment trigger
+SHALL disclose photo, file and library controls. Expanded tools and long
+navigation SHALL remain scrollable.
 
 #### Scenario: Long menu and small viewport
 - **WHEN** navigation or recording content exceeds the available height
 - **THEN** its controls remain reachable without expanding the application beyond the viewport.
+
+#### Scenario: Attach a file while drafting
+- **WHEN** the user opens attachment options and picks a file
+- **THEN** the composer shows upload progress or an available preview
+- **AND** the existing draft remains available and text submission is independent of unfinished uploads

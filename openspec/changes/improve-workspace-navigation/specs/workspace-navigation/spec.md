@@ -27,9 +27,12 @@ control no longer exists.
 ### Requirement: Distinct chat-first workspace destinations
 
 The workspace SHALL use Astryx's dark theme for the shell and keep chat as the
-default. The primary navigation SHALL open chat, incoming notices, ideas,
-goals, and the media library. On a narrow viewport the menu, search and
-new-chat entry points SHALL remain visible at the top.
+default. A compact Astryx SideNav rail SHALL expose chat, conversation search,
+incoming notices, ideas, goals, and the media library on wide screens. The
+workspace SHALL open recent conversations, secondary destinations, and account
+settings in an on-demand drawer. On narrow screens the drawer SHALL also
+provide the primary destinations, and menu, search and new-chat entry points
+SHALL remain visible at the top.
 
 #### Scenario: Find an owned conversation
 - **WHEN** the owner opens title search and selects a result
@@ -43,5 +46,10 @@ new-chat entry points SHALL remain visible at the top.
 #### Scenario: Compact screens and consistent app identity
 - **WHEN** the user opens sign-in, conversation search, model settings or the PWA installer
 - **THEN** these surfaces use Moosuri’s shared Astryx dark theme
-- **AND** the app icon represents the same pixel-art attendant in the shell and install surfaces
+- **AND** the shell and install surfaces use the same folded-collar icon
 - **AND** necessary input, status and confirmation text remains available
+
+#### Scenario: Open conversation history from the desktop rail layout
+- **WHEN** the owner opens the workspace drawer and finds a prior conversation
+- **THEN** the drawer closes when that conversation is selected
+- **AND** the main navigation remains compact and the selected conversation retains its draft

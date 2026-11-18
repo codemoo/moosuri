@@ -6,10 +6,12 @@ use serde::Serialize;
 use std::{fs, os::unix::fs::MetadataExt, path::Path, time::Duration};
 use uuid::Uuid;
 
+pub mod admin;
+
 const REGISTRY: &str = "account-runtimes.sqlite";
 const APP_ID: i64 = 0x4d535252;
 
-#[derive(Debug, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Allocation {
     pub account_id: String,
     pub tenant_id: String,
@@ -82,8 +84,15 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
     }
     let id: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if id != APP_ID || version != 1 {
+    if id != APP_ID || !(1..=2).contains(&version) {
         return Err(StoreError::InvalidInput);
+    }
+    if version == 1 {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!(
+            "../../../migrations/installation_registry/0002_administrators.sql"
+        ))?;
+        tx.commit()?;
     }
     Ok((directory, db))
 }
@@ -101,6 +110,16 @@ pub fn reserve(root: &Path, request: Uuid, email: String) -> Result<Allocation> 
     let email = email_valid(email)?;
     let (_directory, mut db) = open(root, true)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    admin::guard_reserve(&tx, request, &email)?;
+    let result = reserve_in(&tx, request, email)?;
+    tx.commit()?;
+    fs::File::open(root)
+        .and_then(|f| f.sync_all())
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(result)
+}
+// Requires the caller's registry directory lock and immediate transaction.
+fn reserve_in(tx: &Connection, request: Uuid, email: String) -> Result<Allocation> {
     let request = request.to_string();
     let existing=tx.query_row(
         "SELECT account_id,tenant_id,volume_id,generation,email FROM allocations WHERE request_id=?1",
@@ -120,10 +139,6 @@ pub fn reserve(root: &Path, request: Uuid, email: String) -> Result<Allocation> 
             allocation
         }
     };
-    tx.commit()?;
-    fs::File::open(root)
-        .and_then(|f| f.sync_all())
-        .map_err(|_| StoreError::Unavailable)?;
     Ok(result)
 }
 pub fn lookup(root: &Path, email: String) -> Result<Allocation> {
@@ -137,7 +152,7 @@ fn lookup_email(root: &Path, email: String, ready: bool) -> Result<Allocation> {
     let email = email_valid(email)?;
     let (_directory, db) = open(root, false)?;
     db.query_row(
-        "SELECT account_id,tenant_id,volume_id,generation FROM allocations WHERE email=?1 AND (?2=0 OR route_state='ready')",
+        "SELECT account_id,tenant_id,volume_id,generation FROM allocations WHERE email=?1 AND (?2=0 OR (route_state='ready' AND NOT EXISTS(SELECT 1 FROM installation_members m WHERE m.account_id=allocations.account_id AND m.tenant_id=allocations.tenant_id AND m.volume_id=allocations.volume_id AND m.generation=allocations.generation AND m.suspended=1)))",
         params![email, ready],
         decode,
     )
@@ -175,12 +190,18 @@ pub fn with_ready_allocation<T>(
         "SELECT account_id,tenant_id,volume_id,generation FROM allocations WHERE account_id=?1 AND route_state='ready'",
         [account_id.to_string()], decode,
     ).optional()?.ok_or(StoreError::NotFound)?;
+    admin::unsuspended(&db, &allocation)?;
     action(allocation)
 }
 
 /// Operator compare-and-set after the verified personal process has answered.
 pub fn set_routing(root: &Path, allocation: &Allocation, enable: bool) -> Result<()> {
     let (_directory, db) = open(root, false)?;
+    if enable {
+        admin::unsuspended(&db, allocation)?;
+    } else {
+        admin::guard_fence(&db, allocation)?;
+    }
     let changed = db.execute(
         "UPDATE allocations SET route_state=?1 WHERE account_id=?2 AND tenant_id=?3 AND volume_id=?4 AND generation=?5 AND (?1='fenced' OR route_state IN ('reserved','ready'))",
         params![if enable {"ready"} else {"fenced"},allocation.account_id,allocation.tenant_id,allocation.volume_id,allocation.generation])?;

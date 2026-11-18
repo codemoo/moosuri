@@ -30,6 +30,7 @@ use std::{
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+mod admin;
 mod google;
 mod memory;
 
@@ -802,6 +803,7 @@ async fn handle(
             );
         }
         recheck(g, &a).await?;
+        let body = admin::public_session(g, &a, &body).await?;
         return issued(
             g,
             &a,
@@ -885,7 +887,7 @@ async fn handle(
     if path == "/api/v1/auth/logout" {
         return Ok(response(status, body));
     }
-    check_user(&body, &a)?;
+    let body = admin::public_session(g, &a, &body).await?;
     if let Some(set) = set {
         issued(g, &a, status, body, set)
     } else {
@@ -993,6 +995,7 @@ fn router(g: Gateway) -> Router {
         .layer(DefaultBodyLimit::max(4096))
         .merge(memory::routes())
         .merge(google::routes())
+        .merge(admin::routes())
         .with_state(g)
 }
 async fn bind_public_socket(options: &Options) -> Result<(File, tokio::net::UnixListener), String> {
@@ -1173,13 +1176,14 @@ mod tests {
         let counted = count.clone();
         let account = a.account_id.clone();
         let token = token.to_string();
-        let app=Router::new().fallback(axum::routing::any(move|method:Method,uri:Uri,h:HeaderMap,body:axum::body::Bytes|{let account=account.clone();let token=token.clone();let count=counted.clone();async move {
+        let email = email.to_string();
+        let app=Router::new().fallback(axum::routing::any(move|method:Method,uri:Uri,h:HeaderMap,body:axum::body::Bytes|{let account=account.clone();let email=email.clone();let token=token.clone();let count=counted.clone();async move {
             assert_eq!(one(&h,"host"),Some("personal.internal"));assert_eq!(one(&h,"origin"),Some("https://personal.internal"));assert_eq!(one(&h,"x-moosuri-account"),Some(account.as_str()));
             assert!(!h.contains_key("x-real-ip"));count.fetch_add(1,Ordering::SeqCst);
             if uri.path()=="/api/v1/auth/logout" {return StatusCode::NO_CONTENT.into_response();}
             if uri.path()!="/api/v1/auth/login" {assert_eq!(cookie(&h,SESSION,128).unwrap(),token);}
             else {assert_eq!(method,Method::POST);let value:serde_json::Value=serde_json::from_slice(&body).unwrap();assert_eq!(value["password"],"Synthetic-password-42");assert!(!h.contains_key(header::COOKIE));}
-            let mut response=Json(serde_json::json!({"user":{"id":account},"password_change_required":false,"chat_draft_scope":"synthetic"})).into_response();
+            let mut response=Json(serde_json::json!({"user":{"id":account,"email":email,"name":"Member","role":"member","must_change_password":false},"password_change_required":false,"chat_draft_scope":"a".repeat(64)})).into_response();
             if uri.path()=="/api/v1/auth/login"||uri.path()=="/api/v1/auth/password" {response.headers_mut().insert(header::SET_COOKIE,HeaderValue::from_str(&format!("moosuri_session={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=3600")).unwrap());}
             response
         }}));
@@ -2128,6 +2132,118 @@ mod tests {
         for (_, member, _) in clients {
             member.abort();
         }
+    }
+    #[tokio::test]
+    async fn private_member_session_and_host_role_control_web_admin_even_after_demotion() {
+        use moosuri_store::runtime_registry::admin as control;
+        let temp = tempfile::tempdir().unwrap();
+        let options = options(&temp.path().canonicalize().unwrap());
+        let (a, _, a_task) = real_member(&options, "a@example.test").await;
+        let (b, _, b_task) = real_member(&options, "b@example.test").await;
+        let g = Gateway::new(&options).unwrap();
+        let mut auth = Vec::new();
+        for (allocated, email) in [(&a, "a@example.test"), (&b, "b@example.test")] {
+            let login = request(
+                &g,
+                "/api/v1/auth/login",
+                Method::POST,
+                headers(),
+                &serde_json::json!({"email":email,"password":"Synthetic-password-42"}).to_string(),
+            )
+            .await;
+            assert_eq!(login.status(), StatusCode::OK);
+            let h = authenticated(&cookies(&login), allocated);
+            let view = json(login).await;
+            assert_eq!(view["installation_admin"], false);
+            auth.push((
+                h,
+                serde_json::from_value::<moosuri_core::SessionView>(view).unwrap(),
+            ));
+        }
+        control::bootstrap(&options.registry, Uuid::new_v4(), &a, &auth[0].1).unwrap();
+        let collection = "/api/v1/personal/admin/members";
+        let list = request(&g, collection, Method::GET, auth[0].0.clone(), "").await;
+        assert_eq!(list.status(), StatusCode::OK);
+        assert_eq!(
+            request(&g, collection, Method::GET, auth[1].0.clone(), "")
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let rows = json(list).await;
+        let row = |id: &str| {
+            rows["members"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|m| m["account_id"] == id)
+                .unwrap()
+        };
+        let mutation = |m: &serde_json::Value, action: &str| {
+            serde_json::json!({"request_id":Uuid::new_v4(),"account_id":m["account_id"],"generation":m["generation"],"revision":m["revision"],"action":action}).to_string()
+        };
+        let change = format!("{collection}/change");
+        let last = mutation(row(&a.account_id), "suspend");
+        let protected = request(&g, &change, Method::POST, auth[0].0.clone(), &last).await;
+        assert!(!protected.status().is_success());
+        let invitation=serde_json::json!({"request_id":Uuid::new_v4(),"name":"Guest","email":"guest@example.test"}).to_string();
+        for _ in 0..2 {
+            assert_eq!(
+                request(
+                    &g,
+                    "/api/v1/personal/admin/invitations",
+                    Method::POST,
+                    auth[0].0.clone(),
+                    &invitation
+                )
+                .await
+                .status(),
+                StatusCode::OK
+            );
+        }
+        let guest =
+            runtime_registry::lookup(&options.registry, "guest@example.test".into()).unwrap();
+        assert!(
+            runtime_registry::lookup_id(&options.registry, guest.account_id.parse().unwrap())
+                .is_err()
+        );
+        let promote = mutation(row(&b.account_id), "promote");
+        assert_eq!(
+            request(&g, &change, Method::POST, auth[0].0.clone(), &promote)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let demote = mutation(row(&a.account_id), "demote");
+        assert_eq!(
+            request(&g, &change, Method::POST, auth[1].0.clone(), &demote)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            request(&g, collection, Method::GET, auth[0].0.clone(), "")
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let logout = request(
+            &g,
+            "/api/v1/auth/logout",
+            Method::POST,
+            auth[1].0.clone(),
+            "{}",
+        )
+        .await;
+        assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            request(&g, collection, Method::GET, auth[1].0.clone(), "")
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        a_task.abort();
+        b_task.abort();
     }
     #[tokio::test]
     async fn public_preview_entry_serves_built_dependencies_without_a_session_or_api_fallback() {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type {
   ChatPage,
   ChatTurn,
-  SessionView,
+  SessionView as BaseSessionView,
   ThreadSummary,
   ThreadsResponse,
 } from "../shared/api-types";
@@ -20,7 +20,9 @@ import PersonalGoogle, {
   clearPersonalGoogle,
   googleReturn,
 } from "./PersonalGoogle";
+import PersonalAdmin from "./PersonalAdmin";
 import { PersonalMemories } from "./PersonalMemories";
+type SessionView = BaseSessionView & { installation_admin?: boolean };
 export const PREVIEW_DRAFT_KEY = "moosuri.personal-preview-drafts.v1";
 function draftStorage() {
   try {
@@ -369,11 +371,12 @@ function Workspace({
     [reading, setReading] = useState(false),
     [mutating, setMutating] = useState(false),
     [title, setTitle] = useState("새 텍스트 대화");
-  const [view, setView] = useState<"chat" | "memory" | "mail">(() =>
+  const [view, setView] = useState<"chat" | "memory" | "mail" | "admin">(() =>
       googleReturn() ? "mail" : "chat",
     ),
     [refresh, setRefresh] = useState(0);
   const [openInbox, setOpenInbox] = useState(false);
+  const [admin, setAdmin] = useState(session.installation_admin === true);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const memoryRef = useRef(memory);
@@ -463,7 +466,8 @@ function Workspace({
           if (
             v.user.id !== session.user.id ||
             v.chat_draft_scope !== session.chat_draft_scope ||
-            v.password_change_required !== session.password_change_required
+            v.password_change_required !== session.password_change_required ||
+            v.installation_admin !== session.installation_admin
           )
             changedSession(v);
         })
@@ -728,8 +732,25 @@ function Workspace({
         >
           연결 새로고침
         </button>
+        {admin && (
+          <button
+            aria-pressed={view === "admin"}
+            onClick={() => setView("admin")}
+          >
+            관리
+          </button>
+        )}
       </nav>
-      {view === "mail" ? (
+      {view === "admin" && admin ? (
+        <PersonalAdmin
+          account={session.user.id}
+          expired={expired}
+          unavailable={() => {
+            setAdmin(false);
+            setView("chat");
+          }}
+        />
+      ) : view === "mail" ? (
         <PersonalGoogle
           session={session}
           expired={expired}

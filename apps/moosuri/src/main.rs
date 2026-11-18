@@ -23,6 +23,7 @@ mod calls;
 mod gws_inbox;
 mod import_private;
 mod installation;
+mod installation_admin;
 mod kiri_lifecycle;
 mod kiri_provision;
 mod legacy_relations;
@@ -58,6 +59,8 @@ enum RecoveryRole {
 enum Command {
     /// Allocate or inspect a personal runtime identity in a separate installation registry.
     AccountRuntime(account_runtime::Options),
+    /// Local installation administrator bootstrap and status.
+    InstallationAdmin(installation_admin::Options),
     /// Initialize or verify a single new member volume inside its own runtime.
     PersonalVolume(account_runtime::PersonalOptions),
     /// Serve the private Unix gateway for isolated member authentication.
@@ -436,6 +439,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::PersonalVolume(options) = &cli.command {
         return account_runtime::personal(options).await;
     }
+    if let Command::InstallationAdmin(options) = &cli.command {
+        return installation_admin::run(options).await;
+    }
     if let Command::AccountRuntime(options) = &cli.command {
         return account_runtime::run(options).await;
     }
@@ -585,6 +591,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::KiriLifecycle(_)
         | Command::KiriProvision(_)
         | Command::PersonalVolume(_)
+        | Command::InstallationAdmin(_)
         | Command::AccountRuntime(_)
         | Command::GwsInbox(_)
         | Command::Models { .. }

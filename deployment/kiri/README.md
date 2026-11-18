@@ -82,6 +82,10 @@ Linux Kiri 안의 두 실제 클라이언트에서 무수리 Rust 모델 서비�
 
 회원 프로비저닝에 `--model-sockets-root "$MODEL_SOCKETS" --enable-text-preview`를 지정한다. 로그인한 클라이언트는 `GET /api/v1/text-preview`로 지원 여부를 확인하고, `POST /api/v1/threads/{id}/text-preview`로 `request_id`, `text`, `capability: "text_only_preview"`를 보낸다. 답변은 기존 대화 이력에서 조회한다. 응답을 잃었다면 동일 요청 ID로 기존 상태를 조회한다. 동일한 요청으로 새 호출이 발생하지 않는다. 이 API가 제공하는 기능은 텍스트 대화이며 메일 발송·웹 탐색·예약·도구가 필요한 정규 비서 요청은 기존 운영 경로를 사용한다.
 
+## 첫 관리자와 회원 초대
+
+최초 설치 관리자를 지정한 뒤 회원의 개인 웹에서 초대 접수, 권한 변경, 정지와 해제를 진행한다. [설치 관리자 안내](admin.md)
+
 ## 개인 Gmail 연결
 
 호스트가 공용 Google 앱을 보관하고, 개인 서비스가 회원별 읽기 권한과 세션을 관리한다. 설치자 구성과 회원의 연결 흐름은 [개인 Gmail 연결](google.md)을 따른다.

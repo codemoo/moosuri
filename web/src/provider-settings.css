@@ -270,6 +270,57 @@
   color: #687260;
   line-height: 1.8;
 }
+.claude-connections .section-heading {
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.claude-connection-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+}
+.claude-connection-option {
+  min-width: 0;
+  padding: 18px;
+  background: #f6f6ef;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.claude-connection-option h4 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.claude-connection-option p,
+.claude-binding p {
+  margin: 10px 0;
+  line-height: 1.75;
+}
+.claude-create-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.claude-binding {
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+}
+.claude-binding > strong {
+  overflow-wrap: anywhere;
+}
+.claude-binding > label {
+  margin: 16px 0 8px;
+}
+.claude-login-command {
+  display: block;
+  padding: 14px;
+  background: #f6f6ef;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.7;
+}
 @media (max-width: 1100px) {
   .probe-form {
     grid-template-columns: 1fr 1fr;
@@ -313,6 +364,7 @@
   }
   .settings-field-pair,
   .probe-form,
+  .claude-connection-options,
   .model-selection-form {
     grid-template-columns: 1fr;
   }

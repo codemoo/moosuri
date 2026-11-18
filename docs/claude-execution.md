@@ -119,7 +119,24 @@ and its container. Each bridge/output/request/connection lifetime is bounded.
 
 ## Owner login and selection
 
-In **My model → My Claude**, add an owned binding. On the same Linux server,
+**My model → Claude → Claude 연결** is always available, including while runtime
+status is loading or unavailable. It separates personal subscription setup from
+shared Anthropic API connections. Without a configured execution profile, the
+subscription option explains the missing setup and links to this operator guide;
+it cannot create or probe a binding. Refresh after operator setup. A failed status
+request is shown as an error with retry, not as missing setup or endless loading.
+Existing owned connections remain visible and can be disconnected even when the
+operator removes the runtime; credential cleanup may remain pending.
+
+Administrators can choose **Claude API 연결** to open the existing shared provider
+editor with Anthropic already selected. An API key is still required, billing is
+separate from a Claude subscription, and the normal exact-model/capability checks
+apply. Members use verified shared choices or ask their administrator to configure
+the shared connection; they cannot edit shared credentials from this entry point.
+
+For a configured subscription runtime, choose **내 Claude 연결 추가** to create an
+owned binding. Creating a binding is not official login or model verification.
+On the same Linux server,
 run the displayed native helper with the exact operator profile:
 
 ```sh

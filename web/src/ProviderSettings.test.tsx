@@ -140,6 +140,10 @@ function server(
         return Promise.resolve(response(state.providers));
       if (path === "/settings/model" && call.method === "GET")
         return Promise.resolve(response(state.settings));
+      if (path === "/settings/claude" && call.method === "GET")
+        return Promise.resolve(response({ runtime_configured: false, bindings: [], text_only: true }));
+      if (path === "/settings/chatgpt" && call.method === "GET")
+        return Promise.resolve(response([]));
       return Promise.resolve(response({ code: "unexpected_test_route" }, 404));
     }),
   );
@@ -158,6 +162,41 @@ beforeEach(() => {
 });
 
 describe("shared model administration", () => {
+  it("opens the real Anthropic editor from My model and saves through the shared admin endpoint", async () => {
+    const user = userEvent.setup();
+    const claude: ProviderSummary = { ...provider, name: "Claude API", config: { ...provider.config, kind: "anthropic" } };
+    const { calls } = server(call => call.path === "/admin/providers" && call.method === "POST"
+      ? response(claude, 201) : undefined);
+    open("/settings/model");
+    await user.click(await screen.findByRole("button", { name: "Claude 연결" }));
+    await user.click(screen.getByRole("button", { name: "Claude API 연결" }));
+    const editor = await screen.findByRole("region", { name: "새 모델 연결" });
+    expect(within(editor).getByLabelText("연결 방식")).toHaveValue("anthropic");
+    expect(within(editor).getByLabelText("연결 이름")).toHaveValue("Claude API");
+    await user.type(within(editor).getByLabelText("API 키"), "synthetic-anthropic-key");
+    await user.click(within(editor).getByRole("button", { name: "연결 저장" }));
+    expect(await screen.findByText("연결을 저장했습니다. 사용할 모델을 확인해 주세요.")).toBeInTheDocument();
+    expect(calls.find(call => call.path === "/admin/providers" && call.method === "POST")?.body).toMatchObject({
+      config: { kind: "anthropic" }, credential: { action: "replace", value: "synthetic-anthropic-key" },
+    });
+    expect(screen.queryByDisplayValue("synthetic-anthropic-key")).not.toBeInTheDocument();
+  });
+
+  it("does not expose shared credential creation to a member through the Claude entry or a direct link", async () => {
+    const user = userEvent.setup();
+    const { calls } = server(undefined, member);
+    open("/settings/model");
+    await user.click(await screen.findByRole("button", { name: "Claude 연결" }));
+    expect(screen.queryByRole("button", { name: "Claude API 연결" })).not.toBeInTheDocument();
+    await act(async () => {
+      window.history.pushState(null, "", "/admin/providers?connect=anthropic");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(await screen.findByText("This page is for administrators.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("API 키")).not.toBeInTheDocument();
+    expect(calls.filter(call => call.path === "/admin/providers")).toEqual([]);
+  });
+
   it("creates a compatible connection without a key and probes without an effort override", async () => {
     const user = userEvent.setup();
     const local: ProviderSummary = {
@@ -732,9 +771,11 @@ describe("personal foreground tool verification", () => {
 });
 
 
-it("describes personal typed local and solo Calendar writes while retaining staged background boundaries", async () => {
+it("explains personal tools, delegated reads and the remaining external-work limits", async () => {
   server(call => call.path === "/settings/chatgpt" ? response([]) : undefined,member,{providers:[],default_selection:null},{selection:null,effective:null,choices:[]});
   open("/settings/model");
-  expect(await screen.findByText(/명확한 현재 요청의 기억 저장\/정정\/망각/)).toHaveTextContent("참석자·반복·종일 일정, 첨부·백그라운드 업무는 아직 지원하지 않습니다.");
-  expect(screen.getByText(/명확한 현재 요청의 기억 저장\/정정\/망각/)).toHaveTextContent("메일 발송은 최종 내용을 보고 매번 허락해야 합니다.");
+  const tools = await screen.findByText(/자료·메일·일정 조회, 계산, 기억과 기록 관리/);
+  expect(tools).toHaveTextContent("맡긴 업무는 로그아웃한 뒤에도 실행됩니다.");
+  expect(tools).toHaveTextContent("메일 발송은 최종 내용을 보고 매번 허락해야 합니다.");
+  expect(screen.getByText(/현재 요청으로 기본 캘린더의 단일 시간 일정/)).toHaveTextContent("예약 업무의 메일·일정 변경 및 브라우저·볼트 사용은 아직 지원하지 않습니다.");
 });

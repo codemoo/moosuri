@@ -28,7 +28,7 @@ type ProviderDraft = {
 };
 const names: Record<ProviderKind, string> = {
   open_ai: "OpenAI",
-  anthropic: "Anthropic",
+  anthropic: "Anthropic (Claude API)",
   open_router: "OpenRouter",
   compatible: "로컬 / 호환 API",
 };
@@ -130,7 +130,7 @@ function ChoiceOptions({ choices }: { choices: ModelChoice[] }) {
   );
 }
 
-export function PersonalModelSettings({ accountId, onExpired }: Props) {
+export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi }: Props & { onConnectClaudeApi?: () => void }) {
   const scope = useScope(accountId);
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [draft, setDraft] = useState("");
@@ -214,7 +214,7 @@ export function PersonalModelSettings({ accountId, onExpired }: Props) {
           {notice}
         </p>
       )}
-      <ClaudeExecutionSettings accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} />
+      <ClaudeExecutionSettings accountId={accountId} onExpired={onExpired} onVerified={()=>setRetry(v=>v+1)} onConnectApi={onConnectClaudeApi} />
       <PersonalChatGpt accountId={accountId} onExpired={onExpired} choices={settings?.choices ?? []} onVerified={()=>setRetry(v=>v+1)} />
       <section className="admin-card">
         <div className="section-heading">
@@ -317,7 +317,8 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [editor, setEditor] = useState<ProviderSummary | "new" | null>(null);
+  const [initialKind] = useState<ProviderKind>(() => new URLSearchParams(window.location.search).get("connect") === "anthropic" ? "anthropic" : "open_ai");
+  const [editor, setEditor] = useState<ProviderSummary | "new" | null>(() => initialKind === "anthropic" ? "new" : null);
   const [defaultKey, setDefaultKey] = useState("");
   function fail(error: unknown) {
     if (isAborted(error)) return;
@@ -551,10 +552,11 @@ export function AdminProviderSettings({ accountId, onExpired }: Props) {
           새로고침
         </button>
       </div>
-      {editor && (
+      {editor && !loading && data && (
         <ProviderEditor
           key={editor === "new" ? "new" : `${editor.id}:${editor.revision}`}
           provider={editor === "new" ? null : editor}
+          initialKind={initialKind}
           busy={busy}
           save={saveProvider}
           close={() => setEditor(null)}
@@ -808,11 +810,13 @@ function ProbeForm({
 
 function ProviderEditor({
   provider,
+  initialKind,
   busy,
   save,
   close,
 }: {
   provider: ProviderSummary | null;
+  initialKind: ProviderKind;
   busy: boolean;
   save: (
     draft: ProviderDraft,
@@ -820,9 +824,9 @@ function ProviderEditor({
   ) => Promise<boolean>;
   close: () => void;
 }) {
-  const [name, setName] = useState(provider?.name ?? "");
+  const [name, setName] = useState(provider?.name ?? (initialKind === "anthropic" ? "Claude API" : ""));
   const [kind, setKind] = useState<ProviderKind>(
-    provider?.config.kind ?? "open_ai",
+    provider?.config.kind ?? initialKind,
   );
   const [url, setUrl] = useState(provider?.config.base_url ?? "");
   const [ips, setIps] = useState(provider?.config.allowed_ips.join(", ") ?? "");
@@ -891,6 +895,7 @@ function ProviderEditor({
             {provider ? "연결 수정" : "새 모델 연결"}
           </h3>
           <p>키는 저장 요청 후 입력창에서 지워지며, 다시 표시하지 않습니다.</p>
+          {kind === "anthropic" && <p>Claude 구독과 별도로 과금되는 Anthropic API 키가 필요합니다. 이 연결은 설치 구성원이 함께 사용합니다.</p>}
         </div>
         <button
           className="text-button"

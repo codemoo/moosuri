@@ -1309,6 +1309,7 @@ function Workspace({
           <PersonalModelSettings
             accountId={session.user.id}
             onExpired={onExpired}
+            onConnectClaudeApi={allowedAdmin ? () => navigate("/admin/providers?connect=anthropic") : undefined}
           />
         ) : admin ? (
           allowedAdmin ? (

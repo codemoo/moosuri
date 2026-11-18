@@ -7,6 +7,8 @@
 - [x] Owned auth-environment retirement/tombstone/cleanup ACK and restore fencing.
 - [x] Synthetic connector/Store/Runtime/UI outcomes and deployment documentation.
 
+- [x] Always-visible connection entry, actionable runtime status/retry, Anthropic admin shortcut and disconnection without runtime configuration.
+
 ## Separate acceptance / later capabilities
 
 - [x] Independent integrated storage/dispatch review and joined Linux synthetic connector/Store/Runtime/HTTP/restore gates.

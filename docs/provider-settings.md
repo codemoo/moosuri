@@ -4,6 +4,11 @@ The administrator manages installation API/local connections at `/admin/provider
 Each member chooses a verified model and effort at `/settings/model`, or explicitly
 uses the installation default. Verified choices are connected to saved conversations.
 Personal ChatGPT text connections use the separate owner-scoped flow below.
+The **Claude 연결** button in My model also leads administrators directly to a
+new Anthropic API connection. The form starts with Anthropic selected and makes
+the shared connection and separate API billing explicit. The adjacent personal
+subscription route reports its actual server setup state; see
+[official Claude execution](claude-execution.md#owner-login-and-selection).
 
 1. Add an OpenAI API, Anthropic API, OpenRouter, or compatible/local connection.
 2. Enter its API key. Compatible servers may omit a key; hosted providers require one.

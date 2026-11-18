@@ -14,6 +14,25 @@ base application SHALL remain usable without the external runtime.
   persists validated text/usage, and restores the saved conversation on reconnect
 - **AND** tools/media/background/catalog/observed-effort capabilities remain absent.
 
+### Requirement: Discoverable connection setup
+
+My model SHALL always expose a Claude connection entry. It SHALL distinguish
+personal subscription runtime setup from administrator-managed Anthropic API
+credentials, and SHALL NOT present a missing or failed runtime status as a
+successful login. Existing owned bindings SHALL remain removable without a
+configured runtime, retaining the credential retirement contract.
+
+#### Scenario: Runtime not configured or temporarily unreachable
+
+- **WHEN** an owner opens My model without a configured runtime or a successful status response
+- **THEN** Claude connection setup remains discoverable, the missing setup or retryable error is explicit, and subscription creation/probing stays unavailable
+- **AND** administrators can open the real shared Anthropic editor while members cannot access shared credential editing.
+
+#### Scenario: Runtime removed after a connection exists
+
+- **WHEN** the operator removes the optional runtime
+- **THEN** the owner can still view and disconnect existing bindings, with local cleanup shown as pending until acknowledged.
+
 ### Requirement: Conservative process lifecycle
 
 Execution SHALL use the pinned isolated Linux profile, bounded inert composed

@@ -137,9 +137,10 @@ it("returns an OAuth callback to the original owned conversation without sending
 it("finishes web OAuth, resumes its eligible read once and returns to the original conversation", async () => {
   const original = {...thread,id:"11111111-1111-4111-8111-111111111111",title:"Original web Gmail read"};
   const runId = "22222222-2222-4222-8222-222222222222";
-  const connection = {id:"33333333-3333-4333-8333-333333333333",epoch:4,email:"mine@example.test",status:"active",compose_enabled:false};
+  const flowId="a".repeat(64);
+  const connection = {id:"33333333-3333-4333-8333-333333333333",epoch:4,email:"mine@example.test",status:"active",compose_enabled:false,flow_id:flowId};
   rememberMailReturn(alice.user.id, original.id);
-  beginGoogleMailResume(alice.user.id, {threadId:original.id,runId});
+  beginGoogleMailResume(alice.user.id, {threadId:original.id,runId}, flowId);
   window.history.replaceState(null,"","/settings/mail?oauth=synthetic-once");
   const calls = server(path => path === "/threads" ? response({threads:[thread,original]})
     : path === "/mail/connections" ? response({configured:true,connections:[connection]})

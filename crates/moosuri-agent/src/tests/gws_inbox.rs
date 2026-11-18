@@ -368,3 +368,30 @@ async fn gws_first_link_checks_only_signed_profile_and_requires_exact_owner_conf
     assert_eq!(lists.load(Ordering::SeqCst), 1);
     server.abort();
 }
+
+#[tokio::test]
+async fn explicitly_requested_missing_device_never_uses_server_mailbox() {
+    let _guard = TEST_LOCK.lock().await;
+    let (dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
+    let (registry, _) = registry(
+        dir.path(),
+        &uuid::Uuid::new_v4().to_string(),
+        "http://127.0.0.1:1/v1/inbox/latest",
+    );
+    for device in [None, Some(registry.clone())] {
+        let mail = service(&store, registry.clone()).with_gws_inbox(device);
+        let run = claim(&store, &user, &thread, "GWS 내 최신 메일 보여줘").await;
+        assert!(mail.latest_inbox_chat(&run.lease).await.unwrap());
+        let turn = store
+            .conversation(&user, thread.clone(), None)
+            .await
+            .unwrap()
+            .turns
+            .pop()
+            .unwrap();
+        assert!(matches!(
+            turn.run.mail_connection_recovery,
+            Some(moosuri_core::MailConnectionRecovery::GwsSetup)
+        ));
+    }
+}

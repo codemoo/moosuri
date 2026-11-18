@@ -4,7 +4,7 @@
 
 **사용자별 런타임 전환**에서 Ubuntu 24.04의 Kiri 0.2.1에 합성 사용자 두 명을 올렸다. 전용 볼륨·소켓·UID, CPU·메모리·디스크 한도, 재부팅 후 데이터 유지와 마운트 누락 시 시작 차단을 확인했다. 개인 컨테이너는 네트워크를 끄고 각자의 Unix 소켓을 쓴다. Kiri 내부 브리지에서는 호스트 서비스에 접근할 수 있었다. 실행 조건과 미완료 항목은 [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md), 측정값은 [Linux 실험](../deployment/kiri/linux-vm-smoke/README.md)에 있다.
 
-**개발판**에서 Gmail 기본 연결을 서버 Google OAuth로 변경했다. 채팅 연결 카드는 원래 로그인과 현재 메일 연결 버전을 확인하고 마지막 조회를 한 번 이어간다. SQLite는 82다. 합성 OAuth·재시도·철회·웹 화면을 검증했다. 개인 Google 계정의 실제 동의 및 운영 전환은 대기 중이다. [Gmail 연결](gws-inbox.md)
+**개발판**에서 Gmail 기본 연결을 서버 Google OAuth로 변경했다. 채팅 연결 카드는 원래 로그인·해당 Google 동의 흐름·현재 메일 연결 버전을 확인하고 마지막 조회를 한 번 이어간다. SQLite는 82다. 합성 OAuth·재시도·철회·웹 화면을 검증했다. 개인 Google 계정의 실제 동의 및 운영 전환은 대기 중이다. [Gmail 연결](gws-inbox.md)
 
 **운영 배포**는 [dev.30](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.30)을 운영 Linux에 배포했다. 모바일 크기의 Chrome과 합성 Gmail 기기로 채팅 입력 → 계정 확인 → 같은 대화에 메일 제목 표시 → 새로고침까지 확인했다. 메일 목록 조회는 한 번이었고 이 과정에서 모델 호출은 없었다. 운영 계정에서는 기기 미등록 안내와 대기 중 요청의 재개 차단을 확인했다. SQLite는 schema 81이다.
 

@@ -178,13 +178,17 @@ pub(super) async fn start_for(s: &AppState, user: &UserContext, setup_return: bo
         &start.verifier,
     )
     .map_err(|_| HttpError(StoreError::Unavailable))?;
-    Ok(Json(serde_json::json!({"authorization_url":url})).into_response())
+    Ok(
+        Json(serde_json::json!({"authorization_url":url,"flow_id":start.flow_id()}))
+            .into_response(),
+    )
 }
 async fn callback(State(s): State<AppState>, Query(input): Query<Callback>) -> HttpResult {
     if input.state.starts_with("cal.") {
         return crate::calendar::callback(&s, input.state, input.code, input.error.is_some()).await;
     }
     let _ = (input.scope, input.authuser, input.prompt);
+    let flow_id = Store::mail_oauth_flow_id(&input.state);
     if input.error.is_some() {
         let setup = s.store.cancel_mail_oauth_state(input.state).await?;
         let path = if setup {
@@ -192,7 +196,9 @@ async fn callback(State(s): State<AppState>, Query(input): Query<Callback>) -> H
         } else {
             "/settings/mail?oauth_error=denied"
         };
-        return Ok(axum::response::Redirect::to(path).into_response());
+        return Ok(
+            axum::response::Redirect::to(&format!("{path}&oauth_flow={flow_id}")).into_response(),
+        );
     }
     let code = SecretString::new(input.code.ok_or(StoreError::InvalidInput)?)
         .map_err(|_| HttpError(StoreError::InvalidInput))?;
@@ -205,7 +211,10 @@ async fn callback(State(s): State<AppState>, Query(input): Query<Callback>) -> H
     } else {
         "/settings/mail"
     };
-    Ok(axum::response::Redirect::to(&format!("{path}?oauth={handle}")).into_response())
+    Ok(
+        axum::response::Redirect::to(&format!("{path}?oauth={handle}&oauth_flow={flow_id}"))
+            .into_response(),
+    )
 }
 async fn complete(
     State(s): State<AppState>,
@@ -225,6 +234,9 @@ async fn complete(
         .store
         .claim_mail_oauth_with_app(&user, input.handle, app.pin)
         .await?;
+    // This tag is derived only after the original handle has passed the
+    // current owner's exact session, auth epoch and app-pin checks.
+    let flow_id = exchange.flow_id();
     let cancel = CancellationToken::new();
     let tokens = match s
         .mail
@@ -275,7 +287,17 @@ async fn complete(
         .store
         .complete_mail_oauth(exchange, tokens, profile.email_address)
         .await?;
-    Ok(Json(connection).into_response())
+    #[derive(Serialize)]
+    struct Completed {
+        #[serde(flatten)]
+        connection: moosuri_core::MailConnection,
+        flow_id: String,
+    }
+    Ok(Json(Completed {
+        connection,
+        flow_id,
+    })
+    .into_response())
 }
 async fn search(
     State(s): State<AppState>,
@@ -471,7 +493,10 @@ async fn start_compose(State(s): State<AppState>, headers: HeaderMap) -> HttpRes
         &moosuri_connectors::gmail::COMPOSE_SCOPES,
     )
     .map_err(|_| StoreError::Unavailable)?;
-    Ok(Json(serde_json::json!({"authorization_url":url})).into_response())
+    Ok(
+        Json(serde_json::json!({"authorization_url":url,"flow_id":start.flow_id()}))
+            .into_response(),
+    )
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

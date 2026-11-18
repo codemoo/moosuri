@@ -89,6 +89,26 @@ pub struct MailOAuthStart {
     pub verifier: Zeroizing<String>,
 }
 
+impl MailOAuthStart {
+    /// Public continuity tag only; never a credential or authority to claim state.
+    pub fn flow_id(&self) -> String {
+        Store::mail_oauth_flow_id(&self.state)
+    }
+}
+fn oauth_flow_id_from_hash(state_hash: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"moosuri/gmail/oauth-continuity/v1\0");
+    h.update(state_hash);
+    format!("{:x}", h.finalize())
+}
+impl Store {
+    /// A domain-separated public tag. The original state/handle, session, epoch,
+    /// app pin and PKCE remain independently required by OAuth admission.
+    pub fn mail_oauth_flow_id(state: &str) -> String {
+        oauth_flow_id_from_hash(&hash(state))
+    }
+}
+
 pub struct MailOAuthExchange {
     pub code: SecretString,
     pub verifier: SecretString,
@@ -96,6 +116,14 @@ pub struct MailOAuthExchange {
     state: Vec<u8>,
     app: Option<GoogleAppPin>,
     pub compose: bool,
+}
+
+impl MailOAuthExchange {
+    /// Derived from the actual session-bound state claimed by the original
+    /// handle, never from a callback query or client-supplied continuation tag.
+    pub fn flow_id(&self) -> String {
+        oauth_flow_id_from_hash(&self.state)
+    }
 }
 
 /// Trusted application carrier. Never Debug/Serialize or pass to the model.

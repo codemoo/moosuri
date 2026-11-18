@@ -91,6 +91,7 @@ function GoogleSetupAccount({ accountId, onExpired, back }: { accountId: string;
       if (handle || denied) {
         params.delete("oauth");
         params.delete("oauth_error");
+        params.delete("oauth_flow");
         const query = params.toString();
         window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : "") + window.location.hash);
       }

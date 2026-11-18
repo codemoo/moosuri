@@ -7,7 +7,6 @@ import {
 } from "react";
 import type {
   MailAction,
-  MailConnection,
   MailConnections as Connections,
   MailDraftContent,
 } from "../shared/api-types";
@@ -20,7 +19,7 @@ import { MailApproval } from "./MailApproval";
 import { GoogleLoginHelp } from "./GoogleLoginHelp";
 import { rememberMailReturn } from "./mail-return";
 import { GwsInboxHelp } from "./GwsInboxHelp";
-import { clearGoogleMailResume, pendingGoogleMailResume, resumeGoogleMail } from "./google-mail-connection";
+import { clearGoogleMailResume, clearGoogleMailResumeForFlow, pendingGoogleMailResume, resumeGoogleMail, type VerifiedGoogleMailConnection } from "./google-mail-connection";
 import "./mail.css";
 type ReadMessage = {
   id: string;
@@ -92,7 +91,7 @@ function MailConnectionsAccount({
   const [timingEditing, setTimingEditing] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const oauthStarted = useRef(false);
-  const oauthCallback = useRef<{ handle: string | null; denied: boolean } | null>(null);
+  const oauthCallback = useRef<{ handle: string | null; denied: boolean; flowId: string | null } | null>(null);
   function fail(e: unknown) {
     if (isAborted(e)) return;
     if (e instanceof ApiFailure && e.status === 401) onExpired();
@@ -127,9 +126,10 @@ function MailConnectionsAccount({
       const params = new URLSearchParams(window.location.search);
       const handle = params.get("oauth");
       const denied = params.has("oauth_error");
-      oauthCallback.current = { handle, denied };
+      const flowId = params.get("oauth_flow");
+      oauthCallback.current = { handle, denied, flowId };
       if (handle || denied) {
-        params.delete("oauth"); params.delete("oauth_error");
+        params.delete("oauth"); params.delete("oauth_error"); params.delete("oauth_flow");
         const query = params.toString();
         window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : "") + window.location.hash);
       }
@@ -137,9 +137,9 @@ function MailConnectionsAccount({
     let active = true;
     void Promise.resolve().then(async () => {
       if (!active || oauthStarted.current) return;
-      const { handle, denied } = oauthCallback.current!;
+      const { handle, denied, flowId } = oauthCallback.current!;
       if (denied) {
-        clearGoogleMailResume(accountId);
+        clearGoogleMailResumeForFlow(accountId, flowId);
         setError("Google 연결을 허락하지 않았습니다. 원할 때 다시 연결하세요.");
         oauthCallback.current!.handle = null;
         return;
@@ -149,16 +149,18 @@ function MailConnectionsAccount({
       oauthCallback.current!.handle = null;
       setBusy(true);
       const target = pendingGoogleMailResume(accountId);
+      let completedFlow: string | null = null;
       try {
-        const verified = await scope.request<MailConnection>("/mail/oauth/complete", "POST", { handle });
+        const verified = await scope.request<VerifiedGoogleMailConnection>("/mail/oauth/complete", "POST", { handle });
         if (!active) return;
+        completedFlow = verified.flow_id;
         await reload();
         if (!active) return;
         if (target) {
-          await resumeGoogleMail(accountId, target, verified, scope.request);
-          if (active) setConnectionNotice("Google 연결을 마쳤습니다. 원래 받은메일 요청을 이어갑니다.");
+          const resumed = await resumeGoogleMail(accountId, target, verified, scope.request);
+          if (active) setConnectionNotice(resumed ? "Google 연결을 마쳤습니다. 원래 받은메일 요청을 이어갑니다." : "Google 연결을 마쳤습니다. 다른 연결 흐름의 요청은 이어가지 않았습니다.");
         } else setConnectionNotice("Google 연결을 마쳤습니다. 연결된 계정을 확인한 뒤 대화로 돌아가세요.");
-      } catch (e) { if (active) { clearGoogleMailResume(accountId); fail(e); } }
+      } catch (e) { if (active) { clearGoogleMailResumeForFlow(accountId, completedFlow ?? flowId); fail(e); } }
       finally { if (active) setBusy(false); }
     });
     return () => { active = false; };

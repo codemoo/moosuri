@@ -57,6 +57,11 @@ async fn oauth_is_one_use_session_bound_and_tokens_never_enter_dtos() {
     let a = admin(&store).await;
     let b = member(&store, &a.user, "member@example.test").await;
     let start = store.start_mail_oauth(&a.user).await.unwrap();
+    let flow_id = start.flow_id();
+    let other = store.start_mail_oauth(&a.user).await.unwrap();
+    assert_ne!(flow_id, other.flow_id());
+    assert_eq!(flow_id.len(), 64);
+    assert_ne!(flow_id, start.state);
     let state = start.state.clone();
     let handle = store
         .capture_mail_oauth(
@@ -91,6 +96,7 @@ async fn oauth_is_one_use_session_bound_and_tokens_never_enter_dtos() {
         .claim_mail_oauth(&a.user, handle.clone())
         .await
         .unwrap();
+    assert_eq!(ex.flow_id(), flow_id);
     assert!(store.claim_mail_oauth(&a.user, handle).await.is_err());
     let c = store
         .complete_mail_oauth(ex, tokens(), "sender@example.test".into())

@@ -3,7 +3,7 @@ import type { MailConnectionRecovery as Recovery } from "../shared/api-types";
 import { useScope } from "./account-scope";
 import { errorText, isAborted } from "./api";
 import { rememberMailReturn } from "./mail-return";
-import { beginGoogleMailResume, clearGoogleMailResume } from "./google-mail-connection";
+import { beginGoogleMailResume, clearGoogleMailResume, clearGoogleMailResumeForFlow } from "./google-mail-connection";
 import { GwsInboxHelp } from "./GwsInboxHelp";
 
 // Only a server receipt chooses from this fixed local catalog.
@@ -26,14 +26,18 @@ export function MailConnectionRecovery({ action, accountId, threadId, runId, can
     if (!accountId || busy) return;
     setBusy(true); setError("");
     rememberMailReturn(accountId, threadId ?? null);
-    beginGoogleMailResume(accountId, canResume && threadId && runId ? { threadId, runId } : undefined);
+    clearGoogleMailResume(accountId);
+    let startedFlow: string | null = null;
     try {
-      const result = await scope.request<{ authorization_url: string }>("/mail/oauth/start", "POST", {});
+      const result = await scope.request<{ authorization_url: string; flow_id: string }>("/mail/oauth/start", "POST", {});
       const url = new URL(result.authorization_url);
       if (url.origin !== "https://accounts.google.com") throw new Error("Google 로그인 주소를 확인하지 못했습니다.");
+      if (!/^[a-f0-9]{64}$/.test(result.flow_id)) throw new Error("Google 연결 흐름을 확인하지 못했습니다.");
+      startedFlow = result.flow_id;
+      beginGoogleMailResume(accountId, canResume && threadId && runId ? { threadId, runId } : undefined, startedFlow);
       window.location.assign(url.href);
     } catch (e) {
-      clearGoogleMailResume(accountId);
+      clearGoogleMailResumeForFlow(accountId, startedFlow);
       if (!isAborted(e)) { setError(errorText(e)); setBusy(false); }
     }
   }

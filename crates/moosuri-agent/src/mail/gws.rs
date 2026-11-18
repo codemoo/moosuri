@@ -165,23 +165,13 @@ impl MailService {
                 return Ok(Some(true));
             }
         }
-        let Some(registry) = &self.gws_inbox else {
-            return Ok(None);
-        };
-        match registry.mailbox(&user.account().id) {
-            Ok(None) => return Ok(None),
-            Ok(Some(_)) => {}
-            Err(_) => {
-                if !latest {
-                    return Ok(Some(false));
-                }
-                self.finish_gws_unavailable(lease).await?;
-                return Ok(Some(true));
-            }
-        }
         if !latest {
             return Ok(Some(false));
         }
+        let Some(registry) = &self.gws_inbox else {
+            self.finish_gws_unavailable(lease).await?;
+            return Ok(Some(true));
+        };
         let result = async {
             let binding = registry.binding(&user.account().id).map_err(|_|StoreError::Unavailable)?.ok_or(StoreError::Conflict)?;
             if resumed_pin.is_some_and(|pin|pin!=binding.fingerprint()) {return Err(StoreError::Conflict);}

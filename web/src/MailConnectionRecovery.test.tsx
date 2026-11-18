@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MailConnectionRecovery } from "./MailConnectionRecovery";
 import type { MailConnectionRecovery as Recovery } from "../shared/api-types";
+import { pendingGoogleMailResume } from "./google-mail-connection";
 import { clearMailReturn, mailReturnThread } from "./mail-return";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("uses only fixed server recovery actions and separates installer setup from owner consent", () => {
@@ -44,4 +45,14 @@ it("starts account-scoped web Google login directly and clears failed continuati
   expect(calls).toEqual([{url:"/api/v1/mail/oauth/start",body:{},account:"owner"}]);
   expect(sessionStorage.getItem("moosuri.google-mail-resume.v1.owner")).toBeNull();
   expect(screen.queryByText(/Mac|GWS|기기 연결/)).toBeNull();
+});
+
+it("binds a chat continuation only to the actual OAuth start flow returned by the server", async () => {
+  sessionStorage.clear();
+  const flowId="c".repeat(64);
+  vi.stubGlobal("fetch",vi.fn(async()=>Response.json({authorization_url:"https://accounts.google.com/o/oauth2/v2/auth?state=synthetic-state",flow_id:flowId})));
+  render(<MailConnectionRecovery action="connect" accountId="owner" threadId="11111111-1111-4111-8111-111111111111" runId="22222222-2222-4222-8222-222222222222" canResume/>);
+  fireEvent.click(screen.getByRole("button",{name:"Google 로그인하고 요청 이어가기"}));
+  await waitFor(()=>expect(pendingGoogleMailResume("owner")).toEqual({threadId:"11111111-1111-4111-8111-111111111111",runId:"22222222-2222-4222-8222-222222222222",flowId}));
+  sessionStorage.clear();
 });

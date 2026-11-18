@@ -1,0 +1,383 @@
+{
+  "final": [
+    {
+      "check": "socket-image",
+      "result": {
+        "Id": "sha256:67fd5f7b4b120eaa3308775fe87aff98a2492287576bd6656ef785d54a1b5605",
+        "RepoDigests": [
+          "python@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e"
+        ]
+      }
+    },
+    {
+      "check": "a-state",
+      "result": {
+        "RestartCount": 0,
+        "State": {
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 137,
+          "FinishedAt": "0001-01-01T00:00:00Z",
+          "OOMKilled": false,
+          "Paused": false,
+          "Pid": 1343,
+          "Restarting": false,
+          "Running": true,
+          "StartedAt": "2026-11-18T15:57:47.269891595Z",
+          "Status": "running"
+        }
+      }
+    },
+    {
+      "check": "a-isolation",
+      "result": {
+        "exit": 0,
+        "output": "socket_reply a:own-runtime\nbroker_reply a:broker-ok\nowner a-private\nstarts ['a-start', 'a-start', 'a-start', 'a-start']\nabsent /run/kiri/docker.sock True\nabsent /var/run/docker.sock True\nabsent /srv/moosuri-lab/a True\nabsent /srv/moosuri-lab/b True\nabsent /etc/moosuri-kiri-lab-marker True\nwrite-denied /root-denied 30\nwrite-denied /shared/module 30\nuid 10001\nstatus ['CapInh:\\t0000000000000000', 'CapPrm:\\t0000000000000000', 'CapEff:\\t0000000000000000', 'CapBnd:\\t0000000000000000', 'CapAmb:\\t0000000000000000', 'NoNewPrivs:\\t1', 'Seccomp:\\t2', 'Seccomp_filters:\\t1']\n"
+      }
+    },
+    {
+      "check": "a-cgroup",
+      "result": {
+        "cpu.max": "50000 100000",
+        "memory.max": "67108864",
+        "pids.max": "32"
+      }
+    },
+    {
+      "check": "a-mount",
+      "result": "/srv/moosuri-lab/a /dev/loop0 ext4   rw,nosuid,nodev,noexec,relatime\n"
+    },
+    {
+      "check": "b-state",
+      "result": {
+        "RestartCount": 0,
+        "State": {
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 137,
+          "FinishedAt": "0001-01-01T00:00:00Z",
+          "OOMKilled": false,
+          "Paused": false,
+          "Pid": 1344,
+          "Restarting": false,
+          "Running": true,
+          "StartedAt": "2026-11-18T15:57:47.297993404Z",
+          "Status": "running"
+        }
+      }
+    },
+    {
+      "check": "b-isolation",
+      "result": {
+        "exit": 0,
+        "output": "socket_reply b:own-runtime\nbroker_reply b:broker-ok\nowner b-private\nstarts ['b-start', 'b-start', 'b-start', 'b-start']\nabsent /run/kiri/docker.sock True\nabsent /var/run/docker.sock True\nabsent /srv/moosuri-lab/a True\nabsent /srv/moosuri-lab/b True\nabsent /etc/moosuri-kiri-lab-marker True\nwrite-denied /root-denied 30\nwrite-denied /shared/module 30\nuid 10002\nstatus ['CapInh:\\t0000000000000000', 'CapPrm:\\t0000000000000000', 'CapEff:\\t0000000000000000', 'CapBnd:\\t0000000000000000', 'CapAmb:\\t0000000000000000', 'NoNewPrivs:\\t1', 'Seccomp:\\t2', 'Seccomp_filters:\\t1']\n"
+      }
+    },
+    {
+      "check": "b-cgroup",
+      "result": {
+        "cpu.max": "50000 100000",
+        "memory.max": "67108864",
+        "pids.max": "32"
+      }
+    },
+    {
+      "check": "b-mount",
+      "result": "/srv/moosuri-lab/b /dev/loop1 ext4   rw,nosuid,nodev,noexec,relatime\n"
+    },
+    {
+      "check": "disk",
+      "result": "Filesystem     1B-blocks  Used Available Use% Mounted on\n/dev/loop0      27234304 32768  26533888   1% /srv/moosuri-lab/a\n/dev/loop1      27234304 32768  26533888   1% /srv/moosuri-lab/b\n"
+    },
+    {
+      "check": "socket-image",
+      "result": {
+        "Id": "sha256:67fd5f7b4b120eaa3308775fe87aff98a2492287576bd6656ef785d54a1b5605",
+        "RepoDigests": [
+          "python@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e"
+        ]
+      }
+    },
+    {
+      "check": "a-state",
+      "result": {
+        "RestartCount": 0,
+        "State": {
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 137,
+          "FinishedAt": "0001-01-01T00:00:00Z",
+          "OOMKilled": false,
+          "Paused": false,
+          "Pid": 1343,
+          "Restarting": false,
+          "Running": true,
+          "StartedAt": "2026-11-18T15:57:47.269891595Z",
+          "Status": "running"
+        }
+      }
+    },
+    {
+      "check": "a-isolation",
+      "result": {
+        "exit": 0,
+        "output": "socket_reply a:own-runtime\nbroker_reply a:broker-ok\nowner a-private\nstarts ['a-start', 'a-start', 'a-start', 'a-start']\nabsent /run/kiri/docker.sock True\nabsent /var/run/docker.sock True\nabsent /srv/moosuri-lab/a True\nabsent /srv/moosuri-lab/b True\nabsent /etc/moosuri-kiri-lab-marker True\nwrite-denied /root-denied 30\nwrite-denied /shared/module 30\nuid 10001\nstatus ['CapInh:\\t0000000000000000', 'CapPrm:\\t0000000000000000', 'CapEff:\\t0000000000000000', 'CapBnd:\\t0000000000000000', 'CapAmb:\\t0000000000000000', 'NoNewPrivs:\\t1', 'Seccomp:\\t2', 'Seccomp_filters:\\t1']\n"
+      }
+    },
+    {
+      "check": "a-quota",
+      "result": {
+        "exit": 0,
+        "output": "quota-denied 28 written 26529792\nowner-after-quota a-private\n"
+      }
+    },
+    {
+      "check": "a-cgroup",
+      "result": {
+        "cpu.max": "50000 100000",
+        "memory.max": "67108864",
+        "pids.max": "32"
+      }
+    },
+    {
+      "check": "a-mount",
+      "result": "/srv/moosuri-lab/a /dev/loop0 ext4   rw,nosuid,nodev,noexec,relatime\n"
+    },
+    {
+      "check": "b-state",
+      "result": {
+        "RestartCount": 0,
+        "State": {
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 137,
+          "FinishedAt": "0001-01-01T00:00:00Z",
+          "OOMKilled": false,
+          "Paused": false,
+          "Pid": 1344,
+          "Restarting": false,
+          "Running": true,
+          "StartedAt": "2026-11-18T15:57:47.297993404Z",
+          "Status": "running"
+        }
+      }
+    },
+    {
+      "check": "b-isolation",
+      "result": {
+        "exit": 0,
+        "output": "socket_reply b:own-runtime\nbroker_reply b:broker-ok\nowner b-private\nstarts ['b-start', 'b-start', 'b-start', 'b-start']\nabsent /run/kiri/docker.sock True\nabsent /var/run/docker.sock True\nabsent /srv/moosuri-lab/a True\nabsent /srv/moosuri-lab/b True\nabsent /etc/moosuri-kiri-lab-marker True\nwrite-denied /root-denied 30\nwrite-denied /shared/module 30\nuid 10002\nstatus ['CapInh:\\t0000000000000000', 'CapPrm:\\t0000000000000000', 'CapEff:\\t0000000000000000', 'CapBnd:\\t0000000000000000', 'CapAmb:\\t0000000000000000', 'NoNewPrivs:\\t1', 'Seccomp:\\t2', 'Seccomp_filters:\\t1']\n"
+      }
+    },
+    {
+      "check": "b-quota",
+      "result": {
+        "exit": 0,
+        "output": "quota-denied 28 written 26533888\nowner-after-quota b-private\n"
+      }
+    },
+    {
+      "check": "b-cgroup",
+      "result": {
+        "cpu.max": "50000 100000",
+        "memory.max": "67108864",
+        "pids.max": "32"
+      }
+    },
+    {
+      "check": "b-mount",
+      "result": "/srv/moosuri-lab/b /dev/loop1 ext4   rw,nosuid,nodev,noexec,relatime\n"
+    },
+    {
+      "check": "disk",
+      "result": "Filesystem     1B-blocks  Used Available Use% Mounted on\n/dev/loop0      27234304 32768  26533888   1% /srv/moosuri-lab/a\n/dev/loop1      27234304 32768  26533888   1% /srv/moosuri-lab/b\n"
+    }
+  ],
+  "reboot": [
+    {
+      "check": "socket-image",
+      "result": {
+        "Id": "sha256:67fd5f7b4b120eaa3308775fe87aff98a2492287576bd6656ef785d54a1b5605",
+        "RepoDigests": [
+          "python@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e"
+        ]
+      }
+    },
+    {
+      "check": "a-state",
+      "result": {
+        "RestartCount": 0,
+        "State": {
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 137,
+          "FinishedAt": "0001-01-01T00:00:00Z",
+          "OOMKilled": false,
+          "Paused": false,
+          "Pid": 803,
+          "Restarting": false,
+          "Running": true,
+          "StartedAt": "2026-11-18T15:56:26.836343438Z",
+          "Status": "running"
+        }
+      }
+    },
+    {
+      "check": "a-isolation",
+      "result": {
+        "exit": 0,
+        "output": "socket_reply a:own-runtime\nowner a-private\nstarts ['a-start', 'a-start', 'a-start']\nabsent /run/kiri/docker.sock True\nabsent /var/run/docker.sock True\nabsent /srv/moosuri-lab/a True\nabsent /srv/moosuri-lab/b True\nabsent /etc/moosuri-kiri-lab-marker True\nwrite-denied /root-denied 30\nwrite-denied /shared/module 30\nuid 10001\nstatus ['CapInh:\\t0000000000000000', 'CapPrm:\\t0000000000000000', 'CapEff:\\t0000000000000000', 'CapBnd:\\t0000000000000000', 'CapAmb:\\t0000000000000000', 'NoNewPrivs:\\t1', 'Seccomp:\\t2', 'Seccomp_filters:\\t1']\n"
+      }
+    },
+    {
+      "check": "a-cgroup",
+      "result": {
+        "cpu.max": "50000 100000",
+        "memory.max": "67108864",
+        "pids.max": "32"
+      }
+    },
+    {
+      "check": "a-mount",
+      "result": "/srv/moosuri-lab/a /dev/loop0 ext4   rw,nosuid,nodev,noexec,relatime\n"
+    },
+    {
+      "check": "b-state",
+      "result": {
+        "RestartCount": 0,
+        "State": {
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 137,
+          "FinishedAt": "0001-01-01T00:00:00Z",
+          "OOMKilled": false,
+          "Paused": false,
+          "Pid": 804,
+          "Restarting": false,
+          "Running": true,
+          "StartedAt": "2026-11-18T15:56:26.867713289Z",
+          "Status": "running"
+        }
+      }
+    },
+    {
+      "check": "b-isolation",
+      "result": {
+        "exit": 0,
+        "output": "socket_reply b:own-runtime\nowner b-private\nstarts ['b-start', 'b-start', 'b-start']\nabsent /run/kiri/docker.sock True\nabsent /var/run/docker.sock True\nabsent /srv/moosuri-lab/a True\nabsent /srv/moosuri-lab/b True\nabsent /etc/moosuri-kiri-lab-marker True\nwrite-denied /root-denied 30\nwrite-denied /shared/module 30\nuid 10002\nstatus ['CapInh:\\t0000000000000000', 'CapPrm:\\t0000000000000000', 'CapEff:\\t0000000000000000', 'CapBnd:\\t0000000000000000', 'CapAmb:\\t0000000000000000', 'NoNewPrivs:\\t1', 'Seccomp:\\t2', 'Seccomp_filters:\\t1']\n"
+      }
+    },
+    {
+      "check": "b-cgroup",
+      "result": {
+        "cpu.max": "50000 100000",
+        "memory.max": "67108864",
+        "pids.max": "32"
+      }
+    },
+    {
+      "check": "b-mount",
+      "result": "/srv/moosuri-lab/b /dev/loop1 ext4   rw,nosuid,nodev,noexec,relatime\n"
+    },
+    {
+      "check": "disk",
+      "result": "Filesystem     1B-blocks  Used Available Use% Mounted on\n/dev/loop0      27234304 32768  26533888   1% /srv/moosuri-lab/a\n/dev/loop1      27234304 32768  26533888   1% /srv/moosuri-lab/b\n"
+    }
+  ],
+  "lifecycle": [
+    {
+      "check": "unless-stopped",
+      "result": "PASS explicit A stop survives daemon restart; B resumes"
+    },
+    {
+      "check": "socket-image",
+      "result": {
+        "Id": "sha256:67fd5f7b4b120eaa3308775fe87aff98a2492287576bd6656ef785d54a1b5605",
+        "RepoDigests": [
+          "python@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e"
+        ]
+      }
+    },
+    {
+      "check": "a-state",
+      "result": {
+        "RestartCount": 0,
+        "State": {
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 137,
+          "FinishedAt": "0001-01-01T00:00:00Z",
+          "OOMKilled": false,
+          "Paused": false,
+          "Pid": 1717,
+          "Restarting": false,
+          "Running": true,
+          "StartedAt": "2026-11-18T15:58:57.720666206Z",
+          "Status": "running"
+        }
+      }
+    },
+    {
+      "check": "a-isolation",
+      "result": {
+        "exit": 0,
+        "output": "socket_reply a:own-runtime\nbroker_reply a:broker-ok\nowner a-private\nstarts ['a-start', 'a-start', 'a-start', 'a-start', 'a-start']\nabsent /run/kiri/docker.sock True\nabsent /var/run/docker.sock True\nabsent /srv/moosuri-lab/a True\nabsent /srv/moosuri-lab/b True\nabsent /etc/moosuri-kiri-lab-marker True\nwrite-denied /root-denied 30\nwrite-denied /shared/module 30\nuid 10001\nstatus ['CapInh:\\t0000000000000000', 'CapPrm:\\t0000000000000000', 'CapEff:\\t0000000000000000', 'CapBnd:\\t0000000000000000', 'CapAmb:\\t0000000000000000', 'NoNewPrivs:\\t1', 'Seccomp:\\t2', 'Seccomp_filters:\\t1']\n"
+      }
+    },
+    {
+      "check": "a-cgroup",
+      "result": {
+        "cpu.max": "50000 100000",
+        "memory.max": "67108864",
+        "pids.max": "32"
+      }
+    },
+    {
+      "check": "a-mount",
+      "result": "/srv/moosuri-lab/a /dev/loop0 ext4   rw,nosuid,nodev,noexec,relatime\n"
+    },
+    {
+      "check": "b-state",
+      "result": {
+        "RestartCount": 0,
+        "State": {
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 137,
+          "FinishedAt": "0001-01-01T00:00:00Z",
+          "OOMKilled": false,
+          "Paused": false,
+          "Pid": 1696,
+          "Restarting": false,
+          "Running": true,
+          "StartedAt": "2026-11-18T15:58:57.698401321Z",
+          "Status": "running"
+        }
+      }
+    },
+    {
+      "check": "b-isolation",
+      "result": {
+        "exit": 0,
+        "output": "socket_reply b:own-runtime\nbroker_reply b:broker-ok\nowner b-private\nstarts ['b-start', 'b-start', 'b-start', 'b-start', 'b-start']\nabsent /run/kiri/docker.sock True\nabsent /var/run/docker.sock True\nabsent /srv/moosuri-lab/a True\nabsent /srv/moosuri-lab/b True\nabsent /etc/moosuri-kiri-lab-marker True\nwrite-denied /root-denied 30\nwrite-denied /shared/module 30\nuid 10002\nstatus ['CapInh:\\t0000000000000000', 'CapPrm:\\t0000000000000000', 'CapEff:\\t0000000000000000', 'CapBnd:\\t0000000000000000', 'CapAmb:\\t0000000000000000', 'NoNewPrivs:\\t1', 'Seccomp:\\t2', 'Seccomp_filters:\\t1']\n"
+      }
+    },
+    {
+      "check": "b-cgroup",
+      "result": {
+        "cpu.max": "50000 100000",
+        "memory.max": "67108864",
+        "pids.max": "32"
+      }
+    },
+    {
+      "check": "b-mount",
+      "result": "/srv/moosuri-lab/b /dev/loop1 ext4   rw,nosuid,nodev,noexec,relatime\n"
+    },
+    {
+      "check": "disk",
+      "result": "Filesystem     1B-blocks  Used Available Use% Mounted on\n/dev/loop0      27234304 32768  26533888   1% /srv/moosuri-lab/a\n/dev/loop1      27234304 32768  26533888   1% /srv/moosuri-lab/b\n"
+    }
+  ],
+  "missing_mount": "PASS missing account filesystem prevents Kiri startup; empty mountpoint has no fallback owner data"
+}

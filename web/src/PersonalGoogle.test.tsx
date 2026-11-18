@@ -3,7 +3,6 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import PersonalGoogle from "./PersonalGoogle";
 import type { SessionView } from "../shared/api-types";
-
 const key = "moosuri.personal.google-read.v1",
   flow = "a".repeat(64),
   handle = "b".repeat(64);
@@ -11,52 +10,77 @@ const session = {
   user: { id: "member-a" },
   chat_draft_scope: "session-a",
 } as SessionView;
+const read = { thread_id: "original-thread", request_id: "read-request" };
 const grant = {
   connection_id: "e8cb4767-2688-43ab-9ece-76ad780360aa",
   epoch: 3,
   mailbox: "member@example.test",
 };
-function setup(url: string, binding = session.chat_draft_scope, lost = false) {
-  const calls: { path: string; body: unknown }[] = [];
+function setup({
+  manual = false,
+  binding = session.chat_draft_scope,
+  lost = "",
+}: { manual?: boolean; binding?: string; lost?: string } = {}) {
+  const calls: { path: string; body: any }[] = [];
   sessionStorage.setItem(
     key,
     JSON.stringify({
       flow,
       account: session.user.id,
       session: binding,
-      read: true,
+      read: manual ? undefined : read,
+      draft: "Original mail request",
+      phase: "consent",
       expires: Date.now() + 60000,
     }),
   );
-  history.replaceState(null, "", "/#" + url);
+  history.replaceState(null, "", "/#google_handle=" + handle + "&flow=" + flow);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string, init: RequestInit) => {
-      calls.push({
-        path: input,
-        body: init?.body ? JSON.parse(String(init.body)) : null,
-      });
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ path: input, body });
       if (input.endsWith("/complete")) {
-        if (lost) throw new TypeError("lost response");
-        return Response.json({ ...grant, flow_id: flow });
-      }
-      if (input.endsWith("/inbox"))
+        if (lost === "complete") throw new TypeError("lost reply");
         return Response.json({
-          mailbox: grant.mailbox,
-          messages: [],
-          has_more: false,
+          ...grant,
+          flow_id: flow,
+          ...(manual ? {} : { continuation: read }),
         });
+      }
+      if (input.endsWith("/inbox")) {
+        if (lost === "read") throw new TypeError("lost read reply");
+        return Response.json({
+          ...read,
+          state: "completed",
+          created_at: 1,
+          source: { ...grant, app_revision: "app" },
+          result: {
+            mailbox: grant.mailbox,
+            messages: [],
+            has_more: false,
+            scope: "one_inbox_page_metadata_only",
+          },
+        });
+      }
       return Response.json({ connection: null });
     }),
   );
   return calls;
 }
-function mount() {
-  return render(
-    <StrictMode>
-      <PersonalGoogle session={session} expired={() => {}} />
-    </StrictMode>,
-  );
+function mount(returned = vi.fn()) {
+  return {
+    returned,
+    ...render(
+      <StrictMode>
+        <PersonalGoogle
+          session={session}
+          expired={() => {}}
+          returned={returned}
+        />
+      </StrictMode>,
+    ),
+  };
 }
 afterEach(() => {
   cleanup();
@@ -64,10 +88,12 @@ afterEach(() => {
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
 });
-it("completes once in the originating tab and reads only the returned grant", async () => {
-  const calls = setup("google_handle=" + handle + "&flow=" + flow);
-  mount();
-  await screen.findByText("받은 메일이 없습니다.");
+it("returns the durable read to the original thread using only server continuation", async () => {
+  const calls = setup();
+  const { returned } = mount();
+  await waitFor(() =>
+    expect(returned).toHaveBeenCalledWith(read, false, "Original mail request"),
+  );
   expect(calls.map((c) => c.path)).toEqual([
     "/api/v1/personal/google/complete",
     "/api/v1/personal/google/inbox",
@@ -75,39 +101,59 @@ it("completes once in the originating tab and reads only the returned grant", as
   expect(calls[1].body).toEqual({
     connection_id: grant.connection_id,
     epoch: 3,
+    read,
   });
   expect(location.hash).toBe("");
   expect(sessionStorage.getItem(key)).toBeNull();
 });
-it("a different session cannot exchange a returned handle", async () => {
-  const calls = setup(
-    "google_handle=" + handle + "&flow=" + flow,
-    "retired-session",
-  );
+it("manual connection never resumes a read", async () => {
+  const calls = setup({ manual: true });
+  mount();
+  await screen.findByText(grant.mailbox);
+  expect(calls.map((c) => c.path)).toEqual([
+    "/api/v1/personal/google/complete",
+  ]);
+  expect(sessionStorage.getItem(key)).toBeNull();
+});
+it("a different session cannot exchange the returned handle", async () => {
+  const calls = setup({ binding: "old-session" });
   mount();
   await screen.findByText(/연결을 시작한 계정/);
   expect(calls.every((c) => c.path.endsWith("/google"))).toBe(true);
 });
-it("denial clears the pending read and never calls the provider", async () => {
-  const calls = setup("google_denied=" + flow);
+it.each(["complete", "read"])(
+  "lost %s reply returns to stored history on reload without a second read",
+  async (lost) => {
+    const calls = setup({ lost });
+    const first = mount();
+    await waitFor(() =>
+      expect(first.returned).toHaveBeenCalledWith(
+        read,
+        true,
+        "Original mail request",
+      ),
+    );
+    first.unmount();
+    const second = mount();
+    await waitFor(() =>
+      expect(second.returned).toHaveBeenCalledWith(
+        read,
+        true,
+        "Original mail request",
+      ),
+    );
+    expect(calls.filter((c) => c.path.endsWith("/complete"))).toHaveLength(1);
+    expect(calls.filter((c) => c.path.endsWith("/inbox"))).toHaveLength(
+      lost === "read" ? 1 : 0,
+    );
+    expect(location.hash).toBe("");
+  },
+);
+it("denial clears pending read without a provider read", async () => {
+  const calls = setup();
+  history.replaceState(null, "", "/#google_denied=" + flow);
   mount();
   await screen.findByText(/취소됐습니다/);
   expect(calls.map((c) => c.path)).toEqual(["/api/v1/personal/google"]);
   expect(sessionStorage.getItem(key)).toBeNull();
-});
-it("a lost completion reply cannot silently replay an exchange or read", async () => {
-  const calls = setup(
-    "google_handle=" + handle + "&flow=" + flow,
-    session.chat_draft_scope,
-    true,
-  );
-  const first = mount();
-  await screen.findByText(/다시 확인해 주세요/);
-  first.unmount();
-  mount();
-  await waitFor(() => expect(calls).toHaveLength(2));
-  expect(calls.map((c) => c.path)).toEqual([
-    "/api/v1/personal/google/complete",
-    "/api/v1/personal/google",
-  ]);
 });

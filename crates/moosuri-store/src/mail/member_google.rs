@@ -5,6 +5,7 @@ use super::*;
 use crate::personal_volume::VolumeOwner;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
+pub(super) mod reads;
 const READ: &str = moosuri_connectors::gmail::READ_SCOPE;
 #[derive(Serialize)]
 pub struct MemberGoogleStatus {
@@ -113,6 +114,7 @@ fn needs_refresh(r: &Row) -> bool {
         .is_none_or(|e| e <= now().unwrap_or(i64::MAX).saturating_add(60))
 }
 pub(super) fn restart(c: &Connection) -> Result<()> {
+    c.execute("UPDATE member_google_thread_reads SET phase='unknown',cipher=NULL,updated_at=unixepoch() WHERE phase='dispatched'",[])?;
     c.execute("UPDATE member_google_grants SET status='needs_reauth',cipher=NULL,expires_at=NULL,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='unknown' WHERE refresh_phase='dispatched'", [])?;
     Ok(())
 }
@@ -148,6 +150,7 @@ fn sync_app(c: &Connection, u: &UserContext, o: VolumeOwner, app: Uuid) -> Resul
         )?;
         c.execute("UPDATE member_google_grants SET app_revision=?3,app_version=?4,epoch=epoch+1,credential_version=credential_version+1,status='needs_reauth',cipher=NULL,expires_at=NULL,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='idle' WHERE tenant_id=?1 AND account_id=?2",params![u.tenant.0,u.account.id,app.to_string(),next])?;
         clear_flows(c, u)?;
+        reads::withdraw(c, u)?;
     } else {
         c.execute(
             "INSERT INTO member_google_apps VALUES(?1,?2,?3,1)",
@@ -508,6 +511,7 @@ impl Store {
             r.digest = u.digest.to_vec();
             let cipher = encrypt(&db.provider_key, &r, &payload)?;
             tx.execute("UPDATE member_google_grants SET connection_id=?3,epoch=?4,credential_version=?5,auth_epoch=?6,consent_digest=?7,mailbox=?8,status='active',cipher=?9,expires_at=?10,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='idle' WHERE tenant_id=?1 AND account_id=?2 AND app_version=?11 AND epoch=?12",params![u.tenant.0,u.account.id,r.id.map(|v|v.to_string()),r.epoch,r.version,u.epoch,u.digest.as_slice(),mailbox,cipher,expires,p.version,p.epoch])?;
+            reads::connected(&tx,&u,p.owner,p.app,&e.flow_id(),r.id.ok_or(StoreError::Corrupt)?,r.epoch)?;
             clear_flows(&tx, &u)?;
             let result = status(row(&tx, &u)?.as_ref(), Some(p.app), &u);
             tx.commit()?;
@@ -686,6 +690,7 @@ impl Store {
             }
             let changed = tx.execute("UPDATE member_google_grants SET epoch=epoch+1,credential_version=credential_version+1,status='disconnected',cipher=NULL,expires_at=NULL,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='idle' WHERE tenant_id=?1 AND account_id=?2 AND connection_id=?3 AND epoch=?4",params![u.tenant.0,u.account.id,expected_id.to_string(),expected_epoch])?;
             if changed != 1 { return Err(StoreError::Conflict); }
+            reads::withdraw(&tx,&u)?;
             clear_flows(&tx, &u)?;
             let result = status(row(&tx, &u)?.as_ref(), None, &u);
             tx.commit()?;

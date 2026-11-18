@@ -14,6 +14,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const BASE: &str = "/api/v1/personal/google";
+#[cfg(test)]
 const INBOX_SCOPE: &str = "one_inbox_page_metadata_only";
 
 #[derive(Deserialize, Serialize)]
@@ -41,24 +42,10 @@ struct Completed {
     epoch: i64,
     mailbox: String,
     flow_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    continuation: Option<moosuri_store::MemberGoogleReadIntent>,
 }
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Message {
-    id: String,
-    received_at_ms: i64,
-    subject: String,
-    from: String,
-    date: String,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Inbox {
-    mailbox: String,
-    messages: Vec<Message>,
-    has_more: bool,
-    scope: String,
-}
+type Inbox = moosuri_store::MemberGoogleInbox;
 fn hex64(s: &str) -> bool {
     s.len() == 64
         && s.bytes()
@@ -66,9 +53,6 @@ fn hex64(s: &str) -> bool {
 }
 fn mailbox(s: &str) -> bool {
     !s.is_empty() && s.len() <= 320 && s.contains('@') && !s.chars().any(char::is_control)
-}
-fn literal(s: &str) -> bool {
-    s.chars().count() <= 512 && !s.chars().any(char::is_control)
 }
 impl Connection {
     fn valid(&self) -> bool {
@@ -142,24 +126,6 @@ impl Started {
                 .is_some_and(|s| hex64(s) && Store::mail_oauth_flow_id(s) == self.flow_id)
     }
 }
-impl Inbox {
-    fn valid(&self) -> bool {
-        mailbox(&self.mailbox)
-            && self.scope == INBOX_SCOPE
-            && self.messages.len() <= 5
-            && self.messages.iter().all(|m| {
-                !m.id.is_empty()
-                    && m.id.len() <= 256
-                    && m.id
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                    && m.received_at_ms >= 0
-                    && literal(&m.subject)
-                    && literal(&m.from)
-                    && literal(&m.date)
-            })
-    }
-}
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StatusCode> {
     if bytes.len() > 128 * 1024 {
         return Err(StatusCode::BAD_GATEWAY);
@@ -215,14 +181,36 @@ pub fn public_response(
                 || v.epoch <= 0
                 || !mailbox(&v.mailbox)
                 || !hex64(&v.flow_id)
+                || v.continuation
+                    .as_ref()
+                    .is_some_and(|r| r.thread_id.is_nil() || r.request_id.is_nil())
             {
                 return Err(invalid);
             }
             encode(&v)
         }
         "/api/v1/personal/google/inbox" => {
-            let v: Inbox = decode(bytes)?;
-            if !v.valid() {
+            #[derive(Deserialize, Serialize)]
+            #[serde(untagged)]
+            enum Answer {
+                Live(Inbox),
+                Saved(moosuri_store::MemberGoogleThreadRead),
+            }
+            let v: Answer = decode(bytes)?;
+            if !match &v {
+                Answer::Live(v) => v.valid(),
+                Answer::Saved(v) => v.valid(),
+            } {
+                return Err(invalid);
+            }
+            encode(&v)
+        }
+        "/api/v1/personal/google/history" => {
+            if bytes.len() > 1024 * 1024 {
+                return Err(invalid);
+            }
+            let v: ReadHistory = serde_json::from_slice(bytes).map_err(|_| invalid)?;
+            if v.reads.len() > 20 || v.reads.iter().any(|r| !r.valid()) {
                 return Err(invalid);
             }
             encode(&v)
@@ -455,7 +443,28 @@ impl Google {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Empty {}
+struct StartInput {
+    #[serde(default)]
+    read: Option<moosuri_store::MemberGoogleReadIntent>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadSelected {
+    connection_id: Uuid,
+    epoch: i64,
+    #[serde(default)]
+    read: Option<moosuri_store::MemberGoogleReadIntent>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryInput {
+    thread_id: Uuid,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ReadHistory {
+    reads: Vec<moosuri_store::MemberGoogleThreadRead>,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Handle {
@@ -508,6 +517,7 @@ fn router(state: Google) -> Router {
         .route("/internal/google/capture", post(capture))
         .route("/api/v1/personal/google/complete", post(complete))
         .route("/api/v1/personal/google/inbox", post(inbox))
+        .route("/api/v1/personal/google/history", post(thread_history))
         .route("/api/v1/personal/google/disconnect", post(disconnect))
         .layer(DefaultBodyLimit::max(8192))
         .with_state(state)
@@ -540,7 +550,7 @@ async fn status(State(g): State<Google>, headers: HeaderMap) -> Result<Response,
 async fn start(
     State(g): State<Google>,
     headers: HeaderMap,
-    Json(_): Json<Empty>,
+    Json(input): Json<StartInput>,
 ) -> Result<Response, Failure> {
     let user = g.user(&headers).await?;
     let _serial = g
@@ -552,6 +562,22 @@ async fn start(
         .store
         .start_member_google_oauth(&user, g.owner, app.app_revision)
         .await?;
+    if let Some(read) = input.read {
+        if let Err(e) = g
+            .store
+            .bind_member_google_read_oauth(
+                &user,
+                g.owner,
+                app.app_revision,
+                pending.state.clone(),
+                read,
+            )
+            .await
+        {
+            let _ = g.store.cancel_mail_oauth_state(pending.state.clone()).await;
+            return Err(e.into());
+        }
+    }
     let verifier = SecretString::new(pending.verifier.to_string())
         .map_err(|_| Failure(StatusCode::SERVICE_UNAVAILABLE, "unavailable"))?;
     let answer: BrokerReply<Authorization> = g
@@ -640,6 +666,10 @@ async fn complete(
         .store
         .complete_member_google_oauth(exchange, grant)
         .await?;
+    let continuation = g
+        .store
+        .member_google_read_continuation(&user, g.owner, flow_id.clone())
+        .await?;
     let c = connection(settled)?.ok_or(Failure(StatusCode::CONFLICT, "conflict"))?;
     browser(
         "/api/v1/personal/google/complete",
@@ -648,13 +678,14 @@ async fn complete(
             epoch: c.epoch,
             mailbox: c.mailbox,
             flow_id,
+            continuation,
         },
     )
 }
 async fn inbox(
     State(g): State<Google>,
     headers: HeaderMap,
-    Json(input): Json<Selected>,
+    Json(input): Json<ReadSelected>,
 ) -> Result<Response, Failure> {
     let user = g.user(&headers).await?;
     let _serial = g
@@ -667,17 +698,81 @@ async fn inbox(
         .member_google_status(&user, g.owner, app.app_revision)
         .await?;
     let refresh = current.needs_refresh;
-    selected(&input, connection(current)?.as_ref())?;
+    let chosen = Selected {
+        connection_id: input.connection_id,
+        epoch: input.epoch,
+    };
+    selected(&chosen, connection(current)?.as_ref())?;
+    let lease = if let Some(read) = input.read {
+        match g
+            .store
+            .begin_member_google_thread_read(
+                &user,
+                g.owner,
+                app.app_revision,
+                read,
+                input.connection_id,
+                input.epoch,
+            )
+            .await?
+        {
+            moosuri_store::MemberGoogleReadAdmission::Existing(saved) => {
+                return browser("/api/v1/personal/google/inbox", &saved);
+            }
+            moosuri_store::MemberGoogleReadAdmission::Fresh(lease) => Some(lease),
+        }
+    } else {
+        None
+    };
+    match live_inbox(&g, &user, app.app_revision, &chosen, refresh).await {
+        Ok(page) => {
+            if let Some(lease) = lease {
+                let saved = g
+                    .store
+                    .settle_member_google_thread_read(lease, Some(page))
+                    .await?;
+                browser("/api/v1/personal/google/inbox", &saved)
+            } else {
+                browser("/api/v1/personal/google/inbox", &page)
+            }
+        }
+        Err(error) => {
+            if let Some(lease) = lease {
+                let _ = g.store.settle_member_google_thread_read(lease, None).await;
+            }
+            Err(error)
+        }
+    }
+}
+async fn thread_history(
+    State(g): State<Google>,
+    headers: HeaderMap,
+    Json(input): Json<HistoryInput>,
+) -> Result<Response, Failure> {
+    let user = g.user(&headers).await?;
+    let reads = g
+        .store
+        .member_google_thread_history(&user, g.owner, input.thread_id)
+        .await?;
+    browser("/api/v1/personal/google/history", &ReadHistory { reads })
+}
+async fn live_inbox(
+    g: &Google,
+    user: &UserContext,
+    revision: Uuid,
+    input: &Selected,
+    refresh: bool,
+) -> Result<Inbox, Failure> {
     if refresh {
         let lease = g
             .store
-            .claim_member_google_refresh(&user, g.owner, app.app_revision)
+            .claim_member_google_refresh(user, g.owner, revision)
             .await?;
         let id = lease.request_id;
         let attempt = g
             .raw(
                 id,
-                Some(app.app_revision),
+                Some(revision),
                 Operation::Refresh {
                     refresh_token: Secret(&lease.refresh_token),
                     refresh_binding: &lease.refresh_binding,
@@ -700,14 +795,14 @@ async fn inbox(
                 return Err(error);
             }
         };
-        selected(&input, connection(updated)?.as_ref())?;
+        selected(input, connection(updated)?.as_ref())?;
     }
     let binding = g
         .store
-        .member_google_read_binding(&user, g.owner, app.app_revision)
+        .member_google_read_binding(user, g.owner, revision)
         .await?;
     selected(
-        &input,
+        input,
         Some(&Connection {
             connection_id: binding.connection_id,
             epoch: binding.epoch,
@@ -716,7 +811,7 @@ async fn inbox(
     )?;
     let page: BrokerReply<Inbox> = g
         .call(
-            Some(app.app_revision),
+            Some(revision),
             Operation::InboxPage {
                 access_token: Secret(&binding.access_token),
                 access_binding: &binding.access_binding,
@@ -730,7 +825,7 @@ async fn inbox(
             "google_unavailable",
         ));
     }
-    browser("/api/v1/personal/google/inbox", &page.result)
+    Ok(page.result)
 }
 async fn disconnect(
     State(g): State<Google>,
@@ -805,6 +900,7 @@ mod tests {
         hold: AtomicBool,
         entered: Notify,
         release: Notify,
+        fail_read: AtomicBool,
     }
     fn receipt(
         owner: &serde_json::Value,
@@ -870,6 +966,9 @@ mod tests {
                     }
                     "inbox_page" => {
                         fake.reads.fetch_add(1, Ordering::SeqCst);
+                        if fake.fail_read.load(Ordering::SeqCst) {
+                            return Err("synthetic_read_unknown");
+                        }
                         if fake.hold.swap(false, Ordering::SeqCst) {
                             fake.entered.notify_one();
                             fake.release.notified().await;
@@ -990,6 +1089,278 @@ mod tests {
         let v = value(reply).await;
         assert_eq!(v["flow_id"], started["flow_id"]);
         v
+    }
+    async fn thread_connect(
+        app: &Router,
+        owner: VolumeOwner,
+        token: &str,
+        read: &serde_json::Value,
+    ) -> serde_json::Value {
+        let started = value(
+            request(
+                app,
+                owner,
+                token,
+                &format!("{BASE}/start"),
+                "POST",
+                json!({"read":read}),
+            )
+            .await,
+        )
+        .await;
+        let url = url::Url::parse(started["authorization_url"].as_str().unwrap()).unwrap();
+        let state = url
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        let captured = value(
+            request(
+                app,
+                owner,
+                token,
+                "/internal/google/capture",
+                "POST",
+                json!({"state":state,"code":"synthetic-code"}),
+            )
+            .await,
+        )
+        .await;
+        let reply = request(
+            app,
+            owner,
+            token,
+            &format!("{BASE}/complete"),
+            "POST",
+            json!({"handle":captured["handle"]}),
+        )
+        .await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        let v = value(reply).await;
+        assert_eq!(v["continuation"], *read);
+        v
+    }
+    #[tokio::test]
+    async fn thread_read_is_encrypted_durable_idempotent_and_outside_model_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("member");
+        let (store, owner, token) = member(&root).await;
+        let user = store.authenticate(token.clone()).await.unwrap();
+        let thread = store
+            .create_thread(&user, "Original thread".into())
+            .await
+            .unwrap();
+        let fake = Arc::new(Fake::default());
+        let revision = Uuid::new_v4();
+        let app =
+            routes_with_test_transport(store.clone(), owner, transport(fake.clone(), revision));
+        let read = json!({"thread_id":thread.id,"request_id":Uuid::new_v4()});
+        let grant = thread_connect(&app, owner, &token, &read).await;
+        assert_eq!(fake.reads.load(Ordering::SeqCst), 0);
+        let input =
+            json!({"connection_id":grant["connection_id"],"epoch":grant["epoch"],"read":read});
+        let first = request(
+            &app,
+            owner,
+            &token,
+            &format!("{BASE}/inbox"),
+            "POST",
+            input.clone(),
+        )
+        .await;
+        assert_eq!(first.status(), StatusCode::OK);
+        let first = value(first).await;
+        assert_eq!(first["state"], "completed");
+        assert_eq!(first["thread_id"], thread.id);
+        assert_eq!(
+            value(request(&app, owner, &token, &format!("{BASE}/inbox"), "POST", input).await)
+                .await,
+            first
+        );
+        assert_eq!(fake.reads.load(Ordering::SeqCst), 1);
+        assert!(
+            store
+                .conversation(&user, thread.id.clone(), None)
+                .await
+                .unwrap()
+                .turns
+                .is_empty()
+        );
+        drop(app);
+        drop(store);
+        let store = owner.open_verified(&root).await.unwrap();
+        let user = store.authenticate(token.clone()).await.unwrap();
+        let history = store
+            .member_google_thread_history(&user, owner, thread.id.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].state, "completed");
+        assert!(
+            history[0].result.as_ref().unwrap().messages[0]
+                .subject
+                .contains("LITERAL_MAIL_CANARY")
+        );
+        let db = std::fs::read_dir(&root)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("assistant.sqlite");
+        let bytes = std::fs::read(db).unwrap();
+        assert!(
+            !bytes
+                .windows(b"LITERAL_MAIL_CANARY".len())
+                .any(|v| v == b"LITERAL_MAIL_CANARY")
+        );
+        let app =
+            routes_with_test_transport(store.clone(), owner, transport(fake.clone(), revision));
+        let reconnected = connect(&app, owner, &token).await;
+        let replaced = store
+            .member_google_thread_history(&user, owner, thread.id.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(replaced[0].state, "withdrawn");
+        assert!(replaced[0].result.is_none());
+        store
+            .disconnect_member_google(
+                &user,
+                owner,
+                reconnected["connection_id"]
+                    .as_str()
+                    .unwrap()
+                    .parse()
+                    .unwrap(),
+                reconnected["epoch"].as_i64().unwrap(),
+            )
+            .await
+            .unwrap();
+        let withdrawn = store
+            .member_google_thread_history(&user, owner, thread.id.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(withdrawn[0].state, "withdrawn");
+        assert!(withdrawn[0].result.is_none());
+        assert!(withdrawn[0].source.is_none());
+        store.delete_thread(&user, thread.id.clone()).await.unwrap();
+        assert!(
+            store
+                .member_google_thread_history(&user, owner, thread.id.parse().unwrap())
+                .await
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn restart_retires_a_dispatched_read_without_a_second_provider_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("member");
+        let (store, owner, token) = member(&root).await;
+        let user = store.authenticate(token.clone()).await.unwrap();
+        let thread = store.create_thread(&user, "Original".into()).await.unwrap();
+        let fake = Arc::new(Fake::default());
+        let revision = Uuid::new_v4();
+        let app =
+            routes_with_test_transport(store.clone(), owner, transport(fake.clone(), revision));
+        let grant = connect(&app, owner, &token).await;
+        let read = moosuri_store::MemberGoogleReadIntent {
+            thread_id: thread.id.parse().unwrap(),
+            request_id: Uuid::new_v4(),
+        };
+        let admission = store
+            .begin_member_google_thread_read(
+                &user,
+                owner,
+                revision,
+                read.clone(),
+                grant["connection_id"].as_str().unwrap().parse().unwrap(),
+                grant["epoch"].as_i64().unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &admission,
+            moosuri_store::MemberGoogleReadAdmission::Fresh(_)
+        ));
+        drop(admission);
+        drop(app);
+        drop(store);
+        let store = owner.open_verified(&root).await.unwrap();
+        let app =
+            routes_with_test_transport(store.clone(), owner, transport(fake.clone(), revision));
+        let input =
+            json!({"connection_id":grant["connection_id"],"epoch":grant["epoch"],"read":read});
+        let reply = request(&app, owner, &token, &format!("{BASE}/inbox"), "POST", input).await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        assert_eq!(value(reply).await["state"], "unknown");
+        assert_eq!(fake.reads.load(Ordering::SeqCst), 0);
+        assert_eq!(fake.refreshes.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn uncertain_thread_read_never_dispatches_twice_and_manual_connect_has_no_continuation() {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, owner, token) = member(&temp.path().join("member")).await;
+        let user = store.authenticate(token.clone()).await.unwrap();
+        let thread = store.create_thread(&user, "Original".into()).await.unwrap();
+        let fake = Arc::new(Fake::default());
+        let app = routes_with_test_transport(
+            store.clone(),
+            owner,
+            transport(fake.clone(), Uuid::new_v4()),
+        );
+        let grant = connect(&app, owner, &token).await;
+        assert!(grant.get("continuation").is_none());
+        fake.fail_read.store(true, Ordering::SeqCst);
+        let input = json!({"connection_id":grant["connection_id"],"epoch":grant["epoch"],"read":{"thread_id":thread.id,"request_id":Uuid::new_v4()}});
+        assert_eq!(
+            request(
+                &app,
+                owner,
+                &token,
+                &format!("{BASE}/inbox"),
+                "POST",
+                input.clone()
+            )
+            .await
+            .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        fake.fail_read.store(false, Ordering::SeqCst);
+        let second = request(
+            &app,
+            owner,
+            &token,
+            &format!("{BASE}/inbox"),
+            "POST",
+            input.clone(),
+        )
+        .await;
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(value(second).await["state"], "unknown");
+        assert_eq!(fake.reads.load(Ordering::SeqCst), 1);
+        let other = temp.path().join("other");
+        let (other_store, other_owner, other_token) = member(&other).await;
+        let other_user = other_store.authenticate(other_token).await.unwrap();
+        assert!(
+            other_store
+                .member_google_thread_history(&other_user, other_owner, thread.id.parse().unwrap())
+                .await
+                .is_err()
+        );
+        let history = value(
+            request(
+                &app,
+                owner,
+                &token,
+                &format!("{BASE}/history"),
+                "POST",
+                json!({"thread_id":thread.id}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(history["reads"][0]["state"], "unknown");
     }
 
     #[tokio::test]

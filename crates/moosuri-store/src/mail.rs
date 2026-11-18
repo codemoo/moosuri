@@ -8,6 +8,7 @@ use moosuri_core::*;
 
 mod connection_help;
 mod member_google;
+pub use member_google::reads::*;
 pub use member_google::{
     MemberGoogleBinding, MemberGoogleGrant, MemberGoogleRefresh, MemberGoogleStatus,
 };

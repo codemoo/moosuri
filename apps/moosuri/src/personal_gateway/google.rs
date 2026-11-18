@@ -16,6 +16,7 @@ pub(super) fn routes() -> Router<Gateway> {
         .route("/api/v1/personal/google/start", post(member))
         .route("/api/v1/personal/google/complete", post(member))
         .route("/api/v1/personal/google/inbox", post(member))
+        .route("/api/v1/personal/google/history", post(member))
         .route("/api/v1/personal/google/disconnect", post(member))
         .layer(DefaultBodyLimit::max(4096))
 }

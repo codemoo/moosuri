@@ -26,7 +26,7 @@ AccountId, TenantId, intended VolumeId and generation are explicit inputs. The
 account/tenant pair must exist, be active, not deleted and not in recovery. The
 volume and generation are an operator-supplied binding, not installation-registry
 authorization. Email never selects an owner. UUIDs and positive generation are
-validated; schemas 81–84 must match the frozen inventory and public migration hashes.
+validated; schemas 81–85 must match the frozen inventory and public migration hashes.
 Future or unclassified schemas fail before output creation.
 
 The source must be a canonical owner-only 0700 directory containing **only** one

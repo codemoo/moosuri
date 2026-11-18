@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "schema": 85,
+  "base_schema": 84,
+  "migrations": [
+    {
+      "name": "0085_member_google_thread_reads.sql",
+      "sha256": "e9bc0d8f7f2b468ca6ca95a0f76c821560ab30d44a27066a501891d555a7a0d7"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_google_thread_reads",
+      "kind": "table",
+      "sql_sha256": "a5a2bfa69c0541e764c94300a51323b37f43b481da0e1bb955250afbdcf1ebf5",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_thread_reads",
+      "key_transition": "Encrypted private mailbox observations are bound to owner, volume, generation, app, connection and epoch. Exclude from knowledge archives; do not reuse across an unverified restore.",
+      "verification": "Exact schema, owner and thread FKs; source binding and ciphertext AAD; uncertain reads never redispatch.",
+      "on_failure": "Quarantine affected observation; never infer authority from mailbox or reuse a request.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "thread_id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "session_digest",
+        "app_revision",
+        "flow_id",
+        "connection_id",
+        "source_epoch",
+        "phase",
+        "created_at",
+        "updated_at",
+        "cipher"
+      ]
+    }
+  ],
+  "schema_sha256": "30d25647041cb36a62be07f8cf0666ecb20c72f49e53e93a9dd925b7c1b1802b"
+}

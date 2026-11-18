@@ -314,6 +314,8 @@ impl Gateway {
             || path.starts_with("/api/v1/knowledge/memories")
         {
             MAX_THREAD_BODY
+        } else if path == "/api/v1/personal/google/history" {
+            1024 * 1024
         } else if path.starts_with("/api/v1/personal/google") {
             128 * 1024
         } else {

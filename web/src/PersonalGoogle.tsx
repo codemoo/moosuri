@@ -3,32 +3,81 @@ import type { SessionView } from "../shared/api-types";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
 
-const base = "/personal/google";
-const flowKey = "moosuri.personal.google-read.v1";
+const base = "/personal/google",
+  flowKey = "moosuri.personal.google-read.v1";
 type Grant = { connection_id: string; epoch: number; mailbox: string };
-type Status = { connection: Grant | null };
 type Inbox = {
   mailbox: string;
   messages: { id: string; subject: string; from: string; date: string }[];
   has_more: boolean;
+  scope: string;
+};
+export type GoogleReadIntent = { thread_id: string; request_id: string };
+export type ThreadGoogleRead = {
+  thread_id: string;
+  request_id: string;
+  state: string;
+  created_at: number;
+  source: (Grant & { app_revision: string }) | null;
+  result: Inbox | null;
 };
 type Pending = {
   flow: string;
   account: string;
   session: string;
-  read: boolean;
+  read?: GoogleReadIntent;
+  draft?: string;
   expires: number;
+  phase: "consent" | "completing" | "reading" | "uncertain";
 };
-export function googleReturn() {
-  const p = new URLSearchParams(location.hash.slice(1));
-  return p.has("google_handle") || p.has("google_denied");
-}
 function stored(): Pending | null {
   try {
     return JSON.parse(sessionStorage.getItem(flowKey) ?? "null");
   } catch {
     return null;
   }
+}
+function belongs(p: Pending | null, s: SessionView): p is Pending {
+  return (
+    !!p &&
+    p.account === s.user.id &&
+    !!s.chat_draft_scope &&
+    p.session === s.chat_draft_scope &&
+    p.expires > Date.now()
+  );
+}
+function intent(v: unknown): v is GoogleReadIntent {
+  return (
+    !!v &&
+    typeof v === "object" &&
+    typeof (v as GoogleReadIntent).thread_id === "string" &&
+    typeof (v as GoogleReadIntent).request_id === "string"
+  );
+}
+function same(a: GoogleReadIntent, b: GoogleReadIntent) {
+  return a.thread_id === b.thread_id && a.request_id === b.request_id;
+}
+function save(p: Pending) {
+  sessionStorage.setItem(flowKey, JSON.stringify(p));
+}
+function uncertain(p: Pending) {
+  try {
+    save(p);
+  } catch {
+    /* Server dispatch history remains authoritative. */
+  }
+}
+export function googleReadDestination(s: SessionView): GoogleReadIntent | null {
+  const p = stored();
+  return belongs(p, s) && intent(p.read) ? p.read : null;
+}
+export function googleReturn() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  return (
+    p.has("google_handle") ||
+    p.has("google_denied") ||
+    ["completing", "reading", "uncertain"].includes(stored()?.phase ?? "")
+  );
 }
 export function clearPersonalGoogle() {
   try {
@@ -37,16 +86,72 @@ export function clearPersonalGoogle() {
     /* storage unavailable */
   }
 }
+export function GoogleReadHistory({ reads }: { reads: ThreadGoogleRead[] }) {
+  return (
+    <div aria-label="이 대화의 메일 확인 기록">
+      {reads.length > 0 && <h3>저장된 메일 확인 기록 · 최근 20개</h3>}
+      {reads.map((r) => (
+        <article key={r.request_id} className="preview-google-read">
+          <strong>받은편지함 확인</strong>
+          <p>
+            조회 요청:{" "}
+            <time dateTime={new Date(r.created_at * 1000).toISOString()}>
+              {new Date(r.created_at * 1000).toLocaleString()}
+            </time>
+          </p>
+          {r.result && r.source ? (
+            <>
+              <p>
+                {r.source.mailbox} · 받은편지함 첫 페이지에서 최대 5건을
+                확인했습니다. 전체 메일에서 가장 최근인 항목을 뜻하지 않습니다.
+              </p>
+              {r.result.messages.length ? (
+                <ul>
+                  {r.result.messages.map((m) => (
+                    <li key={m.id}>
+                      <strong>{m.subject || "제목 없음"}</strong>
+                      <div>{m.from}</div>
+                      <small>{m.date}</small>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>확인한 페이지에 받은 메일이 없습니다.</p>
+              )}
+              {r.result.has_more && <p>다음 페이지에 메일이 더 있습니다.</p>}
+            </>
+          ) : (
+            <p>
+              {r.state === "withdrawn"
+                ? "연결이 변경되거나 해제되어 이 결과를 제거했습니다."
+                : r.state === "awaiting_consent"
+                  ? "Google 연결을 기다리던 요청입니다. 자동으로 다시 연결하거나 읽지 않습니다."
+                  : r.state === "ready"
+                    ? "연결은 완료됐지만 읽기 결과가 없습니다. 자동으로 읽기를 재개하지 않습니다."
+                    : "조회 결과를 확인하지 못했습니다. 자동으로 다시 읽지 않았습니다."}
+            </p>
+          )}
+        </article>
+      ))}
+    </div>
+  );
+}
 export default function PersonalGoogle({
   session,
   expired,
-  readOnOpen = false,
-  consumed,
+  readIntent,
+  readDraft,
+  returned,
 }: {
   session: SessionView;
   expired: () => void;
-  readOnOpen?: boolean;
-  consumed?: () => void;
+  readIntent?: GoogleReadIntent | null;
+  readDraft?: string;
+  returned?: (
+    intent: GoogleReadIntent,
+    uncertain?: boolean,
+    draft?: string,
+  ) => void;
 }) {
   const scope = useScope(session.user.id, "personal-google");
   const [connection, setConnection] = useState<Grant | null>(null),
@@ -66,26 +171,73 @@ export default function PersonalGoogle({
       setNotice("설치 관리자가 Google 연결을 활성화하면 사용할 수 있습니다.");
       return;
     }
-    setNotice("연결 상태를 확인할 수 없습니다. 다시 확인해 주세요.");
+    setNotice("연결 상태를 확인할 수 없습니다. 자동으로 다시 읽지 않았습니다.");
   }
-  async function read(g: Grant) {
-    const contents = await scope.request<Inbox>(
-      base + "/inbox",
-      "POST",
-      { connection_id: g.connection_id, epoch: g.epoch },
-      undefined,
-      { timeoutMs: 75000 },
-    );
-    setInbox(contents);
+  function pending(
+    read: GoogleReadIntent | undefined,
+    phase: Pending["phase"],
+    flow = "",
+    draft = readDraft,
+  ): Pending {
+    return {
+      flow,
+      account: session.user.id,
+      session: session.chat_draft_scope!,
+      read,
+      draft: read ? draft : undefined,
+      phase,
+      expires: Date.now() + 600000,
+    };
   }
-  async function update(readConnected = false) {
-    setBusy(true);
-    setNotice("");
+  function owns(destination: GoogleReadIntent) {
+    const p = stored();
+    return belongs(p, session) && intent(p.read) && same(p.read, destination);
+  }
+  async function read(
+    g: Grant,
+    destination?: GoogleReadIntent,
+    draftText = readDraft,
+  ) {
+    if (destination) save(pending(destination, "reading", "", draftText));
     try {
-      const v = await scope.request<Status>(base);
+      if (destination) {
+        const result = await scope.request<ThreadGoogleRead>(
+          base + "/inbox",
+          "POST",
+          { connection_id: g.connection_id, epoch: g.epoch, read: destination },
+          undefined,
+          { timeoutMs: 75000 },
+        );
+        if (!same(result, destination))
+          throw Error("read destination mismatch");
+        if (!owns(destination)) return;
+        clearPersonalGoogle();
+        returned?.(destination, result.state !== "completed", draftText);
+      } else
+        setInbox(
+          await scope.request<Inbox>(
+            base + "/inbox",
+            "POST",
+            { connection_id: g.connection_id, epoch: g.epoch },
+            undefined,
+            { timeoutMs: 75000 },
+          ),
+        );
+    } catch (e) {
+      if (isAborted(e)) return;
+      if (destination && owns(destination)) {
+        uncertain(pending(destination, "uncertain", "", draftText));
+        returned?.(destination, true, draftText);
+      }
+      fail(e);
+    }
+  }
+  async function update(destination?: GoogleReadIntent) {
+    try {
+      const v = await scope.request<{ connection: Grant | null }>(base);
       setConnection(v.connection);
       setEnabled(true);
-      if (readConnected && v.connection) await read(v.connection);
+      if (destination && v.connection) await read(v.connection, destination);
     } catch (e) {
       fail(e);
     } finally {
@@ -93,52 +245,70 @@ export default function PersonalGoogle({
     }
   }
   useEffect(() => {
-    // StrictMode may mount twice. Start irreversible completion only on the live mount.
     const timer = window.setTimeout(
       () =>
         void (async () => {
-          if (!googleReturn()) {
-            if (readOnOpen) consumed?.();
-            await update(readOnOpen);
+          const fields = new URLSearchParams(location.hash.slice(1)),
+            p = stored();
+          if (!fields.has("google_handle") && !fields.has("google_denied")) {
+            if (
+              belongs(p, session) &&
+              intent(p.read) &&
+              ["completing", "reading", "uncertain"].includes(p.phase)
+            ) {
+              const destination = p.read;
+              clearPersonalGoogle();
+              returned?.(destination, true, p.draft);
+              setBusy(false);
+              return;
+            }
+            await update(readIntent ?? undefined);
             return;
           }
-          const fields = new URLSearchParams(location.hash.slice(1));
           const flow = fields.get("flow") ?? fields.get("google_denied"),
             handle = fields.get("google_handle");
-          const pending = stored();
           history.replaceState(null, "", location.pathname);
-          const matches =
-            pending &&
-            pending.flow === flow &&
-            pending.account === session.user.id &&
-            !!session.chat_draft_scope &&
-            pending.session === session.chat_draft_scope &&
-            pending.expires > Date.now();
-          if (!matches) {
+          if (
+            !belongs(p, session) ||
+            p.flow !== flow ||
+            p.phase !== "consent"
+          ) {
             await update();
             setNotice("연결을 시작한 계정과 탭에서 다시 진행해 주세요.");
             return;
           }
-          clearPersonalGoogle();
           if (!handle || !/^[a-f0-9]{64}$/.test(handle)) {
+            clearPersonalGoogle();
             await update();
             setNotice("Google 연결이 취소됐습니다.");
             return;
           }
           try {
-            const completed = await scope.request<Grant & { flow_id: string }>(
-              base + "/complete",
-              "POST",
-              { handle },
-              undefined,
-              { timeoutMs: 75000 },
-            );
-            if (completed.flow_id !== pending.flow)
-              throw Error("flow mismatch");
+            save({ ...p, phase: "completing" });
+            const completed = await scope.request<
+              Grant & { flow_id: string; continuation?: GoogleReadIntent }
+            >(base + "/complete", "POST", { handle }, undefined, {
+              timeoutMs: 75000,
+            });
+            if (completed.flow_id !== p.flow) throw Error("flow mismatch");
+            if (stored()?.flow !== p.flow) return;
             setConnection(completed);
             setEnabled(true);
-            if (pending.read) await read(completed);
+            if (intent(p.read)) {
+              if (
+                !completed.continuation ||
+                !same(p.read, completed.continuation)
+              )
+                throw Error("continuation mismatch");
+              await read(completed, completed.continuation, p.draft);
+            } else clearPersonalGoogle(); // Manual connection never resumes a read.
           } catch (e) {
+            if (isAborted(e)) return;
+            if (stored()?.flow !== p.flow) return;
+            if (intent(p.read)) {
+              uncertain({ ...p, phase: "uncertain" });
+              returned?.(p.read, true, p.draft);
+            } else clearPersonalGoogle();
             fail(e);
           } finally {
             setBusy(false);
@@ -162,13 +332,15 @@ export default function PersonalGoogle({
         clearPersonalGoogle();
         setConnection(null);
         setInbox(null);
-      } else if (name === "read" && connection) {
-        await read(connection);
-      } else {
+      } else if (name === "read" && connection)
+        await read(connection, readIntent ?? undefined);
+      else {
+        const destination =
+          name === "read" ? (readIntent ?? undefined) : undefined;
         const started = await scope.request<{
           flow_id: string;
           authorization_url: string;
-        }>(base + "/start", "POST", {});
+        }>(base + "/start", "POST", destination ? { read: destination } : {});
         const url = new URL(started.authorization_url);
         if (
           url.origin !== "https://accounts.google.com" ||
@@ -176,16 +348,7 @@ export default function PersonalGoogle({
           !session.chat_draft_scope
         )
           throw Error("invalid consent");
-        sessionStorage.setItem(
-          flowKey,
-          JSON.stringify({
-            flow: started.flow_id,
-            account: session.user.id,
-            session: session.chat_draft_scope,
-            read: name === "read",
-            expires: Date.now() + 600000,
-          } satisfies Pending),
-        );
+        save(pending(destination, "consent", started.flow_id));
         location.assign(url.href);
       }
     } catch (e) {
@@ -202,9 +365,25 @@ export default function PersonalGoogle({
       {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">확인 중…</p>}
       {enabled && (
-        <button disabled={busy} onClick={() => void action("read")}>
-          {connection ? "메일 확인" : "Google로 연결하고 메일 확인"}
-        </button>
+        <>
+          <button
+            disabled={busy}
+            onClick={() =>
+              void action(readIntent || connection ? "read" : "connect")
+            }
+          >
+            {connection
+              ? "메일 확인"
+              : readIntent
+                ? "Google로 연결하고 이 대화에서 메일 확인"
+                : "Google 연결"}
+          </button>
+          {readIntent && !connection && (
+            <button disabled={busy} onClick={() => void action("connect")}>
+              Google 연결만
+            </button>
+          )}
+        </>
       )}
       {connection && (
         <button disabled={busy} onClick={() => void action("disconnect")}>
@@ -215,7 +394,11 @@ export default function PersonalGoogle({
         <button onClick={() => void update()}>연결 상태 다시 확인</button>
       )}
       {inbox && (
-        <div aria-label="메일 목록">
+        <>
+          <p>
+            받은편지함 첫 페이지에서 최대 5건을 확인했습니다. 전체 메일에서 가장
+            최근인 항목을 뜻하지 않습니다.
+          </p>
           {inbox.messages.length ? (
             <ul>
               {inbox.messages.map((m) => (
@@ -227,10 +410,10 @@ export default function PersonalGoogle({
               ))}
             </ul>
           ) : (
-            <p>받은 메일이 없습니다.</p>
+            <p>확인한 페이지에 받은 메일이 없습니다.</p>
           )}
-          {inbox.has_more && <p>받은편지함의 첫 다섯 건을 표시했습니다.</p>}
-        </div>
+          {inbox.has_more && <p>다음 페이지에 메일이 더 있습니다.</p>}
+        </>
       )}
     </section>
   );

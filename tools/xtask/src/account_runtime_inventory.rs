@@ -34,7 +34,7 @@ fn scalar(c: &Connection, query: &str) -> Check<i64> {
 }
 pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
-        (81..=84).contains(&schema),
+        (81..=85).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
     )?;
     let mut v: Value = serde_json::from_str(&read(
@@ -67,6 +67,7 @@ pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
                 82 => 203,
                 83 => 204,
                 84 => 207,
+                85 => 208,
                 _ => unreachable!(),
             },
         "inventory manifest table count mismatch",
@@ -568,9 +569,9 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             "--schema" if selected.is_none() => {
                 selected = Some(
                     iter.next()
-                        .ok_or("--schema requires 81 through 84")?
+                        .ok_or("--schema requires 81 through 85")?
                         .parse::<i64>()
-                        .map_err(|_| "--schema requires 81 through 84")?,
+                        .map_err(|_| "--schema requires 81 through 85")?,
                 );
             }
             "--snapshot" if snapshot.is_none() => {
@@ -581,7 +582,7 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             }
             _ => {
                 return Err(
-                    "usage: account-runtime-inventory [--schema 81|82|83|84] [--snapshot DIRECTORY]"
+                    "usage: account-runtime-inventory [--schema 81|82|83|84|85] [--snapshot DIRECTORY]"
                         .into(),
                 );
             }
@@ -944,7 +945,7 @@ mod tests {
         let dir = Scratch::new();
         assert!(snapshot_files(&dir.0, &artifact_manifest(&root()).unwrap()).is_err());
         assert!(
-            load(&root(), 85)
+            load(&root(), 86)
                 .unwrap_err()
                 .contains("unsupported inventory schema")
         );

@@ -19,6 +19,10 @@ import "./personal-preview.css";
 import PersonalGoogle, {
   clearPersonalGoogle,
   googleReturn,
+  googleReadDestination,
+  GoogleReadHistory,
+  type GoogleReadIntent,
+  type ThreadGoogleRead,
 } from "./PersonalGoogle";
 import PersonalAdmin from "./PersonalAdmin";
 import { PersonalMemories } from "./PersonalMemories";
@@ -375,8 +379,22 @@ function Workspace({
       googleReturn() ? "mail" : "chat",
     ),
     [refresh, setRefresh] = useState(0);
-  const [openInbox, setOpenInbox] = useState(false);
   const [admin, setAdmin] = useState(session.installation_admin === true);
+  const [openInbox, setOpenInbox] = useState<
+    (GoogleReadIntent & { draft: string }) | null
+  >(null);
+  const [googleReads, setGoogleReads] = useState<ThreadGoogleRead[]>([]);
+  const [mailError, setMailError] = useState("");
+  const mailVersion = useRef(0);
+  const googleThread = useRef(
+    googleReadDestination(session)?.thread_id ?? null,
+  );
+  const googleIntent = useRef(googleReadDestination(session));
+  const completedGoogle = useRef<{
+    intent: GoogleReadIntent;
+    text: string;
+    verified: boolean;
+  } | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const memoryRef = useRef(memory);
@@ -399,6 +417,20 @@ function Workspace({
     const value = update(memoryRef.current);
     memoryRef.current = value;
     setMemory(value);
+  }
+  function clearCompletedGoogleDraft(m: ChatMemory): ChatMemory {
+    const done = completedGoogle.current;
+    if (
+      !done ||
+      !done.verified ||
+      googleIntent.current?.thread_id !== done.intent.thread_id ||
+      googleIntent.current?.request_id !== done.intent.request_id ||
+      m.drafts[done.intent.thread_id] !== done.text
+    )
+      return m;
+    const drafts = { ...m.drafts };
+    delete drafts[done.intent.thread_id];
+    return { ...m, drafts };
   }
   async function inventory() {
     const result = await scope.request<ThreadsResponse>("/threads");
@@ -428,14 +460,20 @@ function Workspace({
               (t) => t.id === restored.memory.threadCreation!.request_id,
             );
           if (restored) {
-            const value = created
-              ? moveNewDraft(restored.memory, created.id)
-              : restored.memory;
+            const value = clearCompletedGoogleDraft(
+              created
+                ? moveNewDraft(restored.memory, created.id)
+                : restored.memory,
+            );
             setMemory(value);
             memoryRef.current = value;
           }
           setSelected(
-            created?.id ?? restored?.selected ?? result.threads[0]?.id ?? null,
+            result.threads.find((t) => t.id === googleThread.current)?.id ??
+              created?.id ??
+              restored?.selected ??
+              result.threads[0]?.id ??
+              null,
           );
           initialized.current = true;
         }
@@ -460,6 +498,7 @@ function Workspace({
   }, [memory, selected, threads, recovery]);
   useEffect(() => {
     const check = () => {
+      setGoogleReads([]);
       void scope
         .request<SessionView>("/auth/session")
         .then((v) => {
@@ -470,12 +509,16 @@ function Workspace({
             v.installation_admin !== session.installation_admin
           )
             changedSession(v);
+          else if (view === "chat" && selectedRef.current) {
+            void history(selectedRef.current);
+            void mailHistory(selectedRef.current);
+          }
         })
         .catch(fail);
     };
     window.addEventListener("focus", check);
     return () => window.removeEventListener("focus", check);
-  }, [scope, session]);
+  }, [scope, session, view]);
   function reconcile(thread: string, turns: ChatTurn[]) {
     const value = memoryRef.current.pending[thread];
     if (!value) return;
@@ -519,12 +562,56 @@ function Workspace({
       if (version === historyVersion.current) setReading(false);
     }
   }
+  async function mailHistory(thread: string) {
+    const version = ++mailVersion.current;
+    setGoogleReads([]);
+    setMailError("");
+    try {
+      const result = await scope.request<{ reads: ThreadGoogleRead[] }>(
+        "/personal/google/history",
+        "POST",
+        { thread_id: thread },
+        undefined,
+        { timeoutMs: 15000 },
+      );
+      if (version !== mailVersion.current || selectedRef.current !== thread)
+        return;
+      setGoogleReads(result.reads.filter((r) => r.thread_id === thread));
+      const candidate = completedGoogle.current;
+      if (
+        candidate &&
+        result.reads.some(
+          (r) =>
+            r.state === "completed" &&
+            r.thread_id === candidate.intent.thread_id &&
+            r.request_id === candidate.intent.request_id,
+        )
+      ) {
+        candidate.verified = true;
+        change(clearCompletedGoogleDraft);
+      }
+    } catch (e) {
+      if (version !== mailVersion.current) return;
+      setGoogleReads([]);
+      if (e instanceof ApiFailure && e.status === 401) expired();
+      else if (!isAborted(e) && !(e instanceof ApiFailure && e.status === 404))
+        setMailError(
+          "저장된 메일 확인 기록을 불러오지 못했습니다. 대화 기록은 계속 이용할 수 있습니다.",
+        );
+    }
+  }
   useEffect(() => {
     ++historyVersion.current;
     setPage(null);
+    ++mailVersion.current;
+    setGoogleReads([]);
+    setMailError("");
     setError("");
-    if (selected) void history(selected);
-  }, [selected, scope, refresh]);
+    if (selected) {
+      void history(selected);
+      if (view === "chat") void mailHistory(selected);
+    }
+  }, [selected, scope, refresh, view]);
   useEffect(() => {
     if (!selected || reading || !page?.turns.some(active)) return;
     const timer = window.setInterval(() => void history(selected), 2000);
@@ -654,7 +741,15 @@ function Workspace({
             return { ...m, pending };
           });
           if (e.status === 422 && e.code === "personal_inbox_requested") {
-            setOpenInbox(true);
+            setOpenInbox({
+              thread_id: destination,
+              request_id: value.request_id,
+              draft: value.text,
+            });
+            googleIntent.current = {
+              thread_id: destination,
+              request_id: value.request_id,
+            };
             setView("mail");
           } else fail(e);
         } else {
@@ -720,7 +815,7 @@ function Workspace({
         <button
           aria-pressed={view === "mail"}
           onClick={() => {
-            setOpenInbox(false);
+            setOpenInbox(null);
             setView("mail");
           }}
         >
@@ -754,8 +849,38 @@ function Workspace({
         <PersonalGoogle
           session={session}
           expired={expired}
-          readOnOpen={openInbox}
-          consumed={() => setOpenInbox(false)}
+          readIntent={
+            openInbox
+              ? {
+                  thread_id: openInbox.thread_id,
+                  request_id: openInbox.request_id,
+                }
+              : null
+          }
+          readDraft={openInbox?.draft}
+          returned={(intent, uncertain, draftText) => {
+            if (
+              googleIntent.current?.thread_id === intent.thread_id &&
+              googleIntent.current?.request_id === intent.request_id &&
+              typeof draftText === "string"
+            ) {
+              completedGoogle.current = {
+                intent,
+                text: draftText,
+                verified: !uncertain,
+              };
+              if (!uncertain) change(clearCompletedGoogleDraft);
+            }
+            googleThread.current = intent.thread_id;
+            setSelected(intent.thread_id);
+            setOpenInbox(null);
+            setView("chat");
+            setRefresh((v) => v + 1);
+            if (uncertain)
+              setError(
+                "저장된 메일 조회 결과만 확인합니다. 자동으로 다시 읽지 않았습니다.",
+              );
+          }}
         />
       ) : view === "memory" ? (
         <section className="preview-memory-panel">
@@ -800,8 +925,8 @@ function Workspace({
             <div className="preview-capability">
               <strong>텍스트 미리보기</strong>
               <p>
-                메일 조회·발송이나 예약이 필요한 작업은 현재 운영 비서에서
-                이용하세요.
+                메일 확인 결과는 이 대화에 별도로 표시되며 모델에 전달되지
+                않습니다. 발송·예약은 지원하지 않습니다.
               </p>
               {cap && <span>모델: {cap.model}</span>}
               {!loading && !ready && (
@@ -854,6 +979,8 @@ function Workspace({
                       </div>
                     </article>
                   ))}
+                  {mailError && <p role="status">{mailError}</p>}
+                  <GoogleReadHistory reads={googleReads} />
                 </div>
                 {pending && (
                   <div className="preview-pending" role="status">

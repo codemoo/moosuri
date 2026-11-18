@@ -244,6 +244,16 @@
       "aad_source": "mail/member_google.rs::aad, member volume and app revision plus grant identity/version",
       "transition": "Reauthorize migrated accounts. Verify the original bound owner, volume and key before reuse on same-volume recovery.",
       "on_unprovable": "Retire only the affected read-only Google grant and request fresh consent."
+    },
+    {
+      "table": "member_google_thread_reads",
+      "since_schema": 85,
+      "columns": [
+        "cipher"
+      ],
+      "aad_source": "mail/member_google/reads.rs::aad; full owner, volume, generation, app, thread, request, connection and epoch",
+      "transition": "Private browser-only read history; exclude from manual-knowledge archives. Require verified original volume and key; withdraw on disconnect or reconnect.",
+      "on_unprovable": "Purge affected observation payload and retain a non-replayable request marker."
     }
   ]
 }

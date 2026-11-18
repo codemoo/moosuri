@@ -1082,6 +1082,12 @@ mod tests {
         ] {
             c.execute("INSERT INTO accounts(id,tenant_id,name,email,role,password_hash,must_change_password,auth_epoch) VALUES(?1,?2,?3,?4,'member','PRIVATE-PASSWORD-HASH-CANARY',0,0)",params![account,tenant,name,email]).unwrap();
         }
+        if schema_version >= 85 {
+            for (account, tenant, id) in [(A, TA, SA), (B, TB, SB)] {
+                c.execute("INSERT INTO threads(tenant_id,id,account_id,title,created_at,updated_at) VALUES(?1,?2,?3,'Private mail read',1000,1000)",params![tenant,id,account]).unwrap();
+                c.execute("INSERT INTO member_google_thread_reads(tenant_id,account_id,request_id,thread_id,volume_id,generation,auth_epoch,session_digest,app_revision,connection_id,source_epoch,phase,created_at,updated_at,cipher) VALUES(?1,?2,?3,?3,'99999999-9999-4999-8999-999999999999',3,0,zeroblob(32),'99999999-8888-4888-8888-999999999999','99999999-7777-4777-8777-999999999999',1,'completed',1000,1000,?4)",params![tenant,account,id,b"PRIVATE-GOOGLE-HEADERS-CANARY".as_slice()]).unwrap();
+            }
+        }
         for (tenant, id, source_id) in [
             (TA, "66666666-6666-4666-8666-666666666666", SA),
             (TB, "77777777-7777-4777-8777-777777777777", SB),
@@ -1171,7 +1177,7 @@ mod tests {
     }
     #[test]
     fn owner_graph_is_copied_exactly_and_verifies_without_the_source() {
-        for version in [81, 82, 83, 84] {
+        for version in [81, 82, 83, 84, 85] {
             let f = fixture(version);
             let before = file_hash(&f.source.join("assistant.sqlite")).unwrap();
             let result = extract(&root(), &f.source, &f.output, &owner()).unwrap();
@@ -1224,8 +1230,23 @@ mod tests {
                 "PRIVATE-B-INDEX-CANARY",
                 "DELETED-STALE-INDEX-CANARY",
                 "PRIVATE-PASSWORD-HASH-CANARY",
+                "PRIVATE-GOOGLE-HEADERS-CANARY",
             ] {
                 assert!(!bytes.windows(canary.len()).any(|w| w == canary.as_bytes()));
+            }
+            if version == 85 {
+                let report: Value =
+                    serde_json::from_slice(&fs::read(f.output.join("manifest.json")).unwrap())
+                        .unwrap();
+                assert!(
+                    report["excluded_tables"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|t| t["table"] == "member_google_thread_reads"
+                            && t["source_rows"] == 2
+                            && t["owner_rows"] == 1)
+                );
             }
             fs::remove_file(f.source.join("assistant.sqlite")).unwrap();
             fs::remove_dir(&f.source).unwrap();
@@ -1244,7 +1265,7 @@ mod tests {
         );
         assert!(!f.output.exists());
         edit(&f, |c| {
-            c.execute_batch("PRAGMA user_version=85;").unwrap();
+            c.execute_batch("PRAGMA user_version=86;").unwrap();
         });
         assert!(
             extract(&root(), &f.source, &f.output, &owner())

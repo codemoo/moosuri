@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import PersonalPreview, { PREVIEW_DRAFT_KEY } from "./PersonalPreview";
+import type { ThreadGoogleRead } from "./PersonalGoogle";
 const aid = "11111111-1111-4111-8111-111111111111",
   bid = "22222222-2222-4222-8222-222222222222",
   tid = "33333333-3333-4333-8333-333333333333";
@@ -22,6 +23,11 @@ let current: ReturnType<typeof session> | null,
   turns: any[],
   calls: { path: string; method: string; body: any; account: string | null }[],
   paid: Map<string, any>;
+let mailReads: ThreadGoogleRead[];
+let mailFailure: boolean,
+  mailHang: boolean,
+  readHang: boolean,
+  paginate: boolean;
 let restrictLogin: boolean,
   unknownFirst: boolean,
   hideHistory: boolean,
@@ -59,6 +65,11 @@ beforeEach(() => {
     { id: tid, title: "A private thread", created_at: 1, updated_at: 1 },
   ];
   turns = [];
+  mailReads = [];
+  mailFailure = false;
+  mailHang = false;
+  readHang = false;
+  paginate = false;
   calls = [];
   paid = new Map();
   restrictLogin = false;
@@ -104,12 +115,48 @@ beforeEach(() => {
             mailbox: "a@example.test",
           },
         });
-      if (path === "/personal/google/inbox")
+      if (path === "/personal/google/complete")
         return Response.json({
+          connection_id: tid,
+          epoch: 1,
+          mailbox: "a@example.test",
+          flow_id: "a".repeat(64),
+          continuation: { thread_id: tid, request_id: bid },
+        });
+      if (path === "/personal/google/history") {
+        if (mailHang) return await new Promise<Response>(() => {});
+        if (mailFailure)
+          return Response.json({ code: "unavailable" }, { status: 503 });
+        return Response.json({
+          reads: mailReads.filter((r) => r.thread_id === body.thread_id),
+        });
+      }
+      if (path === "/personal/google/inbox") {
+        const result = {
           mailbox: "a@example.test",
           messages: [],
           has_more: false,
-        });
+          scope: "one_inbox_page_metadata_only",
+        };
+        if (body.read) {
+          const saved = {
+            ...body.read,
+            state: "completed",
+            created_at: 1,
+            source: {
+              connection_id: tid,
+              epoch: 1,
+              app_revision: aid,
+              mailbox: "a@example.test",
+            },
+            result,
+          };
+          mailReads = [saved];
+          if (readHang) return await new Promise<Response>(() => {});
+          return Response.json(saved);
+        }
+        return Response.json(result);
+      }
       if (path === "/text-preview")
         return capEnabled
           ? Response.json({
@@ -140,7 +187,7 @@ beforeEach(() => {
           thread_id: path.split("/")[2],
           cursor: turns.length,
           turns: hideHistory ? [] : turns,
-          next_before: null,
+          next_before: paginate && !path.includes("?before=") ? 1 : null,
         });
       if (path.match(/^\/threads\/[^/]+\/text-preview$/) && method === "POST") {
         if (body.text === "show my latest email")
@@ -177,6 +224,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
 });
 function mount() {
@@ -206,7 +254,7 @@ it("logs in, replaces a temporary password and sends through the explicit text-o
   await user.type(screen.getByLabelText("새 비밀번호"), "Changed-password-42");
   await user.click(screen.getByRole("button", { name: "비밀번호 변경" }));
   await screen.findByRole("heading", { name: "내 대화" });
-  expect(screen.getByText(/메일 조회·발송/)).toBeInTheDocument();
+  expect(screen.getByText(/모델에 전달되지 않습니다/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "대화 만들기" }));
   const input = await composer();
   await user.type(input, "Explain a queue");
@@ -214,7 +262,9 @@ it("logs in, replaces a temporary password and sends through the explicit text-o
   await screen.findByText("Synthetic reply <button>opaque tool text</button>");
   expect(screen.queryByRole("button", { name: "opaque tool text" })).toBeNull();
   expect(paid.size).toBe(1);
-  const posts = calls.filter((c) => c.method === "POST");
+  const posts = calls.filter(
+    (c) => c.method === "POST" && c.path !== "/personal/google/history",
+  );
   expect(posts.map((c) => c.path)).toEqual([
     "/auth/login",
     "/auth/password",
@@ -340,7 +390,11 @@ it("keeps private history visible when the preview is disabled and deletes only 
       .filter((c) => c.method === "DELETE")
       .map((c) => ({ path: c.path, account: c.account })),
   ).toEqual([{ path: `/threads/${tid}`, account: aid }]);
-  expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  expect(
+    calls.filter(
+      (c) => c.method === "POST" && c.path !== "/personal/google/history",
+    ),
+  ).toHaveLength(0);
 });
 
 it("opens manual memories in the authenticated account and returns to the same conversation", async () => {
@@ -363,7 +417,11 @@ it("opens manual memories in the authenticated account and returns to the same c
   ).toBe(false);
   await user.click(screen.getByRole("button", { name: "대화" }));
   expect(await composer()).toHaveValue("");
-  expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  expect(
+    calls.filter(
+      (c) => c.method === "POST" && c.path !== "/personal/google/history",
+    ),
+  ).toHaveLength(0);
 });
 
 it("sends a first message from the empty workspace with one thread and one model call", async () => {
@@ -381,14 +439,182 @@ it("sends a first message from the empty workspace with one thread and one model
   ).toHaveLength(1);
 });
 
-it("opens an already connected inbox from a recognized chat request and performs one read", async () => {
+it("returns a recognized read to its original thread and replays stored history after reload", async () => {
   const user = userEvent.setup();
-  mount();
+  const first = mount();
   await user.type(await composer(), "show my latest email");
   await user.click(screen.getByRole("button", { name: "보내기" }));
-  await screen.findByText("받은 메일이 없습니다.");
+  await screen.findByText("확인한 페이지에 받은 메일이 없습니다.");
+  expect(
+    screen.getByRole("heading", { name: "A private thread" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/전체 메일에서 가장 최근인 항목을 뜻하지 않습니다/),
+  ).toBeInTheDocument();
   expect(calls.filter((c) => c.path === "/personal/google/inbox")).toHaveLength(
     1,
   );
   expect(paid.size).toBe(0);
+  first.unmount();
+  mount();
+  await screen.findByText("확인한 페이지에 받은 메일이 없습니다.");
+  expect(calls.filter((c) => c.path === "/personal/google/inbox")).toHaveLength(
+    1,
+  );
 });
+
+it("keeps canonical conversation visible while optional mail history is hung", async () => {
+  mailHang = true;
+  turns = [
+    turn(
+      "55555555-5555-4555-8555-555555555555",
+      "Canonical conversation survives",
+    ),
+  ];
+  mount();
+  await screen.findByText("Canonical conversation survives");
+  expect(screen.getByText(/Synthetic reply/)).toBeInTheDocument();
+});
+it("clears stale mail on a history failure without hiding the conversation", async () => {
+  turns = [turn("55555555-5555-4555-8555-555555555555", "Canonical message")];
+  mailReads = [
+    {
+      thread_id: tid,
+      request_id: aid,
+      state: "completed",
+      created_at: 1,
+      source: {
+        connection_id: tid,
+        epoch: 1,
+        app_revision: aid,
+        mailbox: "a@example.test",
+      },
+      result: {
+        mailbox: "a@example.test",
+        messages: [
+          {
+            id: "one",
+            subject: "Private saved mail",
+            from: "sender",
+            date: "date",
+          },
+        ],
+        has_more: false,
+        scope: "one_inbox_page_metadata_only",
+      },
+    },
+  ];
+  mount();
+  await screen.findByText("Private saved mail");
+  mailFailure = true;
+  await act(async () => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  await screen.findByText(/저장된 메일 확인 기록을 불러오지 못했습니다/);
+  expect(screen.queryByText("Private saved mail")).toBeNull();
+  expect(screen.getByText("Canonical message")).toBeInTheDocument();
+});
+it("loading older canonical messages does not fetch the private mail list again", async () => {
+  paginate = true;
+  turns = [turn("55555555-5555-4555-8555-555555555555", "Canonical page")];
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("Canonical page");
+  const count = calls.filter(
+    (c) => c.path === "/personal/google/history",
+  ).length;
+  await user.click(screen.getByRole("button", { name: "이전 메시지" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "이전 메시지" })).toBeNull(),
+  );
+  expect(
+    calls.filter((c) => c.path === "/personal/google/history"),
+  ).toHaveLength(count);
+});
+it("clears only the exact original first-message draft after a mail result", async () => {
+  threads = [];
+  const user = userEvent.setup();
+  mount();
+  await user.type(await composer(), "show my latest email");
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await screen.findByText("확인한 페이지에 받은 메일이 없습니다.");
+  expect(await composer()).toHaveValue("");
+  expect(threads).toHaveLength(1);
+  expect(
+    calls.find((c) => c.path === "/personal/google/inbox")?.body.read.thread_id,
+  ).toBe(threads[0].id);
+  expect(paid.size).toBe(0);
+});
+it("an uncertain old read cannot clear a newer draft when returning to the original thread", async () => {
+  readHang = true;
+  const user = userEvent.setup();
+  mount();
+  await user.type(await composer(), "show my latest email");
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await waitFor(() =>
+    expect(
+      calls.filter((c) => c.path === "/personal/google/inbox"),
+    ).toHaveLength(1),
+  );
+  await user.click(screen.getByRole("button", { name: "대화" }));
+  const input = await composer();
+  await user.clear(input);
+  await user.type(input, "A newer unsent draft");
+  await user.click(screen.getByRole("button", { name: "메일" }));
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "메시지" })).toHaveValue(
+      "A newer unsent draft",
+    ),
+  );
+  expect(calls.filter((c) => c.path === "/personal/google/inbox")).toHaveLength(
+    1,
+  );
+});
+it.each(["Original request", "A newer draft"])(
+  "OAuth returns to the original thread and clears only the exact snapshot: %s",
+  async (draft) => {
+    threads = [
+      { id: aid, title: "Another recent thread", created_at: 2, updated_at: 2 },
+      ...threads,
+    ];
+    sessionStorage.setItem(
+      PREVIEW_DRAFT_KEY,
+      JSON.stringify({
+        version: 1,
+        account: aid,
+        scope: "a".repeat(64),
+        saved_at: Date.now(),
+        selected: aid,
+        slots: [{ id: tid, draft }],
+      }),
+    );
+    sessionStorage.setItem(
+      "moosuri.personal.google-read.v1",
+      JSON.stringify({
+        flow: "a".repeat(64),
+        account: aid,
+        session: "a".repeat(64),
+        read: { thread_id: tid, request_id: bid },
+        draft: "Original request",
+        phase: "consent",
+        expires: Date.now() + 60000,
+      }),
+    );
+    history.replaceState(
+      null,
+      "",
+      "/#google_handle=" + "b".repeat(64) + "&flow=" + "a".repeat(64),
+    );
+    mount();
+    await screen.findByText("확인한 페이지에 받은 메일이 없습니다.");
+    expect(
+      screen.getByRole("heading", { name: "A private thread" }),
+    ).toBeInTheDocument();
+    expect(await composer()).toHaveValue(
+      draft === "Original request" ? "" : draft,
+    );
+    expect(
+      calls.filter((c) => c.path === "/personal/google/inbox"),
+    ).toHaveLength(1);
+  },
+);

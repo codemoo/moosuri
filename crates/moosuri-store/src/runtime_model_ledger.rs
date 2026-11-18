@@ -176,6 +176,16 @@ impl Ledger {
         })
     }
     pub fn admit(&mut self, key: &CallKey, budget: Budget) -> Result<Admission> {
+        self.admit_if_ready(key, budget, true)
+    }
+    /// An unavailable credential can still retrieve an existing receipt. It
+    /// cannot create a new reservation or consume the account's budget.
+    pub fn admit_if_ready(
+        &mut self,
+        key: &CallKey,
+        budget: Budget,
+        provider_ready: bool,
+    ) -> Result<Admission> {
         budget.validate()?;
         if key.generation <= 0 || key.ordinal > 1_000_000 {
             return Err(StoreError::InvalidInput);
@@ -202,6 +212,9 @@ impl Ledger {
         let collision:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calls WHERE account_id=?1 AND generation=?2 AND run_id=?3 AND ordinal=?4)",params![key.account_id.to_string(),key.generation,key.run_id.to_string(),key.ordinal],|r|r.get(0))?;
         if collision {
             return Err(StoreError::Conflict);
+        }
+        if !provider_ready {
+            return Err(StoreError::ModelRequired);
         }
         let (calls, tokens): (u64, u64) = tx.query_row(
             "SELECT count(*),coalesce(sum(charged_tokens),0) FROM calls WHERE account_id=?1",

@@ -192,11 +192,67 @@ fn private_bytes(path: &Path, cap: usize) -> Result<Zeroizing<Vec<u8>>, String> 
     }
     Ok(bytes)
 }
+// Read the installation-owned key for each admission. Reuse the transport
+// (including its pinned HTTP pool) while the credential is unchanged.
+struct ClientCache {
+    tag: Option<hmac::Tag>,
+    client: Arc<ModelClient>,
+}
+impl ClientCache {
+    fn load(config: &Config, key: &hmac::Key, previous: Option<&Self>) -> Result<Self, String> {
+        let bytes = config
+            .key_file
+            .as_deref()
+            .map(|path| {
+                let parent = path.parent().ok_or("model_key_invalid")?;
+                let meta = fs::metadata(parent).map_err(|_| "model_key_invalid")?;
+                if fs::canonicalize(parent).ok().as_deref() != Some(parent)
+                    || meta.uid() != unsafe { libc::geteuid() }
+                    || meta.mode() & 0o022 != 0
+                {
+                    return Err("model_key_invalid".into());
+                }
+                private_bytes(path, 8192)
+            })
+            .transpose()?;
+        let tag = bytes.as_ref().map(|b| hmac::sign(key, b));
+        if let Some(previous) = previous {
+            if tag.as_ref().map(|t| t.as_ref()) == previous.tag.as_ref().map(|t| t.as_ref()) {
+                return Ok(Self {
+                    tag,
+                    client: previous.client.clone(),
+                });
+            }
+        }
+        let credential = bytes
+            .as_ref()
+            .map(|b| {
+                let value = std::str::from_utf8(b).map_err(|_| "model_key_invalid")?;
+                Secret::new(value.trim_end_matches(['\n', '\r']).to_owned())
+                    .map_err(|_| "model_key_invalid")
+            })
+            .transpose()?;
+        let client =
+            moosuri_agent::model_client(&config.provider, credential, TextCapabilities::default())
+                .map_err(|_| "model_config_invalid")?
+                .with_limits(TransportLimits {
+                    connect: Duration::from_secs(5),
+                    idle: Duration::from_secs(20),
+                    total: Duration::from_secs(60),
+                    response_bytes: 512 * 1024,
+                })
+                .map_err(|_| "model_config_invalid")?;
+        Ok(Self {
+            tag,
+            client: Arc::new(client),
+        })
+    }
+}
 struct Broker {
     registry: PathBuf,
     config: Config,
     key: hmac::Key,
-    client: ModelClient,
+    client: Mutex<Option<ClientCache>>,
     ledger: Mutex<Ledger>,
     slots: Arc<Semaphore>,
     stop: CancellationToken,
@@ -245,35 +301,12 @@ impl Broker {
                 return Err("model_binding_invalid".into());
             }
         }
-        let credential = if let Some(path) = &config.key_file {
-            let bytes = private_bytes(path, 8192)?;
-            Some(
-                Secret::new(
-                    std::str::from_utf8(&bytes)
-                        .map_err(|_| "model_key_invalid")?
-                        .trim_end_matches(['\n', '\r'])
-                        .to_owned(),
-                )
-                .map_err(|_| "model_key_invalid")?,
-            )
-        } else {
-            None
-        };
-        let client =
-            moosuri_agent::model_client(&config.provider, credential, TextCapabilities::default())
-                .map_err(|_| "model_config_invalid")?
-                .with_limits(TransportLimits {
-                    connect: Duration::from_secs(5),
-                    idle: Duration::from_secs(20),
-                    total: Duration::from_secs(60),
-                    response_bytes: 512 * 1024,
-                })
-                .map_err(|_| "model_config_invalid")?;
         let key = private_bytes(&options.fingerprint_key, 32)?;
         if key.len() != 32 {
             return Err("fingerprint_key_invalid".into());
         }
         let key = hmac::Key::new(hmac::HMAC_SHA256, &key);
+        let client = Mutex::new(Some(ClientCache::load(&config, &key, None)?));
         let ledger = Ledger::open(&options.ledger).map_err(|_| "model_ledger_unavailable")?;
         Ok(Arc::new(Self {
             registry: options.registry.clone(),
@@ -332,15 +365,17 @@ impl Broker {
             max_output_tokens: r.max_output_tokens,
             effort: None,
         };
-        self.client
-            .validate_text_request(&request)
-            .map_err(|_| "request_invalid")?;
         Ok(request)
     }
     /// Local acceptance point: account/generation validation, quota admission
     /// and the one durable dispatch intent serialize against registry fencing.
     /// The registry lock is released on return, before any provider IO.
-    fn admit(&self, b: &Binding, key: &CallKey) -> moosuri_store::Result<Admission> {
+    fn admit(
+        &self,
+        b: &Binding,
+        key: &CallKey,
+        provider_ready: bool,
+    ) -> moosuri_store::Result<Admission> {
         runtime_registry::with_ready_allocation(&self.registry, b.account_id, |a| {
             if self.stop.is_cancelled() || !binding_matches(&a, b) {
                 return Err(moosuri_store::StoreError::Forbidden);
@@ -349,7 +384,7 @@ impl Broker {
                 .ledger
                 .lock()
                 .map_err(|_| moosuri_store::StoreError::Unavailable)?;
-            let admission = ledger.admit(key, b.budget)?;
+            let admission = ledger.admit_if_ready(key, b.budget, provider_ready)?;
             if let Admission::Fresh(permit) = &admission {
                 ledger.dispatch(permit)?;
             }
@@ -388,7 +423,20 @@ impl Broker {
             connection_revision: self.config.connection_revision,
             fingerprint: tag.as_ref().try_into().unwrap(),
         };
-        let permit = match self.admit(b, &key) {
+        let client = match self.client.lock() {
+            Ok(mut cached) => {
+                *cached = ClientCache::load(&self.config, &self.key, cached.as_ref()).ok();
+                cached.as_ref().map(|c| c.client.clone())
+            }
+            Err(_) => None,
+        };
+        if client
+            .as_ref()
+            .is_some_and(|c| c.validate_text_request(&request).is_err())
+        {
+            return Reply::error("request_invalid");
+        }
+        let permit = match self.admit(b, &key, client.is_some()) {
             Ok(Admission::Existing(receipt)) => return Reply::receipt(r.call_id, receipt),
             Ok(Admission::Fresh(p)) => p,
             Err(moosuri_store::StoreError::NotFound | moosuri_store::StoreError::Forbidden) => {
@@ -398,16 +446,20 @@ impl Broker {
                 return Reply::error("quota_exhausted");
             }
             Err(moosuri_store::StoreError::Conflict) => return Reply::error("call_conflict"),
+            Err(moosuri_store::StoreError::ModelRequired) => {
+                return Reply::error("model_credential_unavailable");
+            }
             Err(_) => return Reply::error("ledger_unavailable"),
         };
         // Already admitted calls may reach the provider after fencing. They are
         // in-flight work, never a fresh post-fence acceptance. Late output is
         // checked again below and usage remains charged to this same receipt.
+        let client = client.expect("a fresh admission requires a provider");
         let (tx, mut rx) = mpsc::channel(32);
         let cancel = self.stop.child_token();
         let (result, (text, usage, outcome)) = tokio::join!(
             async {
-                let result = self.client.stream_text(&request, &tx, &cancel).await;
+                let result = client.stream_text(&request, &tx, &cancel).await;
                 drop(tx);
                 result
             },
@@ -747,6 +799,7 @@ mod tests {
     struct Provider {
         count: AtomicUsize,
         mode: AtomicUsize,
+        rotated_calls: AtomicUsize,
         entered: Notify,
         release: Notify,
     }
@@ -756,10 +809,13 @@ mod tests {
         axum::Json(body): axum::Json<serde_json::Value>,
     ) -> impl IntoResponse {
         p.count.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(
-            headers.get("authorization").unwrap(),
-            "Bearer SYNTHETIC-MODEL-KEY"
-        );
+        match headers.get("authorization").and_then(|v| v.to_str().ok()) {
+            Some("Bearer SYNTHETIC-MODEL-KEY") => (),
+            Some("Bearer SYNTHETIC-ROTATED-KEY") => {
+                p.rotated_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            _ => panic!("unexpected synthetic credential"),
+        }
         assert_eq!(body["model"], "synthetic-model");
         if p.mode.load(Ordering::SeqCst) == 2 {
             p.entered.notify_one();
@@ -779,6 +835,7 @@ mod tests {
         let p = Arc::new(Provider {
             count: AtomicUsize::new(0),
             mode: AtomicUsize::new(0),
+            rotated_calls: AtomicUsize::new(0),
             entered: Notify::new(),
             release: Notify::new(),
         });
@@ -1108,6 +1165,60 @@ mod tests {
         server.await.unwrap().unwrap();
         upstream.abort();
     }
+    #[tokio::test]
+    async fn rotating_key_keeps_inflight_calls_and_replays_without_using_a_stale_key() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let (url, provider, upstream) = upstream().await;
+        let (options, mut bindings) = fixture(&root, url);
+        bindings[1].peer_uid = bindings[0].peer_uid + 1;
+        let mut config: Config =
+            serde_json::from_slice(&fs::read(&options.config).unwrap()).unwrap();
+        config.bindings = bindings.clone();
+        file(&options.config, &serde_json::to_vec(&config).unwrap());
+        let broker = Broker::new(&options, CancellationToken::new()).unwrap();
+        let a = request(&bindings[0]);
+        let previous: Request = serde_json::from_value(serde_json::to_value(&a).unwrap()).unwrap();
+        let (worker, first) = (broker.clone(), bindings[0].clone());
+        provider.mode.store(2, Ordering::SeqCst);
+        let pending = tokio::spawn(async move { worker.call(&first, a).await });
+        tokio::time::timeout(Duration::from_secs(3), provider.entered.notified())
+            .await
+            .unwrap();
+
+        let key = config.key_file.unwrap();
+        let replacement = key.with_extension("new");
+        file(&replacement, b"SYNTHETIC-ROTATED-KEY");
+        fs::rename(replacement, &key).unwrap();
+        provider.mode.store(0, Ordering::SeqCst);
+        let b = &bindings[1];
+        assert_eq!(broker.call(b, request(b)).await.state, "settled");
+        assert_eq!(provider.rotated_calls.load(Ordering::SeqCst), 1);
+        provider.release.notify_one();
+        assert_eq!(pending.await.unwrap().state, "settled");
+
+        // Invalid permissions block new paid calls even though a previous
+        // client was usable. A completed call still has its original receipt.
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).unwrap();
+        let a = &bindings[0];
+        assert_eq!(
+            broker.call(a, previous).await.state,
+            "settled_response_unavailable"
+        );
+        assert_eq!(
+            broker.call(b, request(b)).await.state,
+            "model_credential_unavailable"
+        );
+        assert_eq!(provider.count.load(Ordering::SeqCst), 2);
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+        // Two remaining calls are available under B's three-call budget.
+        for _ in 0..2 {
+            assert_eq!(broker.call(b, request(b)).await.state, "settled");
+        }
+        assert_eq!(broker.call(b, request(b)).await.state, "quota_exhausted");
+        assert_eq!(provider.rotated_calls.load(Ordering::SeqCst), 3);
+        upstream.abort();
+    }
     #[test]
     fn fence_waits_for_atomic_dispatch_admission_and_blocks_following_calls() {
         use std::sync::mpsc as blocking;
@@ -1142,7 +1253,8 @@ mod tests {
         let held = broker.ledger.lock().unwrap();
         let admitted_broker = broker.clone();
         let admitted_binding = binding.clone();
-        let accepted = std::thread::spawn(move || admitted_broker.admit(&admitted_binding, &key));
+        let accepted =
+            std::thread::spawn(move || admitted_broker.admit(&admitted_binding, &key, true));
         let probe = File::open(&options.registry).unwrap();
         let mut locked = false;
         for _ in 0..100 {
@@ -1205,7 +1317,7 @@ mod tests {
             fingerprint: [10; 32],
         };
         assert!(matches!(
-            broker.admit(&binding, &later),
+            broker.admit(&binding, &later, true),
             Err(moosuri_store::StoreError::NotFound)
         ));
     }

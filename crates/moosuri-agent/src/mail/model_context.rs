@@ -14,6 +14,14 @@ fn render(context: &moosuri_store::MailModelConnectionContext, setup: &str, gws:
     };
     let recovery = if route != "none" {
         "none"
+    } else if context.server_read_connected && setup == "unavailable" {
+        "setup_unavailable"
+    } else if context.server_read_connected && setup == "not_configured" {
+        if context.admin {
+            "admin_setup"
+        } else {
+            "member_setup"
+        }
     } else if context.needs_reconnect && !context.server_read_connected && setup == "ready" {
         "reconnect"
     } else if !context.server_read_connected {
@@ -26,6 +34,12 @@ fn render(context: &moosuri_store::MailModelConnectionContext, setup: &str, gws:
         "GWS 도우미가 연결되어 있어요. 최신 받은편지함의 메타데이터만 표시할 수 있으며, 일반 검색·본문·요약·쓰기 도구 권한은 없어요. \"내 최신 메일 보여줘\"처럼 요청하면 지원되는 최근 메일 표시를 할 수 있어요. 아직 메일을 읽었다는 뜻은 아니에요."
     } else {
         match recovery {
+            "admin_setup" => {
+                "기존 웹 OAuth Gmail 연결이 있지만 Google 앱 설정이 필요해요. 관리자는 /admin/google에서 기존 설정을 확인할 수 있어요. 본인 기기의 GWS 방식은 /settings/mail에서 별도로 연결할 수도 있어요."
+            }
+            "member_setup" => {
+                "기존 웹 OAuth Gmail 연결이 있지만 Google 앱 설정이 필요해요. 설치 관리자에게 확인하거나 /settings/mail에서 본인 기기의 GWS 방식을 별도로 연결할 수도 있어요."
+            }
             "gws_setup" if context.admin => {
                 "현재 소유자의 Gmail 읽기가 없으면 /settings/mail에서 본인 기기의 GWS 도우미를 먼저 연결하세요. 볼트와 별도이며, 웹 OAuth를 원하는 관리자는 /admin/google의 기존 Google 앱 설정도 선택할 수 있어요."
             }
@@ -95,6 +109,7 @@ mod tests {
         assert!(render(&c, "ready", false).contains("\"recovery\":\"reconnect\""));
         c.server_read_connected = true;
         assert!(render(&c, "ready", false).contains("\"recovery\":\"model_or_stage\""));
+        assert!(render(&c, "not_configured", false).contains("\"recovery\":\"member_setup\""));
         c.server_read_admitted = true;
         assert!(render(&c, "ready", false).contains("\"run_read_route\":\"server\""));
         c.native_read_admitted = true;

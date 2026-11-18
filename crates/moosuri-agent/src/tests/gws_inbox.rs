@@ -149,24 +149,40 @@ async fn gws_offline_wrong_mailbox_and_revoked_binding_never_deliver_metadata_or
     let app=Router::new().route("/v1/inbox/latest",post(move ||{let shared=shared.clone();let enter=enter.clone();let released=released.clone();async move {
         let m=shared.load(Ordering::SeqCst);
         if m==0{return (axum::http::StatusCode::SERVICE_UNAVAILABLE,axum::Json(json!({})));}
-        if m==2 {enter.add_permits(1);let _=released.acquire().await.unwrap();}
+        if m>=2 {enter.add_permits(1);released.acquire().await.unwrap().forget();}
         (axum::http::StatusCode::OK,axum::Json(json!({"mailbox":if m==1{"foreign@example.test"}else{"owner@example.test"},"messages":[{"id":"one","from":"sender@example.test","subject":"MUST_NOT_DELIVER","date":"today","internal_date":1000}]})))
     }}));
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let (dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
     let (r, path) = registry(dir.path(), &user.account().id, &endpoint);
     let mail = service(&store, r);
-    for m in 0..3 {
+    let saved = std::fs::read_to_string(&path).unwrap();
+    for m in 0..4 {
+        if m == 3 {
+            private(&path, &saved);
+        }
         mode.store(m, Ordering::SeqCst);
         let run = claim(&store, &user, &thread, "내 최신 메일 보여줘").await;
-        if m == 2 {
+        if m >= 2 {
             let service = mail.clone();
             let lease = run.lease.clone();
             let work = tokio::spawn(async move { service.latest_inbox_chat(&lease).await });
-            let _ = entered.acquire().await.unwrap();
-            private(&path, "[]");
+            entered.acquire().await.unwrap().forget();
+            if m == 2 {
+                private(&path, "[]");
+            } else {
+                store
+                    .cancel_run(&user, run.lease.run_id().into(), run.lease.attempt())
+                    .await
+                    .unwrap();
+            }
             release.add_permits(1);
-            assert!(work.await.unwrap().unwrap());
+            let result = work.await.unwrap();
+            if m == 2 {
+                assert!(result.unwrap());
+            } else {
+                assert!(result.is_err());
+            }
         } else {
             assert!(mail.latest_inbox_chat(&run.lease).await.unwrap());
         }
@@ -177,6 +193,12 @@ async fn gws_offline_wrong_mailbox_and_revoked_binding_never_deliver_metadata_or
             .turns
             .pop()
             .unwrap();
+        if m == 3 {
+            assert_eq!(turn.run.state, RunState::Cancelled);
+            assert!(turn.run.mail_connection_recovery.is_none());
+            assert!(turn.assistant.is_empty());
+            continue;
+        }
         assert_eq!(turn.run.state, RunState::Completed);
         assert!(matches!(
             turn.run.mail_connection_recovery,

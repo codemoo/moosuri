@@ -932,12 +932,13 @@ pub(crate) async fn execute_with_calendar(
         && !artifact_profile
             .as_ref()
             .is_some_and(|p| p.selected.is_some() || p.write)
-        && !tool_profile.as_ref().is_some_and(|p| {
-            p.native_mail_model_read
-                && p.native_mail_scope
-                    .as_ref()
-                    .is_some_and(|scope| !scope.candidate_binding_ids.is_empty())
-        })
+        && (mail.gws_route_selected(&lease).await.unwrap_or(false)
+            || !tool_profile.as_ref().is_some_and(|p| {
+                p.native_mail_model_read
+                    && p.native_mail_scope
+                        .as_ref()
+                        .is_some_and(|scope| !scope.candidate_binding_ids.is_empty())
+            }))
         && messages.last().is_some_and(|m| {
             m.role == ContextRole::User && Store::mail_connection_help_intent(&m.text)
         })

@@ -1,6 +1,21 @@
 //! Original-owner literal metadata route. Results never enter model history.
 use super::*;
 impl MailService {
+    pub(crate) async fn gws_route_selected(
+        &self,
+        lease: &moosuri_store::RunLease,
+    ) -> Result<bool, StoreError> {
+        let Some(registry) = &self.gws_inbox else {
+            return Ok(false);
+        };
+        let owner = self.store.mail_run_owner(lease).await?;
+        // An unreadable explicit registry is not permission to choose another
+        // provider. The literal route will return honest setup/unavailability.
+        Ok(registry
+            .mailbox(&owner.account().id)
+            .map(|m| m.is_some())
+            .unwrap_or(true))
+    }
     pub fn gws_inbox_status(&self, user: &UserContext) -> Result<serde_json::Value, StoreError> {
         let mailbox = self
             .gws_inbox

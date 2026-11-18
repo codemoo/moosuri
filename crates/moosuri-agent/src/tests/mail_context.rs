@@ -191,10 +191,12 @@ async fn gmail_connection_helper_requires_structured_current_intent_and_keeps_hi
     }
     runtime.shutdown().await;
     server.abort();
-    let seen = requests.lock().unwrap();
-    assert!(
-        seen.iter()
-            .any(|b| b["tools"][0]["function"]["name"] == "memory_command_decision")
-    );
+    {
+        let seen = requests.lock().unwrap();
+        assert!(
+            seen.iter()
+                .any(|b| b["tools"][0]["function"]["name"] == "memory_command_decision")
+        );
+    }
     assert!(store.mail_actions(&user).await.unwrap().is_empty());
 }

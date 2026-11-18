@@ -378,8 +378,9 @@ impl Broker {
         b: &Binding,
         key: &CallKey,
         provider_ready: bool,
+        start_epoch: i64,
     ) -> moosuri_store::Result<Admission> {
-        runtime_registry::with_ready_allocation(&self.registry, b.account_id, |a| {
+        runtime_registry::with_ready_epoch(&self.registry, b.account_id, start_epoch, |a| {
             if self.stop.is_cancelled() || !binding_matches(&a, b) {
                 return Err(moosuri_store::StoreError::Forbidden);
             }
@@ -442,7 +443,7 @@ impl Broker {
         let Ok(start_epoch) = epoch(&self.registry, b) else {
             return Reply::error("account_fenced");
         };
-        let permit = match self.admit(b, &key, client.is_some()) {
+        let permit = match self.admit(b, &key, client.is_some(), start_epoch) {
             Ok(Admission::Existing(receipt)) => return Reply::receipt(r.call_id, receipt),
             Ok(Admission::Fresh(p)) => p,
             Err(moosuri_store::StoreError::NotFound | moosuri_store::StoreError::Forbidden) => {
@@ -1261,7 +1262,7 @@ mod tests {
         let admitted_broker = broker.clone();
         let admitted_binding = binding.clone();
         let accepted =
-            std::thread::spawn(move || admitted_broker.admit(&admitted_binding, &key, true));
+            std::thread::spawn(move || admitted_broker.admit(&admitted_binding, &key, true, 0));
         let probe = File::open(&options.registry).unwrap();
         let mut locked = false;
         for _ in 0..100 {
@@ -1324,7 +1325,7 @@ mod tests {
             fingerprint: [10; 32],
         };
         assert!(matches!(
-            broker.admit(&binding, &later, true),
+            broker.admit(&binding, &later, true, 0),
             Err(moosuri_store::StoreError::NotFound)
         ));
     }

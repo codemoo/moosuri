@@ -131,6 +131,12 @@ fn role_changes_eligibility_replay_suspension_and_last_usable_administrator() {
     )
     .unwrap();
     assert!(!resumed.suspended);
+    let id = Uuid::parse_str(&a.account_id).unwrap();
+    assert!(matches!(
+        with_ready_epoch(r, id, 0, |_| -> Result<()> { panic!("stale admission") }),
+        Err(StoreError::Forbidden)
+    ));
+    assert_eq!(with_ready_epoch(r, id, 1, Ok).unwrap(), a);
     assert!(lookup_ready(r, "a@example.test".into()).is_ok());
     assert!(list_members(r, &s).is_err());
     let fresh = checked_session(r, &a, &av).unwrap();

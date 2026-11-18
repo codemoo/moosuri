@@ -205,6 +205,13 @@ pub enum SessionDestination {
     Email(String),
 }
 pub fn session_route(root: &Path, destination: SessionDestination) -> Result<(Allocation, i64)> {
+    with_session_route(root, destination, |a, epoch| Ok((a, epoch)))
+}
+fn with_session_route<T>(
+    root: &Path,
+    destination: SessionDestination,
+    action: impl FnOnce(Allocation, i64) -> Result<T>,
+) -> Result<T> {
     let (column, value) = match destination {
         SessionDestination::Account(id) => ("account_id", id.to_string()),
         SessionDestination::Email(email) => ("email", email_valid(email)?),
@@ -218,7 +225,7 @@ pub fn session_route(root: &Path, destination: SessionDestination) -> Result<(Al
         .optional()?
         .ok_or(StoreError::NotFound)?;
     admin::unsuspended(&db, &a)?;
-    Ok((a, epoch))
+    action(a, epoch)
 }
 
 /// Installation-only identity lookup for preparing an inert socket or mount.
@@ -246,13 +253,24 @@ pub fn with_ready_allocation<T>(
     account_id: Uuid,
     action: impl FnOnce(Allocation) -> Result<T>,
 ) -> Result<T> {
-    let (_directory, db) = open(root, false)?;
-    let allocation = db.query_row(
-        "SELECT account_id,tenant_id,volume_id,generation FROM allocations WHERE account_id=?1 AND route_state='ready'",
-        [account_id.to_string()], decode,
-    ).optional()?.ok_or(StoreError::NotFound)?;
-    admin::unsuspended(&db, &allocation)?;
-    action(allocation)
+    with_session_route(root, SessionDestination::Account(account_id), |a, _| {
+        action(a)
+    })
+}
+
+/// Keep a call pinned to the uninterrupted session route through the local ledger write.
+pub fn with_ready_epoch<T>(
+    root: &Path,
+    account_id: Uuid,
+    expected: i64,
+    action: impl FnOnce(Allocation) -> Result<T>,
+) -> Result<T> {
+    with_session_route(root, SessionDestination::Account(account_id), |a, epoch| {
+        if epoch != expected {
+            return Err(StoreError::Forbidden);
+        }
+        action(a)
+    })
 }
 
 /// Operator compare-and-set after the verified personal process has answered.

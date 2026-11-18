@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod account_runtime_inventory;
 mod notice_supplements;
 mod notices;
 mod release;
@@ -233,7 +234,7 @@ fn scenarios(root: &Path, features: &BTreeSet<String>) -> Check<BTreeSet<String>
 }
 
 fn verify(root: &Path) -> Check<()> {
-    let features = definitions(root, "features.md", 'F', 71)?;
+    let features = definitions(root, "features.md", 'F', FEATURE_COUNT)?;
     let requirements = definitions(root, "requirements.md", 'R', 30)?;
     let inventory = table(
         root,
@@ -387,6 +388,8 @@ fn verify(root: &Path) -> Check<()> {
     Ok(())
 }
 
+const FEATURE_COUNT: usize = 71;
+
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args != ["verify-plan"]
@@ -399,12 +402,13 @@ fn main() {
                 "verify-component-provenance",
                 "rust-notices",
                 "web-notices",
+                "account-runtime-inventory",
             ]
             .contains(&s.as_str())
         })
     {
         eprintln!(
-            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY|component-provenance --bundle DIRECTORY|verify-component-provenance --bundle DIRECTORY>"
+            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|account-runtime-inventory [--schema 81|82] [--snapshot DIRECTORY]|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY|component-provenance --bundle DIRECTORY|verify-component-provenance --bundle DIRECTORY>"
         );
         std::process::exit(2);
     }
@@ -413,7 +417,9 @@ fn main() {
         .canonicalize()
         .map_err(|e| e.to_string())
         .and_then(|root| {
-            if args == ["sbom"] {
+            if args[0] == "account-runtime-inventory" {
+                account_runtime_inventory::run(&root, &args[1..])
+            } else if args == ["sbom"] {
                 sbom::print(&root)
             } else if args[0] == "web-notices" {
                 web_notices::run(&root, &args)

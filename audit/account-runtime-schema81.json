@@ -1,0 +1,4341 @@
+{
+  "format": 1,
+  "schema": 81,
+  "migrations": [
+    {
+      "name": "0001_accounts_threads.sql",
+      "sha256": "8f6c155cba189688276b34de4f1ab8d8fba98ff8a65932b1ae78dab735915ffd"
+    },
+    {
+      "name": "0002_providers.sql",
+      "sha256": "1d054cd59e29fc347a582cab9c319742f8024467774ad56c20d865e1d5ed5b64"
+    },
+    {
+      "name": "0003_chat.sql",
+      "sha256": "c6a14a1501330c6d5856aecfeb45efe756618ac405e711a5d8afc3f41b6fd87b"
+    },
+    {
+      "name": "0004_knowledge.sql",
+      "sha256": "112d8fb8b63b54b1c491587b905f88841f615264559244cfee08db2a4e808ea9"
+    },
+    {
+      "name": "0005_agent_execution.sql",
+      "sha256": "a2fd2be61326bb4cd6aef677d27bf9a0392258520df1c106c54ceb188dc4dd6c"
+    },
+    {
+      "name": "0006_memory_commands.sql",
+      "sha256": "c4f20d859308e126150ccbb7d729930924320a1c5c58d75717a3bcba5086a04b"
+    },
+    {
+      "name": "0007_gmail.sql",
+      "sha256": "28fd4f24d04295341d552bf33314da3ba445098043ef327096eb076b572aaac9"
+    },
+    {
+      "name": "0008_browser_workspaces.sql",
+      "sha256": "00ea36273d6f40d00babcdf12c121fa38d3d01b298ac3de7bc22f34b387b7acb"
+    },
+    {
+      "name": "0009_source_connections.sql",
+      "sha256": "a2479eae163c5305323634eb8dde3467dfa184744931c300ca7565a363108185"
+    },
+    {
+      "name": "0010_google_setup.sql",
+      "sha256": "cc9b2025395167ec597d25731bb75d85197b04913029f60ee9007fe176576bf7"
+    },
+    {
+      "name": "0011_community_skills.sql",
+      "sha256": "5271f6ef9fc1780bd232eee360b54e741a5adde18302b5d17f3e367445221e44"
+    },
+    {
+      "name": "0012_memory_target_resolution.sql",
+      "sha256": "e2fe50e01d099cbf564761a7b3325182a48e5207638daff0e20d77772881b9cc"
+    },
+    {
+      "name": "0013_stopped_backup_exports.sql",
+      "sha256": "6791ca25fe19a043ffb13b49bec1506fe03e1274fc60cea0de52b3dacc64f832"
+    },
+    {
+      "name": "0014_automatic_memory.sql",
+      "sha256": "7057c05a3cd0a430ef8ad9fabd782482f45afa17a6e9d3be30ca8e5f0fe1fa56"
+    },
+    {
+      "name": "0015_destructive_intents.sql",
+      "sha256": "7fcf5eb59d20ee373cb952880eba204d39c42fff1486c8236f4d86c1d60c30ea"
+    },
+    {
+      "name": "0016_personal_artifacts.sql",
+      "sha256": "d49368a47271d5ceb0592d516c466fefd217044c706ddf4d55217b155fb594b6"
+    },
+    {
+      "name": "0017_schedules.sql",
+      "sha256": "41034c235ef7de4060cf3b89dddfc9084c40c1dfdfbc7a7778545f35eb023525"
+    },
+    {
+      "name": "0018_account_management.sql",
+      "sha256": "d6f8350e2c129a687944af911c872c804797c11a05217d6d21a123e361c8c37b"
+    },
+    {
+      "name": "0019_sealed_cutover.sql",
+      "sha256": "a42a2a7a1575ff2d2805a7fdc8413f481328c8b04e8ea1f1edee2974d28b989b"
+    },
+    {
+      "name": "0020_restore.sql",
+      "sha256": "cd85e94f39c6bfd0bbe322ae4044a531cf249a2d3d0a23b09dfb5abade644f82"
+    },
+    {
+      "name": "0021_media.sql",
+      "sha256": "565c8dbbff4b6707dc3b1300bbdfef078cb202adedbe3b503a6e14e642cec3f8"
+    },
+    {
+      "name": "0022_schedule_chat.sql",
+      "sha256": "f54e375b64ba8d29b145d6f722c90bd369f532c00fdbdb0e9a3e334ccd789720"
+    },
+    {
+      "name": "0023_web_push.sql",
+      "sha256": "c0fa215b134988dddaa2d08474b4210ece98c818fd37e46c392d0f363f3549bf"
+    },
+    {
+      "name": "0024_vault_authority.sql",
+      "sha256": "369d288a9f8e2442b6785eddb56d6cd5d1108e47d1f8fc83b60b847f2e03e50c"
+    },
+    {
+      "name": "0025_missions.sql",
+      "sha256": "1139376f7c927c0fe77ce919dc56a4f5a9db2300acd6b112f749c4672c6fced5"
+    },
+    {
+      "name": "0026_calendar.sql",
+      "sha256": "8cb2795eb78d7504e04dc0d860232257dc80e0e9b27d337197296af15b92170c"
+    },
+    {
+      "name": "0027_private_files.sql",
+      "sha256": "ca9807374d6da233d482548efe1ef22f480dae2aeab94dcf1ddd71126259dc04"
+    },
+    {
+      "name": "0028_recurring_missions.sql",
+      "sha256": "2573868aa05848d18f9576c94a0b037bb016bc52bff3c2b5b0ec3d1822e802f0"
+    },
+    {
+      "name": "0029_mission_chat.sql",
+      "sha256": "66f2596433313bd313621666b43c98f0e254e5024cfd081892af0994a702fc12"
+    },
+    {
+      "name": "0030_calendar_conversation.sql",
+      "sha256": "a39c989ad250b632005878dfc0ce956d26e79be4f7bcf6287c6aa9327bceb5a6"
+    },
+    {
+      "name": "0031_mail_reconciliation.sql",
+      "sha256": "90e5ee9f51fb8d655120b48a565e548daf80e3f329a113389404576e28a4dab2"
+    },
+    {
+      "name": "0032_personal_chatgpt.sql",
+      "sha256": "b344ba9bb8862a78a16653beeb1d9e9edd3ecf0c1988623a812411e37b5704b3"
+    },
+    {
+      "name": "0033_bounded_audio.sql",
+      "sha256": "b65e5392c5fe785b33c16827950af1bfe974ef7eb3a692c7536c235d99d3584a"
+    },
+    {
+      "name": "0034_chatgpt_vm_handoff.sql",
+      "sha256": "42635e7a0df1490cf0deaa2026d5e6c7693ccb3dc0612da80c3a390aaaf8ee63"
+    },
+    {
+      "name": "0035_community_catalog_cache.sql",
+      "sha256": "e9cdd4e517748405813a79c8fe1c89861c4b7487202d33437941eaf6e7cc403b"
+    },
+    {
+      "name": "0036_personal_chatgpt_tools.sql",
+      "sha256": "82fdcf512c8ff811f47c38a3bb4877f43b58dfa4ba46d687690e53eefd407384"
+    },
+    {
+      "name": "0037_credential_broker.sql",
+      "sha256": "76d27ed871dbdba26d0c53df42e72be277c1fe88db1445eac69191245d532878"
+    },
+    {
+      "name": "0038_learned_skills.sql",
+      "sha256": "7f8528226f05ac7e4ddf46aa2cd1420f39208002a276cda3e0f7c0971b16a94b"
+    },
+    {
+      "name": "0039_notification_topics.sql",
+      "sha256": "da3b1f191c1fbe484080fc6645319d4dfa883254391fda0806a5d1908b64d847"
+    },
+    {
+      "name": "0040_mail_workflows.sql",
+      "sha256": "bd0ceca2e76ca2b4b95031b628354709f3e4b2cf32ce813e26a53197d5a3547b"
+    },
+    {
+      "name": "0041_account_deletion.sql",
+      "sha256": "65a2612671711a55f3bd4dc0e8dc7384554486012557963fcbcf1a4c3b66d565"
+    },
+    {
+      "name": "0042_request_continuations.sql",
+      "sha256": "6818614fc001161aa30f5a52c74817e7a5f72e32f41b3bd78861a11a0efbcc35"
+    },
+    {
+      "name": "0043_invitation_delivery.sql",
+      "sha256": "5055b040ee2c7b5cef36f461a6ff699a5da11106e0b83c59be8cac142942e6ca"
+    },
+    {
+      "name": "0044_native_credential_adapter.sql",
+      "sha256": "0ec85dfa8075256b2153d03c5478da9dbcc7257790c934602e3a64543cebdb18"
+    },
+    {
+      "name": "0045_credential_chat.sql",
+      "sha256": "92d3f51c4e93e41be8a7bee1a4ae44aec4418266b7cec48df709d528c76be244"
+    },
+    {
+      "name": "0046_followup_notifications.sql",
+      "sha256": "71611627a53c3699c00ac93f51e3d3cddf0a2c071015e041bea3f34ddb05890f"
+    },
+    {
+      "name": "0047_conversation_recall.sql",
+      "sha256": "7f7b9b700dcea11b06caea8aec8953d631e1919aaeb3b9e252217f88eaac56a8"
+    },
+    {
+      "name": "0048_source_start_recovery.sql",
+      "sha256": "2a6738ce22dd6b8cc513f71c5ea5e1763afd92a74183620c5bb9312483380b0c"
+    },
+    {
+      "name": "0049_recovery_forward_budget.sql",
+      "sha256": "5b75aebb735019bd7a2737a3b271d07effb9fa9e994a8a78c82d60513ca8912a"
+    },
+    {
+      "name": "0050_personal_claude_code.sql",
+      "sha256": "dc403b897c155582f142ceeef15e0a19550f484e6f6169461028a39ee71d5c92"
+    },
+    {
+      "name": "0051_reminder_chat_drafts.sql",
+      "sha256": "cefd34abf9254f18ecfc948d18a4c406d95291dddf1f32546054c85b4fd225b4"
+    },
+    {
+      "name": "0052_mission_acceptances.sql",
+      "sha256": "3282ab56a702a54fb55c51d686e7da1919a85a5d520edc19c77e02362b6d5d6a"
+    },
+    {
+      "name": "0053_browser_recovery.sql",
+      "sha256": "117d6662d0e95110bbc635df3c0ca826eb943bbeb70fa0bf48f5340bfe444b2b"
+    },
+    {
+      "name": "0054_external_report_documents.sql",
+      "sha256": "cf83291b2fe9453eec3345aee7fee6a2e8bf7676922ca7706abb528815774178"
+    },
+    {
+      "name": "0055_learned_page_collections.sql",
+      "sha256": "7ca9cc00861431233b1b7569d56cb11ec51796a05bfea139f4fd6cbd6cf87dfa"
+    },
+    {
+      "name": "0056_native_mail_send.sql",
+      "sha256": "a64849ccf7196da74aff5f6a3845209b27d2c9c02dadcf5ff680e4b5298a65db"
+    },
+    {
+      "name": "0057_proactive_suggestions.sql",
+      "sha256": "a65d13befd5377e072fad43b4295b50047be4361d89270f82f961df8e0a7309f"
+    },
+    {
+      "name": "0058_planner_step_identity.sql",
+      "sha256": "dbdd650f90982362401ea45f4021bda9d2de2bb5c7bfda74dc5b75597a15de68"
+    },
+    {
+      "name": "0059_compound_reports.sql",
+      "sha256": "4cbb8f7fb585991b5d9df67b1bc45527ff8aa980d3697f4dbd267a6191d3aa44"
+    },
+    {
+      "name": "0060_connection_waits.sql",
+      "sha256": "167bb567170d16851b08a376a17764e062bbdf46299cb55a0b71e42024de258e"
+    },
+    {
+      "name": "0061_native_model_mail.sql",
+      "sha256": "c9d4aa4ec14491682e56ce94bb56f00fc8bc4a09a7cccb6026aa3bedc6f836b4"
+    },
+    {
+      "name": "0062_provider_draft_receipts.sql",
+      "sha256": "e856198b5d20282122a431e539e3eeb03a16b932be9c0774ce05d1d59271513d"
+    },
+    {
+      "name": "0063_native_task_mail.sql",
+      "sha256": "7c155715302e79dfc3eb2aa7043da778a39426b11c9bf45709cb7e89e4e727b8"
+    },
+    {
+      "name": "0064_compound_learning.sql",
+      "sha256": "896800d0e7295d1ba9b66d798e3e5b87cf997a2dc166d90da8158b738557d061"
+    },
+    {
+      "name": "0065_mission_actions.sql",
+      "sha256": "0f21a9c53e65dac6c632a9bfb73e8e7bcc8d9b55d49b99054434358fa1152ee0"
+    },
+    {
+      "name": "0066_selected_browser_missions.sql",
+      "sha256": "8f9b2acca61093ec1ed5479d827ae8df5baa17d40f7058d497bb63c5d21cde2f"
+    },
+    {
+      "name": "0067_compound_draft_learning.sql",
+      "sha256": "0c34dd177edae3e48addfde43ba6511474da5bcecaa52d800e4f49ab9f4c765f"
+    },
+    {
+      "name": "0068_native_mail_settlement_cursor.sql",
+      "sha256": "0e7a0ec38197edd772a718c2cc04900b3132528433e5c591f2860215afc66b79"
+    },
+    {
+      "name": "0069_mission_input_waits.sql",
+      "sha256": "eb9baf30989cae8435a2917707975b2dca83de0d8bd991c4a00873ce5118fbfd"
+    },
+    {
+      "name": "0070_flexible_mission_inputs.sql",
+      "sha256": "acca26840937e701c50902f2a18f95ac6ff1c3c8869caeee2fc86fda6d72b4b4"
+    },
+    {
+      "name": "0071_thread_creation_receipts.sql",
+      "sha256": "6ae57bba14e6e9db2803595ca696656acf2d2ff5015cf799c24d4f7156991402"
+    },
+    {
+      "name": "0072_run_instructions.sql",
+      "sha256": "989ea95eacdfea122d9539f9033337ad56304392d23167193438ced1e2706b57"
+    },
+    {
+      "name": "0073_task_monitors.sql",
+      "sha256": "a0d44f87cd59f4f401c1e551c72228adddfb7846d15716327f750a95016d21e8"
+    },
+    {
+      "name": "0074_mail_reply_watches.sql",
+      "sha256": "61613fd0cde797748a681d92e4b62533d34a590759c7b521657d19ff921bf598"
+    },
+    {
+      "name": "0075_telegram.sql",
+      "sha256": "14291638adab22ed72520ed577bc1c40bd0fb1e1ffcdb1e6fa3999ae0b514f50"
+    },
+    {
+      "name": "0076_claude_model_efforts.sql",
+      "sha256": "9e1469071e4f8eaf61832c6526a490241ec99b4a0d4f4ff2fc2961c15c25bd08"
+    },
+    {
+      "name": "0077_personal_compatible.sql",
+      "sha256": "711714f22b15fa3ebc8ec159cda6b716dde97b73183cd0e417a9b8277152cd15"
+    },
+    {
+      "name": "0078_claude_host_tools.sql",
+      "sha256": "dc7e90cb2830a3488da6273da95f2747435904832f96ef8888dcd99933ec5249"
+    },
+    {
+      "name": "0079_subscription_vision.sql",
+      "sha256": "38e6d09ffe6435a5bf23c17a4086e3fe7016719d1a5faff5c90dddfc8afa00a4"
+    },
+    {
+      "name": "0080_gws_inbox_confirmation.sql",
+      "sha256": "d07ab85865b69f20bca2406d59843ebb80cfd313522e32d0f2287d77912b7500"
+    },
+    {
+      "name": "0081_gmail_resume.sql",
+      "sha256": "2850e1bba7e379943843b2f19fb9815731906ab2945a53269baa1178e6ffa7fd"
+    }
+  ],
+  "tables": [
+    {
+      "name": "account_deletions",
+      "kind": "table",
+      "sql_sha256": "e0f81bbd41b57680a988e295c4cd2ede3e56f5f34442cf3ae6ec108007244de6",
+      "scope": "split-lifecycle-record",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"account_deletions\" t",
+      "key_transition": "Preserve owner deletion marker locally and installation lifecycle completion centrally; deletion intent must survive personal volume removal.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "account_id",
+        "tenant_id",
+        "deleted_at",
+        "local_state"
+      ]
+    },
+    {
+      "name": "account_management_receipts",
+      "kind": "table",
+      "sql_sha256": "8ae0193378efd6e16e3bf4838b3b584ffb4d433b93efc781b80c275965d7e2a5",
+      "scope": "installation-private",
+      "owner_query": "",
+      "key_transition": "Preserve actor/target command idempotency centrally; never infer target ownership from actor.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "actor_id",
+        "request_id",
+        "target_id",
+        "request_digest",
+        "resulting_revision",
+        "created_at"
+      ]
+    },
+    {
+      "name": "accounts",
+      "kind": "table",
+      "sql_sha256": "6080eb2de7ac8fdd17fedf4dda49977fd12152b620b9affe18c39ff77df76409",
+      "scope": "split-account-record",
+      "owner_query": "SELECT t.rowid AS rid,t.id AS account_id,t.tenant_id FROM accounts t",
+      "key_transition": "Project only routing ID/tenant/name/role/status/version centrally; password hash/session authority remain personal. Preserve distinct AccountId and TenantId.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "tenant_id",
+        "name",
+        "email",
+        "role",
+        "password_hash",
+        "must_change_password",
+        "temporary_expires_at",
+        "auth_epoch",
+        "recovery_required",
+        "status",
+        "management_revision",
+        "deleted"
+      ]
+    },
+    {
+      "name": "agent_dependencies",
+      "kind": "table",
+      "sql_sha256": "7c374876192c632d171226701fe924a7c982e51331ed7450b8da94ed45ae97a9",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"agent_dependencies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "kind",
+        "object_id",
+        "revision"
+      ]
+    },
+    {
+      "name": "agent_execution",
+      "kind": "table",
+      "sql_sha256": "219057e948f4cbdcf96d6feeedc86bec2c0e24dd862f421045c0531f041e3afe",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"agent_execution\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "agent",
+        "started_ms",
+        "deadline_ms",
+        "last_clock_ms",
+        "checkpoint_seq",
+        "remote_calls",
+        "tool_calls",
+        "generation",
+        "invalidated",
+        "memory_target_started"
+      ]
+    },
+    {
+      "name": "agent_planner_steps",
+      "kind": "table",
+      "sql_sha256": "634b5b3af295276e25c9d3fc2b88fa4b5484a528472fb22c3b693c028502a435",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"agent_planner_steps\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "domain",
+        "step",
+        "attempt",
+        "nonce",
+        "run_nonce"
+      ]
+    },
+    {
+      "name": "agent_run_leases",
+      "kind": "table",
+      "sql_sha256": "9a7149e91b754deb64806e005f6c8fc4487937717026ce162134c374f7de800c",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"agent_run_leases\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "attempt",
+        "nonce"
+      ]
+    },
+    {
+      "name": "agent_steps",
+      "kind": "table",
+      "sql_sha256": "506a7cdf5d201e7674dd875fccb9262fbcd3e0000e66ae1567f67cb646691c05",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"agent_steps\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "step",
+        "attempt",
+        "nonce",
+        "state",
+        "completion_digest",
+        "checkpoint"
+      ]
+    },
+    {
+      "name": "agent_tool_slots",
+      "kind": "table",
+      "sql_sha256": "123d794153e6bee08878f2974ed49be3da793d3db34ddc05800c813a2ceb2421",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"agent_tool_slots\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "step",
+        "call_id",
+        "input",
+        "result"
+      ]
+    },
+    {
+      "name": "artifact_external_context",
+      "kind": "table",
+      "sql_sha256": "eaaeba8438226bbe46513ef6cc7416984eb0d28fe03526e0998ee026146ece9c",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"artifact_external_context\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "origin_run"
+      ]
+    },
+    {
+      "name": "artifact_external_evidence",
+      "kind": "table",
+      "sql_sha256": "f6d37360468f753c3652de65295da659e9ba5a7acea90f68969fabba1ad12dc7",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"artifact_external_evidence\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "artifact_id",
+        "artifact_revision",
+        "origin_run",
+        "step",
+        "call_id",
+        "kind",
+        "request",
+        "request_sha256",
+        "result_sha256"
+      ]
+    },
+    {
+      "name": "artifact_external_profiles",
+      "kind": "table",
+      "sql_sha256": "fe8597b5f4be095c7793d6e0d2adff9589d807c4d6cc79aec03397a99368ce13",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"artifact_external_profiles\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "artifact_id",
+        "artifact_revision"
+      ]
+    },
+    {
+      "name": "audio_authority",
+      "kind": "table",
+      "sql_sha256": "9eecc648ffd9fcbb383b5424d2b69806799544e69900b0a632c6a12b8e2cf814",
+      "scope": "installation",
+      "owner_query": "",
+      "key_transition": "Preserve shared STT authority generation.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "generation"
+      ]
+    },
+    {
+      "name": "audio_jobs",
+      "kind": "table",
+      "sql_sha256": "8ca58045398a91cd2ff0bedab0dbc94797868678dea999ab1603b6719a926d55",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"audio_jobs\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "tenant_id",
+        "account_id",
+        "session_digest",
+        "auth_epoch",
+        "input_digest",
+        "provider_id",
+        "provider_revision",
+        "model",
+        "authority_generation",
+        "nonce",
+        "state",
+        "transcript",
+        "error",
+        "created_at",
+        "expires_at",
+        "duration_ms",
+        "dispatched"
+      ]
+    },
+    {
+      "name": "audio_selection",
+      "kind": "table",
+      "sql_sha256": "18e1429de0ac0361a6db0bf61b49b159bdc76f181616cf17376e1d80c425c740",
+      "scope": "installation",
+      "owner_query": "",
+      "key_transition": "Preserve installation STT provider selection; not personal authorization.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "provider_id",
+        "provider_revision",
+        "model"
+      ]
+    },
+    {
+      "name": "automatic_memory_budget",
+      "kind": "table",
+      "sql_sha256": "cc437bad8253f5c7bffa0a342a557c3694e4ca43c4f89f443c4f268e45ac6c16",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"automatic_memory_budget\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "day",
+        "calls",
+        "input_bytes",
+        "output_tokens"
+      ]
+    },
+    {
+      "name": "automatic_memory_facts",
+      "kind": "table",
+      "sql_sha256": "cec0b7c5857172c16fe701d8447c4221a7649eb59b23f2c487f75316bac4f05b",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"automatic_memory_facts\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "source_id",
+        "quote_hash",
+        "reported_speaker_hash",
+        "memory_id"
+      ]
+    },
+    {
+      "name": "automatic_memory_grants",
+      "kind": "table",
+      "sql_sha256": "230f023d9159b614d796e1661028423c496ba7356fd4acf484efc856b40b0d44",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"automatic_memory_grants\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "collection_id",
+        "account_id",
+        "revision",
+        "enabled",
+        "attribution_mode",
+        "reported_speaker",
+        "auth_epoch",
+        "model",
+        "daily_calls",
+        "daily_bytes",
+        "daily_output"
+      ]
+    },
+    {
+      "name": "automatic_memory_jobs",
+      "kind": "table",
+      "sql_sha256": "cebd1fd7ac6c3ba4d07135a1ec2a709be9b065408a78a8419dab306a798a8b1e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"automatic_memory_jobs\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "collection_id",
+        "source_id",
+        "source_revision",
+        "grant_revision",
+        "state",
+        "reason",
+        "nonce",
+        "dispatch_nonce",
+        "deadline",
+        "not_before",
+        "saved_count",
+        "input_bytes",
+        "usage",
+        "model",
+        "created_at"
+      ]
+    },
+    {
+      "name": "automatic_memory_origins",
+      "kind": "table",
+      "sql_sha256": "fbf6d2d18a2070467065d4d9be1f4ddabb63244e87ff7520f5bffcfc09ac1e77",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"automatic_memory_origins\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "memory_id",
+        "source_id",
+        "source_revision",
+        "reported_speaker",
+        "model",
+        "grant_revision"
+      ]
+    },
+    {
+      "name": "backup_installation",
+      "kind": "table",
+      "sql_sha256": "5c3ffe1b8213de251188f0bdc392033b309a5fcf03adf9d19f579e699e1bd85d",
+      "scope": "new-recovery-anchor",
+      "owner_query": "",
+      "key_transition": "Authenticate old installation checkpoint and newly approved per-owner recovery anchor; do not copy global chain.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "installation_id",
+        "active_epoch"
+      ]
+    },
+    {
+      "name": "backup_key_epochs",
+      "kind": "table",
+      "sql_sha256": "0d64c41375749466b5a9b826a9619277121c9386e8d2bf1303860dcdb23467e3",
+      "scope": "new-recovery-anchor",
+      "owner_query": "",
+      "key_transition": "Keep original recipients in one recovery archive; create fresh per-owner backup epochs.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "epoch",
+        "recipient",
+        "verified_at"
+      ]
+    },
+    {
+      "name": "browser_workspaces",
+      "kind": "table",
+      "sql_sha256": "7d2ead8b87883dbf4735b2393e11653b8c6610181fd855924f3bb833585a6bf7",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"browser_workspaces\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "thread_id",
+        "id",
+        "auth_epoch",
+        "deployment_pin",
+        "state",
+        "revision",
+        "human_touched",
+        "url",
+        "title",
+        "reason",
+        "created_at",
+        "expires_at",
+        "control_hash",
+        "control_session",
+        "control_until",
+        "resume_request",
+        "resumed_request",
+        "idle_until",
+        "owner_session"
+      ]
+    },
+    {
+      "name": "calendar_actions",
+      "kind": "table",
+      "sql_sha256": "69b9eda2502c8088921655ed80579f4ebc71b04b3b89c6ebd804961392e4bc2f",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"calendar_actions\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "connection_id",
+        "connection_epoch",
+        "credential_revision",
+        "auth_epoch",
+        "session_digest",
+        "app_pin",
+        "payload",
+        "digest",
+        "kind",
+        "event_id",
+        "before_etag",
+        "state",
+        "nonce",
+        "provider_etag",
+        "event",
+        "receipt",
+        "error",
+        "version",
+        "created_at"
+      ]
+    },
+    {
+      "name": "calendar_agent_action_links",
+      "kind": "table",
+      "sql_sha256": "d59ae8dea691f50e3cfb4fa287b0b25e04351b913c743c4c0fcea0dce7389b93",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"calendar_agent_action_links\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "action_id",
+        "step"
+      ]
+    },
+    {
+      "name": "calendar_agent_action_origins",
+      "kind": "table",
+      "sql_sha256": "755202cc3881e50a204bfab613116bc98b23e5d193cb282065f3aab315e3a477",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"calendar_agent_action_origins\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "action_id",
+        "run_id",
+        "withdrawn"
+      ]
+    },
+    {
+      "name": "calendar_agent_observations",
+      "kind": "table",
+      "sql_sha256": "4bbd62175bf768cb16120add2458c71c677838f28043273343bcb70b32036e09",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"calendar_agent_observations\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "handle",
+        "connection_id",
+        "epoch",
+        "step",
+        "call_id",
+        "request",
+        "event_id",
+        "etag",
+        "observed_at",
+        "digest"
+      ]
+    },
+    {
+      "name": "calendar_agent_profiles",
+      "kind": "table",
+      "sql_sha256": "91b85a714ecea621b3632afee61bad4f87ef6fd3028bd5742ea5065bbf0e833d",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"calendar_agent_profiles\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "account_id",
+        "version",
+        "profile"
+      ]
+    },
+    {
+      "name": "calendar_command_plans",
+      "kind": "table",
+      "sql_sha256": "eb5e7087294420087d2ea0017a67019f2bdbc581d711ef4b37f6af0393930712",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"calendar_command_plans\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "action_id",
+        "decision",
+        "state",
+        "expires_at",
+        "receipt",
+        "step"
+      ]
+    },
+    {
+      "name": "calendar_connections",
+      "kind": "table",
+      "sql_sha256": "b9239134abe927992df0a75b4bee26f70ca3a96425d8902b2f6a56c35d48acf9",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"calendar_connections\" t",
+      "key_transition": "Re-encrypt per-owner credentials with verified original AAD/scope/version; transient OAuth state must prove session/generation or restart only that flow.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "primary_id",
+        "title",
+        "time_zone",
+        "auth_epoch",
+        "epoch",
+        "credential_revision",
+        "status",
+        "credential",
+        "expires_at",
+        "scopes",
+        "client_id"
+      ]
+    },
+    {
+      "name": "calendar_oauth_sessions",
+      "kind": "table",
+      "sql_sha256": "747ab6c9d044665274a644ad9248aa75f50c49bc1bd2f03aefcd7f1de14df7ab",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"calendar_oauth_sessions\" t",
+      "key_transition": "Re-encrypt per-owner credentials with verified original AAD/scope/version; transient OAuth state must prove session/generation or restart only that flow.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "state_hash",
+        "tenant_id",
+        "account_id",
+        "session_digest",
+        "auth_epoch",
+        "expires_at",
+        "verifier",
+        "code",
+        "result_hash",
+        "claimed",
+        "app_pin"
+      ]
+    },
+    {
+      "name": "calendar_run_dependencies",
+      "kind": "table",
+      "sql_sha256": "d9debc3c67cb4a89e9d59849bf2c0a3a578894d750f1eac7a3f6b034c31d3f27",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"calendar_run_dependencies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "connection_id",
+        "epoch",
+        "app_revision",
+        "client_id"
+      ]
+    },
+    {
+      "name": "chat_admission_counter",
+      "kind": "table",
+      "sql_sha256": "cde3ad679dc74644a760f02615c12bff49b2e50b2045c3adc553100263854225",
+      "scope": "regenerate",
+      "owner_query": "",
+      "key_transition": "Generate local counter; preserve run order inside copied owner history.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "value"
+      ]
+    },
+    {
+      "name": "chat_events",
+      "kind": "table",
+      "sql_sha256": "53ea933ab42672a571d4ff9391582b7459b681a07601085455f7e323f740e9e6",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"chat_events\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "thread_id",
+        "sequence",
+        "change"
+      ]
+    },
+    {
+      "name": "chat_media",
+      "kind": "table",
+      "sql_sha256": "f1308303a06dd2a2f6003ea726a636a71e896833fc4d039d80837b71d97f57fb",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"chat_media\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "media_id",
+        "revision",
+        "ordinal"
+      ]
+    },
+    {
+      "name": "chat_output",
+      "kind": "table",
+      "sql_sha256": "325222b1286783f919bed976be011160f2521eb6418d766975ab56f070e43c76",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"chat_output\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "item",
+        "id",
+        "ordinal",
+        "text",
+        "phase",
+        "refusal"
+      ]
+    },
+    {
+      "name": "chat_runs",
+      "kind": "table",
+      "sql_sha256": "ea74db732b04d56cd0e1effae356125eaea4f0ed7661818abd1b4fb917e5ddf2",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"chat_runs\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "account_id",
+        "thread_id",
+        "request_id",
+        "payload_digest",
+        "sequence",
+        "user_text",
+        "model",
+        "session_digest",
+        "auth_epoch",
+        "attempt",
+        "state",
+        "version",
+        "error",
+        "created_at",
+        "admitted_order"
+      ]
+    },
+    {
+      "name": "chatgpt_auth_attempts",
+      "kind": "table",
+      "sql_sha256": "40bad92b79576657cdd03032ba480876bb854032303a4818b9cb59f50dfc838b",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"chatgpt_auth_attempts\" t",
+      "key_transition": "Re-encrypt per-owner with AAD/runtime/host/binding/token-generation proof; if proof unavailable mark only this owner reauthentication-required.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "tenant_id",
+        "account_id",
+        "session_digest",
+        "auth_epoch",
+        "binding_id",
+        "revision",
+        "expires_at",
+        "phase"
+      ]
+    },
+    {
+      "name": "chatgpt_binding_revisions",
+      "kind": "table",
+      "sql_sha256": "8fd647429df8060205a636ea43aa765997dc0eb94b692093a6762a911cd59a65",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"chatgpt_binding_revisions\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "label",
+        "client_id",
+        "identity"
+      ]
+    },
+    {
+      "name": "chatgpt_bindings",
+      "kind": "table",
+      "sql_sha256": "9300fd335f722f95a095048fa71aab79b6fb14cc61178bddc7b055e522f8ec6c",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"chatgpt_bindings\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "current_revision",
+        "status",
+        "remote_revoke"
+      ]
+    },
+    {
+      "name": "chatgpt_handoffs",
+      "kind": "table",
+      "sql_sha256": "f5a338d689c3af50bb26a604d92ce0cf3fe0ac4fdc496770b508486e2e6b45d1",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"chatgpt_handoffs\" t",
+      "key_transition": "Re-encrypt per-owner with AAD/runtime/host/binding/token-generation proof; if proof unavailable mark only this owner reauthentication-required.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "tenant_id",
+        "account_id",
+        "session_digest",
+        "auth_epoch",
+        "runtime_id",
+        "target_host",
+        "binding_id",
+        "expected_revision",
+        "staged_revision",
+        "transfer_key",
+        "nonce_commitment",
+        "source_host",
+        "issued_at",
+        "expires_at",
+        "phase",
+        "import_digest",
+        "lease_nonce",
+        "lease_until",
+        "receipt",
+        "receipt_mac"
+      ]
+    },
+    {
+      "name": "chatgpt_model_probes",
+      "kind": "table",
+      "sql_sha256": "0c45ec1465534e2f356270b3e4b7adf8e08072bf59c3583290e8c4465274715a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"chatgpt_model_probes\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "model",
+        "effort",
+        "verified_at",
+        "function_tools"
+      ]
+    },
+    {
+      "name": "chatgpt_sessions",
+      "kind": "table",
+      "sql_sha256": "03b4b5311d53368b54c679c860173f9542fca415c5749e4d0b5d41c559613d91",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"chatgpt_sessions\" t",
+      "key_transition": "Re-encrypt per-owner with AAD/runtime/host/binding/token-generation proof; if proof unavailable mark only this owner reauthentication-required.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "generation",
+        "cipher",
+        "expires_at",
+        "plan_enabled",
+        "refresh_state",
+        "refresh_nonce",
+        "refresh_epoch",
+        "refresh_until",
+        "cooldown_until"
+      ]
+    },
+    {
+      "name": "claude_code_bindings",
+      "kind": "table",
+      "sql_sha256": "98a9a53bbafde697f54f6d9712bbfd412dddc2fb910791753fceb7d0f531852c",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"claude_code_bindings\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "revision",
+        "label",
+        "environment_id",
+        "profile_digest",
+        "root_id",
+        "status"
+      ]
+    },
+    {
+      "name": "claude_code_probes",
+      "kind": "table",
+      "sql_sha256": "008179deb0cd0b80dd24ff61d5f0bd2722ff0163883d86cec7f308fb8dea9adc",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"claude_code_probes\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "model",
+        "verified_at",
+        "supported_efforts"
+      ]
+    },
+    {
+      "name": "claude_code_retirements",
+      "kind": "table",
+      "sql_sha256": "93fdcb4e6557ae53dcd3251bfe755ebffcce4e58ff5bbc002c80d2e17395fa95",
+      "scope": "installation-owner-record",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,a.tenant_id FROM \"claude_code_retirements\" t JOIN accounts a ON a.id=t.account_id",
+      "key_transition": "Preserve owner-indexed external auth-root retirement work until confirmed cleanup; do not lose pending cleanup when deleting owner volume.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "environment_id",
+        "profile_digest",
+        "root_id",
+        "account_id",
+        "state"
+      ]
+    },
+    {
+      "name": "claude_code_tool_probe_attempts",
+      "kind": "table",
+      "sql_sha256": "d7d48ea00fed6bd1f3827f358dcd6a3c6dcec7aeb6a22764924aaa3a2d417e94",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"claude_code_tool_probe_attempts\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "model",
+        "effort",
+        "harness",
+        "id",
+        "reserved_rounds",
+        "expires_at"
+      ]
+    },
+    {
+      "name": "claude_code_tool_probes",
+      "kind": "table",
+      "sql_sha256": "156be1148f435f54426f677b314f351f6c3e8668c30cee88582cba9712136945",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"claude_code_tool_probes\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "model",
+        "effort",
+        "harness",
+        "verified_at"
+      ]
+    },
+    {
+      "name": "claude_code_usage",
+      "kind": "table",
+      "sql_sha256": "b442280f7fc82b70600f44b82a8d459ad56640b5d0a48a7b8b3ffd6e03e0805d",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"claude_code_usage\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "attempt",
+        "step",
+        "model",
+        "usage"
+      ]
+    },
+    {
+      "name": "community_catalog_cache",
+      "kind": "table",
+      "sql_sha256": "2941b1f3f77688a13ae6d42f325e6ebad4f1541b0b56532ddb5199df2b258c9d",
+      "scope": "regenerate",
+      "owner_query": "",
+      "key_transition": "Fetch fixed reviewed public catalog; exclude mutable cache/leases.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "source_key",
+        "source",
+        "index_json",
+        "index_digest",
+        "etag",
+        "verified_at",
+        "checked_at",
+        "error",
+        "generation",
+        "lease_nonce",
+        "lease_until"
+      ]
+    },
+    {
+      "name": "community_installs",
+      "kind": "table",
+      "sql_sha256": "e0abf8bb433ede120cb877f6f794d527fe5b9d9f6938c74e3d5588bfc4c2d503",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"community_installs\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "package_id",
+        "active_digest",
+        "previous_digest",
+        "managed",
+        "enabled",
+        "hidden",
+        "revision"
+      ]
+    },
+    {
+      "name": "community_packages",
+      "kind": "table",
+      "sql_sha256": "96f12f6fa2cccde260944d590ea51b83b8c98abfcd5f4b3c4bc6342e0967578a",
+      "scope": "shared-readonly",
+      "owner_query": "",
+      "key_transition": "Keep verified public package digest/content once; preserve personal installs separately.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "digest",
+        "source",
+        "source_commit",
+        "package"
+      ]
+    },
+    {
+      "name": "community_run_revocations",
+      "kind": "table",
+      "sql_sha256": "e7d01057e00afe6dae4ccd25129e8ec792c5e1505d64d8cfcccc48e444cb436e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"community_run_revocations\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id"
+      ]
+    },
+    {
+      "name": "compound_draft_adoptions",
+      "kind": "table",
+      "sql_sha256": "16ac47c34af2ff39173a97d1febf54a76628146927b7f4f97535f618ccd56395",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"compound_draft_adoptions\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "run_id",
+        "action_id",
+        "action_revision",
+        "action_digest",
+        "recipe_route"
+      ]
+    },
+    {
+      "name": "compound_report_adoptions",
+      "kind": "table",
+      "sql_sha256": "fec38c1b07557a7f77e9e16b8a2ac3c66f64a45a39eded659d68a76b77b7037c",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"compound_report_adoptions\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "run_id",
+        "artifact_id",
+        "artifact_revision",
+        "recipe_route"
+      ]
+    },
+    {
+      "name": "connection_aliases",
+      "kind": "table",
+      "sql_sha256": "268660ceb3ac0fcf6b22c9059f17369360e18c4f4c40026da913adbe22b9c681",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"connection_aliases\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "alias"
+      ]
+    },
+    {
+      "name": "conversation_recall_dependencies",
+      "kind": "table",
+      "sql_sha256": "cf593fd27f528407908648a637705045e56d910a5dc5e0dc3351f224ba92204b",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"conversation_recall_dependencies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "source_run_id",
+        "source_version",
+        "discovered"
+      ]
+    },
+    {
+      "name": "credential_broker_auth",
+      "kind": "table",
+      "sql_sha256": "4ad7c6537a44c21af1d775cbf19cb84ef73de6a654314010d3e1191cd265f47e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,d.account_id AS account_id,d.tenant_id AS tenant_id FROM \"credential_broker_auth\" t JOIN credential_broker_devices d ON d.id=t.device_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "nonce",
+        "device_id",
+        "challenge",
+        "expires_at"
+      ]
+    },
+    {
+      "name": "credential_broker_bindings",
+      "kind": "table",
+      "sql_sha256": "7055be6e555aced5c1aef438c1833354cb6025931f9ee200278507e3a8f8d1ad",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,d.account_id AS account_id,d.tenant_id AS tenant_id FROM \"credential_broker_bindings\" t JOIN credential_broker_devices d ON d.id=t.device_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "device_id",
+        "binding_id",
+        "binding",
+        "active"
+      ]
+    },
+    {
+      "name": "credential_broker_commitments",
+      "kind": "table",
+      "sql_sha256": "7f912fc75de22df61fd95a28c83cb26d004a9ef376d86ba2a659708603c2e260",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"credential_broker_commitments\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "step",
+        "call_id",
+        "invocation_nonce",
+        "commitment",
+        "receipt"
+      ]
+    },
+    {
+      "name": "credential_broker_devices",
+      "kind": "table",
+      "sql_sha256": "4751184ff5bd5fc860c029ec0c2f89030966d99fd4741fc7c02f8435324b670e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"credential_broker_devices\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "account_id",
+        "tenant_id",
+        "session_digest",
+        "enrollment",
+        "public_key",
+        "status"
+      ]
+    },
+    {
+      "name": "credential_broker_invocations",
+      "kind": "table",
+      "sql_sha256": "e992e9c60e6b90790c11673c07a9763877727756602000f0254048949d32d206",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"credential_broker_invocations\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "step",
+        "call_id",
+        "invocation_nonce",
+        "request",
+        "cancelled"
+      ]
+    },
+    {
+      "name": "credential_broker_jobs",
+      "kind": "table",
+      "sql_sha256": "742ef493237089c2a839f80e6a407d914f4c12bd22cf38122c87076033333da1",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"credential_broker_jobs\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "run_id",
+        "call_id",
+        "invocation_nonce",
+        "repository",
+        "auth_epoch",
+        "expires_at",
+        "request",
+        "step"
+      ]
+    },
+    {
+      "name": "credential_broker_pairs",
+      "kind": "table",
+      "sql_sha256": "4320f13a9186c93787be962b9537dfa79a8c1b86cb751d2b652dbc09b2f76fc6",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"credential_broker_pairs\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "nonce",
+        "account_id",
+        "tenant_id",
+        "session_digest",
+        "challenge",
+        "expires_at",
+        "consumed"
+      ]
+    },
+    {
+      "name": "credential_broker_repositories",
+      "kind": "table",
+      "sql_sha256": "aa67c2c41843378e5c268c3caa89a43029e5c44a4942385a0304902c61366fdb",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,d.account_id AS account_id,d.tenant_id AS tenant_id FROM \"credential_broker_repositories\" t JOIN credential_broker_bindings b ON b.device_id=t.device_id AND b.binding_id=t.binding_id JOIN credential_broker_devices d ON d.id=b.device_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "device_id",
+        "binding_id",
+        "repository"
+      ]
+    },
+    {
+      "name": "credential_chat_waits",
+      "kind": "table",
+      "sql_sha256": "f098166c227d26e5c9d20c341befae5500d9acb8457ea15ecf81ab24ca8586de",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"credential_chat_waits\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "attempt",
+        "step",
+        "call_id",
+        "broker_call",
+        "invocation_nonce",
+        "request_id",
+        "repository",
+        "status",
+        "expires_at"
+      ]
+    },
+    {
+      "name": "credential_model_mail_grants",
+      "kind": "table",
+      "sql_sha256": "5f2398f48c14dae9abffb74f2ddc2f0be29c4f10dabc588a09fabbea15a4bcdd",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,d.account_id AS account_id,d.tenant_id AS tenant_id FROM \"credential_model_mail_grants\" t JOIN credential_broker_bindings b ON b.device_id=t.device_id AND b.binding_id=t.binding_id JOIN credential_broker_devices d ON d.id=b.device_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "device_id",
+        "binding_id",
+        "background"
+      ]
+    },
+    {
+      "name": "credential_model_mail_payloads",
+      "kind": "table",
+      "sql_sha256": "d6682aa373e0463b7c1f4a0e267fd571d36ada8525dc31e1108be28846f41d73",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"credential_model_mail_payloads\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "device_id",
+        "binding_id",
+        "payload",
+        "expires_at"
+      ]
+    },
+    {
+      "name": "deleted_account_effects",
+      "kind": "table",
+      "sql_sha256": "10675a4cc103e3cbadcad6e70f50042548a1a1a5b99b6e682118c6ff367be71b",
+      "scope": "installation-owner-record",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,a.tenant_id FROM \"deleted_account_effects\" t JOIN accounts a ON a.id=t.account_id",
+      "key_transition": "Retain minimal owner-indexed external effect tombstones centrally after personal-volume removal; unknown sends remain unknown and are never resent.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "account_id",
+        "effect_id",
+        "kind",
+        "state"
+      ]
+    },
+    {
+      "name": "destructive_journal_meta",
+      "kind": "table",
+      "sql_sha256": "54c5c5ce946a68f616e122621a8a029e49488ee68e75fd4a5c279f3a368a43e3",
+      "scope": "new-recovery-anchor",
+      "owner_query": "",
+      "key_transition": "Authenticate deletion commitment and receiver-approved new owner genesis; never splice old chain.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "installation_id",
+        "legacy_sequence",
+        "legacy_head",
+        "sequence",
+        "head"
+      ]
+    },
+    {
+      "name": "external_tool_dispatches",
+      "kind": "table",
+      "sql_sha256": "b52582a52310408dfa7909d9dba5c3fa7fa2ee0b617db1d33b8009ce85b54833",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"external_tool_dispatches\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "step",
+        "call_id",
+        "nonce",
+        "state"
+      ]
+    },
+    {
+      "name": "followup_reminders",
+      "kind": "table",
+      "sql_sha256": "a164ac2ee7fdec3266d053f83b78f05afe7a6e70b9dc9edb89e385ab56d5025a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"followup_reminders\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "schedule_id",
+        "source_schedule_id",
+        "artifact_id",
+        "artifact_revision",
+        "date_kind",
+        "date_utc",
+        "date_timezone",
+        "scheduled_for"
+      ]
+    },
+    {
+      "name": "gmail_resume_bindings",
+      "kind": "table",
+      "sql_sha256": "16b409a35c37cb5ab58227c63ea258a14708d26743c159e1e283858fa2b6acce",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"gmail_resume_bindings\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "fingerprint"
+      ]
+    },
+    {
+      "name": "google_setup",
+      "kind": "table",
+      "sql_sha256": "86fa096c07ed169f691f434937060a05dcfddc7f7b79a8c67ffd4acc039625d2",
+      "scope": "installation-secret",
+      "owner_query": "",
+      "key_transition": "Keep OAuth client secret only in installation exchange service; rebind version/purpose.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "revision",
+        "client_id",
+        "redirect_uri",
+        "secret"
+      ]
+    },
+    {
+      "name": "gws_inbox_selections",
+      "kind": "table",
+      "sql_sha256": "87ed98b8e726ceacad7bdd53641815046377e20743833c5f39a49f2ecdd8098a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"gws_inbox_selections\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "auth_epoch",
+        "fingerprint",
+        "confirmed",
+        "challenge_digest",
+        "challenge_expires_at"
+      ]
+    },
+    {
+      "name": "installation_cutover",
+      "kind": "table",
+      "sql_sha256": "ee072fe2fd4da23599bf3893fe1ab86db8bed258836945b3de6aaf081ac88368",
+      "scope": "new-recovery-anchor",
+      "owner_query": "",
+      "key_transition": "Preserve original seal/checkpoint once; authenticate owner transfer generation.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "phase",
+        "seal",
+        "checkpoint"
+      ]
+    },
+    {
+      "name": "installation_model_selection",
+      "kind": "table",
+      "sql_sha256": "1d1de98499ebbf8f09c34e21d8dc14b05b4efaeb4d4083e1f0af06d22f4f889b",
+      "scope": "installation",
+      "owner_query": "",
+      "key_transition": "Preserve shared model selection; reject a selection pointing at a personal provider.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "provider_id",
+        "revision",
+        "model",
+        "effort"
+      ]
+    },
+    {
+      "name": "installation_restores",
+      "kind": "table",
+      "sql_sha256": "bb29704ce89809fe6d14bd3c4c5a66223f4fd6a7e1b4f9bc46d37cd4d4c6b26a",
+      "scope": "new-recovery-anchor",
+      "owner_query": "",
+      "key_transition": "Keep original restore identities once; new owner restore references authenticated transfer.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "restore_id",
+        "new_installation_id",
+        "source_installation_id",
+        "journal_installation_id",
+        "seal_id",
+        "checkpoint_id",
+        "ciphertext_sha256",
+        "trusted_head",
+        "restored_at"
+      ]
+    },
+    {
+      "name": "invitation_deliveries",
+      "kind": "table",
+      "sql_sha256": "702ede3af83b7f30dc1776765b2ec2062630992f6efe2a2c2666cc848490c7ac",
+      "scope": "installation-private",
+      "owner_query": "",
+      "key_transition": "Preserve actor/target delivery state and unknown-send receipts centrally; re-encrypt payload with installation service key.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "actor_id",
+        "target_id",
+        "target_epoch",
+        "target_revision",
+        "actor_epoch",
+        "session_digest",
+        "sender_pin",
+        "request_digest",
+        "digest",
+        "from_address",
+        "to_address",
+        "subject",
+        "payload",
+        "state",
+        "expires_at",
+        "provider_message"
+      ]
+    },
+    {
+      "name": "knowledge_batches",
+      "kind": "table",
+      "sql_sha256": "ff84db7546d9dbc5b48b5c140f132a2190754c0ffe55747cb7ce9f6d46dfb989",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_batches\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "request_id",
+        "collection_id",
+        "digest",
+        "receipt"
+      ]
+    },
+    {
+      "name": "knowledge_collections",
+      "kind": "table",
+      "sql_sha256": "5d39e726b969a9934787aaa6cf64117ab86ea2a1a7d1851b7a4bd02728c6369d",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_collections\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "name",
+        "scope",
+        "revision",
+        "cursor",
+        "connected",
+        "deleted"
+      ]
+    },
+    {
+      "name": "knowledge_evidence",
+      "kind": "table",
+      "sql_sha256": "f9d8cb615a2d7e04ace87a97a9e7df03fdbded375e685748e0d2557312ad01fa",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_evidence\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "memory_id",
+        "memory_revision",
+        "source_id",
+        "source_revision",
+        "start_byte",
+        "end_byte",
+        "quote_hash"
+      ]
+    },
+    {
+      "name": "knowledge_fts",
+      "kind": "virtual",
+      "sql_sha256": "baf335bf565a784bd0729566c211068871400e7090dd3c42cbb3f75ecff2164a",
+      "scope": "regenerate",
+      "owner_query": "",
+      "key_transition": "Do not copy FTS/shadows; rebuild only after owner-filtered source extraction.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_key",
+        "kind",
+        "object_id",
+        "revision",
+        "normalized"
+      ]
+    },
+    {
+      "name": "knowledge_journal_meta",
+      "kind": "table",
+      "sql_sha256": "1b62e4d5c10933edd4632c989742456ed60268273475ad943d9aad82e39d9525",
+      "scope": "new-recovery-anchor",
+      "owner_query": "",
+      "key_transition": "Pin old invalidation head once and create authenticated per-owner genesis.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "sequence",
+        "head"
+      ]
+    },
+    {
+      "name": "knowledge_memories",
+      "kind": "table",
+      "sql_sha256": "f6135cecb1bdab67d7958356142609c2170300ab99585fc01a8074a453487d23",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_memories\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "revision",
+        "status",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    {
+      "name": "knowledge_memory_timeline",
+      "kind": "table",
+      "sql_sha256": "2a21900d3420d8dc14e833ab14de6a7b1f964c99d122aa83e4330e4d939fcd6c",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_memory_timeline\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "memory_id",
+        "revision",
+        "valid_from"
+      ]
+    },
+    {
+      "name": "knowledge_memory_versions",
+      "kind": "table",
+      "sql_sha256": "97c2326ca18e81cbe58867096ed101e25e41f6f9e742dca46b7f686aa4990a1f",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_memory_versions\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "memory_id",
+        "revision",
+        "draft",
+        "status",
+        "created_at"
+      ]
+    },
+    {
+      "name": "knowledge_source_versions",
+      "kind": "table",
+      "sql_sha256": "13ecfb1a631b373c2006876e13e6c482826bab91786acdbfaf1f1f077dee63da",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_source_versions\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "source_id",
+        "revision",
+        "version",
+        "title",
+        "text",
+        "speaker",
+        "observed_at",
+        "valid_from",
+        "valid_until",
+        "digest"
+      ]
+    },
+    {
+      "name": "knowledge_sources",
+      "kind": "table",
+      "sql_sha256": "e46a3fac9b19af737a846b3683c5abf51bd3a33103d393c8e1b7151d96540d04",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_sources\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "collection_id",
+        "external_id",
+        "revision",
+        "deleted"
+      ]
+    },
+    {
+      "name": "knowledge_state",
+      "kind": "table",
+      "sql_sha256": "926430b7b7be2ddcfdffacd678107c1016c47b7d40c2402cb7b6f3a1e8dc0604",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_state\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "generation"
+      ]
+    },
+    {
+      "name": "knowledge_suppressions",
+      "kind": "table",
+      "sql_sha256": "15c467e83f3162d8227d53e22c0b6a4955590af8ba0b2da072e30c2fe4ecfa17",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_suppressions\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "source_id",
+        "quote_hash"
+      ]
+    },
+    {
+      "name": "knowledge_writes",
+      "kind": "table",
+      "sql_sha256": "259531985cda99f5c07f1f9af8254a4e019aca25d3cda20cd90680ca6a4cb4de",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"knowledge_writes\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "request_id",
+        "digest",
+        "memory_id",
+        "revision"
+      ]
+    },
+    {
+      "name": "learned_page_dispatches",
+      "kind": "table",
+      "sql_sha256": "65e87689a24f888a5b2921e7ae8539ea116a404238b94e9095918954c1337955",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"learned_page_dispatches\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "step",
+        "call_id",
+        "ordinal",
+        "nonce",
+        "state"
+      ]
+    },
+    {
+      "name": "learned_skill_observations",
+      "kind": "table",
+      "sql_sha256": "9e4d1654da3ea41a2df0c51fc391de62a06185a0b19dbabe007e454530afb3dd",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"learned_skill_observations\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id"
+      ]
+    },
+    {
+      "name": "learned_skill_proofs",
+      "kind": "table",
+      "sql_sha256": "d9ac0f22fc18e2368a0b9a2a2671b043c8d402bc49b0bc937aa76619fe708273",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"learned_skill_proofs\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "skill_id",
+        "input_digest",
+        "run_id",
+        "receipt_digest",
+        "subject_digest"
+      ]
+    },
+    {
+      "name": "learned_skill_receipts",
+      "kind": "table",
+      "sql_sha256": "4de4300eae12477841c776029c7a6d9863a937dac0cd2215c9eafd8f171ff239",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"learned_skill_receipts\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "step",
+        "call_id",
+        "ordinal",
+        "input",
+        "result"
+      ]
+    },
+    {
+      "name": "learned_skill_uses",
+      "kind": "table",
+      "sql_sha256": "f9e043a7a5b621269180c33659819dc4c5f2f512d04905b409301b3ba297c752",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"learned_skill_uses\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "skill_id"
+      ]
+    },
+    {
+      "name": "learned_skills",
+      "kind": "table",
+      "sql_sha256": "2c8afa272968fc5ba372c632cd7e3c5d8aa42a26f4918688335161712b60c806",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"learned_skills\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "route",
+        "schema_version",
+        "state",
+        "enabled",
+        "hidden",
+        "failures",
+        "revision"
+      ]
+    },
+    {
+      "name": "local_notifications",
+      "kind": "table",
+      "sql_sha256": "37a3863632f8837282ab6fa3845549b542744ff19f3e4b769e4b1b9380d7679d",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"local_notifications\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "account_id",
+        "schedule_id",
+        "occurrence_id",
+        "title",
+        "message",
+        "scheduled_for",
+        "delivered_at",
+        "delayed",
+        "quiet",
+        "quiet_revision",
+        "is_read",
+        "dismissed",
+        "source_suppressed",
+        "push_suppressed"
+      ]
+    },
+    {
+      "name": "mail_actions",
+      "kind": "table",
+      "sql_sha256": "a49fe31a213e61b275f6f809a49b6e393bbed8005516de2565985aa97826d42e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mail_actions\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "revision",
+        "version",
+        "connection_id",
+        "connection_epoch",
+        "auth_epoch",
+        "content",
+        "raw",
+        "digest",
+        "message_id",
+        "reply_thread",
+        "origin_thread",
+        "origin_run",
+        "state",
+        "expires_at",
+        "dispatch_nonce",
+        "provider_message",
+        "provider_thread"
+      ]
+    },
+    {
+      "name": "mail_connections",
+      "kind": "table",
+      "sql_sha256": "3d2cfb09fc8a0523aa60b9c9ed7daa1dc87186abd213cd0d83cc7204cb214367",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mail_connections\" t",
+      "key_transition": "Re-encrypt per-owner credentials with verified original AAD/scope/version; transient OAuth state must prove session/generation or restart only that flow.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "email",
+        "epoch",
+        "credential_revision",
+        "status",
+        "credential",
+        "expires_at",
+        "scopes",
+        "oauth_client_id",
+        "native_send"
+      ]
+    },
+    {
+      "name": "mail_oauth_sessions",
+      "kind": "table",
+      "sql_sha256": "dbe7dc7adc5ab12272ea162a77aa15e746d1b7671276acfa88da97e38981f0ff",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mail_oauth_sessions\" t",
+      "key_transition": "Re-encrypt per-owner credentials with verified original AAD/scope/version; transient OAuth state must prove session/generation or restart only that flow.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "state_hash",
+        "tenant_id",
+        "account_id",
+        "session_digest",
+        "auth_epoch",
+        "expires_at",
+        "verifier",
+        "code",
+        "result_hash",
+        "claimed",
+        "app_revision",
+        "client_id",
+        "redirect_uri",
+        "setup_return",
+        "compose"
+      ]
+    },
+    {
+      "name": "mail_provider_saves",
+      "kind": "table",
+      "sql_sha256": "35dbae5f6d3efd97dc2e475b64de23132b68e29d5ebb4799f0b6aa6a8d45c109",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mail_provider_saves\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "action_id",
+        "operation_digest",
+        "action_revision",
+        "connection_id",
+        "connection_epoch",
+        "auth_epoch",
+        "nonce",
+        "state",
+        "receipt",
+        "created_at",
+        "mime_sha256"
+      ]
+    },
+    {
+      "name": "mail_reconciliations",
+      "kind": "table",
+      "sql_sha256": "31307e7775a9bf8d622db9fd2d329aedbb80dce329edf7165445ad90f9aaf859",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mail_reconciliations\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "action_id",
+        "automatic_attempts",
+        "next_due",
+        "manual_after",
+        "lease_nonce",
+        "lease_until",
+        "quarantined",
+        "status",
+        "last_result",
+        "last_checked_at",
+        "candidate_count",
+        "provider_message",
+        "provider_thread",
+        "conflict_message",
+        "conflict_thread"
+      ]
+    },
+    {
+      "name": "mail_reply_watch_requests",
+      "kind": "table",
+      "sql_sha256": "586e6a9b31887c9b32344dd461d695664ca80948eba8c134512b3d66bd316e65",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mail_reply_watch_requests\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "request_digest",
+        "watch_id"
+      ]
+    },
+    {
+      "name": "mail_reply_watches",
+      "kind": "table",
+      "sql_sha256": "28087c81672fb6bc5c7758ae04c37ca3c835fca7fbae9b5e6e0b771dbadad8a6",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mail_reply_watches\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "request_id",
+        "request_digest",
+        "thread_id",
+        "origin_run",
+        "origin_action",
+        "auth_epoch",
+        "connection_id",
+        "connection_epoch",
+        "app_revision",
+        "client_id",
+        "provider_thread",
+        "baseline_ids",
+        "seen_ids",
+        "title",
+        "mailbox",
+        "state",
+        "cadence_seconds",
+        "expires_at",
+        "next_due",
+        "last_checked_at",
+        "failures",
+        "reason",
+        "lease_nonce",
+        "lease_deadline",
+        "replies",
+        "notification_id",
+        "created_at"
+      ]
+    },
+    {
+      "name": "mail_run_dependencies",
+      "kind": "table",
+      "sql_sha256": "3c1debbe606840a4660acebf3ec0ce49b164849e281a4345376ed0d263bc6ade",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mail_run_dependencies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "connection_id",
+        "epoch"
+      ]
+    },
+    {
+      "name": "mail_schedules",
+      "kind": "table",
+      "sql_sha256": "bcabc0eb9bc9253e5ededf067c2e95d70603ec21e4f3e209ad38b34e4aa8c5e8",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mail_schedules\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "action_id",
+        "due_at",
+        "timezone",
+        "approved_revision",
+        "auth_epoch"
+      ]
+    },
+    {
+      "name": "mail_send_evidence",
+      "kind": "table",
+      "sql_sha256": "7ffc6b8099cd49f8a0e98d05d1194bf7be53efc4a843b5326af297a99b334896",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mail_send_evidence\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "action_id",
+        "account_id",
+        "revision",
+        "digest",
+        "connection_id",
+        "connection_epoch",
+        "auth_epoch",
+        "dispatch_nonce",
+        "message_id",
+        "reply_thread",
+        "committed_at",
+        "oracle_version",
+        "fingerprint",
+        "withdrawn"
+      ]
+    },
+    {
+      "name": "media_objects",
+      "kind": "table",
+      "sql_sha256": "21e32a86b8ac9ccac423d276fb575db6b1f439ae254e28c857085081aad1909e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"media_objects\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "revision",
+        "input_digest",
+        "digest",
+        "state",
+        "nonce",
+        "session_digest",
+        "auth_epoch",
+        "width",
+        "height",
+        "bytes",
+        "thumbnail",
+        "created_at",
+        "filename",
+        "media_type",
+        "extracted_text"
+      ]
+    },
+    {
+      "name": "media_run_dependencies",
+      "kind": "table",
+      "sql_sha256": "364d1c58fd5910dbf4847bf6f7e6908fc499ab87d9191632d363d48e303f8bb2",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"media_run_dependencies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "media_id",
+        "revision"
+      ]
+    },
+    {
+      "name": "memory_command_plans",
+      "kind": "table",
+      "sql_sha256": "a61782e6964e51ff10da74dbb1e566239aa3370682b34b2239a3fd1e1c453418",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"memory_command_plans\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "intent"
+      ]
+    },
+    {
+      "name": "memory_command_slots",
+      "kind": "table",
+      "sql_sha256": "fb7fd52613abddc54051dbabe891a296dbe93af8bf62585d9c01cd005424a5f7",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"memory_command_slots\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "slot",
+        "command_id",
+        "nonce",
+        "account_id",
+        "intent_digest",
+        "action",
+        "target_id",
+        "target_revision",
+        "target_effective_revision",
+        "clarification",
+        "proof_attempt",
+        "proof_step",
+        "bound_attempt",
+        "bound_nonce",
+        "session_digest",
+        "auth_epoch",
+        "state",
+        "outcome"
+      ]
+    },
+    {
+      "name": "memory_target_plans",
+      "kind": "table",
+      "sql_sha256": "b3d37c018b2cee331f78b1af5d0cdcb294dc01c8c07f91ccdecf05bce787c2e2",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"memory_target_plans\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "nonce",
+        "intent",
+        "intent_digest",
+        "generation",
+        "planning_step",
+        "snapshot"
+      ]
+    },
+    {
+      "name": "mission_acceptances",
+      "kind": "table",
+      "sql_sha256": "8641554bcf42b264c701d013e19b7df7d3221af2e977d1dffdf4dee9369cbc88",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_acceptances\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "mission_id",
+        "revision",
+        "request_id",
+        "operation",
+        "payload",
+        "first_step"
+      ]
+    },
+    {
+      "name": "mission_action_contracts",
+      "kind": "table",
+      "sql_sha256": "ce0dec00136b95a3ced2ecba26a5e7449d9b504235bbb61ff7a7b8db66946a33",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mission_action_contracts\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "acceptance_revision",
+        "account_id",
+        "kind",
+        "action_id",
+        "payload_digest",
+        "action_revision",
+        "action_digest",
+        "evidence"
+      ]
+    },
+    {
+      "name": "mission_browser_selections",
+      "kind": "table",
+      "sql_sha256": "b19a24bb05ad6e6eed825a71dbd4b42da41007ad7ecdc8e90a575b56d951ab5b",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mission_browser_selections\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "auth_epoch",
+        "request_digest",
+        "origin_thread",
+        "workspace_id",
+        "mission_id",
+        "run_id",
+        "acceptance_revision",
+        "source_id",
+        "source_revision",
+        "receipt"
+      ]
+    },
+    {
+      "name": "mission_chat_commands",
+      "kind": "table",
+      "sql_sha256": "ebb695c87295a92177f522e15b8d2a6bda00a67ce649bd8804d617d214b8d5ea",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_chat_commands\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "receipt"
+      ]
+    },
+    {
+      "name": "mission_chat_plans",
+      "kind": "table",
+      "sql_sha256": "37b218f4cae1223bc7dc6f3dbc2f7f141a6b1875368647d000920daef1df2f56",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_chat_plans\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "anchor",
+        "timezone",
+        "original_session",
+        "original_epoch",
+        "target",
+        "decision",
+        "state"
+      ]
+    },
+    {
+      "name": "mission_connection_selections",
+      "kind": "table",
+      "sql_sha256": "e510021bd6f119b8619439a564b12d4f2e7935317a76f7b3a00527d7f91adf5e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_connection_selections\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "mission_id",
+        "request_id",
+        "payload"
+      ]
+    },
+    {
+      "name": "mission_connection_slots",
+      "kind": "table",
+      "sql_sha256": "ebfec19778e3cecea0ac91813c3ca813e5420471f43151021c353ea8e66394f8",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_connection_slots\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "slot_id",
+        "operation",
+        "resource",
+        "schema_version",
+        "account_scope",
+        "selection",
+        "expires_ms"
+      ]
+    },
+    {
+      "name": "mission_connection_waits",
+      "kind": "table",
+      "sql_sha256": "fd7db6243035df51583715956ad2b85f12d7ded7617dd255c1b303af95ae139d",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_connection_waits\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "mission_id",
+        "run_id",
+        "slot_id",
+        "acceptance_revision",
+        "mission_revision",
+        "step",
+        "request_id",
+        "cause",
+        "status",
+        "expires_ms",
+        "created_order"
+      ]
+    },
+    {
+      "name": "mission_controls",
+      "kind": "table",
+      "sql_sha256": "4269bb8d4982f17b1154964607ff2313af5dcc8e3057d44aa29553ffc9fe0656",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_controls\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "mission_id",
+        "request_id",
+        "payload",
+        "response"
+      ]
+    },
+    {
+      "name": "mission_input_replies",
+      "kind": "table",
+      "sql_sha256": "2c5de12888a3cb6e7431e29c15e0b7fe6f86f855f945fa9b2bc43c321a602967",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_input_replies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "mission_id",
+        "request_id",
+        "payload"
+      ]
+    },
+    {
+      "name": "mission_input_waits",
+      "kind": "table",
+      "sql_sha256": "34cbdeaa7f46824258bd83d619f195d1e09d2a0436755207fe410ddc60b0ac00",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_input_waits\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "mission_id",
+        "run_id",
+        "request_id",
+        "acceptance_revision",
+        "mission_revision",
+        "step",
+        "field",
+        "question",
+        "value",
+        "status",
+        "expires_ms",
+        "candidates",
+        "notification_id"
+      ]
+    },
+    {
+      "name": "mission_report_contracts",
+      "kind": "table",
+      "sql_sha256": "4cc26138f75c2c20821e78ebae1f026422e136164cfa2912e141ec1d79a51e07",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"mission_report_contracts\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "acceptance_revision",
+        "account_id",
+        "schema_version",
+        "profile_sha256",
+        "mutation_id",
+        "contract",
+        "artifact_id",
+        "artifact_revision"
+      ]
+    },
+    {
+      "name": "mission_revisions",
+      "kind": "table",
+      "sql_sha256": "169fa038352279a06e04b9b5f4ea177c4310e3d58bfdcc2704dbfd321c42c931",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"mission_revisions\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "mission_id",
+        "revision",
+        "request_id",
+        "payload"
+      ]
+    },
+    {
+      "name": "missions",
+      "kind": "table",
+      "sql_sha256": "64d1e76d307d6ff02fac22c8533fdff3580706cdd97ab0b9f6bd110fa5e47acc",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"missions\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "account_id",
+        "run_id",
+        "thread_id",
+        "request_id",
+        "payload",
+        "payload_digest",
+        "mode",
+        "auth_epoch",
+        "revision",
+        "state",
+        "grant_enabled",
+        "steering",
+        "plan",
+        "candidate",
+        "report",
+        "repairs",
+        "uncertain",
+        "expires_ms",
+        "round_text"
+      ]
+    },
+    {
+      "name": "model_call_receipts",
+      "kind": "table",
+      "sql_sha256": "d7eaeaaca2bccea30057d34f951b644a62ec7580ab97cb9f1e3698d8a8609f69",
+      "scope": "split-usage-record",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"model_call_receipts\" t",
+      "key_transition": "Keep private per-run usage receipt with owner; authenticate installation spend baseline separately. Never rewind shared spend or double-settle a copied receipt.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "run_id",
+        "attempt",
+        "step",
+        "nonce",
+        "usage",
+        "dispatched_at"
+      ]
+    },
+    {
+      "name": "native_mail_connections",
+      "kind": "table",
+      "sql_sha256": "322257f3e88d0558c232a50ff1c25e913261a90539cd60e9dc56c67bde5daf0b",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"native_mail_connections\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "connection_id",
+        "device_id",
+        "binding_id",
+        "auth_epoch"
+      ]
+    },
+    {
+      "name": "native_mail_context_dependencies",
+      "kind": "table",
+      "sql_sha256": "7d8820a6f4eb4e7f25f5af28f8e00a2cc966cb7244a6c1d2ca9e5ccd673685f4",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"native_mail_context_dependencies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "origin_run"
+      ]
+    },
+    {
+      "name": "native_mail_effects",
+      "kind": "table",
+      "sql_sha256": "23a46e24d5e29e2c7d10a05154d466632bb812e8d9a3972aa028746f2def3d5d",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"native_mail_effects\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "action_id",
+        "revision",
+        "effect_id",
+        "kind",
+        "device_id",
+        "request",
+        "payload",
+        "lease_nonce"
+      ]
+    },
+    {
+      "name": "native_mail_settlement_cursor",
+      "kind": "table",
+      "sql_sha256": "f82591eec9519ee1028715c567a3c5c27af1bd19f4135a94e07df5930aad2ac4",
+      "scope": "regenerate",
+      "owner_query": "",
+      "key_transition": "Rebuild owner scan cursor; preserve every effect/receipt without resend.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "read_rowid",
+        "dependency_rowid"
+      ]
+    },
+    {
+      "name": "native_task_mail_bindings",
+      "kind": "table",
+      "sql_sha256": "5fb8e809d1df0521869dd109d4e0c24b01ccad53300daaae260dd7b56b3df3db",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"native_task_mail_bindings\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "device_id",
+        "binding_id",
+        "binding"
+      ]
+    },
+    {
+      "name": "native_task_mail_reads",
+      "kind": "table",
+      "sql_sha256": "763c76e868cfffa393e7ad6cbe6ff1a3d2e93a8b7c96785f10c666b6235aff58",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"native_task_mail_reads\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "step",
+        "call_id",
+        "request_id",
+        "broker_call",
+        "invocation_nonce",
+        "payload",
+        "status",
+        "expires_ms",
+        "acceptance_revision",
+        "attempt",
+        "request"
+      ]
+    },
+    {
+      "name": "native_task_mail_selections",
+      "kind": "table",
+      "sql_sha256": "4a379ede88711c2affd2e1c207f4967a772849ef1b0a2819e07adbed25301ddf",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"native_task_mail_selections\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "request_id",
+        "payload"
+      ]
+    },
+    {
+      "name": "notification_settings",
+      "kind": "table",
+      "sql_sha256": "3bd6f60fdd30b44c427b0c6da3e6078f9efc2c3404bbe74c404bfe68e1a53433",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"notification_settings\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "revision",
+        "enabled",
+        "timezone",
+        "start_minute",
+        "end_minute"
+      ]
+    },
+    {
+      "name": "notification_source_preferences",
+      "kind": "table",
+      "sql_sha256": "0521d0d5644178046c6f69474f02a404349660d3cddcd65ec189cd7d2856eb2e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"notification_source_preferences\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "schedule_id",
+        "revision",
+        "muted"
+      ]
+    },
+    {
+      "name": "personal_artifact_command_plans",
+      "kind": "table",
+      "sql_sha256": "96ad7e9c6ca5deca00792c915dd00f84adca5987b02a2f71a7f764a573e7692f",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"personal_artifact_command_plans\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "schema_version",
+        "action",
+        "kind",
+        "target_id",
+        "target_revision",
+        "generation",
+        "request_id",
+        "used"
+      ]
+    },
+    {
+      "name": "personal_artifact_dependencies",
+      "kind": "table",
+      "sql_sha256": "35b21ab7be9fba260c667f83f83673cb7fbc96b1e974360db166aa95b4387c1f",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"personal_artifact_dependencies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "artifact_id",
+        "artifact_revision",
+        "kind",
+        "object_id",
+        "revision"
+      ]
+    },
+    {
+      "name": "personal_artifact_mutations",
+      "kind": "table",
+      "sql_sha256": "d0ddca6c1bf7a6ae3b300aef542c272c517c1d6dd2faafa215f3d6108acea55d",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"personal_artifact_mutations\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "request_id",
+        "digest",
+        "artifact_id",
+        "revision",
+        "status"
+      ]
+    },
+    {
+      "name": "personal_artifact_run_dependencies",
+      "kind": "table",
+      "sql_sha256": "8edf6388a40b49911aaa7ea719673dfeec7bde99895f0a145e34b88159ad50af",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"personal_artifact_run_dependencies\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "artifact_id",
+        "revision"
+      ]
+    },
+    {
+      "name": "personal_artifact_run_profiles",
+      "kind": "table",
+      "sql_sha256": "a3001479fbee0fed60aa5cd4c3ca11064a9a160d92ebc8484b82fbff747214e4",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"personal_artifact_run_profiles\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "schema_version",
+        "selected_id",
+        "selected_revision",
+        "planned"
+      ]
+    },
+    {
+      "name": "personal_artifact_versions",
+      "kind": "table",
+      "sql_sha256": "91cd80f59e8d1bc7439406b9b95b1fbef9f97dc465028ebfca540859afacb5d3",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"personal_artifact_versions\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "artifact_id",
+        "revision",
+        "status",
+        "draft",
+        "created_at"
+      ]
+    },
+    {
+      "name": "personal_artifacts",
+      "kind": "table",
+      "sql_sha256": "85fa07cbf1ff22cff57122cd9e8300e48255989256469ea68a160bf87fc9f952",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"personal_artifacts\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "kind",
+        "revision",
+        "status",
+        "updated_at"
+      ]
+    },
+    {
+      "name": "personal_claude_selections",
+      "kind": "table",
+      "sql_sha256": "cc5c9a115b75803430a3b51b54135f7e186a7e05461736c12f627621771ef5a9",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"personal_claude_selections\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "model",
+        "effort"
+      ]
+    },
+    {
+      "name": "personal_compatible_providers",
+      "kind": "table",
+      "sql_sha256": "99a189c67412bfa70cd5b9e5ebe0edbb2fe6c227efe706f9133298abbbd720b6",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"personal_compatible_providers\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "provider_id",
+        "tenant_id",
+        "account_id"
+      ]
+    },
+    {
+      "name": "personal_model_selections",
+      "kind": "table",
+      "sql_sha256": "9853b6ca25d41ae81cf10f6b201d3f556feeeb746fac722a033fed350594bd95",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"personal_model_selections\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "provider_id",
+        "revision",
+        "model",
+        "effort"
+      ]
+    },
+    {
+      "name": "personal_subscription_selections",
+      "kind": "table",
+      "sql_sha256": "7c027310abf2bbb2abf5a2e52cebc29250e1ec7e4e8fc7dc385612c5be9210b7",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"personal_subscription_selections\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "model",
+        "effort"
+      ]
+    },
+    {
+      "name": "personal_subscription_vision_attempts",
+      "kind": "table",
+      "sql_sha256": "689b1ca9d1921b8c0799000041b31b6cb80da8ce394e1f7c051716c3342c6617",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"personal_subscription_vision_attempts\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "source",
+        "tenant_id",
+        "account_id",
+        "id",
+        "reserved",
+        "expires_at"
+      ]
+    },
+    {
+      "name": "personal_subscription_vision_probes",
+      "kind": "table",
+      "sql_sha256": "66019cff32d09724bff5e3a5953f0043774aba2f175cb5e85cb1215c55551247",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"personal_subscription_vision_probes\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "source",
+        "tenant_id",
+        "account_id",
+        "binding_id",
+        "revision",
+        "model",
+        "effort",
+        "harness",
+        "verified_at"
+      ]
+    },
+    {
+      "name": "proactive_suggestions",
+      "kind": "table",
+      "sql_sha256": "eddfa0b439f9df5eb6f42bc075f38a4c83d1d9ec82daa8077d272c2056ee05a7",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"proactive_suggestions\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "artifact_id",
+        "artifact_revision",
+        "schedule_id"
+      ]
+    },
+    {
+      "name": "proactive_topics",
+      "kind": "table",
+      "sql_sha256": "40891131f84eaf1abfae63a355fdba3a0c526609ad7f6bb530d7d89251b70570",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"proactive_topics\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "topic",
+        "schedule_id"
+      ]
+    },
+    {
+      "name": "provider_key_meta",
+      "kind": "table",
+      "sql_sha256": "d3e5b250ef634847d1e5c7b91ec98150ade60aa63af4eaef0fec60829420a686",
+      "scope": "rekey",
+      "owner_query": "",
+      "key_transition": "Do not copy root key check; issue separate installation/personal key checks after re-encryption.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "key_check"
+      ]
+    },
+    {
+      "name": "provider_model_probes",
+      "kind": "table",
+      "sql_sha256": "5a1832427c78e04eabb2617cad9704af2ce03ef486ce66035047a995a76be83a",
+      "scope": "partitioned-model",
+      "owner_query": "SELECT t.rowid AS rid,p.account_id,p.tenant_id FROM \"provider_model_probes\" t LEFT JOIN personal_compatible_providers p ON p.provider_id=t.provider_id",
+      "key_transition": "Personal compatible provider revisions follow exact personal_compatible_providers binding; other providers stay installation-owned. Re-encrypt credentials, never copy shared root key.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "provider_id",
+        "revision",
+        "model",
+        "effort",
+        "verified_at",
+        "function_tools"
+      ]
+    },
+    {
+      "name": "provider_revisions",
+      "kind": "table",
+      "sql_sha256": "08bca490246aebc193a28842264d463226b35bc5859d1c5c1c4dc07c2e2e72fc",
+      "scope": "partitioned-model",
+      "owner_query": "SELECT t.rowid AS rid,p.account_id,p.tenant_id FROM \"provider_revisions\" t LEFT JOIN personal_compatible_providers p ON p.provider_id=t.provider_id",
+      "key_transition": "Personal compatible provider revisions follow exact personal_compatible_providers binding; other providers stay installation-owned. Re-encrypt credentials, never copy shared root key.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "provider_id",
+        "revision",
+        "name",
+        "config",
+        "enabled",
+        "credential"
+      ]
+    },
+    {
+      "name": "provider_vision_probes",
+      "kind": "table",
+      "sql_sha256": "60d27a48102b8787875e87087726ae05daf2782929ac974388d02e9a53ec114d",
+      "scope": "partitioned-model",
+      "owner_query": "SELECT t.rowid AS rid,p.account_id,p.tenant_id FROM provider_vision_probes t JOIN provider_revisions r ON r.provider_id=t.provider_id AND r.revision=t.revision LEFT JOIN personal_compatible_providers p ON p.provider_id=t.provider_id",
+      "key_transition": "Personal compatible provider revisions follow exact personal_compatible_providers binding; other providers stay installation-owned. Re-encrypt credentials, never copy shared root key.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "provider_id",
+        "revision",
+        "model",
+        "effort"
+      ]
+    },
+    {
+      "name": "providers",
+      "kind": "table",
+      "sql_sha256": "bb791a9fc085c8951ab21271938e9edefbc61e00f02b2f6fad6aba7b14c40c87",
+      "scope": "partitioned-model",
+      "owner_query": "SELECT t.rowid AS rid,p.account_id,p.tenant_id FROM \"providers\" t LEFT JOIN personal_compatible_providers p ON p.provider_id=t.id",
+      "key_transition": "Personal compatible provider revisions follow exact personal_compatible_providers binding; other providers stay installation-owned. Re-encrypt credentials, never copy shared root key.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "current_revision"
+      ]
+    },
+    {
+      "name": "push_enrollment_receipts",
+      "kind": "table",
+      "sql_sha256": "4f7fbb0485e1747f14ed332abd0d351ce02276f66016509d30d1461f222c23f7",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"push_enrollment_receipts\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "request_digest",
+        "binding_id",
+        "device_id",
+        "operation_revision"
+      ]
+    },
+    {
+      "name": "push_owners",
+      "kind": "table",
+      "sql_sha256": "17f7bfee471be07917f4c173db965a6ccf2852250e5a41c01a8c12aaaabd19b2",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"push_owners\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "last_claim"
+      ]
+    },
+    {
+      "name": "push_queue",
+      "kind": "table",
+      "sql_sha256": "91e66e6ad1114e265588ada4542201252328d829a58627abd390f9bb213f4ff3",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"push_queue\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "account_id",
+        "binding_id",
+        "notification_id",
+        "state",
+        "attempt",
+        "nonce",
+        "ready_at",
+        "deadline",
+        "expires_at",
+        "created_at",
+        "finished_at",
+        "reason"
+      ]
+    },
+    {
+      "name": "push_subscriptions",
+      "kind": "table",
+      "sql_sha256": "a0427b24d706166ce68817c75241998a16715fa27b02752cd6f108bfaf30297a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"push_subscriptions\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "binding_id",
+        "tenant_id",
+        "account_id",
+        "device_id",
+        "endpoint_hash",
+        "credentials",
+        "auth_epoch",
+        "session_digest",
+        "state",
+        "cursor_after",
+        "last_scan",
+        "created_at",
+        "last_outcome"
+      ]
+    },
+    {
+      "name": "push_vapid_meta",
+      "kind": "table",
+      "sql_sha256": "0918e37d891443338e9dc2cf06688038b4b468fb776fdd73a8a0d0865d6d7726",
+      "scope": "installation-secret",
+      "owner_query": "",
+      "key_transition": "Keep installation VAPID authority at push service; do not put private signing key in personal volume.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "public_key",
+        "contact",
+        "retired"
+      ]
+    },
+    {
+      "name": "push_worker_state",
+      "kind": "table",
+      "sql_sha256": "be69597c0aa55c760187f92edd3ae3650e71b29287971058ece6f1e56980a684",
+      "scope": "regenerate",
+      "owner_query": "",
+      "key_transition": "Reset local claim counter, retain owner subscriptions/queued delivery outcomes.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "counter"
+      ]
+    },
+    {
+      "name": "recovery_forward_allocations",
+      "kind": "table",
+      "sql_sha256": "5294057d26e9e3fd76cef7969e513a96cd8c17eaa69efda8b8437c124fdf8fa3",
+      "scope": "installation",
+      "owner_query": "",
+      "key_transition": "Preserve non-rewindable global spend allocation; owner restore must not duplicate budget.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "restore_id",
+        "installation_id",
+        "inference_calls",
+        "stt_duration_ms",
+        "created_at"
+      ]
+    },
+    {
+      "name": "recovery_forward_dispatches",
+      "kind": "table",
+      "sql_sha256": "7a2aa736e63a7554c5da46b462cda4533845f1d1299110eb498eee4730f111c3",
+      "scope": "installation-owner-record",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"recovery_forward_dispatches\" t",
+      "key_transition": "Retain non-rewindable installation spend dispatch receipts with exact owner provenance; personal-volume restore must not recreate allocation or erase dispatched spend.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "nonce",
+        "allocation_id",
+        "tenant_id",
+        "account_id",
+        "kind",
+        "duration_ms",
+        "committed_at"
+      ]
+    },
+    {
+      "name": "recurring_mission_occurrences",
+      "kind": "table",
+      "sql_sha256": "da7b1c5cc77956be93023b65c6b0520be446f557f3bcf2a037ed3f65ee396274",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"recurring_mission_occurrences\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "occurrence_id",
+        "schedule_id",
+        "schedule_revision",
+        "mission_id",
+        "scheduled_for",
+        "notification_id",
+        "publication_state"
+      ]
+    },
+    {
+      "name": "recurring_missions",
+      "kind": "table",
+      "sql_sha256": "74de2e76335ca662cbc7a32a27a4558f7d9371e53a35e17438a5dbf130d36800",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"recurring_missions\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "schedule_id",
+        "account_id",
+        "request_id",
+        "payload_digest",
+        "template",
+        "model",
+        "changes_only"
+      ]
+    },
+    {
+      "name": "reminder_clock",
+      "kind": "table",
+      "sql_sha256": "3c2cbb64d929c24f40bcc2801ba3f6f1ea8d39a91a3cd016207c1255c490367c",
+      "scope": "regenerate",
+      "owner_query": "",
+      "key_transition": "Generate local scheduling order; preserve due occurrences/claims and receipts.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "claim_order"
+      ]
+    },
+    {
+      "name": "reminder_occurrences",
+      "kind": "table",
+      "sql_sha256": "cb780bcd086783bc3df6acdca65c6bad38f16fa2e013e7a917ea6a9c66bfda22",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"reminder_occurrences\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "schedule_id",
+        "account_id",
+        "revision",
+        "auth_epoch",
+        "scheduled_for",
+        "local_slot",
+        "state",
+        "reason",
+        "nonce",
+        "deadline",
+        "notification_id",
+        "delayed",
+        "title",
+        "message",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    {
+      "name": "reminder_owners",
+      "kind": "table",
+      "sql_sha256": "b0df094504a28e3e1225152f76cb2c8f14007a8a939c25a7875b2785997f6929",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"reminder_owners\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "last_claim"
+      ]
+    },
+    {
+      "name": "reminder_schedules",
+      "kind": "table",
+      "sql_sha256": "e09ff446d52057d0a9dd3d0e433465a68a093904444de4c3e149f0af23b22e1e",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"reminder_schedules\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "account_id",
+        "request_id",
+        "request_digest",
+        "revision",
+        "auth_epoch",
+        "state",
+        "reason",
+        "title",
+        "message",
+        "rule",
+        "valid_until",
+        "timezone_db",
+        "next_slot",
+        "next_due",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    {
+      "name": "reminder_skipped_ranges",
+      "kind": "table",
+      "sql_sha256": "1635f7e692dbba5deb9ef195161fb5114d7ad21947ec7006f7d3cc253452b11a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"reminder_skipped_ranges\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "schedule_id",
+        "revision",
+        "from_slot",
+        "to_slot",
+        "count",
+        "reason",
+        "created_at"
+      ]
+    },
+    {
+      "name": "request_continuations",
+      "kind": "table",
+      "sql_sha256": "d34e768f9a339c30b581dc9abf00076b02da435c0ea0e4878e1e900e47bc7d82",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"request_continuations\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "context",
+        "pending",
+        "calendar_target"
+      ]
+    },
+    {
+      "name": "run_instruction_channels",
+      "kind": "table",
+      "sql_sha256": "a1777d891383fcb87eff28121d827792bccefd6330054e9435e492956b4937df",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"run_instruction_channels\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "attempt"
+      ]
+    },
+    {
+      "name": "run_instructions",
+      "kind": "table",
+      "sql_sha256": "2d6f3182fd1ac57903a4648aec5451d5a8a3732412e81a43a8d4976abb70fdcb",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"run_instructions\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "request_id",
+        "attempt",
+        "execution_attempt",
+        "sequence",
+        "text",
+        "state",
+        "reason",
+        "session_digest",
+        "auth_epoch",
+        "dispatch_step"
+      ]
+    },
+    {
+      "name": "schedule_chat_commands",
+      "kind": "table",
+      "sql_sha256": "6f62eb8bd0d1cf1ef29f8d282d9a28c740bcf32f49075fdfdbd91afa378e3ed0",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"schedule_chat_commands\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "schema_version",
+        "receipt"
+      ]
+    },
+    {
+      "name": "schedule_chat_drafts",
+      "kind": "table",
+      "sql_sha256": "f1c8b642f3a53b83ef081b995cb8613c8ad2a43018d9cfbd79adba9a0464a589",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"schedule_chat_drafts\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "draft",
+        "pending"
+      ]
+    },
+    {
+      "name": "sessions",
+      "kind": "table",
+      "sql_sha256": "10287d6cc47d32f505ab7db8e30bbb4119cc5c295f8692da55dc4158f8e15ac9",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"sessions\" t",
+      "key_transition": "Keep owner auth_epoch/digests private; legacy handoff must be one-use, generation/browser bound. No new sessions in inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "digest",
+        "tenant_id",
+        "account_id",
+        "auth_epoch",
+        "password_change_only",
+        "expires_at",
+        "purpose",
+        "absolute_deadline"
+      ]
+    },
+    {
+      "name": "source_batch_receipts",
+      "kind": "table",
+      "sql_sha256": "d0ce3366fc9992d22e9f4fda96d31ac1b112ee0fef5d9c13063f98c22a1c94f3",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"source_batch_receipts\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "connection_id",
+        "request_id",
+        "run_id",
+        "digest",
+        "sequence",
+        "committed_at",
+        "checkpoint_before",
+        "checkpoint_after",
+        "receipt"
+      ]
+    },
+    {
+      "name": "source_connections",
+      "kind": "table",
+      "sql_sha256": "1246ee750a84de109adf5198a504c6da0fb09feef63ff43bcd19dc35c431bf69",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"source_connections\" t",
+      "key_transition": "Re-encrypt per-owner credentials with verified original AAD/scope/version; transient OAuth state must prove session/generation or restart only that flow.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "account_id",
+        "collection_id",
+        "kind",
+        "adapter_version",
+        "name",
+        "scope",
+        "remote_account",
+        "mail_connection_id",
+        "mail_epoch",
+        "config_revision",
+        "credential_epoch",
+        "auth_epoch",
+        "state",
+        "sync_enabled",
+        "poll_interval",
+        "token_hash",
+        "token_expires",
+        "credential",
+        "checkpoint",
+        "run_generation",
+        "last_heartbeat",
+        "last_commit",
+        "last_completed",
+        "next_due",
+        "failure_count",
+        "error"
+      ]
+    },
+    {
+      "name": "source_provenance",
+      "kind": "table",
+      "sql_sha256": "8e6d79cdeadf6cc9e95a8fea5ecb19e7d94688d61ce3b4df66685b6ba8c31174",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"source_provenance\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "source_id",
+        "source_revision",
+        "connection_id",
+        "request_id",
+        "run_id",
+        "received_at",
+        "thread_id",
+        "parent_id"
+      ]
+    },
+    {
+      "name": "source_run_starts",
+      "kind": "table",
+      "sql_sha256": "a8c12f29b77e3fed2a89b34c0bfd57e7f37d92d815b17e481c506a0eeb9f86a2",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"source_run_starts\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "connection_id",
+        "run_id",
+        "client_request_id",
+        "request_digest"
+      ]
+    },
+    {
+      "name": "source_sync_runs",
+      "kind": "table",
+      "sql_sha256": "ea2eee96c25906680692c357df42a2c2d3d6f190474caa99b8061a776c5184c4",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"source_sync_runs\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "connection_id",
+        "id",
+        "generation",
+        "config_revision",
+        "credential_epoch",
+        "nonce",
+        "state",
+        "started_at",
+        "heartbeat_at",
+        "lease_until",
+        "finished_at",
+        "error",
+        "page_count"
+      ]
+    },
+    {
+      "name": "store_meta",
+      "kind": "table",
+      "sql_sha256": "dabd84fe5a3514b36dc76f0ae77ccee4c0972d43c237ed7361fe51506fdba90f",
+      "scope": "new-recovery-anchor",
+      "owner_query": "",
+      "key_transition": "Pin original auth chain once; create authenticated owner genesis, never copy full global chain.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "journal_seq",
+        "journal_head"
+      ]
+    },
+    {
+      "name": "subscription_runtime",
+      "kind": "table",
+      "sql_sha256": "ff09191b82e2818eea6199ed284d73df9741cce2374e823680e7fd61b92e9399",
+      "scope": "rekey",
+      "owner_query": "",
+      "key_transition": "Create owner runtime/host identity; old host/runtime-bound sessions require proof or owner reauthentication.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "runtime_id",
+        "host_id"
+      ]
+    },
+    {
+      "name": "task_monitor_links",
+      "kind": "table",
+      "sql_sha256": "9dc1500df0c5d690f7a05bc59373c10ab91d7a6ba724e4351292be2d67a20b4a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"task_monitor_links\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "parent_mission_id",
+        "acceptance_revision",
+        "monitor_id"
+      ]
+    },
+    {
+      "name": "task_monitor_observations",
+      "kind": "table",
+      "sql_sha256": "d6d3fc5b2e99a1c81f2066bf37d46e2a660c7bfeea449d0b109d5ace779969b5",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"task_monitor_observations\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "monitor_id",
+        "ordinal",
+        "fingerprint",
+        "mission_id",
+        "created_at",
+        "resolved_at",
+        "resolution_note"
+      ]
+    },
+    {
+      "name": "task_monitor_policies",
+      "kind": "table",
+      "sql_sha256": "58e9598544d9e4a1df6cda2bb22f2947c3cf0c0f28214d4f76e4c97c92e866ee",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"task_monitor_policies\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "scope_digest",
+        "sources",
+        "check_template",
+        "auth_epoch",
+        "cadence_seconds",
+        "expires_at",
+        "reusable",
+        "state",
+        "request_id",
+        "request_digest"
+      ]
+    },
+    {
+      "name": "task_monitors",
+      "kind": "table",
+      "sql_sha256": "45b7bcdcd9f9eac514b9c5eabbaeb8bd64883b71b22bca42cf6001fe3a601406",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"task_monitors\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "parent_mission_id",
+        "acceptance_revision",
+        "sources",
+        "scope_digest",
+        "model",
+        "state",
+        "revision",
+        "policy_id",
+        "schedule_id",
+        "last_fingerprint",
+        "last_members",
+        "reason",
+        "local_note",
+        "created_at",
+        "last_checked_at"
+      ]
+    },
+    {
+      "name": "telegram_bindings",
+      "kind": "table",
+      "sql_sha256": "198be304e734f1fcd282be354c32de97b7da00918ed57ab0105698af379a56bc",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"telegram_bindings\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "telegram_user_id",
+        "chat_id",
+        "session_digest",
+        "bot_revision",
+        "thread_id",
+        "timezone",
+        "notifications",
+        "notification_cursor",
+        "last_delivery",
+        "created_at"
+      ]
+    },
+    {
+      "name": "telegram_bot",
+      "kind": "table",
+      "sql_sha256": "49d3c4fce57991d03ca4b51026b956bc1e421afb2e29eef288af40cf0e84f8af",
+      "scope": "installation-secret",
+      "owner_query": "",
+      "key_transition": "Single poller retains token and contiguous offset; require owner durable inbox ACK before advance.",
+      "verification": "Exact schema; row count; retained global authority or explicit regeneration; no personal-volume copy",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "singleton",
+        "revision",
+        "bot_id",
+        "username",
+        "token",
+        "offset",
+        "status",
+        "last_poll_at"
+      ]
+    },
+    {
+      "name": "telegram_outbox",
+      "kind": "table",
+      "sql_sha256": "f371d22dfa0c4d8cad020c546d7c7defd84c0d11be4ac90329ed3806b1a559ff",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"telegram_outbox\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "binding_id",
+        "dedupe",
+        "body",
+        "run_id",
+        "attempt",
+        "notification_id",
+        "position",
+        "body_digest",
+        "state",
+        "nonce",
+        "part_bytes",
+        "attempts",
+        "ready_at",
+        "created_at",
+        "dispatched_at"
+      ]
+    },
+    {
+      "name": "telegram_pairings",
+      "kind": "table",
+      "sql_sha256": "e1dc58eda4de0fbc5b1ab7258166e7f0a8809a43c83e957d68e059226bff141a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"telegram_pairings\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "digest",
+        "session_digest",
+        "bot_revision",
+        "expires_at",
+        "timezone",
+        "notifications"
+      ]
+    },
+    {
+      "name": "telegram_turns",
+      "kind": "table",
+      "sql_sha256": "c3c6055592d9ae1a05ec8287d88c854f227230b8f26ab6cf7fbb4478c8ed8f03",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM \"telegram_turns\" t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "binding_id",
+        "run_id",
+        "attempt",
+        "settled"
+      ]
+    },
+    {
+      "name": "tenants",
+      "kind": "table",
+      "sql_sha256": "ba41e6461c934e6299635a16f62a1a72178fb56ce6775df987e68666db27558a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.id AS tenant_id FROM tenants t JOIN accounts a ON a.tenant_id=t.id",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "name": "thread_creation_receipts",
+      "kind": "table",
+      "sql_sha256": "9ce482a7ce116f561260b281021761fa7262f52b16acf48757f3299e81252d0f",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"thread_creation_receipts\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "title_sha256"
+      ]
+    },
+    {
+      "name": "threads",
+      "kind": "table",
+      "sql_sha256": "918dd879f043f023961bee34b3b60a083ab8ef8f8c487c9aafb94cc450df0274",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"threads\" t",
+      "key_transition": "Preserve identifiers, revisions, pending/unknown effects and receipts; do not execute effects during inventory.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "id",
+        "account_id",
+        "title",
+        "created_at",
+        "updated_at",
+        "chat_turn_seq",
+        "chat_event_seq",
+        "chat_reset_floor",
+        "mission_internal"
+      ]
+    },
+    {
+      "name": "vault_grants",
+      "kind": "table",
+      "sql_sha256": "0333d5b1f821d01090ea378097ebb9ee1416335c2b070d47f04dc7cfa226ab77",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"vault_grants\" t",
+      "key_transition": "Preserve separate vault owner/ciphertext authority and durable deletion ACK; regenerate generation-bound handoff/grants through authenticated owner route.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "digest",
+        "session_digest",
+        "account_id",
+        "tenant_id",
+        "auth_epoch",
+        "installation_id",
+        "expires_at",
+        "closed"
+      ]
+    },
+    {
+      "name": "vault_handoffs",
+      "kind": "table",
+      "sql_sha256": "4b2bd308a67e86e05e7af635f1d8748275b94ad2e3dc9e934e9a4e65e2fdca4a",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"vault_handoffs\" t",
+      "key_transition": "Preserve separate vault owner/ciphertext authority and durable deletion ACK; regenerate generation-bound handoff/grants through authenticated owner route.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "digest",
+        "session_digest",
+        "account_id",
+        "tenant_id",
+        "auth_epoch",
+        "installation_id",
+        "vault_origin",
+        "expires_at",
+        "consumed"
+      ]
+    },
+    {
+      "name": "vault_lifecycle_outbox",
+      "kind": "table",
+      "sql_sha256": "5798d3e86d97536c45c5d2547e2e76d1ec6f8c2efd8a416a19ce5324ef31d2f9",
+      "scope": "split-lifecycle-record",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"vault_lifecycle_outbox\" t",
+      "key_transition": "Retain installation-owned durable deletion/revoke intent and same-event ACK until independent vault completion; preserve original tenant/account/installation/auth epoch identity without granting decryption.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "id",
+        "account_id",
+        "tenant_id",
+        "installation_id",
+        "auth_epoch",
+        "action",
+        "acknowledged"
+      ]
+    },
+    {
+      "name": "vault_operation_commitments",
+      "kind": "table",
+      "sql_sha256": "56b33a05b7ab0695b75a390a7a57e1590e0671aa0cfdbafbed01f366e778291c",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,t.account_id,t.tenant_id FROM \"vault_operation_commitments\" t",
+      "key_transition": "Preserve separate vault owner/ciphertext authority and durable deletion ACK; regenerate generation-bound handoff/grants through authenticated owner route.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "installation_id",
+        "operation_id",
+        "payload_digest",
+        "auth_epoch",
+        "committed_at"
+      ]
+    }
+  ],
+  "schema_sha256": "fcc203352bda3eac404be7096d5d87c9c091c99714ed4163b784484661066bf1"
+}

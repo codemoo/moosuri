@@ -1,0 +1,239 @@
+{
+  "format": 1,
+  "store_entries": [
+    {
+      "name": "assistant.sqlite",
+      "scope": "split",
+      "action": "Extract verified per-owner rows into a new database; retain original consistent snapshot.",
+      "verification": "Schema fingerprint, integrity, foreign keys, unambiguous owner joins. This tool does not extract rows."
+    },
+    {
+      "name": "assistant.sqlite-wal",
+      "scope": "snapshot-boundary",
+      "action": "Refuse snapshot with WAL; operator must supply a complete consistent stopped/checkpointed copy.",
+      "verification": "Must be absent, including empty sidecars."
+    },
+    {
+      "name": "assistant.sqlite-shm",
+      "scope": "snapshot-boundary",
+      "action": "Refuse snapshot with SHM; never independently copy live database files.",
+      "verification": "Must be absent, including empty sidecars."
+    },
+    {
+      "name": "writer.lock",
+      "scope": "regenerate",
+      "action": "Create fresh target writer lock only at target admission; never open/lock source here.",
+      "verification": "Only regular non-symlink files allowed in supplied snapshot."
+    },
+    {
+      "name": "provider-secrets.key",
+      "scope": "rekey",
+      "action": "Never copy shared root key into owner volumes. Decrypt only in authorized migration boundary; re-encrypt shared/personal credentials with distinct new keys and original AAD proof.",
+      "verification": "This inventory never opens key contents; cryptographic binding proof remains pending. Failure requires affected owner reauthentication, never silent credential loss."
+    },
+    {
+      "name": "web-push-vapid.key",
+      "scope": "installation-secret",
+      "action": "Keep private signing authority at shared push service; preserve per-owner subscriptions and delivery state.",
+      "verification": "This inventory never opens key contents. Rebinding and live delivery proof remain pending."
+    },
+    {
+      "name": "auth-epochs.journal",
+      "scope": "new-recovery-anchor",
+      "action": "Keep old global chain once; pin old installation/sequence/head and authenticate new per-owner genesis through independent receiver.",
+      "verification": "Never slice records into a claimed valid old chain. Chain authentication and receiver approval remain pending."
+    },
+    {
+      "name": "knowledge-invalidations.journal",
+      "scope": "new-recovery-anchor",
+      "action": "Commit owner invalidations/deletion state at original checkpoint, authenticate new per-owner genesis.",
+      "verification": "No journal parsing or replay here; original-free recovery drill remains pending."
+    },
+    {
+      "name": "destructive-intents.journal",
+      "scope": "new-recovery-anchor",
+      "action": "Retain global deletion evidence once and authenticate owner deletion commitment/new genesis.",
+      "verification": "No journal parsing or replay here; original-free recovery drill remains pending."
+    },
+    {
+      "name": "cutover-seal.json",
+      "scope": "new-recovery-anchor",
+      "action": "Preserve original seal/checkpoint reference once; new owner cutover needs authenticated transfer certificate.",
+      "verification": "File presence is inventoried only; seal authentication remains pending."
+    },
+    {
+      "name": "cutover-checkpoint",
+      "scope": "incomplete-transition",
+      "action": "Refuse snapshot containing transition staging. Resolve using existing cutover recovery before making a stopped copy.",
+      "verification": "Must be absent."
+    }
+  ],
+  "external_boundaries": [
+    {
+      "name": "configured-browser-profile-and-recovery-root",
+      "scope": "personal-rekey",
+      "action": "Map every browser workspace/profile/recovery capsule to exact tenant/account and original lifetime; reject shared HOME or ambiguous paths.",
+      "verification": "External paths are not opened/discovered by this tool; owner manifests, referenced file hashes and recovery proofs are pending."
+    },
+    {
+      "name": "configured-gws-registry-and-auth-directory",
+      "scope": "personal-reauthentication-if-unprovable",
+      "action": "Share only GWS executable; preserve exact personal registry binding and move owner credentials without copying shared auth HOME.",
+      "verification": "External registry/key paths and cryptographic binding proof require separate owner-authorized inventory."
+    },
+    {
+      "name": "configured-claude-auth-root-and-provider-cli-caches",
+      "scope": "personal-reauthentication-if-unprovable",
+      "action": "Preserve account/environment/profile/root binding; prove separate conversation/session/cache and token refresh writer before reuse.",
+      "verification": "External paths and same-auth concurrent isolation are not inspected here."
+    },
+    {
+      "name": "encrypted-backups-journal-receivers-and-pins",
+      "scope": "new-recovery-anchor",
+      "action": "Keep old global archives once outside personal volumes; authenticate each owner checkpoint/new encrypted backup and persist independent receiver approval.",
+      "verification": "No backup keys, receiver trust pins or remote paths are opened; authenticated transition and source-free restore remain pending."
+    },
+    {
+      "name": "separate-vault-service-and-client-keys",
+      "scope": "separate-vault-authority",
+      "action": "Keep existing ciphertext/client key boundary and owner namespace; retain durable deletion intent centrally until same-event ACK.",
+      "verification": "No vault ciphertext/client keys are copied or opened; per-owner restore and ACK-loss drill remain pending."
+    },
+    {
+      "name": "private-media-and-file-payloads",
+      "scope": "personal",
+      "action": "Current media_objects stores bytes/thumbnail in SQLite; extract by verified owner with original digest/revision; do not infer unrecognized filesystem media paths.",
+      "verification": "Source inventory checks ownership only; payload digest/size reconciliation and new target file references remain pending."
+    }
+  ],
+  "ciphertext_bindings": [
+    {
+      "table": "provider_key_meta",
+      "columns": [
+        "key_check"
+      ],
+      "aad_source": "providers.rs::KEY_AAD / KEY_PLAIN",
+      "transition": "fresh independent key check; shared source root key never copied",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "provider_revisions",
+      "columns": [
+        "credential"
+      ],
+      "aad_source": "providers.rs::aad(provider_id,revision,config)",
+      "transition": "partition by immutable personal_compatible_providers first; re-encrypt at exact original AAD",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "google_setup",
+      "columns": [
+        "secret"
+      ],
+      "aad_source": "google_setup.rs::secret_aad(version,revision,client_id,redirect_uri)",
+      "transition": "installation exchange service only",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "mail_oauth_sessions",
+      "columns": [
+        "verifier",
+        "code"
+      ],
+      "aad_source": "mail.rs::oauth_aad(state_hash,purpose)",
+      "transition": "preserve exact original session/auth epoch/app revision/client/redirect binding or restart only affected flow",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "calendar_oauth_sessions",
+      "columns": [
+        "verifier",
+        "code"
+      ],
+      "aad_source": "calendar.rs::oauth_aad(state_hash,kind)",
+      "transition": "preserve original session/auth epoch/app pin and one-use flow or restart only affected flow",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "mail_connections",
+      "columns": [
+        "credential"
+      ],
+      "aad_source": "mail.rs::aad(tenant_id,account_id,id,credential_revision,tokens)",
+      "transition": "per-owner new key, verify email/scope/connection epoch; retain unknown send evidence",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "calendar_connections",
+      "columns": [
+        "credential"
+      ],
+      "aad_source": "calendar.rs::aad(tenant_id,account_id,auth_epoch,id,credential_revision)",
+      "transition": "per-owner new key, verify original primary calendar/scope/client id",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "source_connections",
+      "columns": [
+        "credential"
+      ],
+      "aad_source": "source_connections.rs::slack_aad / gmail_aad; mail/reply_watches/credentials.rs::aad",
+      "transition": "per-owner new key, preserve source collection/connection/config/credential revisions and exact source identity",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "chatgpt_binding_revisions",
+      "columns": [
+        "identity"
+      ],
+      "aad_source": "subscriptions.rs::context; chatgpt_oauth/sealed SessionSealer identity context",
+      "transition": "verify runtime/host/tenant/account/binding/revision identity under old key before sealing to new owner context",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "chatgpt_sessions",
+      "columns": [
+        "cipher"
+      ],
+      "aad_source": "subscriptions.rs::context; chatgpt_oauth/sealed SessionSealer session context",
+      "transition": "verify original runtime/host/binding/revision/token generation and selected model capability; selective reauthentication if unavailable",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "chatgpt_handoffs",
+      "columns": [
+        "transfer_key"
+      ],
+      "aad_source": "subscriptions/handoff.rs::HandoffContext::aad",
+      "transition": "do not replay old transfer ticket; original generation/session/host proof must succeed or expire only that handoff",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "push_subscriptions",
+      "columns": [
+        "credentials"
+      ],
+      "aad_source": "push.rs::AAD moosuri/web-push/subscription/v1",
+      "transition": "per-owner new key plus explicit tenant/account/device/session/auth_epoch checks; constant AAD alone does not certify ownership",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "telegram_bot",
+      "columns": [
+        "token"
+      ],
+      "aad_source": "telegram.rs::aad(bot_revision,bot_id)",
+      "transition": "installation single poller key only; preserve contiguous offset and owner inbox ACK boundary",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "invitation_deliveries",
+      "columns": [
+        "payload"
+      ],
+      "aad_source": "invitations.rs::aad(request_id)",
+      "transition": "installation admin delivery service only; actor/target epochs/session/receipt remain bound",
+      "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    }
+  ]
+}

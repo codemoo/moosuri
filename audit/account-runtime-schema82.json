@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "schema": 82,
+  "migrations": [
+    {
+      "name": "0082_gmail_server_resume.sql",
+      "sha256": "f9d35ab7f0e2d9138fb503ddccda15cff6e4872c0db4c6a0f735a30bf6c879f5"
+    }
+  ],
+  "tables": [
+    {
+      "name": "gmail_server_resume_bindings",
+      "kind": "table",
+      "sql_sha256": "08517d76f7cfa64408f5372f91ed76a082ba0d10d6a3e237f48143c00235366b",
+      "scope": "personal",
+      "owner_query": "SELECT t.rowid AS rid,a.id AS account_id,t.tenant_id FROM gmail_server_resume_bindings t JOIN accounts a ON a.tenant_id=t.tenant_id",
+      "key_transition": "Preserve exact original server OAuth connection/epoch and run binding; never select helper or replacement mailbox.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "connection_id",
+        "connection_epoch"
+      ]
+    }
+  ],
+  "schema_sha256": "8cf91dfff66e918a93e855dae5b5f2f73af8e38040cb846be16408957cbd37e7",
+  "base_schema": 81
+}

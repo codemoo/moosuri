@@ -1,47 +1,47 @@
 {
   "format": 1,
   "channel": "preview",
-  "version": "0.1.0-dev.12",
-  "source_commit": "e0b65d3c74a1acd43fbf603cc4eb0e00e638a33e",
+  "version": "0.1.0-dev.13",
+  "source_commit": "8f997e4978488051a6964443a158aad3c77bce83",
   "public_key": "71b717c2713ce35dc858159b8edbdf454620d94b4412307ce0663fe0cdcd0a3e",
   "packages": {
     "aarch64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.12-aarch64-apple-darwin.tar.gz",
-      "sha256": "ff2260b79741e36e1ae8c1c3f01bb238633639ce2ec39030371035722df41c0e",
-      "bytes": 20630916,
-      "binary_sha256": "425acf17ba867cd62e912ea5409552a03ce0c29f822c610efacfd0ac4193f37b",
-      "manifest_sha256": "289e9bf9f55de0939ea8c115c0ccefa17bb33563f75b4385f3d9f432ff03b1e2"
+      "file": "moosuri-0.1.0-dev.13-aarch64-apple-darwin.tar.gz",
+      "sha256": "3efcc52a968f6f9672350b36936d36ed010f874b62224e91dfa919267eeecd72",
+      "bytes": 20786623,
+      "binary_sha256": "c0db17e2c57a9c8586ecc4414566e4e81d0cd91c3b4b633e5cf1398f5b4da460",
+      "manifest_sha256": "05d0f8a9b0a33427005c0601e364e37bd0c7a894015d820284660bbf2f09d2de"
     },
     "x86_64-apple-darwin": {
-      "file": "moosuri-0.1.0-dev.12-x86_64-apple-darwin.tar.gz",
-      "sha256": "334db4c4fcaf427c597d44e8b584ba3a3967132f8a36f9a12a0abdff311575a3",
-      "bytes": 21624924,
-      "binary_sha256": "51c5b81a1643ffdd51bcef3a8b24ed1c6d51f8152ea7a130803ddd9dbf0a651b",
-      "manifest_sha256": "dd0ef907c1f6377f7e4b72a6edede40a41217f1dbf8afaa4009d655881fe482b"
+      "file": "moosuri-0.1.0-dev.13-x86_64-apple-darwin.tar.gz",
+      "sha256": "65c1c645e1d52365ed941dd9086fdc1c7d44b17fd14d672b4e5d8db4580a2bca",
+      "bytes": 21859570,
+      "binary_sha256": "24ddecfde9075389991451249576692be625c3e04b20e9fde6d0e6bdc286a004",
+      "manifest_sha256": "1fd5fe7e0455ac3e48dcf0dd82135404435d1d23d858322ee6c4c2a910202812"
     },
     "x86_64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.12-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "2e6d542aac21d5e8b89f9c14c76469d05035119a2c49bb9ccf63fce5a1a5fca8",
-      "bytes": 24198573,
-      "binary_sha256": "f7b5834bb0db4708016ffbec996a745774bd81111f313ce71cd974e4f06c7d3a",
-      "manifest_sha256": "d27e03a1482d64842a6ef41238da0ce78e7bee39e7adec2bad8b95b9cc3e8c59"
+      "file": "moosuri-0.1.0-dev.13-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "211613d6274b65318ddf34a18e8cfd8811a09325c705630f09ce2fe9ff0d8644",
+      "bytes": 23512107,
+      "binary_sha256": "ad9f1ce533252c236901cd7393630c93357f8eb3125964a975b01d22441872a5",
+      "manifest_sha256": "ca698a7f46a8e3a072ae2755ad7b3be8d47287ae828488809d8de6d657b77ce4"
     },
     "aarch64-unknown-linux-gnu": {
-      "file": "moosuri-0.1.0-dev.12-aarch64-unknown-linux-gnu.tar.gz",
-      "sha256": "9c74fe2aad82f226f7d05c8c1f5e4bc316e6cabf3db65d33a62107ce34912df8",
-      "bytes": 22167828,
-      "binary_sha256": "a70e1ecd43e0df55c5304c8874a28ce9df325cc3a4ce0af9e564eaf1bdd2fa7e",
-      "manifest_sha256": "c1c1a2699cac184d35f6e27f29898c29177c617bdd29932276f9da46a3d351d5"
+      "file": "moosuri-0.1.0-dev.13-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "fcc41508206e5d24d9927734123f5b0abed0453bbcddf0ec6e6111e7231065e2",
+      "bytes": 23220959,
+      "binary_sha256": "87c65ff80b1e2cc97ed3cb5f7ad21b06635db0cbfa98fba127112fe0378661a0",
+      "manifest_sha256": "92f7141dc5de263782ad592e49a239422c50601275fe60ac605ddc30a72aa7d1"
     }
   },
   "runtime": "Rust + embedded React + SQLite + native desktop menu",
   "linux_glibc_minimum": "2.34",
   "ci_enabled": false,
   "acceptance": {
-    "macos_arm64": "native binary probe, embedded verified-model picker and UI recovery regression",
-    "macos_x64": "cross-built; physical Intel/Rosetta host unverified",
-    "linux_x64": "isolated packaged login/web, account catalog recovery and model stream acceptance",
-    "linux_arm64": "QEMU packaged login/web/Claude settings smoke; physical hardware unverified",
-    "wsl2": "Linux installer; physical WSL2 host unverified"
+    "macos_arm64": "native binary probe",
+    "macos_x64": "cross-built",
+    "linux_x64": "packaged synthetic login, web assets and account-scoped routes",
+    "linux_arm64": "emulated packaged login/web",
+    "wsl2": "physical host unverified"
   }
 }

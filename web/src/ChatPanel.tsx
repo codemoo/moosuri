@@ -119,6 +119,8 @@ const labels: Record<RunView["state"], string> = {
   outcome_unknown: "결과 확인 필요",
 };
 function runExplanation(run: RunView) {
+  if (run.error === "tools_required")
+    return "이 요청에는 도구가 필요합니다. 내 모델에서 도구를 확인하거나 ‘도구 사용 가능’ 모델을 선택한 다음 다시 보내 주세요.";
   if (run.error === "knowledge_invalidated")
     return "참고한 자료가 변경되거나 삭제되어 관련 답변을 지웠습니다. 현재 자료로 다시 질문해 주세요.";
   if (run.error === "recovery_forward_allowance_exhausted") return "복원 후 새 요청 허용량을 모두 사용했습니다. 운영자가 중지된 서버에서 새 허용량을 배정해야 합니다. 과거 사용량은 계속 알 수 없습니다.";
@@ -1179,6 +1181,9 @@ export function ChatPanel(props: Props) {
                 </div>
                 {runExplanation(turn.run) && (
                   <p className="run-explanation">{runExplanation(turn.run)}</p>
+                )}
+                {turn.run.error === "tools_required" && (
+                  <button className="text-button" onClick={props.openSettings}>내 모델에서 도구 확인</button>
                 )}
                 {turn.assistant.some((message) => message.text) && turn.run.evidence.length > 0 && (
                   <div className="chat-evidence" aria-label="답변에 제공한 자료">

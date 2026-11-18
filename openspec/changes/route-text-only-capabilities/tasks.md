@@ -1,0 +1,3 @@
+- [x] Cover colloquial inbox phrasing and separate explicit operation intent from ordinary chat.
+- [x] Surface exact model and effort capability and its existing verification action.
+- [x] Verify Claude subscription, tool-verified ChatGPT, and text-only compatible model behavior.

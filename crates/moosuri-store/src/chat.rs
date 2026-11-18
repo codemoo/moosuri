@@ -30,6 +30,7 @@ pub enum OutputPatch {
 #[derive(Clone, Copy)]
 pub enum RunFailure {
     ProviderUnavailable,
+    ToolsRequired,
     CredentialsRejected,
     RateLimited,
     TimedOut,
@@ -51,6 +52,7 @@ impl RunFailure {
     fn code(self) -> &'static str {
         match self {
             Self::ProviderUnavailable => "provider_unavailable",
+            Self::ToolsRequired => "tools_required",
             Self::CredentialsRejected => "credentials_rejected",
             Self::RateLimited => "rate_limited",
             Self::TimedOut => "timed_out",
@@ -287,6 +289,7 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             && !crate::credential_chat::has(conn, &run.tenant, &run.id)?
             && !run.state.active()
             && run.state != RunState::Completed
+            && run.error.as_deref() != Some(RunFailure::ToolsRequired.code())
             && run.attempt < 32
             && agent_execution::retry_allowed(conn, &run.tenant, &run.id)?
             && is_latest(conn, run)?,
@@ -1327,6 +1330,7 @@ fn retry_run_inner(
         || run.attempt != expected_attempt
         || run.state.active()
         || run.state == RunState::Completed
+        || run.error.as_deref() == Some(RunFailure::ToolsRequired.code())
         || run.attempt >= 32
         || !agent_execution::retry_allowed(&tx, &run.tenant, &run.id)?
         || !is_latest(&tx, &run)?

@@ -25,11 +25,12 @@ mod memory;
 mod mission;
 mod mission_chat;
 mod planning;
+mod text_only;
 
 const MAX_OUTPUT: usize = 256 * 1024;
 const MAX_PATCH: usize = 8 * 1024;
 const MAX_ITEMS: usize = 128;
-const SYSTEM: &str = "You are moosuri, a helpful assistant. Answer clearly in the user's language. Tools, external actions, persistent memory and attachments are unavailable; never claim to have used them. 무수리는 사용자의 언어로 정확하게 답하며, 지원하지 않는 작업을 수행했다고 주장하지 않습니다.";
+const SYSTEM: &str = "You are moosuri, a helpful assistant. Answer clearly in the user's language. During this text-only inference you cannot use Moosuri tools, access connected accounts or perform external actions. For an execution request, explain the current model limitation briefly and point the owner to a tool-verified model under 내 모델. Do not make claims about a connected account's actual status, ask the owner to paste private mail, or present generic instructions as work performed. 무수리는 사용자의 언어로 정확하게 답하며, 지원하지 않는 작업을 수행했다고 주장하지 않습니다.";
 
 fn phase(value: Option<AssistantPhase>) -> Option<MessagePhase> {
     value.map(|v| match v {
@@ -818,6 +819,28 @@ pub(crate) async fn execute_with_calendar(
                 return;
             }
         }
+    }
+    if !model.function_tools
+        && !native_resume
+        && !media_context
+        && images.is_empty()
+        && documents.is_empty()
+        && context.checkpoint.is_none()
+        && context.calls.is_empty()
+        && messages.last().is_some_and(|message| {
+            message.role == ContextRole::User && text_only::needs_tools(&message.text)
+        })
+    {
+        finish(
+            &store,
+            &lease,
+            None,
+            RunState::Failed,
+            Some(RunFailure::ToolsRequired),
+            &signals,
+        )
+        .await;
+        return;
     }
     if let Some(reference) = binding.claude_code.take() {
         execute_claude_text(

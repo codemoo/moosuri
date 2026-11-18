@@ -739,6 +739,41 @@ it("guides local-helper server sign-in without requesting private launch materia
 
 
 describe("personal foreground tool verification", () => {
+  it("checks the effective subscription tuple on demand and keeps the selected model", async () => {
+    const user = userEvent.setup();
+    const choice: ModelChoice = {...high, source:"personal_chat_gpt", provider_id:"current-plan", function_tools:false};
+    const settings: ModelSettings = {selection:{...selection(choice), source:choice.source}, effective:choice, choices:[choice]};
+    const endpoint = "/settings/chatgpt/current-plan/tool-probe";
+    const {calls} = server(call => {
+      if (call.path !== endpoint || call.method !== "POST") return undefined;
+      settings.effective = {...choice, function_tools:true};
+      settings.choices = [settings.effective];
+      return response(settings.effective);
+    }, member, undefined, settings);
+    open("/settings/model");
+    const probe = await screen.findByRole("button", {name:"현재 모델 도구 확인"});
+    expect(await screen.findByText("도구 확인 필요")).toBeInTheDocument();
+    expect(calls.some(call => call.path === endpoint)).toBe(false);
+    await user.click(probe);
+    expect(await screen.findByText(/이 모델의 도구 호출을 확인했습니다/)).toBeInTheDocument();
+    expect(calls.filter(call => call.path === endpoint).map(call => call.body)).toEqual([
+      {revision:choice.provider_revision, model:choice.model, effort:choice.effort},
+    ]);
+    expect(calls.some(call => call.method === "PUT")).toBe(false);
+    expect(screen.queryByRole("button", {name:"현재 모델 도구 확인"})).not.toBeInTheDocument();
+  });
+
+  it("prefers a tool-verified effort when starting a new model selection", async () => {
+    const user = userEvent.setup();
+    const noProof: ModelChoice = {...high, effort:null, function_tools:false};
+    const proved: ModelChoice = {...high, function_tools:true};
+    server(undefined, member, undefined, {selection:null, effective:null, choices:[noProof, proved]});
+    open("/settings/model");
+    await user.selectOptions(await screen.findByLabelText("모델"), key(noProof));
+    expect(screen.getByLabelText("추론 강도")).toHaveValue(key(proved));
+    expect(screen.getByRole("option", {name:"모델 기본값 · 도구 확인 필요"})).toBeInTheDocument();
+  });
+
   it("verifies only a saved exact personal tuple and reports capability on refreshed settings", async () => {
     const user=userEvent.setup();
     const choice: ModelChoice={...high,source:"personal_chat_gpt",provider_id:"personal-tools",provider_name:"개인 도구 연결",function_tools:false};

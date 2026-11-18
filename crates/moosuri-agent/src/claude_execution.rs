@@ -427,7 +427,7 @@ mod tests {
                 &user,
                 inbox.clone(),
                 uuid::Uuid::new_v4().to_string(),
-                "내 이메일 가장 최근에 온게 뭐야?".into(),
+                "내 이메일 최근에 온거 뭐야".into(),
             )
             .await
             .unwrap();
@@ -439,6 +439,26 @@ mod tests {
                 .iter()
                 .any(|answer| answer.text.contains("/settings/mail"))
         );
+        assert_eq!(fixture.launches(), 0);
+        let work = store
+            .create_thread(&user, "Live web lookup".into())
+            .await
+            .unwrap()
+            .id;
+        store
+            .submit_turn(
+                &user,
+                work.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                "인터넷에서 오늘 발표한 합성 자료 찾아줘".into(),
+            )
+            .await
+            .unwrap();
+        runtime.wake();
+        let blocked = terminal(&store, &user, &work).await;
+        assert_eq!(blocked.run.state, RunState::Failed);
+        assert_eq!(blocked.run.error.as_deref(), Some("tools_required"));
+        assert!(!blocked.run.can_retry);
         assert_eq!(fixture.launches(), 0);
         let conversation = store
             .create_thread(&user, "Ordinary conversation".into())

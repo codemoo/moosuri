@@ -142,6 +142,8 @@ exercise this integration. They do not establish real account/workspace eligibil
 live capability or remotely managed hosted-app approval. Independent security and
 actual account acceptance remain separate gates.
 
+The model settings distinguish verified tools, an unverified tool capability, and the text-only Claude subscription connection. Tool support is recorded for the exact connection revision, model, and reasoning strength. The current model can use its existing verification action. When the owner explicitly changes to a different model, the picker prefers a verified tool combination if available. Chat routes supported direct Gmail inbox requests independent of the model. For other clearly tool-dependent requests on a text-only selection, chat shows a model settings action before dispatch.
+
 ## 별도 음성 연결
 
 관리자 모델 설정의 **음성을 글로**에서 현재 유효한 설치용 OpenAI API 연결을 선택한다. 고정 공개 문장 “The blue bird sings beside the quiet river.”가 들리는15초 이하 녹음을 선택하고 **음성 연결 확인하고 저장**을 누른다. 실제 API 응답의 단어가 일치해야 저장한다. 기대 문장을 provider prompt에 넣지 않는다. 현재 모델은 `gpt-4o-mini-transcribe`이며 text/vision/tools 연결 확인과 독립적이다. 설정 변경·API key 회전/disable 뒤 다시 확인해야 한다. 구독/SIWC token은 Audio API로 보내지 않는다. 이 설치용 API key는 현재 server-managed 경계이며 개인 vault CredentialBroker 지원을 주장하지 않는다. 제공업체 처리 비용은 별도로 발생할 수 있다.

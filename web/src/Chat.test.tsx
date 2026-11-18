@@ -1378,6 +1378,18 @@ it("falls back to a canonical page when a fresh accepted request has no SSE rece
   } finally { vi.useRealTimers(); }
 });
 
+it("shows model settings for an operation blocked by the selected model capability", async () => {
+  const user = userEvent.setup();
+  const initial = turn({state:"failed", error:"tools_required", can_retry:false});
+  fixture({turns:[initial]});
+  open();
+  const settings = await screen.findByRole("button", {name:"내 모델에서 도구 확인"});
+  expect(screen.getByText(/이 요청에는 도구가 필요합니다/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", {name:"같은 설정으로 다시 시도"})).not.toBeInTheDocument();
+  await user.click(settings);
+  expect(window.location.pathname).toBe("/settings/model");
+});
+
 it("logout fences a pending streamed receipt before its delayed GET fallback", async () => {
   const user = userEvent.setup();
   const ack = deferred<Response>();

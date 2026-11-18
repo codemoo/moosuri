@@ -114,6 +114,21 @@ function Alert({ children }: { children: string }) {
     </p>
   );
 }
+function toolCapability(choice: ModelChoice) {
+  if (choice.function_tools) return "도구 사용 가능";
+  return choice.source === "personal_claude_code" ? "텍스트 전용" : "도구 확인 필요";
+}
+
+function toolProbePath(choice: ModelChoice, canManageShared: boolean) {
+  const id = encodeURIComponent(choice.provider_id);
+  switch (choice.source) {
+    case "personal_claude_code": return null;
+    case "personal_chat_gpt": return `/settings/chatgpt/${id}/tool-probe`;
+    case "personal_compatible": return `/settings/compatible-providers/${id}/tool-probe`;
+    default: return canManageShared ? `/admin/providers/${id}/tool-probe` : null;
+  }
+}
+
 function ModelPicker({choices, draft, unavailable, busy, edit, installation = false}: {
   choices: ModelChoice[]; draft: string; unavailable: boolean; busy: boolean; edit: (value: string) => void; installation?: boolean;
 }) {
@@ -132,8 +147,10 @@ function ModelPicker({choices, draft, unavailable, busy, edit, installation = fa
                 {installation ? "기본 모델" : "모델"}
                 <select value={modelKey} disabled={busy} onChange={event => {
                   const group = groups.get(event.target.value);
-                  const first = group?.find(choice => choice.effort === null)
-                    ?? group?.find(choice => choice.effort === selected?.effort) ?? group?.[0];
+                  const first = group?.find(choice => choice.function_tools && choice.effort === selected?.effort)
+                    ?? group?.find(choice => choice.function_tools && choice.effort === null)
+                    ?? group?.find(choice => choice.function_tools)
+                    ?? group?.find(choice => choice.effort === null) ?? group?.[0];
                   edit(first ? selectionKey(first) : "");
                 }}>
                   <option value="">{installation ? "기본 모델 지정 안 함" : "설치 기본값 사용"}</option>
@@ -147,7 +164,7 @@ function ModelPicker({choices, draft, unavailable, busy, edit, installation = fa
                 {installation ? "기본 추론 강도" : "추론 강도"}
                 <select disabled={busy || levels.length <= 1} value={selected ? draft : ""} onChange={event => edit(event.target.value)}>
                   {!selected && <option value="">{unavailable ? "사용할 수 없음" : "설치 기본값 사용"}</option>}
-                  {levels.map(choice => <option key={selectionKey(choice)} value={selectionKey(choice)}>{choice.effort ?? "모델 기본값"}</option>)}
+                  {levels.map(choice => <option key={selectionKey(choice)} value={selectionKey(choice)}>{choice.effort ?? "모델 기본값"} · {toolCapability(choice)}</option>)}
                 </select>
               </label>
   </>;
@@ -222,6 +239,36 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
       setBusy(false);
     }
   }
+  const effective = settings?.effective;
+  const probePath = effective && !effective.function_tools
+    ? toolProbePath(effective, !!onConnectClaudeApi) : null;
+  async function verifyEffectiveTools() {
+    if (!effective || !probePath || pending.current) return;
+    const choice = choiceSelection(effective);
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const checked = await scope.request<ModelChoice>(probePath, "POST", {
+        revision: choice.provider_revision,
+        model: choice.model,
+        effort: choice.effort,
+      });
+      if (!checked.function_tools || selectionKey(choiceSelection(checked)) !== selectionKey(choice)) {
+        throw new Error("Tool proof did not match current model");
+      }
+      const current = await scope.request<ModelSettings>("/settings/model");
+      setSettings(current);
+      if (!dirty.current) setDraft(selectionKey(current.selection));
+      setNotice("이 모델의 도구 호출을 확인했습니다. 새 요청부터 도구를 사용할 수 있습니다.");
+    } catch (error) {
+      fail(error);
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
   const unavailableDraft =
     !!draft &&
     !settings?.choices.some(
@@ -274,6 +321,15 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
                     {settings.effective.provider_name} ·{" "}
                     {settings.effective.effort ?? "기본 강도"}
                   </p>
+                  <p>{toolCapability(settings.effective)}</p>
+                  {probePath && <button type="button" disabled={busy} onClick={() => void verifyEffectiveTools()}>
+                    현재 모델 도구 확인
+                  </button>}
+                  {!settings.effective.function_tools && !probePath && <p>
+                    {settings.effective.source === "personal_claude_code"
+                      ? "메일·웹 검색·예약처럼 도구가 필요한 작업에는 도구 사용 가능 모델을 선택하세요."
+                      : "이 공용 모델의 도구 확인은 관리자가 할 수 있습니다."}
+                  </p>}
                 </>
               ) : (
                 <>

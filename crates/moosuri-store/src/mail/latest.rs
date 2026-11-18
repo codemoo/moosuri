@@ -83,18 +83,27 @@ fn intent(text: &str) -> bool {
         .find_map(|v| v.strip_prefix(' '))
     {
         let questions = [
-            "게 뭐야",
-            " 게 뭐야",
-            "건 뭐야",
-            " 건 뭐야",
-            " 것 알려줘",
-            " 거 보여줘",
-            " 것은 무엇인가요",
+            "뭐야",
+            "뭐예요",
+            "뭐였어",
+            "뭔지알려줘",
+            "무엇인가요",
+            "알려줘",
+            "알려주세요",
+            "보여줘",
+            "보여주세요",
+            "확인해줘",
         ];
         return recencies
             .iter()
             .filter_map(|p| rest.strip_prefix(p.trim_end()))
-            .any(|suffix| questions.contains(&suffix));
+            .any(|rest| {
+                let rest: String = rest.chars().filter(|c| !c.is_whitespace()).collect();
+                ["것은", "것이", "것", "거", "게", "건", ""]
+                    .iter()
+                    .filter_map(|pronoun| rest.strip_prefix(pronoun))
+                    .any(|predicate| questions.contains(&predicate))
+            });
     }
     false
 }
@@ -184,6 +193,10 @@ mod tests {
             "내가 가장 최근에 받은 이메일이 뭐야?",
             "내 이메일 가장 최근에 온 게 뭐야?",
             "내 이메일 가장 최근에 온게 뭐야?",
+            "내 이메일 최근에 온거 뭐야",
+            "내 이메일 최근에 온 거 뭐야?",
+            "내 메일 최근에 받은 건 뭐야?",
+            "지메일 마지막으로 온 것 알려 줘",
             "가장 최근에 온 메일 알려줘",
             "내 마지막으로 받은 메일 보여 줘",
             "Please show me my latest email.",
@@ -194,6 +207,8 @@ mod tests {
         for text in [
             "내가 가장 최근에 받은 이메일이 뭐야? 라고 물었다",
             "최근에 받은 메일 알려주지 마",
+            "내 이메일 최근에 온 거 뭐야라는 문장 번역해줘",
+            "내 이메일 최근에 온 거 뭐야? 답장도 보내줘",
             "다른 사람의 최신 메일 보여줘",
             r#""show my latest email""#,
             "Translate show my latest email",

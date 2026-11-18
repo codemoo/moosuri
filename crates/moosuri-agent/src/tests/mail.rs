@@ -97,6 +97,38 @@ async fn latest_inbox_unconfigured_turn_finishes_without_any_model_call() {
 }
 
 #[tokio::test]
+async fn unverified_compatible_model_does_not_respond_to_an_explicit_tool_request() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user, thread) = configured("http://127.0.0.1:1/v1").await;
+    let runtime = Runtime::start(store.clone());
+    let admitted = store
+        .submit_turn(
+            &user,
+            thread.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "내 Gmail 받은편지함을 요약해 줘".into(),
+        )
+        .await
+        .unwrap();
+    assert!(!admitted.run.model.function_tools);
+    runtime.wake();
+    let blocked = wait_for(&store, &user, &thread, |turn| !turn.run.state.active()).await;
+    assert_eq!(blocked.run.error.as_deref(), Some("tools_required"));
+    assert!(!blocked.run.can_retry);
+    assert!(
+        store
+            .retry_run(&user, blocked.run.id.clone(), blocked.run.attempt)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        0
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn latest_inbox_scans_metadata_across_pages_and_keeps_literal_result_out_of_models() {
     use moosuri_connectors::gmail::{OAuthClient, SecretString, TokenSet};
     let _guard = TEST_LOCK.lock().await;

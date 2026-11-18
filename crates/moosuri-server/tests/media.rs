@@ -197,6 +197,13 @@ async fn wait(
 }
 #[tokio::test]
 async fn upload_probe_chat_retry_reload_library_and_delete_during_response() {
+    exercise_image_chat(false).await;
+}
+#[tokio::test]
+async fn personal_compatible_image_proof_and_conversation_use_the_owners_connection() {
+    exercise_image_chat(true).await;
+}
+async fn exercise_image_chat(personal: bool) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let script = Arc::new(Script::default());
@@ -220,24 +227,35 @@ async fn upload_probe_chat_retry_reload_library_and_delete_during_response() {
         .login("owner@example.test".into(), password.into())
         .await
         .unwrap();
-    let p = store
-        .create_provider(
-            &login.user,
-            ProviderChange {
-                name: "Scripted pixels".into(),
-                enabled: true,
-                credential: CredentialChange::Clear,
-                config: ProviderConfig {
-                    kind: ProviderKind::Compatible,
-                    base_url: Some(base),
-                    allowed_ips: vec!["127.0.0.1".into()],
-                    router_providers: vec![],
-                    zero_data_retention: false,
-                },
-            },
+    let change = || ProviderChange {
+        name: "Scripted pixels".into(),
+        enabled: true,
+        credential: CredentialChange::Clear,
+        config: ProviderConfig {
+            kind: ProviderKind::Compatible,
+            base_url: Some(base.clone()),
+            allowed_ips: vec!["127.0.0.1".into()],
+            router_providers: vec![],
+            zero_data_retention: false,
+        },
+    };
+    let shared = store.create_provider(&login.user, change()).await.unwrap();
+    let (p, source, provider_route) = if personal {
+        (
+            store
+                .create_personal_compatible(&login.user, change())
+                .await
+                .unwrap(),
+            moosuri_core::ModelSource::PersonalCompatible,
+            "/api/v1/settings/compatible-providers",
         )
-        .await
-        .unwrap();
+    } else {
+        (
+            shared,
+            moosuri_core::ModelSource::Shared,
+            "/api/v1/admin/providers",
+        )
+    };
     store
         .record_model_probe(&login.user, p.id.clone(), 1, "image-fixture".into(), None)
         .await
@@ -247,10 +265,10 @@ async fn upload_probe_chat_retry_reload_library_and_delete_during_response() {
         .await
         .unwrap();
     store
-        .set_default_model(
+        .set_model_preference(
             &login.user,
             Some(ModelSelection {
-                source: Default::default(),
+                source,
                 provider_id: p.id.clone(),
                 provider_revision: 1,
                 model: "image-fixture".into(),
@@ -307,7 +325,7 @@ async fn upload_probe_chat_retry_reload_library_and_delete_during_response() {
         &app,
         &login,
         "POST",
-        &format!("/api/v1/admin/providers/{}/vision-probe", p.id),
+        &format!("{provider_route}/{}/vision-probe", p.id),
         json!({"revision":1,"model":"image-fixture","effort":null}),
     )
     .await;

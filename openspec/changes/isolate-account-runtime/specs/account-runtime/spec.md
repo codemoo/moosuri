@@ -25,6 +25,12 @@ The installation SHALL supply read-only shared modules and model availability, a
 - **THEN** the same installation engine selects the configured upstream adapter, attributes each call to its originating member and returns results through that member’s socket
 - **AND** each container keeps its conversation, tool permissions and work state on its own volume and receives no upstream credential
 
+#### Scenario: Call a login-backed upstream
+- **WHEN** a member submits a text request to an engine configured for official ChatGPT or Claude Code login
+- **THEN** the broker verifies its dedicated worker UID, account, tenant, volume, generation, model and connection revision before admitting a fresh request and sending the prompt over the same connection
+- **AND** an unavailable worker leaves a fresh budget untouched and a duplicate request can still retrieve its original receipt
+- **AND** the upstream credential and CLI authentication environment remain on the host
+
 #### Scenario: Rotate the installation model credential
 - **WHEN** two members use the same provider and its installation credential rotates
 - **THEN** each retains their own conversation and neither member obtains the provider credential or the other's session

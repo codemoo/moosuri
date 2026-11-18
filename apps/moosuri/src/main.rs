@@ -20,6 +20,7 @@ mod account_runtime;
 mod backup_live;
 mod backup_snapshots;
 mod calls;
+mod engine_login;
 mod gws_inbox;
 mod import_private;
 mod installation;
@@ -79,6 +80,12 @@ enum Command {
     KiriLifecycle(kiri_lifecycle::Options),
     /// Serve an installation-owned, pinned model to allocated members over Unix sockets.
     RuntimeModel(runtime_model::Options),
+    /// Serve a pinned login-backed model behind the installation engine (Linux service UID).
+    EngineLoginWorker(engine_login::Options),
+    /// Enroll the official Claude Code account for a host model worker.
+    ClaudeEngineLogin(engine_login::claude::LoginOptions),
+    /// Inspect an enrolled host-side ChatGPT engine connection.
+    EngineChatgptInspect(engine_login::ChatGptInspectOptions),
     /// Make one text call using the member broker socket and private standard input.
     RuntimeModelCall(runtime_model::ClientOptions),
     /// Serve fixed read-only Google OAuth/Gmail egress to isolated members.
@@ -429,6 +436,15 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::RuntimeGoogleCall(options) = &cli.command {
         return runtime_google::run_client(options).await;
     }
+    if let Command::EngineLoginWorker(options) = &cli.command {
+        return engine_login::run(options).await;
+    }
+    if let Command::EngineChatgptInspect(options) = &cli.command {
+        return engine_login::inspect_chatgpt(options).await;
+    }
+    if let Command::ClaudeEngineLogin(options) = &cli.command {
+        return engine_login::claude::login(options).await;
+    }
     if let Command::RuntimeModel(options) = &cli.command {
         return runtime_model::run(options).await;
     }
@@ -602,6 +618,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         }
         Command::RuntimeGoogle(_)
         | Command::RuntimeGoogleCall(_)
+        | Command::EngineLoginWorker(_)
+        | Command::ClaudeEngineLogin(_)
+        | Command::EngineChatgptInspect(_)
         | Command::RuntimeModel(_)
         | Command::RuntimeModelCall(_)
         | Command::PersonalGateway(_)

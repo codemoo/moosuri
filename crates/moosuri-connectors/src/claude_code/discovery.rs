@@ -50,6 +50,14 @@ fn valid_model(model: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
 }
 pub(super) fn catalog(v: &Value, request_id: &str) -> Result<AccountModels, TransportError> {
+    catalog_for_email(v, request_id, None)
+}
+
+pub(super) fn catalog_for_email(
+    v: &Value,
+    request_id: &str,
+    expected_email: Option<&str>,
+) -> Result<AccountModels, TransportError> {
     if v["type"] != "control_response"
         || v["response"]["request_id"] != request_id
         || v["response"]["subtype"] != "success"
@@ -66,10 +74,13 @@ pub(super) fn catalog(v: &Value, request_id: &str) -> Result<AccountModels, Tran
     let subscription = account
         .get("subscriptionType")
         .and_then(Value::as_str)
-        .is_some_and(|s| !s.is_empty() && s != "none");
+        .is_some_and(|s| !s.is_empty() && s != "none" && (expected_email.is_none() || s != "free"));
     let first_party = account
         .get("apiProvider")
         .is_some_and(|v| v == "firstParty");
+    let email_matches = expected_email.is_none_or(|email| {
+        !email.is_empty() && account.get("email").and_then(Value::as_str) == Some(email)
+    });
     let rows = response
         .get("models")
         .and_then(Value::as_array)
@@ -128,7 +139,7 @@ pub(super) fn catalog(v: &Value, request_id: &str) -> Result<AccountModels, Tran
         .collect();
     Ok(AccountModels {
         effort_metadata,
-        login_required: !subscription || !first_party,
+        login_required: !subscription || !first_party || !email_matches,
         models,
     })
 }
@@ -138,6 +149,32 @@ impl Profile {
     pub async fn account_models(
         &self,
         environment: &str,
+        cancel: &CancellationToken,
+    ) -> Result<AccountModels, TransportError> {
+        self.account_models_inner(environment, None, cancel).await
+    }
+
+    /// Compare the expected account without returning provider identity data.
+    pub async fn account_models_for_email(
+        &self,
+        environment: &str,
+        expected_email: &str,
+        cancel: &CancellationToken,
+    ) -> Result<AccountModels, TransportError> {
+        let mut models = self
+            .account_models_inner(environment, Some(expected_email), cancel)
+            .await?;
+        if models.login_required {
+            models.models.clear();
+            models.effort_metadata.clear();
+        }
+        Ok(models)
+    }
+
+    async fn account_models_inner(
+        &self,
+        environment: &str,
+        expected_email: Option<&str>,
         cancel: &CancellationToken,
     ) -> Result<AccountModels, TransportError> {
         let _os = tokio::select! {_=cancel.cancelled()=>return Err(TransportError::Cancelled),r=self.os_lock(environment)=>r?};
@@ -156,7 +193,7 @@ impl Profile {
         let name = format!("moosuri-claude-{session}");
         let local = CancellationToken::new();
         let proxy = ProxyTask(tokio::spawn(proxy_server(listener, local.clone())));
-        let mut cmd = self.launch(&env, temp.path(), &name, false, false);
+        let mut cmd = self.launch(&env, temp.path(), &name, false, false, None);
         cmd.arg("default")
             .arg(&session)
             .stdin(Stdio::piped())
@@ -195,7 +232,7 @@ impl Profile {
                     if found.is_some() {
                         return Err(err());
                     }
-                    found = Some(catalog(&v, &request_id)?);
+                    found = Some(catalog_for_email(&v, &request_id, expected_email)?);
                     let mut input = stdin.take().ok_or_else(err)?;
                     input
                         .shutdown()

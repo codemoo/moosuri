@@ -1,29 +1,64 @@
-# 무수리 엔진과 모델 공급자 연결
+# 회원 컨테이너에서 무수리 엔진 호출하기
 
-설치자는 호스트에서 무수리 엔진의 모델 연결을 관리한다. 회원 A와 B의 컨테이너에는 각각 자신의 `/model/model.sock`이 보인다. 호스트에서는 두 소켓이 같은 무수리 프로세스(`runtime-model`)로 연결된다. 엔진이 호출자의 UID와 현재 계정 상태를 확인하고, 설정된 공급자에 추론을 요청한 뒤 응답과 사용량을 해당 호출에 연결한다. 대화 이력·기억·도구 권한·작업 진행은 회원의 개인 런타임이 관리한다. [엔진 구현](../../apps/moosuri/src/runtime_model.rs) · [컨테이너 구성](README.md)
+회원 A와 B는 각각 자신의 컨테이너에서 `/model/model.sock`을 호출한다. 두 소켓의 요청을 받는 호스트 서비스는 하나의 `runtime-model`이다. 회원은 공급자 키나 실행기 주소를 입력할 필요가 없다. 엔진은 회원 UID·계정 세대·모델·예산을 확인한다. 답변은 요청한 회원에게 돌려주고 중앙 원장에는 호출 지문과 사용량을 기록한다. 대화·기억·도구 권한·작업 진행은 개인 런타임이 소유한다. [회원 소켓과 텍스트 대화 설정](README.md#공용-모델-개발판)
 
-| 엔진의 모델 연결 | Kiri 개발판 지원 범위 |
-| --- | --- |
-| 설치 API 키, OpenRouter, 호환 API, 로컬 모델 | 회원 전용 소켓을 통한 텍스트 추론. 두 컨테이너에서 동일한 엔진을 호출하는 경로를 검증했다. |
-| ChatGPT 공식 로그인 | 기존 로그인·추론 경로를 Kiri 엔진에 연결하는 작업이 남아 있다. 설정값 `chatgpt_plan`의 현재 진단은 `chatgpt_engine_adapter_unavailable`이다. |
-| Claude 공식 실행기 | Linux 비루트 실행기와 호스트 엔진 사이의 연결이 필요하다. 설정값 `claude_code`의 현재 진단은 `claude_rootless_executor_bridge_required`이다. |
+| 호스트 엔진 연결 | 인증과 실행 | 설치 안내 |
+| --- | --- | --- |
+| 설치 API 키·OpenRouter·호환 API·로컬 모델 | 엔진이 설치 설정의 모델을 직접 호출한다. | [모델 서비스 설정](README.md#공용-모델-개발판) |
+| ChatGPT 공식 로그인 | 전용 워커가 검증된 사용자·워크스페이스 등록을 열고 공식 Responses API를 호출한다. 갱신 권한은 호스트의 등록 저장소에 있다. | [ChatGPT 등록 및 모델 확인](engine-chatgpt.md) |
+| Claude Code | 전용 비루트 워커가 공식 CLI를 실행한다. 요청마다 같은 CLI 프로세스에서 로그인 계정과 허용 모델을 확인한 뒤 대화를 전달한다. | [Claude 로그인 및 모델 확인](engine-claude.md) |
 
-회원의 무수리 로그인과 모델 공급자의 로그인은 별개다. 공급자 계정의 사용 범위는 엔진 뒤에 연결한 서비스의 공식 인증 방식과 계약에 따른다. 별도의 공급자 인증이 필요한 연결은 해당 어댑터의 설정에서 안내한다.
+각 엔진 구성에는 한 공급자와 모델을 지정한다. 여러 회원이 설치 인증 하나로 모델을 쓰려면 해당 용도의 API 또는 로컬 모델을 구성한다. 공식 로그인 상품은 그 공급자가 허용한 인증 주체에 연결한다. 이 모드에서 무수리 회원의 컨테이너는 같은 엔진을 계속 사용하고, 엔진이 해당 회원에게 배정된 호스트 워커를 고른다. [OpenAI 등록 조건](https://developers.openai.com/siwc/token-sharing-open-source) · [Claude Code 호스팅 조건](https://code.claude.com/docs/en/legal-and-compliance)
 
-## 공식 지원 범위
+이 절차에는 위 워커 명령이 포함된 개발판 바이너리가 필요하다. 현재 배포판에서 제공되는 명령은 `moosuri --help`에서 확인한다.
 
-| 경로 | 확인한 근거와 판단 |
-|---|---|
-| ChatGPT SIWC | [OSS overview](https://developers.openai.com/siwc/token-sharing-open-source)는 issued `client_id`를 인증한 사용자와 선택 workspace에 묶는다. 같은 사용자의 여러 host는 가능하지만 다른 사용자의 가족/회원 풀로 쓰라는 허가는 아니다. 유료 또는 remotely hosted 앱은 별도 interest/등록 경로를 안내한다. |
-| 개인 self-hosted VM | [Self-hosted VMs](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms)는 같은 사용자·workspace의 로컬 OAuth, 보호된 credential 전달, VM 고유 host ID 보존과 VM의 refresh 소유를 설명한다. 이전한 session의 host별 usage attribution/revocation은 아직 제공되지 않는다. 이 절차를 설치자 구독의 다중 회원 공유로 확대하지 않는다. |
-| SIWC inference | [Models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)는 공개 `api.openai.com/v1/models`와 `/responses`, account별 모델 목록, `store:false`, `stream:true`, terminal `response.completed`를 요구한다. [Preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)는 HTTP `previous_response_id`, `max_output_tokens`와 여러 hosted tool을 지원하지 않는다. ChatGPT `backend-api`, Codex 로그인 파일 추출, scope 위장은 대안이 아니다. |
-| 자체 Claude 제품/SDK | [공식 legal/compliance](https://code.claude.com/docs/en/legal-and-compliance)의 Authentication and credential use는 자체 제품/서비스와 Agent SDK에 Console API key 또는 지원 cloud를 안내한다. consumer Claude OAuth를 Rust HTTP 모델 adapter로 전달하는 기능은 만들지 않는다. |
-| 변경 없는 Claude Code hosting | 같은 문서의 Can customers offer Claude Code in their products?는 별도 합의가 없으면 Commercial Terms 수락, 게시된 binary의 무변경 실행, 내장 인증 방식 유지, 각 최종 사용자의 자체 인증·직접 과금 등을 요구한다. “Customers may not pay for, resell, or intermediate Claude usage on their end users’ behalf.” 설치자의 Claude 구독을 모든 회원의 공용 사용량으로 중계하는 경로는 제공하지 않는다. |
+## 로그인 기반 엔진 구성
 
-공식 문서는 해당 설치·계정·모델의 사용 자격이나 계약 수락 증명이 아니다. 이 작업은 인증·결제·실제 provider 추론을 수행하지 않았다.
+1. 위 설치 안내에 따라 호스트에서 로그인과 모델 확인을 마친다. 각 로그인 연결에는 고유한 워커 UID·소켓·인증 경로를 배정한다. 워커 UID는 모든 회원 컨테이너의 UID와 달라야 한다.
+2. 워커가 소유한 `0700` 디렉터리를 소켓 전용으로 준비한다. 루트 또는 워커가 관리하는 절대 경로를 사용한다. 워커 설정 파일은 해당 UID 소유의 `0600`으로 둔다. 아래 예시의 계정·테넌트·볼륨·세대는 설치 레지스트리의 실제 예약값으로, 모델은 로그인에서 확인한 값으로 교체한다. `adapter` 객체는 위 설치 안내의 공급자별 JSON으로 교체한다.
 
-## 엔진에 어댑터를 연결할 때
+   ```json
+   {
+     "version": 1,
+     "socket_directory": "/run/moosuri-engine-a",
+     "owner": {
+       "account_id": "11111111-1111-4111-8111-111111111111",
+       "tenant_id": "22222222-2222-4222-8222-222222222222",
+       "volume_id": "33333333-3333-4333-8333-333333333333",
+       "generation": 1
+     },
+     "connection_revision": "1fc91be7-8a93-4ef1-a1cb-eee7660a601b",
+     "model": "<verified-model>",
+     "adapter": {"type": "claude_code", "settings": {
+       "profile_file": "/srv/moosuri-claude/private/profile.json",
+       "profile_digest": "<verified-profile-digest>",
+       "environment_id": "<environment-uuid>",
+       "expected_email_file": "/srv/moosuri-claude/private/owner-email"
+     }}
+   }
+   ```
 
-- ChatGPT 어댑터는 기존 공식 로그인 구현의 소유자·워크스페이스 확인과 갱신 잠금을 재사용한다. [로그인 구현](../../crates/moosuri-agent/src/subscriptions.rs) · [인증 저장소](../../crates/moosuri-store/src/subscriptions.rs)
-- Claude 실행기는 비루트 Linux UID를 요구한다. 호스트 엔진에서 해당 실행기에 요청을 넘기고, 검증된 프로필과 인증 환경을 지정해야 한다. [실행 조건](../../docs/claude-execution.md) · [프로필 검사](../../crates/moosuri-connectors/src/claude_code/sandbox.rs)
-- 어댑터 수락 시험은 두 컨테이너가 같은 엔진에 동시에 요청하는 흐름에서 시작한다. 각 응답의 소유자, 공급자 세션 분리, 단일 갱신, 재시도 시 중복 호출·정산 방지를 확인한다. [전환 작업표](../../openspec/changes/isolate-account-runtime/tasks.md)
+3. 전용 서비스 계정으로 `moosuri engine-login-worker --config /srv/moosuri-claude/private/worker.json`을 실행한다. systemd로 관리할 때는 서비스의 `User`를 그 계정으로 지정하고 `RuntimeDirectory=moosuri-engine-a`, `RuntimeDirectoryMode=0700`, `UMask=0077`로 소켓 디렉터리를 생성한다. Claude 실행기는 프로필에 지정한 rootless 엔진에 접근할 수 있어야 한다.
+4. 호스트 루트 서비스의 기존 `runtime-model` 설정에서 공급자와 바인딩을 지정한다. 아래는 Claude 예시다. ChatGPT는 `subscription`에 `chatgpt_plan`, `provider.kind`에 `open_ai`를 사용한다. 회원을 추가할 때는 별도 `bindings` 항목에 해당 회원의 예약과 워커를 등록한다.
+
+   ```json
+   {
+     "version": 1,
+     "subscription": "claude_code",
+     "connection_revision": "1fc91be7-8a93-4ef1-a1cb-eee7660a601b",
+     "provider": {"kind": "anthropic", "base_url": null, "allowed_ips": [], "router_providers": [], "zero_data_retention": false},
+     "model": "<verified-model>",
+     "bindings": [{
+       "account_id": "11111111-1111-4111-8111-111111111111",
+       "tenant_id": "22222222-2222-4222-8222-222222222222",
+       "volume_id": "33333333-3333-4333-8333-333333333333",
+       "generation": 1, "peer_uid": 10011,
+       "budget": {"max_calls": 100, "max_tokens": 250000, "reservation_tokens": 8192},
+       "worker": {"socket": "/run/moosuri-engine-a/engine.sock", "worker_uid": 10111}
+     }]
+   }
+   ```
+
+5. 회원 설정의 모델·공급자 종류·연결 버전을 호스트 설정에 맞추고 텍스트 대화로 확인한다. 공급자 계정·실행 환경·모델을 교체할 때는 연결 버전을 새로 발급하고 회원 설정에도 적용한다. [개인 대화 확인](README.md#개인-대화에-텍스트-답변-저장하기)
+
+엔진은 커널이 확인한 워커 소켓에서 회원과 연결 버전의 일치를 확인한 다음, 현재 회원 상태와 예산을 검사하고 같은 연결로 프롬프트를 전송한다. 워커가 꺼져 있으면 새 요청은 예산을 쓰기 전에 `model_worker_unavailable`을 반환한다. 이미 전송한 요청의 결과를 잃으면 기존 호출 ID로 영수증을 조회한다. 공급자 응답이 불확실한 요청을 새로 실행하면 추가 비용이 발생할 수 있다.

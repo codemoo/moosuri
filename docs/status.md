@@ -14,7 +14,9 @@
 | 브라우저로 Gmail 연결 후 원래 대화에서 최근 메일 확인 | 개발판 중앙 서버는 schema 82부터 Google OAuth를 제공한다. 개인 서비스는 schema 84에서 읽기 권한을 암호화하고 schema 85에서 최대 다섯 건의 조회 결과를 대화에 보관한다. 합성 Google 서버에서 계정·세션 분리, 새로고침, 연결 교체·해제와 중복 조회 차단을 확인했다. 메일 헤더는 모델 입력에서 제외한다. 실제 Google 계정 동의 검증은 남아 있다. [개인 Gmail](../deployment/kiri/google.md) · [중앙 서버 Gmail](gws-inbox.md) |
 | 재부팅 후 회원 세션 복구 | 2 vCPU·2 GiB VM에서 20회원 유휴 구동을 확인했다. 재부팅 후 활성 19명은 복구됐고 차단한 1명은 기동하지 않았다. 64 MiB 상한에 닿은 회원이 있어 동시 사용 성능과 운영 적정 인원은 미확정이다. [측정 조건·수치](../deployment/kiri/measurements/2026-11-19-idle-capacity.md) |
 
-각 Kiri 컨테이너는 회원 전용 소켓으로 호스트의 무수리 엔진을 호출한다. 엔진이 설치에 설정된 모델에 요청하고 사용량을 호출한 회원에게 기록한다. 현재 이 경로는 API·호환 엔드포인트·로컬 모델의 텍스트 추론을 지원한다. ChatGPT·Claude 로그인 기반 어댑터 연결은 후속 작업이다. [구독 연결 검토와 구현 조건](../deployment/kiri/subscriptions.md)
+각 Kiri 컨테이너는 회원 전용 소켓으로 호스트의 무수리 엔진을 호출한다. 엔진이 설치에 설정된 모델에 요청하고 사용량을 호출한 회원에게 기록한다. 개발판의 텍스트 경로는 API·로컬 모델과 호스트의 ChatGPT·Claude 워커를 선택할 수 있다. 로그인 워커는 Linux 운영자 설정이 필요하다. 이 경로의 실계정 추론과 운영 절체는 별도 검증 대상으로 남아 있다. [엔진 연결과 설정](../deployment/kiri/subscriptions.md)
+
+격리한 Linux에서 루트 엔진과 별도 비루트 UID의 워커가 같은 Unix 연결로 합성 답변을 주고받았다. 브로커 시험에서는 동시 중복 호출의 단일 전송, 워커 응답 도중 회원이 정지된 경우의 전송 차단, 워커 중단 후 영수증 재조회를 확인했다. 합성 ChatGPT 공급자에서는 동시 호출의 단일 토큰 갱신과 취소 중 갱신 보존을, 합성 Claude CLI에서는 계정 또는 모델이 바뀌었을 때 원문 전송 전 차단을 확인했다. [브로커 시험](../apps/moosuri/src/runtime_model/tests/engine_dispatch.rs) · [워커 시험](../apps/moosuri/src/engine_login/tests.rs)
 
 기존 설치의 오프라인 도구는 schema 81–85의 합성 A/B 백업에서 한 회원의 수동 기억·근거·삭제 이력을 추출하고 검색 색인을 재구축한다. 원본 없이 추출 결과를 확인할 수 있다. 전체 계정 복원, 개인 컨테이너의 정규 도구·스케줄 실행, 운영 시범 계정 전환은 후속 작업이다. [이전 도구 범위](../audit/account-runtime-extraction.md) · [남은 작업](../openspec/changes/isolate-account-runtime/tasks.md)
 

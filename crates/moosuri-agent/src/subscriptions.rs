@@ -243,6 +243,18 @@ pub async fn personal_client(
 ) -> Result<ModelClient, StoreError> {
     personal_client_inner(store, authority, binding, None, None).await
 }
+/// Synthetic host adapter acceptance; fixed exact loopback checks live in the connectors.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub async fn personal_client_fixture(
+    store: &Store,
+    authority: SubscriptionAuthority,
+    binding: SubscriptionRef,
+    origin: &str,
+) -> Result<ModelClient, StoreError> {
+    let fixture = (origin.to_owned(), origin.to_owned());
+    personal_client_inner(store, authority, binding, Some(&fixture), None).await
+}
 async fn personal_client_inner(
     store: &Store,
     authority: SubscriptionAuthority,

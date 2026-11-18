@@ -120,7 +120,7 @@ impl Profile {
         let name = format!("moosuri-claude-{session}");
         let local = CancellationToken::new();
         let proxy = ProxyTask(tokio::spawn(proxy_server(listener, local.clone())));
-        let mut cmd = self.launch(&env, temp.path(), &name, false, false);
+        let mut cmd = self.launch(&env, temp.path(), &name, false, false, None);
         cmd.arg("default")
             .arg(&session)
             .stdin(Stdio::piped())

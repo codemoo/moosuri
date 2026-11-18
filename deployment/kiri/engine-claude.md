@@ -1,0 +1,34 @@
+# Kiri 엔진의 Claude Code 연결
+
+Kiri 엔진은 등록한 회원의 요청을 호스트의 Linux 비루트 작업자에게 전달한다. 한 작업자에 한 회원의 런타임 튜플과 그 회원이 직접 인증한 Claude 계정을 등록한다. 회원 컨테이너는 기존 `/model/model.sock`을 사용한다. 공식 Claude Code가 자신의 인증 환경을 관리한다. [엔진 연결](subscriptions.md) · [Claude Code 이용 조건](https://code.claude.com/docs/en/legal-and-compliance)
+
+## 운영자 설정
+
+1. 전용 비루트 Linux UID에서 rootless Docker와 격리 프로필을 준비한다. 공식 Claude Code 바이너리, Moosuri 실행 파일, 이미지 다이제스트를 고정하고 배포 환경의 격리 수락 시험을 통과한 프로필을 사용한다. `auth_root`와 `scratch_root`는 작업자가 소유한 `0700` 디렉터리다. 프로필 JSON과 계정 이메일 파일은 작업자가 소유한 비공개 디렉터리에 `0600`으로 둔다. 프로필 필드와 시험 절차는 기존 실행 가이드를 따른다. [프로필과 격리 시험](../../docs/claude-execution.md#operator-profile)
+2. 회원마다 고유한 UUID를 하나 만들어 `environment_id`로 지정한다. `expected_email_file`에 해당 회원의 Claude 계정 이메일을 공식 계정 화면에 표시된 대로 한 줄로 저장한다. 동일한 환경을 여러 회원에게 배정하지 않는다.
+3. 같은 비루트 UID의 비공개 대화형 터미널에서 아래 명령을 실행한다. 사용자가 공식 Claude 로그인에서 자기 계정으로 인증한다. 다음 세 필드가 성공 결과로 출력된다. `profile_digest`, `environment_id`, `models`.
+
+   ```sh
+   moosuri claude-engine-login \
+     --profile-file /srv/moosuri-claude/private/profile.json \
+     --environment-id "$CLAUDE_ENVIRONMENT_ID" \
+     --expected-email-file /srv/moosuri-claude/private/owner-email
+   ```
+
+4. 작업자 설정의 `owner`에 이 회원의 계정·테넌트·볼륨·세대를 등록한다. `model`에는 위 `models`에서 고른 구체적인 ID를 사용한다. 엔진과 작업자에 같은 모델과 연결 리비전을 설정한다. 작업자 설정의 `adapter`는 아래 필드를 사용한다.
+
+   ```json
+   {
+     "type": "claude_code",
+     "settings": {
+       "profile_file": "/srv/moosuri-claude/private/profile.json",
+       "profile_digest": "<로그인 명령이 출력한 다이제스트>",
+       "environment_id": "<회원 전용 환경 UUID>",
+       "expected_email_file": "/srv/moosuri-claude/private/owner-email"
+     }
+   }
+   ```
+
+작업자는 시작할 때 선택한 환경의 이전 컨테이너를 정리하고, 공식 초기화 응답에서 구독과 이메일을 확인한다. 각 사용자 요청에서도 같은 Claude Code 프로세스의 초기화 응답으로 이메일·구독·모델을 확인한 뒤 사용자 메시지를 전달한다. 모델 목록은 공식 초기화에서 확인한 기본 구독 모델을 제공한다. 다른 Claude 계정으로 전환할 때는 새 환경 UUID와 연결 리비전을 설정한다. [Claude 모델 탐색](../../crates/moosuri-connectors/src/claude_code/discovery.rs) · [Claude 실행 환경](../../crates/moosuri-connectors/src/claude_code/sandbox.rs)
+
+작업자는 엔진의 출력 토큰 한도를 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`로 전달한다. Claude Code는 이 값을 대부분의 요청에 적용하며 모델별 한도를 적용할 수 있다. 엔진은 CLI가 반환한 사용량을 원래 호출 원장에 기록한다. [Claude Code 환경 변수](https://code.claude.com/docs/en/env-vars#available-environment-variables)

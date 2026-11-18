@@ -80,7 +80,7 @@ impl Profile {
         let operation = async {
             self.allowed_environment(environment)?;
             let mut child = self
-                .launch(&env, temp.path(), &name, true, false)
+                .launch(&env, temp.path(), &name, true, false, None)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

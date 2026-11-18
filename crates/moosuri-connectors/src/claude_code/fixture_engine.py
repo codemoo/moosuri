@@ -40,6 +40,7 @@ if mode=='login':
  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
 assert mode=='text'
 model,session=a[index+2:index+4]
+bound_token_limit=next((arg.split('=',2)[-1] for arg in a if arg.startswith('--env=MOOSURI_CLAUDE_MAX_OUTPUT_TOKENS=')),None)
 bridge=next(item.split('src=',1)[1].split(',dst=',1)[0] for item in a if 'dst=/bridge' in item)
 settings=json.loads((pathlib.Path(bridge)/'settings.json').read_text())
 assert settings['disableAllHooks'] is True and settings['autoMemoryEnabled'] is False
@@ -47,12 +48,22 @@ with (root/'settings-history').open('a') as f:f.write(json.dumps(settings)+'\n')
 v=json.loads(sys.stdin.buffer.readline())
 behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
 if v.get('type')=='control_request':
- assert model=='default' and v['request']=={'subtype':'initialize'}
+ assert (model=='default' or bound_token_limit) and v['request']=={'subtype':'initialize'}
  print(json.dumps({'type':'system','subtype':'ui_invalidate'}),flush=True)
- print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':v['request_id'],'response':{'account':{} if behavior=='logged-out' else {'subscriptionType':'pro','apiProvider':'firstParty'},'models':[] if behavior=='catalog-empty' else [{'value':alias,'resolvedModel':concrete, 'supportsEffort': alias!='haiku' and behavior!='effort-withdrawn', 'supportedEffortLevels': ['low','medium','high','xhigh','max'] if alias!='haiku' else []} for alias,concrete in [('default','claude-fixture-v1'),('opus','claude-fixture-v1'),('sonnet','claude-fixture-sonnet'),('haiku','claude-fixture-haiku'),('fable','claude-fixture-fable')]]}}}),flush=True)
+ account={'subscriptionType':'pro','apiProvider':'firstParty','email':'owner@example.test'}
+ if behavior=='different-account':account['email']='sibling@example.test'
+ if behavior=='email-missing':del account['email']
+ if behavior=='external-provider':account['apiProvider']='bedrock'
+ if behavior=='unsubscribed':account['subscriptionType']='free'
+ print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':v['request_id'],'response':{'account':{} if behavior=='logged-out' else account,'models':[] if behavior=='catalog-empty' else [{'value':alias,'resolvedModel':concrete, 'supportsEffort': alias!='haiku' and behavior!='effort-withdrawn', 'supportedEffortLevels': ['low','medium','high','xhigh','max'] if alias!='haiku' else []} for alias,concrete in [('default','claude-fixture-v1'),('opus','claude-fixture-v1'),('sonnet','claude-fixture-sonnet'),('haiku','claude-fixture-haiku'),('fable','claude-fixture-fable')]]}}}),flush=True)
  next_line=sys.stdin.buffer.readline()
  if not next_line:sys.exit(0)
- command=json.loads(next_line)
+ v=json.loads(next_line)
+ if bound_token_limit:
+  (root/'bound-user').write_text(bound_token_limit)
+if v.get('type')=='user' and not v.get('client_composed'):
+ assert model=='default' and bound_token_limit is None
+ command=v
  assert command=={'type':'user','uuid':command['uuid'],'session_id':session,'parent_tool_use_id':None,'message':{'role':'user','content':[{'type':'text','text':'/usage'}]}}
  assert sys.stdin.buffer.read()==b''
  (root/'usage-command').write_text('/usage')

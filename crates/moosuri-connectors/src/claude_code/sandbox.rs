@@ -13,6 +13,7 @@ use crate::model::{
 };
 pub use login::{LoginCode, LoginEvent};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     os::unix::{
@@ -288,6 +289,30 @@ impl Profile {
         let _os = self.os_lock(environment).await?;
         // A credential directory is not retired while any owned container may still use it.
         self.verify().await?;
+        self.remove_environment_containers(environment).await?;
+        let p = self.config.auth_root.join(environment);
+        match std::fs::symlink_metadata(&p) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => return Err(err()),
+            Ok(m) if m.file_type().is_symlink() => return Err(err()),
+            Ok(_) => {}
+        }
+        directory(&p)?;
+        std::fs::remove_dir_all(p).map_err(|_| err())?;
+        std::fs::File::open(&self.config.auth_root)
+            .map_err(|_| err())?
+            .sync_all()
+            .map_err(|_| err())?;
+        Ok(())
+    }
+    /// Reap only this worker's dormant environment, under its launch lock.
+    pub async fn cleanup_stale_environment(&self, environment: &str) -> Result<(), TransportError> {
+        let _os = self.os_lock(environment).await?;
+        self.allowed_environment(environment)?;
+        self.verify().await?;
+        self.remove_environment_containers(environment).await
+    }
+    async fn remove_environment_containers(&self, environment: &str) -> Result<(), TransportError> {
         let root_label = format!("label=moosuri.claude.installation={}", self.root_id());
         let environment_label = format!("label=moosuri.claude.environment={environment}");
         let containers = self
@@ -307,19 +332,6 @@ impl Profile {
             }
             self.engine_output(&["rm", "-f", id]).await?;
         }
-        let p = self.config.auth_root.join(environment);
-        match std::fs::symlink_metadata(&p) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(_) => return Err(err()),
-            Ok(m) if m.file_type().is_symlink() => return Err(err()),
-            Ok(_) => {}
-        }
-        directory(&p)?;
-        std::fs::remove_dir_all(p).map_err(|_| err())?;
-        std::fs::File::open(&self.config.auth_root)
-            .map_err(|_| err())?
-            .sync_all()
-            .map_err(|_| err())?;
         Ok(())
     }
     async fn os_lock(&self, environment: &str) -> Result<std::fs::File, TransportError> {
@@ -463,6 +475,7 @@ impl Profile {
         name: &str,
         login: bool,
         terminal: bool,
+        max_output_tokens: Option<u32>,
     ) -> Command {
         let c = &self.config;
         let mut cmd = self.engine();
@@ -513,6 +526,11 @@ impl Profile {
                 if ro { ",readonly" } else { "" }
             ));
         }
+        if let Some(max_output_tokens) = max_output_tokens {
+            cmd.arg(format!(
+                "--env=MOOSURI_CLAUDE_MAX_OUTPUT_TOKENS={max_output_tokens}"
+            ));
+        }
         if terminal {
             cmd.arg("-it");
         } else {
@@ -557,7 +575,7 @@ impl Profile {
         let name = format!("moosuri-claude-{}", uuid::Uuid::new_v4());
         let cancel = CancellationToken::new();
         let proxy = ProxyTask(tokio::spawn(proxy_server(listener, cancel.clone())));
-        let mut cmd = self.launch(&env, temp.path(), &name, true, true);
+        let mut cmd = self.launch(&env, temp.path(), &name, true, true, None);
         cmd.stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
@@ -605,6 +623,36 @@ impl Profile {
         tx: &mpsc::Sender<ModelEvent>,
         cancel: &CancellationToken,
     ) -> Result<(), TransportError> {
+        self.stream_text_inner(environment, request, images, None, tx, cancel)
+            .await
+    }
+
+    /// Uses the official initializer to authenticate the exact subscription in
+    /// the same process and under the same lock as the subsequent user turn.
+    pub async fn stream_text_for_email(
+        &self,
+        environment: &str,
+        expected_email: &str,
+        request: &TextRequest,
+        tx: &mpsc::Sender<ModelEvent>,
+        cancel: &CancellationToken,
+    ) -> Result<(), TransportError> {
+        if expected_email.is_empty() || !(1..=2048).contains(&request.max_output_tokens) {
+            return Err(err());
+        }
+        self.stream_text_inner(environment, request, &[], Some(expected_email), tx, cancel)
+            .await
+    }
+
+    async fn stream_text_inner(
+        &self,
+        environment: &str,
+        request: &TextRequest,
+        images: &[crate::model::NormalizedJpeg],
+        expected_email: Option<&str>,
+        tx: &mpsc::Sender<ModelEvent>,
+        cancel: &CancellationToken,
+    ) -> Result<(), TransportError> {
         let _os = tokio::select! {_=cancel.cancelled()=>return Err(TransportError::Cancelled),r=self.os_lock(environment)=>r?};
         let (session, user) = protocol::ids();
         let (system, input) = protocol::input_with_images(request, &session, &user, images)?;
@@ -623,7 +671,8 @@ impl Profile {
         let name = format!("moosuri-claude-{}", session);
         let local = CancellationToken::new();
         let proxy = ProxyTask(tokio::spawn(proxy_server(listener, local.clone())));
-        let mut cmd = self.launch(&env, temp.path(), &name, false, false);
+        let max_output_tokens = expected_email.map(|_| request.max_output_tokens);
+        let mut cmd = self.launch(&env, temp.path(), &name, false, false, max_output_tokens);
         cmd.arg(&request.model).arg(&session);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -632,6 +681,31 @@ impl Profile {
             self.allowed_environment(environment)?;
             let mut child = cmd.spawn().map_err(|_| TransportError::Transport)?;
             let mut stdin = child.stdin.take().ok_or_else(err)?;
+            let mut stdout = BufReader::new(child.stdout.take().ok_or_else(err)?);
+            let mut decoder =
+                protocol::Decoder::new(&session, &user, &request.model, &self.config.cli_version);
+            if let Some(expected_email) = expected_email {
+                let initial = tokio::time::timeout(
+                    Duration::from_secs(30),
+                    initialize_for_email(
+                        &mut stdin,
+                        &mut stdout,
+                        &session,
+                        expected_email,
+                        request,
+                    ),
+                )
+                .await
+                .map_err(|_| TransportError::Timeout)??;
+                if let Some(initial) = initial {
+                    for event in decoder.line(&initial)? {
+                        tx.send(event)
+                            .await
+                            .map_err(|_| TransportError::Cancelled)?;
+                    }
+                }
+                self.allowed_environment(environment)?;
+            }
             stdin
                 .write_all(&input)
                 .await
@@ -641,9 +715,6 @@ impl Profile {
                 .await
                 .map_err(|_| TransportError::Transport)?;
             drop(stdin);
-            let mut stdout = BufReader::new(child.stdout.take().ok_or_else(err)?);
-            let mut decoder =
-                protocol::Decoder::new(&session, &user, &request.model, &self.config.cli_version);
             let mut total = 0usize;
             loop {
                 let mut line = Vec::new();
@@ -684,6 +755,69 @@ impl Profile {
             self.retain_text_identity(environment)?;
         }
         result
+    }
+}
+
+async fn initialize_for_email(
+    stdin: &mut tokio::process::ChildStdin,
+    stdout: &mut BufReader<tokio::process::ChildStdout>,
+    session: &str,
+    expected_email: &str,
+    request: &TextRequest,
+) -> Result<Option<Vec<u8>>, TransportError> {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let initialize =
+        json!({"type":"control_request","request_id":request_id,"request":{"subtype":"initialize"}})
+            .to_string() + "\n";
+    stdin
+        .write_all(initialize.as_bytes())
+        .await
+        .map_err(|_| TransportError::Transport)?;
+    let mut initial = None;
+    let mut total = 0;
+    loop {
+        let mut line = Vec::new();
+        let n = (&mut *stdout)
+            .take(256 * 1024 + 1)
+            .read_until(b'\n', &mut line)
+            .await
+            .map_err(|_| TransportError::Transport)?;
+        total += n;
+        if n == 0 {
+            return Err(TransportError::Transport);
+        }
+        if n > 256 * 1024 || total > 1024 * 1024 || line.last() != Some(&b'\n') {
+            return Err(TransportError::LimitExceeded);
+        }
+        let v: Value = serde_json::from_slice(&line).map_err(|_| err())?;
+        match v["type"].as_str() {
+            Some("control_response") => {
+                let catalog = discovery::catalog_for_email(&v, &request_id, Some(expected_email))?;
+                if catalog.login_required || !catalog.models.contains(&request.model) {
+                    return Err(err());
+                }
+                if let Some(effort) = &request.effort {
+                    let eligible = catalog.effort_metadata.iter().any(|metadata| {
+                        metadata.model == request.model
+                            && metadata
+                                .efforts
+                                .as_ref()
+                                .is_some_and(|levels| levels.contains(effort))
+                    });
+                    if !eligible {
+                        return Err(err());
+                    }
+                }
+                return Ok(initial);
+            }
+            Some("system") if v["subtype"] == "ui_invalidate" => {}
+            Some("system")
+                if v["subtype"] == "init" && v["session_id"] == session && initial.is_none() =>
+            {
+                initial = Some(line);
+            }
+            _ => return Err(err()),
+        }
     }
 }
 struct ProxyTask(tokio::task::JoinHandle<()>);
@@ -839,6 +973,16 @@ pub async fn helper_main(
     if mode == "login" {
         cmd.args(["auth", "login", "--claudeai"]);
     } else {
+        if let Some(limit) = std::env::var_os("MOOSURI_CLAUDE_MAX_OUTPUT_TOKENS") {
+            if !limit
+                .to_str()
+                .and_then(|n| n.parse::<u32>().ok())
+                .is_some_and(|n| (1..=2048).contains(&n))
+            {
+                return Err(err());
+            }
+            cmd.env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", limit);
+        }
         let model = model.ok_or_else(err)?;
         let session = session.ok_or_else(err)?;
         cmd.args([

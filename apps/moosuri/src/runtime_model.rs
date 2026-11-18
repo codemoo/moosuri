@@ -1,6 +1,8 @@
 //! Opt-in text-only shared model broker for preallocated synthetic/new runtimes.
-//! One configured Unix socket per owner. No subscription CLI, tools, provider
-//! sessions, prompt/answer persistence, fallback, retry, or private Store opening.
+//! One configured Unix socket per owner, with subscription sessions held by
+//! dedicated host workers. No tools, prompt/answer persistence, fallback, retry,
+//! or private Store opening in the broker.
+use crate::engine_login::{Connection, Endpoint, Owner, Route};
 use clap::Args;
 use fs2::FileExt;
 use moosuri_connectors::model::{
@@ -9,8 +11,9 @@ use moosuri_connectors::model::{
         FinishOutcome, ModelEvent, TextCapabilities, TextMessage, TextRequest, TextRole, Usage,
     },
 };
-use moosuri_core::ProviderConfig;
+use moosuri_core::{ProviderConfig, ProviderKind};
 use moosuri_store::{
+    StoreError,
     runtime_model_ledger::{Admission, Budget, CallKey, Ledger, Receipt},
     runtime_registry,
 };
@@ -65,25 +68,10 @@ struct Config {
     model: String,
     /// API/local endpoint credential only. No personal subscription auth HOME.
     key_file: Option<PathBuf>,
-    /// Explicit unsupported subscription requests fail before any credential IO.
-    /// Never put a consumer subscription token in key_file as an API substitute.
+    /// Use a host worker instead of an API credential for every binding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    subscription: Option<SubscriptionRoute>,
+    subscription: Option<Route>,
     bindings: Vec<Binding>,
-}
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum SubscriptionRoute {
-    ChatgptPlan,
-    ClaudeCode,
-}
-impl SubscriptionRoute {
-    fn unavailable(self) -> &'static str {
-        match self {
-            Self::ChatgptPlan => "chatgpt_engine_adapter_unavailable",
-            Self::ClaudeCode => "claude_rootless_executor_bridge_required",
-        }
-    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -94,6 +82,18 @@ struct Binding {
     generation: i64,
     peer_uid: u32,
     budget: Budget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    worker: Option<Endpoint>,
+}
+impl Binding {
+    fn owner(&self) -> Owner {
+        Owner {
+            account_id: self.account_id,
+            tenant_id: self.tenant_id,
+            volume_id: self.volume_id,
+            generation: self.generation,
+        }
+    }
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -169,6 +169,15 @@ impl Reply {
             connection_revision: None,
             model: None,
         }
+    }
+    fn admission_error(error: StoreError, unavailable: &str) -> Self {
+        Self::error(match error {
+            StoreError::NotFound | StoreError::Forbidden => "account_fenced",
+            StoreError::BudgetExhausted => "quota_exhausted",
+            StoreError::Conflict => "call_conflict",
+            StoreError::ModelRequired => unavailable,
+            _ => "ledger_unavailable",
+        })
     }
 }
 fn private_dir(path: &Path) -> Result<(), String> {
@@ -275,6 +284,14 @@ struct Broker {
     slots: Arc<Semaphore>,
     stop: CancellationToken,
 }
+enum Executor {
+    Api(Arc<ModelClient>),
+    Login {
+        route: Route,
+        owner: Owner,
+        connection: Connection,
+    },
+}
 fn binding_matches(a: &runtime_registry::Allocation, b: &Binding) -> bool {
     a.account_id == b.account_id.to_string()
         && a.tenant_id == b.tenant_id.to_string()
@@ -297,9 +314,6 @@ impl Broker {
         private_dir(&options.registry)?;
         let config: Config = serde_json::from_slice(&private_bytes(&options.config, MAX_FRAME)?)
             .map_err(|_| "model_config_invalid")?;
-        if let Some(subscription) = config.subscription {
-            return Err(subscription.unavailable().into());
-        }
         if config.version != 1
             || config.bindings.is_empty()
             || config.bindings.len() > 128
@@ -308,6 +322,23 @@ impl Broker {
         {
             return Err("model_config_invalid".into());
         }
+        if let Some(route) = config.subscription {
+            let kind = match route {
+                Route::ChatgptPlan => ProviderKind::OpenAi,
+                Route::ClaudeCode => ProviderKind::Anthropic,
+            };
+            if config.connection_revision.is_nil()
+                || config.key_file.is_some()
+                || config.provider.kind != kind
+                || config.provider.base_url.is_some()
+                || !config.provider.allowed_ips.is_empty()
+                || !config.provider.router_providers.is_empty()
+                || config.provider.zero_data_retention
+                || !config.model.bytes().all(|b| b.is_ascii_graphic())
+            {
+                return Err("model_config_invalid".into());
+            }
+        }
         let mut accounts = BTreeSet::new();
         let mut peer_uids = BTreeSet::new();
         for b in &config.bindings {
@@ -315,6 +346,28 @@ impl Broker {
             if b.generation <= 0 || !accounts.insert(b.account_id) || !peer_uids.insert(b.peer_uid)
             {
                 return Err("model_binding_invalid".into());
+            }
+        }
+        let mut worker_uids = BTreeSet::new();
+        let mut worker_sockets = BTreeSet::new();
+        for b in &config.bindings {
+            match (config.subscription, &b.worker) {
+                (Some(_), Some(worker)) => {
+                    if worker.worker_uid == 0
+                        || worker.worker_uid == unsafe { libc::geteuid() }
+                        || peer_uids.contains(&worker.worker_uid)
+                        || !worker_uids.insert(worker.worker_uid)
+                        || !worker_sockets.insert(&worker.socket)
+                        || [b.account_id, b.tenant_id, b.volume_id]
+                            .iter()
+                            .any(Uuid::is_nil)
+                    {
+                        return Err("model_binding_invalid".into());
+                    }
+                    worker.validate().map_err(|_| "model_binding_invalid")?;
+                }
+                (None, None) => (),
+                _ => return Err("model_binding_invalid".into()),
             }
             // An inert listener may be created for reserved/fenced allocations.
             // Ready is required only at actual dispatch/result admission, avoiding
@@ -330,13 +383,17 @@ impl Broker {
             return Err("fingerprint_key_invalid".into());
         }
         let key = hmac::Key::new(hmac::HMAC_SHA256, &key);
-        let client = Mutex::new(Some(ClientCache::load(&config, &key, None)?));
+        let client = if config.subscription.is_none() {
+            Some(ClientCache::load(&config, &key, None)?)
+        } else {
+            None
+        };
         let ledger = Ledger::open(&options.ledger).map_err(|_| "model_ledger_unavailable")?;
         Ok(Arc::new(Self {
             registry: options.registry.clone(),
             config,
             key,
-            client,
+            client: Mutex::new(client),
             ledger: Mutex::new(ledger),
             slots: Arc::new(Semaphore::new(8)),
             stop,
@@ -416,14 +473,15 @@ impl Broker {
             Ok(admission)
         })
     }
-    async fn call(&self, b: &Binding, r: Request) -> Reply {
-        let request = match self.request(b, &r) {
-            Ok(r) => r,
-            Err(e) => return Reply::error(&e),
-        };
-        // Keyed canonical fingerprint covers the complete request, immutable
-        // owner tuple and admin-pinned connection revision/model/network policy.
-        let canonical = match serde_json::to_vec(&(
+    fn call_key(
+        &self,
+        b: &Binding,
+        r: &Request,
+        login: Option<(Route, &Endpoint)>,
+    ) -> Result<CallKey, serde_json::Error> {
+        // Keep the API fingerprint stable. Login calls also pin the exact
+        // worker endpoint and subscription route.
+        let api_fingerprint = (
             "moosuri/shared-model/v1",
             b.account_id,
             b.tenant_id,
@@ -432,13 +490,14 @@ impl Broker {
             self.config.connection_revision,
             &self.config.provider,
             &self.config.model,
-            &r,
-        )) {
-            Ok(v) => Zeroizing::new(v),
-            Err(_) => return Reply::error("request_invalid"),
-        };
+            r,
+        );
+        let canonical = Zeroizing::new(match login {
+            Some((route, worker)) => serde_json::to_vec(&(api_fingerprint, route, worker)),
+            None => serde_json::to_vec(&api_fingerprint),
+        }?);
         let tag = hmac::sign(&self.key, &canonical);
-        let key = CallKey {
+        Ok(CallKey {
             call_id: r.call_id,
             account_id: b.account_id,
             tenant_id: b.tenant_id,
@@ -447,49 +506,110 @@ impl Broker {
             ordinal: r.ordinal,
             connection_revision: self.config.connection_revision,
             fingerprint: tag.as_ref().try_into().unwrap(),
+        })
+    }
+    async fn call(&self, b: &Binding, r: Request) -> Reply {
+        let request = match self.request(b, &r) {
+            Ok(r) => r,
+            Err(e) => return Reply::error(&e),
         };
-        let client = match self.client.lock() {
-            Ok(mut cached) => {
-                *cached = ClientCache::load(&self.config, &self.key, cached.as_ref()).ok();
-                cached.as_ref().map(|c| c.client.clone())
-            }
-            Err(_) => None,
+        let login = match (self.config.subscription, b.worker.as_ref()) {
+            (Some(route), Some(worker)) => Some((route, worker)),
+            (None, None) => None,
+            _ => return Reply::error("model_binding_invalid"),
         };
-        if client
-            .as_ref()
-            .is_some_and(|c| c.validate_text_request(&request).is_err())
-        {
+        let Ok(key) = self.call_key(b, &r, login) else {
             return Reply::error("request_invalid");
+        };
+        let mut executor = None;
+        if login.is_none() {
+            let client = match self.client.lock() {
+                Ok(mut cached) => {
+                    *cached = ClientCache::load(&self.config, &self.key, cached.as_ref()).ok();
+                    cached.as_ref().map(|c| c.client.clone())
+                }
+                Err(_) => None,
+            };
+            if let Some(client) = client {
+                if client.validate_text_request(&request).is_err() {
+                    return Reply::error("request_invalid");
+                }
+                executor = Some(Executor::Api(client));
+            }
         }
         let Ok(start_epoch) = epoch(&self.registry, b) else {
             return Reply::error("account_fenced");
         };
-        let permit = match self.admit(b, &key, client.is_some(), start_epoch) {
+        let unavailable = if let Some((route, worker)) = login {
+            // Check for a prior receipt before attempting any worker IO. Fresh
+            // calls must authorize routing metadata before budget admission.
+            let unavailable = "model_worker_unavailable";
+            match self.admit(b, &key, false, start_epoch) {
+                Ok(Admission::Existing(receipt)) => return Reply::receipt(r.call_id, receipt),
+                Ok(Admission::Fresh(_)) => unreachable!("a fresh admission requires an executor"),
+                Err(StoreError::ModelRequired) => (),
+                Err(error) => return Reply::admission_error(error, unavailable),
+            }
+            let valid = match route {
+                Route::ChatgptPlan => moosuri_connectors::model::chatgpt::encode_text_request(
+                    &request,
+                    &TextCapabilities::default(),
+                )
+                .is_ok(),
+                Route::ClaudeCode => {
+                    use moosuri_connectors::claude_code::protocol::{ids, input};
+                    let (session, user) = ids();
+                    input(&request, &session, &user).is_ok()
+                }
+            };
+            if !valid {
+                return Reply::error("request_invalid");
+            }
+            let owner = b.owner();
+            let connection = tokio::select! {
+                _ = self.stop.cancelled() => None,
+                result = async {
+                    Connection::connect(worker).await?
+                        .authorize(route, owner, r.connection_revision, &request.model).await
+                } => result.ok(),
+            };
+            executor = connection.map(|connection| Executor::Login {
+                route,
+                owner,
+                connection,
+            });
+            unavailable
+        } else {
+            "model_credential_unavailable"
+        };
+        let permit = match self.admit(b, &key, executor.is_some(), start_epoch) {
             Ok(Admission::Existing(receipt)) => return Reply::receipt(r.call_id, receipt),
             Ok(Admission::Fresh(p)) => p,
-            Err(moosuri_store::StoreError::NotFound | moosuri_store::StoreError::Forbidden) => {
-                return Reply::error("account_fenced");
-            }
-            Err(moosuri_store::StoreError::BudgetExhausted) => {
-                return Reply::error("quota_exhausted");
-            }
-            Err(moosuri_store::StoreError::Conflict) => return Reply::error("call_conflict"),
-            Err(moosuri_store::StoreError::ModelRequired) => {
-                return Reply::error("model_credential_unavailable");
-            }
-            Err(_) => return Reply::error("ledger_unavailable"),
+            Err(error) => return Reply::admission_error(error, unavailable),
         };
         // Already admitted calls may reach the provider after fencing. They are
         // in-flight work, never a fresh post-fence acceptance. Late output is
         // checked again below and usage remains charged to this same receipt.
-        let client = client.expect("a fresh admission requires a provider");
+        let executor = executor.expect("a fresh admission requires an executor");
         let (tx, mut rx) = mpsc::channel(32);
         let cancel = self.stop.child_token();
-        let (result, (text, usage, outcome)) = tokio::join!(
+        let (succeeded, (text, usage, outcome)) = tokio::join!(
             async {
-                let result = client.stream_text(&request, &tx, &cancel).await;
+                let succeeded = match executor {
+                    Executor::Api(client) => {
+                        client.stream_text(&request, &tx, &cancel).await.is_ok()
+                    }
+                    Executor::Login {
+                        route,
+                        owner,
+                        connection,
+                    } => connection
+                        .stream(route, owner, r.connection_revision, &request, &tx, &cancel)
+                        .await
+                        .is_ok(),
+                };
                 drop(tx);
-                result
+                succeeded
             },
             async {
                 let mut text = String::new();
@@ -515,7 +635,7 @@ impl Broker {
                 (text, usage, outcome)
             }
         );
-        if result.is_err() || outcome.is_none() {
+        if !succeeded || outcome.is_none() {
             let receipt = self.ledger.lock().ok().and_then(|mut l| {
                 l.uncertain(&permit, usage.input_tokens, usage.output_tokens)
                     .ok()
@@ -820,6 +940,7 @@ pub async fn personal_call(socket: &Path, request: &[u8]) -> Result<Vec<u8>, Str
 
 #[cfg(test)]
 mod tests {
+    mod engine_dispatch;
     mod volume_replay;
     use super::*;
     use axum::{Router, extract::State, http::HeaderMap, response::IntoResponse, routing::post};
@@ -907,6 +1028,7 @@ mod tests {
                     max_tokens: 8192,
                     reservation_tokens: 2048,
                 },
+                worker: None,
             });
         }
         let key_file = root.join("api.key");
@@ -952,42 +1074,6 @@ mod tests {
             serde_json::from_slice(&fs::read(&options.config).unwrap()).unwrap();
         config.bindings = vec![binding.clone()];
         file(&options.config, &serde_json::to_vec(&config).unwrap());
-    }
-    #[test]
-    fn subscription_routes_fail_before_credentials_ledger_or_executor_access() {
-        let root = tempfile::tempdir().unwrap();
-        let root = root.path().canonicalize().unwrap();
-        let (options, _) = fixture(&root, "http://127.0.0.1:65531/v1".into());
-        let original = fs::read(&options.config).unwrap();
-        let mut c: Config = serde_json::from_slice(&original).unwrap();
-        // Missing credential/fingerprint files prove that subscription rejection
-        // occurs before either private file can be opened or a ledger created.
-        c.key_file = Some(root.join("never-open-subscription-token"));
-        fs::remove_file(&options.fingerprint_key).unwrap();
-        for (route, expected) in [
-            (
-                SubscriptionRoute::ChatgptPlan,
-                "chatgpt_engine_adapter_unavailable",
-            ),
-            (
-                SubscriptionRoute::ClaudeCode,
-                "claude_rootless_executor_bridge_required",
-            ),
-        ] {
-            c.subscription = Some(route);
-            file(&options.config, &serde_json::to_vec(&c).unwrap());
-            assert_eq!(
-                Broker::new(&options, CancellationToken::new())
-                    .err()
-                    .as_deref(),
-                Some(expected)
-            );
-            assert_eq!(fs::read_dir(&options.ledger).unwrap().count(), 0);
-            assert_eq!(fs::read_dir(&options.socket_dir).unwrap().count(), 0);
-            assert!(!root.join("never-open-subscription-token").exists());
-        }
-        let encoded: serde_json::Value = serde_json::from_slice(&original).unwrap();
-        assert!(encoded.get("subscription").is_none());
     }
     fn request(binding: &Binding) -> Request {
         Request {
@@ -1198,6 +1284,7 @@ mod tests {
                 max_tokens: 8192,
                 reservation_tokens: 2048,
             },
+            worker: None,
         };
         select_binding(&options, &binding);
         let stop = CancellationToken::new();

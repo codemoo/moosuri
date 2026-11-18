@@ -187,6 +187,12 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
         )
         .await
         .unwrap();
+    let proof_owner = a.clone();
+    store.call(move |db| {
+        db.conn.execute("INSERT INTO personal_subscription_vision_probes VALUES('claude',?1,?2,'synthetic-old-binding',1,'claude-synthetic','','subscription-image-tiles-v1',1)",params![proof_owner.tenant.0,proof_owner.account.id])?;
+        db.conn.execute("INSERT INTO personal_subscription_vision_attempts VALUES('claude',?1,?2,'synthetic-attempt',1,9999999999)",params![proof_owner.tenant.0,proof_owner.account.id])?;
+        Ok(())
+    }).await.unwrap();
     store
         .set_default_model(
             &a,
@@ -662,7 +668,7 @@ async fn actual_current_schema_restores_artifacts_media_receipts_quarantine_and_
     );
     assert_eq!(artifact_state(&conn, false).unwrap(), expected);
     assert_eq!(
-        conn.query_row("SELECT count(*) FROM provider_vision_probes", [], |r| r
+        conn.query_row("SELECT (SELECT count(*) FROM provider_vision_probes)+(SELECT count(*) FROM personal_subscription_vision_probes)+(SELECT count(*) FROM personal_subscription_vision_attempts)", [], |r| r
             .get::<_, i64>(0))
             .unwrap(),
         0

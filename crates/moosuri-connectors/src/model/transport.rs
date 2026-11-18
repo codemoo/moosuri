@@ -124,7 +124,7 @@ pub enum TransportError {
 
 pub struct ModelClient {
     dialect: ResponsesDialect,
-    images: Vec<Vec<u8>>,
+    images: Vec<super::NormalizedJpeg>,
     protocol: Protocol,
     endpoint: Url,
     network: NetworkPolicy,
@@ -253,6 +253,7 @@ impl ModelClient {
         next.network = self.network.clone();
         next.limits = self.limits;
         next.http = self.http.clone();
+        next.images = self.images.clone();
         Ok(next)
     }
 
@@ -324,16 +325,22 @@ impl ModelClient {
 
     /// Private bounded canonical images for this one client lifetime.
     pub fn with_images(mut self, images: Vec<Vec<u8>>) -> Result<Self, TransportError> {
-        if self.dialect == ResponsesDialect::ChatGptPlan && !images.is_empty() {
-            return Err(ProtocolError::UnsupportedCapability.into());
-        }
-        if images.len() > 4
-            || images
-                .iter()
-                .any(|v| v.len() > 2 * 1024 * 1024 || !v.starts_with(&[255, 216, 255]))
-        {
+        if images.len() > super::MAX_IMAGES {
             return Err(TransportError::LimitExceeded);
         }
+        self.images = images
+            .into_iter()
+            .map(super::NormalizedJpeg::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        super::images::validate_count(&self.images)?;
+        Ok(self)
+    }
+
+    pub fn with_normalized_images(
+        mut self,
+        images: Vec<super::NormalizedJpeg>,
+    ) -> Result<Self, TransportError> {
+        super::images::validate_count(&images)?;
         self.images = images;
         Ok(self)
     }
@@ -581,26 +588,41 @@ impl ModelClient {
         }
     }
 
+    /// Pure wire validation before a caller creates durable dispatch state.
+    pub fn validate_text_request(&self, request: &TextRequest) -> Result<(), TransportError> {
+        self.encode_text_request(request).map(|_| ())
+    }
+
+    fn encode_text_request(
+        &self,
+        request: &TextRequest,
+    ) -> Result<serde_json::Value, TransportError> {
+        if self.dialect == ResponsesDialect::ChatGptPlan {
+            Ok(super::chatgpt::encode_image_request(
+                request,
+                &self.capabilities,
+                &self.images,
+            )?)
+        } else {
+            Ok(super::protocol::encode_normalized_image_request(
+                self.protocol,
+                request,
+                &self.capabilities,
+                &self.images,
+            )?)
+        }
+    }
+
     async fn stream_inner(
         &self,
         request: &TextRequest,
         events: &mpsc::Sender<ModelEvent>,
     ) -> Result<(), TransportError> {
-        let (body, decoder) = if self.dialect == ResponsesDialect::ChatGptPlan {
-            (
-                super::chatgpt::encode_text_request(request, &self.capabilities)?,
-                StreamDecoder::chatgpt_plan(&request.model),
-            )
+        let body = self.encode_text_request(request)?;
+        let decoder = if self.dialect == ResponsesDialect::ChatGptPlan {
+            StreamDecoder::chatgpt_plan(&request.model)
         } else {
-            (
-                super::protocol::encode_image_request(
-                    self.protocol,
-                    request,
-                    &self.capabilities,
-                    &self.images,
-                )?,
-                StreamDecoder::new(self.protocol),
-            )
+            StreamDecoder::new(self.protocol)
         };
         self.stream_encoded(body, decoder, events).await
     }
@@ -698,7 +720,7 @@ impl ModelClient {
             > if self.images.is_empty() {
                 1024 * 1024
             } else {
-                12 * 1024 * 1024
+                super::MAX_IMAGE_REQUEST_BYTES
             }
         {
             return Err(TransportError::LimitExceeded);

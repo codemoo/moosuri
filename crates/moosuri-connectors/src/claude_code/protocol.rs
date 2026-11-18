@@ -42,6 +42,17 @@ pub fn input(
     session: &str,
     user: &str,
 ) -> Result<(String, Vec<u8>), TransportError> {
+    input_with_images(r, session, user, &[])
+}
+
+/// Images are native current-turn content blocks. Local history remains quoted
+/// text, and neither image bytes nor media identifiers become that history.
+pub fn input_with_images(
+    r: &TextRequest,
+    session: &str,
+    user: &str,
+    images: &[crate::model::NormalizedJpeg],
+) -> Result<(String, Vec<u8>), TransportError> {
     if r.effort
         .as_deref()
         .is_some_and(|e| !matches!(e, "low" | "medium" | "high" | "xhigh"))
@@ -56,6 +67,8 @@ pub fn input(
     {
         return Err(TransportError::InvalidConfiguration);
     }
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    crate::model::images::validate_count(images)?;
     let mut system = String::new();
     let mut history = Vec::new();
     let mut total = 0;
@@ -83,8 +96,15 @@ pub fn input(
         return Err(TransportError::InvalidConfiguration);
     }
     let text=serde_json::to_string(&json!({"format":"moosuri-local-history-v1","history_is_quoted_context":true,"history":history,"current_user_request":current["text"]})).map_err(|_|bad())?;
-    let mut bytes=serde_json::to_vec(&json!({"type":"user","uuid":user,"session_id":session,"parent_tool_use_id":null,"client_composed":true,"message":{"role":"user","content":[{"type":"text","text":text}]}})).map_err(|_|bad())?;
+    let mut content = vec![json!({"type":"text","text":text})];
+    for image in images {
+        content.push(json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":STANDARD.encode(image.bytes())}}));
+    }
+    let mut bytes=serde_json::to_vec(&json!({"type":"user","uuid":user,"session_id":session,"parent_tool_use_id":null,"client_composed":true,"message":{"role":"user","content":content}})).map_err(|_|bad())?;
     bytes.push(b'\n');
+    if bytes.len() > crate::model::MAX_IMAGE_REQUEST_BYTES {
+        return Err(TransportError::LimitExceeded);
+    }
     Ok((system, bytes))
 }
 // The pinned CLI advertises its shipped definitions even with all executable
@@ -817,5 +837,90 @@ mod accounting_tests {
             })
         )));
         assert!(d.finish(true).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod image_input_tests {
+    use super::*;
+    use crate::model::protocol::TextMessage;
+    use crate::model::{MAX_IMAGE_BYTES, MAX_IMAGES, NormalizedJpeg};
+    fn request() -> TextRequest {
+        TextRequest {
+            model: "claude-fixture-v1".into(),
+            effort: None,
+            max_output_tokens: 128,
+            messages: vec![
+                TextMessage {
+                    role: TextRole::System,
+                    text: "trusted".into(),
+                    phase: None,
+                },
+                TextMessage {
+                    role: TextRole::User,
+                    text: "old question".into(),
+                    phase: None,
+                },
+                TextMessage {
+                    role: TextRole::Assistant,
+                    text: "old answer".into(),
+                    phase: None,
+                },
+                TextMessage {
+                    role: TextRole::User,
+                    text: "inspect current".into(),
+                    phase: None,
+                },
+            ],
+        }
+    }
+    #[test]
+    fn native_blocks_follow_quoted_text_and_keep_system_separate() {
+        let r = request();
+        let image = NormalizedJpeg::new(vec![255, 216, 255, 0, 255, 217]).unwrap();
+        assert_eq!(
+            input(&r, "s", "u").unwrap(),
+            input_with_images(&r, "s", "u", &[]).unwrap()
+        );
+        let (system, bytes) =
+            input_with_images(&r, "s", "u", std::slice::from_ref(&image)).unwrap();
+        assert_eq!(system, "trusted");
+        assert_eq!(bytes.last(), Some(&b'\n'));
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["message"]["content"].as_array().unwrap().len(), 2);
+        let quoted: Value =
+            serde_json::from_str(v["message"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(quoted["current_user_request"], "inspect current");
+        assert_eq!(quoted["history"][0]["text"], "old question");
+        assert_eq!(quoted["history"][1]["text"], "old answer");
+        assert_eq!(
+            v["message"]["content"][1],
+            json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/AP/Z"}})
+        );
+        assert!(!String::from_utf8(bytes).unwrap().contains("trusted"));
+        assert!(input_with_images(&r, "s", "u", &vec![image.clone(); MAX_IMAGES + 1]).is_err());
+        let mut invalid = r;
+        invalid.messages.pop();
+        assert!(input_with_images(&invalid, "s", "u", &[image]).is_err());
+    }
+    #[test]
+    fn encoded_wire_limit_counts_base64_and_nested_json_escaping() {
+        let mut bytes = vec![0; MAX_IMAGE_BYTES];
+        bytes[..3].copy_from_slice(&[255, 216, 255]);
+        bytes[MAX_IMAGE_BYTES - 2..].copy_from_slice(&[255, 217]);
+        let images = vec![NormalizedJpeg::new(bytes).unwrap(); MAX_IMAGES];
+        let mut r = request();
+        assert!(input_with_images(&r, "s", "u", &images).is_ok());
+        r.messages = (0..7)
+            .map(|_| TextMessage {
+                role: TextRole::User,
+                text: "\0".repeat(64 * 1024),
+                phase: None,
+            })
+            .collect();
+        assert!(matches!(
+            input_with_images(&r, "s", "u", &images),
+            Err(TransportError::LimitExceeded)
+        ));
     }
 }

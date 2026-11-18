@@ -364,3 +364,57 @@ fn plan_full_progress_snapshots_cannot_hide_foreign_or_missing_identity() {
     assert!(api.push(wire.as_bytes()).error.is_none());
     assert!(api.finish().is_ok());
 }
+
+#[test]
+fn plan_images_keep_native_shape_and_plan_restrictions() {
+    use crate::model::NormalizedJpeg;
+    let image = NormalizedJpeg::new(vec![255, 216, 255, 0, 255, 217]).unwrap();
+    let mut request = TextRequest {
+        model: "fixture-model".into(),
+        effort: None,
+        max_output_tokens: 128,
+        messages: vec![
+            TextMessage {
+                role: TextRole::System,
+                text: "trusted".into(),
+                phase: None,
+            },
+            TextMessage {
+                role: TextRole::User,
+                text: "inspect".into(),
+                phase: None,
+            },
+        ],
+    };
+    let caps = TextCapabilities::default();
+    assert_eq!(
+        encode_text_request(&request, &caps).unwrap(),
+        encode_image_request(&request, &caps, &[]).unwrap()
+    );
+    let body = encode_image_request(&request, &caps, std::slice::from_ref(&image)).unwrap();
+    assert_eq!(body["input"][0]["role"], "developer");
+    assert_eq!(
+        body["input"][1]["content"],
+        json!([
+            {"type":"input_text","text":"inspect"},
+            {"type":"input_image","image_url":"data:image/jpeg;base64,/9j/AP/Z","detail":"auto"}
+        ])
+    );
+    assert_eq!(body["store"], false);
+    assert_eq!(body["stream"], true);
+    for key in [
+        "max_output_tokens",
+        "previous_response_id",
+        "conversation",
+        "background",
+        "tools",
+    ] {
+        assert!(body.get(key).is_none());
+    }
+    request.messages.last_mut().unwrap().role = TextRole::Assistant;
+    assert!(encode_image_request(&request, &caps, std::slice::from_ref(&image)).is_err());
+    assert!(matches!(
+        encode_image_request(&request, &caps, &vec![image; 5]),
+        Err(ProtocolError::LimitExceeded)
+    ));
+}

@@ -118,6 +118,10 @@ impl LocalGrant {
         g.binding.grant_hash = hash(&data);
         Ok(g)
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "keep the public constructor and explicit vault, item and key epochs"
+    )]
     pub fn select_gitea(
         device: Device,
         item: Uuid,

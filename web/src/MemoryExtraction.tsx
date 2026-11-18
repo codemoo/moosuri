@@ -14,7 +14,7 @@ function Controls({accountId,collectionId,connected,onExpired,source}:Props){
  function fail(e:unknown){
   if(isAborted(e))return;
   if(e instanceof ApiFailure&&e.status===401){onExpired();return}
-  const message=e instanceof ApiFailure?({model_required:"사용할 모델이 없어요. 내 모델에서 연결과 모델 선택을 확인해 주세요.",tools_required:"자동 기억에는 도구가 필요해요. 내 모델에서 도구 연결을 확인하거나 도구 사용 가능한 모델을 저장해 주세요.",extraction_model_unsupported:"현재 선택한 구독 모델은 자동 기억을 지원하지 않아요. 내 모델에서 API 또는 개인 LLM 모델을 선택해 주세요."} as Record<string,string>)[e.code]:undefined;
+  const message=e instanceof ApiFailure?({model_required:"사용할 모델이 없어요. 내 모델에서 연결과 모델 선택을 확인해 주세요.",tools_required:"자동 기억에는 도구가 필요해요. 내 모델에서 도구 연결을 확인하거나 도구 사용 가능한 모델을 저장해 주세요.",extraction_model_unsupported:"이 연결로 자동 기억을 시작할 수 없어요. 내 모델에서 연결 상태와 도구 확인 결과를 확인해 주세요."} as Record<string,string>)[e.code]:undefined;
   setModelRecovery(!!message);setError(message??"기억 추출 상태를 확인하지 못했습니다. 다시 열어 확인해 주세요.");
  }
  async function request(kind:"read"|"mutation",path:string,method="GET",body?:unknown,initialize=false){

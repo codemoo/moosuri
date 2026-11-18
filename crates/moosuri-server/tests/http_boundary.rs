@@ -67,7 +67,12 @@ async fn claude_settings_require_owner_and_keep_unconfigured_runtime_unavailable
     assert_eq!(listed["bindings"][0]["id"], binding.id);
     let other = value(send(&app, "GET", base, Some(&b), json!({})).await).await;
     assert_eq!(other["bindings"], json!([]));
-    for (method, suffix) in [("POST", "/native"), ("POST", "/probe"), ("DELETE", "")] {
+    for (method, suffix) in [
+        ("POST", "/native"),
+        ("POST", "/probe"),
+        ("POST", "/vision-probe"),
+        ("DELETE", ""),
+    ] {
         let path = format!("{base}/{}{suffix}", binding.id);
         assert_eq!(
             send(

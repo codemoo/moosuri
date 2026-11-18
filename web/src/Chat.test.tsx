@@ -1952,13 +1952,13 @@ it("authoritative thread absence releases its held DELETE without unlocking a ne
 });
 
 it.each([
- ["subscription_media_unsupported",false], ["subscription_media_unsupported",true],
+ ["attachment_reselection_required",false], ["attachment_reselection_required",true],
  ["vision_required",false], ["vision_required",true],
 ] as const)("recovers %s with retained input and %s existing media without an automatic resend",async(code,existing)=>{
  const user=userEvent.setup();
  const media={id:"11111111-1111-4111-8111-111111111111",revision:2,digest:"synthetic",state:"ready",width:32,height:32,bytes:30,created_at:1};
  const prior={...turn({state:"completed",can_cancel:false},"Earlier image question"),attachments:[media]};
- const model={...choice,source:code==="subscription_media_unsupported"?"personal_chat_gpt":"personal_compatible"};
+ const model={...choice,source:code==="attachment_reselection_required"?"personal_chat_gpt":"personal_compatible"};
  const test=fixture({turns:existing?[prior]:[],extra:call=>{
   if(call.path==="/settings/model")return response({selection:null,effective:model,choices:[model]});
   if(call.path==="/media")return response({items:[media],used_bytes:30,quota_bytes:67108864});
@@ -1973,8 +1973,8 @@ it.each([
  await user.type(screen.getByLabelText("메시지"),"Keep this image question");
  await user.click(screen.getByRole("button",{name:"메시지 전송"}));
  const alert=await screen.findByRole("alert");
- expect(alert).toHaveTextContent(code==="vision_required"?"현재 모델의 이미지 읽기가 확인되지 않았습니다":"현재 구독 모델은 이미지·파일이 포함된 대화를 지원하지 않습니다");
- expect(alert).toHaveTextContent("이전 메시지에도");
+ expect(alert).toHaveTextContent(code==="vision_required"?"현재 모델의 이미지 읽기가 확인되지 않았습니다":"이 대화에는 다른 연결로 보낸 첨부가 있습니다");
+ expect(alert).toHaveTextContent(code==="vision_required"?"이전 메시지에도":"다시 선택");
  expect(screen.getByLabelText("메시지")).toHaveValue("Keep this image question");
  if(!existing)expect(screen.getByText("첨부 준비됨")).toBeInTheDocument();
  expect(screen.queryByRole("button",{name:"같은 요청 다시 제출"})).not.toBeInTheDocument();

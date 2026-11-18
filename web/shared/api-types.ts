@@ -165,6 +165,7 @@ temporary_password: string | null, };
 export type InvitationApproval = { digest: string, };
 export type InvitationSenderStatus = { configured: boolean, from: string | null, };
 export type MailConnection = { native_send?: boolean, compose_enabled: boolean, id: string, email: string, epoch: number, status: string, };
+export type MailConnectionRecovery = "admin_setup" | "member_setup" | "connect" | "reconnect" | "choose_account";
 export type MailConnections = { configured: boolean, connections: Array<MailConnection>, };
 export type MailReply = { thread_id: string, in_reply_to: string, references: Array<string>, };
 export type MailDraftContent = { from: string, to: Array<string>, cc: Array<string>, bcc: Array<string>, subject: string, text: string, reply: MailReply | null, };
@@ -233,7 +234,7 @@ export type CredentialChatStatus = { service?: string, request_id: string, repos
 export type RunInstructionRequest = { request_id: string, expected_attempt: number, text: string, };
 export type RunInstructionReceipt = { request_id: string, run_id: string, thread_id: string, attempt: number, sequence: number, text: string, state: string, reason: string | null, };
 export type RunInstructionTarget = { run_id: string, thread_id: string, attempt: number, supports_instructions: boolean, };
-export type RunView = { supports_instructions?: boolean, instruction_target?: RunInstructionTarget, instructions?: Array<RunInstructionReceipt>, connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
+export type RunView = { mail_connection_recovery?: MailConnectionRecovery, supports_instructions?: boolean, instruction_target?: RunInstructionTarget, instructions?: Array<RunInstructionReceipt>, connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**
  * Fixed application error category, never provider text.
  */

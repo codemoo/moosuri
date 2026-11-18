@@ -1362,12 +1362,10 @@ async fn chatgpt_plan_tool_dialect_preflight_rejects_capability_without_dispatch
         ))
     ));
     assert_eq!(f.count.load(Ordering::SeqCst), 0);
-    assert!(matches!(
-        c.with_images(vec![vec![255, 216, 255]]),
-        Err(TransportError::Protocol(
-            ProtocolError::UnsupportedCapability
-        ))
-    ));
+    assert!(
+        c.with_images(vec![vec![255, 216, 255, 0, 255, 217]])
+            .is_ok()
+    );
 }
 
 #[tokio::test]
@@ -1539,4 +1537,54 @@ async fn quota_never_reuses_personal_or_compatible_authority() {
         router.openrouter_quota(&cancelled).await,
         Err(TransportError::InvalidConfiguration)
     ));
+}
+
+#[tokio::test]
+async fn chatgpt_plan_image_reaches_public_responses_text_transport() {
+    let f = fixture(Reply::Stream(vec![plan_wire(&plan_text_frames())])).await;
+    let c = plan_client(&f)
+        .with_images(vec![vec![255, 216, 255, 0, 255, 217]])
+        .unwrap();
+    let (result, _) = run(&c, &request()).await;
+    assert!(result.is_ok(), "{result:?}");
+    let captures = f.captures.lock().await;
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0].path, "/v1/responses");
+    assert_eq!(
+        captures[0].body["input"][0]["content"][1]["image_url"],
+        "data:image/jpeg;base64,/9j/AP/Z"
+    );
+    assert_eq!(captures[0].body["store"], false);
+    assert_eq!(captures[0].body["stream"], true);
+    assert!(captures[0].body.get("max_output_tokens").is_none());
+}
+
+#[tokio::test]
+async fn chatgpt_plan_renewal_preserves_images_and_preflight_has_no_io() {
+    let f = fixture(Reply::Stream(vec![plan_wire(&plan_text_frames())])).await;
+    let original = plan_client(&f)
+        .with_images(vec![vec![255, 216, 255, 0, 255, 217]])
+        .unwrap();
+    let c = original
+        .renewed_chatgpt_plan(
+            Secret::new("synthetic-renewed".into()).unwrap(),
+            TextCapabilities::default(),
+        )
+        .unwrap();
+    assert!(c.validate_text_request(&request()).is_ok());
+    let mut invalid = request();
+    invalid.messages.last_mut().unwrap().role = TextRole::Assistant;
+    assert!(c.validate_text_request(&invalid).is_err());
+    assert_eq!(f.count.load(Ordering::SeqCst), 0);
+    let (result, _) = run(&c, &request()).await;
+    assert!(result.is_ok(), "{result:?}");
+    let captures = f.captures.lock().await;
+    assert_eq!(
+        captures[0].headers["authorization"],
+        "Bearer synthetic-renewed"
+    );
+    assert_eq!(
+        captures[0].body["input"][0]["content"][1]["image_url"],
+        "data:image/jpeg;base64,/9j/AP/Z"
+    );
 }

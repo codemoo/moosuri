@@ -83,7 +83,7 @@ it("a source revision change fences the prior extraction and pins the next reque
 it.each([
  ["model_required","사용할 모델이 없어요."],
  ["tools_required","자동 기억에는 도구가 필요해요."],
- ["extraction_model_unsupported","현재 선택한 구독 모델은 자동 기억을 지원하지 않아요."],
+ ["extraction_model_unsupported","이 연결로 자동 기억을 시작할 수 없어요."],
 ])("explains %s and links model recovery without losing attribution or enabling extraction",async(code,message)=>{
  const fetch=vi.fn(async(_path:string,init?:RequestInit)=>init?.method==="PUT"?new Response(JSON.stringify({code}),{status:409,headers:{"content-type":"application/json"}}):response(status()));vi.stubGlobal("fetch",fetch);
  render(<MemoryExtraction accountId="a" collectionId="c" connected onExpired={vi.fn()}/>);

@@ -270,9 +270,8 @@ struct Job {
 fn job(conn: &Connection, lease: &ExtractionLease) -> Result<Job> {
     conn.query_row("SELECT collection_id,source_id,source_revision,grant_revision,state,deadline FROM automatic_memory_jobs WHERE tenant_id=?1 AND id=?2 AND nonce=?3",params![lease.tenant,lease.job,lease.nonce],|r|Ok(Job{collection:r.get(0)?,source:r.get(1)?,revision:r.get(2)?,grant_revision:r.get(3)?,state:r.get(4)?,deadline:r.get(5)?})).optional()?.ok_or(StoreError::Conflict)
 }
-/// Collection grants admit API/compatible transports only, with the original
-/// owner's exact provider pin. Subscription transports need separate background
-/// extraction admission and must never fall back to the installation default.
+/// Recheck the frozen owner's exact model and function proof. A newer selection
+/// or installation default never upgrades an existing collection grant.
 fn extraction_binding(
     conn: &Connection,
     key: &[u8; 32],
@@ -280,13 +279,31 @@ fn extraction_binding(
     account: &str,
     model: &ModelChoice,
 ) -> Result<ProviderBinding> {
-    if !matches!(
-        model.source,
-        moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalCompatible
-    ) {
-        return Err(StoreError::ExtractionModelUnsupported);
+    if !model.function_tools {
+        return Err(StoreError::ToolsRequired);
     }
     providers::binding_for_owner_choice(conn, key, tenant, account, model)
+}
+/// Opaque collection authority used for OAuth readiness and every refresh CAS.
+/// It requires a live source lease, original account epoch and exact model pin.
+pub(crate) fn authorize_subscription(
+    conn: &Connection,
+    key: &[u8; 32],
+    lease: &ExtractionLease,
+    binding: &crate::SubscriptionRef,
+) -> Result<i64> {
+    let (_, grant, _) = checked(conn, key, lease)?;
+    if lease.tenant != binding.tenant
+        || grant.account != binding.account
+        || grant.model.source != moosuri_core::ModelSource::PersonalChatGpt
+        || grant.model.provider_id != binding.id
+        || grant.model.provider_revision != binding.revision
+        || grant.model.model != binding.model
+        || grant.model.effort != binding.effort
+    {
+        return Err(StoreError::Unauthorized);
+    }
+    Ok(grant.epoch)
 }
 fn checked(
     conn: &Connection,

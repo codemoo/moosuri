@@ -429,8 +429,8 @@ async fn reply_watch_schema73_update_creates_no_grants_and_notification_preferen
     let _g = TEST_LOCK.lock().await;
     let dir = directory();
     drop(Store::open(dir.path()).unwrap());
-    let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    conn.execute_batch("DROP TABLE mail_reply_watch_requests;DROP TABLE mail_reply_watches;PRAGMA user_version=73;").unwrap();
+    let mut conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+    crate::schema::tests::replace_with_predecessor(&mut conn, 73);
     drop(conn);
     let store = Store::open(dir.path()).unwrap();
     assert!(store.next_mail_reply_watch().await.unwrap().is_none());

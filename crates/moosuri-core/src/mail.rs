@@ -212,3 +212,14 @@ pub struct MailSchedulePreviewInput {
     pub local_datetime: String,
     pub timezone: String,
 }
+
+/// Server-recorded setup action; model text and links cannot create this receipt.
+#[derive(Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MailConnectionRecovery {
+    AdminSetup,
+    MemberSetup,
+    Connect,
+    Reconnect,
+    ChooseAccount,
+}

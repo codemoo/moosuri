@@ -910,14 +910,14 @@ async fn personal_compatible_grants_pin_owner_destination_and_fence_revoked_work
                 )
                 .is_err()
             );
-            // A function-tools bit never admits subscription extraction.
+            // A forged source with a tools bit cannot reuse another transport binding.
             for source in [
                 ModelSource::PersonalChatGpt,
                 ModelSource::PersonalClaudeCode,
             ] {
                 let mut unsupported = choice.clone();
                 unsupported.source = source;
-                assert_eq!(
+                assert!(
                     extraction_binding(
                         &db.conn,
                         &db.provider_key,
@@ -925,8 +925,7 @@ async fn personal_compatible_grants_pin_owner_destination_and_fence_revoked_work
                         &own.account.id,
                         &unsupported
                     )
-                    .err(),
-                    Some(StoreError::ExtractionModelUnsupported)
+                    .is_err()
                 );
             }
             Ok(())
@@ -1019,7 +1018,7 @@ async fn personal_compatible_grants_pin_owner_destination_and_fence_revoked_work
 }
 
 #[tokio::test]
-async fn enable_reports_model_tools_and_unsupported_source_without_minting_a_grant() {
+async fn enable_requires_verified_function_tools_without_minting_a_grant() {
     let _g = TEST_LOCK.lock().await;
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
@@ -1067,7 +1066,7 @@ async fn enable_reports_model_tools_and_unsupported_source_without_minting_a_gra
     let claude = store
         .create_claude_binding(
             &u,
-            "Unsupported extraction".into(),
+            "Text-only extraction".into(),
             "a".repeat(64),
             "b".repeat(64),
         )
@@ -1095,11 +1094,142 @@ async fn enable_reports_model_tools_and_unsupported_source_without_minting_a_gra
             .set_memory_extraction(&u, c.id.clone(), change(0, true))
             .await
             .err(),
-        Some(StoreError::ExtractionModelUnsupported)
+        Some(StoreError::ToolsRequired)
     );
     let status = store.memory_extraction_status(&u, c.id).await.unwrap();
     assert_eq!(status.revision, 0);
     assert!(!status.enabled);
     assert_eq!(status.state, "idle");
     assert!(store.claim_memory_extraction().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn subscription_extraction_freezes_original_owner_proof_and_never_falls_back_to_shared_default()
+ {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let u = configured(&store).await;
+    for claude in [false, true] {
+        let choice = if claude {
+            let reference = store
+                .create_claude_binding(
+                    &u,
+                    "Synthetic Claude".into(),
+                    "a".repeat(64),
+                    "b".repeat(64),
+                )
+                .await
+                .unwrap();
+            store
+                .record_claude_probe(&u, reference.clone(), "claude-fixture".into())
+                .await
+                .unwrap();
+            let proof = store
+                .claude_tool_probe_binding(
+                    &u,
+                    reference.id,
+                    reference.revision,
+                    "claude-fixture".into(),
+                    None,
+                )
+                .await
+                .unwrap();
+            store
+                .reserve_claude_tool_probe(&u, &proof, 1)
+                .await
+                .unwrap();
+            store
+                .reserve_claude_tool_probe(&u, &proof, 2)
+                .await
+                .unwrap();
+            store.record_claude_tool_probe(&u, proof).await.unwrap()
+        } else {
+            let login = store
+                .begin_subscription_login(&u, None, "Synthetic plan".into())
+                .await
+                .unwrap();
+            let mut binding = login.binding;
+            let seed = binding.clone();
+            // Capability/authority test: fake sealed bytes are never decrypted.
+            store.call(move |db| {
+                db.conn.execute("UPDATE chatgpt_bindings SET status='active' WHERE tenant_id=?1 AND account_id=?2 AND id=?3", params![seed.tenant,seed.account,seed.id])?;
+                db.conn.execute("INSERT INTO chatgpt_sessions(tenant_id,account_id,binding_id,revision,generation,cipher,expires_at,plan_enabled) VALUES(?1,?2,?3,?4,1,x'00',9999999999,1)",params![seed.tenant,seed.account,seed.id,seed.revision])?;
+                Ok(())
+            }).await.unwrap();
+            binding.model = "fixture-model".into();
+            store
+                .record_subscription_probe(&u, binding.clone())
+                .await
+                .unwrap();
+            store
+                .record_subscription_tool_probe(&u, binding)
+                .await
+                .unwrap()
+        };
+        store
+            .set_model_preference(
+                &u,
+                Some(ModelSelection {
+                    source: choice.source,
+                    provider_id: choice.provider_id.clone(),
+                    provider_revision: choice.provider_revision,
+                    model: choice.model.clone(),
+                    effort: choice.effort.clone(),
+                }),
+            )
+            .await
+            .unwrap();
+        let c = collection(&store, &u).await;
+        store
+            .set_memory_extraction(&u, c.id.clone(), change(0, true))
+            .await
+            .unwrap();
+        source(&store, &u, &c, "I prefer trains.", None).await;
+        store.set_model_preference(&u, None).await.unwrap();
+        let claim = store.claim_memory_extraction().await.unwrap().unwrap();
+        assert_eq!(claim.binding.id, choice.provider_id);
+        assert_eq!(claim.binding.model, choice.model);
+        store
+            .admit_memory_extraction(&claim.lease, 1200)
+            .await
+            .unwrap();
+        let owner = u.clone();
+        let lease = claim.lease.clone();
+        store
+            .call(move |db| {
+                assert!(
+                    extraction_binding(
+                        &db.conn,
+                        &db.provider_key,
+                        &owner.tenant.0,
+                        "different-owner",
+                        &choice
+                    )
+                    .is_err()
+                );
+                if claude {
+                    db.conn.execute("DELETE FROM claude_code_tool_probes", [])?;
+                } else {
+                    db.conn
+                        .execute("UPDATE chatgpt_model_probes SET function_tools=0", [])?;
+                }
+                assert!(checked(&db.conn, &db.provider_key, &lease).is_err());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(
+            store
+                .finish_memory_extraction(&claim.lease, vec![0], RunUsage::default())
+                .await
+                .is_err()
+        );
+        store
+            .fail_memory_extraction(&claim.lease, "interrupted".into())
+            .await
+            .unwrap();
+        assert!(store.claim_memory_extraction().await.unwrap().is_none());
+        assert!(store.memories(&u, None).await.unwrap().items.is_empty());
+    }
 }

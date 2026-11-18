@@ -41,6 +41,17 @@ pub fn preflight(
     prepare(request, capabilities).map(|_| ())
 }
 
+/// Exact serialized CLI input plus system instruction bytes after the host
+/// envelope and history wrappers. Fresh UUID values have fixed encoded length.
+pub fn encoded_input_bytes(
+    request: &ToolRequest<'_>,
+    capabilities: &TextCapabilities,
+) -> Result<usize, TransportError> {
+    let (text, id) = prepare(request, capabilities)?;
+    let (system, bytes) = super::protocol::input(&text, &id, &id)?;
+    Ok(system.len() + bytes.len())
+}
+
 fn prepare(
     request: &ToolRequest<'_>,
     capabilities: &TextCapabilities,

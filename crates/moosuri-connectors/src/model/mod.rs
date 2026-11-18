@@ -1,5 +1,7 @@
 //! Bounded text and client-function model protocols. Not a durable agent runner.
 pub mod chatgpt;
+pub(crate) mod images;
+pub use images::{MAX_IMAGE_BYTES, MAX_IMAGE_REQUEST_BYTES, MAX_IMAGES, NormalizedJpeg};
 pub mod protocol;
 mod quota;
 mod transport;

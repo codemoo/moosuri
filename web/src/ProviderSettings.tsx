@@ -273,6 +273,31 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
       setBusy(false);
     }
   }
+  const visionPath = effective && (effective.source === "personal_claude_code" || effective.source === "personal_chat_gpt")
+    ? `/settings/${effective.source === "personal_claude_code" ? "claude" : "chatgpt"}/${encodeURIComponent(effective.provider_id)}/vision-probe` : null;
+  async function verifyEffectiveVision() {
+    if (!effective || !visionPath || pending.current) return;
+    const choice = choiceSelection(effective);
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await scope.request<{vision:boolean}>(visionPath, "POST", {
+        revision: choice.provider_revision, model: choice.model, effort: choice.effort,
+      });
+      if (result.vision !== true) throw new Error("Image proof incomplete");
+      const current = await scope.request<ModelSettings>("/settings/model");
+      setSettings(current);
+      if (!dirty.current) setDraft(selectionKey(current.selection));
+      if (current.effective && selectionKey(choiceSelection(current.effective)) === selectionKey(choice)) {
+        setNotice("이 모델과 추론 강도의 이미지 연결을 확인했습니다. 새 대화 요청에 이미지를 첨부할 수 있습니다.");
+      } else {
+        setError("현재 적용 모델이 변경되었습니다. 새 모델의 이미지 연결을 확인해 주세요.");
+      }
+    } catch (error) { fail(error); }
+    finally { pending.current = false; setBusy(false); }
+  }
   const unavailableDraft =
     !!draft &&
     !settings?.choices.some(
@@ -329,6 +354,10 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
                   {probePath && <button type="button" disabled={busy} onClick={() => void verifyEffectiveTools()}>
                     현재 모델 도구 확인
                   </button>}
+                  {visionPath && <button type="button" disabled={busy} onClick={() => void verifyEffectiveVision()}>
+                    현재 모델 이미지 확인
+                  </button>}
+                  {visionPath && <p className="settings-hint">임의 색상 이미지를 실제로 읽어 확인하며 본인 구독을 사용합니다. 확인은 이 연결·모델·추론 강도에만 적용됩니다.</p>}
                   {!settings.effective.function_tools && !probePath && <p>
                     이 공용 모델의 도구 확인은 관리자가 할 수 있습니다.
                   </p>}

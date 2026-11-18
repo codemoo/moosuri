@@ -451,6 +451,10 @@ pub fn router_with_runtime(
             post(subscriptions::probe),
         )
         .route(
+            "/api/v1/settings/chatgpt/{id}/vision-probe",
+            post(subscriptions::vision_probe),
+        )
+        .route(
             "/api/v1/settings/chatgpt/{id}/tool-probe",
             post(subscriptions::tool_probe),
         )
@@ -484,6 +488,10 @@ pub fn router_with_runtime(
         .route(
             "/api/v1/settings/claude/{id}/probe",
             post(claude_execution::probe),
+        )
+        .route(
+            "/api/v1/settings/claude/{id}/vision-probe",
+            post(claude_execution::vision_probe),
         )
         .route(
             "/api/v1/settings/claude/{id}/tool-probe",
@@ -708,8 +716,8 @@ impl IntoResponse for HttpError {
         let (status, code) = match self.0 {
             StoreError::InvalidInput => (StatusCode::BAD_REQUEST, "invalid_input"),
             StoreError::ModelRequired => (StatusCode::CONFLICT, "model_required"),
-            StoreError::SubscriptionMediaUnsupported => {
-                (StatusCode::CONFLICT, "subscription_media_unsupported")
+            StoreError::AttachmentReselectionRequired => {
+                (StatusCode::CONFLICT, "attachment_reselection_required")
             }
             StoreError::VisionRequired => (StatusCode::CONFLICT, "vision_required"),
             StoreError::ExtractionModelUnsupported => {

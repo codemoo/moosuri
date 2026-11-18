@@ -610,7 +610,11 @@ struct Observation {
 #[derive(Clone, Copy)]
 enum TextExecutor<'a> {
     Http(&'a ModelClient),
-    Claude(&'a moosuri_connectors::claude_code::Profile, &'a str),
+    Claude(
+        &'a moosuri_connectors::claude_code::Profile,
+        &'a str,
+        &'a [moosuri_connectors::model::NormalizedJpeg],
+    ),
 }
 impl TextExecutor<'_> {
     fn restore(
@@ -667,17 +671,14 @@ impl ExecutionClient {
             return Ok(Self::Claude(profile, reference.environment_id.clone()));
         }
         if let Some(reference) = &binding.subscription {
-            if !images.is_empty() {
-                return Err(TransportError::InvalidConfiguration);
-            }
-            return subscriptions
+            let client = subscriptions
                 .client(
                     moosuri_store::SubscriptionAuthority::Run(lease.clone()),
                     reference.clone(),
                 )
                 .await
-                .map(Self::Http)
-                .map_err(|_| TransportError::InvalidConfiguration);
+                .map_err(|_| TransportError::InvalidConfiguration)?;
+            return client.with_images(images).map(Self::Http);
         }
         let credential = binding
             .credential
@@ -722,7 +723,7 @@ impl ExecutionClient {
     fn executor(&self) -> TextExecutor<'_> {
         match self {
             Self::Http(client) => TextExecutor::Http(client),
-            Self::Claude(profile, environment) => TextExecutor::Claude(profile, environment),
+            Self::Claude(profile, environment) => TextExecutor::Claude(profile, environment, &[]),
         }
     }
 }
@@ -748,6 +749,9 @@ async fn stream_round<'a>(
     };
     let operation = async {
         match (client.into(), tools) {
+            (TextExecutor::Claude(_, _, [_, ..]), Some(_)) => {
+                Err(TransportError::InvalidConfiguration)
+            }
             (TextExecutor::Http(client), Some(tools)) => client
                 .stream_tool_round(tools, &capability, &tx, &cancellation)
                 .await
@@ -756,11 +760,11 @@ async fn stream_round<'a>(
                 .stream_text(request, &tx, &cancellation)
                 .await
                 .map(|()| None),
-            (TextExecutor::Claude(profile, environment), None) => profile
-                .stream_text(environment, request, &tx, &cancellation)
+            (TextExecutor::Claude(profile, environment, images), None) => profile
+                .stream_text_with_images(environment, request, images, &tx, &cancellation)
                 .await
                 .map(|()| None),
-            (TextExecutor::Claude(profile, environment), Some(tools)) => profile
+            (TextExecutor::Claude(profile, environment, []), Some(tools)) => profile
                 .stream_tool_round(
                     environment,
                     tools,
@@ -917,21 +921,6 @@ pub(crate) async fn execute_with_calendar(
         .await
         .unwrap_or(false);
     let personal = binding.subscription.is_some();
-    if (personal || binding.claude_code.is_some())
-        && (media_context || !images.is_empty() || !documents.is_empty())
-    {
-        // Defense after claim: no unsupported raw attachment may enter plan IO.
-        finish(
-            &store,
-            &lease,
-            None,
-            RunState::Failed,
-            Some(RunFailure::ProviderUnavailable),
-            &signals,
-        )
-        .await;
-        return;
-    }
     // This literal current-owner service route is independent of the selected
     // text provider. It never exposes credentials or mail to that provider.
     if !native_resume
@@ -940,9 +929,18 @@ pub(crate) async fn execute_with_calendar(
         && documents.is_empty()
         && context.checkpoint.is_none()
         && context.calls.is_empty()
-        && messages
-            .last()
-            .is_some_and(|m| m.role == ContextRole::User && Store::latest_inbox_intent(&m.text))
+        && !artifact_profile
+            .as_ref()
+            .is_some_and(|p| p.selected.is_some() || p.write)
+        && !tool_profile.as_ref().is_some_and(|p| {
+            p.native_mail_model_read
+                && p.native_mail_scope
+                    .as_ref()
+                    .is_some_and(|scope| !scope.candidate_binding_ids.is_empty())
+        })
+        && messages.last().is_some_and(|m| {
+            m.role == ContextRole::User && Store::mail_connection_help_intent(&m.text)
+        })
     {
         match mail.latest_inbox_chat(&lease).await {
             Ok(true) => {
@@ -981,16 +979,23 @@ pub(crate) async fn execute_with_calendar(
     }
     if let Some(reference) = binding.claude_code.clone()
         && !model.function_tools
+        && !media_context
     {
+        let request = TextRequest {
+            model: model.model.clone(),
+            effort: model.effort.clone(),
+            max_output_tokens: 4096,
+            messages: project(messages, false),
+        };
         execute_claude_text(
             &store,
             &lease,
             &signals,
             &subscriptions,
             reference,
-            messages,
+            request,
             context,
-            false,
+            vec![],
         )
         .await;
         return;
@@ -1054,7 +1059,10 @@ pub(crate) async fn execute_with_calendar(
         .map(|m| m.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let mut messages = project(messages, protocol == Protocol::Responses);
+    let mut messages = project(
+        messages,
+        binding.claude_code.is_none() && protocol == Protocol::Responses,
+    );
     if model.function_tools {
         messages[0].text = with_trusted_context(
             knowledge_tools::system(tool_profile.as_ref()),
@@ -1105,6 +1113,20 @@ pub(crate) async fn execute_with_calendar(
                 request.messages[0].text.push_str(" HISTORY_OMITTED: whole oldest conversation turns were omitted to fit selected exact document evidence. Tell the user that earlier conversation context was omitted; do not invent it.");
             }
         }
+    }
+    if media_context && let Some(reference) = binding.claude_code.clone() {
+        execute_claude_text(
+            &store,
+            &lease,
+            &signals,
+            &subscriptions,
+            reference,
+            request,
+            context,
+            images,
+        )
+        .await;
+        return;
     }
     let built_client =
         ExecutionClient::acquire(&mut binding, &subscriptions, &lease, &capabilities, images).await;
@@ -1184,7 +1206,7 @@ pub(crate) async fn execute_with_calendar(
             .push_str(&crate::calendar_tools::system(calendar_profile.as_ref()));
     }
     if (personal || matches!(&client, ExecutionClient::Claude(..))) && model.function_tools {
-        request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. One explicit current-user solo-event Calendar command uses its separate typed action and actual receipt. Background work requires an original explicit owner mission delegation and its durable grant; foreground tools alone grant none. Media attachments remain unavailable.");
+        request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. One explicit current-user solo-event Calendar command uses its separate typed action and actual receipt. Background work requires an original explicit owner mission delegation and its durable grant; foreground tools alone grant none.");
     }
     let artifact_write = artifact_profile.as_ref().is_some_and(|p| p.write);
     let external_report = artifact_profile.as_ref().is_some_and(|p| {
@@ -1424,14 +1446,10 @@ pub(crate) async fn execute_with_calendar(
         }
         let valid = if model.function_tools {
             preflight_tools(client.executor(), protocol, &tool_request, &capabilities)
-        } else if personal {
-            moosuri_connectors::model::chatgpt::encode_text_request(&request, &capabilities)
-                .map(|_| ())
-                .map_err(TransportError::from)
+        } else if let ExecutionClient::Http(client) = &client {
+            client.validate_text_request(&request)
         } else {
-            encode_request(protocol, &request, &capabilities)
-                .map(|_| ())
-                .map_err(TransportError::from)
+            Err(TransportError::InvalidConfiguration)
         };
         if valid.is_err() {
             finish(
@@ -1966,11 +1984,11 @@ async fn execute_claude_text(
     signals: &Signals,
     subscriptions: &crate::subscriptions::SubscriptionService,
     reference: moosuri_store::ClaudeExecutionRef,
-    messages: Vec<ContextMessage>,
+    request: TextRequest,
     context: AgentContext,
-    has_media: bool,
+    images: Vec<Vec<u8>>,
 ) {
-    if has_media || context.checkpoint.is_some() || !context.calls.is_empty() {
+    if context.checkpoint.is_some() || !context.calls.is_empty() {
         finish(
             store,
             lease,
@@ -1983,7 +2001,7 @@ async fn execute_claude_text(
         return;
     }
     let profile = match subscriptions.claude_profile().await {
-        Ok(p) if p.digest() == reference.profile_digest => p,
+        Ok(p) if p.digest() == reference.profile_digest && p.root_id() == reference.root_id => p,
         _ => {
             finish(
                 store,
@@ -1997,27 +2015,26 @@ async fn execute_claude_text(
             return;
         }
     };
-    let selection = match store.check_run(lease).await {
-        Ok(()) => match store.claude_run_selection(lease).await {
-            Ok(v) => v,
-            Err(_) => return,
-        },
-        Err(_) => return,
+    let model = request.model.clone();
+    let images = images
+        .into_iter()
+        .map(moosuri_connectors::model::NormalizedJpeg::new)
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(images) = images else {
+        finish(
+            store,
+            lease,
+            None,
+            RunState::Failed,
+            Some(RunFailure::ProtocolFailed),
+            signals,
+        )
+        .await;
+        return;
     };
-    let request = TextRequest {
-        model: selection.model.clone(),
-        effort: selection.effort,
-        max_output_tokens: 4096,
-        messages: project(messages, false),
-    };
-    let model = selection.model;
-    // Pure local validation cannot consume a remote dispatch reservation.
-    if moosuri_connectors::claude_code::protocol::input(
-        &request,
-        "00000000-0000-4000-8000-000000000001",
-        "00000000-0000-4000-8000-000000000002",
-    )
-    .is_err()
+    if profile
+        .validate_text_with_images(&request, &images)
+        .is_err()
     {
         finish(
             store,
@@ -2046,7 +2063,7 @@ async fn execute_claude_text(
         expected_model: &model,
     };
     let observed = stream_round(
-        TextExecutor::Claude(&profile, &reference.environment_id),
+        TextExecutor::Claude(&profile, &reference.environment_id, &images),
         &request,
         None,
         &checkpoint,

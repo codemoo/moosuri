@@ -1,0 +1,4 @@
+- [x] Bind image verification to the owner, current connection revision, model and effort.
+- [x] Send document evidence and normalized images through official subscription transports with tools disabled.
+- [x] Recheck the frozen subscription, collection and source throughout automatic extraction.
+- [x] Exercise failure paths for model identity, attachment withdrawal, connection withdrawal and token renewal.

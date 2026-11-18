@@ -1,6 +1,7 @@
 import { Button } from "@astryxdesign/core/Button";
 import { ChatComposer } from "@astryxdesign/core/Chat";
 import { WorkspaceIcon } from "./WorkspaceNavigation";
+import { MailConnectionRecovery } from "./MailConnectionRecovery";
 import { MailReplyWatches } from "./MailReplyWatches";
 import { TaskMonitors } from "./TaskMonitors";
 import { InstructionReceipts, useRunInstructions } from "./RunInstructions";
@@ -155,8 +156,8 @@ function runExplanation(run: RunView) {
 }
 const modelSendErrors:Record<string,string>={
   model_required:"사용할 모델이 없습니다. 내 모델에서 연결과 모델을 저장한 뒤 직접 다시 보내세요. 입력과 첨부는 유지됩니다.",
-  subscription_media_unsupported:"현재 구독 모델은 이미지·파일이 포함된 대화를 지원하지 않습니다. 내 모델에서 지원하는 API·로컬 모델로 바꾼 뒤 직접 다시 보내세요. 이번 첨부만 있다면 선택을 해제하고 글만 보낼 수 있습니다. 이전 메시지에도 첨부가 있으면 새 대화에서 글만 보내세요. 입력과 첨부는 유지됩니다.",
-  vision_required:"현재 모델의 이미지 읽기가 확인되지 않았습니다. 내 모델에서 개인 LLM의 이미지 연결을 확인하거나 이미지 읽기가 확인된 모델로 바꾼 뒤 직접 다시 보내세요. 공용 연결은 관리자에게 이미지 확인을 요청하세요. 이번 이미지 선택을 해제하고 글만 보낼 수도 있습니다. 이전 메시지에도 이미지가 있으면 확인된 모델을 사용하거나 새 대화를 시작하세요. 입력과 첨부는 유지됩니다.",
+  attachment_reselection_required:"이 대화에는 다른 연결로 보낸 첨부가 있습니다. 현재 구독 연결로 보낼 자료를 새 대화에 첨부하거나, 이 대화에서 이전 첨부를 다시 선택해 보내세요. 입력과 첨부는 유지됩니다.",
+  vision_required:"현재 모델의 이미지 읽기가 확인되지 않았습니다. 내 모델에서 현재 모델의 이미지 읽기를 확인하거나 이미지 읽기가 확인된 모델로 바꾼 뒤 직접 다시 보내세요. 공용 연결은 관리자에게 이미지 확인을 요청하세요. 이번 이미지 선택을 해제하고 글만 보낼 수도 있습니다. 이전 메시지에도 이미지가 있으면 확인된 모델을 사용하거나 새 대화를 시작하세요. 입력과 첨부는 유지됩니다.",
 };
 function chatError(error: unknown) {
   if (error instanceof ApiFailure) {
@@ -1162,6 +1163,7 @@ export function ChatPanel(props: Props) {
                       {turn.run.credential?.status==="waiting" ? "연결된 기기의 응답을 기다리는 중" : labels[turn.run.state]}…
                     </p>
                   )}
+                {turn.run.state === "completed" && <MailConnectionRecovery action={turn.run.mail_connection_recovery} />}
                 {turn.run.connection_wait&&<NativeMailWait accountId={accountId} runId={turn.run.id} revision={turn.run.version} wait={turn.run.connection_wait} openSettings={()=>props.openCredentials?.()} onExpired={props.onExpired}/>}
                 {turn.run.credential && <section className="run-explanation" aria-label="볼트 작업 상태">
                   <p>{turn.run.credential.service==='google'?'Gmail':'GitHub'} {turn.run.credential.repository} · {({waiting:"연결 대기",complete:"조회 완료",outcome_unknown:"결과 확인 필요",not_completed:"조회하지 못했어요",cancelled:"취소됨"} as Record<string,string>)[turn.run.credential.status]??"상태 확인"}</p>

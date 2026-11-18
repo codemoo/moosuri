@@ -387,3 +387,34 @@ pub(super) async fn handoff_cancel(
     s.store.cancel_chatgpt_handoff(&u, id).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
+
+pub(super) async fn vision_probe(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(i): Json<Input>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    let selection = moosuri_core::ModelSelection {
+        source: moosuri_core::ModelSource::PersonalChatGpt,
+        provider_id: id,
+        provider_revision: i.revision,
+        model: i.model.ok_or(StoreError::InvalidInput)?,
+        effort: i.effort,
+    };
+    match s
+        .runtime
+        .subscription_service()
+        .personal_vision_probe(&u, selection)
+        .await
+    {
+        Ok(_) => Ok(Json(serde_json::json!({"vision":true})).into_response()),
+        Err(StoreError::Unavailable) => Ok(failure(StatusCode::BAD_GATEWAY, "vision_probe_failed")),
+        Err(e) => Err(e.into()),
+    }
+}

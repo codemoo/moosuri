@@ -2,7 +2,10 @@
 use crate::*;
 use moosuri_connectors::model::protocol::{
     FinishOutcome, TextMessage, TextRequest, TextRole,
-    tools::{FunctionDefinition, ToolCapabilities, ToolRequest, encode_tool_request},
+    tools::{
+        FunctionDefinition, ToolCapabilities, ToolRequest, encode_chatgpt_plan_tool_request,
+        encode_tool_request,
+    },
 };
 use moosuri_core::RunUsage;
 use moosuri_store::ExtractionClaim;
@@ -51,7 +54,12 @@ fn selected(
     }
     Some(decision.selected)
 }
-async fn execute(store: &Store, signals: &Signals, mut claim: ExtractionClaim) {
+pub(super) async fn execute(
+    store: &Store,
+    signals: &Signals,
+    subscriptions: &subscriptions::SubscriptionService,
+    mut claim: ExtractionClaim,
+) {
     let request = request(&claim);
     let definitions = definitions();
     let tools = ToolRequest {
@@ -72,35 +80,27 @@ async fn execute(store: &Store, signals: &Signals, mut claim: ExtractionClaim) {
         ProviderKind::OpenRouter => Protocol::OpenRouterChat,
         ProviderKind::Compatible => Protocol::ChatCompletions,
     };
-    let input_bytes = match encode_tool_request(protocol, &tools, &capabilities, &capability)
-        .and_then(|mut v| {
-            // Match ModelClient::stream_encoded's public routing envelope exactly.
-            if protocol==Protocol::OpenRouterChat {
-                v["provider"]=json!({"only":claim.binding.config.router_providers,"allow_fallbacks":false,"require_parameters":true,"data_collection":"deny","zdr":claim.binding.config.zero_data_retention});
+    let encoded = if claim.binding.claude_code.is_some() {
+        moosuri_connectors::claude_code::tool_bridge::encoded_input_bytes(&tools, &capabilities)
+            .map_err(|_| ())
+    } else {
+        let body = if claim.binding.subscription.is_some() {
+            encode_chatgpt_plan_tool_request(&tools, &capabilities, &capability)
+        } else {
+            encode_tool_request(protocol, &tools, &capabilities, &capability)
+        };
+        body.map_err(|_| ()).and_then(|mut v| {
+            if protocol == Protocol::OpenRouterChat {
+                v["provider"] = json!({"only":claim.binding.config.router_providers,"allow_fallbacks":false,"require_parameters":true,"data_collection":"deny","zdr":claim.binding.config.zero_data_retention});
             }
-            serde_json::to_vec(&v)
-                .map_err(|_| moosuri_connectors::model::protocol::ProtocolError::Protocol)
-        }) {
-        Ok(v) => v.len(),
-        Err(_) => {
+            serde_json::to_vec(&v).map(|v| v.len()).map_err(|_| ())
+        })
+    };
+    let input_bytes = match encoded {
+        Ok(bytes) if bytes > 0 && bytes <= 24000 => bytes,
+        _ => {
             let _ = store
                 .fail_memory_extraction(&claim.lease, "request_bound".into())
-                .await;
-            return;
-        }
-    };
-    let credential = claim
-        .binding
-        .credential
-        .take()
-        .map(|v| Secret::new(v.to_string()))
-        .transpose();
-    let client = match credential.and_then(|v| model_client(&claim.binding.config, v, capabilities))
-    {
-        Ok(v) => v,
-        Err(_) => {
-            let _ = store
-                .fail_memory_extraction(&claim.lease, "transport_failed".into())
                 .await;
             return;
         }
@@ -121,7 +121,64 @@ async fn execute(store: &Store, signals: &Signals, mut claim: ExtractionClaim) {
     }
     let cancel = CancellationToken::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-    let operation = client.stream_tool_round(&tools, &capability, &tx, &cancel);
+    let is_claude = claim.binding.claude_code.is_some();
+    let operation = async {
+        if let Some(reference) = &claim.binding.claude_code {
+            let profile = subscriptions.claude_profile().await?;
+            if profile.digest() != reference.profile_digest
+                || profile.root_id() != reference.root_id
+            {
+                return Err(StoreError::Conflict);
+            }
+            store.check_memory_extraction(&claim.lease).await?;
+            if cancel.is_cancelled() {
+                return Err(StoreError::Conflict);
+            }
+            profile
+                .stream_tool_round(
+                    &reference.environment_id,
+                    &tools,
+                    &capabilities,
+                    &tx,
+                    &cancel,
+                )
+                .await
+                .map_err(|_| StoreError::Unavailable)
+        } else {
+            let client = if let Some(binding) = &claim.binding.subscription {
+                subscriptions
+                    .client(
+                        moosuri_store::SubscriptionAuthority::Extraction(claim.lease.clone()),
+                        binding.clone(),
+                    )
+                    .await?
+            } else {
+                let credential = claim
+                    .binding
+                    .credential
+                    .take()
+                    .map(|v| Secret::new(v.to_string()))
+                    .transpose()
+                    .map_err(|_| StoreError::Unavailable)?;
+                model_client(
+                    &claim.binding.config,
+                    credential,
+                    TextCapabilities {
+                        efforts: request.effort.iter().cloned().collect(),
+                    },
+                )
+                .map_err(|_| StoreError::Unavailable)?
+            };
+            store.check_memory_extraction(&claim.lease).await?;
+            if cancel.is_cancelled() {
+                return Err(StoreError::Conflict);
+            }
+            client
+                .stream_tool_round(&tools, &capability, &tx, &cancel)
+                .await
+                .map_err(|_| StoreError::Unavailable)
+        }
+    };
     tokio::pin!(operation);
     let mut tick = tokio::time::interval(Duration::from_millis(200));
     let deadline = tokio::time::sleep(Duration::from_secs(120));
@@ -163,6 +220,12 @@ async fn execute(store: &Store, signals: &Signals, mut claim: ExtractionClaim) {
     }
     if interrupted {
         cancel.cancel();
+        // The CLI supervisor owns a real child; wait for cancellation settlement.
+        // OAuth/network cancellation conservatively keeps any dispatched rotation
+        // unknown rather than replaying a rotating token exchange.
+        if is_claude && result.is_none() {
+            let _ = operation.await;
+        }
         let _ = store
             .fail_memory_extraction(&claim.lease, "interrupted".into())
             .await;
@@ -213,12 +276,16 @@ async fn execute(store: &Store, signals: &Signals, mut claim: ExtractionClaim) {
     }
     signals.changed();
 }
-pub(crate) async fn worker(store: Store, signals: Signals) {
+pub(crate) async fn worker(
+    store: Store,
+    signals: Signals,
+    subscriptions: subscriptions::SubscriptionService,
+) {
     let mut tick = tokio::time::interval(Duration::from_millis(400));
     loop {
         tokio::select! {biased;_=signals.stop.cancelled()=>break,_=tick.tick()=>{}}
         if let Ok(Some(claim)) = store.claim_memory_extraction().await {
-            execute(&store, &signals, claim).await;
+            execute(&store, &signals, &subscriptions, claim).await;
         }
     }
 }

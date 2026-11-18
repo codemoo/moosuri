@@ -1,5 +1,8 @@
 # Memories from opted-in source collections
 
+A collection can use a verified shared, personal compatible, Claude subscription or ChatGPT subscription model. Enabling extraction freezes the granting account, collection, provider revision, model and effort. Each source revision uses a single data-only model decision. The service checks the grant before dispatch and before saving quoted facts. Disconnecting or withdrawing the collection invalidates pending work. The 1,024 output tokens reserved per job are an accounting reservation on subscription routes that do not enforce a requested output limit. Usage from the provider is recorded.
+
+
 In `/app/knowledge`, select a connected collection and open **자료에서 기억 만들기**.
 Automatic extraction starts disabled. Choose either the author label already
 reported by each source, or explicitly assign one person label to this collection.

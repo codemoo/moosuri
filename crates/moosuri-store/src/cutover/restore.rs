@@ -489,6 +489,7 @@ fn quarantine(
     crate::media::quarantine(&tx)?;
     crate::audio::quarantine_restore(&tx)?;
     tx.execute("DELETE FROM provider_vision_probes", [])?;
+    tx.execute_batch("DELETE FROM personal_subscription_vision_probes; DELETE FROM personal_subscription_vision_attempts;")?;
     // Immutable provider metadata stays; move each current pointer to a new disabled
     // revision before using the existing permitted old-ciphertext retirement rule.
     let providers = tx

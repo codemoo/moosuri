@@ -940,16 +940,8 @@ async fn schema29_and30_upgrade_keeps_unknown_legacy_without_self_derived_oracle
         store.finish_mail_dispatch(&d, None, false).await.unwrap();
         drop(d);
         drop(store);
-        let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-        conn.execute_batch("DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;")
-            .unwrap();
-        if predecessor == 29 {
-            conn.execute_batch("DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;").unwrap();
-        }
-        conn.execute_batch("DROP TABLE thread_creation_receipts;")
-            .unwrap();
-        conn.pragma_update(None, "user_version", predecessor)
-            .unwrap();
+        let mut conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+        crate::schema::tests::replace_with_predecessor(&mut conn, predecessor);
         drop(conn);
         let store = Store::open(dir.path()).unwrap();
         let p = store.next_mail_reconciliation().await.unwrap().unwrap();
@@ -1448,7 +1440,7 @@ async fn latest_inbox_owner_missing_ambiguous_and_withdrawal_are_fenced() {
         .await
         .unwrap();
     let claim = store.claim_agent_run().await.unwrap().unwrap();
-    let (owner, missing) = store
+    let (owner, missing, _) = store
         .latest_inbox_request(&claim.lease)
         .await
         .unwrap()
@@ -1558,4 +1550,68 @@ async fn latest_inbox_literal_settlement_is_terminal_and_hidden_from_model_histo
             .iter()
             .any(|m| m.text.contains("PRIVATE_LITERAL_MAIL"))
     );
+}
+
+#[tokio::test]
+async fn inbox_connection_help_cannot_grant_latest_mail_read_authority() {
+    let _g = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let a = admin(&store).await;
+    configured(&store, &a.user).await;
+    let c = connect(&store, &a.user).await;
+    let thread = store
+        .create_thread(&a.user, "Synthetic inbox help".into())
+        .await
+        .unwrap();
+    store
+        .submit_turn(
+            &a.user,
+            thread.id.clone(),
+            Uuid::new_v4().to_string(),
+            "내 Gmail 받은편지함을 요약해 줘".into(),
+        )
+        .await
+        .unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    assert!(
+        !store
+            .latest_inbox_request(&claim.lease)
+            .await
+            .unwrap()
+            .unwrap()
+            .2
+    );
+    assert_eq!(
+        store
+            .pin_latest_inbox(&claim.lease, c.id, c.epoch)
+            .await
+            .err(),
+        Some(StoreError::Forbidden)
+    );
+    assert_eq!(
+        store
+            .finish_latest_inbox(&claim.lease, "must not claim a read".into(), None)
+            .await
+            .err(),
+        Some(StoreError::Forbidden)
+    );
+    store
+        .finish_mail_connection_guidance(
+            &claim.lease,
+            "Synthetic connection guidance".into(),
+            MailConnectionRecovery::Connect,
+        )
+        .await
+        .unwrap();
+    let turn = store
+        .conversation(&a.user, thread.id, None)
+        .await
+        .unwrap()
+        .turns
+        .remove(0);
+    assert!(matches!(
+        turn.run.mail_connection_recovery,
+        Some(MailConnectionRecovery::Connect)
+    ));
 }

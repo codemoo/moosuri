@@ -670,7 +670,14 @@ impl Browser {
             self.pipe.write_all(encoded.as_bytes()).await.map_err(|_|Error::Unknown)?;
             let mut consumed=0usize;
             loop {
-                let mut bytes=zeroize::Zeroizing::new(Vec::new());loop{let b=self.pipe.read_u8().await.map_err(|_|Error::Unknown)?;consumed+=1;if consumed>1024*1024{return Err(Error::ProviderContent)}if b==0{break}bytes.push(b)}
+                let mut bytes = zeroize::Zeroizing::new(Vec::new());
+                loop {
+                    let byte = self.pipe.read_u8().await.map_err(|_| Error::Unknown)?;
+                    consumed += 1;
+                    if consumed > 1024 * 1024 { return Err(Error::ProviderContent); }
+                    if byte == 0 { break; }
+                    bytes.push(byte);
+                }
                 let v:Value=serde_json::from_slice(&bytes).map_err(|_|Error::ProviderContent)?;
                 if v["method"]=="Fetch.requestPaused" {
                     let target=v.pointer("/params/request/url").and_then(Value::as_str).and_then(|s|url::Url::parse(s).ok());

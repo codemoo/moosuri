@@ -1115,8 +1115,12 @@ async fn source_mute_schema38_upgrade_is_atomic_and_preserves_old_visible_receip
         .unwrap();
     let visible = deliver(&store, at).await;
     drop(store);
-    let c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    c.execute_batch("DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DROP TRIGGER native_mail_effect_identity;DROP TABLE native_mail_effects;DROP TABLE native_mail_connections;ALTER TABLE mail_connections DROP COLUMN native_send;DROP TABLE recovery_forward_dispatches;DROP TABLE recovery_forward_allocations;DROP TRIGGER claude_retire_delete;DROP TRIGGER claude_retire_disconnect;DROP TRIGGER claude_exclusive_insert;DROP TRIGGER claude_shared_insert;DROP TRIGGER claude_shared_update;DROP TRIGGER claude_chatgpt_insert;DROP TRIGGER claude_chatgpt_update;DROP TABLE personal_claude_selections;DROP TABLE claude_code_probes;DROP TABLE claude_code_bindings;DROP TABLE claude_code_retirements;DROP TABLE claude_code_usage;ALTER TABLE browser_workspaces DROP COLUMN idle_until;ALTER TABLE browser_workspaces DROP COLUMN owner_session;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=38;CREATE TABLE notification_source_preferences(conflict INTEGER);").unwrap();
+    let mut c = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+    {
+        crate::schema::tests::replace_with_predecessor(&mut c, 38);
+        c.execute_batch("CREATE TABLE notification_source_preferences(conflict INTEGER);")
+    }
+    .unwrap();
     assert!(Store::open(dir.path()).is_err());
     assert_eq!(
         c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))

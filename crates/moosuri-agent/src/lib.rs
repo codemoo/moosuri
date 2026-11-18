@@ -49,9 +49,18 @@ use tokio::{
 const RUN_DRAIN: Duration = Duration::from_secs(6);
 const MAIL_DRAIN: Duration = Duration::from_secs(2);
 const BROWSER_DRAIN: Duration = Duration::from_secs(7);
-// Enclose both sequential supervisor drains, with time to publish completion.
-// In particular, do not abort independently owned browser cleanup at five seconds.
-const SUPERVISOR_WAIT: Duration = Duration::from_secs(24);
+// Claude cancellation settles a bounded engine remove (10s) and, when needed,
+// an independent absence query (10s) before releasing its authentication lock.
+const EXTRACTION_DRAIN: Duration = Duration::from_secs(22);
+// Enclose every sequential drain, including extraction cleanup, for both the
+// supervisor owner and concurrent public shutdown callers.
+const SUPERVISOR_WAIT: Duration = Duration::from_secs(
+    RUN_DRAIN.as_secs()
+        + BROWSER_DRAIN.as_secs()
+        + EXTRACTION_DRAIN.as_secs()
+        + 6 * MAIL_DRAIN.as_secs()
+        + 2,
+);
 
 /// Constructs a connection without DNS or IO. Hosted secrets cannot be retargeted.
 pub fn model_client(
@@ -404,8 +413,11 @@ async fn supervise(
     let claude_service = subscriptions.clone();
     let claude_worker =
         tokio::spawn(async move { claude_service.claude_retirement_worker().await });
-    let mut extraction_worker =
-        tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
+    let mut extraction_worker = tokio::spawn(automatic_memory::worker(
+        store.clone(),
+        signals.clone(),
+        subscriptions.clone(),
+    ));
     let mut schedule_worker = tokio::spawn(schedules::worker(store.clone(), signals.clone()));
     let mut push_worker = tokio::spawn(push::worker(store.clone(), signals.clone()));
     let mut telegram_worker = tokio::spawn(telegram::worker(
@@ -474,8 +486,11 @@ async fn supervise(
         }
         if extraction_worker.is_finished() {
             let _ = (&mut extraction_worker).await;
-            extraction_worker =
-                tokio::spawn(automatic_memory::worker(store.clone(), signals.clone()));
+            extraction_worker = tokio::spawn(automatic_memory::worker(
+                store.clone(),
+                signals.clone(),
+                subscriptions.clone(),
+            ));
         }
         if source_worker.is_finished() {
             let _ = (&mut source_worker).await;
@@ -556,7 +571,7 @@ async fn supervise(
         source_worker.abort();
         let _ = source_worker.await;
     }
-    if tokio::time::timeout(MAIL_DRAIN, &mut extraction_worker)
+    if tokio::time::timeout(EXTRACTION_DRAIN, &mut extraction_worker)
         .await
         .is_err()
     {

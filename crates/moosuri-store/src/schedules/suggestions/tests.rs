@@ -603,8 +603,10 @@ fn predecessor56(
         .unwrap()
         .write_all(&items[1].1)
         .unwrap();
-    let c = Connection::open(&db).unwrap();
-    c.execute_batch("DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE agent_planner_steps;DROP TABLE proactive_suggestions;DROP TABLE proactive_topics;DELETE FROM notification_source_preferences;DELETE FROM reminder_schedules;DROP TRIGGER installation_cutover_monotonic;DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=56;").unwrap();
+    let mut c = Connection::open(&db).unwrap();
+    crate::schema::tests::replace_with_predecessor(&mut c, 56);
+    c.execute_batch("DROP TRIGGER installation_cutover_monotonic;")
+        .unwrap();
     c.execute(
         "UPDATE installation_cutover SET seal=?1",
         [serde_json::to_string(&manifest.seal).unwrap()],

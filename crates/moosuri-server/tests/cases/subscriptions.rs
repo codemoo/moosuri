@@ -32,7 +32,7 @@ async fn personal_chatgpt_settings_require_owner_and_shared_default_rejects_pers
         .await,
         json!([])
     );
-    for operation in ["models", "probe", "tool-probe"] {
+    for operation in ["models", "probe", "tool-probe", "vision-probe"] {
         let r = send(
             &app,
             "POST",

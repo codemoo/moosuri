@@ -13,7 +13,11 @@ fn intent(text: &str) -> bool {
         .trim_end_matches(['?', '!', '.', '？'])
         .to_lowercase();
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let en = text.strip_prefix("please ").unwrap_or(&text);
+    let text = ["아니 ", "그러니까 ", "아니요 ", "i mean ", "i asked "]
+        .iter()
+        .find_map(|prefix| text.strip_prefix(prefix))
+        .unwrap_or(&text);
+    let en = text.strip_prefix("please ").unwrap_or(text);
     let en = en.strip_suffix(" please").unwrap_or(en);
     if [
         "what is my latest email",
@@ -27,6 +31,16 @@ fn intent(text: &str) -> bool {
         "what is the latest email in my inbox",
         "show me the latest email in my inbox",
         "what is my latest received email",
+        "what was my latest email",
+        "what email did i receive last",
+        "what's the latest email i received",
+        "what is the latest email i received",
+        "tell me what my latest email is",
+        "what's my most recent email",
+        "show me the last email i received",
+        "show me the most recent email i received",
+        "what's the most recent email in my inbox",
+        "tell me my latest email",
     ]
     .contains(&en)
     {
@@ -46,6 +60,10 @@ fn intent(text: &str) -> bool {
         "제일 최근에 온 ",
         "최근에 온 ",
         "마지막으로 온 ",
+        "최근 온 ",
+        "최근 받은 ",
+        "최근에 도착한 ",
+        "최근 수신한 ",
         "최신 ",
     ];
     let actions = [
@@ -70,6 +88,12 @@ fn intent(text: &str) -> bool {
         "을 알려줘",
         "을 보여줘",
         "을 보여 줘",
+        "이 뭐냐고",
+        "이 뭐냐고요",
+        " 뭐냐고",
+        " 뭐냐고요",
+        " 알려달라고",
+        " 보여달라고",
     ];
     if let Some(rest) = recencies.iter().find_map(|p| ko.strip_prefix(p)) {
         return mails
@@ -84,6 +108,14 @@ fn intent(text: &str) -> bool {
     {
         let questions = [
             "뭐야",
+            "뭐냐고",
+            "뭐냐고요",
+            "뭐냐구",
+            "뭔데",
+            "뭐였냐고",
+            "알려달라고",
+            "보여달라고",
+            "뭔지알려달라고",
             "뭐예요",
             "뭐였어",
             "뭔지알려줘",
@@ -108,10 +140,111 @@ fn intent(text: &str) -> bool {
     false
 }
 
+// This grammar only requests setup help when no usable read connection exists.
+// It never authorizes mail IO; pin_latest_inbox still requires intent() above.
+fn connection_help_intent(text: &str) -> bool {
+    if intent(text) {
+        return true;
+    }
+    if text.len() > 512 || text.contains(['\n', '\r']) {
+        return false;
+    }
+    let text = text
+        .trim()
+        .trim_end_matches(['?', '!', '.', '？'])
+        .to_lowercase();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = ["아니 ", "그러니까 ", "아니요 ", "i mean "]
+        .iter()
+        .find_map(|prefix| text.strip_prefix(prefix))
+        .unwrap_or(&text);
+    let en = text.strip_prefix("please ").unwrap_or(text);
+    if [
+        "check my email",
+        "check my emails",
+        "read my email",
+        "show my inbox",
+        "show me my inbox",
+        "summarize my inbox",
+        "summarise my inbox",
+        "summarize my recent emails",
+        "show my unread emails",
+        "do i have any new email",
+        "do i have any new emails",
+        "check my gmail inbox",
+        "what are my recent emails",
+        "show me my recent emails",
+        "show me my unread emails",
+        "any new emails in my inbox",
+    ]
+    .contains(&en)
+    {
+        return true;
+    }
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let ko = ["내가", "나의", "내"]
+        .iter()
+        .find_map(|p| compact.strip_prefix(p))
+        .unwrap_or(&compact);
+    let ko = ["최근", "새로온", "안읽은", "오늘온", "오늘받은"]
+        .iter()
+        .find_map(|p| ko.strip_prefix(p))
+        .unwrap_or(ko);
+    [
+        "gmail받은편지함",
+        "지메일받은편지함",
+        "gmail메일",
+        "이메일",
+        "받은편지함",
+        "지메일",
+        "메일",
+        "gmail",
+    ]
+    .iter()
+    .filter_map(|p| ko.strip_prefix(p))
+    .any(|rest| {
+        let rest = rest.strip_prefix(['을', '를']).unwrap_or(rest);
+        [
+            "확인해줘",
+            "확인해줘요",
+            "확인해주세요",
+            "좀확인해줘",
+            "읽어줘",
+            "읽어주세요",
+            "요약해줘",
+            "요약해주세요",
+            "보여줘",
+            "보여주세요",
+            "알려줘",
+            "확인해달라고",
+        ]
+        .contains(&rest)
+    })
+}
+
+pub(crate) fn recovery_view(
+    conn: &Connection,
+    tenant: &str,
+    run: &str,
+) -> Result<Option<MailConnectionRecovery>> {
+    let item: Option<String> = conn.query_row("SELECT item FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item IN('mail-recovery-admin_setup','mail-recovery-member_setup','mail-recovery-connect','mail-recovery-reconnect','mail-recovery-choose_account') LIMIT 1", params![tenant,run], |r|r.get(0)).optional()?;
+    item.map(|item| {
+        parse(&format!(
+            "\"{}\"",
+            item.trim_start_matches("mail-recovery-")
+        ))
+    })
+    .transpose()
+}
+
 impl Store {
     /// Cheap discovery only; authority is revalidated against the stored text.
     pub fn latest_inbox_intent(text: &str) -> bool {
         intent(text)
+    }
+
+    pub fn mail_connection_help_intent(text: &str) -> bool {
+        connection_help_intent(text)
     }
 
     /// The original stored request, never history or model text, authorizes this
@@ -119,17 +252,17 @@ impl Store {
     pub async fn latest_inbox_request(
         &self,
         lease: &RunLease,
-    ) -> Result<Option<(UserContext, Vec<MailConnection>)>> {
+    ) -> Result<Option<(UserContext, Vec<MailConnection>, bool)>> {
         let lease = lease.clone();
         self.call(move |db| {
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run = chat::guard(&tx, &db.provider_key, &lease)?;
-            if !intent(&run.text) || crate::missions::is_mission(&tx, &run.tenant, &run.id)? { return Ok(None); }
+            if !connection_help_intent(&run.text) || crate::missions::is_mission(&tx, &run.tenant, &run.id)? { return Ok(None); }
             let user = chat::authority(&tx, &run)?;
             let ids = tx.prepare("SELECT id FROM mail_connections WHERE tenant_id=?1 AND account_id=?2 ORDER BY id LIMIT 17")?.query_map(params![user.tenant.0, user.account.id], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             let connections = ids.iter().map(|id| connection(&tx, &user, id)).collect::<Result<Vec<_>>>()?;
             tx.commit()?;
-            Ok(Some((user, connections)))
+            Ok(Some((user, connections, intent(&run.text))))
         }).await
     }
 
@@ -161,13 +294,36 @@ impl Store {
         text: String,
         binding: Option<&MailBinding>,
     ) -> Result<()> {
+        self.finish_inbox_result(lease, text, binding, None).await
+    }
+    pub async fn finish_mail_connection_guidance(
+        &self,
+        lease: &RunLease,
+        text: String,
+        recovery: MailConnectionRecovery,
+    ) -> Result<()> {
+        self.finish_inbox_result(lease, text, None, Some(recovery))
+            .await
+    }
+    async fn finish_inbox_result(
+        &self,
+        lease: &RunLease,
+        text: String,
+        binding: Option<&MailBinding>,
+        recovery: Option<MailConnectionRecovery>,
+    ) -> Result<()> {
         let pin = binding.map(|b| (b.id.clone(), b.epoch, b.app.clone()));
         let lease = lease.clone();
         self.call(move |db| {
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let run = chat::guard(&tx, &db.provider_key, &lease)?;
-            if !intent(&run.text) || crate::missions::is_mission(&tx, &run.tenant, &run.id)? { return Err(StoreError::Forbidden); }
+            if !(intent(&run.text) || recovery.is_some() && connection_help_intent(&run.text)) || crate::missions::is_mission(&tx, &run.tenant, &run.id)? { return Err(StoreError::Forbidden); }
             let user = chat::authority(&tx, &run)?;
+            if let Some(recovery) = recovery {
+                if matches!(recovery, MailConnectionRecovery::AdminSetup) && user.account.role != Role::Admin { return Err(StoreError::Forbidden); }
+                let item = format!("mail-recovery-{}", json(&recovery)?.trim_matches('"'));
+                chat::apply_patches(&tx, &run, vec![OutputPatch::Append { item, text: String::new(), phase: None, refusal: false }])?;
+            }
             if let Some((id, epoch, app)) = &pin {
                 let c = connection(&tx, &user, id)?;
                 if c.status != "active" || c.native_send || c.epoch != *epoch { return Err(StoreError::Conflict); }
@@ -194,6 +350,12 @@ mod tests {
             "내 이메일 가장 최근에 온 게 뭐야?",
             "내 이메일 가장 최근에 온게 뭐야?",
             "내 이메일 최근에 온거 뭐야",
+            "내 이메일 최근에 온거 뭐냐고",
+            "아니 내 이메일 최근에 온 거 뭐냐고요?",
+            "그러니까 내 메일 최근에 받은 게 뭔데?",
+            "내 최근에 받은 메일이 뭐냐고?",
+            "I mean what's my latest email?",
+            "What email did I receive last?",
             "내 이메일 최근에 온 거 뭐야?",
             "내 메일 최근에 받은 건 뭐야?",
             "지메일 마지막으로 온 것 알려 줘",
@@ -218,8 +380,48 @@ mod tests {
             "내 최신 메일 보여주고 답장해줘",
             "최근 메일 기능 설명해줘",
             "show Alice's latest email",
+            "내 이메일 최근에 온거 뭐냐고 라는 문장 번역해줘",
+            "내 이메일 최근에 온거 뭐냐고 답장도 보내",
+            "내 이메일 최근에 온거 뭐냐고 지워줘",
+            "최근에 온거 뭐냐고",
+            "I asked show my latest email and delete it",
         ] {
             assert!(!intent(text), "{text}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::*;
+    #[test]
+    fn common_read_help_is_separate_from_permission_to_read_latest_mail() {
+        for text in [
+            "내 Gmail 받은편지함을 요약해 줘",
+            "내 이메일 확인해줘",
+            "받은편지함 보여줘",
+            "내 안 읽은 메일 보여줘",
+            "Check my email",
+            "Summarize my recent emails",
+        ] {
+            assert!(connection_help_intent(text), "{text}");
+            assert!(!intent(text), "{text}");
+        }
+        for text in [
+            "메일 보내줘",
+            "내 메일 삭제해줘",
+            "내 메일 확인하고 답장해줘",
+            "내 Gmail 받은편지함을 요약해 줘 그리고 기록해",
+            "저장한 이메일 요약해줘",
+            "이 자료에서 이메일 찾아줘",
+            "요약해줘",
+            "메일 연결 방법 설명해줘",
+            "Translate check my email",
+            "Do not check my email",
+            "check my email and forward it",
+            "\"check my email\"",
+        ] {
+            assert!(!connection_help_intent(text), "{text}");
         }
     }
 }

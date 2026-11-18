@@ -585,9 +585,29 @@ impl Profile {
         tx: &mpsc::Sender<ModelEvent>,
         cancel: &CancellationToken,
     ) -> Result<(), TransportError> {
+        self.stream_text_with_images(environment, request, &[], tx, cancel)
+            .await
+    }
+    /// Pure native-frame validation before a caller creates durable dispatch state.
+    pub fn validate_text_with_images(
+        &self,
+        request: &TextRequest,
+        images: &[crate::model::NormalizedJpeg],
+    ) -> Result<(), TransportError> {
+        let (session, user) = protocol::ids();
+        protocol::input_with_images(request, &session, &user, images).map(|_| ())
+    }
+    pub async fn stream_text_with_images(
+        &self,
+        environment: &str,
+        request: &TextRequest,
+        images: &[crate::model::NormalizedJpeg],
+        tx: &mpsc::Sender<ModelEvent>,
+        cancel: &CancellationToken,
+    ) -> Result<(), TransportError> {
         let _os = tokio::select! {_=cancel.cancelled()=>return Err(TransportError::Cancelled),r=self.os_lock(environment)=>r?};
         let (session, user) = protocol::ids();
-        let (system, input) = protocol::input(request, &session, &user)?;
+        let (system, input) = protocol::input_with_images(request, &session, &user, images)?;
         let (env, temp, listener) = tokio::select! {_=cancel.cancelled()=>return Err(TransportError::Cancelled),r=self.prepare(environment)=>r?};
         std::fs::write(temp.path().join("system.txt"), system).map_err(|_| err())?;
         std::fs::write(temp.path().join("mcp.json"), b"{\"mcpServers\":{}}").map_err(|_| err())?;

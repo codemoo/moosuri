@@ -24,6 +24,7 @@ serde_json.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
 rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
 moosuri-credential-broker = {path="../moosuri-credential-broker"}
 moosuri-store = { path = "../moosuri-store", features = ["test-fixtures"] }

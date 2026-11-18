@@ -86,6 +86,17 @@ pub fn encode_text_request(
     Ok(body)
 }
 
+/// SIWC supports image input when the exact selected model accepts images.
+/// Uses the public Responses input_image shape, preserving every plan restriction.
+pub fn encode_image_request(
+    request: &TextRequest,
+    caps: &TextCapabilities,
+    images: &[super::NormalizedJpeg],
+) -> Result<Value, ProtocolError> {
+    let body = encode_text_request(request, caps)?;
+    super::protocol::overlay_images(Protocol::Responses, request, body, images)
+}
+
 pub(super) fn parse_catalog(bytes: &[u8]) -> Result<Catalog, TransportError> {
     if bytes.len() > 1024 * 1024 {
         return Err(TransportError::LimitExceeded);

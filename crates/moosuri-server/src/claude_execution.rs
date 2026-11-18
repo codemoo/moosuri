@@ -233,3 +233,27 @@ pub(super) async fn login_cancel(
     )
     .into_response())
 }
+
+pub(super) async fn vision_probe(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(i): Json<ToolProbeInput>,
+) -> HttpResult {
+    let u = current(&s, &h).await?;
+    let _permit = s
+        .probes
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StoreError::Busy)?;
+    match s
+        .runtime
+        .subscription_service()
+        .claude_vision_probe(&u, id, i.revision, i.model, i.effort)
+        .await
+    {
+        Ok(_) => Ok(Json(serde_json::json!({"vision":true})).into_response()),
+        Err(StoreError::Unavailable) => Ok(failure(StatusCode::BAD_GATEWAY, "vision_probe_failed")),
+        Err(e) => Err(e.into()),
+    }
+}

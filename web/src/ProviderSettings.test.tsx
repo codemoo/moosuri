@@ -836,3 +836,29 @@ it("explains personal tools, delegated reads and the remaining external-work lim
   expect(tools).toHaveTextContent("메일 발송은 최종 내용을 보고 매번 허락해야 합니다.");
   expect(screen.getByText(/현재 요청으로 기본 캘린더의 단일 시간 일정/)).toHaveTextContent("예약 업무의 메일·일정 변경 및 브라우저·볼트 사용은 아직 지원하지 않습니다.");
 });
+
+describe("personal image verification", () => {
+  it.each([["personal_chat_gpt","chatgpt"],["personal_claude_code","claude"]] as const)("checks exact effective %s image tuple only on request", async (source,route) => {
+    const user=userEvent.setup();
+    const choice:ModelChoice={...high,source,provider_id:"vision-owner"};
+    const settings:ModelSettings={selection:{...selection(choice),source},effective:choice,choices:[choice]};
+    const endpoint=`/settings/${route}/vision-owner/vision-probe`;
+    const {calls}=server(call=>call.path===endpoint?response({vision:true}):undefined,member,undefined,settings);
+    open("/settings/model");
+    const button=await screen.findByRole("button",{name:"현재 모델 이미지 확인"});
+    expect(calls.some(call=>call.path===endpoint)).toBe(false);
+    await user.click(button);
+    expect(await screen.findByText(/이 모델과 추론 강도의 이미지 연결을 확인했습니다/)).toBeInTheDocument();
+    expect(calls.filter(call=>call.path===endpoint).map(call=>call.body)).toEqual([{revision:1,model:choice.model,effort:"high"}]);
+    expect(calls.some(call=>call.method==="PUT")).toBe(false);
+  });
+  it("keeps a failed image proof unavailable and permits retry",async()=>{
+    const choice:ModelChoice={...high,source:"personal_chat_gpt",provider_id:"vision-owner"};
+    server(call=>call.path.endsWith("/vision-probe")?response({code:"vision_probe_failed"},502):undefined,member,undefined,{selection:null,effective:choice,choices:[choice]});
+    open("/settings/model");
+    await userEvent.click(await screen.findByRole("button",{name:"현재 모델 이미지 확인"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("이미지 픽셀을 정확히 읽는지 확인하지 못했습니다");
+    expect(screen.getByRole("button",{name:"현재 모델 이미지 확인"})).toBeEnabled();
+    expect(screen.queryByText(/이 모델과 추론 강도의 이미지 연결을 확인했습니다/)).not.toBeInTheDocument();
+  });
+});

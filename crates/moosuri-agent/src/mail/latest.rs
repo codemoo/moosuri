@@ -3,32 +3,45 @@ use super::*;
 
 fn connection_guidance(
     configured: bool,
+    admin: bool,
     connections: &[moosuri_core::MailConnection],
-) -> Option<&'static str> {
+) -> Option<(&'static str, moosuri_core::MailConnectionRecovery)> {
+    use moosuri_core::MailConnectionRecovery::*;
     let active = connections
         .iter()
         .filter(|c| !c.native_send && c.status == "active")
         .count();
-    if active > 1 {
-        Some(
-            "Gmail 읽기 계정이 여러 개 연결되어 있어 어느 받은편지함을 읽을지 정할 수 없어요. 설정 → Gmail (/settings/mail)에서 연결된 계정을 확인해 주세요. 현재 이 간편 조회는 여러 계정 중 하나를 선택하는 기능이 없어 메일을 읽지 않았어요. 원하는 계정의 Gmail 받은편지함에서 최신 메일을 확인해 주세요.",
-        )
-    } else if !configured {
-        Some(
-            "이 무수리에는 Google 앱이 아직 설정되지 않아 Gmail을 조회할 수 없어요. 설정 → Gmail (/settings/mail)에서 안내를 확인하고, 설치 관리자에게 Google 앱 설정을 요청한 뒤 본인의 Gmail을 연결해 주세요. 연결을 마친 후 다시 물어보면 받은편지함을 확인할 수 있어요.",
-        )
+    if !configured {
+        if admin {
+            Some((
+                "이 설치에는 Google 앱이 아직 준비되지 않아 Gmail을 확인하지 못했어요. 관리자인 본인이 Google 설치 설정에서 이 서버의 OAuth 앱을 먼저 설정한 뒤, Gmail 설정에서 본인 계정의 읽기 권한을 연결해 주세요. 연결을 마치면 여기서 다시 요청할 수 있어요.",
+                AdminSetup,
+            ))
+        } else {
+            Some((
+                "이 설치에는 Google 앱이 아직 준비되지 않아 Gmail을 확인하지 못했어요. 설치 관리자에게 Google 앱 설정을 요청해 주세요. 준비가 끝나면 Gmail 설정에서 본인 Google 계정으로 로그인하고 읽기 권한을 연결한 뒤 다시 요청해 주세요.",
+                MemberSetup,
+            ))
+        }
+    } else if active > 1 {
+        Some((
+            "Gmail 읽기 계정이 여러 개 연결되어 있어 어느 받은편지함을 읽을지 정할 수 없어요. Gmail 설정에서 연결된 계정을 확인해 주세요. 현재 간편 조회는 여러 계정 중 하나를 선택할 수 없어 메일을 읽지 않았어요.",
+            ChooseAccount,
+        ))
     } else if active == 0
         && connections
             .iter()
             .any(|c| !c.native_send && c.status == "needs_reconnect")
     {
-        Some(
-            "Gmail 읽기 연결을 다시 인증해야 해요. 설정 → Gmail (/settings/mail)에서 본인의 계정을 다시 연결한 뒤 최신 메일을 다시 요청해 주세요. 지금은 메일을 확인하지 못했어요.",
-        )
+        Some((
+            "Gmail 읽기 연결을 다시 인증해야 해요. Gmail 설정에서 본인 계정을 다시 연결한 뒤 요청해 주세요. 지금은 메일을 확인하지 못했어요.",
+            Reconnect,
+        ))
     } else if active == 0 {
-        Some(
-            "현재 로그인한 계정에 Gmail 읽기 연결이 없어요. 설정 → Gmail (/settings/mail)에서 본인의 Google 계정을 연결하고 읽기 권한을 허용한 뒤 다시 요청해 주세요. 기기의 미리보기·발송 전용 연결만으로는 이 최신 메일 조회를 할 수 없어요.",
-        )
+        Some((
+            "현재 로그인한 계정에 Gmail 읽기 연결이 없어요. Gmail 설정에서 본인 Google 계정으로 로그인하고 읽기 권한을 허용한 뒤 다시 요청해 주세요. 기기의 미리보기·발송 전용 연결만으로는 이 조회를 할 수 없어요.",
+            Connect,
+        ))
     } else {
         None
     }
@@ -38,14 +51,33 @@ impl MailService {
         &self,
         lease: &moosuri_store::RunLease,
     ) -> Result<bool, StoreError> {
-        let Some((user, connections)) = self.store.latest_inbox_request(lease).await? else {
+        let Some((user, connections, latest)) = self.store.latest_inbox_request(lease).await?
+        else {
             return Ok(false);
         };
-        let configured = self.configured().await;
-        let (text, binding) = if let Some(guidance) = connection_guidance(configured, &connections)
+        if !latest
+            && connections
+                .iter()
+                .any(|c| !c.native_send && c.status == "active")
         {
-            (guidance.to_owned(), None)
-        } else {
+            return Ok(false);
+        }
+        let configured = self.configured().await;
+        if let Some((guidance, recovery)) = connection_guidance(
+            configured,
+            user.account().role == moosuri_core::Role::Admin,
+            &connections,
+        ) {
+            let _delivery = self.signals.delivery.write().await;
+            self.store
+                .finish_mail_connection_guidance(lease, guidance.into(), recovery)
+                .await?;
+            return Ok(true);
+        }
+        if !latest {
+            return Ok(false);
+        }
+        let (text, binding) = {
             let c = connections
                 .iter()
                 .find(|c| !c.native_send && c.status == "active")
@@ -170,26 +202,30 @@ mod tests {
     #[test]
     fn actionable_missing_ambiguous_and_disconnected_accounts() {
         assert!(
-            connection_guidance(false, &[])
+            connection_guidance(false, false, &[])
                 .unwrap()
+                .0
                 .contains("Google 앱")
         );
         assert!(
-            connection_guidance(true, &[])
+            connection_guidance(true, false, &[])
                 .unwrap()
+                .0
                 .contains("읽기 연결이 없어요")
         );
         assert!(
-            connection_guidance(true, &[connection("needs_reconnect")])
+            connection_guidance(true, false, &[connection("needs_reconnect")])
                 .unwrap()
+                .0
                 .contains("다시 인증")
         );
         assert!(
-            connection_guidance(true, &[connection("active"), connection("active")])
+            connection_guidance(true, false, &[connection("active"), connection("active")])
                 .unwrap()
+                .0
                 .contains("여러 개")
         );
-        assert!(connection_guidance(true, &[connection("active")]).is_none());
+        assert!(connection_guidance(true, false, &[connection("active")]).is_none());
     }
     #[test]
     fn bounded_scan_never_claims_latest_without_exhaustion() {

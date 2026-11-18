@@ -75,7 +75,7 @@ async fn latest_inbox_unconfigured_turn_finishes_without_any_model_call() {
             &user,
             thread.clone(),
             uuid::Uuid::new_v4().to_string(),
-            "내 이메일 가장 최근에 온게 뭐야?".into(),
+            "내 이메일 최근에 온거 뭐냐고".into(),
         )
         .await
         .unwrap();
@@ -87,8 +87,12 @@ async fn latest_inbox_unconfigured_turn_finishes_without_any_model_call() {
         .iter()
         .map(|m| m.text.as_str())
         .collect::<String>();
-    assert!(text.contains("Google 앱이 아직 설정되지"));
-    assert!(text.contains("/settings/mail"));
+    assert!(text.contains("Google 앱이 아직 준비되지"));
+    assert!(text.contains("관리자인 본인"));
+    assert!(matches!(
+        done.run.mail_connection_recovery,
+        Some(moosuri_core::MailConnectionRecovery::AdminSetup)
+    ));
     assert_eq!(
         store.usage_summary(&user).await.unwrap().dispatched_calls,
         0
@@ -97,7 +101,7 @@ async fn latest_inbox_unconfigured_turn_finishes_without_any_model_call() {
 }
 
 #[tokio::test]
-async fn unverified_compatible_model_does_not_respond_to_an_explicit_tool_request() {
+async fn unconnected_inbox_request_recovers_before_unverified_model_tools_error() {
     let _guard = TEST_LOCK.lock().await;
     let (_dir, store, user, thread) = configured("http://127.0.0.1:1/v1").await;
     let runtime = Runtime::start(store.clone());
@@ -113,14 +117,18 @@ async fn unverified_compatible_model_does_not_respond_to_an_explicit_tool_reques
     assert!(!admitted.run.model.function_tools);
     runtime.wake();
     let blocked = wait_for(&store, &user, &thread, |turn| !turn.run.state.active()).await;
-    assert_eq!(blocked.run.error.as_deref(), Some("tools_required"));
-    assert!(!blocked.run.can_retry);
+    assert_eq!(blocked.run.state, RunState::Completed);
+    assert!(matches!(
+        blocked.run.mail_connection_recovery,
+        Some(moosuri_core::MailConnectionRecovery::AdminSetup)
+    ));
     assert!(
-        store
-            .retry_run(&user, blocked.run.id.clone(), blocked.run.attempt)
-            .await
-            .is_err()
+        blocked
+            .assistant
+            .iter()
+            .any(|m| m.text.contains("Google 앱"))
     );
+    assert!(!blocked.run.can_retry);
     assert_eq!(
         store.usage_summary(&user).await.unwrap().dispatched_calls,
         0
@@ -244,4 +252,101 @@ async fn latest_inbox_scans_metadata_across_pages_and_keeps_literal_result_out_o
             .any(|m| m.text.contains("PRIVATE_NEWEST_LITERAL"))
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn inbox_recovery_uses_actual_google_setup_and_current_members_own_connection() {
+    use moosuri_connectors::gmail::{OAuthClient, SecretString};
+    use moosuri_core::MailConnectionRecovery;
+    let _guard = TEST_LOCK.lock().await;
+    for configured in [false, true] {
+        let (_dir, store, admin, _) = tool_configured("http://127.0.0.1:1/v1").await;
+        let redirect = "https://assistant.example.test/callback";
+        if configured {
+            store
+                .save_google_setup(
+                    &admin,
+                    0,
+                    OAuthClient {
+                        client_id: "synthetic.apps.googleusercontent.com".into(),
+                        client_secret: SecretString::new("synthetic-secret".into()).unwrap(),
+                        redirect_uri: redirect.into(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let invite = store
+            .create_user(
+                &admin,
+                "Synthetic Member".into(),
+                "member@example.test".into(),
+            )
+            .await
+            .unwrap();
+        let restricted = store
+            .login("member@example.test".into(), invite.temporary_password)
+            .await
+            .unwrap();
+        let member = store
+            .change_password(&restricted.user, PASSWORD.into())
+            .await
+            .unwrap()
+            .user;
+        let thread = store
+            .create_thread(&member, "Synthetic mail request".into())
+            .await
+            .unwrap();
+        store
+            .submit_turn(
+                &member,
+                thread.id.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                "내 이메일 최근에 온거 뭐냐고".into(),
+            )
+            .await
+            .unwrap();
+        let claim = store.claim_agent_run().await.unwrap().unwrap();
+        let (changes, _) = watch::channel(0);
+        let signals = Signals {
+            stop: CancellationToken::new(),
+            wake: Arc::new(Notify::new()),
+            changes,
+            delivery: Arc::new(tokio::sync::RwLock::new(())),
+        };
+        let mail = crate::mail::MailService::new(store.clone(), None, signals)
+            .with_managed_google(Some(redirect.into()));
+        assert!(mail.latest_inbox_chat(&claim.lease).await.unwrap());
+        let turn = store
+            .conversation(&member, thread.id, None)
+            .await
+            .unwrap()
+            .turns
+            .remove(0);
+        let text = turn
+            .assistant
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect::<String>();
+        if configured {
+            assert!(matches!(
+                turn.run.mail_connection_recovery,
+                Some(MailConnectionRecovery::Connect)
+            ));
+            assert!(text.contains("현재 로그인한 계정에"));
+            assert!(!text.contains("설치 관리자"));
+        } else {
+            assert!(matches!(
+                turn.run.mail_connection_recovery,
+                Some(MailConnectionRecovery::MemberSetup)
+            ));
+            assert!(text.contains("설치 관리자에게 Google 앱 설정"));
+            assert!(!text.contains("관리자인 본인"));
+        }
+        assert_eq!(turn.run.state, RunState::Completed);
+        assert_eq!(
+            store.usage_summary(&member).await.unwrap().dispatched_calls,
+            0
+        );
+    }
 }

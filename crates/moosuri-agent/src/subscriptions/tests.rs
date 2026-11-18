@@ -33,6 +33,9 @@ struct Provider {
     jwks_release: Notify,
     refresh_id: AtomicUsize,
     token_status: AtomicUsize,
+    pause_token: AtomicUsize,
+    token_entered: Notify,
+    token_release: Notify,
     nonce: Mutex<String>,
     shared_documents: AtomicUsize,
     tool_mode: AtomicUsize,
@@ -94,6 +97,9 @@ async fn fixture() -> Fixture {
         jwks_release: Notify::new(),
         refresh_id: AtomicUsize::new(0),
         token_status: AtomicUsize::new(200),
+        pause_token: AtomicUsize::new(0),
+        token_entered: Notify::new(),
+        token_release: Notify::new(),
         nonce: Mutex::new(String::new()),
         shared_documents: AtomicUsize::new(0),
         tool_mode: AtomicUsize::new(0),
@@ -107,7 +113,7 @@ async fn fixture() -> Fixture {
  .route("/.well-known/openid-configuration",get(|State(s):State<Arc<Provider>>|async move{if s.pause_discovery.load(Ordering::SeqCst)==1{s.discovery_entered.notify_one();s.discovery_release.notified().await;}
  if s.discovery_status.load(Ordering::SeqCst)!=200{return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()}Json(json!({"issuer":"https://auth.openai.com","authorization_endpoint":"https://auth.openai.com/api/accounts/authorize","token_endpoint":"https://auth.openai.com/api/accounts/oauth/token","revocation_endpoint":"https://auth.openai.com/api/accounts/oauth/revoke","jwks_uri":"https://auth.openai.com/.well-known/jwks.json","id_token_signing_alg_values_supported":["RS256"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["none"]})).into_response()}))
  .route("/.well-known/jwks.json",get(|State(s):State<Arc<Provider>>|async move{if s.pause_jwks.load(Ordering::SeqCst)==1{s.jwks_entered.notify_one();s.jwks_release.notified().await;}let status=s.jwks_status.load(Ordering::SeqCst) as u16;if status!=200{return (axum::http::StatusCode::from_u16(status).unwrap(),Json(json!({"error":"temporary_fixture_failure"}))).into_response()}Json(json!({"keys":[{"kty":"RSA","kid":"fixture","alg":"RS256","use":"sig","key_ops":["verify"],"n":MODULUS,"e":"AQAB"}]})).into_response()}))
- .route("/api/accounts/oauth/token",post(|State(s):State<Arc<Provider>>,Form(f):Form<HashMap<String,String>>|async move{let n=s.tokens.fetch_add(1,Ordering::SeqCst);assert_eq!(f["client_id"],"issued-synthetic-client");assert_eq!(f["resource"],"https://api.openai.com/v1");if f["grant_type"]=="refresh_token"{s.refreshes.fetch_add(1,Ordering::SeqCst);tokio::time::sleep(Duration::from_millis(s.delay.load(Ordering::SeqCst) as u64)).await;let status=s.token_status.load(Ordering::SeqCst) as u16;if status!=200{return (axum::http::StatusCode::from_u16(status).unwrap(),Json(json!({"error":"temporary_fixture_failure"}))).into_response()}let mut body=json!({"access_token":format!("synthetic-access-{n}"),"refresh_token":format!("synthetic-refresh-{n}"),"token_type":"Bearer","expires_in":3600});if s.refresh_id.load(Ordering::SeqCst)==1{body["id_token"]=json!(signed(&s.nonce.lock().unwrap()));}Json(body).into_response()}else{if f["code"]=="synthetic-invalid-grant"{return (axum::http::StatusCode::BAD_REQUEST,Json(json!({"error":"invalid_grant"}))).into_response()}*s.nonce.lock().unwrap()=f["code"].clone();Json(json!({"access_token":"synthetic-access-0","refresh_token":"synthetic-refresh-0","token_type":"Bearer","expires_in":s.expires.load(Ordering::SeqCst),"scope":"openid profile email offline_access resource.invoke chatgpt.tokens.use.direct","id_token":signed(&f["code"])})).into_response()}}))
+ .route("/api/accounts/oauth/token",post(|State(s):State<Arc<Provider>>,Form(f):Form<HashMap<String,String>>|async move{let n=s.tokens.fetch_add(1,Ordering::SeqCst);assert_eq!(f["client_id"],"issued-synthetic-client");assert_eq!(f["resource"],"https://api.openai.com/v1");if f["grant_type"]=="refresh_token"{s.refreshes.fetch_add(1,Ordering::SeqCst);if s.pause_token.load(Ordering::SeqCst)==1{s.token_entered.notify_one();s.token_release.notified().await;}tokio::time::sleep(Duration::from_millis(s.delay.load(Ordering::SeqCst) as u64)).await;let status=s.token_status.load(Ordering::SeqCst) as u16;if status!=200{return (axum::http::StatusCode::from_u16(status).unwrap(),Json(json!({"error":"temporary_fixture_failure"}))).into_response()}let mut body=json!({"access_token":format!("synthetic-access-{n}"),"refresh_token":format!("synthetic-refresh-{n}"),"token_type":"Bearer","expires_in":3600});if s.refresh_id.load(Ordering::SeqCst)==1{body["id_token"]=json!(signed(&s.nonce.lock().unwrap()));}Json(body).into_response()}else{if f["code"]=="synthetic-invalid-grant"{return (axum::http::StatusCode::BAD_REQUEST,Json(json!({"error":"invalid_grant"}))).into_response()}*s.nonce.lock().unwrap()=f["code"].clone();Json(json!({"access_token":"synthetic-access-0","refresh_token":"synthetic-refresh-0","token_type":"Bearer","expires_in":s.expires.load(Ordering::SeqCst),"scope":"openid profile email offline_access resource.invoke chatgpt.tokens.use.direct","id_token":signed(&f["code"])})).into_response()}}))
  .route("/api/accounts/oauth/revoke",post(||async{axum::http::StatusCode::SERVICE_UNAVAILABLE}))
  .route("/v1/models",get(||async{Json(json!({"models":[{"slug":"fixture-model","display_name":"Fixture","visibility":"list"}]}))}))
  .route("/v1/chat/completions",post(|State(s):State<Arc<Provider>>,Json(body):Json<Value>|async move{
@@ -118,6 +124,10 @@ async fn fixture() -> Fixture {
  }))
  .route("/v1/responses",post(|State(s):State<Arc<Provider>>,axum::extract::ConnectInfo(peer):axum::extract::ConnectInfo<std::net::SocketAddr>,headers:axum::http::HeaderMap,Json(body):Json<Value>|async move{
   s.model_peers.lock().unwrap().push(peer);
+  if body.pointer("/tools/0/tools/0/name").and_then(Value::as_str) == Some("source_memory_selection") {
+    return automatic_memory_tests::response(&s, &headers, &body).await;
+  }
+  if s.tool_mode.load(Ordering::SeqCst)==90 { return vision_probe_tests::response(&s,&body).await; }
   let phase_mode = s.answer_phase.load(Ordering::SeqCst);
   if phase_mode > 0 {
     s.models.fetch_add(1, Ordering::SeqCst);
@@ -132,7 +142,13 @@ async fn fixture() -> Fixture {
   if body.get("tools").is_some() && s.tool_mode.load(Ordering::SeqCst)>0 {
     return foreground_tools_tests::tool_response(&s,&headers,&body).await;
   }
-  s.models.fetch_add(1,Ordering::SeqCst);assert!(!body.to_string().contains("SYNTHETIC_PRIVATE_DOCUMENT_PSR2"));assert_eq!(body["model"],"fixture-model");assert_eq!(body["store"],false);assert_eq!(body["stream"],true);assert!(body.get("max_output_tokens").is_none());assert!(body.get("tools").is_none());for item in body["input"].as_array().unwrap(){assert_ne!(item["role"],"system")}
+  s.models.fetch_add(1,Ordering::SeqCst);
+  if body.to_string().contains("SYNTHETIC_PRIVATE_DOCUMENT_PSR2"){
+    assert!(body.to_string().contains("Explicitly reselect this source"));
+    assert!(body.get("tools").is_none());
+    s.shared_documents.fetch_add(1,Ordering::SeqCst);
+  }
+  assert_eq!(body["model"],"fixture-model");assert_eq!(body["store"],false);assert_eq!(body["stream"],true);assert!(body.get("max_output_tokens").is_none());assert!(body.get("tools").is_none());for item in body["input"].as_array().unwrap(){assert_ne!(item["role"],"system")}
   let item=json!({"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK","annotations":[]}]});let events=[json!({"type":"response.created","response":{"id":"r","model":"fixture-model"}}),json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"m","role":"assistant","content":[]}}),json!({"type":"response.content_part.added","item_id":"m","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}),json!({"type":"response.output_text.delta","item_id":"m","output_index":0,"content_index":0,"delta":"OK"}),json!({"type":"response.output_text.done","item_id":"m","output_index":0,"content_index":0,"text":"OK"}),json!({"type":"response.content_part.done","item_id":"m","output_index":0,"content_index":0,"part":{"type":"output_text","text":"OK","annotations":[]}}),json!({"type":"response.output_item.done","output_index":0,"item":item}),json!({"type":"response.completed","response":{"id":"r","model":"fixture-model","status":"completed","output":[item],"usage":{"input_tokens":8,"output_tokens":2}}})];let text=events.iter().map(|e|format!("data: {e}\n\n")).collect::<String>();([(axum::http::header::CONTENT_TYPE,"text/event-stream")],text).into_response()
  })).with_state(state.clone());
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -808,7 +824,7 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
             "Read this source".into(),
             None,
             vec![moosuri_core::MediaRef {
-                id: file.id,
+                id: file.id.clone(),
                 revision: file.revision,
             }],
         )
@@ -830,18 +846,17 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
         .await
         .unwrap();
     let requests = f.state.models.load(Ordering::SeqCst);
-    // Queued ancestors are excluded, without disturbing their pinned shared source.
-    assert!(matches!(
-        store
-            .submit_turn(
-                &owner.user,
-                thread.id.clone(),
-                uuid::Uuid::new_v4().to_string(),
-                "Follow-up while queued".into()
-            )
-            .await,
-        Err(StoreError::SubscriptionMediaUnsupported)
-    ));
+    // The thread accepts only one active turn. An attempted model switch cannot overtake its queued source.
+    let refused = store
+        .submit_turn(
+            &owner.user,
+            thread.id.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "Follow-up while queued".into(),
+        )
+        .await
+        .err();
+    assert_eq!(refused, Some(StoreError::Conflict));
     let first = store.claim_agent_run().await.unwrap().unwrap();
     assert!(
         first
@@ -879,7 +894,7 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
                 "Plain follow-up".into()
             )
             .await,
-        Err(StoreError::SubscriptionMediaUnsupported)
+        Err(StoreError::AttachmentReselectionRequired)
     ));
     assert_eq!(f.state.models.load(Ordering::SeqCst), requests);
     assert_eq!(
@@ -930,7 +945,7 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
     .await;
     assert_eq!(
         store
-            .conversation(&owner.user, thread.id, None)
+            .conversation(&owner.user, thread.id.clone(), None)
             .await
             .unwrap()
             .turns[1]
@@ -940,6 +955,50 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
     );
     assert_eq!(f.state.shared_documents.load(Ordering::SeqCst), 2);
     assert_eq!(f.state.models.load(Ordering::SeqCst), requests);
+    store
+        .set_model_preference(&owner.user, Some(selection))
+        .await
+        .unwrap();
+    store
+        .submit_turn_with_media(
+            &owner.user,
+            thread.id.clone(),
+            uuid::Uuid::new_v4().to_string(),
+            "Explicitly reselect this source".into(),
+            None,
+            vec![moosuri_core::MediaRef {
+                id: file.id.clone(),
+                revision: file.revision,
+            }],
+        )
+        .await
+        .unwrap();
+    let selected = store.claim_agent_run().await.unwrap().unwrap();
+    assert!(
+        selected.media_context && !selected.model.function_tools && selected.tool_profile.is_none()
+    );
+    crate::runner::execute(
+        store.clone(),
+        selected,
+        s.signals.clone(),
+        crate::mail::MailService::new(store.clone(), None, s.signals.clone()),
+        crate::web::Service::new(None),
+        s.clone(),
+    )
+    .await;
+    assert_eq!(
+        store
+            .conversation(&owner.user, thread.id, None)
+            .await
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .run
+            .state,
+        RunState::Completed
+    );
+    assert_eq!(f.state.shared_documents.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
@@ -1891,7 +1950,7 @@ async fn lost_refresh_acquisition_ack_releases_actor_lease_before_next_attempt()
 }
 
 #[tokio::test]
-async fn acquired_refresh_cleanup_cannot_release_new_nonce_or_dispatched_exchange() {
+async fn dropped_refresh_cleanup_preserves_new_nonce_and_quarantines_exact_dispatched_exchange() {
     let _guard = crate::tests::TEST_LOCK.lock().await;
     let f = fixture().await;
     f.state.expires.store(1, Ordering::SeqCst);
@@ -1923,7 +1982,7 @@ async fn acquired_refresh_cleanup_cannot_release_new_nonce_or_dispatched_exchang
         )
         .await
         .unwrap();
-    let a = SubscriptionAuthority::User(u);
+    let a = SubscriptionAuthority::User(u.clone());
     let SubscriptionAccess::Refresh(old, _) = store
         .subscription_access(a.clone(), b.clone())
         .await
@@ -1950,11 +2009,34 @@ async fn acquired_refresh_cleanup_cannot_release_new_nonce_or_dispatched_exchang
     store.dispatch_subscription_refresh(&current).await.unwrap();
     store.abandon_subscription_refresh(&current).await.unwrap();
     assert!(matches!(
-        store.subscription_access(a, b).await.unwrap(),
+        store
+            .subscription_access(a.clone(), b.clone())
+            .await
+            .unwrap(),
         SubscriptionAccess::Wait
     ));
+    drop(old);
+    assert_eq!(store.subscriptions(&u).await.unwrap()[0].status, "active");
+    assert!(matches!(
+        store
+            .subscription_access(a.clone(), b.clone())
+            .await
+            .unwrap(),
+        SubscriptionAccess::Wait
+    ));
+    drop(current);
+    assert_eq!(
+        store.subscriptions(&u).await.unwrap()[0].status,
+        "needs_reauth"
+    );
+    assert!(store.subscription_access(a, b).await.is_err());
     assert_eq!(f.state.refreshes.load(Ordering::SeqCst), 0);
 }
 
 #[path = "answer_phase_tests.rs"]
 mod answer_phase_tests;
+
+#[path = "automatic_memory_tests.rs"]
+mod automatic_memory_tests;
+#[path = "vision_probe_tests.rs"]
+mod vision_probe_tests;

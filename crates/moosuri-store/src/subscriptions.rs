@@ -19,6 +19,7 @@ pub struct SubscriptionRef {
 pub enum SubscriptionAuthority {
     User(UserContext),
     Run(RunLease),
+    Extraction(crate::ExtractionLease),
 }
 pub struct SubscriptionLogin {
     pub attempt_id: String,
@@ -53,6 +54,10 @@ impl Drop for RefreshCleanup {
         let (b, generation, nonce) = (self.binding.clone(), self.generation, self.nonce.clone());
         let command: Command = Box::new(move |db| {
             let _ = abandon_refresh(&db.conn, &b, generation, &nonce);
+            // A dropped dispatched exchange may already have rotated remotely.
+            // Invalidate only this exact lease; never replay its old token or
+            // quarantine a newer nonce/generation/revision after successful CAS.
+            let _ = refresh_failure_for(&db.conn, &b, generation, &nonce, "rotation_unknown");
         });
         if let Err(mpsc::error::TrySendError::Full(command)) = sender.try_send(command) {
             let weak = self.sender.clone();
@@ -204,6 +209,9 @@ fn authorize(
                 return Err(StoreError::NotFound);
             }
             Ok(u.epoch)
+        }
+        SubscriptionAuthority::Extraction(lease) => {
+            crate::automatic_memory::authorize_subscription(c, key, lease, b)
         }
         SubscriptionAuthority::Run(l) => {
             let r = chat::guard(c, key, l)?;
@@ -804,8 +812,16 @@ fn validate_attempt(
     }
 }
 fn refresh_failure(c: &Connection, l: &SubscriptionRefresh, state: &str) -> Result<()> {
-    let b = &l.binding;
-    let changed=c.execute("UPDATE chatgpt_sessions SET refresh_state=?7,cipher=CASE WHEN ?7='idle' THEN cipher ELSE NULL END,refresh_nonce=NULL,refresh_until=NULL,cooldown_until=?8 WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND generation=?5 AND refresh_nonce=?6 AND refresh_state='dispatched'",params![b.tenant,b.account,b.id,b.revision,l.generation,l.nonce,state,now()?+5])?;
+    refresh_failure_for(c, &l.binding, l.generation, &l.nonce, state)
+}
+fn refresh_failure_for(
+    c: &Connection,
+    b: &SubscriptionRef,
+    generation: i64,
+    nonce: &str,
+    state: &str,
+) -> Result<()> {
+    let changed=c.execute("UPDATE chatgpt_sessions SET refresh_state=?7,cipher=CASE WHEN ?7='idle' THEN cipher ELSE NULL END,refresh_nonce=NULL,refresh_until=NULL,cooldown_until=?8 WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3 AND revision=?4 AND generation=?5 AND refresh_nonce=?6 AND refresh_state='dispatched'",params![b.tenant,b.account,b.id,b.revision,generation,nonce,state,now()?+5])?;
     if changed == 1 && state != "idle" {
         c.execute("UPDATE chatgpt_bindings SET status='needs_reauth' WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND current_revision=?4 AND status='active'",params![b.tenant,b.account,b.id,b.revision])?;
     }

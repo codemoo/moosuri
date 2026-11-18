@@ -142,7 +142,7 @@ exercise this integration. They do not establish real account/workspace eligibil
 live capability or remotely managed hosted-app approval. Independent security and
 actual account acceptance remain separate gates.
 
-The model settings distinguish verified tools, an unverified tool capability, and the text-only Claude subscription connection. Tool support is recorded for the exact connection revision, model, and reasoning strength. The current model can use its existing verification action. When the owner explicitly changes to a different model, the picker prefers a verified tool combination if available. Chat routes supported direct Gmail inbox requests independent of the model. For other clearly tool-dependent requests on a text-only selection, chat shows a model settings action before dispatch.
+The model settings distinguish verified tools, an unverified tool capability, and subscription connections with separately verified tool and image capabilities. Tool support is recorded for the exact connection revision, model, and reasoning strength. The current model can use its existing verification action. When the owner explicitly changes to a different model, the picker prefers a verified tool combination if available. Chat routes supported direct Gmail inbox requests independent of the model. For other clearly tool-dependent requests on a text-only selection, chat shows a model settings action before dispatch.
 
 ## 별도 음성 연결
 

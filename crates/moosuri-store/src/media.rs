@@ -137,15 +137,45 @@ pub(super) fn apply_delete(conn: &Connection, tenant: &str, account: &str, id: &
     agent_execution::purge_runs(conn, tenant, runs)?;
     Ok(())
 }
-/// Same ready, non-withdrawn conversation prefix used by attachment inheritance.
-/// P1 personal text must reject this before copying dependencies or loading bytes.
-pub(super) fn thread_has_context(
+/// Materialize media only after the submitting owner has explicitly attached each
+/// inherited revision to this same subscription connection in the thread prefix.
+pub(super) fn authorize_subscription_context(
     conn: &Connection,
-    tenant: &str,
-    account: &str,
-    thread: &str,
-) -> Result<bool> {
-    Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM media_run_dependencies d JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.run_id JOIN media_objects m ON m.tenant_id=d.tenant_id AND m.id=d.media_id WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.thread_id=?3 AND m.state='ready' AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=r.tenant_id AND a.run_id=r.id AND a.invalidated=1))",params![tenant,account,thread],|r|r.get(0))?)
+    run: &crate::chat::Run,
+) -> Result<()> {
+    use moosuri_core::ModelSource;
+    if !matches!(
+        run.model.source,
+        ModelSource::PersonalChatGpt | ModelSource::PersonalClaudeCode
+    ) || !has_context(conn, &run.tenant, &run.id)?
+    {
+        return Ok(());
+    }
+    let unselected:bool=conn.query_row("SELECT EXISTS(
+        SELECT 1 FROM media_run_dependencies d
+        JOIN chat_runs current ON current.tenant_id=d.tenant_id AND current.id=d.run_id
+        WHERE d.tenant_id=?1 AND d.run_id=?2 AND NOT EXISTS(
+            SELECT 1 FROM chat_media selected JOIN chat_runs prior
+            ON prior.tenant_id=selected.tenant_id AND prior.id=selected.run_id
+            WHERE selected.tenant_id=d.tenant_id AND selected.media_id=d.media_id AND selected.revision=d.revision
+              AND prior.account_id=current.account_id AND prior.thread_id=current.thread_id AND prior.sequence<=current.sequence
+              AND json_extract(prior.model,'$.source')=json_extract(current.model,'$.source')
+              AND json_extract(prior.model,'$.provider_id')=json_extract(current.model,'$.provider_id')
+              AND json_extract(prior.model,'$.provider_revision')=json_extract(current.model,'$.provider_revision')
+        ))",params![run.tenant,run.id],|r|r.get(0))?;
+    if unselected {
+        return Err(StoreError::AttachmentReselectionRequired);
+    }
+    let sends_pixels:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM chat_media c
+        JOIN media_objects m ON m.tenant_id=c.tenant_id AND m.id=c.media_id AND m.revision=c.revision
+        WHERE c.tenant_id=?1 AND c.run_id=?2 AND m.account_id=?3 AND m.state='ready' AND m.filename IS NULL)",
+        params![run.tenant,run.id,run.account],|r|r.get(0))?;
+    if sends_pixels
+        && !crate::subscription_vision::proven(conn, &run.tenant, &run.account, &run.model)?
+    {
+        return Err(StoreError::VisionRequired);
+    }
+    Ok(())
 }
 pub(super) fn has_context(conn: &Connection, tenant: &str, run: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -791,8 +821,12 @@ mod tombstone_quota_tests {
         let store = Store::open(dir.path()).unwrap();
         let user = admin(&store).await.user;
         drop(store);
-        let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-        conn.execute_batch("DROP TRIGGER IF EXISTS native_task_mail_delete;DROP TRIGGER IF EXISTS native_mail_effect_identity;DROP TRIGGER IF EXISTS claude_exclusive_insert;DROP TRIGGER IF EXISTS claude_shared_insert;DROP TRIGGER IF EXISTS claude_shared_update;DROP TRIGGER IF EXISTS claude_chatgpt_insert;DROP TRIGGER IF EXISTS claude_chatgpt_update;DROP TRIGGER IF EXISTS claude_retire_delete;DROP TRIGGER IF EXISTS claude_retire_disconnect;DROP TRIGGER IF EXISTS recovery_forward_allocations_no_update;DROP TRIGGER IF EXISTS recovery_forward_allocations_no_delete;DROP TRIGGER IF EXISTS recovery_forward_dispatches_no_update;DROP TRIGGER IF EXISTS recovery_forward_dispatches_no_delete;DROP TRIGGER IF EXISTS mail_send_evidence_immutable;DROP TRIGGER IF EXISTS calendar_action_origin_withdrawal_no_reset;DROP TABLE IF EXISTS native_mail_settlement_cursor;DROP TABLE IF EXISTS compound_draft_adoptions;DROP TABLE IF EXISTS mission_browser_selections;DROP TABLE IF EXISTS mission_action_contracts;DROP TABLE IF EXISTS compound_report_adoptions;DROP TABLE IF EXISTS native_mail_context_dependencies;DROP TABLE IF EXISTS native_task_mail_selections;DROP TABLE IF EXISTS native_task_mail_reads;DROP TABLE IF EXISTS native_task_mail_bindings;DROP TABLE IF EXISTS mail_provider_saves;DROP TABLE IF EXISTS credential_model_mail_payloads;DROP TABLE IF EXISTS credential_model_mail_grants;DROP TABLE IF EXISTS agent_planner_steps;DROP TABLE IF EXISTS proactive_suggestions;DROP TABLE IF EXISTS proactive_topics;DROP TABLE IF EXISTS native_mail_effects;DROP TABLE IF EXISTS native_mail_connections;DROP TABLE IF EXISTS claude_code_usage;DROP TABLE IF EXISTS claude_code_retirements;DROP TABLE IF EXISTS personal_claude_selections;DROP TABLE IF EXISTS claude_code_probes;DROP TABLE IF EXISTS claude_code_bindings;DROP TABLE IF EXISTS recovery_forward_dispatches;DROP TABLE IF EXISTS recovery_forward_allocations;ALTER TABLE mail_connections DROP COLUMN native_send;ALTER TABLE browser_workspaces DROP COLUMN owner_session;ALTER TABLE browser_workspaces DROP COLUMN idle_until;DROP TABLE IF EXISTS mission_input_replies;DROP TABLE IF EXISTS mission_input_waits;DROP TABLE mission_connection_waits;DROP TABLE mission_connection_selections;DROP TABLE mission_connection_slots;DROP TABLE connection_aliases;DROP TABLE mission_report_contracts;DROP TABLE learned_page_dispatches;DROP TABLE artifact_external_evidence;DROP TABLE artifact_external_context;DROP TABLE artifact_external_profiles;DROP TABLE mission_acceptances;DROP TABLE schedule_chat_drafts;DROP TABLE source_run_starts;DROP TABLE conversation_recall_dependencies;DROP TABLE followup_reminders;DROP TRIGGER credential_chat_delete;DROP TABLE credential_chat_waits;ALTER TABLE credential_broker_jobs DROP COLUMN step;DROP TABLE credential_broker_repositories;DROP TABLE credential_broker_jobs;DROP TABLE invitation_deliveries;DROP TABLE request_continuations;DROP TABLE deleted_account_effects;DROP TABLE vault_lifecycle_outbox;DROP TABLE account_deletions;ALTER TABLE accounts DROP COLUMN deleted;DROP TABLE mail_schedules;ALTER TABLE mail_oauth_sessions DROP COLUMN compose;DROP INDEX local_notifications_source;DROP TRIGGER notification_suppression_monotonic;DROP TABLE notification_source_preferences;ALTER TABLE local_notifications DROP COLUMN source_suppressed;ALTER TABLE local_notifications DROP COLUMN push_suppressed;DROP TABLE learned_skill_receipts;DROP TABLE learned_skill_observations;DROP TABLE learned_skill_uses;DROP TABLE learned_skill_proofs;DROP TABLE learned_skills;DROP TABLE credential_broker_auth;DROP TABLE credential_broker_bindings;DROP TABLE credential_broker_devices;DROP TABLE credential_broker_pairs;DROP TABLE credential_broker_invocations;DROP TABLE credential_broker_commitments;DROP TABLE community_catalog_cache;DROP TRIGGER chatgpt_handoff_session_logout;DROP TRIGGER chatgpt_handoff_account_epoch;DROP TRIGGER chatgpt_handoff_binding_change;DROP TRIGGER session_purpose_valid_insert;DROP TRIGGER session_purpose_immutable;ALTER TABLE sessions DROP COLUMN absolute_deadline;ALTER TABLE sessions DROP COLUMN purpose;DROP TABLE chatgpt_handoffs;DROP TRIGGER audio_authority_no_delete;DROP TRIGGER audio_authority_monotonic;DROP TABLE audio_jobs;DROP TABLE audio_selection;DROP TABLE audio_authority;DROP TRIGGER personal_subscription_exclusive;DROP TRIGGER personal_shared_exclusive;DROP TRIGGER personal_shared_exclusive_update;DROP TABLE personal_subscription_selections;DROP TABLE chatgpt_model_probes;DROP TABLE chatgpt_auth_attempts;DROP TABLE chatgpt_sessions;DROP TABLE chatgpt_binding_revisions;DROP TABLE chatgpt_bindings;DROP TABLE subscription_runtime;DROP TABLE mail_reconciliations;DROP TABLE mail_send_evidence;DROP TABLE calendar_agent_action_origins;DROP TABLE calendar_agent_action_links;DROP TABLE calendar_command_plans;DROP TABLE calendar_agent_observations;DROP TABLE calendar_run_dependencies;DROP TABLE calendar_agent_profiles;DROP TABLE mission_chat_commands;DROP TABLE mission_chat_plans;DROP TABLE recurring_mission_occurrences;DROP TABLE recurring_missions;DROP TABLE calendar_actions;DROP TABLE calendar_oauth_sessions;DROP TABLE calendar_connections;DROP TABLE mission_controls;DROP TABLE mission_revisions;DROP TABLE missions;ALTER TABLE threads DROP COLUMN mission_internal;DROP TABLE vault_handoffs;DROP TABLE vault_grants;DROP TABLE vault_operation_commitments;DROP TABLE push_enrollment_receipts;DROP TABLE push_queue;DROP TABLE push_subscriptions;DROP TABLE push_vapid_meta;DROP TABLE push_owners;DROP TABLE push_worker_state;DROP TABLE schedule_chat_commands;DROP TABLE chat_media; DROP TABLE media_run_dependencies; DROP TABLE media_objects; DROP TABLE provider_vision_probes; CREATE TABLE provider_vision_probes(conflict INTEGER); DROP TABLE IF EXISTS thread_creation_receipts;PRAGMA user_version=20;").unwrap();
+        let mut conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+        {
+            crate::schema::tests::replace_with_predecessor(&mut conn, 20);
+            conn.execute_batch("CREATE TABLE provider_vision_probes(conflict INTEGER);")
+        }
+        .unwrap();
         drop(conn);
         assert!(Store::open(dir.path()).is_err());
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

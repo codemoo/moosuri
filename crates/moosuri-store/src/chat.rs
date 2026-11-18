@@ -252,6 +252,11 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
     let instruction_target = crate::run_instructions::target(conn, run)?;
     let instructions = crate::run_instructions::displayed(conn, run)?;
     Ok(RunView {
+        mail_connection_recovery: if run.state == RunState::Completed {
+            crate::mail::latest::recovery_view(conn, &run.tenant, &run.id)?
+        } else {
+            None
+        },
         supports_instructions: instruction_target
             .as_ref()
             .map(|t| t.supports_instructions)
@@ -476,13 +481,7 @@ pub(super) fn binding_for_run(
     key: &[u8; 32],
     run: &Run,
 ) -> Result<ProviderBinding> {
-    if !matches!(
-        run.model.source,
-        moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalCompatible
-    ) && crate::media::has_context(conn, &run.tenant, &run.id)?
-    {
-        return Err(StoreError::Conflict);
-    }
+    crate::media::authorize_subscription_context(conn, run)?;
     providers::binding_for_owner_choice(conn, key, &run.tenant, &run.account, &run.model)
 }
 
@@ -1066,16 +1065,6 @@ pub(super) fn submit_turn_context_in(
         &user.account.id,
         &choice,
     )?;
-    if !matches!(
-        choice.source,
-        moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalCompatible
-    ) && (!attachments.is_empty()
-        || crate::media::thread_has_context(tx, &user.tenant.0, &user.account.id, &thread_id)?)
-    {
-        // P1 excludes raw document and image history as well as current uploads.
-        // Include queued/running ancestors, matching dependency inheritance.
-        return Err(StoreError::SubscriptionMediaUnsupported);
-    }
     let mut needs_vision = false;
     for media in &attachments {
         let image:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM media_objects WHERE tenant_id=?1 AND id=?2 AND filename IS NULL)",params![user.tenant.0,media.id],|r|r.get(0))?;
@@ -1085,7 +1074,12 @@ pub(super) fn submit_turn_context_in(
             return Err(StoreError::Conflict);
         }
     }
-    if needs_vision {
+    if needs_vision
+        && matches!(
+            choice.source,
+            moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalCompatible
+        )
+    {
         let vision:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM provider_vision_probes WHERE provider_id=?1 AND revision=?2 AND model=?3 AND effort=?4)",params![choice.provider_id,choice.provider_revision,choice.model,choice.effort.as_deref().unwrap_or("")],|r|r.get(0))?;
         if !vision {
             return Err(StoreError::VisionRequired);
@@ -1137,6 +1131,22 @@ pub(super) fn submit_turn_context_in(
     // Inherit even queued/running ancestors: their output may arrive before dispatch.
     tx.execute("INSERT OR IGNORE INTO media_run_dependencies SELECT d.tenant_id,?2,d.media_id,d.revision FROM media_run_dependencies d JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.run_id JOIN media_objects m ON m.tenant_id=d.tenant_id AND m.id=d.media_id WHERE r.tenant_id=?1 AND r.thread_id=?3 AND r.id!=?2 AND m.state='ready' AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=r.tenant_id AND a.run_id=r.id AND a.invalidated=1)",params![user.tenant.0,id,thread_id])?;
     let run = load_run(tx, &user.tenant.0, &id)?;
+    crate::media::authorize_subscription_context(tx, &run)?;
+    // Media turns, including inherited document history, are evidence-only. Do
+    // not create local schedule, Calendar, artifact or other action grants.
+    if crate::media::has_context(tx, &run.tenant, &run.id)? {
+        tx.execute("UPDATE chat_runs SET model=json_remove(json_set(model,'$.mission_commands_enabled',json('false'),'$.function_tools',json('false')), '$.agent_profile') WHERE tenant_id=?1 AND id=?2",params![run.tenant,run.id])?;
+        let admitted = load_run(tx, &run.tenant, &run.id)?;
+        let result = turn(tx, &admitted)?;
+        emit(
+            tx,
+            &admitted,
+            ChatChange::Turn {
+                turn: result.clone(),
+            },
+        )?;
+        return Ok(result);
+    }
     if run.tool_profile.is_some() {
         tx.execute(
             "INSERT INTO artifact_external_profiles(tenant_id,run_id) VALUES(?1,?2)",

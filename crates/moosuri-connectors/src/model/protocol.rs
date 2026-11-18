@@ -2456,17 +2456,45 @@ pub fn encode_image_request(
     capabilities: &TextCapabilities,
     images: &[Vec<u8>],
 ) -> Result<Value, ProtocolError> {
+    if images.len() > super::MAX_IMAGES {
+        return Err(ProtocolError::LimitExceeded);
+    }
+    let images = images
+        .iter()
+        .cloned()
+        .map(super::NormalizedJpeg::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    encode_normalized_image_request(protocol, request, capabilities, &images)
+}
+
+pub fn encode_normalized_image_request(
+    protocol: Protocol,
+    request: &TextRequest,
+    capabilities: &TextCapabilities,
+    images: &[super::NormalizedJpeg],
+) -> Result<Value, ProtocolError> {
+    let value = encode_request(protocol, request, capabilities)?;
+    overlay_images(protocol, request, value, images)
+}
+
+pub(super) fn overlay_images(
+    protocol: Protocol,
+    request: &TextRequest,
+    mut value: Value,
+    images: &[super::NormalizedJpeg],
+) -> Result<Value, ProtocolError> {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    let mut value = encode_request(protocol, request, capabilities)?;
+    super::images::validate_count(images)?;
     if images.is_empty() {
         return Ok(value);
     }
-    if images.len() > 4
-        || images
-            .iter()
-            .any(|v| v.len() > 2 * 1024 * 1024 || !v.starts_with(&[255, 216, 255]))
+    // Media belongs to the current turn; never insert it into stale user history.
+    if request
+        .messages
+        .last()
+        .is_none_or(|m| m.role != TextRole::User)
     {
-        return Err(ProtocolError::LimitExceeded);
+        return Err(ProtocolError::Protocol);
     }
     let index = request
         .messages
@@ -2477,7 +2505,7 @@ pub fn encode_image_request(
         json!({"type":if protocol==Protocol::Responses{"input_text"}else{"text"},"text":request.messages[index].text}),
     ];
     for image in images {
-        let data = STANDARD.encode(image);
+        let data = STANDARD.encode(image.bytes());
         content.push(match protocol{
             Protocol::Responses=>json!({"type":"input_image","image_url":format!("data:image/jpeg;base64,{data}"),"detail":"auto"}),
             Protocol::AnthropicMessages=>json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":data}}),
@@ -2501,7 +2529,7 @@ pub fn encode_image_request(
     if serde_json::to_vec(&value)
         .map_err(|_| ProtocolError::Protocol)?
         .len()
-        > 12 * 1024 * 1024
+        > super::MAX_IMAGE_REQUEST_BYTES
     {
         return Err(ProtocolError::LimitExceeded);
     }
@@ -2531,7 +2559,7 @@ mod image_tests {
             effort: None,
         };
         let caps = TextCapabilities { efforts: vec![] };
-        let images = vec![vec![255, 216, 255, 0]];
+        let images = vec![vec![255, 216, 255, 0, 255, 217]];
         for p in [
             Protocol::Responses,
             Protocol::AnthropicMessages,
@@ -2574,6 +2602,83 @@ mod image_tests {
                 &[b"https://foreign/image".to_vec()]
             )
             .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod normalized_image_tests {
+    use super::*;
+    #[test]
+    fn images_require_current_user_and_never_replace_earlier_content() {
+        let mut request = TextRequest {
+            model: "synthetic".into(),
+            messages: vec![
+                TextMessage {
+                    role: TextRole::System,
+                    text: "instruction".into(),
+                    phase: None,
+                },
+                TextMessage {
+                    role: TextRole::User,
+                    text: "old question".into(),
+                    phase: None,
+                },
+                TextMessage {
+                    role: TextRole::Assistant,
+                    text: "old answer".into(),
+                    phase: None,
+                },
+                TextMessage {
+                    role: TextRole::User,
+                    text: "current question".into(),
+                    phase: None,
+                },
+            ],
+            max_output_tokens: 128,
+            effort: None,
+        };
+        let caps = TextCapabilities::default();
+        let images =
+            vec![crate::model::NormalizedJpeg::new(vec![255, 216, 255, 0, 255, 217]).unwrap()];
+        for protocol in [
+            Protocol::Responses,
+            Protocol::AnthropicMessages,
+            Protocol::ChatCompletions,
+            Protocol::OpenRouterChat,
+        ] {
+            let body = encode_normalized_image_request(protocol, &request, &caps, &images).unwrap();
+            let key = if protocol == Protocol::Responses {
+                "input"
+            } else {
+                "messages"
+            };
+            let offset = if protocol == Protocol::AnthropicMessages {
+                1
+            } else {
+                0
+            };
+            let baseline = encode_request(protocol, &request, &caps).unwrap();
+            assert_eq!(
+                body[key][1 - offset]["content"],
+                baseline[key][1 - offset]["content"]
+            );
+            assert_eq!(
+                body[key][2 - offset]["content"],
+                baseline[key][2 - offset]["content"]
+            );
+            assert_eq!(
+                body[key][3 - offset]["content"][0]["text"],
+                "current question"
+            );
+            assert_eq!(
+                body[key][3 - offset]["content"].as_array().unwrap().len(),
+                2
+            );
+        }
+        request.messages.pop();
+        assert!(
+            encode_normalized_image_request(Protocol::Responses, &request, &caps, &images).is_err()
         );
     }
 }

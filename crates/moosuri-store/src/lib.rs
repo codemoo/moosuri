@@ -79,6 +79,8 @@ pub use mail::*;
 mod claude_execution;
 mod providers;
 pub use claude_execution::{ClaudeBindingSummary, ClaudeExecutionRef, ClaudeToolProbe};
+pub(crate) mod subscription_vision;
+pub use subscription_vision::PersonalVisionProbe;
 mod subscriptions;
 pub use subscriptions::*;
 mod recovery;
@@ -115,8 +117,8 @@ pub enum StoreError {
     ToolsRequired,
     #[error("the selected model does not support automatic extraction")]
     ExtractionModelUnsupported,
-    #[error("the selected subscription cannot read attachments in this conversation")]
-    SubscriptionMediaUnsupported,
+    #[error("reselect attachments before sending earlier media to this subscription")]
+    AttachmentReselectionRequired,
     #[error("verified image input is required")]
     VisionRequired,
     #[error("authentication required")]

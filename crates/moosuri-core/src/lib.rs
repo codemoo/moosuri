@@ -246,6 +246,7 @@ pub fn typescript_contract() -> String {
         InvitationApproval::decl(),
         InvitationSenderStatus::decl(),
         MailConnection::decl(),
+        MailConnectionRecovery::decl(),
         MailConnections::decl(),
         MailReply::decl(),
         MailDraftContent::decl(),

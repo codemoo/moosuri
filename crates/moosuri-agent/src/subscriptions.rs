@@ -1,5 +1,6 @@
 //! Bounded personal SIWC orchestration. SQLite owns refresh admission and CAS.
 mod handoff;
+mod vision_probe;
 use crate::*;
 use moosuri_connectors::chatgpt_oauth::{AuthError, ChatGptAuthClient};
 use moosuri_store::{SubscriptionAccess, SubscriptionAuthority, SubscriptionRef, UserContext};

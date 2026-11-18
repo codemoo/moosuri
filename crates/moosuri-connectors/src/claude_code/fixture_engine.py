@@ -83,7 +83,35 @@ behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
 if behavior=='identity-mismatch':model='claude-not-requested'
 if behavior in ['hold','tool-bridge-hold']:
  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
+if behavior=='vision':
+ import base64
+ content=v['message']['content']
+ assert len(content)==2 and content[0]['type']=='text'
+ assert content[1]['type']=='image' and content[1]['source']['media_type']=='image/jpeg'
+ assert content[1]['source']['type']=='base64'
+ assert base64.b64decode(content[1]['source']['data'],validate=True)==bytes([255,216,255,0,255,217])
+ (root/'vision-accepted').write_text('accepted')
 answer='OK'
+if behavior in ['vision-probe','vision-wrong','vision-refusal','vision-hold','vision-truncated']:
+ import base64
+ content=v['message']['content']
+ assert len(content)==2 and content[0]['type']=='text'
+ assert content[1]['type']=='image' and content[1]['source']['media_type']=='image/jpeg'
+ assert content[1]['source']['type']=='base64'
+ image=base64.b64decode(content[1]['source']['data'],validate=True)
+ assert image.startswith(bytes([255,216,255])) and image.endswith(bytes([255,217]))
+ # Only this synthetic fixture captures the synthetic challenge; never production.
+ (root/'vision-input.jpg').write_bytes(image)
+ (root/'entered').write_text('entered')
+ if behavior=='vision-probe':
+  deadline=time.monotonic()+10
+  while not (root/'vision-answer').exists():
+   assert time.monotonic()<deadline
+   time.sleep(0.01)
+  answer=(root/'vision-answer').read_text()
+ elif behavior=='vision-refusal':answer='I cannot inspect images.'
+ elif behavior=='vision-hold':time.sleep(120);sys.exit(2)
+ else:answer='WRONG'
 if behavior.startswith('tool-bridge'):
  context=json.loads(v['message']['content'][0]['text'])
  fragments=[item['text'] for item in context['history'] if item['role']=='user']+[context['current_user_request']]
@@ -167,7 +195,7 @@ emit({'type':'assistant','parent_tool_use_id':None,'message':{'id':'m','role':'a
 event({'type':'content_block_stop','index':0})
 event({'type':'message_delta','delta':{'stop_reason':'end_turn'}})
 event({'type':'message_stop'})
-if behavior in ['truncated','tool-bridge-truncated']:sys.exit(2)
+if behavior in ['truncated','tool-bridge-truncated','vision-truncated']:sys.exit(2)
 emit({'type':'result','subtype':'success','is_error':False,'result':answer,'stop_reason':'end_turn','user_message_uuid':v['uuid'],'modelUsage':{model:{'inputTokens':8,'outputTokens':2,'cacheReadInputTokens':0,'cacheCreationInputTokens':0}}})
 if behavior in ['suffix','tool-bridge-suffix']:print('{bad json',flush=True)
 if behavior in ['nonzero','tool-bridge-nonzero'] or behavior=='partial' and model=='claude-fixture-sonnet':sys.exit(2)

@@ -23,3 +23,11 @@ The route SHALL compare actual Gmail internal timestamps across its checked reco
 #### Scenario: Permission is withdrawn during a read
 - **WHEN** the session or read connection is revoked before completion
 - **THEN** the pending read cannot expose the result in chat
+
+#### Scenario: Owner repeats the latest-inbox question informally
+- **WHEN** the owner asks for the latest received email using a supported informal follow-up
+- **THEN** the assistant checks the owner's current connection and reports verified metadata or an appropriate setup action for the owner's role
+
+#### Scenario: Ordinary inbox help without an authorized connection
+- **WHEN** the owner asks for inbox help and the installation or personal Gmail connection is missing
+- **THEN** the service may explain setup without granting permission to read mail or representing a model response as mailbox evidence

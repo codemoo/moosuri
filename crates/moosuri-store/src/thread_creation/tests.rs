@@ -132,9 +132,8 @@ async fn latest_deletion_replay_fences_snapshot_before_keyed_creation() {
         })
         .unwrap();
         if historical {
-            let conn = Connection::open(&snapshot).unwrap();
-            conn.execute_batch("DROP TABLE thread_creation_receipts;PRAGMA user_version=70;")
-                .unwrap();
+            let mut conn = Connection::open(&snapshot).unwrap();
+            crate::schema::tests::replace_with_predecessor(&mut conn, 70);
         }
         let key = Uuid::new_v4().to_string();
         store
@@ -185,9 +184,8 @@ async fn schema70_upgrade_preserves_threads_without_adopting_legacy_ids() {
     let user = admin(&store).await.user;
     let legacy = store.create_thread(&user, "Existing".into()).await.unwrap();
     drop(store);
-    let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
-    conn.execute_batch("DROP TABLE thread_creation_receipts;PRAGMA user_version=70;")
-        .unwrap();
+    let mut conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
+    crate::schema::tests::replace_with_predecessor(&mut conn, 70);
     drop(conn);
     let store = Store::open(dir.path()).unwrap();
     assert_eq!(store.list_threads(&user).await.unwrap()[0].id, legacy.id);

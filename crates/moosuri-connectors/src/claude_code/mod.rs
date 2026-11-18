@@ -274,3 +274,61 @@ mod login_cleanup_tests {
         assert_eq!(f.launches(), 1);
     }
 }
+
+#[cfg(test)]
+mod image_supervisor_tests {
+    use super::*;
+    use crate::model::{
+        CancellationToken, NormalizedJpeg,
+        protocol::{TextMessage, TextRequest, TextRole},
+    };
+    #[tokio::test]
+    async fn native_image_blocks_pass_unchanged_supervisor_and_invalid_placement_never_launches() {
+        let f = fixture::Fixture::new();
+        f.behavior("vision");
+        let mut request = TextRequest {
+            model: "claude-fixture-v1".into(),
+            effort: None,
+            max_output_tokens: 128,
+            messages: vec![TextMessage {
+                role: TextRole::User,
+                text: "Inspect this synthetic JPEG".into(),
+                phase: None,
+            }],
+        };
+        let images = vec![NormalizedJpeg::new(vec![255, 216, 255, 0, 255, 217]).unwrap()];
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        assert!(
+            f.profile
+                .validate_text_with_images(&request, &images)
+                .is_ok()
+        );
+        assert_eq!(f.launches(), 0);
+        f.profile
+            .stream_text_with_images(
+                "00000000-0000-4000-8000-000000000001",
+                &request,
+                &images,
+                &tx,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert!(f.directory.path().join("vision-accepted").exists());
+        assert_eq!(f.launches(), 1);
+        request.messages.last_mut().unwrap().role = TextRole::Assistant;
+        assert!(
+            f.profile
+                .stream_text_with_images(
+                    "00000000-0000-4000-8000-000000000001",
+                    &request,
+                    &images,
+                    &tx,
+                    &CancellationToken::new()
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(f.launches(), 1);
+    }
+}

@@ -798,6 +798,7 @@ pub async fn personal_call(socket: &Path, request: &[u8]) -> Result<Vec<u8>, Str
 
 #[cfg(test)]
 mod tests {
+    mod volume_replay;
     use super::*;
     use axum::{Router, extract::State, http::HeaderMap, response::IntoResponse, routing::post};
     use std::sync::atomic::{AtomicUsize, Ordering};

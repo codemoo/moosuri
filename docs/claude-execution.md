@@ -15,12 +15,13 @@ this profile intentionally rejects it. Do not change host services to bypass thi
 
 ## Supported boundary
 
-Only text is enabled. Tools, attachments, live model catalog, observed effort,
-background/mission execution, memory writes, Calendar/mail operations and remote
-CLI session resume are unavailable. Supply an exact `claude-...` version ID;
-aliases are not advertised as an account catalog. The official account still has
-to accept that exact model in the owner's actual probe. No effort echo is exposed
-by the CLI stream to applications, so this integration offers unspecified effort.
+My model reads the official CLI initialization catalog for the signed-in
+subscription. The catalog maps the default, Opus, Sonnet and Haiku choices to
+concrete IDs. Moosuri checks up to three distinct standard text models with one
+short request each and lists the models that returned verified text. Each check
+uses the owner's subscription. The owner can verify a different exact ID under
+advanced settings. Effort is unspecified for this text route. Tools, attachments,
+background tasks, memory writes and external actions remain unavailable.
 
 Each inference has a fresh official session and process with session persistence
 disabled. Canonical Moosuri history is sent as labelled, quoted conversation data
@@ -174,11 +175,12 @@ cannot share mutable auth state. Each environment has independent HOME,
 CLAUDE_CONFIG_DIR, XDG roots, private cwd/temp and processes. Nothing reads an
 ambient local Claude login or copies a Mac keychain/credential file.
 
-After official login, return to the UI and explicitly run the exact text-model
-probe; this real probe uses the user's account. A successful probe enables that
-exact binding/revision/profile/model choice, with tools false and effort null.
-Select it in the ordinary personal model selector, then use saved chat. A synthetic
-probe fixture is never shown as successful real-account acceptance.
+After official login the web app fills **사용할 모델** automatically. Opening My
+model also recovers a previously signed-in pending connection. Choose the desired
+model and save. Refreshing the screen reuses saved verification. **모델 목록 다시
+확인** checks the current catalog for missing standard tiers. Connecting a different
+Claude account uses a new binding with its own isolated login environment.
+Automatic discovery skips Fable because its use can require separate usage credits.
 
 Disconnect blocks future dispatch immediately and fences active output. An opaque
 durable retirement queue then tombstones and removes the owned host auth directory

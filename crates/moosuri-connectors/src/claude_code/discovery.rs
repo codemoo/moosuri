@@ -31,7 +31,9 @@ fn catalog(v: &Value, request_id: &str) -> Result<AccountModels, TransportError>
         .get("subscriptionType")
         .and_then(Value::as_str)
         .is_some_and(|s| !s.is_empty() && s != "none");
-    let first_party = account.get("apiProvider").is_none_or(|v| v == "firstParty");
+    let first_party = account
+        .get("apiProvider")
+        .is_some_and(|v| v == "firstParty");
     let rows = response
         .get("models")
         .and_then(Value::as_array)
@@ -165,7 +167,7 @@ mod tests {
     fn catalog_never_promotes_aliases_or_account_identity_to_eligibility() {
         let response = |account| json!({"type":"control_response","response":{"subtype":"success","request_id":"r","response":{"account":account,"models":[{"value":"sonnet","resolvedModel":"claude-sonnet-synthetic"},{"value":"default","resolvedModel":"claude-opus-synthetic"},{"value":"claude-opus-synthetic"}]}}});
         let parsed = catalog(
-            &response(json!({"subscriptionType":"pro","email":"synthetic@example.test"})),
+            &response(json!({"subscriptionType":"pro","apiProvider":"firstParty","email":"synthetic@example.test"})),
             "r",
         )
         .unwrap();

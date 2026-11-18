@@ -16,6 +16,6 @@
 - [x] Independent integrated storage/dispatch review and joined Linux synthetic connector/Store/Runtime/HTTP/restore gates.
 - [x] Supported rootless Linux production-profile isolation canary gate (deployment-wide auth byte/inode bounds).
 - [x] Pinned official Linux artifact startup and piped URL/code-prompt acceptance without account credentials.
-- [ ] User-performed official login and exact-model probe.
+- [x] Recover existing official subscription login and discover account standard tiers, verifying exact text IDs before listing them.
 - [x] Recovery-budget admission for actual text probes after schema49 integration; real restored Store and subprocess fixture prove rejected/failed/final-slot behavior.
-- [ ] Tools, live catalog, observed effort, media and background capabilities (remain unavailable).
+- [ ] Tools, observed effort, media and background capabilities (remain unavailable).

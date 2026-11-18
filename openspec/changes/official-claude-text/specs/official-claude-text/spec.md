@@ -68,3 +68,14 @@ The system SHALL bridge the unchanged official CLI authorization URL and returne
 #### Scenario: Stale requests and session withdrawal
 - **WHEN** code submission or cancellation supersedes an earlier status response, or the originating session expires or is revoked
 - **THEN** stale UI responses cannot revive the prior code screen and withdrawn authority cancels the process while holding the environment lock through cleanup
+
+### Requirement: Discover verified subscription models in owner settings
+After official login the system SHALL resolve the owner's standard model choices through the pinned CLI catalog and expose exact IDs that complete text verification in the personal model selector.
+
+#### Scenario: Existing signed-in connection has no model choices
+- **WHEN** the owner opens or refreshes My model with a pending authenticated connection
+- **THEN** the selector updates with successful exact-ID probes without requiring the owner to enter a model name or log in again
+
+#### Scenario: Reload previously verified models
+- **WHEN** the owner reloads verified choices
+- **THEN** the selector shows the saved choices without repeating inference

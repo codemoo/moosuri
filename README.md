@@ -122,8 +122,8 @@ broad mission writes/browser/vault execution remain pending. Supported [composed
 An optional [official Claude Code text connection](docs/claude-execution.md) provides
 owner settings, an exact-model probe and saved chat through a separate pinned
 rootless Linux execution profile. The web bridges the official login link and returned code to the original CLI.
-Linux isolation and no-inference startup were checked; user-completed official
-login and exact-model acceptance remain pending. Tools/media/background are unavailable.
+My model discovers the signed-in account’s standard models and lists verified
+text choices automatically. Tools/media/background are unavailable.
 See [foreground-tool acceptance](docs/reviews/2026-11-14-personal-chatgpt-tools.md),
 [personal Calendar](docs/reviews/2026-11-14-personal-chatgpt-calendar.md),
 and the [combined-tool limit repair](docs/reviews/2026-11-14-combined-tool-profiles.md). Synthetic protocol

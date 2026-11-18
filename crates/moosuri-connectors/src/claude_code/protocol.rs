@@ -57,6 +57,62 @@ pub fn input(
     bytes.push(b'\n');
     Ok((system, bytes))
 }
+// The pinned CLI advertises its shipped definitions even with all executable
+// tools disabled. Accept only its known inventory and keep tool outputs forbidden.
+fn trusted_init_inventory(frame: &Value) -> bool {
+    const SKILLS: &[&str] = &[
+        "deep-research",
+        "dataviz",
+        "update-config",
+        "verify",
+        "debug",
+        "code-review",
+        "simplify",
+        "batch",
+        "fewer-permission-prompts",
+        "doctor",
+        "loop",
+        "schedule",
+        "claude-api",
+        "workflow-authoring",
+        "run",
+        "run-skill-generator",
+        "plugin-authoring",
+    ];
+    const AGENTS: &[&str] = &["Explore", "general-purpose", "Plan"];
+    const PLUGINS: &[&str] = &[
+        "cc-plugin-agents-md",
+        "cc-plugin-privacy",
+        "cc-plugin-plugin-authoring",
+    ];
+    let names_allowed = |key: &str, allowed: &[&str]| {
+        frame.get(key).is_none_or(|value| {
+            value.as_array().is_some_and(|items| {
+                items.len() <= allowed.len()
+                    && items
+                        .iter()
+                        .all(|item| item.as_str().is_some_and(|name| allowed.contains(&name)))
+            })
+        })
+    };
+    names_allowed("agents", AGENTS)
+        && names_allowed("skills", SKILLS)
+        && ["tools", "mcp_servers"]
+            .iter()
+            .all(|key| frame[*key].as_array().is_some_and(Vec::is_empty))
+        && frame.get("plugins").is_none_or(|value| {
+            value.as_array().is_some_and(|items| {
+                items.len() <= PLUGINS.len()
+                    && items.iter().all(|item| {
+                        item["name"].as_str().is_some_and(|name| {
+                            PLUGINS.contains(&name)
+                                && item["path"] == "builtin"
+                                && item["source"] == format!("{name}@builtin")
+                        })
+                    })
+            })
+        })
+}
 pub struct Decoder {
     session: String,
     user: String,
@@ -64,6 +120,7 @@ pub struct Decoder {
     version: String,
     init: bool,
     terminal: bool,
+    lifecycle_done: bool,
     completed: bool,
     message: Option<String>,
     block: Option<u64>,
@@ -87,6 +144,7 @@ impl Decoder {
             version: version.into(),
             init: false,
             terminal: false,
+            lifecycle_done: false,
             completed: false,
             message: None,
             block: None,
@@ -108,10 +166,24 @@ impl Decoder {
             return Err(TransportError::LimitExceeded);
         }
         let v: Value = serde_json::from_slice(line).map_err(|_| bad())?;
-        if self.terminal
-            || v["session_id"] != self.session
-            || v["parent_tool_use_id"].as_str().is_some()
-        {
+        if v["session_id"] != self.session || !v["parent_tool_use_id"].is_null() {
+            return Err(bad());
+        }
+        // Official command bookkeeping surrounds one user turn. Its final ACK
+        // can follow result; it never supplies content or establishes completion.
+        if v["type"] == "command_lifecycle" && v["command_uuid"] == self.user {
+            let expected = if self.terminal {
+                v["state"] == "completed" && !self.lifecycle_done
+            } else {
+                !self.init && matches!(v["state"].as_str(), Some("queued" | "started"))
+            };
+            if !expected {
+                return Err(bad());
+            }
+            self.lifecycle_done = self.terminal;
+            return Ok(vec![]);
+        }
+        if self.terminal {
             return Err(bad());
         }
         let mut out = vec![];
@@ -124,12 +196,8 @@ impl Decoder {
                 {
                     return Err(bad());
                 }
-                for field in ["tools", "mcp_servers", "plugins", "skills", "agents"] {
-                    if v.get(field)
-                        .is_some_and(|x| x.as_array().is_none_or(|a| !a.is_empty()))
-                    {
-                        return Err(bad());
-                    }
+                if !trusted_init_inventory(&v) {
+                    return Err(bad());
                 }
                 self.init = true;
                 out.push(ModelEvent::Started {
@@ -137,6 +205,9 @@ impl Decoder {
                     model: Some(self.model.clone()),
                 });
             }
+            Some("system") if v["subtype"] == "ui_invalidate" && v["event"] == "ui.render" => {}
+            Some("system")
+                if self.init && v["subtype"] == "status" && v["status"] == "requesting" => {}
             Some("stream_event") if self.init => {
                 let e = &v["event"];
                 match e["type"].as_str() {
@@ -481,6 +552,38 @@ mod tests {
         f[2]["event"]["content_block"]["type"] = json!("tool_use");
         assert!(decode(&f).is_err());
     }
+    #[test]
+    fn official_bundled_inventory_and_turn_notifications_do_not_grant_tools() {
+        let mut f = frames();
+        f[0]["agents"] = json!(["Explore", "Plan"]);
+        f[0]["skills"] = json!(["doctor", "verify"]);
+        f[0]["plugins"] = json!([{"name":"cc-plugin-privacy","path":"builtin","source":"cc-plugin-privacy@builtin"}]);
+        f.insert(
+            0,
+            json!({"type":"system","session_id":"s","subtype":"ui_invalidate","event":"ui.render"}),
+        );
+        let notification = |state| json!({"type":"command_lifecycle","session_id":"s","command_uuid":"u","state":state});
+        f.insert(1, notification("queued"));
+        f.insert(2, notification("started"));
+        f.insert(
+            4,
+            json!({"type":"system","session_id":"s","subtype":"status","status":"requesting"}),
+        );
+        f.push(notification("completed"));
+        assert!(decode(&f).unwrap().finish(true).is_ok());
+        let mut wrong = f.clone();
+        wrong[3]["plugins"][0]["path"] = json!("/work/plugin");
+        assert!(decode(&wrong).is_err());
+        let mut wrong = f.clone();
+        wrong[3]["skills"] = json!(["external-skill"]);
+        assert!(decode(&wrong).is_err());
+        let mut wrong = f.clone();
+        wrong.last_mut().unwrap()["command_uuid"] = json!("other");
+        assert!(decode(&wrong).is_err());
+        f.push(notification("completed"));
+        assert!(decode(&f).is_err());
+    }
+
     #[test]
     fn input_keeps_system_private_and_commands_inert() {
         let r = TextRequest {

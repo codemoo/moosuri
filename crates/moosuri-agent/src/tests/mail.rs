@@ -70,33 +70,41 @@ async fn latest_inbox_unconfigured_turn_finishes_without_any_model_call() {
     let _guard = TEST_LOCK.lock().await;
     let (_dir, store, user, thread) = tool_configured("http://127.0.0.1:1/v1").await;
     let runtime = Runtime::start(store.clone());
-    store
-        .submit_turn(
-            &user,
-            thread.clone(),
-            uuid::Uuid::new_v4().to_string(),
-            "내 이메일 최근에 온거 뭐냐고".into(),
-        )
-        .await
-        .unwrap();
-    runtime.wake();
-    let done = wait_for(&store, &user, &thread, |t| !t.run.state.active()).await;
-    assert_eq!(done.run.state, RunState::Completed);
-    let text = done
-        .assistant
-        .iter()
-        .map(|m| m.text.as_str())
-        .collect::<String>();
-    assert!(text.contains("Google 앱이 아직 준비되지"));
-    assert!(text.contains("관리자인 본인"));
-    assert!(matches!(
-        done.run.mail_connection_recovery,
-        Some(moosuri_core::MailConnectionRecovery::AdminSetup)
-    ));
-    assert_eq!(
-        store.usage_summary(&user).await.unwrap().dispatched_calls,
-        0
-    );
+    for request in [
+        "이메일 가장 최근꺼 뭐야",
+        "내 이메일은 가장 최근 꺼가 뭐야?",
+        "가장 최근의 이메일이 뭐야?",
+        "GmAiL 제일 최근 거 보여 줘",
+        "내 이메일 최근에 온거 뭐냐고",
+    ] {
+        store
+            .submit_turn(
+                &user,
+                thread.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                request.into(),
+            )
+            .await
+            .unwrap();
+        runtime.wake();
+        let done = wait_for(&store, &user, &thread, |t| !t.run.state.active()).await;
+        assert_eq!(done.run.state, RunState::Completed);
+        let text = done
+            .assistant
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect::<String>();
+        assert!(text.contains("Google 앱이 아직 준비되지"));
+        assert!(text.contains("관리자인 본인"));
+        assert!(matches!(
+            done.run.mail_connection_recovery,
+            Some(moosuri_core::MailConnectionRecovery::AdminSetup)
+        ));
+        assert_eq!(
+            store.usage_summary(&user).await.unwrap().dispatched_calls,
+            0
+        );
+    }
     runtime.shutdown().await;
 }
 
@@ -211,30 +219,74 @@ async fn latest_inbox_scans_metadata_across_pages_and_keeps_literal_result_out_o
         signals,
     )
     .with_synthetic_google(address);
-    store
-        .submit_turn(
-            &user,
-            thread.clone(),
-            uuid::Uuid::new_v4().to_string(),
-            "내 이메일 가장 최근에 온 게 뭐야?".into(),
-        )
-        .await
-        .unwrap();
-    let claim = store.claim_agent_run().await.unwrap().unwrap();
-    assert!(mail.latest_inbox_chat(&claim.lease).await.unwrap());
-    let history = store
-        .conversation(&user, thread.clone(), None)
-        .await
-        .unwrap();
-    let text = serde_json::to_string(&history).unwrap();
-    assert!(text.contains("PRIVATE_NEWEST_LITERAL"));
-    assert!(!text.contains("PRIVATE_OLDER_LITERAL"));
-    assert!(text.contains("전체에서 가장 최근"));
-    assert_eq!(requests.lock().unwrap().len(), 4);
-    assert_eq!(
-        store.usage_summary(&user).await.unwrap().dispatched_calls,
-        0
-    );
+    for request in [
+        "이메일 가장 최근꺼 뭐야 그리고 답장해줘",
+        "내가 가장 최근에 보낸 이메일이 뭐야",
+        "다른 사람의 이메일 가장 최근꺼 뭐야",
+        "이메일 가장 최근꺼 뭐야라는 문장 번역해줘",
+    ] {
+        let excluded = store
+            .create_thread(&user, "Excluded mailbox request".into())
+            .await
+            .unwrap();
+        let admitted = store
+            .submit_turn(
+                &user,
+                excluded.id,
+                uuid::Uuid::new_v4().to_string(),
+                request.into(),
+            )
+            .await
+            .unwrap();
+        let claim = store.claim_agent_run().await.unwrap().unwrap();
+        assert!(
+            !mail.latest_inbox_chat(&claim.lease).await.unwrap(),
+            "{request}"
+        );
+        assert!(
+            requests.lock().unwrap().is_empty(),
+            "excluded request cannot read Gmail: {request}"
+        );
+        store
+            .cancel_run(&user, admitted.run.id, admitted.run.attempt)
+            .await
+            .unwrap();
+    }
+    for (index, request) in [
+        "이메일 가장 최근꺼 뭐야",
+        "가장 최근의 이메일이 뭐야?",
+        "내 GmAiL 가장 최근 꺼는 뭔데",
+        "이메일 중에서 최근 거 보여줘",
+        "내 이메일 가장 최근에 온 게 뭐야?",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        store
+            .submit_turn(
+                &user,
+                thread.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                request.into(),
+            )
+            .await
+            .unwrap();
+        let claim = store.claim_agent_run().await.unwrap().unwrap();
+        assert!(mail.latest_inbox_chat(&claim.lease).await.unwrap());
+        let history = store
+            .conversation(&user, thread.clone(), None)
+            .await
+            .unwrap();
+        let text = serde_json::to_string(&history).unwrap();
+        assert!(text.contains("PRIVATE_NEWEST_LITERAL"));
+        assert!(!text.contains("PRIVATE_OLDER_LITERAL"));
+        assert!(text.contains("전체에서 가장 최근"));
+        assert_eq!(requests.lock().unwrap().len(), (index + 1) * 4);
+        assert_eq!(
+            store.usage_summary(&user).await.unwrap().dispatched_calls,
+            0
+        );
+    }
     store
         .submit_turn(
             &user,

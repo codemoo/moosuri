@@ -31,3 +31,15 @@ The route SHALL compare actual Gmail internal timestamps across its checked reco
 #### Scenario: Ordinary inbox help without an authorized connection
 - **WHEN** the owner asks for inbox help and the installation or personal Gmail connection is missing
 - **THEN** the service may explain setup without granting permission to read mail or representing a model response as mailbox evidence
+
+#### Scenario: Latest-inbox phrasing varies in Korean spacing and particles
+- **WHEN** the current owner asks “이메일 가장 최근꺼 뭐야” or another supported whole-utterance variant
+- **THEN** the same narrow inbox route validates owner/session/read authority, while translation, sent-mail, other-owner and compound requests obtain no mailbox read from a partial match
+
+### Requirement: Current setup context for ordinary model answers
+
+For an ordinary foreground answer or isolated classifier, the service SHALL supply a content-free snapshot of the current owner's Gmail setup, connection and already-admitted read route. The snapshot SHALL preserve the latest request and helper output contract without granting new actions or exposing mailbox content.
+
+#### Scenario: Current mail request falls outside the shortcut grammar
+- **WHEN** a new current request concerns mail while earlier history contains unrelated homepage advice
+- **THEN** the model receives the original current request and authoritative setup context, without display-only mailbox output or a new setup-button receipt

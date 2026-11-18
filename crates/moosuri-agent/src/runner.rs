@@ -895,7 +895,7 @@ pub(crate) async fn execute_with_calendar(
         lease,
         mut binding,
         mut model,
-        messages,
+        mut messages,
         media_context,
         images,
         documents,
@@ -955,6 +955,24 @@ pub(crate) async fn execute_with_calendar(
             }
         }
     }
+    // One authoritative, content-free owner observation reaches ordinary answers
+    // and isolated helpers even when no literal mail shortcut recognizes the turn.
+    let mail_connection_context = match mail.model_connection_context(&lease).await {
+        Ok(context) => context,
+        Err(error) => {
+            let (state, reason) = store_failure(&error);
+            finish(&store, &lease, None, state, Some(reason), &signals).await;
+            return;
+        }
+    };
+    messages.insert(
+        0,
+        ContextMessage {
+            role: ContextRole::System,
+            text: mail_connection_context.clone(),
+            phase: None,
+        },
+    );
     if !model.function_tools
         && !native_resume
         && !media_context
@@ -1163,6 +1181,7 @@ pub(crate) async fn execute_with_calendar(
             lease: &lease,
             client: &client,
             request: &request,
+            mail_connection_context: &mail_connection_context,
             signals: &signals,
             protocol,
             capabilities: &capabilities,

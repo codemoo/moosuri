@@ -46,98 +46,110 @@ fn intent(text: &str) -> bool {
     {
         return true;
     }
-    let ko = ["내 ", "나의 ", "내가 "]
+    // Korean spacing (including around particles and 거/꺼) is optional. Parse
+    // the complete compact utterance; no substring alone authorizes a read.
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    // Backtrack optional owner forms: 내 + 가장 also begins with 내가 after
+    // spacing is removed, so choosing just the longest prefix loses that request.
+    ["내가", "나의", "내", ""]
         .iter()
-        .find_map(|p| text.strip_prefix(p))
-        .unwrap_or(&text);
-    let mails = ["gmail 메일", "이메일", "지메일", "메일", "gmail"];
+        .filter_map(|p| compact.strip_prefix(p))
+        .any(korean_latest_intent)
+}
+
+fn korean_latest_intent(ko: &str) -> bool {
+    let mails = ["gmail메일", "이메일", "지메일", "메일", "gmail"];
     let recencies = [
-        "가장 최근에 받은 ",
-        "제일 최근에 받은 ",
-        "최근에 받은 ",
-        "마지막으로 받은 ",
-        "가장 최근에 온 ",
-        "제일 최근에 온 ",
-        "최근에 온 ",
-        "마지막으로 온 ",
-        "최근 온 ",
-        "최근 받은 ",
-        "최근에 도착한 ",
-        "최근 수신한 ",
-        "최신 ",
+        "가장최근에받은",
+        "제일최근에받은",
+        "최근에받은",
+        "마지막으로받은",
+        "가장최근에온",
+        "제일최근에온",
+        "최근에온",
+        "마지막으로온",
+        "최근에도착한",
+        "최근수신한",
+        "최근받은",
+        "최근온",
+        "가장최근",
+        "제일최근",
+        "최근",
+        "최신",
+        "마지막",
     ];
-    let actions = [
-        " 알려줘",
-        " 알려 줘",
-        " 알려주세요",
-        " 알려 주세요",
-        " 보여줘",
-        " 보여 줘",
-        " 보여주세요",
-        " 보여 주세요",
-        " 확인해줘",
-        " 확인해 줘",
-        " 읽어줘",
-        " 읽어 줘",
-        "이 뭐야",
-        "은 뭐야",
-        " 뭐야",
-        "이 뭔지 알려줘",
-        "은 무엇인가요",
-        "이 무엇인가요",
-        "을 알려줘",
-        "을 보여줘",
-        "을 보여 줘",
-        "이 뭐냐고",
-        "이 뭐냐고요",
-        " 뭐냐고",
-        " 뭐냐고요",
-        " 알려달라고",
-        " 보여달라고",
-    ];
-    if let Some(rest) = recencies.iter().find_map(|p| ko.strip_prefix(p)) {
-        return mails
-            .iter()
-            .filter_map(|p| rest.strip_prefix(p))
-            .any(|suffix| actions.contains(&suffix));
-    }
-    if let Some(rest) = mails
-        .iter()
-        .filter_map(|p| ko.strip_prefix(p))
-        .find_map(|v| v.strip_prefix(' '))
-    {
-        let questions = [
+    fn predicate(rest: &str) -> bool {
+        let actions = [
             "뭐야",
             "뭐냐고",
             "뭐냐고요",
             "뭐냐구",
             "뭔데",
             "뭐였냐고",
-            "알려달라고",
-            "보여달라고",
-            "뭔지알려달라고",
             "뭐예요",
             "뭐였어",
-            "뭔지알려줘",
             "무엇인가요",
+            "뭔지알려줘",
+            "뭔지알려주세요",
+            "뭔지알려달라고",
             "알려줘",
             "알려주세요",
+            "알려달라고",
             "보여줘",
             "보여주세요",
+            "보여달라고",
             "확인해줘",
+            "확인해주세요",
+            "읽어줘",
+            "읽어주세요",
         ];
-        return recencies
-            .iter()
-            .filter_map(|p| rest.strip_prefix(p.trim_end()))
-            .any(|rest| {
-                let rest: String = rest.chars().filter(|c| !c.is_whitespace()).collect();
-                ["것은", "것이", "것", "거", "게", "건", ""]
-                    .iter()
-                    .filter_map(|pronoun| rest.strip_prefix(pronoun))
-                    .any(|predicate| questions.contains(&predicate))
-            });
+        [
+            "것은", "것이", "것을", "것", "거는", "거가", "거를", "거", "꺼는", "꺼가", "꺼를",
+            "꺼", "게", "건", "이", "은", "는", "을", "를", "",
+        ]
+        .iter()
+        .filter_map(|p| rest.strip_prefix(p))
+        .any(|p| actions.contains(&p))
     }
-    false
+    // Recency before the mail noun: 가장 최근의 이메일이 뭐야.
+    if recencies
+        .iter()
+        .filter_map(|r| ko.strip_prefix(r))
+        .any(|rest| {
+            let rest = rest.strip_prefix('의').unwrap_or(rest);
+            mails
+                .iter()
+                .filter_map(|m| rest.strip_prefix(m))
+                .any(predicate)
+        })
+    {
+        return true;
+    }
+    // Mail noun before recency: 이메일(은/중에서) 가장 최근 꺼가 뭐야.
+    // Only fixed particles may join these two constituents; extra owners,
+    // sent-mail qualifiers, quoted prose and second actions cannot be consumed.
+    mails.iter().filter_map(|m| ko.strip_prefix(m)).any(|rest| {
+        [
+            "중에서",
+            "중에",
+            "중",
+            "에서",
+            "은",
+            "는",
+            "이",
+            "을",
+            "를",
+            "",
+        ]
+        .iter()
+        .filter_map(|p| rest.strip_prefix(p))
+        .any(|rest| {
+            recencies
+                .iter()
+                .filter_map(|r| rest.strip_prefix(r))
+                .any(predicate)
+        })
+    })
 }
 
 // This grammar only requests setup help when no usable read connection exists.
@@ -346,6 +358,22 @@ mod tests {
     #[test]
     fn latest_intent_requires_one_whole_current_owner_request() {
         for text in [
+            "이메일 가장 최근꺼 뭐야",
+            "이메일 가장 최근 꺼 뭐야?",
+            "이메일가장최근꺼뭐야",
+            "내 이메일은 가장 최근 꺼가 뭐야?",
+            "내 이메일 중에서 가장 최근 것은 뭐예요?",
+            "내 메일 중 제일 최근 거를 보여 주세요",
+            "GmAiL 가장 최근 꺼 알려 줘",
+            "최신 GMAIL 메일을 읽어 줘",
+            "가장 최근의 이메일이 뭐야?",
+            "가장최근이메일이뭐야",
+            "최근 메일 보여줘",
+            "내 이메일 최신 거 보여주세요",
+            "내 메일 최근꺼는 뭔지 알려줘",
+            "제일 최근 메일은 무엇인가요?",
+            "내 가장 최근 메일 을 보여 줘",
+            "pLeAsE ShOw Me My LaTeSt EmAiL!",
             "내가 가장 최근에 받은 이메일이 뭐야?",
             "내 이메일 가장 최근에 온 게 뭐야?",
             "내 이메일 가장 최근에 온게 뭐야?",
@@ -367,6 +395,23 @@ mod tests {
             assert!(intent(text), "{text}");
         }
         for text in [
+            "이메일 가장 최근꺼 뭐야 그리고 답장해줘",
+            "이메일 가장 최근꺼 뭐야 지워줘",
+            "이메일 가장 최근꺼 뭐야 라는 문장 번역해줘",
+            "내가 가장 최근에 보낸 이메일이 뭐야",
+            "내 보낸 메일 가장 최근꺼 뭐야",
+            "최근 보낸 이메일 보여줘",
+            "이메일 중에서 최근 보낸 거 뭐야",
+            "다른 사람 이메일 가장 최근꺼 뭐야",
+            "내 동료의 이메일 가장 최근꺼 뭐야",
+            "이메일 가장 최근 다른 사람꺼 뭐야",
+            "저장한 이메일 가장 최근꺼 뭐야",
+            "이메일 가장 최근꺼 보여주지마",
+            "가장 최근꺼 뭐야",
+            "이메일 가장 최근꺼 뭐야\n그리고 보내줘",
+            "Show my latest sent email",
+            "SHOW ALICE'S LATEST EMAIL",
+            "Please show my latest email and delete it",
             "내가 가장 최근에 받은 이메일이 뭐야? 라고 물었다",
             "최근에 받은 메일 알려주지 마",
             "내 이메일 최근에 온 거 뭐야라는 문장 번역해줘",

@@ -8,6 +8,7 @@ pub(super) struct PlanningSession<'a> {
     pub lease: &'a RunLease,
     pub client: &'a ExecutionClient,
     pub request: &'a TextRequest,
+    pub mail_connection_context: &'a str,
     pub signals: &'a Signals,
     pub protocol: Protocol,
     pub capabilities: &'a TextCapabilities,
@@ -47,6 +48,29 @@ impl PlanningSession<'_> {
         definitions: &[FunctionDefinition],
         admission: Admission,
     ) -> Option<(ToolRound, StepLease)> {
+        // Keep the planner's original current user input and domain contract.
+        // Add only the runtime observation, never prior conversational claims.
+        let mut messages = request
+            .messages
+            .iter()
+            .map(|m| TextMessage {
+                role: m.role,
+                text: m.text.clone(),
+                phase: m.phase,
+            })
+            .collect::<Vec<_>>();
+        if let Some(system) = messages.first_mut().filter(|m| m.role == TextRole::System) {
+            system.text.push('\n');
+            system.text.push_str(self.mail_connection_context);
+            system.text.push_str(" Capability availability does not change this helper's domain classification, exact quote requirements or output schema. Do not execute mail or turn this observation into a mutation.");
+        }
+        let request = TextRequest {
+            model: request.model.clone(),
+            effort: request.effort.clone(),
+            max_output_tokens: request.max_output_tokens,
+            messages,
+        };
+        let request = &request;
         let tools = ToolRequest {
             text: request,
             tools: definitions,

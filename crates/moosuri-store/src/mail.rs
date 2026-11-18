@@ -8,6 +8,8 @@ use moosuri_core::*;
 
 mod external;
 pub(crate) mod latest;
+mod model_context;
+pub use model_context::MailModelConnectionContext;
 pub(crate) mod native;
 pub(crate) mod provider_saves;
 mod reconcile;

@@ -1615,3 +1615,6 @@ async fn inbox_connection_help_cannot_grant_latest_mail_read_authority() {
         Some(MailConnectionRecovery::Connect)
     ));
 }
+
+#[path = "model_context_tests.rs"]
+mod model_context_tests;

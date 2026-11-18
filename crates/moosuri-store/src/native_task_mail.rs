@@ -58,6 +58,24 @@ fn grants(c: &Connection, t: &str, a: &str, epoch: i64, background: bool) -> Res
     }
     Ok(out)
 }
+/// Current grants intersect the already frozen foreground route; this is a
+/// content-free observation and never grants a new binding to the run.
+pub(crate) fn current_model_read_admitted(c: &Connection, run: &crate::chat::Run) -> Result<bool> {
+    let Some(scope) = run
+        .tool_profile
+        .as_ref()
+        .filter(|p| p.native_mail_model_read)
+        .and_then(|p| p.native_mail_scope.as_ref())
+    else {
+        return Ok(false);
+    };
+    if !cfg!(feature = "credential-broker-chat") {
+        return Ok(false);
+    }
+    Ok(grants(c, &run.tenant, &run.account, run.epoch, false)?
+        .iter()
+        .any(|grant| scope.candidate_binding_ids.contains(&grant.choice())))
+}
 pub(crate) fn admit_profile(
     c: &Connection,
     u: &UserContext,

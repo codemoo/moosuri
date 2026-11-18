@@ -148,6 +148,38 @@ fn reserve_in(tx: &Connection, request: Uuid, email: String) -> Result<Allocatio
     };
     Ok(result)
 }
+/// Compare an invite retry with its original allocation and current route state.
+/// Only control metadata is read; no personal store or credential is opened.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum InviteState {
+    Reserved,
+    Ready,
+    Fenced,
+}
+pub fn invitation_state(
+    root: &Path,
+    request: Uuid,
+    allocation: &Allocation,
+) -> Result<InviteState> {
+    let (_directory, db) = open(root, false)?;
+    let state:String=db.query_row("SELECT route_state FROM allocations WHERE request_id=?1 AND account_id=?2 AND tenant_id=?3 AND volume_id=?4 AND generation=?5 AND NOT EXISTS(SELECT 1 FROM installation_members m WHERE m.account_id=allocations.account_id AND m.tenant_id=allocations.tenant_id AND m.volume_id=allocations.volume_id AND m.generation=allocations.generation AND m.suspended=1)",params![request.to_string(),allocation.account_id,allocation.tenant_id,allocation.volume_id,allocation.generation],|r|r.get(0)).optional()?.ok_or(StoreError::Conflict)?;
+    match state.as_str() {
+        "reserved" => Ok(InviteState::Reserved),
+        "ready" => Ok(InviteState::Ready),
+        "fenced" => Ok(InviteState::Fenced),
+        _ => Err(StoreError::Corrupt),
+    }
+}
+/// Invite completion cannot revive a fenced route or adopt another request.
+pub fn activate_invitation(root: &Path, request: Uuid, allocation: &Allocation) -> Result<()> {
+    let (_directory, db) = open(root, false)?;
+    let changed=db.execute("UPDATE allocations SET route_state='ready' WHERE request_id=?1 AND account_id=?2 AND tenant_id=?3 AND volume_id=?4 AND generation=?5 AND route_state='reserved' AND NOT EXISTS(SELECT 1 FROM installation_members m WHERE m.account_id=allocations.account_id AND m.tenant_id=allocations.tenant_id AND m.volume_id=allocations.volume_id AND m.generation=allocations.generation AND m.suspended=1)",params![request.to_string(),allocation.account_id,allocation.tenant_id,allocation.volume_id,allocation.generation])?;
+    if changed != 1 {
+        return Err(StoreError::Conflict);
+    }
+    Ok(())
+}
+
 pub fn lookup(root: &Path, email: String) -> Result<Allocation> {
     lookup_email(root, email, false)
 }
@@ -327,5 +359,42 @@ mod tests {
             reserve(&root, Uuid::new_v4(), "c@example.test".into()),
             Err(StoreError::InvalidInput)
         ));
+    }
+}
+
+#[cfg(test)]
+mod invite_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn invite_activation_is_request_bound_and_never_unfences() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let request = Uuid::new_v4();
+        let a = reserve(&root, request, "new@example.invalid".into()).unwrap();
+        assert_eq!(
+            reserve(&root, request, "NEW@example.invalid".into()).unwrap(),
+            a
+        );
+        assert!(reserve(&root, Uuid::new_v4(), "new@example.invalid".into()).is_err());
+        assert_eq!(
+            invitation_state(&root, request, &a).unwrap(),
+            InviteState::Reserved
+        );
+        assert!(activate_invitation(&root, Uuid::new_v4(), &a).is_err());
+        activate_invitation(&root, request, &a).unwrap();
+        assert_eq!(
+            invitation_state(&root, request, &a).unwrap(),
+            InviteState::Ready
+        );
+        assert!(activate_invitation(&root, request, &a).is_err());
+        set_routing(&root, &a, false).unwrap();
+        assert_eq!(
+            invitation_state(&root, request, &a).unwrap(),
+            InviteState::Fenced
+        );
+        assert!(activate_invitation(&root, request, &a).is_err());
+        assert!(lookup_ready(&root, "new@example.invalid".into()).is_err());
     }
 }

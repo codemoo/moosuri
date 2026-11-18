@@ -1,0 +1,51 @@
+[
+  {
+    "check": "missing-storage-stable-reservation",
+    "unread": true
+  },
+  {
+    "check": "no-password-private-status",
+    "stage": "password_required",
+    "owner_uid": 10041
+  },
+  {
+    "check": "first-invite-ready",
+    "login": 200,
+    "password_change_required": true
+  },
+  {
+    "check": "ready-retry-preserves-password",
+    "unread": true
+  },
+  {
+    "check": "google-readonly-and-kernel-uid",
+    "erofs": 30,
+    "peer_uid": 10041
+  },
+  {
+    "check": "duplicate-uid-paused-before-private-init",
+    "reason": "kiri_provision_uid_assignment_conflict",
+    "unread": true
+  },
+  {
+    "check": "parent-kill-after-private-commit-recovers",
+    "unread": true,
+    "private_uid": 10042
+  },
+  {
+    "check": "web-planned-name-and-operation-bound",
+    "unread": true
+  },
+  {
+    "check": "suspended-retry-denied",
+    "unread": true
+  },
+  {
+    "check": "fenced-retry-never-revives",
+    "unread": true
+  },
+  {
+    "check": "metadata-secret-and-private-owner-check",
+    "plaintext_secret_absent": true
+  }
+]

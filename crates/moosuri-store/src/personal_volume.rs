@@ -79,6 +79,20 @@ impl VolumeOwner {
         )
     }
 
+    /// Installer child only: prepare a fresh owner store or identify a completed
+    /// retry under this UID's writer lock, without accepting a new password.
+    pub async fn initialization_status(self, root: &Path, email: String) -> Result<bool> {
+        let email = email_valid(email)?;
+        let store = self.open(root, true)?;
+        store.call(move |db| {
+            let accounts:i64=db.conn.query_row("SELECT count(*) FROM accounts",[],|r|r.get(0))?;
+            let tenants:i64=db.conn.query_row("SELECT count(*) FROM tenants",[],|r|r.get(0))?;
+            let identity:bool=db.conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='personal_runtime_identity')",[],|r|r.get(0))?;
+            if accounts==0 && tenants==0 && !identity {return Ok(false);}
+            self.check_identity(&db.conn,Some(&email))?;Ok(true)
+        }).await
+    }
+
     pub async fn initialize(
         self,
         root: &Path,
@@ -227,5 +241,80 @@ mod tests {
                 .await,
             Err(StoreError::Unauthorized)
         ));
+    }
+}
+
+#[cfg(test)]
+mod invite_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[tokio::test]
+    async fn installer_status_recovers_initialization_without_replacing_a_password() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let owner = VolumeOwner {
+            account: Uuid::new_v4(),
+            tenant: Uuid::new_v4(),
+            volume: Uuid::new_v4(),
+            generation: 1,
+        };
+        assert!(
+            !owner
+                .initialization_status(&root, "new@example.invalid".into())
+                .await
+                .unwrap()
+        );
+        owner
+            .initialize(
+                &root,
+                "Synthetic member".into(),
+                "new@example.invalid".into(),
+                "Original-synthetic-password-191!".into(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            owner
+                .initialization_status(&root, "new@example.invalid".into())
+                .await
+                .unwrap()
+        );
+        assert!(
+            owner
+                .initialization_status(&root, "other@example.invalid".into())
+                .await
+                .is_err()
+        );
+        assert!(
+            owner
+                .initialize(
+                    &root,
+                    "Synthetic member".into(),
+                    "new@example.invalid".into(),
+                    "Replacement-synthetic-password-191!".into()
+                )
+                .await
+                .is_err()
+        );
+        let store = owner.open_verified(&root).await.unwrap();
+        assert!(
+            store
+                .login(
+                    "new@example.invalid".into(),
+                    "Original-synthetic-password-191!".into()
+                )
+                .await
+                .is_ok()
+        );
+        assert!(
+            store
+                .login(
+                    "new@example.invalid".into(),
+                    "Replacement-synthetic-password-191!".into()
+                )
+                .await
+                .is_err()
+        );
     }
 }

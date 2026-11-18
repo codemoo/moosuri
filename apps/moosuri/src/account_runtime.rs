@@ -105,6 +105,11 @@ pub struct PersonalOptions {
 }
 #[derive(Subcommand)]
 enum PersonalOperation {
+    /// Installer-only owner check; run as the dedicated member UID, never root.
+    InitializationStatus {
+        #[arg(long)]
+        email: String,
+    },
     /// Create the allocated member with a temporary password read from the terminal.
     Initialize {
         #[arg(long)]
@@ -137,6 +142,17 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
         generation: options.generation,
     };
     match &options.command {
+        PersonalOperation::InitializationStatus { email } => {
+            if unsafe { libc::geteuid() } == 0 {
+                return Err("member_initialization_requires_nonroot_uid".into());
+            }
+            let initialized = owner
+                .initialization_status(&options.root, email.clone())
+                .await
+                .map_err(|_| "member_initialization_status_failed")?;
+            println!("{}", serde_json::json!({"initialized":initialized}));
+            return Ok(());
+        }
         PersonalOperation::Serve {
             socket,
             text_preview_config,

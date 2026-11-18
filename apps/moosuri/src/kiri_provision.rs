@@ -180,6 +180,15 @@ pub(crate) async fn reconcile_member(args: &Options) -> Result<Value, String> {
         .map_err(|_| "kiri_provision_worker_failed".to_owned())?
 }
 fn run_blocking(args: &Options) -> Result<Value, String> {
+    let (expected, engine) = expected_member(args, true)?;
+    let _lock = reserve_expected(args, &expected)?;
+    let state = reconcile(&engine, &expected, args.start)?;
+    Ok(
+        json!({"profile":PROFILE,"container":expected.name,"account":expected.account,"generation":expected.generation,"state":state,
+        "readiness":"unverified-private-auth-only","production":false}),
+    )
+}
+fn expected_member(args: &Options, initialized: bool) -> Result<(Expected, Engine), String> {
     if !cfg!(target_os = "linux") || !args.experimental {
         return Err("kiri_provision_explicit_experimental_linux_only".into());
     }
@@ -209,10 +218,11 @@ fn run_blocking(args: &Options) -> Result<Value, String> {
     validate_mount(&mount, args.max_volume_bytes)?;
     let data = mount.join("member-data");
     trusted_dir(&data, args.uid, true)?;
-    validate_initialized_data(
+    validate_member_data(
         &data,
         &format!("{volume}-{account}-{tenant}-g{}", allocation.generation),
         args.uid,
+        initialized,
     )?;
     let scratch = mount.join("scratch");
     trusted_dir(&scratch, args.uid, true)?;
@@ -296,6 +306,10 @@ fn run_blocking(args: &Options) -> Result<Value, String> {
         pids: args.pids,
         env,
     };
+    Ok((expected, engine))
+}
+
+fn reserve_expected(args: &Options, expected: &Expected) -> Result<File, String> {
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -313,13 +327,76 @@ fn run_blocking(args: &Options) -> Result<Value, String> {
     }
     lock.lock_exclusive()
         .map_err(|_| "kiri_provision_allocation_lock_failed")?;
-    reserve_host(args, &expected)?;
-    let state = reconcile(&engine, &expected, args.start)?;
-    Ok(
-        json!({"profile":PROFILE,"container":expected.name,"account":expected.account,"generation":expected.generation,"state":state,
-        "readiness":"unverified-private-auth-only","production":false}),
-    )
+    reserve_host(args, expected)?;
+    Ok(lock)
 }
+
+/// Metadata-only first-use preflight. Never opens the private SQLite database.
+pub(crate) struct PreparedMember {
+    pub account_id: String,
+    pub tenant_id: String,
+    pub volume_id: String,
+    pub generation: i64,
+    pub data_directory: PathBuf,
+    pub scratch_directory: PathBuf,
+    pub ipc_directory: PathBuf,
+    pub runtime_running: bool,
+}
+pub(crate) async fn prepare_member(args: &Options) -> Result<PreparedMember, String> {
+    let args = args.clone();
+    tokio::task::spawn_blocking(move || {
+        let (e, engine) = expected_member(&args, false)?;
+        let _lock = reserve_expected(&args, &e)?;
+        let (status, v) =
+            engine.request("GET", &format!("{API}/containers/{}/json", e.name), None)?;
+        let running = match status {
+            404 => false,
+            200 => {
+                verify_inspect(&v, &e)?;
+                v["State"]["Running"] == true
+            }
+            n => return Err(format!("kiri_provision_engine_http_{n}")),
+        };
+        Ok(PreparedMember {
+            account_id: e.account,
+            tenant_id: e.tenant,
+            volume_id: e.volume,
+            generation: e.generation,
+            data_directory: e.data,
+            scratch_directory: e.scratch,
+            ipc_directory: e.ipc,
+            runtime_running: running,
+        })
+    })
+    .await
+    .map_err(|_| "kiri_provision_worker_failed".to_owned())?
+}
+fn validate_member_data(
+    root: &Path,
+    name: &str,
+    uid: u32,
+    initialized: bool,
+) -> Result<(), String> {
+    if initialized {
+        return validate_initialized_data(root, name, uid);
+    }
+    let entries = fs::read_dir(root)
+        .map_err(|_| "kiri_provision_volume_read_failed")?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "kiri_provision_volume_read_failed")?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+    if entries.len() != 1 || entries[0].file_name() != name {
+        return Err("kiri_provision_exact_owner_directory_required".into());
+    }
+    let m = checked_metadata(&root.join(name))?;
+    if !m.is_dir() || m.uid() != uid || m.mode() & 0o077 != 0 {
+        return Err("kiri_provision_private_owner_subdirectory_required".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_limits(a: &Options) -> Result<(), String> {
     if a.uid < 10000
         || a.uid > 2_000_000_000
@@ -1016,5 +1093,22 @@ mod tests {
         }
         let without_option = expected();
         assert!(verify_inspect(&inspect(&e, true), &without_option).is_err());
+    }
+}
+
+#[cfg(test)]
+mod first_use_tests {
+    use super::*;
+    #[test]
+    fn first_use_preflight_accepts_only_empty_or_exact_owner_layout_without_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let name = "synthetic-owner";
+        let uid = unsafe { libc::geteuid() };
+        validate_member_data(&root, name, uid, false).unwrap();
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        assert!(validate_member_data(&root, name, uid, true).is_err());
+        fs::create_dir(root.join("other-owner")).unwrap();
+        assert!(validate_member_data(&root, name, uid, false).is_err());
     }
 }

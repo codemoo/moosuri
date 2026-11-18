@@ -739,11 +739,15 @@ it("guides local-helper server sign-in without requesting private launch materia
 
 
 describe("personal foreground tool verification", () => {
-  it("checks the effective subscription tuple on demand and keeps the selected model", async () => {
+  it.each([
+    ["personal_chat_gpt", "chatgpt"],
+    ["personal_claude_code", "claude"],
+    ["personal_compatible", "compatible-providers"],
+  ] as const)("checks the effective %s tuple on demand and keeps the selected model", async (source, route) => {
     const user = userEvent.setup();
-    const choice: ModelChoice = {...high, source:"personal_chat_gpt", provider_id:"current-plan", function_tools:false};
+    const choice: ModelChoice = {...high, source, provider_id:"current-plan", function_tools:false};
     const settings: ModelSettings = {selection:{...selection(choice), source:choice.source}, effective:choice, choices:[choice]};
-    const endpoint = "/settings/chatgpt/current-plan/tool-probe";
+    const endpoint = `/settings/${route}/current-plan/tool-probe`;
     const {calls} = server(call => {
       if (call.path !== endpoint || call.method !== "POST") return undefined;
       settings.effective = {...choice, function_tools:true};
@@ -761,6 +765,27 @@ describe("personal foreground tool verification", () => {
     ]);
     expect(calls.some(call => call.method === "PUT")).toBe(false);
     expect(screen.queryByRole("button", {name:"현재 모델 도구 확인"})).not.toBeInTheDocument();
+  });
+
+  it.each(["selection_changed", "proof_missing"])("does not announce tools on the current model when refreshed settings report %s", async changed => {
+    const user = userEvent.setup();
+    const choice: ModelChoice = {...high, source:"personal_claude_code", provider_id:"current-plan", function_tools:false};
+    const other: ModelChoice = {...choice, model:"synthetic-other", effort:null};
+    const settings: ModelSettings = {selection:{...selection(choice), source:choice.source}, effective:choice, choices:[choice,other]};
+    server(call => {
+      if (!call.path.endsWith("current-plan/tool-probe")) return undefined;
+      if (changed === "selection_changed") {
+        settings.selection = {...selection(other), source:other.source};
+        settings.effective = other;
+      }
+      return response({...choice,function_tools:true});
+    }, member, undefined, settings);
+    open("/settings/model");
+    await user.click(await screen.findByRole("button", {name:"현재 모델 도구 확인"}));
+    await screen.findByText(/모델 설정이 변경되었거나 도구 확인을 적용하지 못했습니다/);
+    expect(screen.queryByText(/이 모델의 도구 호출을 확인했습니다/)).not.toBeInTheDocument();
+    expect(screen.getByText("도구 확인 필요")).toBeInTheDocument();
+    if (changed === "selection_changed") expect(screen.getByText(other.model, {selector:"strong"})).toBeInTheDocument();
   });
 
   it("prefers a tool-verified effort when starting a new model selection", async () => {

@@ -1,0 +1,4 @@
+- [x] Unify execution and per-round readiness across chat, planners and mission dispatch.
+- [x] Use verified tool capability at admission and preserve frozen task authority.
+- [x] Give useful setup errors with an intact task draft.
+- [ ] Verify the Linux release and a real scheduled task.

@@ -230,9 +230,9 @@ scope를 늘리지 않는다. 읽기 권한이 사라지면 결과·private chec
 추가하지 않는다. 합성 Store/Runtime 및 실제 loopback connector 검증은 실제 Google 계정 동의,
 넓은 언어 이해 정확도, 실계정 정책이나 production 배포 검증을 뜻하지 않는다.
 
-## 개인 ChatGPT로 맡기는 읽기 업무
+## 개인 모델로 맡기는 업무
 
-설치 공용 API 모델 없이도 소유자가 선택한 개인 ChatGPT 연결로 기존 일회성·반복
+설치 공용 API 모델 없이도 소유자가 선택한 ChatGPT·Claude 구독이나 개인 OpenAI 호환 연결로 일회성·반복
 읽기 업무를 맡길 수 있다. 정확한 연결 revision/model/effort의 text·도구 왕복 확인이
 필요하다. 이 확인은 전송 기능 증명이며 background 실행 허용이 아니다. 실제 허용은
 양식/API의 원래 업무 요청 또는 현재 대화에서 명시적으로 맡긴 요청을 같은 writer
@@ -252,8 +252,7 @@ current-session 위임은 원래 세션이 끝나면 실행하지 않는다. 계
 복원 격리와 이미 시작한 호출의 unknown/no-reentry 계약은 공용 모델 업무와 같다.
 
 지원 범위는 기존 보관 자료·기억/지침 읽기·정확 계산·설정된 공개 HTTP와 명시해서
-맡긴 개인 Gmail/기본 Calendar 읽기다. 메일/Calendar 쓰기·브라우저·볼트·media·Claude
-background는 추가하지 않았다. 원래 요청에 필요한 연결이 사라지면 다른 계정이나
+맡긴 개인 Gmail/기본 Calendar 읽기다. 메일/Calendar 쓰기·브라우저·볼트·media 등 작업의 허용 범위는 위임별로 정한다. 원래 요청에 필요한 연결이 사라지면 다른 계정이나
 공용 모델로 우회하지 않는다. 개인 연결 token은 기존 sealing/refresh 전용 경로만 쓰며
 모델·업무 결과·일반 도구 output에 복사하지 않는다. 합성 공식 protocol/Runtime 검증은
 실계정 eligibility나 자연어 품질 평가를 대신하지 않는다.

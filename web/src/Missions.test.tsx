@@ -5,6 +5,27 @@ import type {MissionView} from "../shared/api-types";
 const missionFetch=(handler:(url:any,init:any)=>any)=>vi.fn((url:any,init:any)=>String(url)==="/api/v1/task-monitors"?Promise.resolve(new Response("[]")):handler(url,init));
 const mission:MissionView={id:"m",revision:1,state:"paused",request:{request_id:"r",task:"Synthetic task",constraints:"Keep original",checks:[{kind:"user_review",description:"Owner review"}],execution_mode:"durable"},steering:[],plan:["Find evidence","Verify"],completed_steps:1,receipts:[],result:null,report:[],uncertain:false,expires_at_ms:0};
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
+it.each([
+ ["one-off","tools_required"], ["one-off","model_required"],
+ ["recurring","tools_required"], ["recurring","model_required"],
+] as const)("routes a %s mission's %s rejection to model settings while preserving the request",async(kind,code)=>{
+ const posts:any[]=[];
+ vi.stubGlobal("fetch",missionFetch(async(_url,init)=>{
+  if(init?.method==="POST"){posts.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({code}),{status:400})}
+  return new Response("[]");
+ }));
+ render(<Missions accountId="owner" onExpired={vi.fn()} back={vi.fn()}/>);
+ const recurring=kind==="recurring";
+ if(recurring)fireEvent.click(screen.getByText("예약해서 맡기기"));
+ const input=screen.getByLabelText(recurring?"예약할 일":"맡길 일");
+ fireEvent.change(input,{target:{value:"Keep this exact calculation request"}});
+ fireEvent.click(screen.getByRole("button",{name:recurring?"업무 예약 저장":"일 맡기기"}));
+ const error=await screen.findByRole("alert");
+ expect(error).toHaveTextContent(code==="tools_required"?"맡긴 일에는 도구가 필요해요.":"사용할 모델이 없어요.");
+ expect(screen.getByRole("link",{name:"내 모델 설정"})).toHaveAttribute("href","/settings/model");
+ expect(input).toHaveValue("Keep this exact calculation request");
+ expect(posts).toHaveLength(1);
+});
 it("edits paused acceptance without another approval, retaining fields and exact UUID after lost acknowledgement",async()=>{
  const writes:any[]=[];let item={...mission,revision:2};
  vi.stubGlobal("fetch",missionFetch(async(url,init)=>{

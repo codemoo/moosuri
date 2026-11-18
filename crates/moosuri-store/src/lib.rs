@@ -109,6 +109,10 @@ pub enum StoreError {
     GoogleAuthorizationInProgress,
     #[error("invalid input")]
     InvalidInput,
+    #[error("a configured model is required")]
+    ModelRequired,
+    #[error("verified model tools are required")]
+    ToolsRequired,
     #[error("authentication required")]
     Unauthorized,
     #[error("operation forbidden")]

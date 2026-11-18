@@ -466,6 +466,15 @@ async fn mission_starts_with_tools_and_same_exact_result_survives_reopen() {
 
 #[tokio::test]
 async fn recurring_worker_is_idle_before_due_then_executes_and_publishes_actual_mission() {
+    verify_recurring_worker(false).await;
+}
+
+#[tokio::test]
+async fn recurring_worker_preserves_personal_compatible_model_after_selection_changes() {
+    verify_recurring_worker(true).await;
+}
+
+async fn verify_recurring_worker(personal: bool) {
     let _guard = TEST_LOCK.lock().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -483,6 +492,46 @@ async fn recurring_worker_is_idle_before_due_then_executes_and_publishes_actual_
     }}));
     let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let (_d, s, u, _thread) = knowledge::tool_configured(&base).await;
+    if personal {
+        let provider = s
+            .create_personal_compatible(
+                &u,
+                ProviderChange {
+                    name: "Synthetic personal endpoint".into(),
+                    enabled: true,
+                    config: s
+                        .admit_personal_compatible_config(
+                            &u,
+                            base.clone(),
+                            vec!["127.0.0.1".into()],
+                        )
+                        .await
+                        .unwrap(),
+                    credential: CredentialChange::Clear,
+                },
+            )
+            .await
+            .unwrap();
+        let choice = s
+            .record_model_probe(&u, provider.id.clone(), 1, "fixture-model".into(), None)
+            .await
+            .unwrap();
+        s.record_tool_probe(&u, provider.id.clone(), 1, choice.model.clone(), None)
+            .await
+            .unwrap();
+        s.set_model_preference(
+            &u,
+            Some(ModelSelection {
+                source: moosuri_core::ModelSource::PersonalCompatible,
+                provider_id: provider.id,
+                provider_revision: 1,
+                model: choice.model,
+                effort: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -512,6 +561,10 @@ async fn recurring_worker_is_idle_before_due_then_executes_and_publishes_actual_
     )
     .await
     .unwrap();
+    if personal {
+        s.set_model_preference(&u, None).await.unwrap();
+        s.set_default_model(&u, None).await.unwrap();
+    }
     let runtime = Runtime::start(s.clone());
     tokio::time::sleep(Duration::from_millis(250)).await;
     assert_eq!(count.load(Ordering::SeqCst), 0);

@@ -94,7 +94,22 @@ if behavior.startswith('tool-bridge'):
  turn=int(turn_path.read_text()) if turn_path.exists() else 0
  turn_path.write_text(str(turn+1))
  plan_path=root/'tool-bridge-decisions.json'
- if plan_path.exists():
+ if behavior=='tool-bridge-mission':
+  current=json.loads(''.join(part['text'] for part in document['messages'][-1]['content'] if part['type']=='text'))
+  assert current['accepted']['task']=='Calculate the exact sum of 917.13 and 409.15'
+  assert current['original']['task']==current['accepted']['task']
+  assert all(tool['name'] not in ['mail_send','browser_open','artifact_write'] for tool in document['tools'])
+  receipts=current['receipts']
+  if not receipts:
+   assert any(tool['name']=='decimal_calculate' for tool in document['tools'])
+   decision={'kind':'calls','calls':[{'id':'untrusted-label','name':'decimal_calculate','arguments':{'operation':'sum','operands':['917.13','409.15']}}]}
+  else:
+   assert len(receipts)==1
+   receipt=receipts[0]
+   assert receipt['step']==1 and receipt['call_id'].startswith('moosuri_')
+   assert receipt['result']['value']['exact']=='1326.28'
+   decision={'kind':'final','answer':json.dumps({'text':'The exact sum is 1326.28.','evidence':[{'step':receipt['step'],'call_id':receipt['call_id']}]})}
+ elif plan_path.exists():
   plan=json.loads(plan_path.read_text())
   assert isinstance(plan,list) and turn<len(plan)
   decision=plan[turn]

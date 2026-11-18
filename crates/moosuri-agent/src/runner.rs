@@ -641,6 +641,84 @@ enum ExecutionClient {
     ),
 }
 impl ExecutionClient {
+    /// One provider selection path for foreground, planners and durable missions.
+    /// The binding is already owner/lease-scoped by Store admission; it never
+    /// falls back to another configured engine when that binding is unavailable.
+    async fn acquire(
+        binding: &mut moosuri_store::ProviderBinding,
+        subscriptions: &crate::subscriptions::SubscriptionService,
+        lease: &RunLease,
+        capabilities: &TextCapabilities,
+        images: Vec<Vec<u8>>,
+    ) -> Result<Self, TransportError> {
+        if let Some(reference) = &binding.claude_code {
+            if binding.subscription.is_some() || !images.is_empty() {
+                return Err(TransportError::InvalidConfiguration);
+            }
+            let profile = subscriptions
+                .claude_profile()
+                .await
+                .map_err(|_| TransportError::InvalidConfiguration)?;
+            if profile.digest() != reference.profile_digest
+                || profile.root_id() != reference.root_id
+            {
+                return Err(TransportError::InvalidConfiguration);
+            }
+            return Ok(Self::Claude(profile, reference.environment_id.clone()));
+        }
+        if let Some(reference) = &binding.subscription {
+            if !images.is_empty() {
+                return Err(TransportError::InvalidConfiguration);
+            }
+            return subscriptions
+                .client(
+                    moosuri_store::SubscriptionAuthority::Run(lease.clone()),
+                    reference.clone(),
+                )
+                .await
+                .map(Self::Http)
+                .map_err(|_| TransportError::InvalidConfiguration);
+        }
+        let credential = binding
+            .credential
+            .take()
+            .map(|value| Secret::new(value.to_string()))
+            .transpose()?;
+        model_client(
+            &binding.config,
+            credential,
+            TextCapabilities {
+                efforts: capabilities.efforts.clone(),
+            },
+        )?
+        .with_images(images)
+        .map(Self::Http)
+    }
+
+    /// Refresh only before durable dispatch admission; never replay inference.
+    /// An owned replacement keeps planner borrows independent of their caller.
+    async fn ready_client(
+        &self,
+        subscription: Option<(
+            &crate::subscriptions::SubscriptionService,
+            &moosuri_store::SubscriptionRef,
+        )>,
+        lease: &RunLease,
+    ) -> Result<Option<ModelClient>, StoreError> {
+        Ok(match (subscription, self) {
+            (Some((service, reference)), Self::Http(client)) => Some(
+                service
+                    .client_for_round(
+                        moosuri_store::SubscriptionAuthority::Run(lease.clone()),
+                        reference.clone(),
+                        client,
+                    )
+                    .await?,
+            ),
+            (None, _) => None,
+            _ => return Err(StoreError::Conflict),
+        })
+    }
     fn executor(&self) -> TextExecutor<'_> {
         match self {
             Self::Http(client) => TextExecutor::Http(client),
@@ -901,42 +979,21 @@ pub(crate) async fn execute_with_calendar(
         .await;
         return;
     }
-    let mut claude_client = None;
-    if let Some(reference) = binding.claude_code.take() {
-        if !model.function_tools {
-            execute_claude_text(
-                &store,
-                &lease,
-                &signals,
-                &subscriptions,
-                reference,
-                messages,
-                context,
-                false,
-            )
-            .await;
-            return;
-        }
-        match subscriptions.claude_profile().await {
-            Ok(profile)
-                if profile.digest() == reference.profile_digest
-                    && profile.root_id() == reference.root_id =>
-            {
-                claude_client = Some(ExecutionClient::Claude(profile, reference.environment_id));
-            }
-            _ => {
-                finish(
-                    &store,
-                    &lease,
-                    None,
-                    RunState::Failed,
-                    Some(RunFailure::ProviderUnavailable),
-                    &signals,
-                )
-                .await;
-                return;
-            }
-        }
+    if let Some(reference) = binding.claude_code.clone()
+        && !model.function_tools
+    {
+        execute_claude_text(
+            &store,
+            &lease,
+            &signals,
+            &subscriptions,
+            reference,
+            messages,
+            context,
+            false,
+        )
+        .await;
+        return;
     }
     if !native_resume {
         match calendar.chat(&lease).await {
@@ -1049,35 +1106,8 @@ pub(crate) async fn execute_with_calendar(
             }
         }
     }
-    let credential = binding
-        .credential
-        .take()
-        .map(|v| Secret::new(v.to_string()))
-        .transpose();
-    let built_client = if let Some(client) = claude_client {
-        Ok(client)
-    } else if let Some(reference) = binding.subscription.clone() {
-        subscriptions
-            .client(
-                moosuri_store::SubscriptionAuthority::Run(lease.clone()),
-                reference,
-            )
-            .await
-            .map(ExecutionClient::Http)
-            .map_err(|_| TransportError::InvalidConfiguration)
-    } else {
-        credential.and_then(|credential| {
-            model_client(
-                &binding.config,
-                credential,
-                TextCapabilities {
-                    efforts: capabilities.efforts.clone(),
-                },
-            )
-            .and_then(|client| client.with_images(images))
-            .map(ExecutionClient::Http)
-        })
-    };
+    let built_client =
+        ExecutionClient::acquire(&mut binding, &subscriptions, &lease, &capabilities, images).await;
     let mut client = match built_client {
         Ok(client) => client,
         Err(error) => {
@@ -1155,9 +1185,6 @@ pub(crate) async fn execute_with_calendar(
     }
     if (personal || matches!(&client, ExecutionClient::Claude(..))) && model.function_tools {
         request.messages[0].text.push_str(" In this personal foreground stage, explicit current-user memory and artifact changes use their separate typed intent and actual stored receipts. One explicit current-user solo-event Calendar command uses its separate typed action and actual receipt. Background work requires an original explicit owner mission delegation and its durable grant; foreground tools alone grant none. Media attachments remain unavailable.");
-        if matches!(&client, ExecutionClient::Claude(..)) {
-            request.messages[0].text.push_str(" The Claude subscription binding can execute foreground tools only. Never claim it registered or will run a background task.");
-        }
     }
     let artifact_write = artifact_profile.as_ref().is_some_and(|p| p.write);
     let external_report = artifact_profile.as_ref().is_some_and(|p| {
@@ -1368,6 +1395,33 @@ pub(crate) async fn execute_with_calendar(
             continuation: continuation.as_ref(),
             results: &results,
         };
+        // All execution paths use the same owner-bound token readiness before
+        // admission. Neither a refresh failure nor a lost ack replays inference.
+        match client
+            .ready_client(
+                binding
+                    .subscription
+                    .as_ref()
+                    .map(|reference| (&subscriptions, reference)),
+                &lease,
+            )
+            .await
+        {
+            Ok(Some(ready)) => client = ExecutionClient::Http(ready),
+            Ok(None) => (),
+            Err(_) => {
+                finish(
+                    &store,
+                    &lease,
+                    None,
+                    RunState::Failed,
+                    Some(RunFailure::ProviderUnavailable),
+                    &signals,
+                )
+                .await;
+                return;
+            }
+        }
         let valid = if model.function_tools {
             preflight_tools(client.executor(), protocol, &tool_request, &capabilities)
         } else if personal {
@@ -1390,34 +1444,6 @@ pub(crate) async fn execute_with_calendar(
             )
             .await;
             return;
-        }
-        // Each personal continuation resolves current token readiness through the same
-        // durable RunLease/refresh CAS. This never retries an inference dispatch.
-        if let (Some(reference), ExecutionClient::Http(http)) =
-            (binding.subscription.clone(), &mut client)
-        {
-            *http = match subscriptions
-                .client_for_round(
-                    moosuri_store::SubscriptionAuthority::Run(lease.clone()),
-                    reference,
-                    http,
-                )
-                .await
-            {
-                Ok(client) => client,
-                Err(_) => {
-                    finish(
-                        &store,
-                        &lease,
-                        None,
-                        RunState::Failed,
-                        Some(RunFailure::ProviderUnavailable),
-                        &signals,
-                    )
-                    .await;
-                    return;
-                }
-            };
         }
         // Dispatch admission is the actor transaction's linearization point. A
         // failed/unknown acknowledgement never authorizes a provider request.

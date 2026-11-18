@@ -86,7 +86,7 @@ impl Store {
             let u=validate(&tx,&user,true,false)?;
             let digest=Sha256::digest(encode(&input)?.as_bytes()).to_vec();
             if let Some((id,old))=tx.query_row("SELECT schedule_id,payload_digest FROM recurring_missions WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",params![u.tenant.0,u.account.id,input.request_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?))).optional()?{if old!=digest{return Err(StoreError::Conflict)}return view(&tx,&u,&id)}
-            let choice=providers::selected_choice(&tx,&u)?;let profile=crate::web::admitted_profile(&tx,&u,&db.web_profile)?;
+            let choice=providers::selected_mission_model(&tx,&u)?;let profile=crate::web::admitted_profile(&tx,&u,&db.web_profile)?;
             let out=create_owner_in(&tx,&db.provider_key,&u,input,choice,profile)?;tx.commit()?;Ok(out)
         }).await
     }
@@ -365,9 +365,6 @@ pub(crate) fn create_owner_in(
                 if old!=digest{return Err(StoreError::Conflict)}
                 return view(tx,u,&id)
             }
-    if !choice.function_tools {
-        return Err(StoreError::InvalidInput);
-    }
     crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &choice)?;
     let profile = crate::missions::connected::admit_profile(
         tx,

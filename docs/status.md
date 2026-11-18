@@ -12,6 +12,8 @@
 
 내 모델에서 **모델**과 **추론 강도**를 따로 고르고 다음 메시지부터 적용할 수 있다. Claude는 공식 CLI가 해당 모델에 보고한 강도 가운데 실행 설정이 지원하는 값만 표시한다. ChatGPT는 개인 공식 로그인과 검증된 모델·강도 조합을 사용한다. 계정별 호환 LLM, 로컬 모델 찾기, 워크스테이션 도우미는 [모델 연결 안내](provider-settings.md#personal-openai-compatible-models)에 정리했다. 공급자가 공개한 한도와 리셋 정보는 [사용량 안내](provider-quota.md)를 따른다.
 
+대화·일회성 업무·반복 업무가 같은 모델 실행기를 사용한다. 도구 연결을 확인한 Claude 구독과 개인 OpenAI 호환 모델도 업무 등록 당시의 모델·추론 강도로 실행한다. 모델 연결이 철회되면 해당 업무는 중단되며, 업무 결과는 실제 도구 기록으로 검증한다. [실행 계약](../openspec/changes/unify-mission-engine/specs/mission-engine/spec.md)
+
 Claude 구독의 **현재 모델 도구 확인**은 선택한 모델과 추론 강도로 도구 호출과 결과 활용을 검증한다. 검증된 Claude는 새 요청부터 무수리의 웹·메일·일정·기억 도구를 선택하고 실제 실행 결과를 받아 이어서 답변한다. 필요한 서비스 연결과 메일 발송 미리보기 승인은 그대로 적용된다. [Claude 구독 연결과 사용 범위](claude-execution.md#supported-boundary)
 [dev.22](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.22)는 운영 Linux에서 기존 로그인·대화·모델 선택을 보존하며 SQLite 77에서 78로 업데이트했다. 기존 구독의 Sonnet 5.5 · medium으로 도구 확인을 통과했고, 별도 합성 대화에서 계산 호출·결과 저장·후속 답변을 실제로 확인했다.
 

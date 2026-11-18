@@ -1390,6 +1390,17 @@ it("shows model settings for an operation blocked by the selected model capabili
   expect(window.location.pathname).toBe("/settings/model");
 });
 
+it.each(["personal_chat_gpt", "personal_claude_code", "personal_compatible"] as const)("routes failed %s authentication to the owner's model connection", async source => {
+  const user = userEvent.setup();
+  fixture({turns:[turn({state:"failed", error:"credentials_rejected", model:{...choice, source}, can_retry:false})]});
+  open();
+  const settings = await screen.findByRole("button", {name:"내 모델 연결 확인"});
+  expect(screen.getByText(/개인 모델 연결 인증에 실패했습니다/)).toBeInTheDocument();
+  expect(screen.queryByText(/관리자에게 연결 확인을 요청하세요/)).not.toBeInTheDocument();
+  await user.click(settings);
+  expect(window.location.pathname).toBe("/settings/model");
+});
+
 it("logout fences a pending streamed receipt before its delayed GET fallback", async () => {
   const user = userEvent.setup();
   const ack = deferred<Response>();

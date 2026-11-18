@@ -179,30 +179,8 @@ pub(super) async fn execute(
     let capabilities = TextCapabilities {
         efforts: binding.effort.iter().cloned().collect(),
     };
-    let credential = binding
-        .credential
-        .take()
-        .map(|v| Secret::new(v.to_string()))
-        .transpose();
-    let built = if let Some(reference) = binding.subscription.clone() {
-        subscriptions
-            .client(
-                moosuri_store::SubscriptionAuthority::Run(lease.clone()),
-                reference,
-            )
-            .await
-            .map_err(|_| TransportError::InvalidConfiguration)
-    } else {
-        credential.and_then(|credential| {
-            model_client(
-                &binding.config,
-                credential,
-                TextCapabilities {
-                    efforts: capabilities.efforts.clone(),
-                },
-            )
-        })
-    };
+    let built =
+        ExecutionClient::acquire(&mut binding, &subscriptions, &lease, &capabilities, vec![]).await;
     let mut client = match built {
         Ok(v) => v,
         Err(e) => {
@@ -225,32 +203,32 @@ pub(super) async fn execute(
             Err(_) => return,
         };
         let through = guidance.last().map_or(0, |i| i.sequence);
-        // Token readiness/rotation is authorized by the same owner mission
-        // lease before each new inference; this never retries a dispatched call.
-        if let Some(reference) = binding.subscription.clone() {
-            client = match subscriptions
-                .client_for_round(
-                    moosuri_store::SubscriptionAuthority::Run(lease.clone()),
-                    reference,
-                    &client,
+        match client
+            .ready_client(
+                binding
+                    .subscription
+                    .as_ref()
+                    .map(|reference| (&subscriptions, reference)),
+                &lease,
+            )
+            .await
+        {
+            Ok(Some(ready)) => client = ExecutionClient::Http(ready),
+            Ok(None) => (),
+            Err(_) => {
+                finish(
+                    &store,
+                    &lease,
+                    None,
+                    RunState::Failed,
+                    Some(RunFailure::ProviderUnavailable),
+                    &signals,
                 )
-                .await
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    finish(
-                        &store,
-                        &lease,
-                        None,
-                        RunState::Failed,
-                        Some(RunFailure::ProviderUnavailable),
-                        &signals,
-                    )
-                    .await;
-                    return;
-                }
-            };
+                .await;
+                return;
+            }
         }
+        // A dispatched token rotation settles before shutdown is observed.
         if signals.stopping().is_cancelled() {
             return;
         }
@@ -318,7 +296,7 @@ pub(super) async fn execute(
             continuation: None,
             results: &[],
         };
-        let valid = preflight_tools(TextExecutor::Http(&client), wire, &tools, &capabilities);
+        let valid = preflight_tools(client.executor(), wire, &tools, &capabilities);
         if valid.is_err() {
             finish(
                 &store,
@@ -349,7 +327,7 @@ pub(super) async fn execute(
             expected_model: &request.model,
         };
         let observed = match stream_round(
-            &client,
+            client.executor(),
             &request,
             Some(&tools),
             &checkpoint,
@@ -535,3 +513,7 @@ mod tests {
         assert!(mission.iter().any(|d| d.name == "knowledge_read_source"));
     }
 }
+
+#[cfg(test)]
+#[path = "mission_transport_tests.rs"]
+mod transport_tests;

@@ -571,6 +571,11 @@ impl Store {
             tx.execute("INSERT INTO provider_revisions(provider_id,revision,name,config,enabled,credential) VALUES (?1,?2,?3,?4,?5,?6)",params![id,revision,name_valid(change.name,200)?,config_bytes(&change.config)?,change.enabled,cipher])?;
             tx.execute("UPDATE providers SET current_revision=?1 WHERE id=?2 AND current_revision=?3",params![revision,id,expected_revision])?;
             tx.execute("UPDATE provider_revisions SET credential=NULL WHERE provider_id=?1 AND revision<>?2 AND credential IS NOT NULL",params![id,revision])?;
+            if personal {
+                crate::calendar::agent::invalidate_personal_model(
+                    &tx, &user.tenant.0, &user.account.id, &id, expected_revision, moosuri_core::ModelSource::PersonalCompatible,
+                )?;
+            }
             crate::missions::connected::withdraw_provider(&tx,&id)?;
             tx.execute("UPDATE missions SET grant_enabled=0,candidate=NULL,round_text=NULL,plan='[]',state='quarantined' WHERE state!='deleted' AND EXISTS(SELECT 1 FROM chat_runs r WHERE r.tenant_id=missions.tenant_id AND r.id=missions.run_id AND json_extract(r.model,'$.provider_id')=?1)",[&id])?;
             let result=summary(&tx,load_revision(&tx,&id)?)?; tx.commit()?; Ok(result)
@@ -811,13 +816,21 @@ pub(super) fn binding_for_choice(
         model: choice.model.clone(),
         effort: choice.effort.clone(),
     };
-    verified(conn, &selection)?;
+    let current = verified(conn, &selection)?;
+    if choice.function_tools && !current.function_tools {
+        return Err(StoreError::Conflict);
+    }
     binding(
         key,
         require_binding(conn, &choice.provider_id, choice.provider_revision)?,
         choice.model.clone(),
         choice.effort.clone(),
     )
+}
+pub(super) fn selected_mission_model(conn: &Connection, user: &UserContext) -> Result<ModelChoice> {
+    settings(conn, user)?
+        .effective
+        .ok_or(StoreError::ModelRequired)
 }
 pub(super) fn selected_choice(conn: &Connection, user: &UserContext) -> Result<ModelChoice> {
     settings(conn, user)?
@@ -832,14 +845,14 @@ pub(super) fn binding_for_owner_choice(
     account: &str,
     choice: &ModelChoice,
 ) -> Result<ProviderBinding> {
-    if choice.source == moosuri_core::ModelSource::PersonalClaudeCode {
-        crate::claude_execution::binding(conn, tenant, account, choice)
-    } else if choice.source == moosuri_core::ModelSource::PersonalChatGpt {
-        subscriptions::binding(conn, tenant, account, choice)
-    } else if choice.source == moosuri_core::ModelSource::PersonalCompatible {
-        personal_binding(conn, key, tenant, account, choice)
-    } else {
-        binding_for_choice(conn, key, choice)
+    use moosuri_core::ModelSource;
+    match choice.source {
+        ModelSource::Shared => binding_for_choice(conn, key, choice),
+        ModelSource::PersonalChatGpt => subscriptions::binding(conn, tenant, account, choice),
+        ModelSource::PersonalClaudeCode => {
+            crate::claude_execution::binding(conn, tenant, account, choice)
+        }
+        ModelSource::PersonalCompatible => personal_binding(conn, key, tenant, account, choice),
     }
 }
 

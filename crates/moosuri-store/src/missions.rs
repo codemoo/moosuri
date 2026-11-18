@@ -44,13 +44,8 @@ pub(crate) fn require_model(
     account: &str,
     choice: &moosuri_core::ModelChoice,
 ) -> Result<()> {
-    if !choice.function_tools
-        || !matches!(
-            choice.source,
-            moosuri_core::ModelSource::Shared | moosuri_core::ModelSource::PersonalChatGpt
-        )
-    {
-        return Err(StoreError::Forbidden);
+    if !choice.function_tools {
+        return Err(StoreError::ToolsRequired);
     }
     providers::binding_for_owner_choice(c, key, tenant, account, choice).map(|_| ())
 }
@@ -717,7 +712,7 @@ impl Store {
                 }
                 return view(&tx, &u.tenant.0, &id);
             }
-            let choice = providers::selected_choice(&tx, &u)?;
+            let choice = providers::selected_mission_model(&tx, &u)?;
             let profile = crate::web::admitted_profile(&tx, &u, &db.web_profile)?;
             let id = create_owner_in(&tx, &db.provider_key, &u, input, choice, profile)?;
             let result = view(&tx, &u.tenant.0, &id)?;
@@ -1015,9 +1010,6 @@ pub(crate) fn create_owner_in(
     choice: moosuri_core::ModelChoice,
     profile: moosuri_core::RunToolProfile,
 ) -> Result<String> {
-    if !choice.function_tools {
-        return Err(StoreError::InvalidInput);
-    }
     crate::connection_waits::poll(tx, clock()?)?;
     validate_input(&input)?;
     let payload = json(&input)?;

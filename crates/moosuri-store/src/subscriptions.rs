@@ -761,7 +761,7 @@ impl Store {
             tx.execute("UPDATE chatgpt_bindings SET status='revoking',remote_revoke='unconfirmed' WHERE tenant_id=?1 AND account_id=?2 AND id=?3 AND current_revision=?4",params![b.tenant,b.account,b.id,b.revision])?;
             // Retire only unfinished Calendar work frozen to this exact binding.
             // Completed conversation/effect history is not revoked by model sign-out.
-            crate::calendar::agent::invalidate_subscription(&tx,&b.tenant,&b.account,&b.id,b.revision, ModelSource::PersonalChatGpt)?;
+            crate::calendar::agent::invalidate_personal_model(&tx,&b.tenant,&b.account,&b.id,b.revision, ModelSource::PersonalChatGpt)?;
             tx.execute("DELETE FROM chatgpt_sessions WHERE tenant_id=?1 AND account_id=?2 AND binding_id=?3",params![b.tenant,b.account,b.id])?;
             tx.commit()?;
             bundle}

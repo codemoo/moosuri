@@ -149,7 +149,7 @@ pub(super) fn personal_binding(
     a: &str,
     choice: &ModelChoice,
 ) -> Result<ProviderBinding> {
-    personal_verified(
+    let current = personal_verified(
         c,
         t,
         a,
@@ -161,6 +161,9 @@ pub(super) fn personal_binding(
             effort: choice.effort.clone(),
         },
     )?;
+    if choice.function_tools && !current.function_tools {
+        return Err(StoreError::Conflict);
+    }
     crate::recovery_budget::require_dispatch_identity(c)?;
     let row = require_binding_metadata(c, &choice.provider_id, choice.provider_revision)?;
     binding(key, row, choice.model.clone(), choice.effort.clone())

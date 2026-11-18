@@ -521,7 +521,7 @@ impl Store {
             if changed != 1 {
                 return Err(StoreError::NotFound);
             }
-            crate::calendar::agent::invalidate_subscription(
+            crate::calendar::agent::invalidate_personal_model(
                 &tx, &u.tenant.0, &u.account.id, &id, revision, ModelSource::PersonalClaudeCode,
             )?;
             tx.commit()?;
@@ -666,7 +666,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_proof_preserves_saved_text_runs_and_foreground_only_policy() {
+    async fn host_proof_admits_new_missions_and_preserves_legacy_runs() {
         let _g = TEST_LOCK.lock().await;
         let d = directory();
         let s = Store::open(d.path()).unwrap();
@@ -736,8 +736,12 @@ mod tests {
             assert!(binding(&db.conn, &u.tenant.0, &u.account.id, &old.model).is_ok());
             assert!(new.model.function_tools);
             assert!(new.tool_profile.is_some());
-            assert!(!new.mission_commands_enabled);
-            assert!(!crate::missions::chat::commands_allowed(&new));
+            assert!(new.mission_commands_enabled);
+            assert!(crate::missions::chat::commands_allowed(&new));
+            assert!(!crate::missions::chat::commands_allowed(&old));
+            let mut legacy = crate::chat::load_run(&db.conn, &u.tenant.0, &run_id)?;
+            legacy.mission_commands_enabled = false;
+            assert!(!crate::missions::chat::commands_allowed(&legacy));
             assert!(
                 crate::missions::require_model(
                     &db.conn,
@@ -746,7 +750,7 @@ mod tests {
                     &u.account.id,
                     &choice
                 )
-                .is_err()
+                .is_ok()
             );
             assert!(
                 crate::providers::binding_for_choice(&db.conn, &db.provider_key, &choice).is_err()

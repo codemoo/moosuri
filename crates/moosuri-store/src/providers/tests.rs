@@ -895,6 +895,10 @@ async fn personal_compatible_destination_owner_storage_and_deleted_account_bound
         .await
         .unwrap();
     assert!(store.set_default_model(&admin, Some(s)).await.is_err());
+    let tool_choice = store
+        .record_tool_probe(&own, row.id.clone(), 1, choice.model.clone(), None)
+        .await
+        .unwrap();
     let id = row.id.clone();
     let t = own.tenant.0.clone();
     let a = own.account.id.clone();
@@ -905,6 +909,12 @@ async fn personal_compatible_destination_owner_storage_and_deleted_account_bound
         assert!(binding_for_owner_choice(&db.conn,&db.provider_key,&ot,&oa,&choice).is_err());
         let binding=binding_for_owner_choice(&db.conn,&db.provider_key,&t,&a,&choice)?;
         assert_eq!(binding.credential.as_deref().map(|s|s.as_str()),Some("synthetic-private-bearer"));
+        crate::missions::require_model(&db.conn, &db.provider_key, &t, &a, &tool_choice)?;
+        assert!(crate::missions::require_model(&db.conn, &db.provider_key, &ot, &oa, &tool_choice).is_err());
+        assert_eq!(crate::missions::require_model(&db.conn, &db.provider_key, &t, &a, &choice), Err(StoreError::ToolsRequired));
+        db.conn.execute("UPDATE provider_model_probes SET function_tools=0 WHERE provider_id=?1", [&id])?;
+        assert!(binding_for_owner_choice(&db.conn,&db.provider_key,&t,&a,&tool_choice).is_err());
+        assert!(binding_for_owner_choice(&db.conn,&db.provider_key,&t,&a,&choice).is_ok());
         let cipher:Vec<u8>=db.conn.query_row("SELECT credential FROM provider_revisions WHERE provider_id=?1",[&id],|r|r.get(0))?;
         assert!(!cipher.windows(b"synthetic-private-bearer".len()).any(|w|w==b"synthetic-private-bearer"));
         assert!(db.conn.execute("UPDATE personal_compatible_providers SET account_id=?1 WHERE provider_id=?2",params![oa,id]).is_err());

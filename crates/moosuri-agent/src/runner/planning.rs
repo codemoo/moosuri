@@ -23,28 +23,6 @@ pub(super) enum Admission {
 }
 
 impl PlanningSession<'_> {
-    /// Refresh only before durable admission; never replay an inference.
-    async fn ready_client(&self) -> Result<Option<ModelClient>, StoreError> {
-        let client = match (self.subscription, self.client) {
-            (Some((service, reference)), ExecutionClient::Http(client)) => Some(
-                service
-                    .client_for_round(
-                        moosuri_store::SubscriptionAuthority::Run(self.lease.clone()),
-                        reference.clone(),
-                        client,
-                    )
-                    .await?,
-            ),
-            (None, _) => None,
-            _ => return Err(StoreError::Conflict),
-        };
-        // Settle a dispatched rotating refresh before observing shutdown.
-        if self.signals.stopping().is_cancelled() {
-            return Err(StoreError::Unavailable);
-        }
-        Ok(client)
-    }
-
     pub async fn failed(&self, step: Option<&StepLease>, error: StoreError) {
         let (state, reason) = store_failure(&error);
         self.finish(step, state, reason).await;
@@ -75,13 +53,22 @@ impl PlanningSession<'_> {
             continuation: None,
             results: &[],
         };
-        let ready = match self.ready_client().await {
+        let ready = match self
+            .client
+            .ready_client(self.subscription, self.lease)
+            .await
+        {
             Ok(client) => client,
             Err(error) => {
                 self.failed(None, error).await;
                 return None;
             }
         };
+        // Settle a dispatched rotating refresh before observing shutdown.
+        if self.signals.stopping().is_cancelled() {
+            self.failed(None, StoreError::Unavailable).await;
+            return None;
+        }
         let client = ready
             .as_ref()
             .map(TextExecutor::Http)

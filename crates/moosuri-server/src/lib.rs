@@ -689,6 +689,8 @@ impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         let (status, code) = match self.0 {
             StoreError::InvalidInput => (StatusCode::BAD_REQUEST, "invalid_input"),
+            StoreError::ModelRequired => (StatusCode::CONFLICT, "model_required"),
+            StoreError::ToolsRequired => (StatusCode::CONFLICT, "tools_required"),
             StoreError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             StoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             StoreError::Conflict | StoreError::AlreadyInitialized => {

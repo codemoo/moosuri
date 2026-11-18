@@ -22,10 +22,9 @@ fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
     serde_json::from_str(v).map_err(|_| StoreError::Corrupt)
 }
 pub(crate) fn commands_allowed(r: &Run) -> bool {
-    r.model.source == ModelSource::Shared
-        || r.model.source == ModelSource::PersonalChatGpt
-            && r.model.function_tools
-            && r.mission_commands_enabled
+    // Shared tool runs predate the saved flag. Personal runs keep their
+    // original admission when replayed across an upgrade.
+    r.model.function_tools && (r.mission_commands_enabled || r.model.source == ModelSource::Shared)
 }
 pub(crate) fn admit(
     c: &Connection,

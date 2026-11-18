@@ -118,6 +118,9 @@ const labels: Record<RunView["state"], string> = {
   refused: "답변 제한",
   outcome_unknown: "결과 확인 필요",
 };
+function personalConnectionFailed(run: RunView) {
+  return run.state === "failed" && run.error === "credentials_rejected" && !!run.model.source && run.model.source !== "shared";
+}
 function runExplanation(run: RunView) {
   if (run.error === "tools_required")
     return "이 요청에는 도구가 필요합니다. 내 모델에서 도구를 확인하거나 ‘도구 사용 가능’ 모델을 선택한 다음 다시 보내 주세요.";
@@ -137,7 +140,9 @@ function runExplanation(run: RunView) {
     if (run.error === "timed_out")
       return "모델 응답을 기다리는 시간이 초과되었습니다.";
     if (run.error === "credentials_rejected")
-      return "모델 연결 인증에 실패했습니다. 관리자에게 연결 확인을 요청하세요.";
+      return personalConnectionFailed(run)
+        ? "개인 모델 연결 인증에 실패했습니다. 내 모델에서 연결을 다시 확인해 주세요."
+        : "모델 연결 인증에 실패했습니다. 관리자에게 연결 확인을 요청하세요.";
     if (run.error === "protocol_failed")
       return "모델의 응답 형식을 확인하지 못했습니다.";
     if (run.error === "rate_limited")
@@ -1184,6 +1189,9 @@ export function ChatPanel(props: Props) {
                 )}
                 {turn.run.error === "tools_required" && (
                   <button className="text-button" onClick={props.openSettings}>내 모델에서 도구 확인</button>
+                )}
+                {personalConnectionFailed(turn.run) && (
+                  <button className="text-button" onClick={props.openSettings}>내 모델 연결 확인</button>
                 )}
                 {turn.assistant.some((message) => message.text) && turn.run.evidence.length > 0 && (
                   <div className="chat-evidence" aria-label="답변에 제공한 자료">

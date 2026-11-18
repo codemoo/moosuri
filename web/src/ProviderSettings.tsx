@@ -261,7 +261,11 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
       const current = await scope.request<ModelSettings>("/settings/model");
       setSettings(current);
       if (!dirty.current) setDraft(selectionKey(current.selection));
-      setNotice("이 모델의 도구 호출을 확인했습니다. 새 요청부터 도구를 사용할 수 있습니다.");
+      if (current.effective?.function_tools && selectionKey(choiceSelection(current.effective)) === selectionKey(choice)) {
+        setNotice("이 모델의 도구 호출을 확인했습니다. 새 요청부터 도구를 사용할 수 있습니다.");
+      } else {
+        setError("모델 설정이 변경되었거나 도구 확인을 적용하지 못했습니다. 현재 적용 모델을 확인해 주세요.");
+      }
     } catch (error) {
       fail(error);
     } finally {

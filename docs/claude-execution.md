@@ -2,7 +2,7 @@
 
 This optional integration executes Anthropic's unchanged official Linux CLI. It
 connects owner settings, model and reasoning selection, saved conversations,
-and foreground tools. The base Rust application needs no Claude CLI,
+foreground tools, and delegated missions. The base Rust application needs no Claude CLI,
 Node/Python SDK, container engine or subscription. Claude.ai bearer tokens and
 session cookies are never imported into the Rust HTTP model adapter.
 
@@ -31,8 +31,7 @@ decision, runs its usual owner-scoped tools, and sends the resulting receipts ba
 to the same model. Depending on configured connections and the request, this
 includes web and mail reads, mail drafts, Calendar commands, saved sources,
 memories, and calculations. Sending mail still requires final preview approval.
-Each round publishes the validated answer as a unit. Subscription media and
-model-driven background missions remain unavailable.
+Each round publishes the validated answer as a unit. Explicit one-off and recurring missions use the same pinned model, effort, and owner binding. Each occurrence needs the original mission grant. Subscription media remains unavailable.
 
 Moosuri handles explicit latest-inbox questions separately before sending a request to the CLI. This account-scoped route uses an existing Gmail read connection and displays only checked message metadata. When Gmail is unavailable, it returns a connection step. The Claude process receives no Gmail metadata or credential through this route.
 

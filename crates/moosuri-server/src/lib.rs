@@ -16,6 +16,7 @@ mod knowledge;
 mod mail;
 mod media;
 mod missions;
+mod personal_threads;
 mod private_files;
 mod provider_quota;
 mod providers;
@@ -919,14 +920,16 @@ fn auth_routes<S: Clone + Send + Sync + 'static>(state: AuthState) -> Router<S> 
 /// internal Host/Origin only on its private Unix transport.
 pub fn personal_auth_router(store: Store) -> Router {
     let config = ServerConfig::new("https://personal.internal", false).expect("fixed HTTPS origin");
-    auth_routes(AuthState {
+    let state = AuthState {
         store,
         config: config.clone(),
         logins: Default::default(),
         delivery: Default::default(),
-    })
-    .layer(DefaultBodyLimit::max(16 * 1024))
-    .layer(middleware::from_fn_with_state(config, boundary))
+    };
+    auth_routes(state.clone())
+        .merge(personal_threads::routes(state))
+        .layer(DefaultBodyLimit::max(16 * 1024))
+        .layer(middleware::from_fn_with_state(config, boundary))
 }
 
 async fn login(

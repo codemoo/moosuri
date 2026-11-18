@@ -6,7 +6,7 @@ use axum::{
     extract::{DefaultBodyLimit, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Args;
@@ -33,7 +33,9 @@ use zeroize::Zeroizing;
 const ROUTER: &str = "__Host-moosuri_route";
 const SESSION: &str = "moosuri_session";
 const MAX_BODY: usize = 64 * 1024;
+// The cookie locates a server session; Store separately enforces sliding expiry.
 const MAX_AGE: u64 = moosuri_server::COOKIE_MAX_AGE;
+const MAX_THREAD_BODY: usize = 32 * 1024 * 1024;
 const WINDOW: Duration = Duration::from_secs(300);
 
 #[derive(Args)]
@@ -306,7 +308,7 @@ impl Gateway {
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         let status = response.status();
-        if ![200, 204, 400, 401, 403, 409, 429, 503].contains(&status.as_u16()) {
+        if ![200, 201, 204, 400, 401, 403, 404, 409, 422, 429, 503].contains(&status.as_u16()) {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
         let mut result = Vec::new();
@@ -315,14 +317,19 @@ impl Gateway {
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
         {
-            if result.len() + chunk.len() > MAX_BODY {
+            if result.len() + chunk.len()
+                > if path.starts_with("/api/v1/threads") {
+                    MAX_THREAD_BODY
+                } else {
+                    MAX_BODY
+                }
+            {
                 return Err(StatusCode::SERVICE_UNAVAILABLE);
             }
             result.extend_from_slice(&chunk);
         }
         let set = if status.is_success()
-            && path != "/api/v1/auth/session"
-            && path != "/api/v1/auth/logout"
+            && matches!(path, "/api/v1/auth/login" | "/api/v1/auth/password")
         {
             Some(runtime_cookie(response.headers())?)
         } else {
@@ -330,6 +337,153 @@ impl Gateway {
         };
         Ok((status, result, set))
     }
+}
+#[derive(Clone, Copy)]
+enum Endpoint {
+    Login,
+    Session,
+    Password,
+    Logout,
+    Threads,
+    Thread(Uuid),
+    History(Uuid, Option<i64>),
+}
+impl Endpoint {
+    fn parse(method: &Method, uri: &Uri) -> Result<Self, StatusCode> {
+        let path = uri.path();
+        let endpoint = match path {
+            "/api/v1/auth/login" => Self::Login,
+            "/api/v1/auth/session" => Self::Session,
+            "/api/v1/auth/password" => Self::Password,
+            "/api/v1/auth/logout" => Self::Logout,
+            "/api/v1/threads" => Self::Threads,
+            _ => {
+                let tail = path
+                    .strip_prefix("/api/v1/threads/")
+                    .ok_or(StatusCode::NOT_FOUND)?;
+                let (id, history) = tail
+                    .strip_suffix("/messages")
+                    .map(|id| (id, true))
+                    .unwrap_or((tail, false));
+                let id = Uuid::parse_str(id)
+                    .ok()
+                    .filter(|id| {
+                        !id.is_nil()
+                            && id.to_string() == tail.strip_suffix("/messages").unwrap_or(tail)
+                    })
+                    .ok_or(StatusCode::BAD_REQUEST)?;
+                if history {
+                    Self::History(id, None)
+                } else {
+                    Self::Thread(id)
+                }
+            }
+        };
+        let valid = match endpoint {
+            Self::Session | Self::History(..) => method == Method::GET,
+            Self::Threads => method == Method::GET || method == Method::POST,
+            Self::Thread(_) => method == Method::DELETE,
+            _ => method == Method::POST,
+        };
+        if !valid {
+            return Err(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match (endpoint, uri.query()) {
+            (Self::History(id, _), Some(query)) if !query.is_empty() => {
+                let pairs = url::form_urlencoded::parse(query.as_bytes()).collect::<Vec<_>>();
+                if pairs.len() != 1 || pairs[0].0 != "before" {
+                    return Err(StatusCode::BAD_REQUEST);
+                }
+                let before = pairs[0]
+                    .1
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or(StatusCode::BAD_REQUEST)?;
+                Ok(Self::History(id, Some(before)))
+            }
+            (Self::History(..), _) => Ok(endpoint),
+            (_, Some(_)) => Err(StatusCode::BAD_REQUEST),
+            _ => Ok(endpoint),
+        }
+    }
+    fn path(self) -> String {
+        match self {
+            Self::Login => "/api/v1/auth/login".into(),
+            Self::Session => "/api/v1/auth/session".into(),
+            Self::Password => "/api/v1/auth/password".into(),
+            Self::Logout => "/api/v1/auth/logout".into(),
+            Self::Threads => "/api/v1/threads".into(),
+            Self::Thread(id) => format!("/api/v1/threads/{id}"),
+            Self::History(id, before) => format!(
+                "/api/v1/threads/{id}/messages{}",
+                before.map(|n| format!("?before={n}")).unwrap_or_default()
+            ),
+        }
+    }
+    fn threads(self) -> bool {
+        matches!(self, Self::Threads | Self::Thread(_) | Self::History(..))
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CreateThread {
+    title: String,
+    request_id: Option<String>,
+}
+fn thread_response(
+    endpoint: Endpoint,
+    method: &Method,
+    status: StatusCode,
+    body: Vec<u8>,
+) -> Result<Response, StatusCode> {
+    if !status.is_success() {
+        let error: moosuri_core::ApiError =
+            serde_json::from_slice(&body).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        if error.code.is_empty()
+            || error.code.len() > 80
+            || !error
+                .code
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'_')
+        {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+        return Ok(response(
+            status,
+            serde_json::to_vec(&error).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+        ));
+    }
+    match endpoint {
+        Endpoint::Threads if method == Method::GET => {
+            if status != StatusCode::OK {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+            serde_json::from_slice::<moosuri_core::ThreadsResponse>(&body)
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        }
+        Endpoint::Threads => {
+            if status != StatusCode::CREATED {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+            serde_json::from_slice::<moosuri_core::ThreadSummary>(&body)
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        }
+        Endpoint::History(id, _) => {
+            let page: moosuri_core::ChatPage =
+                serde_json::from_slice(&body).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            if status != StatusCode::OK || page.thread_id != id.to_string() {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        }
+        Endpoint::Thread(_) => {
+            if status != StatusCode::NO_CONTENT || !body.is_empty() {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        }
+        _ => return Err(StatusCode::SERVICE_UNAVAILABLE),
+    }
+    Ok(response(status, body))
 }
 fn one<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
@@ -506,22 +660,13 @@ async fn handle(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<Response, StatusCode> {
-    // Axum's GET router also recognizes HEAD; authentication exposes only the
-    // four explicit method/path pairs and never forwards implicit variants.
-    if (uri.path() == "/api/v1/auth/session" && method != Method::GET)
-        || (uri.path() != "/api/v1/auth/session" && method != Method::POST)
-    {
-        return Err(StatusCode::METHOD_NOT_ALLOWED);
-    }
+    let endpoint = Endpoint::parse(&method, &uri)?;
+    let path = endpoint.path();
     let ip = g.headers(headers, &method)?;
     let _permit = g
         .inflight
         .try_acquire()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    if uri.query().is_some() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let path = uri.path();
     if method == Method::POST
         && one(headers, "content-type").and_then(|s| s.split(';').next())
             != Some("application/json")
@@ -549,7 +694,9 @@ async fn handle(
             serde_json::to_vec(&serde_json::json!({"email":email,"password":password.as_str()}))
                 .map_err(|_| StatusCode::BAD_REQUEST)?,
         );
-        let (status, body, set) = g.proxy(&a, method, path, Some(&bytes), None).await?;
+        let result = g.proxy(&a, method, &path, Some(&bytes), None).await;
+        recheck(g, &a).await?;
+        let (status, body, set) = result?;
         if !status.is_success() {
             return Err(
                 if status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED {
@@ -580,10 +727,36 @@ async fn handle(
         if account != route.account.to_string() {
             return Err(StatusCode::UNAUTHORIZED);
         }
-    } else if method != Method::GET {
+    } else if method != Method::GET || endpoint.threads() {
         return Err(StatusCode::UNAUTHORIZED);
     }
     let a = active(g, &route).await?;
+    if endpoint.threads() {
+        let payload = if matches!(endpoint, Endpoint::Threads) && method == Method::POST {
+            let input: CreateThread =
+                serde_json::from_slice(body).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+            Some(serde_json::to_vec(&input).map_err(|_| StatusCode::BAD_REQUEST)?)
+        } else {
+            if !body.is_empty() && body != b"{}" {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            None
+        };
+        let result = g
+            .proxy(
+                &a,
+                method.clone(),
+                &path,
+                payload.as_deref(),
+                Some(&session),
+            )
+            .await;
+        // A fenced generation cannot publish either private results or stale
+        // error information, including timeouts and runtime 404 responses.
+        recheck(g, &a).await?;
+        let (status, body, _) = result?;
+        return thread_response(endpoint, &method, status, body);
+    }
     let payload = if path == "/api/v1/auth/password" {
         let input: Password = serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
         let password = Zeroizing::new(input.password);
@@ -600,19 +773,20 @@ async fn handle(
         }
         None
     };
-    let (status, body, set) = g
+    let result = g
         .proxy(
             &a,
             method,
-            path,
+            &path,
             payload.as_ref().map(|p| p.as_slice()),
             Some(&session),
         )
-        .await?;
+        .await;
+    recheck(g, &a).await?;
+    let (status, body, set) = result?;
     if !status.is_success() {
         return Err(status);
     }
-    recheck(g, &a).await?;
     if path == "/api/v1/auth/logout" {
         return Ok(response(status, body));
     }
@@ -666,6 +840,9 @@ fn router(g: Gateway) -> Router {
         .route("/api/v1/auth/session", get(handler))
         .route("/api/v1/auth/password", post(handler))
         .route("/api/v1/auth/logout", post(handler))
+        .route("/api/v1/threads", get(handler).post(handler))
+        .route("/api/v1/threads/{id}", delete(handler))
+        .route("/api/v1/threads/{id}/messages", get(handler))
         .layer(DefaultBodyLimit::max(4096))
         .with_state(g)
 }
@@ -1077,5 +1254,302 @@ mod tests {
         );
         second.abort();
         let _ = second.await;
+    }
+    async fn real_member(
+        options: &Options,
+        email: &str,
+    ) -> (
+        Allocation,
+        moosuri_store::Store,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let a = runtime_registry::reserve(&options.registry, Uuid::new_v4(), email.into()).unwrap();
+        let root = directory(options.ipc_root.parent().unwrap(), &a.volume_id);
+        let owner = moosuri_store::personal_volume::VolumeOwner {
+            account: Uuid::parse_str(&a.account_id).unwrap(),
+            tenant: Uuid::parse_str(&a.tenant_id).unwrap(),
+            volume: Uuid::parse_str(&a.volume_id).unwrap(),
+            generation: a.generation as u64,
+        };
+        owner
+            .initialize(
+                &root,
+                "Synthetic member".into(),
+                email.into(),
+                "Temporary-synthetic-42".into(),
+            )
+            .await
+            .unwrap();
+        let store = owner.open_verified(&root).await.unwrap();
+        let initial = store
+            .login(email.into(), "Temporary-synthetic-42".into())
+            .await
+            .unwrap();
+        store
+            .change_password(&initial.user, "Synthetic-password-42".into())
+            .await
+            .unwrap();
+        let ipc = directory(&options.ipc_root, &a.account_id);
+        let socket = ipc.join("personal.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let router = moosuri_server::personal_auth_router(store.clone());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        runtime_registry::set_routing(&options.registry, &a, true).unwrap();
+        (a, store, task)
+    }
+    async fn json(response: Response) -> serde_json::Value {
+        serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), MAX_THREAD_BODY)
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+    }
+    fn authenticated(cookies: &str, a: &Allocation) -> HeaderMap {
+        let mut h = headers();
+        h.insert(header::COOKIE, HeaderValue::from_str(cookies).unwrap());
+        h.insert(
+            "x-moosuri-account",
+            HeaderValue::from_str(&a.account_id).unwrap(),
+        );
+        h
+    }
+    #[tokio::test]
+    async fn actual_member_sockets_keep_cookie_locator_and_thread_history_private() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let options = options(&root);
+        let (a, store_a, task_a) = real_member(&options, "a@example.test").await;
+        let (b, _store_b, task_b) = real_member(&options, "b@example.test").await;
+        let g = Gateway::new(&options).unwrap();
+        let mut sessions = Vec::new();
+        for email in ["a@example.test", "b@example.test"] {
+            let login = request(
+                &g,
+                "/api/v1/auth/login",
+                Method::POST,
+                headers(),
+                &serde_json::json!({"email":email,"password":"Synthetic-password-42"}).to_string(),
+            )
+            .await;
+            assert_eq!(login.status(), StatusCode::OK);
+            // Real unrestricted Store login uses a 400-day locator. Database
+            // authorization keeps its separate sliding inactivity deadline.
+            assert!(login.headers().get_all(header::SET_COOKIE).iter().all(|h| {
+                h.to_str()
+                    .unwrap()
+                    .contains(&format!("Max-Age={}", moosuri_server::COOKIE_MAX_AGE))
+            }));
+            sessions.push(cookies(&login));
+        }
+        let a_headers = authenticated(&sessions[0], &a);
+        let b_headers = authenticated(&sessions[1], &b);
+        let key = Uuid::new_v4().to_string();
+        let body = serde_json::json!({"title":"Only A history","request_id":key}).to_string();
+        let created = request(
+            &g,
+            "/api/v1/threads",
+            Method::POST,
+            a_headers.clone(),
+            &body,
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let created = json(created).await;
+        let replay = json(
+            request(
+                &g,
+                "/api/v1/threads",
+                Method::POST,
+                a_headers.clone(),
+                &body,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(created, replay);
+        let a_id = created["id"].as_str().unwrap();
+        let b_thread = json(
+            request(
+                &g,
+                "/api/v1/threads",
+                Method::POST,
+                b_headers.clone(),
+                &serde_json::json!({"title":"Only B history","request_id":Uuid::new_v4()})
+                    .to_string(),
+            )
+            .await,
+        )
+        .await;
+        let listed =
+            json(request(&g, "/api/v1/threads", Method::GET, a_headers.clone(), "").await).await;
+        assert_eq!(listed["threads"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["threads"][0]["title"], "Only A history");
+        let history = format!("/api/v1/threads/{a_id}/messages");
+        let page = json(request(&g, &history, Method::GET, a_headers.clone(), "").await).await;
+        assert_eq!(page["thread_id"], a_id);
+        assert_eq!(page["turns"], serde_json::json!([]));
+        let missing = request(&g, &history, Method::GET, b_headers.clone(), "").await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(json(missing).await["code"], "not_found");
+        assert_eq!(
+            request(
+                &g,
+                &format!("/api/v1/threads/{a_id}"),
+                Method::DELETE,
+                b_headers.clone(),
+                ""
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            request(
+                &g,
+                &format!("{history}?before=2&before=3"),
+                Method::GET,
+                a_headers.clone(),
+                ""
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            request(
+                &g,
+                &format!("{history}?before=1"),
+                Method::GET,
+                a_headers.clone(),
+                ""
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            request(
+                &g,
+                &history,
+                Method::POST,
+                a_headers.clone(),
+                r#"{"text":"must not start an agent"}"#
+            )
+            .await
+            .status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert_eq!(
+            request(
+                &g,
+                &format!("/api/v1/threads/{a_id}"),
+                Method::DELETE,
+                a_headers.clone(),
+                ""
+            )
+            .await
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            request(&g, &history, Method::GET, a_headers.clone(), "")
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        let listed =
+            json(request(&g, "/api/v1/threads", Method::GET, b_headers.clone(), "").await).await;
+        assert_eq!(listed["threads"][0]["id"], b_thread["id"]);
+        assert!(store_a.claim_agent_run().await.unwrap().is_none());
+        let changed = request(
+            &g,
+            "/api/v1/auth/password",
+            Method::POST,
+            a_headers,
+            r#"{"password":"Changed-synthetic-password-42"}"#,
+        )
+        .await;
+        assert_eq!(changed.status(), StatusCode::OK);
+        assert!(
+            changed
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .all(|h| h
+                    .to_str()
+                    .unwrap()
+                    .contains(&format!("Max-Age={}", moosuri_server::COOKIE_MAX_AGE)))
+        );
+        let session = request(
+            &g,
+            "/api/v1/auth/session",
+            Method::GET,
+            authenticated(&cookies(&changed), &a),
+            "",
+        )
+        .await;
+        assert_eq!(session.status(), StatusCode::OK);
+        assert!(!session.headers().contains_key(header::SET_COOKIE));
+        task_a.abort();
+        task_b.abort();
+    }
+    #[tokio::test]
+    async fn fenced_generation_withholds_runtime_errors_after_the_request_started() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let options = options(&root);
+        let a =
+            runtime_registry::reserve(&options.registry, Uuid::new_v4(), "a@example.test".into())
+                .unwrap();
+        runtime_registry::set_routing(&options.registry, &a, true).unwrap();
+        let ipc = directory(&options.ipc_root, &a.account_id);
+        let path = ipc.join("personal.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let released = Arc::new(tokio::sync::Notify::new());
+        let e = entered.clone();
+        let r = released.clone();
+        let app = Router::new().fallback(axum::routing::any(move || {
+            let e = e.clone();
+            let r = r.clone();
+            async move {
+                e.notify_one();
+                r.notified().await;
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"code":"not_found"})),
+                )
+            }
+        }));
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let g = Gateway::new(&options).unwrap();
+        let session = "s".repeat(43);
+        let route = g
+            .sign(&Route {
+                account: Uuid::parse_str(&a.account_id).unwrap(),
+                tenant: Uuid::parse_str(&a.tenant_id).unwrap(),
+                volume: Uuid::parse_str(&a.volume_id).unwrap(),
+                generation: a.generation,
+                expires: now().unwrap() + 3600,
+                session_hash: hash(&session),
+            })
+            .unwrap();
+        let h = authenticated(&format!("{SESSION}={session}; {ROUTER}={route}"), &a);
+        let gateway = g.clone();
+        let history = format!("/api/v1/threads/{}/messages", Uuid::new_v4());
+        let work =
+            tokio::spawn(async move { request(&gateway, &history, Method::GET, h, "").await });
+        entered.notified().await;
+        runtime_registry::set_routing(&options.registry, &a, false).unwrap();
+        released.notify_one();
+        assert_eq!(work.await.unwrap().status(), StatusCode::UNAUTHORIZED);
+        task.abort();
     }
 }

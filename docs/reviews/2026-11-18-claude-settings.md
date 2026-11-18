@@ -18,7 +18,10 @@ web build passed. The unchanged ChatGPT guidance test contained obsolete copy an
 to check its current delegated-read and mail-approval boundaries. Independent review identified the distinct POST receipt shape; the UI now constructs
 the pending binding explicitly and the failed-refresh regression uses the actual
 reference shape. Read-only follow-up resolved the finding. Signed deployment
-acceptance is recorded after completion.
+acceptance is recorded after completion. Playwright with synthetic accounts verified
+the desktop and 390px mobile layouts and real navigation into the Anthropic
+editor. That shortcut focuses the API key field so the existing audio settings
+do not leave the requested form below the mobile viewport.
 
 No real Claude account login/probe or rootless production-runtime acceptance is
 claimed. Configured profile, stored binding and verified text model are distinct

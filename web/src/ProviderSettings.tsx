@@ -1007,6 +1007,7 @@ function ProviderEditor({
           <input
             type="password"
             autoComplete="new-password"
+            autoFocus={!provider && initialKind === "anthropic"}
             spellCheck={false}
             value={key}
             disabled={busy || clearKey}

@@ -173,6 +173,7 @@ describe("shared model administration", () => {
     const editor = await screen.findByRole("region", { name: "새 모델 연결" });
     expect(within(editor).getByLabelText("연결 방식")).toHaveValue("anthropic");
     expect(within(editor).getByLabelText("연결 이름")).toHaveValue("Claude API");
+    expect(within(editor).getByLabelText("API 키")).toHaveFocus();
     await user.type(within(editor).getByLabelText("API 키"), "synthetic-anthropic-key");
     await user.click(within(editor).getByRole("button", { name: "연결 저장" }));
     expect(await screen.findByText("연결을 저장했습니다. 사용할 모델을 확인해 주세요.")).toBeInTheDocument();

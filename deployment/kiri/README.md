@@ -82,6 +82,10 @@ Linux Kiri 안의 두 실제 클라이언트에서 무수리 Rust 모델 서비�
 
 회원 프로비저닝에 `--model-sockets-root "$MODEL_SOCKETS" --enable-text-preview`를 지정한다. 로그인한 클라이언트는 `GET /api/v1/text-preview`로 지원 여부를 확인하고, `POST /api/v1/threads/{id}/text-preview`로 `request_id`, `text`, `capability: "text_only_preview"`를 보낸다. 답변은 기존 대화 이력에서 조회한다. 응답을 잃었다면 동일 요청 ID로 기존 상태를 조회한다. 동일한 요청으로 새 호출이 발생하지 않는다. 이 API가 제공하는 기능은 텍스트 대화이며 메일 발송·웹 탐색·예약·도구가 필요한 정규 비서 요청은 기존 운영 경로를 사용한다.
 
+## 개인 Gmail 연결
+
+호스트가 공용 Google 앱을 보관하고, 개인 서비스가 회원별 읽기 권한과 세션을 관리한다. 설치자 구성과 회원의 연결 흐름은 [개인 Gmail 연결](google.md)을 따른다.
+
 ## 검증한 경계
 
 Ubuntu 24.04 x86_64의 격리 VM에서 실제 무수리 Linux 바이너리로 UID가 다른 회원 두 명을 초기화했다. 각 컨테이너의 준비 응답에서 계정·테넌트·볼륨·세대를 대조했다. 두 계정에 총 20개의 재조정 요청을 동시 실행도 4로 보내도 컨테이너 ID와 PID가 유지됐다. 한 볼륨의 마운트를 잃으면 그 계정의 재조정은 중단되고 다른 계정은 준비 응답을 계속 보냈다. 검증한 Linux 실행 파일의 SHA-256은 `f525302d4f692a135d5ef1e628d0d5e00748932171dd4a9a9aec5f1e58db2d7e`, 해당 OCI config의 SHA-256은 `61ca38a10a8450612a4bbebb60b09b48d35efb40e8039e984ca8b13a3a4be802`이다. 이 값은 실험 당시 아티팩트를 식별한다.

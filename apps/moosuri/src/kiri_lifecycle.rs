@@ -45,6 +45,7 @@ struct Config {
     ipc_root: PathBuf,
     allocations_root: PathBuf,
     model_sockets_root: Option<PathBuf>,
+    google_sockets_root: Option<PathBuf>,
     image: String,
     #[serde(default = "engine_socket")]
     engine_socket: PathBuf,
@@ -67,6 +68,8 @@ struct Member {
     uid: u32,
     #[serde(default)]
     enable_text_preview: bool,
+    #[serde(default)]
+    enable_google_readonly: bool,
 }
 fn engine_socket() -> PathBuf {
     "/run/kiri/docker.sock".into()
@@ -93,6 +96,11 @@ impl Config {
             ipc_root: self.ipc_root.clone(),
             allocations_root: self.allocations_root.clone(),
             model_sockets_root: self.model_sockets_root.clone(),
+            google_sockets_root: if m.enable_google_readonly {
+                self.google_sockets_root.clone()
+            } else {
+                None
+            },
             enable_text_preview: m.enable_text_preview,
             uid: m.uid,
             image: self.image.clone(),
@@ -117,6 +125,7 @@ impl Config {
         ]
         .into_iter()
         .chain(self.model_sockets_root.iter())
+        .chain(self.google_sockets_root.iter())
         {
             plain_absolute(p)?;
         }
@@ -134,6 +143,7 @@ impl Config {
                 || !uids.insert(m.uid)
                 || !emails.insert(m.email.to_ascii_lowercase())
                 || (m.enable_text_preview && self.model_sockets_root.is_none())
+                || (m.enable_google_readonly && self.google_sockets_root.is_none())
             {
                 return Err("kiri_lifecycle_invalid_or_duplicate_member".into());
             }
@@ -282,7 +292,7 @@ fn admitted(config: &Config, m: &Member) -> Result<Allocation, &'static str> {
     }
     Ok(a)
 }
-async fn health(socket: &Path, a: &Allocation, uid: u32) -> Result<(), &'static str> {
+pub(crate) async fn health(socket: &Path, a: &Allocation, uid: u32) -> Result<(), &'static str> {
     // Authenticate the connected process before sending even the fixed GET. An
     // account-writable socket name must never redirect this privileged worker.
     if fs::canonicalize(socket).ok().as_deref() != Some(socket) {
@@ -435,6 +445,7 @@ mod tests {
                 email: "a@example.invalid".into(),
                 uid: 10001,
                 enable_text_preview: false,
+                enable_google_readonly: false,
             },
             Member {
                 account_id: Uuid::new_v4(),
@@ -442,6 +453,7 @@ mod tests {
                 email: "b@example.invalid".into(),
                 uid: 10001,
                 enable_text_preview: false,
+                enable_google_readonly: false,
             },
         ];
         assert!(c.validate().is_err());
@@ -474,6 +486,7 @@ mod tests {
             email: "a@example.invalid".into(),
             uid: 10001,
             enable_text_preview: false,
+            enable_google_readonly: false,
         });
         let states = cycle(&c, &CancellationToken::new()).await;
         assert_eq!(states[0].state, "not_active");

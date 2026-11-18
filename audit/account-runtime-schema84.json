@@ -1,0 +1,80 @@
+{
+  "format": 1,
+  "schema": 84,
+  "migrations": [
+    {
+      "name": "0084_member_google_readonly.sql",
+      "sha256": "913439816196e12213e9eedca7c8e7d75cc6a862a83eb01c95948cddac07b5de"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_google_apps",
+      "kind": "table",
+      "sql_sha256": "dd41b8615303febb72ad2b8749210d3d4279c28bec9a098229a4178a89ae55dd",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_apps",
+      "key_transition": "Preserve owner-scoped revision history across a verified same-volume restore. Reconcile the current app revision before use.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "app_revision",
+        "app_version"
+      ]
+    },
+    {
+      "name": "member_google_grants",
+      "kind": "table",
+      "sql_sha256": "1c02d629feb750e498641281edaa79ceb0990ef8659edd302c407eeacc89377b",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_grants",
+      "key_transition": "Encrypted tokens and signed receipts are bound to one member, volume, generation and OAuth app. Reauthorize on migration or key change. Exclude from knowledge archives; never copy a decryption key.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "app_revision",
+        "app_version",
+        "connection_id",
+        "epoch",
+        "credential_version",
+        "auth_epoch",
+        "consent_digest",
+        "mailbox",
+        "status",
+        "cipher",
+        "expires_at",
+        "refresh_nonce",
+        "refresh_request_id",
+        "refresh_phase"
+      ]
+    },
+    {
+      "name": "member_google_oauth",
+      "kind": "table",
+      "sql_sha256": "c1424345f7267a62baaccf009bab5f1230c2810358df4b3efd0e8d1e67ad2f27",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_oauth",
+      "key_transition": "Expire incomplete consent and captured callbacks on cutover. Obtain fresh consent in the destination session.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "state_hash",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "app_revision",
+        "app_version",
+        "epoch"
+      ]
+    }
+  ],
+  "schema_sha256": "e4be27e85d363bcd73bd3c10cb6c00ca368e0fb990023b61c1a633964e9c2ac4",
+  "base_schema": 83
+}

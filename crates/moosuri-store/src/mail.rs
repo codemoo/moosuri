@@ -7,6 +7,10 @@ use moosuri_connectors::gmail::{FrozenMail, MailContent, ReplyContext, SecretStr
 use moosuri_core::*;
 
 mod connection_help;
+mod member_google;
+pub use member_google::{
+    MemberGoogleBinding, MemberGoogleGrant, MemberGoogleRefresh, MemberGoogleStatus,
+};
 mod external;
 pub(crate) mod gws;
 pub use connection_help::MailConnectionHelpIntent;
@@ -116,6 +120,7 @@ pub struct MailOAuthExchange {
     state: Vec<u8>,
     app: Option<GoogleAppPin>,
     pub compose: bool,
+    member_google: Option<member_google::ExchangePin>,
 }
 
 impl MailOAuthExchange {
@@ -123,6 +128,9 @@ impl MailOAuthExchange {
     /// handle, never from a callback query or client-supplied continuation tag.
     pub fn flow_id(&self) -> String {
         oauth_flow_id_from_hash(&self.state)
+    }
+    pub fn member_google_request_id(&self) -> Option<Uuid> {
+        self.member_google.as_ref().map(|p| p.request_id)
     }
 }
 
@@ -484,7 +492,7 @@ impl Store {
         user: &UserContext,
         handle: String,
     ) -> Result<MailOAuthExchange> {
-        self.claim_mail_oauth_inner(user, handle, None).await
+        self.claim_mail_oauth_inner(user, handle, None, None).await
     }
     pub async fn claim_mail_oauth_with_app(
         &self,
@@ -492,13 +500,15 @@ impl Store {
         handle: String,
         pin: GoogleAppPin,
     ) -> Result<MailOAuthExchange> {
-        self.claim_mail_oauth_inner(user, handle, Some(pin)).await
+        self.claim_mail_oauth_inner(user, handle, Some(pin), None)
+            .await
     }
     async fn claim_mail_oauth_inner(
         &self,
         user: &UserContext,
         handle: String,
         pin: Option<GoogleAppPin>,
+        member: Option<member_google::Expected>,
     ) -> Result<MailOAuthExchange> {
         let user = user.clone();
 
@@ -506,6 +516,7 @@ impl Store {
             validate(&db.conn,&user,true,false)?;
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let(state,code,verifier):(Vec<u8>,Vec<u8>,Vec<u8>)=tx.query_row("SELECT state_hash,code,verifier FROM mail_oauth_sessions WHERE result_hash=?1 AND tenant_id=?2 AND account_id=?3 AND session_digest=?4 AND auth_epoch=?5 AND expires_at>?6 AND claimed=0 AND code IS NOT NULL",params![hash(&handle),user.tenant.0,user.account.id,user.digest.as_slice(),user.epoch,now()?],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::Conflict)?;
+            let member_google=match member {Some(expected)=>Some(member_google::claim_in(&tx,&user,&state,expected)?),None=>{if tx.query_row("SELECT EXISTS(SELECT 1 FROM member_google_oauth WHERE state_hash=?1)",[&state],|r|r.get::<_,bool>(0))?{return Err(StoreError::Forbidden);}None}};
             let saved:(Option<i64>,Option<String>,Option<String>)=tx.query_row("SELECT app_revision,client_id,redirect_uri FROM mail_oauth_sessions WHERE state_hash=?1",[&state],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
             match &pin {
                 Some(p) if saved==(p.revision,Some(p.client_id.clone()),Some(p.redirect_uri.clone()))=>google_setup::guard_app(&tx,p)?,
@@ -516,7 +527,7 @@ impl Store {
                 let plain=providers::decrypt(&db.provider_key,bytes,&oauth_aad(&state,purpose))?;
                 SecretString::new(String::from_utf8(plain.to_vec()).map_err(|_|StoreError::Corrupt)?).map_err(|_|StoreError::Corrupt)};
             let result=MailOAuthExchange{
-                compose:tx.query_row("SELECT compose FROM mail_oauth_sessions WHERE state_hash=?1",[&state],|r|r.get(0))?,code:decode(&code,"code")?,verifier:decode(&verifier,"verifier")?,user,state:state.clone(),app:pin};
+                compose:tx.query_row("SELECT compose FROM mail_oauth_sessions WHERE state_hash=?1",[&state],|r|r.get(0))?,code:decode(&code,"code")?,verifier:decode(&verifier,"verifier")?,user,state:state.clone(),app:pin,member_google};
             tx.execute("UPDATE mail_oauth_sessions SET claimed=1,code=NULL,verifier=NULL WHERE state_hash=?1",[state])?;
             tx.commit()?;
             Ok(result)}
@@ -530,6 +541,7 @@ impl Store {
         email: String,
     ) -> Result<MailConnection> {
         self.call(move|db|{
+            if exchange.member_google.is_some(){return Err(StoreError::Forbidden);}
             let user=validate(&db.conn,&exchange.user,true,false)?;
             if !db.conn.query_row("SELECT EXISTS(SELECT 1 FROM mail_oauth_sessions WHERE state_hash=?1 AND claimed=1 AND expires_at>?2)",params![exchange.state,now()?],|r|r.get::<_,bool>(0))?{
                 return Err(StoreError::Conflict)}
@@ -881,3 +893,7 @@ impl Store {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn restart_member_google(c: &Connection) -> Result<()> {
+    member_google::restart(c)
+}

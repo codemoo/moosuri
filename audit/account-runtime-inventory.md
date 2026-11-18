@@ -16,18 +16,18 @@ cargo run --locked -p xtask -- account-runtime-inventory --schema 81 --snapshot 
 
 The default schema follows the newest source migration; unknown versions fail.
 An explicit supported `--schema` replays only that pinned baseline. Schema81 has
-202 application tables, including virtual FTS, schema82 has 203, and schema83 has 204. All three have 34
+202 application tables, including virtual FTS, schema82 has 203, schema83 has 204 and schema84 has 207. All four have 34
 tables with neither `tenant_id` nor `account_id`. SQLite internal tables and the
 five FTS shadow tables are excluded using SQLite's actual table kinds, rather
 than a name-prefix guess. Schema82 extends the frozen 81 classification with its
-one exact Gmail server-resume table and migration hash. Schema83 adds the per-run private model-preview binding and receipt.
+one exact Gmail server-resume table and migration hash. Schema83 adds the per-run private model-preview binding and receipt. Schema84 records the private Google app history, encrypted read-only grant and pending consent. The manual knowledge archive excludes these tables.
 
 The manifests pin every migration SHA-256, every application table SQL shape and
 the complete non-shadow table/index/trigger/view fingerprint. Each table has an
 explicit disposition, owner query or global/regeneration decision, key transition,
 verification and failure action. The tool checks SQLite integrity, all declared
 foreign keys, complete and unique owner-join coverage, exact AccountId/TenantId
-pairs, and cross-owner references for 187 declared relationships in 81, 189 in 82 and 190 in 83.
+pairs, and cross-owner references for 187 declared relationships in 81, 189 in 82, 190 in 83 and 196 in 84.
 Deletion/vault ACK and external auth-root cleanup records retain durable installation responsibility, and recovery spend dispatches remain non-rewindable even when owner-indexed.
 Parent-only broker auth/binding/repository/mail-grant rows resolve through their
 actual device/binding parents. Personal compatible providers partition by the
@@ -68,7 +68,7 @@ Validation on isolated synthetic data (2026-11-19):
   valid-FK cross-account provider misuse, private-provider promotion, source hash
   drift, unknown table/version/index/shape, incomplete classification, and immutable
   snapshot/no-sidecar/symlink/unknown-file failure boundaries.
-- Schema81, schema82 and schema83 CLI runs passed against pinned public migrations.
+- Schema81–84 CLI runs passed against pinned public migrations.
   Source-only replay contains 10 bootstrap rows; these are not user data acceptance.
 - Formatting check passed. No production data, credentials or services were used.
 

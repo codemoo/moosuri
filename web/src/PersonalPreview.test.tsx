@@ -96,6 +96,20 @@ beforeEach(() => {
       }
       if (path === "/knowledge/memories")
         return Response.json({ items: [], next_after: null, generation: 1 });
+      if (path === "/personal/google")
+        return Response.json({
+          connection: {
+            connection_id: tid,
+            epoch: 1,
+            mailbox: "a@example.test",
+          },
+        });
+      if (path === "/personal/google/inbox")
+        return Response.json({
+          mailbox: "a@example.test",
+          messages: [],
+          has_more: false,
+        });
       if (path === "/text-preview")
         return capEnabled
           ? Response.json({
@@ -129,6 +143,11 @@ beforeEach(() => {
           next_before: null,
         });
       if (path.match(/^\/threads\/[^/]+\/text-preview$/) && method === "POST") {
+        if (body.text === "show my latest email")
+          return Response.json(
+            { code: "personal_inbox_requested" },
+            { status: 422 },
+          );
         let result = paid.get(body.request_id);
         if (!result) {
           result = turn(body.request_id, body.text);
@@ -360,4 +379,16 @@ it("sends a first message from the empty workspace with one thread and one model
   expect(
     calls.filter((c) => c.path === "/threads" && c.method === "POST"),
   ).toHaveLength(1);
+});
+
+it("opens an already connected inbox from a recognized chat request and performs one read", async () => {
+  const user = userEvent.setup();
+  mount();
+  await user.type(await composer(), "show my latest email");
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await screen.findByText("받은 메일이 없습니다.");
+  expect(calls.filter((c) => c.path === "/personal/google/inbox")).toHaveLength(
+    1,
+  );
+  expect(paid.size).toBe(0);
 });

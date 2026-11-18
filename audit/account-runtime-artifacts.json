@@ -234,6 +234,16 @@
       "aad_source": "invitations.rs::aad(request_id)",
       "transition": "installation admin delivery service only; actor/target epochs/session/receipt remain bound",
       "on_unprovable": "Stop credential reuse; quarantine binding and require only the affected owner/installation reconnection. Never discard history, receipts or unrelated valid bindings."
+    },
+    {
+      "table": "member_google_grants",
+      "since_schema": 84,
+      "columns": [
+        "cipher"
+      ],
+      "aad_source": "mail/member_google.rs::aad, member volume and app revision plus grant identity/version",
+      "transition": "Reauthorize migrated accounts. Verify the original bound owner, volume and key before reuse on same-volume recovery.",
+      "on_unprovable": "Retire only the affected read-only Google grant and request fresh consent."
     }
   ]
 }

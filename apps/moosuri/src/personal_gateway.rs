@@ -30,6 +30,7 @@ use std::{
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+mod google;
 mod memory;
 
 const ROUTER: &str = "__Host-moosuri_route";
@@ -258,7 +259,7 @@ impl Gateway {
         }
         Ok(route)
     }
-    fn socket(&self, a: &Allocation) -> Result<PathBuf, StatusCode> {
+    fn socket(&self, a: &Allocation) -> Result<(PathBuf, u32), StatusCode> {
         let account =
             Uuid::parse_str(&a.account_id).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         if account.is_nil() || a.generation < 1 {
@@ -277,7 +278,7 @@ impl Gateway {
         if !meta.file_type().is_socket() || meta.uid() != dir.uid() || meta.mode() & 0o077 != 0 {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
-        Ok(path)
+        Ok((path, dir.uid()))
     }
     async fn proxy(
         &self,
@@ -287,70 +288,79 @@ impl Gateway {
         body: Option<&[u8]>,
         session: Option<&str>,
     ) -> Result<(StatusCode, Vec<u8>, Option<(String, u64)>), StatusCode> {
-        let socket = self.socket(a)?;
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(2))
-            .timeout(Duration::from_secs(if path.ends_with("/text-preview") {
-                85
-            } else {
-                10
-            }))
-            .unix_socket(socket)
-            .build()
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        // HTTP is confined to the protected local socket. The runtime's HTTPS
-        // security origin stays fixed and never comes from browser input.
-        let mut request = client
-            .request(method, format!("http://personal.internal{path}"))
-            .header("Host", "personal.internal")
-            .header("Origin", "https://personal.internal")
-            .header("X-Moosuri-Account", &a.account_id);
-        if let Some(session) = session {
-            request = request.header("Cookie", format!("{SESSION}={session}"));
+        let unavailable = StatusCode::SERVICE_UNAVAILABLE;
+        let (socket, uid) = self.socket(a)?;
+        let stream = tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::net::UnixStream::connect(socket),
+        )
+        .await
+        .map_err(|_| unavailable)?
+        .map_err(|_| unavailable)?;
+        if stream.peer_cred().map_err(|_| unavailable)?.uid() != uid {
+            return Err(unavailable);
         }
-        if let Some(body) = body {
-            request = request
-                .header("Content-Type", "application/json")
-                .body(body.to_vec());
-        }
-        let mut response = request
-            .send()
-            .await
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        let status = response.status();
-        if ![200, 201, 202, 204, 400, 401, 403, 404, 409, 422, 429, 503].contains(&status.as_u16())
-        {
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
-        }
-        let mut result = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-        {
-            if result.len() + chunk.len()
-                > if path.starts_with("/api/v1/threads")
-                    || path.starts_with("/api/v1/knowledge/memories")
-                {
-                    MAX_THREAD_BODY
-                } else {
-                    MAX_BODY
-                }
-            {
-                return Err(StatusCode::SERVICE_UNAVAILABLE);
-            }
-            result.extend_from_slice(&chunk);
-        }
-        let set = if status.is_success()
-            && matches!(path, "/api/v1/auth/login" | "/api/v1/auth/password")
-        {
-            Some(runtime_cookie(response.headers())?)
+        let timeout = if path.ends_with("/text-preview") {
+            85
+        } else if path.starts_with("/api/v1/personal/google") {
+            75
         } else {
-            None
+            10
         };
-        Ok((status, result, set))
+        let limit = if path.starts_with("/api/v1/threads")
+            || path.starts_with("/api/v1/knowledge/memories")
+        {
+            MAX_THREAD_BODY
+        } else if path.starts_with("/api/v1/personal/google") {
+            128 * 1024
+        } else {
+            MAX_BODY
+        };
+        tokio::time::timeout(Duration::from_secs(timeout), async {
+            // Keep this exact peer-verified stream through the last response byte.
+            let (mut sender, connection) =
+                hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
+                    .await
+                    .map_err(|_| unavailable)?;
+            tokio::spawn(connection);
+            let mut req = axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header(header::HOST, "personal.internal")
+                .header(header::ORIGIN, "https://personal.internal")
+                .header("X-Moosuri-Account", &a.account_id);
+            if let Some(token) = session {
+                req = req.header(header::COOKIE, format!("{SESSION}={token}"));
+            }
+            if body.is_some() {
+                req = req.header(header::CONTENT_TYPE, "application/json");
+            }
+            let req = req
+                .body(Body::from(body.unwrap_or_default().to_vec()))
+                .map_err(|_| unavailable)?;
+            let response = sender.send_request(req).await.map_err(|_| unavailable)?;
+            let status = response.status();
+            if ![
+                200, 201, 202, 204, 400, 401, 403, 404, 409, 413, 422, 429, 502, 503,
+            ]
+            .contains(&status.as_u16())
+            {
+                return Err(unavailable);
+            }
+            let set = if status.is_success()
+                && matches!(path, "/api/v1/auth/login" | "/api/v1/auth/password")
+            {
+                Some(runtime_cookie(response.headers())?)
+            } else {
+                None
+            };
+            let bytes = axum::body::to_bytes(Body::new(response.into_body()), limit)
+                .await
+                .map_err(|_| unavailable)?;
+            Ok((status, bytes.to_vec(), set))
+        })
+        .await
+        .map_err(|_| unavailable)?
     }
 }
 #[derive(Clone, Copy)]
@@ -982,6 +992,7 @@ fn router(g: Gateway) -> Router {
         .fallback(public_shell)
         .layer(DefaultBodyLimit::max(4096))
         .merge(memory::routes())
+        .merge(google::routes())
         .with_state(g)
 }
 async fn bind_public_socket(options: &Options) -> Result<(File, tokio::net::UnixListener), String> {
@@ -1471,6 +1482,18 @@ mod tests {
         tokio::task::JoinHandle<()>,
     ) {
         let a = runtime_registry::reserve(&options.registry, Uuid::new_v4(), email.into()).unwrap();
+        serve_test_member(options, email, a, None).await
+    }
+    async fn serve_test_member(
+        options: &Options,
+        email: &str,
+        a: Allocation,
+        google: Option<crate::personal_google::TestTransport>,
+    ) -> (
+        Allocation,
+        moosuri_store::Store,
+        tokio::task::JoinHandle<()>,
+    ) {
         let root = directory(options.ipc_root.parent().unwrap(), &a.volume_id);
         let owner = moosuri_store::personal_volume::VolumeOwner {
             account: Uuid::parse_str(&a.account_id).unwrap(),
@@ -1500,7 +1523,10 @@ mod tests {
         let socket = ipc.join("personal.sock");
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
-        let router = moosuri_server::personal_auth_router(store.clone());
+        let extensions = google
+            .map(|t| crate::personal_google::routes_with_test_transport(store.clone(), owner, t))
+            .unwrap_or_default();
+        let router = moosuri_server::personal_service_router(store.clone(), None, extensions);
         let task = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
@@ -1913,6 +1939,11 @@ mod tests {
         let id = thread["id"].as_str().unwrap();
         let endpoint = format!("/api/v1/threads/{id}/text-preview");
         let body=serde_json::json!({"request_id":Uuid::new_v4(),"text":"Explain a queue","capability":"text_only_preview"}).to_string();
+        let inbox=serde_json::json!({"request_id":Uuid::new_v4(),"text":"show me my latest email","capability":"text_only_preview"}).to_string();
+        let handoff = request(&g, &endpoint, Method::POST, h.clone(), &inbox).await;
+        assert_eq!(handoff.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(json(handoff).await["code"], "personal_inbox_requested");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
         let first = request(&g, &endpoint, Method::POST, h.clone(), &body).await;
         assert_eq!(first.status(), StatusCode::CREATED);
         let first = json(first).await;
@@ -1960,6 +1991,143 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         broker.abort();
         member.abort();
+    }
+    #[cfg(feature = "test-fixtures")]
+    #[tokio::test]
+    async fn google_callback_claims_only_the_originating_member_and_resumes_a_pinned_read() {
+        use crate::runtime_google::tests::Fixture;
+        let provider = Fixture::new().await;
+        let (stop, broker) = provider.start().await;
+        let temp = tempfile::tempdir().unwrap();
+        let mut options = options(&temp.path().canonicalize().unwrap());
+        options.registry = provider.registry();
+        let g = Gateway::new(&options).unwrap();
+        let mut clients = Vec::new();
+        for (index, email) in ["a@example.test", "b@example.test"].into_iter().enumerate() {
+            let a = runtime_registry::lookup(&options.registry, email.to_string()).unwrap();
+            let (a, _store, member) =
+                serve_test_member(&options, email, a, Some(provider.transport(index))).await;
+            let login = request(
+                &g,
+                "/api/v1/auth/login",
+                Method::POST,
+                headers(),
+                &serde_json::json!({"email":email,"password":"Synthetic-password-42"}).to_string(),
+            )
+            .await;
+            assert_eq!(login.status(), StatusCode::OK);
+            clients.push((authenticated(&cookies(&login), &a), member, a));
+        }
+        let base = "/api/v1/personal/google";
+        let (a, b) = (&clients[0].0, &clients[1].0);
+        let start = request(&g, &format!("{base}/start"), Method::POST, a.clone(), "{}").await;
+        assert_eq!(start.status(), StatusCode::OK);
+        let start = json(start).await;
+        let url = url::Url::parse(start["authorization_url"].as_str().unwrap()).unwrap();
+        let state = url
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        let callback = format!("/api/v1/mail/oauth/callback?state={state}&code=synthetic-a");
+        let mut no_cookie = HeaderMap::new();
+        no_cookie.insert(
+            header::HOST,
+            HeaderValue::from_static("assistant.example.test"),
+        );
+        let mut wrong_origin = g.clone();
+        wrong_origin.origin = "https://another.example.test".into();
+        assert_eq!(
+            request(&wrong_origin, &callback, Method::GET, no_cookie.clone(), "")
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        let mut wrong_state = URL_SAFE_NO_PAD.decode(&state).unwrap();
+        wrong_state[16] ^= 1;
+        let tampered = callback.replace(&state, &URL_SAFE_NO_PAD.encode(wrong_state));
+        assert_eq!(
+            request(&g, &tampered, Method::GET, no_cookie.clone(), "")
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        let returned = request(&g, &callback, Method::GET, no_cookie.clone(), "").await;
+        assert!(returned.status().is_redirection());
+        let fragment = returned.headers()[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .strip_prefix("/#")
+            .unwrap();
+        let fields: std::collections::BTreeMap<_, _> =
+            url::form_urlencoded::parse(fragment.as_bytes())
+                .into_owned()
+                .collect();
+        assert_eq!(fields["flow"], start["flow_id"]);
+        assert_eq!(
+            request(&g, &callback, Method::GET, no_cookie, "")
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        let complete = format!("{base}/complete");
+        let handle = serde_json::json!({"handle":fields["google_handle"]}).to_string();
+        assert!(
+            !request(&g, &complete, Method::POST, b.clone(), &handle)
+                .await
+                .status()
+                .is_success()
+        );
+        let reply = request(&g, &complete, Method::POST, a.clone(), &handle).await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        let grant = json(reply).await;
+        assert_eq!(grant["flow_id"], start["flow_id"]);
+        assert_eq!(grant["mailbox"], "a@example.test");
+        let pin =
+            serde_json::json!({"connection_id":grant["connection_id"],"epoch":grant["epoch"]})
+                .to_string();
+        let inbox = format!("{base}/inbox");
+        assert!(
+            !request(&g, &complete, Method::POST, a.clone(), &handle)
+                .await
+                .status()
+                .is_success()
+        );
+        assert!(
+            !request(&g, &inbox, Method::POST, b.clone(), &pin)
+                .await
+                .status()
+                .is_success()
+        );
+        let page = request(&g, &inbox, Method::POST, a.clone(), &pin).await;
+        assert_eq!(page.status(), StatusCode::OK);
+        let page = json(page).await;
+        assert_eq!(page["messages"][0]["id"], "message-a");
+        assert_eq!(page["has_more"], true);
+        assert_eq!(
+            request(
+                &g,
+                &format!("{base}/disconnect"),
+                Method::POST,
+                a.clone(),
+                &pin
+            )
+            .await
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(
+            !request(&g, &inbox, Method::POST, a.clone(), &pin)
+                .await
+                .status()
+                .is_success()
+        );
+        stop.cancel();
+        broker.await.unwrap().unwrap();
+        for (_, member, _) in clients {
+            member.abort();
+        }
     }
     #[tokio::test]
     async fn public_preview_entry_serves_built_dependencies_without_a_session_or_api_fallback() {

@@ -457,6 +457,7 @@ impl Store {
             [],
         )?;
         migrate_startup(&conn, pending, 66..=CURRENT_SCHEMA_VERSION)?;
+        mail::restart_member_google(&conn)?;
         invitations::restart(&conn)?;
         cutover::require_active(&conn, &dir).map_err(|_| StoreError::Unavailable)?;
         audio::restart(&conn)?;

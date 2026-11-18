@@ -100,6 +100,13 @@ async fn submit(
             .await?
     };
     match admission {
+        Admission::InboxRequested => Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(moosuri_core::ApiError {
+                code: "personal_inbox_requested".into(),
+            }),
+        )
+            .into_response()),
         Admission::Existing(turn) => Ok((
             if turn.run.state.active() {
                 StatusCode::ACCEPTED

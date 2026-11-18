@@ -16,6 +16,10 @@ import { ScopeRegistry, useScope } from "./account-scope";
 import { accountPasswordValid } from "./account-password";
 import { ChatDraftRecovery, type ChatDraftSession } from "./chat-drafts";
 import "./personal-preview.css";
+import PersonalGoogle, {
+  clearPersonalGoogle,
+  googleReturn,
+} from "./PersonalGoogle";
 import { PersonalMemories } from "./PersonalMemories";
 export const PREVIEW_DRAFT_KEY = "moosuri.personal-preview-drafts.v1";
 function draftStorage() {
@@ -54,6 +58,7 @@ export default function PersonalPreview() {
   function fence() {
     for (const s of scopes) s.close();
     recovery.clear();
+    clearPersonalGoogle();
     setDraftSession(null);
     setSession(null);
     setEpoch((v) => v + 1);
@@ -364,8 +369,11 @@ function Workspace({
     [reading, setReading] = useState(false),
     [mutating, setMutating] = useState(false),
     [title, setTitle] = useState("새 텍스트 대화");
-  const [view, setView] = useState<"chat" | "memory">("chat"),
+  const [view, setView] = useState<"chat" | "memory" | "mail">(() =>
+      googleReturn() ? "mail" : "chat",
+    ),
     [refresh, setRefresh] = useState(0);
+  const [openInbox, setOpenInbox] = useState(false);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const memoryRef = useRef(memory);
@@ -641,7 +649,10 @@ function Workspace({
             delete pending[destination];
             return { ...m, pending };
           });
-          fail(e);
+          if (e.status === 422 && e.code === "personal_inbox_requested") {
+            setOpenInbox(true);
+            setView("mail");
+          } else fail(e);
         } else {
           change((m) => ({
             ...m,
@@ -703,13 +714,29 @@ function Workspace({
           기억
         </button>
         <button
+          aria-pressed={view === "mail"}
+          onClick={() => {
+            setOpenInbox(false);
+            setView("mail");
+          }}
+        >
+          메일
+        </button>
+        <button
           disabled={mutating || loading}
           onClick={() => setRefresh((v) => v + 1)}
         >
           연결 새로고침
         </button>
       </nav>
-      {view === "memory" ? (
+      {view === "mail" ? (
+        <PersonalGoogle
+          session={session}
+          expired={expired}
+          readOnOpen={openInbox}
+          consumed={() => setOpenInbox(false)}
+        />
+      ) : view === "memory" ? (
         <section className="preview-memory-panel">
           <p className="preview-memory-note">
             직접 저장한 기억을 편집하고 수정 이력을 확인할 수 있습니다.

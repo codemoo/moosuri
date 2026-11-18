@@ -47,6 +47,9 @@ pub struct Options {
     /// Optional root-owned private broker parent; only the registry account child is mounted.
     #[arg(long)]
     pub model_sockets_root: Option<PathBuf>,
+    /// Optional dedicated Google broker parent; mount only this owner’s socket directory.
+    #[arg(long)]
+    pub google_sockets_root: Option<PathBuf>,
     /// Enable the image-pinned member text preview on its read-only broker mount.
     #[arg(long, requires = "model_sockets_root")]
     pub enable_text_preview: bool,
@@ -85,6 +88,7 @@ struct Expected {
     ipc: PathBuf,
     scratch: PathBuf,
     model: Option<PathBuf>,
+    google: Option<PathBuf>,
     text_preview: bool,
     memory: u64,
     nano_cpus: u64,
@@ -120,6 +124,9 @@ impl Expected {
                 "/etc/moosuri/text-preview.json".to_owned(),
             ]);
         }
+        if self.google.is_some() {
+            command.push("--google-readonly".into());
+        }
         json!(command)
     }
     fn create(&self) -> Value {
@@ -130,6 +137,9 @@ impl Expected {
         ];
         if let Some(model) = &self.model {
             binds.push(format!("{}:/model:ro", model.display()));
+        }
+        if let Some(google) = &self.google {
+            binds.push(format!("{}:/google:ro", google.display()));
         }
         json!({"Image": self.image, "Entrypoint": [ENTRYPOINT], "Cmd": self.command(),
             "User": format!("{}:{}",self.uid,self.uid), "WorkingDir": "/", "Env": self.env,
@@ -148,6 +158,9 @@ impl Expected {
             "volume":self.volume,"uid":self.uid,"data":self.data,"ipc":self.ipc,"scratch":self.scratch});
         if let Some(model) = &self.model {
             row["model"] = json!(model);
+        }
+        if let Some(google) = &self.google {
+            row["google"] = json!(google);
         }
         row
     }
@@ -229,7 +242,7 @@ fn run_blocking(args: &Options) -> Result<Value, String> {
     let model = args
         .model_sockets_root
         .as_deref()
-        .map(|root| model_directory(root, &account, args.uid))
+        .map(|root| broker_directory(root, &account, args.uid, "model.sock"))
         .transpose()?;
     let engine = Engine(args.engine_socket.clone());
     let version = engine.required("GET", "/version", None)?;
@@ -259,6 +272,11 @@ fn run_blocking(args: &Options) -> Result<Value, String> {
     {
         return Err("kiri_provision_image_environment_not_minimal".into());
     }
+    let google = args
+        .google_sockets_root
+        .as_deref()
+        .map(|root| broker_directory(root, &account, args.uid, "google.sock"))
+        .transpose()?;
     let expected = Expected {
         name: format!("moosuri-member-{account}"),
         image: args.image.clone(),
@@ -270,6 +288,7 @@ fn run_blocking(args: &Options) -> Result<Value, String> {
         data,
         ipc,
         scratch,
+        google,
         model,
         text_preview: args.enable_text_preview,
         memory: args.memory_bytes,
@@ -445,7 +464,12 @@ fn validate_mount(_: &Path, _: u64) -> Result<(), String> {
     Err("kiri_provision_linux_only".into())
 }
 // Bind the directory, not a socket inode: broker replacement remains visible.
-fn model_directory(root: &Path, account: &str, uid: u32) -> Result<PathBuf, String> {
+fn broker_directory(
+    root: &Path,
+    account: &str,
+    uid: u32,
+    filename: &str,
+) -> Result<PathBuf, String> {
     trusted_dir(root, 0, true)?;
     let child = root.join(account);
     trusted_dir(&child, 0, false)?;
@@ -457,10 +481,10 @@ fn model_directory(root: &Path, account: &str, uid: u32) -> Result<PathBuf, Stri
         .map_err(|_| "kiri_provision_model_directory_unavailable")?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| "kiri_provision_model_directory_unavailable")?;
-    if entries.len() != 1 || entries[0].file_name() != "model.sock" {
+    if entries.len() != 1 || entries[0].file_name() != filename {
         return Err("kiri_provision_exact_model_socket_required".into());
     }
-    let socket = checked_metadata(&child.join("model.sock"))?;
+    let socket = checked_metadata(&child.join(filename))?;
     if !socket.file_type().is_socket()
         || socket.uid() != uid
         || socket.nlink() != 1
@@ -736,7 +760,7 @@ fn verify_inspect(v: &Value, e: &Expected) -> Result<(), String> {
     let mounts = v["Mounts"]
         .as_array()
         .ok_or("kiri_provision_mount_inspect_missing")?;
-    if mounts.len() != 3 + usize::from(e.model.is_some()) {
+    if mounts.len() != 3 + usize::from(e.model.is_some()) + usize::from(e.google.is_some()) {
         return Err("kiri_provision_inspected_mount_conflict".into());
     }
     let mut required = vec![
@@ -744,6 +768,9 @@ fn verify_inspect(v: &Value, e: &Expected) -> Result<(), String> {
         ("/ipc", &e.ipc, true),
         ("/tmp", &e.scratch, true),
     ];
+    if let Some(google) = &e.google {
+        required.push(("/google", google, false));
+    }
     if let Some(model) = &e.model {
         required.push(("/model", model, false));
     }
@@ -787,6 +814,7 @@ mod tests {
             ipc: "/srv/synthetic/ipc".into(),
             scratch: "/srv/synthetic/scratch".into(),
             model: None,
+            google: None,
             text_preview: false,
             memory: 67108864,
             nano_cpus: 500000000,
@@ -806,7 +834,29 @@ mod tests {
         if let Some(model) = &e.model {
             v["Mounts"].as_array_mut().unwrap().push(json!({"Destination":"/model","Type":"bind","Source":model,"RW":false,"Propagation":"rprivate"}));
         }
+        if let Some(google) = &e.google {
+            v["Mounts"].as_array_mut().unwrap().push(json!({"Destination":"/google","Type":"bind","Source":google,"RW":false,"Propagation":"rprivate"}));
+        }
         v
+    }
+    #[test]
+    fn google_readonly_socket_mount_must_match_profile() {
+        let mut e = expected();
+        e.google = Some(PathBuf::from("/srv/google/member"));
+        let v = inspect(&e, true);
+        let (dir, engine, worker) = fake(vec![(200, v.clone())]);
+        assert_eq!(reconcile(&engine, &e, true).unwrap(), "running");
+        worker.join().unwrap();
+        drop(dir);
+        let mut writable = v;
+        writable["Mounts"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap()["RW"] = json!(true);
+        let (_dir, engine, worker) = fake(vec![(200, writable)]);
+        assert!(reconcile(&engine, &e, true).is_err());
+        worker.join().unwrap();
     }
     fn fake(
         responses: Vec<(u16, Value)>,

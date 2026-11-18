@@ -34,7 +34,7 @@ fn scalar(c: &Connection, query: &str) -> Check<i64> {
 }
 pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
-        (81..=83).contains(&schema),
+        (81..=84).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
     )?;
     let mut v: Value = serde_json::from_str(&read(
@@ -66,6 +66,7 @@ pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
                 81 => 202,
                 82 => 203,
                 83 => 204,
+                84 => 207,
                 _ => unreachable!(),
             },
         "inventory manifest table count mismatch",
@@ -452,6 +453,19 @@ fn check_ciphertext_registry(c: &Connection, manifest: &Value, artifacts: &Value
     let mut output = Vec::new();
     for binding in array(artifacts, "ciphertext_bindings")? {
         let name = field(binding, "table")?;
+        if let Some(since) = binding.get("since_schema") {
+            let since = since.as_i64().ok_or("invalid ciphertext schema")?;
+            let schema = manifest["schema"]
+                .as_i64()
+                .ok_or("invalid inventory schema")?;
+            if schema < since {
+                ensure(
+                    tables.iter().all(|t| t["name"] != name),
+                    "ciphertext table predates declared schema",
+                )?;
+                continue;
+            }
+        }
         let table = tables
             .iter()
             .find(|t| t["name"] == name)
@@ -554,9 +568,9 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             "--schema" if selected.is_none() => {
                 selected = Some(
                     iter.next()
-                        .ok_or("--schema requires 81, 82 or 83")?
+                        .ok_or("--schema requires 81 through 84")?
                         .parse::<i64>()
-                        .map_err(|_| "--schema requires 81, 82 or 83")?,
+                        .map_err(|_| "--schema requires 81 through 84")?,
                 );
             }
             "--snapshot" if snapshot.is_none() => {
@@ -567,7 +581,7 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             }
             _ => {
                 return Err(
-                    "usage: account-runtime-inventory [--schema 81|82|83] [--snapshot DIRECTORY]"
+                    "usage: account-runtime-inventory [--schema 81|82|83|84] [--snapshot DIRECTORY]"
                         .into(),
                 );
             }
@@ -930,7 +944,7 @@ mod tests {
         let dir = Scratch::new();
         assert!(snapshot_files(&dir.0, &artifact_manifest(&root()).unwrap()).is_err());
         assert!(
-            load(&root(), 84)
+            load(&root(), 85)
                 .unwrap_err()
                 .contains("unsupported inventory schema")
         );

@@ -27,6 +27,8 @@ mod kiri_lifecycle;
 mod kiri_provision;
 mod legacy_relations;
 mod personal_gateway;
+mod personal_google;
+mod runtime_google;
 mod runtime_model;
 mod skills;
 mod subscriptions;
@@ -68,6 +70,10 @@ enum Command {
     RuntimeModel(runtime_model::Options),
     /// Make one text call using the member broker socket and private standard input.
     RuntimeModelCall(runtime_model::ClientOptions),
+    /// Serve fixed read-only Google OAuth/Gmail egress to isolated members.
+    RuntimeGoogle(runtime_google::Options),
+    /// Read public Google broker configuration or build a consent URL.
+    RuntimeGoogleCall(runtime_google::ClientOptions),
     /// Serve a bounded local Gmail INBOX metadata bridge using existing gws authentication.
     GwsInbox(gws_inbox::Options),
     /// Guided installation (English / 한국어), or resume an existing setup.
@@ -406,6 +412,12 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::RuntimeGoogle(options) = &cli.command {
+        return runtime_google::run(options).await;
+    }
+    if let Command::RuntimeGoogleCall(options) = &cli.command {
+        return runtime_google::run_client(options).await;
+    }
     if let Command::RuntimeModel(options) = &cli.command {
         return runtime_model::run(options).await;
     }
@@ -565,7 +577,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::RuntimeModel(_)
+        Command::RuntimeGoogle(_)
+        | Command::RuntimeGoogleCall(_)
+        | Command::RuntimeModel(_)
         | Command::RuntimeModelCall(_)
         | Command::PersonalGateway(_)
         | Command::KiriLifecycle(_)

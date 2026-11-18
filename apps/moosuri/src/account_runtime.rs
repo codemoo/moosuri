@@ -49,46 +49,25 @@ pub async fn run(options: &Options) -> Result<(), String> {
         Operation::Activate { email, ipc_root } => {
             let allocation = runtime_registry::lookup(&options.registry, email.clone())
                 .map_err(|e| e.to_string())?;
-            let socket = ipc_root.join(&allocation.account_id).join("personal.sock");
-            if !ipc_root.is_absolute()
-                || std::fs::canonicalize(&socket).ok().as_ref() != Some(&socket)
+            use std::os::unix::fs::MetadataExt;
+            let owner_dir = ipc_root.join(&allocation.account_id);
+            let root = std::fs::symlink_metadata(ipc_root).map_err(|_| "invalid_ipc_root")?;
+            let member =
+                std::fs::symlink_metadata(&owner_dir).map_err(|_| "invalid_member_directory")?;
+            if !root.is_dir()
+                || root.mode() & 0o077 != 0
+                || root.uid() != unsafe { libc::geteuid() }
+                || !member.is_dir()
+                || member.mode() & 0o077 != 0
             {
-                return Err("invalid_member_socket".into());
+                return Err("invalid_member_directory".into());
             }
-            let client = reqwest::Client::builder()
-                .unix_socket(socket)
-                .no_proxy()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(4))
-                .build()
-                .map_err(|_| "invalid_member_transport")?;
-            let response = client
-                .get("http://personal.internal/health/ready")
-                .send()
-                .await
-                .map_err(|_| "member_unavailable")?;
-            let headers = response.headers();
-            if response.status() != 204
-                || headers
-                    .get("x-moosuri-volume")
-                    .and_then(|h| h.to_str().ok())
-                    != Some(allocation.volume_id.as_str())
-                || headers
-                    .get("x-moosuri-account")
-                    .and_then(|h| h.to_str().ok())
-                    != Some(allocation.account_id.as_str())
-                || headers
-                    .get("x-moosuri-tenant")
-                    .and_then(|h| h.to_str().ok())
-                    != Some(allocation.tenant_id.as_str())
-                || headers
-                    .get("x-moosuri-generation")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|n| n.parse::<i64>().ok())
-                    != Some(allocation.generation)
-            {
-                return Err("member_identity_mismatch".into());
-            }
+            crate::kiri_lifecycle::health(
+                &owner_dir.join("personal.sock"),
+                &allocation,
+                member.uid(),
+            )
+            .await?;
             runtime_registry::set_routing(&options.registry, &allocation, true).map(|()| allocation)
         }
         Operation::Fence { email } => {
@@ -145,6 +124,9 @@ enum PersonalOperation {
         /// Optional owner-only JSON for explicitly limited broker text previews.
         #[arg(long)]
         text_preview_config: Option<PathBuf>,
+        /// Mount the member-scoped Google egress socket at /google/google.sock.
+        #[arg(long)]
+        google_readonly: bool,
     },
 }
 pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
@@ -158,6 +140,7 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
         PersonalOperation::Serve {
             socket,
             text_preview_config,
+            google_readonly,
         } => {
             let store = owner
                 .open_verified(&options.root)
@@ -167,7 +150,7 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
                 .as_ref()
                 .map(|p| read_preview(p))
                 .transpose()?;
-            return serve_member(socket, store, owner, preview).await;
+            return serve_member(socket, store, owner, preview, *google_readonly).await;
         }
         PersonalOperation::Initialize {
             name,
@@ -207,6 +190,7 @@ async fn serve_member(
     store: moosuri_store::Store,
     owner: moosuri_store::personal_volume::VolumeOwner,
     preview: Option<moosuri_server::personal_text::Options>,
+    google_readonly: bool,
 ) -> Result<(), String> {
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use tokio::net::UnixListener;
@@ -251,12 +235,18 @@ async fn serve_member(
             ],
         )
     });
+    let extensions = if google_readonly {
+        crate::personal_google::routes(store.clone(), owner, "/google/google.sock".into(), 0)
+    } else {
+        axum::Router::new()
+    };
     axum::serve(
         listener,
-        match preview {
-            Some(options) => moosuri_server::personal_text_preview_router(store, owner, options),
-            None => moosuri_server::personal_auth_router(store),
-        }
+        moosuri_server::personal_service_router(
+            store,
+            preview.map(|options| (owner, options)),
+            extensions,
+        )
         .route("/health/ready", ready),
     )
     .await

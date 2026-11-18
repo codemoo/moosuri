@@ -1171,7 +1171,7 @@ mod tests {
     }
     #[test]
     fn owner_graph_is_copied_exactly_and_verifies_without_the_source() {
-        for version in [81, 82, 83] {
+        for version in [81, 82, 83, 84] {
             let f = fixture(version);
             let before = file_hash(&f.source.join("assistant.sqlite")).unwrap();
             let result = extract(&root(), &f.source, &f.output, &owner()).unwrap();
@@ -1244,7 +1244,7 @@ mod tests {
         );
         assert!(!f.output.exists());
         edit(&f, |c| {
-            c.execute_batch("PRAGMA user_version=84;").unwrap();
+            c.execute_batch("PRAGMA user_version=85;").unwrap();
         });
         assert!(
             extract(&root(), &f.source, &f.output, &owner())

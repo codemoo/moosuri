@@ -14,6 +14,7 @@ pub struct ModelPin {
     pub max_output_tokens: u32,
 }
 pub enum Admission {
+    InboxRequested,
     Existing(ChatTurn),
     Fresh(Work),
 }
@@ -162,6 +163,7 @@ impl Store {
             if let Some((id,previous))=previous {if previous!=digest||!has(&tx,&user.tenant.0,&id)?{return Err(StoreError::Conflict);}return Ok(Admission::Existing(chat::turn(&tx,&chat::load_run(&tx,&user.tenant.0,&id)?)?));}
             let active:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND state IN ('queued','running'))",params![user.tenant.0,thread],|r|r.get(0))?;
             if active{return Err(StoreError::Conflict);}
+            if Store::latest_inbox_intent(&text) { return Ok(Admission::InboxRequested); }
             let stable=|label:&str|->Result<Uuid>{let hash:[u8;32]=Sha256::digest(serde_json::to_vec(&(label,owner.account,owner.tenant,&request_id)).map_err(|_|StoreError::Corrupt)?).into();let mut bytes:[u8;16]=hash[..16].try_into().map_err(|_|StoreError::Corrupt)?;bytes[6]=(bytes[6]&0x0f)|0x50;bytes[8]=(bytes[8]&0x3f)|0x80;Ok(Uuid::from_bytes(bytes))};
             let id=stable("personal-text-preview-run-v1")?;let call_id=stable("personal-text-preview-call-v1")?;let mut nonce=[0u8;32];OsRng.try_fill_bytes(&mut nonce).map_err(|_|StoreError::Unavailable)?;
             // Only prior successful preview turns may enter this deliberately

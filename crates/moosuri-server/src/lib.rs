@@ -906,14 +906,21 @@ struct AuthState {
     logins: Arc<Mutex<LoginBuckets>>,
     delivery: Arc<tokio::sync::RwLock<()>>,
 }
+/// Verify both the server session and the explicit account on a private member request.
+pub async fn personal_request_user(
+    store: &Store,
+    headers: &HeaderMap,
+) -> Result<UserContext, StoreError> {
+    let user = store.authenticate(cookie_token(headers)?).await?;
+    expected_account(headers, &user)?;
+    if user.is_chatgpt_helper() || user.account().must_change_password {
+        return Err(StoreError::Forbidden);
+    }
+    Ok(user)
+}
 impl AuthState {
     async fn member(&self, headers: &HeaderMap) -> Result<UserContext, HttpError> {
-        let user = self.store.authenticate(cookie_token(headers)?).await?;
-        expected_account(headers, &user)?;
-        if user.is_chatgpt_helper() {
-            return Err(StoreError::Forbidden.into());
-        }
-        Ok(user)
+        Ok(personal_request_user(&self.store, headers).await?)
     }
 }
 fn store_auth_state(state: &AppState) -> AuthState {
@@ -936,7 +943,7 @@ fn auth_routes<S: Clone + Send + Sync + 'static>(state: AuthState) -> Router<S> 
 /// workers. The host gateway validates the public origin and supplies the fixed
 /// internal Host/Origin only on its private Unix transport.
 pub fn personal_auth_router(store: Store) -> Router {
-    personal_router(store, None)
+    personal_service_router(store, None, Router::new())
 }
 /// Explicit text-only preview; ordinary /messages submission stays unavailable.
 pub fn personal_text_preview_router(
@@ -944,14 +951,15 @@ pub fn personal_text_preview_router(
     owner: moosuri_store::personal_volume::VolumeOwner,
     options: personal_text::Options,
 ) -> Router {
-    personal_router(store, Some((owner, options)))
+    personal_service_router(store, Some((owner, options)), Router::new())
 }
-fn personal_router(
+pub fn personal_service_router(
     store: Store,
     preview: Option<(
         moosuri_store::personal_volume::VolumeOwner,
         personal_text::Options,
     )>,
+    extensions: Router,
 ) -> Router {
     let config = ServerConfig::new("https://personal.internal", false).expect("fixed HTTPS origin");
     let state = AuthState {
@@ -961,6 +969,7 @@ fn personal_router(
         delivery: Default::default(),
     };
     let routes = auth_routes(state.clone())
+        .merge(extensions)
         .merge(personal_threads::routes(state.clone()))
         .nest(
             "/api/v1/knowledge",

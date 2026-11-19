@@ -47,8 +47,10 @@ it("resumes the selected project and hands all five API activations and the OAut
   const view = mount();
   const project = await screen.findByRole("textbox", { name: "프로젝트 ID" });
   const consoleOrigin = "https://console.cloud.google.com";
+  await user.click(screen.getByText("Google Cloud 콘솔에서 직접 준비"));
   expect(screen.getByRole("link", { name: "기존 프로젝트 선택" })).toHaveAttribute("href", consoleOrigin + "/cloud-resource-manager");
   expect(screen.getByRole("link", { name: "새 프로젝트 만들기" })).toHaveAttribute("href", consoleOrigin + "/projectcreate");
+  await user.clear(project);
   await user.type(project, "demo-kiri");
   await user.click(screen.getByRole("button", { name: "프로젝트 사용" }));
   const enable = screen.getByRole("link", { name: "Google API 5개 사용 설정" });
@@ -66,9 +68,67 @@ it("resumes the selected project and hands all five API activations and the OAut
   expect(await screen.findByRole("heading", { name: "OAuth 동의 화면" })).toBeVisible();
   expect(screen.getByRole("link", { name: "사용 대상 및 테스트 사용자" })).toHaveAttribute("href", consoleOrigin + "/auth/audience?project=demo-kiri");
   await user.click(screen.getByRole("button", { name: "동의 화면 설정을 마쳤습니다" }));
-  expect(screen.getByRole("link", { name: "Google OAuth 클라이언트 열기" })).toHaveAttribute("href", consoleOrigin + "/auth/clients?project=demo-kiri");
+  const oauthLink = screen.getByRole("link", { name: "콜백 복사하고 Google OAuth 클라이언트 열기" });
+  expect(oauthLink).toHaveAttribute("href", consoleOrigin + "/auth/clients?project=demo-kiri");
+  const writeText = vi.spyOn(navigator.clipboard, "writeText");
+  await user.click(oauthLink);
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(redirect_uri);
   expect(requests).toEqual([{ method: "GET", account }, { method: "GET", account }]);
-  expect(JSON.parse(localStorage.getItem(draftKey) ?? "null")).toEqual({ project: "demo-kiri", step: 3 });
+  expect(JSON.parse(localStorage.getItem(draftKey) ?? "null")).toEqual({ project: "demo-kiri", step: 3, method: "console" });
+});
+
+it("keeps a generated project ID and copies the exact setup command when opening Google Cloud Shell", async () => {
+  const requests = setup();
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText");
+  const first = mount();
+  const project = (await screen.findByRole("textbox", { name: "프로젝트 ID" }) as HTMLInputElement).value;
+  expect(project).toMatch(/^moosuri-[a-f0-9]{16}$/);
+  first.unmount();
+  const second = mount();
+  expect(await screen.findByRole("textbox", { name: "프로젝트 ID" })).toHaveValue(project);
+  const launcher = screen.getByRole("link", { name: "Cloud Shell 열고 설정 명령 복사" });
+  const url = new URL(launcher.getAttribute("href") ?? "");
+  expect(url.origin + url.pathname).toBe("https://shell.cloud.google.com/cloudshell/editor");
+  expect(url.searchParams.get("show")).toBe("terminal");
+  expect(url.searchParams.get("cloudshell_git_repo")).toBe("https://github.com/codemoo/moosuri");
+  expect(url.searchParams.get("cloudshell_git_branch")).toBe("main");
+  expect(url.searchParams.get("cloudshell_workspace")).toBe(".");
+  expect(url.searchParams.get("cloudshell_tutorial")).toBe("deployment/kiri/google-cloud-setup.md");
+  expect(launcher).toHaveAttribute("rel", "noopener noreferrer");
+
+  await user.click(launcher);
+  const expected = "bash deployment/kiri/prepare-google-project.sh " + project;
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(expected);
+  expect(screen.getByRole("textbox", { name: "Cloud Shell 명령" })).toHaveValue(expected);
+  second.unmount();
+  mount();
+  expect(await screen.findByRole("textbox", { name: "Cloud Shell 명령" })).toHaveValue(expected);
+  await user.click(screen.getByRole("button", { name: "프로젝트와 API 준비를 마쳤습니다" }));
+  expect(screen.getByRole("link", { name: "앱 정보 설정" })).toHaveAttribute("href", "https://console.cloud.google.com/auth/branding?project=" + project);
+  expect(requests.every(request => request.method === "GET")).toBe(true);
+});
+
+it("allows manual copying when clipboard access is denied and blocks invalid command arguments", async () => {
+  setup();
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("clipboard denied"));
+  mount();
+  const project = await screen.findByRole("textbox", { name: "프로젝트 ID" });
+  await user.clear(project);
+  await user.type(project, "bad;argument");
+  expect(screen.getByRole("button", { name: "Cloud Shell 열고 설정 명령 복사" })).toBeDisabled();
+  expect(writeText).not.toHaveBeenCalled();
+  await user.clear(project);
+  await user.type(project, "existing-demo");
+  await user.click(screen.getByRole("link", { name: "Cloud Shell 열고 설정 명령 복사" }));
+  expect(await screen.findByText("아래 명령을 직접 복사해 주세요.")).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Cloud Shell 명령" })).toHaveValue("bash deployment/kiri/prepare-google-project.sh existing-demo");
+  await user.click(screen.getByRole("button", { name: "프로젝트와 API 준비를 마쳤습니다" }));
+  await user.click(screen.getByRole("button", { name: "동의 화면 설정을 마쳤습니다" }));
+  await user.click(screen.getByRole("link", { name: "콜백 복사하고 Google OAuth 클라이언트 열기" }));
+  expect(await screen.findByText("선택된 콜백 주소를 직접 복사해 주세요.")).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "이 설치의 콜백 주소" })).toHaveValue(redirect_uri);
 });
 
 it("copies the callback and imports an existing JSON through the account-scoped API only", async () => {

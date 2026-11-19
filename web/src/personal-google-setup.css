@@ -48,7 +48,7 @@
   font-weight: 600;
 }
 
-.google-setup-field input {
+.google-setup-field :is(input, textarea) {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -76,4 +76,8 @@
 .google-setup-buttons .member-page-action {
   min-height: 44px;
   white-space: normal;
+}
+
+.google-setup-options .google-setup-buttons {
+  margin-block-start: 8px;
 }

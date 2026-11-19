@@ -387,6 +387,7 @@ function Workspace({
       googleReturn() || workspaceGoogleReturn(session) ? "connections" : "chat",
     ),
     [refresh, setRefresh] = useState(0);
+  const connectorOrigin = useRef<MemberView>("chat");
   const [admin, setAdmin] = useState(session.installation_admin === true);
   const onAdminUnavailable = useCallback(() => setAdmin(false), []);
   const [adminTab, setAdminTab] = useState<"members" | "engine">("members");
@@ -881,6 +882,7 @@ function Workspace({
               thread_id: destination,
               request_id: value.request_id,
             };
+            connectorOrigin.current = "chat";
             setView("connections");
           } else if (e.code === "personal_text_model_unavailable") {
             setCap(null);
@@ -944,7 +946,10 @@ function Workspace({
   }
   function navigate(destination: MemberView) {
     if (destination === "chat" && view === "admin") setRefresh((value) => value + 1);
-    if (destination === "connections") setOpenInbox(null);
+    if (destination === "connections" && view !== "connections") {
+      connectorOrigin.current = view;
+      setOpenInbox(null);
+    }
     setView(destination);
   }
   function openThread(id: string | null) {
@@ -995,7 +1000,7 @@ function Workspace({
             <PersonalConnections
               installationAdmin={admin}
               onAdminUnavailable={onAdminUnavailable}
-              onBack={() => navigate("chat")}
+              onBack={() => navigate(connectorOrigin.current === "admin" && !admin ? "chat" : connectorOrigin.current)}
               session={session}
               expired={expired}
               readIntent={

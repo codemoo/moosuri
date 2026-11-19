@@ -264,10 +264,8 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
       {!checking && status && !status.configured && (
         <>
           <p className="management-note">설치에 사용할 Google 앱을 준비하세요. 새 브라우저 탭의 Google 공식 화면에서 로그인과 설정을 마치고 이 화면으로 돌아오세요.</p>
-          <ol className="google-setup-progress" aria-label="Google 설정 단계">
-            {steps.map((name, index) => <li key={name} aria-current={step === index ? "step" : undefined}>{name}</li>)}
-          </ol>
           <section className="member-page-list google-setup-panel" aria-labelledby="google-setup-step">
+            <span className="google-setup-progress">{steps.length}단계 중 {step + 1}단계</span>
             <h2 tabIndex={-1} ref={stepHeading} id="google-setup-step">{steps[step]}</h2>
             {step > 0 && cloudProject && <p className="management-note">프로젝트 <strong>{cloudProject}</strong></p>}
             {step === 0 && (

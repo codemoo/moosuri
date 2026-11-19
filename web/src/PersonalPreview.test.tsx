@@ -936,7 +936,7 @@ it("shows actual service connections and disconnects Gmail without reading mail"
   await user.click(nav);
   expect(nav).toHaveAttribute("aria-current", "page");
   await screen.findByRole("heading", { name: "커넥터" });
-  expect(screen.getByRole("button", { name: "사용 가능" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "전체" })).toHaveAttribute("aria-pressed", "true");
   await user.click(screen.getByRole("button", { name: "연결됨" }));
   expect(screen.queryByRole("button", { name: /볼트/ })).not.toBeInTheDocument();
   await user.click(await screen.findByRole("button", { name: /Gmail/ }));
@@ -951,10 +951,10 @@ it("shows actual service connections and disconnects Gmail without reading mail"
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   expect(screen.getByRole("button", { name: "연결됨" })).toHaveAttribute("aria-pressed", "true");
   await screen.findByText("연결된 서비스가 없습니다.");
-  await user.click(screen.getByRole("button", { name: "사용 가능" }));
+  await user.click(screen.getByRole("button", { name: "전체" }));
   await user.click(screen.getByRole("button", { name: /볼트/ }));
   const vault = within(screen.getByRole("region", { name: "볼트" }));
-  expect(await vault.findByText("회원 인증 연결 필요")).toBeInTheDocument();
+  expect(await vault.findByText("볼트 주소 미설정")).toBeInTheDocument();
   expect(vault.queryByText("a@example.test")).not.toBeInTheDocument();
   expect(vault.queryByRole("link")).not.toBeInTheDocument();
   expect(vault.queryByRole("button")).not.toBeInTheDocument();
@@ -974,10 +974,10 @@ it("distinguishes unavailable vault status from confirmed setup requirements", a
   await user.click(screen.getByRole("button", { name: /볼트/ }));
   const vault = within(screen.getByRole("region", { name: "볼트" }));
   await vault.findByText("연결 상태를 확인할 수 없습니다.");
-  expect(vault.queryByText("회원 인증 연결 필요")).not.toBeInTheDocument();
+  expect(vault.queryByText("볼트 주소 미설정")).not.toBeInTheDocument();
   vaultUnreachable = false;
   await user.click(screen.getByRole("button", { name: "다시 확인" }));
-  await vault.findByText("회원 인증 연결 필요");
+  await vault.findByText("볼트 주소 미설정");
   expect(vault.queryByRole("button")).not.toBeInTheDocument();
 });
 
@@ -987,12 +987,12 @@ it("opens the configured independent HTTPS vault while keeping member setup stat
   mount();
   await user.click(await screen.findByRole("button", { name: "연결" }));
   await user.click(screen.getByRole("button", { name: /볼트/ }));
-  await screen.findByText("회원 인증 연결 필요");
-  const link = screen.getByRole("link", { name: "볼트 사이트 보기" });
+  await screen.findByText("별도 로그인");
+  const link = screen.getByRole("link", { name: "볼트 열기" });
   expect(link).toHaveAttribute("href", "https://vault.example.test");
   expect(link).toHaveAttribute("target", "_blank");
   expect(link).toHaveAttribute("rel", "noopener noreferrer");
-  expect(screen.getByText("현재 설치의 회원 세션과 볼트가 연결되지 않았습니다.")).toBeInTheDocument();
+  expect(screen.getByText("볼트는 새 탭에서 열립니다. 볼트 계정으로 로그인하세요.")).toBeInTheDocument();
 });
 
 it.each([
@@ -1005,25 +1005,25 @@ it.each([
   mount();
   await user.click(await screen.findByRole("button", { name: "연결" }));
   await user.click(screen.getByRole("button", { name: /볼트/ }));
-  await screen.findByText("회원 인증 연결 필요");
-  expect(screen.queryByRole("link", { name: "볼트 사이트 보기" })).not.toBeInTheDocument();
+  await screen.findByText("볼트 주소 미설정");
+  expect(screen.queryByRole("link", { name: "볼트 열기" })).not.toBeInTheDocument();
 });
 
-it("searches candidate services and returns to the filtered list from details", async () => {
+it("searches supported services and returns to the filtered list from details", async () => {
   const user = userEvent.setup();
   mount();
   await user.click(await screen.findByRole("button", { name: "연결" }));
   const search = screen.getByRole("searchbox", { name: "커넥터 검색" });
-  await user.type(search, "unknown");
+  await user.type(search, "slack");
   await screen.findByText("검색어와 일치하는 서비스가 없습니다.");
   await user.clear(search);
-  await user.type(search, "slack");
+  await user.type(search, "구글 문서");
   expect(screen.queryByRole("button", { name: /Gmail/ })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: /Slack/ }));
-  expect(screen.getByRole("heading", { name: "Slack" })).toBeInTheDocument();
-  expect(screen.getByRole("region", { name: "Slack" })).toHaveTextContent("도입 후보");
+  await user.click(screen.getByRole("button", { name: /Google Docs/ }));
+  expect(screen.getByRole("heading", { name: "Google Docs" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Google Docs" })).toHaveTextContent("Docs 문서");
   await user.click(screen.getByRole("button", { name: "뒤로" }));
-  expect(screen.getByRole("searchbox", { name: "커넥터 검색" })).toHaveValue("slack");
+  expect(screen.getByRole("searchbox", { name: "커넥터 검색" })).toHaveValue("구글 문서");
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   expect(await composer()).toBeInTheDocument();
 });

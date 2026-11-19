@@ -1,15 +1,6 @@
-.personal-google-setup .google-setup-progress {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 26px;
-  margin: 0;
-  padding-inline-start: 22px;
+.google-setup-progress {
+  font-size: 13px;
   color: var(--muted);
-}
-
-.google-setup-progress [aria-current="step"] {
-  color: var(--ink);
-  font-weight: 650;
 }
 
 .google-setup-panel,

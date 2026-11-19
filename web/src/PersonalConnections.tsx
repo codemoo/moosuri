@@ -10,13 +10,6 @@ import driveMark from "./connector-marks/drive.png?no-inline";
 import docsMark from "./connector-marks/docs.png?no-inline";
 import slidesMark from "./connector-marks/slides.png?no-inline";
 import sheetsMark from "./connector-marks/sheets.png?no-inline";
-import calendarMark from "./connector-marks/calendar.png?no-inline";
-import slackMark from "./connector-marks/slack.png?no-inline";
-
-const candidates = [
-  { id: "calendar", name: "Google Calendar", mark: calendarMark, description: "예정된 일정을 조회하고 새 일정을 추가합니다." },
-  { id: "slack", name: "Slack", mark: slackMark, description: "워크스페이스의 채널과 메시지를 검색합니다." },
-] as const;
 
 const workspaceConnectors = [
   { id: "drive", name: "Google Drive", mark: driveMark, description: "Drive 파일의 읽기 권한을 연결합니다.", aliases: ["구글 드라이브"] },
@@ -32,9 +25,9 @@ type Connector = {
   description?: string;
   aliases?: readonly string[];
 };
-const gmail: Connector = { id: "gmail", name: "Gmail", mark: gmailMark };
+const gmail: Connector = { id: "gmail", name: "Gmail", mark: gmailMark, aliases: ["지메일", "구글 메일"] };
 const vault: Connector = { id: "vault", name: "볼트" };
-const connectors: readonly Connector[] = [gmail, ...workspaceConnectors, vault, ...candidates];
+const connectors: readonly Connector[] = [gmail, ...workspaceConnectors, vault];
 
 function searchText(value: string) {
   return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, "");
@@ -104,11 +97,11 @@ export function PersonalConnections({
     : workspace.status === "error" ? "연결 상태를 확인할 수 없습니다."
     : "연결된 계정이 없습니다.";
   const vaultLabel = vaultStatus.status === "checking" ? "연결 상태 확인 중…"
-    : vaultStatus.status === "setup_required" ? "회원 인증 연결 필요"
+    : vaultStatus.status === "setup_required" ? (vaultStatus.siteOrigin ? "별도 로그인" : "볼트 주소 미설정")
     : "연결 상태를 확인할 수 없습니다.";
 
   const setupGuide = installationAdmin && (
-    <button className="member-page-action" onClick={() => setSetupOpen(true)}>Google Workspace 설정</button>
+    <button className={installed === false ? "member-page-action management-primary" : "member-page-action"} onClick={() => setSetupOpen(true)}>Google Workspace 설정</button>
   );
 
   if (installationAdmin && setupOpen) {
@@ -119,17 +112,16 @@ export function PersonalConnections({
       returnLabel={selected ? selected.name + " 연결로 돌아가기" : "커넥터 열기"} />;
   }
 
-  function row(connector: Connector, description?: string, trailing?: string, candidate = false) {
+  function row(connector: Connector, description?: string) {
     return (
       <li key={connector.id}>
-        <button className="member-library-row member-connector-row" data-candidate={candidate || undefined} onClick={() => setSelected(connector)}>
+        <button className="member-library-row member-connector-row" onClick={() => setSelected(connector)}>
           <ConnectorMark mark={connector.mark} />
           <span className="member-library-row-copy">
             <strong>{connector.name}</strong>
             {description && <span>{description}</span>}
           </span>
-          {trailing ? <span className="member-connector-row-action">{trailing}</span>
-            : <span aria-hidden="true" className="member-library-chevron" />}
+          <span aria-hidden="true" className="member-library-chevron" />
         </button>
       </li>
     );
@@ -171,7 +163,7 @@ export function PersonalConnections({
                 )
               )}
               {setupGuide}
-              {(google.status === "error" || google.status === "disabled") && !google.busy && (
+              {(google.status === "error" || (google.status === "disabled" && !(installationAdmin && installed === false))) && !google.busy && (
                 <button className="member-page-action" onClick={google.retry}>다시 확인</button>
               )}
               {props.readIntent && google.status === "ready" && (
@@ -195,7 +187,7 @@ export function PersonalConnections({
                 <button className="member-page-action" disabled={workspace.busy} onClick={() => void workspace.action(workspaceService, "connect")}>Google 연결</button>
               ))}
               {setupGuide}
-              {(workspace.status === "error" || workspace.status === "disabled") && !workspace.busy && (
+              {(workspace.status === "error" || (workspace.status === "disabled" && !(installationAdmin && installed === false))) && !workspace.busy && (
                 <button className="member-page-action" onClick={() => void workspace.retry()}>다시 확인</button>
               )}
             </div>
@@ -203,15 +195,15 @@ export function PersonalConnections({
               <p className="member-library-status" role="status">{workspace.notice.message}</p>
             )}
           </>
-        ) : selected.id === vault.id ? (
+        ) : (
           <>
             <ConnectorDetail connector={vault} status={vaultLabel} busy={vaultStatus.status === "checking"}>
-              {vaultStatus.status === "setup_required" && <span>현재 설치의 회원 세션과 볼트가 연결되지 않았습니다.</span>}
+              {vaultStatus.status === "setup_required" && <span>{vaultStatus.siteOrigin ? "볼트는 새 탭에서 열립니다. 볼트 계정으로 로그인하세요." : "이 설치에 등록된 볼트 주소가 없습니다."}</span>}
             </ConnectorDetail>
             {vaultStatus.siteOrigin && (
               <div className="member-connector-actions">
                 <a className="member-page-action" href={vaultStatus.siteOrigin} target="_blank" rel="noopener noreferrer">
-                  볼트 사이트 보기
+                  볼트 열기
                 </a>
               </div>
             )}
@@ -221,11 +213,7 @@ export function PersonalConnections({
               </div>
             )}
           </>
-        ) : (
-          <ConnectorDetail connector={selected} status="도입 후보">
-            <span>{selected.description}</span>
-            <span>현재 이 설치에서 연결할 수 없습니다.</span>
-          </ConnectorDetail>
+
         )
       ) : (
         <>
@@ -240,21 +228,20 @@ export function PersonalConnections({
               placeholder="커넥터 검색" aria-label="커넥터 검색" />
           </label>
           <div className="member-connection-switch" role="group" aria-label="서비스 목록">
-            <button aria-pressed={view === "available"} onClick={() => setView("available")}>사용 가능</button>
+            <button aria-pressed={view === "available"} onClick={() => setView("available")}>전체</button>
             <button aria-pressed={view === "connected"} onClick={() => setView("connected")}>연결됨</button>
           </div>
           {workspace.notice?.service === null && <p className="member-library-status" role="status">{workspace.notice.message}</p>}
           {view === "available" ? (
             <>
               {group("생산성", [
-                ...(found.includes(gmail) ? [row(gmail, google.connection?.mailbox ?? gmailStatus, google.status === "ready" && !google.connection ? "연결" : "보기")] : []),
+                ...(found.includes(gmail) ? [row(gmail, google.connection?.mailbox ?? (google.status === "error" ? gmailStatus : "받은 메일"))] : []),
                 ...workspaceConnectors.filter(matches).map((connector) => {
                   const grant = workspace.connections[connector.id];
-                  return row(connector, grant?.mailbox ?? workspaceStatus, workspace.status === "ready" && !grant ? "연결" : "보기");
+                  return row(connector, grant?.mailbox ?? (workspace.status === "error" ? workspaceStatus : connector.aliases[0]));
                 }),
               ])}
-              {group("보안", found.includes(vault) ? [row(vault, vaultLabel, "보기")] : [])}
-              {group("추천 · 도입 후보", candidates.filter(matches).map((connector) => row(connector, connector.description, undefined, true)))}
+              {group("보안", found.includes(vault) ? [row(vault, vaultLabel)] : [])}
             </>
           ) : found.length > 0 && (
             <ul className="member-page-list member-library-list">{found.map((connector) => row(connector,

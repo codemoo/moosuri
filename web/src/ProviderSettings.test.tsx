@@ -524,6 +524,13 @@ describe("model assignments", () => {
     expect(calls.some(call => call.path.endsWith(`/accounts/${member.user.id}/model`))).toBe(false);
   });
 
+  it("directs the administrator to the installation selection when it governs all model calls", async () => {
+    server(undefined, admin, undefined, {selection: selection(low), effective: high, choices: [low, high], installation_default: selection(high)});
+    open("/settings/model");
+    expect(await screen.findByRole("link", {name:"설치 모델 설정"})).toHaveAttribute("href","/admin/providers");
+    expect(screen.queryByRole("button", {name:"선택 저장"})).not.toBeInTheDocument();
+  });
+
   it("saves an exact verified provider/revision/model/effort pair and can return to the installation default", async () => {
     const user = userEvent.setup();
     const { calls } = server(

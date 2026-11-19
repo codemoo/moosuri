@@ -210,7 +210,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
   }, [scope, retry]);
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (pending.current || !settings) return;
+    if (pending.current || !settings || settings.installation_default) return;
     const choice = settings.choices.find(
       (choice) => selectionKey(choiceSelection(choice)) === draft,
     );
@@ -328,7 +328,10 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
           </p>
         ) : settings ? (
           <>
-            <form onSubmit={save} className="model-selection-form">
+            {settings.installation_default ? (
+              <a href="/admin/providers">설치 모델 설정</a>
+            ) : (
+              <form onSubmit={save} className="model-selection-form">
               <ModelPicker choices={settings.choices} draft={draft} unavailable={unavailableDraft} busy={busy} edit={edit} />
               <button
                 className="primary"
@@ -340,7 +343,8 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
               >
                 {busy ? "저장 중…" : "선택 저장"}
               </button>
-            </form>
+              </form>
+            )}
             <div className="effective-model">
               <span className="eyebrow">현재 적용</span>
               {settings.effective ? (
@@ -366,7 +370,7 @@ export function PersonalModelSettings({ accountId, onExpired, onConnectClaudeApi
                 <>
                   <strong>사용할 수 있는 모델이 없습니다</strong>
                   <p>
-                    {settings.selection
+                    {settings.selection && !settings.installation_default
                       ? "내가 선택한 연결이 비활성화되었거나 다시 확인해야 합니다. 다른 모델로 자동 전환하지 않습니다."
                       : "설치 기본 모델이 아직 준비되지 않았습니다. 관리자에게 연결 확인을 요청하세요."}
                   </p>

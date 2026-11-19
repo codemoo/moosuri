@@ -1,7 +1,8 @@
 # Shared model connections
 
-The administrator manages installation API/local connections at `/admin/providers`.
-Administrators choose the installation default and can assign a verified shared model and reasoning effort to an individual member. A member inherits the installation default until assigned an override. Ordinary members go directly to their assistant and have no model settings or provider login controls. The personal login and connection instructions below apply to administrators managing their own account. [Kiri engine administration](../deployment/kiri/admin.md)
+In Kiri, the installation administrator selects the engine model and reasoning effort in the personal web’s administration page. Each member runtime obtains the selection from the installation broker. Browser planning, browser answers and ordinary chat use the effective pair at dispatch. [Kiri engine administration](../deployment/kiri/admin.md)
+
+In the standard server, the administrator manages installation API and local connections at `/admin/providers`. An installation default governs member and administrator inference. The owner-specific login options below require the credential owner's authorization. Members open their assistant directly.
 
 The **Claude 연결** button in My model also leads administrators directly to a
 new Anthropic API connection. The form starts with Anthropic selected and makes

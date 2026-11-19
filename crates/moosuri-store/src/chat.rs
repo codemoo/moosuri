@@ -294,7 +294,8 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
         },
         connection_wait: crate::native_task_mail::view(conn, &run.tenant, &run.id)?,
         credential: crate::credential_chat::status(conn, run)?,
-        can_retry: !crate::personal_text_preview::has(conn, &run.tenant, &run.id)?
+        can_retry: !crate::personal_browser::has(conn, &run.tenant, &run.id)?
+            && !crate::personal_text_preview::has(conn, &run.tenant, &run.id)?
             && !crate::native_task_mail::has(conn, &run.tenant, &run.id)?
             && !crate::credential_chat::has(conn, &run.tenant, &run.id)?
             && !run.state.active()
@@ -304,6 +305,7 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             && agent_execution::retry_allowed(conn, &run.tenant, &run.id)?
             && is_latest(conn, run)?,
         can_cancel: run.state.active()
+            && !crate::personal_browser::has(conn, &run.tenant, &run.id)?
             && !crate::personal_text_preview::has(conn, &run.tenant, &run.id)?,
         created_at: run.created,
     })
@@ -881,8 +883,10 @@ pub(super) fn restart(conn: &mut Connection) -> Result<()> {
         "UPDATE agent_steps SET state='unknown' WHERE state='dispatched'",
         [],
     )?;
+    tx.execute("UPDATE personal_browser_jobs SET view=json_set(view,'$.state','outcome_unknown','$.reason','browser_interrupted','$.revision',json_extract(view,'$.revision')+1),pending=NULL,controller_digest=NULL,controller_session=NULL,controller_until=NULL WHERE pending IS NOT NULL",[])?;
+    tx.execute("UPDATE personal_browser_jobs SET view=json_set(view,'$.state','ready','$.revision',json_extract(view,'$.revision')+1),controller_digest=NULL,controller_session=NULL,controller_until=NULL WHERE json_extract(view,'$.state')='user_control'",[])?;
     let rows = tx
-        .prepare("SELECT tenant_id,id FROM chat_runs WHERE state='running'")?
+        .prepare("SELECT tenant_id,id FROM chat_runs r WHERE state='running' AND NOT EXISTS(SELECT 1 FROM personal_browser_jobs b WHERE b.tenant_id=r.tenant_id AND b.run_id=r.id AND json_extract(b.view,'$.state')='ready')")?
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     for (tenant, id) in rows {
@@ -1341,7 +1345,8 @@ fn retry_run_inner(
         .conn
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
     let run = load_run(&tx, &user.tenant.0, &run_id)?;
-    if crate::personal_text_preview::has(&tx, &run.tenant, &run.id)?
+    if crate::personal_browser::has(&tx, &run.tenant, &run.id)?
+        || crate::personal_text_preview::has(&tx, &run.tenant, &run.id)?
         || crate::native_task_mail::has(&tx, &run.tenant, &run.id)?
         || crate::credential_chat::has(&tx, &run.tenant, &run.id)?
         || run.attempt != expected_attempt

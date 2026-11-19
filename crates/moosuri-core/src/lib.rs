@@ -33,6 +33,7 @@ pub use source_connections::*;
 mod web;
 pub use web::*;
 mod browser;
+pub mod personal_browser;
 pub use browser::*;
 mod invitations;
 pub use invitations::*;

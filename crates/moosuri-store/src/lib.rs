@@ -1,6 +1,7 @@
 //! Private, bounded single-writer SQLite account and thread storage.
 //! Authentication capabilities can only be created here and are revalidated on every use.
 pub mod audio;
+pub mod personal_browser;
 pub mod personal_text_preview;
 pub mod personal_volume;
 pub mod push;

@@ -1,0 +1,339 @@
+use super::*;
+use axum::{
+    body::{Body, to_bytes},
+    http::Request,
+};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::UnixListener,
+};
+use tower::ServiceExt;
+
+struct Member {
+    store: Store,
+    owner: VolumeOwner,
+    token: String,
+    thread: String,
+}
+async fn member(path: &std::path::Path) -> Member {
+    fs::create_dir(path).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    let owner = VolumeOwner {
+        account: Uuid::new_v4(),
+        tenant: Uuid::new_v4(),
+        volume: Uuid::new_v4(),
+        generation: 1,
+    };
+    owner
+        .initialize(
+            path,
+            "Member".into(),
+            "member@example.test".into(),
+            "Temporary-synthetic-42".into(),
+        )
+        .await
+        .unwrap();
+    let store = owner.open_verified(path).await.unwrap();
+    let login = store
+        .login(
+            "member@example.test".into(),
+            "Temporary-synthetic-42".into(),
+        )
+        .await
+        .unwrap();
+    let login = store
+        .change_password(&login.user, "Second-synthetic-password-42".into())
+        .await
+        .unwrap();
+    let thread = store
+        .create_thread(&login.user, "Synthetic timetable".into())
+        .await
+        .unwrap()
+        .id;
+    Member {
+        store,
+        owner,
+        token: login.token,
+        thread,
+    }
+}
+async fn request(
+    app: &Router,
+    method: &str,
+    path: &str,
+    owner: Uuid,
+    token: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header("host", "personal.internal")
+                .header("origin", "https://personal.internal")
+                .header("content-type", "application/json")
+                .header("x-moosuri-account", owner.to_string())
+                .header("x-moosuri-session-epoch", "3")
+                .header("cookie", format!("moosuri_session={token}"))
+                .body(if method == "GET" {
+                    Body::empty()
+                } else {
+                    Body::from(body.to_string())
+                })
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let code = resp.status();
+    let bytes = to_bytes(resp.into_body(), 1 << 22).await.unwrap();
+    (code, serde_json::from_slice(&bytes).unwrap_or_default())
+}
+fn listener(socket: &std::path::Path) -> UnixListener {
+    let l = UnixListener::bind(socket).unwrap();
+    fs::set_permissions(socket, fs::Permissions::from_mode(0o600)).unwrap();
+    l
+}
+fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
+    let l = listener(path);
+    let counter = Arc::new(AtomicUsize::new(0));
+    let seen = counter.clone();
+    tokio::spawn(async move {
+        let tab = Uuid::new_v4();
+        let url = "https://example.org/timetable";
+        let mut filtered = false;
+        loop {
+            let (stream, _) = l.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).await.unwrap();
+            let r: Value = serde_json::from_str(&line).unwrap();
+            let observation = || json!({"page":{"title":"Timetable","url":url,"text":if filtered{"Morning bus 08:15"}else{"Afternoon bus 14:30"},"warning":"","retrieved_at_unix_ms":1234,"links":[],"truncated":false}});
+            let value = match r["op"].as_str().unwrap() {
+                "open" => json!({"tab_id":tab,"observation":observation()}),
+                "frame" => {
+                    json!({"url":url,"width":1280,"height":900,"frame_token":"f".repeat(64),"png_base64":"cG5n"})
+                }
+                "tabs" => json!({"active_tab":tab,"tabs":[{"tab_id":tab,"url":url}]}),
+                "input" => {
+                    assert_eq!(r["input"]["kind"], "click");
+                    filtered = true;
+                    json!({"accepted":true})
+                }
+                "selected" => {
+                    assert!(filtered);
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    observation()
+                }
+                "stop" => json!({"stopped":true}),
+                _ => panic!("unexpected operation"),
+            };
+            stream
+                .write_all(format!("{}\n", json!({"ok":true,"result":value})).as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    counter
+}
+fn model_fixture(path: &std::path::Path) -> moosuri_server::personal_text::Options {
+    let l = listener(path);
+    tokio::spawn(async move {
+        let rev = Uuid::new_v4();
+        loop {
+            let (stream, _) = l.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).await.unwrap();
+            let r: Value = serde_json::from_str(&line).unwrap();
+            let value = if r["operation"] == "selection" {
+                json!({"v":1,"state":"selection","connection_revision":rev,"selection_epoch":3,"model":"fixture","effort":null,"kind":"compatible"})
+            } else {
+                let context = r["messages"][1]["text"].as_str().unwrap();
+                assert!(context.contains("Morning bus 08:15") && context.contains("morning only"));
+                assert!(
+                    !context.contains("14:30")
+                        && !context.contains("frame_token")
+                        && !context.contains("insert_text")
+                );
+                json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":rev,"model":"fixture","effort":null,"outcome":"completed","output":json!({"answer":"The morning bus leaves at 08:15.","needs_user":false}).to_string(),"receipt":{"state":"settled","input_tokens":90,"output_tokens":12,"charged_tokens":102}})
+            };
+            stream
+                .write_all(format!("{value}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    moosuri_server::personal_text::Options {
+        socket: path.into(),
+        broker_uid: unsafe { libc::geteuid() },
+        max_output_tokens: 256,
+    }
+}
+#[tokio::test]
+async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let apath = root.join("a");
+    let bpath = root.join("b");
+    let (a, b) = tokio::join!(member(&apath), member(&bpath));
+    let socket = root.join("browser.sock");
+    let reads = browser_fixture(&socket);
+    let model = model_fixture(&root.join("model.sock"));
+    let app = moosuri_server::personal_service_router(
+        a.store.clone(),
+        None,
+        routes(
+            a.store.clone(),
+            a.owner,
+            Some(socket),
+            unsafe { libc::geteuid() },
+            Some(model),
+        ),
+    );
+    let bapp = moosuri_server::personal_service_router(
+        b.store.clone(),
+        None,
+        routes(b.store.clone(), b.owner, None, 0, None),
+    );
+    let base = format!("/api/v1/threads/{}/browser", a.thread);
+    assert_eq!(
+        request(&bapp, "GET", &base, b.owner.account, &b.token, Value::Null)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(&app, "GET", &base, a.owner.account, &b.token, Value::Null)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(
+            &bapp,
+            "GET",
+            &format!("/api/v1/threads/{}/browser", b.thread),
+            b.owner.account,
+            &b.token,
+            Value::Null
+        )
+        .await
+        .1["configured"],
+        false
+    );
+    let start = json!({"request_id":Uuid::new_v4(),"text":"Read the selected timetable","url":"https://example.org/timetable","wait_for_user":true});
+    let call = async |token: String, path: String, body: Value| {
+        request(&app, "POST", &path, a.owner.account, &token, body).await
+    };
+    let (ok, opened) = call(a.token.clone(), base.clone(), start.clone()).await;
+    assert_eq!(ok, StatusCode::OK);
+    let v = &opened["workspace"];
+    assert_eq!(v["state"], "ready");
+    assert_eq!(
+        call(a.token.clone(), base.clone(), start).await.1["workspace"]["id"],
+        v["id"]
+    );
+    let version = |v: &Value| json!({"workspace_id":v["id"],"revision":v["revision"],"request_id":Uuid::new_v4()});
+    let first = call(a.token.clone(), format!("{base}/takeover"), version(v))
+        .await
+        .1;
+    let second = a
+        .store
+        .login(
+            "member@example.test".into(),
+            "Second-synthetic-password-42".into(),
+        )
+        .await
+        .unwrap();
+    let active = call(
+        second.token.clone(),
+        format!("{base}/takeover"),
+        version(&first["workspace"]),
+    )
+    .await
+    .1;
+    let mut input = version(&active["workspace"]);
+    input["control_token"] = first["control_token"].clone();
+    input["frame_token"] = json!("f".repeat(64));
+    input["input"] = json!({"kind":"click","x":50,"y":60});
+    assert_eq!(
+        call(a.token.clone(), format!("{base}/input"), input.clone())
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    input["control_token"] = active["control_token"].clone();
+    let (ok, changed) = call(second.token.clone(), format!("{base}/input"), input.clone()).await;
+    assert_eq!(ok, StatusCode::OK);
+    assert_eq!(
+        call(second.token.clone(), format!("{base}/input"), input)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    let guide = json!({"request_id":Uuid::new_v4(),"text":"morning only","workspace_id":v["id"]});
+    assert_eq!(
+        call(second.token.clone(), base.clone(), guide).await.0,
+        StatusCode::OK
+    );
+    let f = request(
+        &app,
+        "GET",
+        &format!("{base}/frame"),
+        a.owner.account,
+        &second.token,
+        Value::Null,
+    )
+    .await
+    .1;
+    let mut resume = version(&changed["workspace"]);
+    resume["control_token"] = active["control_token"].clone();
+    resume["frame_token"] = f["frame_token"].clone();
+    let settled = call(
+        second.token.clone(),
+        format!("{base}/resume"),
+        resume.clone(),
+    )
+    .await;
+    assert_eq!(settled.0, StatusCode::OK);
+    assert_eq!(settled.1["workspace"]["state"], "completed");
+    assert_eq!(
+        call(second.token.clone(), format!("{base}/resume"), resume)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    let history = a
+        .store
+        .conversation(&second.user, a.thread.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(history.turns.len(), 1);
+    let turn = &history.turns[0];
+    assert_eq!(turn.run.id, v["run_id"]);
+    assert_eq!(turn.assistant.len(), 1);
+    assert!(turn.assistant[0].text.contains("08:15") && !turn.assistant[0].text.contains("14:30"));
+    assert_eq!(turn.run.instructions.as_ref().unwrap()[0].state, "applied");
+    a.store.logout(&second.user).await.unwrap();
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            &format!("{base}/frame"),
+            a.owner.account,
+            &second.token,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+}

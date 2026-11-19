@@ -1,0 +1,586 @@
+//! Authenticated member-side browser control. Persist the dispatch before contacting Chromium.
+use super::{browser_model, browser_wire as wire};
+use axum::{
+    Json, Router,
+    extract::{DefaultBodyLimit, Path, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use moosuri_connectors::browser::capsule::{WorkspaceFrame, WorkspaceInput, WorkspaceObservation};
+use moosuri_core::personal_browser::{Control, Frame, Link, Status, Tab, Workspace};
+use moosuri_store::{
+    Store, StoreError,
+    personal_browser::{Admission, Job, Scope, Version},
+    personal_volume::VolumeOwner,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::{path::PathBuf, sync::Arc};
+use uuid::Uuid;
+
+#[derive(Clone)]
+pub(super) struct Service {
+    store: Store,
+    pub(super) owner: VolumeOwner,
+    pub(super) socket: Option<PathBuf>,
+    pub(super) uid: u32,
+    pub(super) model: Option<moosuri_server::personal_text::Options>,
+    frames: Arc<tokio::sync::Semaphore>,
+}
+pub(super) fn routes(
+    store: Store,
+    owner: VolumeOwner,
+    socket: Option<PathBuf>,
+    uid: u32,
+    model: Option<moosuri_server::personal_text::Options>,
+) -> Router {
+    Router::new()
+        .route("/api/v1/threads/{id}/browser", get(status).post(start))
+        .route("/api/v1/threads/{id}/browser/frame", get(frame))
+        .route("/api/v1/threads/{id}/browser/{operation}", post(mutate))
+        .layer(DefaultBodyLimit::max(16 * 1024))
+        .with_state(Service {
+            store,
+            owner,
+            socket,
+            uid,
+            model,
+            frames: Arc::new(tokio::sync::Semaphore::new(1)),
+        })
+}
+pub(super) enum Failure {
+    Invalid,
+    Stale,
+    Missing,
+    Forbidden,
+    Unavailable,
+    Unknown,
+    Store(StoreError),
+}
+impl From<StoreError> for Failure {
+    fn from(e: StoreError) -> Self {
+        Self::Store(e)
+    }
+}
+impl IntoResponse for Failure {
+    fn into_response(self) -> Response {
+        let (status, code) = match self {
+            Self::Store(StoreError::Unauthorized) => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            Self::Forbidden | Self::Store(StoreError::Forbidden) => {
+                (StatusCode::FORBIDDEN, "forbidden")
+            }
+            Self::Store(StoreError::NotFound) => (StatusCode::NOT_FOUND, "not_found"),
+            Self::Store(StoreError::BudgetExhausted) => {
+                (StatusCode::CONFLICT, "browser_budget_exhausted")
+            }
+            Self::Stale | Self::Store(StoreError::Conflict) => {
+                (StatusCode::CONFLICT, "browser_stale")
+            }
+            Self::Invalid | Self::Store(StoreError::InvalidInput) => {
+                (StatusCode::BAD_REQUEST, "invalid_request")
+            }
+            Self::Missing => (StatusCode::SERVICE_UNAVAILABLE, "browser_worker_missing"),
+            Self::Unknown => (StatusCode::SERVICE_UNAVAILABLE, "browser_outcome_unknown"),
+            _ => (StatusCode::SERVICE_UNAVAILABLE, "browser_unavailable"),
+        };
+        (
+            status,
+            [("cache-control", "no-store")],
+            Json(json!({"code":code})),
+        )
+            .into_response()
+    }
+}
+type Reply = Result<Response, Failure>;
+fn response<T: Serialize>(v: T) -> Response {
+    ([("cache-control", "no-store")], Json(v)).into_response()
+}
+fn status_view(s: &Service, v: Option<Workspace>) -> Response {
+    response(Status {
+        configured: wire::available(s),
+        workspace: v,
+    })
+}
+async fn scope(s: &Service, h: &HeaderMap, thread: String) -> Result<Scope, Failure> {
+    let user = moosuri_server::personal_request_user(&s.store, h).await?;
+    if user.account().id != s.owner.account.to_string() {
+        return Err(Failure::Forbidden);
+    }
+    Ok(Scope {
+        owner: s.owner,
+        user,
+        thread,
+    })
+}
+fn epoch(h: &HeaderMap) -> Option<i64> {
+    let mut values = h
+        .get_all(moosuri_server::personal_text::SESSION_EPOCH_HEADER)
+        .iter();
+    values
+        .next()?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()
+        .filter(|v: &i64| *v >= 0 && values.next().is_none())
+}
+#[derive(Deserialize)]
+struct Tabs {
+    active_tab: Option<Uuid>,
+    tabs: Vec<BrokerTab>,
+}
+#[derive(Deserialize)]
+struct BrokerTab {
+    tab_id: Uuid,
+    url: String,
+}
+fn tabs(view: &mut Workspace, t: Tabs) -> Result<(), Failure> {
+    if t.tabs.len() > 16
+        || t.active_tab
+            .is_some_and(|id| !t.tabs.iter().any(|tab| tab.tab_id == id))
+    {
+        return Err(Failure::Unknown);
+    }
+    view.active_tab_id = t.active_tab.map(|id| id.to_string());
+    let mut mapped = Vec::new();
+    for tab in t.tabs {
+        let id = tab.tab_id.to_string();
+        let title = view
+            .tabs
+            .iter()
+            .find(|b| b.id == id && b.url == tab.url)
+            .map(|b| b.title.clone())
+            .unwrap_or_default();
+        if Some(&id) == view.active_tab_id.as_ref() {
+            view.url = tab.url.clone();
+            view.title = title.clone();
+        }
+        mapped.push(Tab {
+            id,
+            url: tab.url,
+            title,
+        });
+    }
+    view.tabs = mapped;
+    Ok(())
+}
+async fn status(State(s): State<Service>, h: HeaderMap, Path(thread): Path<String>) -> Reply {
+    let scope = scope(&s, &h, thread).await?;
+    let Some(j) = s.store.personal_browser_current(scope.clone()).await? else {
+        return Ok(status_view(&s, None));
+    };
+    let mut v = j.view;
+    if matches!(v.state.as_str(), "ready" | "user_control" | "completed") {
+        match wire::call(&s, &v.id, "tabs", json!({})).await {
+            Ok(t) => tabs(&mut v, t)?,
+            Err(Failure::Missing | Failure::Unavailable) => {
+                v.state = "outcome_unknown".into();
+                v.reason = Some("browser_worker_missing".into());
+            }
+            Err(_) => {}
+        }
+        v = s
+            .store
+            .personal_browser_refresh(scope, v.revision, v)
+            .await?;
+    }
+    Ok(status_view(&s, Some(v)))
+}
+async fn frame(State(s): State<Service>, h: HeaderMap, Path(thread): Path<String>) -> Reply {
+    let scope = scope(&s, &h, thread).await?;
+    let Some(job) = s.store.personal_browser_current(scope.clone()).await? else {
+        return Err(StoreError::NotFound.into());
+    };
+    let _permit = s.frames.try_acquire().map_err(|_| Failure::Stale)?;
+    let v = job.view;
+    if !matches!(
+        v.state.as_str(),
+        "reading" | "ready" | "user_control" | "completed"
+    ) {
+        return Err(Failure::Stale);
+    }
+    let tab = v.active_tab_id.ok_or(Failure::Stale)?;
+    let f: WorkspaceFrame = wire::call(&s, &v.id, "frame", json!({"tab_id":tab})).await?;
+    let current = s
+        .store
+        .personal_browser_current(scope)
+        .await?
+        .ok_or(Failure::Stale)?;
+    if current.view.id != v.id
+        || current.view.revision != v.revision
+        || current.view.active_tab_id.as_ref() != Some(&tab)
+    {
+        return Err(Failure::Stale);
+    }
+    Ok(response(Frame {
+        workspace_id: v.id,
+        revision: v.revision,
+        tab_id: tab,
+        frame_token: f.frame_token,
+        png_base64: f.png_base64,
+        width: f.width,
+        height: f.height,
+        url: f.url,
+    }))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Start {
+    request_id: Uuid,
+    url: String,
+    text: String,
+    #[serde(default)]
+    wait_for_user: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Guide {
+    request_id: Uuid,
+    workspace_id: String,
+    text: String,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StartOrGuide {
+    Start(Start),
+    Guide(Guide),
+}
+#[derive(Deserialize)]
+struct Opened {
+    tab_id: Uuid,
+    observation: WorkspaceObservation,
+}
+async fn start(
+    State(s): State<Service>,
+    h: HeaderMap,
+    Path(thread): Path<String>,
+    Json(input): Json<StartOrGuide>,
+) -> Reply {
+    let scope = scope(&s, &h, thread).await?;
+    let epoch = epoch(&h);
+    match input {
+        StartOrGuide::Guide(g) => {
+            let job = s
+                .store
+                .personal_browser_guide(scope, g.workspace_id, g.request_id, g.text)
+                .await?;
+            Ok(status_view(&s, Some(job.view)))
+        }
+        StartOrGuide::Start(input) => {
+            // Detached only for this accepted HTTP call: a lost response cannot strand or replay an action.
+            tokio::spawn(async move {
+                let url = url::Url::parse(&input.url).map_err(|_| Failure::Invalid)?;
+                if !matches!(url.scheme(), "http" | "https")
+                    || url.host().is_none()
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                {
+                    return Err(Failure::Invalid);
+                }
+                let admission = s
+                    .store
+                    .personal_browser_open(
+                        scope.clone(),
+                        input.request_id,
+                        input.url.clone(),
+                        input.text,
+                        input.wait_for_user,
+                    )
+                    .await?;
+                let j = match admission {
+                    Admission::Existing(j) => return Ok(status_view(&s, Some(j.view))),
+                    Admission::Fresh(j) => j,
+                };
+                let result =
+                    wire::call::<Opened>(&s, &j.view.id, "open", json!({"url":input.url})).await;
+                let opened = match result {
+                    Ok(x) => x,
+                    Err(err) => {
+                        return failed(&s, scope, j.view, input.request_id, err, None).await;
+                    }
+                };
+                observed(
+                    &s,
+                    scope,
+                    j,
+                    input.request_id,
+                    opened.tab_id,
+                    opened.observation,
+                    input.wait_for_user,
+                    epoch,
+                )
+                .await
+            })
+            .await
+            .map_err(|_| Failure::Unknown)?
+        }
+    }
+}
+async fn observed(
+    s: &Service,
+    scope: Scope,
+    mut j: Job,
+    request: Uuid,
+    tab: Uuid,
+    obs: WorkspaceObservation,
+    wait: bool,
+    epoch: Option<i64>,
+) -> Reply {
+    let p = obs.page;
+    let v = &mut j.view;
+    let tab = tab.to_string();
+    v.url = p.url.clone();
+    v.title = p.title.clone();
+    if let Some(t) = v.tabs.iter_mut().find(|t| t.id == tab) {
+        t.title = p.title.clone();
+        t.url = p.url.clone();
+    } else {
+        v.tabs.push(Tab {
+            id: tab.clone(),
+            title: p.title.clone(),
+            url: p.url.clone(),
+        });
+    }
+    v.active_tab_id = Some(tab);
+    v.links = if j.human_touched {
+        vec![]
+    } else {
+        p.links
+            .iter()
+            .take(24)
+            .map(|l| Link {
+                url: l.url.clone(),
+                text: l.text.clone(),
+            })
+            .collect()
+    };
+    let mut j = s
+        .store
+        .personal_browser_publish(scope.clone(), request, j.view)
+        .await?;
+    let generated = if wait {
+        None
+    } else {
+        browser_model::answer(s, &j, &p, epoch).await
+    };
+    let (answer, needs_user, applied, reason) = match generated {
+        Some((answer, needs_user)) => (
+            format!("{answer}\n\n{}", p.url),
+            needs_user,
+            j.guidance.len(),
+            "waiting_for_user",
+        ),
+        None => {
+            let text = p.text.chars().take(2000).collect::<String>();
+            let note = if wait {
+                "현재 화면입니다. 조건을 변경한 뒤 완료를 눌러 주세요."
+            } else {
+                "페이지에서 확인한 내용입니다. 모델 답변을 받지 못해 작업을 열어 두었습니다."
+            };
+            (
+                format!("{note}\n\n{}\n{}\n\n{text}", p.title, p.url),
+                true,
+                0,
+                if wait {
+                    "waiting_for_user"
+                } else {
+                    "browser_model_unavailable"
+                },
+            )
+        }
+    };
+    j.view.state = if needs_user { "ready" } else { "completed" }.into();
+    j.view.reason = needs_user.then(|| reason.into());
+    let view = s
+        .store
+        .personal_browser_finish(scope, j.view, request, Some(answer), applied)
+        .await?;
+    Ok(status_view(s, Some(view)))
+}
+async fn failed(
+    s: &Service,
+    scope: Scope,
+    mut v: Workspace,
+    request: Uuid,
+    error: Failure,
+    restore: Option<&str>,
+) -> Reply {
+    if matches!(error, Failure::Stale | Failure::Invalid)
+        && let Some(state) = restore
+    {
+        v.state = state.into();
+        v.reason = Some("browser_stale".into());
+    } else {
+        v.state = "outcome_unknown".into();
+        v.reason = Some("browser_unavailable".into());
+    }
+    s.store
+        .personal_browser_finish(scope, v, request, None, 0)
+        .await?;
+    Err(error)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Action {
+    workspace_id: String,
+    revision: i64,
+    request_id: Uuid,
+    control_token: Option<String>,
+    frame_token: Option<String>,
+    input: Option<WorkspaceInput>,
+    action: Option<String>,
+    tab_id: Option<Uuid>,
+    url: Option<String>,
+}
+async fn mutate(
+    State(s): State<Service>,
+    h: HeaderMap,
+    Path((thread, op)): Path<(String, String)>,
+    Json(a): Json<Action>,
+) -> Reply {
+    let scope = scope(&s, &h, thread).await?;
+    let epoch = epoch(&h);
+    tokio::spawn(async move { dispatch(s, scope, op, a, epoch).await })
+        .await
+        .map_err(|_| Failure::Unknown)?
+}
+async fn dispatch(s: Service, scope: Scope, op: String, a: Action, epoch: Option<i64>) -> Reply {
+    let op = match op.as_str() {
+        "takeover" => "takeover",
+        "input" => "input",
+        "resume" => "resume",
+        "close" => "close",
+        "tabs" => match a.action.as_deref() {
+            Some("switch") => "switch",
+            Some("close") => "close_tab",
+            Some("follow") => "follow",
+            _ => return Err(Failure::Invalid),
+        },
+        _ => return Err(StoreError::NotFound.into()),
+    };
+    let mut args = json!({});
+    match op {
+        "input" | "resume" => {
+            let proof = a
+                .frame_token
+                .as_ref()
+                .filter(|t| !t.is_empty() && t.len() <= 256)
+                .ok_or(Failure::Invalid)?;
+            args["frame_token"] = json!(proof);
+            if op == "input" {
+                let input = a.input.as_ref().ok_or(Failure::Invalid)?;
+                input.validate().map_err(|_| Failure::Invalid)?;
+                args["input"] = json!(input);
+            }
+        }
+        "switch" => args["to_tab_id"] = json!(a.tab_id.ok_or(Failure::Invalid)?),
+        "close_tab" => {
+            if a.tab_id.is_none() {
+                return Err(Failure::Invalid);
+            }
+        }
+        "follow" => {
+            args["url"] = json!(
+                a.url
+                    .as_ref()
+                    .filter(|u| u.len() <= 2048)
+                    .ok_or(Failure::Invalid)?
+            )
+        }
+        _ => {}
+    }
+    let prior = s
+        .store
+        .personal_browser_current(scope.clone())
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    if op == "close_tab" && a.tab_id.map(|t| t.to_string()) != prior.view.active_tab_id {
+        return Err(Failure::Stale);
+    }
+    let control = if op == "takeover" {
+        Some(Uuid::new_v4().to_string())
+    } else {
+        a.control_token
+    };
+    let version = Version {
+        workspace_id: a.workspace_id,
+        revision: a.revision,
+        request_id: a.request_id,
+    };
+    let mut j = match s
+        .store
+        .personal_browser_reserve(scope.clone(), version, op, control.clone())
+        .await?
+    {
+        Admission::Existing(j) => return Ok(status_view(&s, Some(j.view))),
+        Admission::Fresh(j) => j,
+    };
+    if op == "takeover" {
+        return Ok(response(Control {
+            workspace: j.view,
+            control_token: control.ok_or(Failure::Invalid)?,
+        }));
+    }
+    if op != "close" {
+        args["tab_id"] = json!(j.view.active_tab_id);
+    }
+    let wire_op = match op {
+        "close" => "stop",
+        "resume" => "selected",
+        s => s,
+    };
+    let result = wire::call::<Value>(&s, &j.view.id, wire_op, args).await;
+    let result = match result {
+        Ok(r) => r,
+        Err(Failure::Missing) if op == "close" => json!({"stopped":true}),
+        Err(e) => return failed(&s, scope, j.view, a.request_id, e, Some(&prior.view.state)).await,
+    };
+    match op {
+        "resume" | "follow" => {
+            let parse = if op == "follow" {
+                serde_json::from_value::<Opened>(result)
+                    .ok()
+                    .map(|o| (o.tab_id, o.observation))
+            } else {
+                j.view
+                    .active_tab_id
+                    .as_ref()
+                    .and_then(|id| Uuid::parse_str(id).ok())
+                    .zip(serde_json::from_value::<WorkspaceObservation>(result).ok())
+            };
+            let Some((tab, obs)) = parse else {
+                return failed(&s, scope, j.view, a.request_id, Failure::Unknown, None).await;
+            };
+            return observed(&s, scope, j, a.request_id, tab, obs, false, epoch).await;
+        }
+        "switch" | "close_tab" => {
+            if let Ok(t) = serde_json::from_value(result)
+                && tabs(&mut j.view, t).is_ok()
+            {
+                if j.view.tabs.is_empty() {
+                    j.view.state = "closed".into();
+                }
+            } else {
+                return failed(&s, scope, j.view, a.request_id, Failure::Unknown, None).await;
+            }
+        }
+        "close" if result["stopped"] == true => {
+            j.view.state = "closed".into();
+            j.view.active_tab_id = None;
+            j.view.tabs.clear();
+            j.view.links.clear();
+        }
+        "input" if result["accepted"] == true => {}
+        _ => return failed(&s, scope, j.view, a.request_id, Failure::Unknown, None).await,
+    }
+    let view = s
+        .store
+        .personal_browser_finish(scope, j.view, a.request_id, None, 0)
+        .await?;
+    Ok(status_view(&s, Some(view)))
+}
+
+#[cfg(test)]
+#[path = "browser_tests.rs"]
+mod tests;

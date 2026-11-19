@@ -1,4 +1,7 @@
 //! Local installation operator interface for stable provisioning identities.
+mod browser;
+mod browser_model;
+mod browser_wire;
 mod gws_setup;
 use clap::{Args, Subcommand};
 use moosuri_store::runtime_registry;
@@ -135,6 +138,9 @@ enum PersonalOperation {
         /// Optional owner-only JSON for explicitly limited broker text previews.
         #[arg(long)]
         text_preview_config: Option<PathBuf>,
+        /// Enable the dedicated member browser broker at /browser/browser.sock.
+        #[arg(long)]
+        browser: bool,
         /// Mount the member-scoped Google egress socket at /google/google.sock.
         #[arg(long)]
         google_readonly: bool,
@@ -173,6 +179,7 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
         PersonalOperation::Serve {
             socket,
             text_preview_config,
+            browser,
             google_readonly,
             local_gws,
         } => {
@@ -207,6 +214,13 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
             } else {
                 axum::Router::new()
             };
+            let extensions = extensions.merge(browser::routes(
+                store.clone(),
+                owner,
+                browser.then(|| PathBuf::from("/browser/browser.sock")),
+                0,
+                preview.clone(),
+            ));
             return serve_member(socket, store, owner, preview, extensions).await;
         }
         PersonalOperation::Initialize {

@@ -87,15 +87,19 @@ struct Selection {
     effort: Option<String>,
     kind: ProviderKind,
 }
-async fn select(state: &Preview, epoch: i64) -> Result<ModelPin, String> {
+pub async fn select_model(
+    options: &Options,
+    generation: u64,
+    epoch: i64,
+) -> Result<ModelPin, String> {
     let request = serde_json::to_vec(&serde_json::json!({
         "v": 1,
         "operation": "selection",
-        "generation": state.owner.generation,
+        "generation": generation,
         "selection_epoch": epoch,
     }))
     .map_err(|_| "preview_request_invalid")?;
-    let bytes = tokio::time::timeout(Duration::from_secs(4), call(&state.options, &request))
+    let bytes = tokio::time::timeout(Duration::from_secs(4), call(options, &request))
         .await
         .map_err(|_| "preview_selection_unavailable")??;
     let selection: Selection =
@@ -109,7 +113,7 @@ async fn select(state: &Preview, epoch: i64) -> Result<ModelPin, String> {
         model: selection.model,
         effort: selection.effort,
         kind: selection.kind,
-        max_output_tokens: state.options.max_output_tokens,
+        max_output_tokens: options.max_output_tokens,
     })
 }
 async fn info(State(state): State<Preview>, headers: HeaderMap) -> HttpResult {
@@ -117,7 +121,13 @@ async fn info(State(state): State<Preview>, headers: HeaderMap) -> HttpResult {
         let _delivery = state.auth.delivery.read().await;
         owner(&state, &headers).await?;
     }
-    let enabled = select(&state, gateway_epoch(&headers)?).await.is_ok();
+    let enabled = select_model(
+        &state.options,
+        state.owner.generation,
+        gateway_epoch(&headers)?,
+    )
+    .await
+    .is_ok();
     Ok(Json(serde_json::json!({
         "enabled":enabled,
         "capability":"text_only_preview",
@@ -162,7 +172,7 @@ async fn submit(
     let admission = if let Some(existing) = existing {
         existing
     } else {
-        let Ok(pin) = select(&state, epoch).await else {
+        let Ok(pin) = select_model(&state.options, state.owner.generation, epoch).await else {
             return Ok((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(moosuri_core::ApiError {

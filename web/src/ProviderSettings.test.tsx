@@ -713,7 +713,7 @@ describe("personal ChatGPT settings", () => {
     await user.click(within(group).getByRole("button", {name: "내 모델 목록"}));
     await user.type(within(group).getByLabelText("정확한 모델"), personal.model);
     await user.click(within(group).getByRole("button", {name: "텍스트 연결 확인"}));
-    await screen.findByText("텍스트 연결을 확인했습니다. 사용할 모델을 선택하세요.");
+    await screen.findByText("텍스트 연결을 확인했습니다.");
     expect(fixture.calls.find((call) => call.path.endsWith("personal-a/probe"))?.body).toEqual({revision: 1, model: personal.model, effort: null});
     const targetKey = JSON.stringify(["personal_chat_gpt", personal.provider_id, 1, personal.model, null]);
     await user.selectOptions(screen.getByRole("combobox", {name: "모델"}), targetKey);

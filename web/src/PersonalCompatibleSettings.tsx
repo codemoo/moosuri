@@ -72,7 +72,7 @@ export function PersonalCompatibleSettings({accountId, onExpired, onVerified}:Pr
   }
   async function verify(p:ProviderSummary, model:string) {
     await scope.request(`${path}/${encodeURIComponent(p.id)}/probe`,"POST",{revision:p.revision, model,effort:null});
-    await reload(); onVerified(); setNotice("텍스트 응답을 확인했습니다. 아래 모델 선택에서 사용할 수 있습니다.");
+    await reload(); onVerified(); setNotice("텍스트 응답을 확인했습니다.");
   }
   async function verifyVision(p:ProviderSummary, choice:ModelChoice) {
     const result=await scope.request<{vision:boolean}>(`${path}/${encodeURIComponent(p.id)}/vision-probe`,"POST",{revision:p.revision,model:choice.model,effort:choice.effort});

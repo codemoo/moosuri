@@ -139,7 +139,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
         await scope.request(`/settings/claude/${encodeURIComponent(binding.id)}/probe`, "POST", {
           revision: binding.revision, model: (models[binding.id] ?? "").trim(),
         });
-        setNotice("정확한 모델의 텍스트 응답을 확인했습니다. 아래 사용할 모델에서 선택하고 저장하세요.");
+        setNotice("선택한 Claude 모델의 텍스트 응답을 확인했습니다.");
         onVerified();
       }
       if (binding && kind === "disconnect") {
@@ -184,7 +184,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
     {guideOpen && <div id={guideId} className="claude-connection-options" role="region" aria-label="Claude 연결 방식">
       <section className="claude-connection-option" aria-label="Claude 구독 연결">
         <h4>Claude 구독으로 연결</h4>
-        <p>본인 계정으로 공식 Claude Code에 로그인합니다. 내 모델에서 사용할 모델과 추론 강도를 선택한 뒤 도구 연결을 확인하세요.</p>
+        <p>본인 계정으로 공식 Claude Code에 로그인합니다.</p>
         {loading ? <p>서버 설정을 확인하고 있습니다.</p>
           : !state ? <p>서버 상태를 확인한 뒤 구독 연결을 시작할 수 있습니다. 아래에서 연결을 새로고침하세요.</p>
           : state.runtime_configured ? <form className="claude-create-form" onSubmit={create}>
@@ -201,7 +201,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
         <p>Anthropic API 키로 연결합니다. Claude 구독과 별도로 사용량이 청구되며, 설치 구성원이 함께 사용하는 연결입니다.</p>
         {onConnectApi
           ? <button className="secondary" onClick={onConnectApi}>Claude API 연결</button>
-          : <p>공유 API 연결은 관리자가 추가합니다. 연결된 모델은 아래 ‘사용할 모델’에서 선택하세요.</p>}
+          : <p>공유 API 연결은 관리자가 추가합니다.</p>}
       </section>
     </div>}
 
@@ -218,7 +218,7 @@ function ClaudeConnections({ accountId, onExpired, onVerified, onConnectApi, ref
           revision={binding.revision} disabled={busy || loading} onExpired={onExpired} onSucceeded={() => void refresh(binding, { afterLogin: true })} />}
         <p className="settings-hint">공식 로그인 후 사용 가능한 모델을 자동으로 확인합니다. 모델 확인은 본인 구독을 사용합니다.</p>
         {syncStatus[binding.id] === "checking" && <p role="status">사용할 Claude 모델을 확인하는 중…</p>}
-        {syncStatus[binding.id] === "ready" && <p role="status">Claude 모델을 준비했습니다. 아래 ‘사용할 모델’에서 선택하고 저장하세요.</p>}
+        {syncStatus[binding.id] === "ready" && <p role="status">Claude 모델을 준비했습니다.</p>}
         {syncStatus[binding.id] === "login_required" && <p role="status">{binding.status === "pending"
           ? "공식 로그인이 필요합니다. 구독 로그인을 완료하면 모델 목록을 자동으로 불러옵니다."
           : "Claude 로그인 상태를 확인할 수 없습니다. 위 ‘Claude 연결’에서 새 연결을 추가해 로그인하세요."}</p>}

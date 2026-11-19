@@ -1263,7 +1263,7 @@ function PersonalChatGpt({accountId, onExpired, onVerified, choices}: Props & {o
           effort: (effort[binding.id] ?? "").trim() || null,
         });
         onVerified();
-        setNotice("텍스트 연결을 확인했습니다. 사용할 모델을 선택하세요.");
+        setNotice("텍스트 연결을 확인했습니다.");
       }
     } catch (error) { fail(error); }
     finally { setBusy(false); }

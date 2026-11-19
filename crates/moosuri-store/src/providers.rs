@@ -417,12 +417,12 @@ fn admin_selection(conn: &Connection, user: &UserContext) -> Result<Option<Model
         .or(subscriptions::selected(conn, user)?)
         .or(selected(conn, Some(user))?))
 }
-fn effective_selection(conn: &Connection, user: &UserContext) -> Result<Option<ModelSelection>> {
-    let installation = selected(conn, None)?;
-    if installation.is_some() || user.account.role == Role::Member {
-        return Ok(installation);
-    }
-    admin_selection(conn, user)
+/// A stale configured selection returns an error. Absence permits the
+/// installation's owner-only selection path.
+pub(super) fn installation_choice(conn: &Connection) -> Result<Option<ModelChoice>> {
+    selected(conn, None)?
+        .map(|selection| verified(conn, &selection))
+        .transpose()
 }
 fn selection_choice(
     conn: &Connection,
@@ -438,14 +438,19 @@ fn selection_choice(
         ModelSource::PersonalChatGpt => subscriptions::verified(conn, user, selection),
     }
 }
+fn effective_choice(conn: &Connection, user: &UserContext) -> Result<Option<ModelChoice>> {
+    let installation = installation_choice(conn)?;
+    if installation.is_some() || user.account.role == Role::Member {
+        return Ok(installation);
+    }
+    admin_selection(conn, user)?
+        .map(|selection| selection_choice(conn, user, &selection))
+        .transpose()
+}
 fn available_choice(conn: &Connection, user: &UserContext) -> Result<Option<ModelChoice>> {
-    let Some(selection) = effective_selection(conn, user)? else {
-        return Ok(None);
-    };
-    match selection_choice(conn, user, &selection) {
-        Ok(choice) => Ok(Some(choice)),
+    match effective_choice(conn, user) {
         Err(StoreError::Conflict | StoreError::NotFound) => Ok(None),
-        Err(error) => Err(error),
+        outcome => outcome,
     }
 }
 fn settings(conn: &Connection, user: &UserContext) -> Result<ModelSettings> {
@@ -760,9 +765,7 @@ impl Store {
         let user = user.clone();
         self.call(move |db| {
             let current = validate(&db.conn, &user, true, false)?;
-            let selection =
-                effective_selection(&db.conn, &current)?.ok_or(StoreError::Unavailable)?;
-            let choice = selection_choice(&db.conn, &current, &selection)?;
+            let choice = effective_choice(&db.conn, &current)?.ok_or(StoreError::Unavailable)?;
             binding_for_owner_choice(
                 &db.conn,
                 &db.provider_key,
@@ -813,7 +816,7 @@ pub(super) fn selected_choice(conn: &Connection, user: &UserContext) -> Result<M
 
 // Durable work keeps its exact pin. An installation selection must authorize
 // the pin at dispatch, including work admitted under the retired member policy.
-fn require_model_policy(
+pub(super) fn require_model_policy(
     conn: &Connection,
     tenant: &str,
     account: &str,
@@ -842,6 +845,18 @@ pub(super) fn binding_for_owner_choice(
     choice: &ModelChoice,
 ) -> Result<ProviderBinding> {
     require_model_policy(conn, tenant, account, choice)?;
+    revalidate_owner_binding(conn, key, tenant, account, choice)
+}
+
+/// Check a dispatched call's exact provider, capability proof and credential.
+/// The writer already enforced installation selection when it admitted the call.
+pub(super) fn revalidate_owner_binding(
+    conn: &Connection,
+    key: &[u8; 32],
+    tenant: &str,
+    account: &str,
+    choice: &ModelChoice,
+) -> Result<ProviderBinding> {
     match choice.source {
         ModelSource::Shared => binding_for_choice(conn, key, choice),
         ModelSource::PersonalChatGpt => subscriptions::binding(conn, tenant, account, choice),

@@ -470,7 +470,7 @@ pub(super) fn guard(conn: &Connection, key: &[u8; 32], lease: &RunLease) -> Resu
         )?;
         return Err(StoreError::Unauthorized);
     }
-    if binding_for_run(conn, key, &run).is_err() {
+    if revalidate_run_binding(conn, key, &run).is_err() {
         transition(
             conn,
             &run,
@@ -489,8 +489,13 @@ pub(super) fn binding_for_run(
     key: &[u8; 32],
     run: &Run,
 ) -> Result<ProviderBinding> {
+    providers::require_model_policy(conn, &run.tenant, &run.account, &run.model)?;
+    revalidate_run_binding(conn, key, run)
+}
+
+fn revalidate_run_binding(conn: &Connection, key: &[u8; 32], run: &Run) -> Result<ProviderBinding> {
     crate::media::authorize_subscription_context(conn, run)?;
-    providers::binding_for_owner_choice(conn, key, &run.tenant, &run.account, &run.model)
+    providers::revalidate_owner_binding(conn, key, &run.tenant, &run.account, &run.model)
 }
 
 impl Store {

@@ -931,6 +931,11 @@ impl Store {
             let pending: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_tool_slots WHERE tenant_id=?1 AND run_id=?2 AND result IS NULL AND step>=?3)",params![run.tenant,run.id,crate::missions::acceptance_floor(&tx,&run.tenant,&run.id)?],|r|r.get(0))?;
             let dispatched: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_steps WHERE tenant_id=?1 AND run_id=?2 AND state='dispatched')",params![run.tenant,run.id],|r|r.get(0))?;
             if pending || dispatched {return Err(StoreError::Conflict)}
+            if let Err(error) = crate::providers::require_model_policy(&tx, &run.tenant, &run.account, &run.model) {
+                chat::transition(&tx, &run, RunState::Failed, Some(RunFailure::ProviderUnavailable))?;
+                tx.commit()?;
+                return Err(error);
+            }
             let clock=millis()?;let step=remote+1;let n=nonce()?;
             crate::recovery_budget::reserve(&tx,&run.tenant,&run.account,&format!("agent:{}",crate::backup::hex(&n)),"agent",0)?;
             tx.execute("UPDATE agent_execution SET remote_calls=?3,checkpoint_seq=checkpoint_seq+1,started_ms=coalesce(started_ms,?4),deadline_ms=coalesce(deadline_ms,?4+120000),last_clock_ms=?4 WHERE tenant_id=?1 AND run_id=?2",params![run.tenant,run.id,step,clock])?;

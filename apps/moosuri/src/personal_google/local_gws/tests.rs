@@ -407,7 +407,7 @@ case "$*" in
     printf '%s\n' '{"documentId":"fixture-doc","title":"First document"}' ;;
   'slides presentations get --params {"fields":"presentationId,title,slides(objectId)","presentationId":"fixture-deck"} --format json')
     [ -f cache/slides_v1.json ]
-    printf '%s\n' '{"presentationId":"fixture-deck","title":"First deck","slides":[{"objectId":"slide1"},{"objectId":"slide2"}]}' ;;
+    printf '%s\n' '{"presentationId":"fixture-deck","title":"First deck","slides":[{"objectId":"slide:1"},{"objectId":"slide.2"}]}' ;;
   'sheets spreadsheets get --params {"fields":"spreadsheetId,properties(title),sheets(properties(title,index))","spreadsheetId":"fixture-book"} --format json')
     [ -f cache/sheets_v4.json ]
     printf '%s\n' '{"spreadsheetId":"fixture-book","properties":{"title":"First spreadsheet"},"sheets":[{"properties":{"title":"First sheet"}}]}' ;;

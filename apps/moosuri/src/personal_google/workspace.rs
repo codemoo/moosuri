@@ -49,7 +49,9 @@ pub(super) async fn status(
         Backend::Local { config, .. } => {
             Some(registered_client(config).map_err(configuration_failure)?.0)
         }
-        _ => None,
+        Backend::Broker { .. } => return Err(Failure(StatusCode::NOT_FOUND, "not_found")),
+        #[cfg(test)]
+        Backend::Fixture(_) => None,
     };
     let mut connections = Vec::new();
     for service in Service::WORKSPACE {

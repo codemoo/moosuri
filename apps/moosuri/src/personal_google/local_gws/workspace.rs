@@ -258,7 +258,8 @@ impl<'a> WorkspaceRead<'a> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Slide {
-            object_id: String,
+            #[serde(rename = "objectId")]
+            _object_id: String,
         }
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -314,12 +315,7 @@ impl<'a> WorkspaceRead<'a> {
             }
             Self::Slides(id) => {
                 let presentation: Presentation = read(bytes)?;
-                if presentation.presentation_id != *id
-                    || presentation
-                        .slides
-                        .iter()
-                        .any(|slide| !valid_id(&slide.object_id))
-                {
+                if presentation.presentation_id != *id {
                     return Err(unavailable());
                 }
                 WorkspaceData::Slides(SlidesMetadata {

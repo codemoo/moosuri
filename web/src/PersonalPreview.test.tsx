@@ -257,6 +257,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   sessionStorage.clear();
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
@@ -405,6 +406,79 @@ it("keeps an ordinary reference in chat and preserves a browser draft when the c
   const posts = calls.filter((call) => call.method === "POST" && /\/(?:text-preview|browser)$/.test(call.path));
   expect(posts.map((call) => call.path)).toEqual([`/threads/${tid}/text-preview`, `/threads/${tid}/browser`]);
   expect(posts[1].body.url).toBe("https://example.test/");
+});
+
+it("renews an idle frame proof before Done, disallows old gestures, and retains control after a busy response", async () => {
+  vi.useFakeTimers();
+  const base = `/threads/${tid}/browser`;
+  const work: PersonalBrowserWorkspace = {
+    id: bid, request_id: aid, run_id: tid, thread_id: tid, state: "ready", revision: 1,
+    title: "Timetable", url: "https://timetable.example.test/", active_tab_id: "main",
+    tabs: [], links: [], reason: null,
+  };
+  const status = () => Response.json({ configured: true, workspace: work });
+  let proof = 0;
+  let minted = 0;
+  let firstResume = true;
+  browserRoute = (path) => {
+    if (path === base) return status();
+    if (path === `${base}/frame`) {
+      const now = performance.now();
+      if (!proof || now >= minted + 30000) {
+        proof++;
+        minted = now;
+      }
+      return Response.json({ workspace_id: work.id, tab_id: "main", revision: work.revision,
+        frame_token: `proof-${proof}`, proof_valid_for_ms: 30000 - (now - minted),
+        png_base64: "QUJD", width: 900, height: 600, url: work.url });
+    }
+    if (path === `${base}/takeover`) {
+      work.state = "user_control";
+      work.revision++;
+      return Response.json({ workspace: work, control_token: "held-controller" });
+    }
+    if (path === `${base}/resume`) {
+      if (firstResume) {
+        firstResume = false;
+        return Response.json({ code: "browser_busy" }, { status: 429 });
+      }
+      work.state = "completed";
+      work.revision++;
+      return status();
+    }
+    throw new Error(`Unexpected browser route ${path}`);
+  };
+  const tick = async (milliseconds = 0) => act(async () => {
+    await vi.advanceTimersByTimeAsync(milliseconds);
+  });
+  mount();
+  await tick();
+  fireEvent.click(screen.getByRole("button", { name: "미리 보기 열기" }));
+  await tick();
+  fireEvent.click(screen.getByRole("button", { name: "브라우저 제어" }));
+  await tick();
+  const done = () => screen.getByRole("button", { name: "완료" });
+  expect(done()).toBeEnabled();
+  const frame = screen.getByRole("img", { name: "개인 브라우저의 현재 화면" });
+  vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ width: 450, height: 300 } as DOMRect);
+  fireEvent.pointerDown(frame);
+  await tick(31000);
+  expect(proof).toBe(2);
+  expect(calls.filter((call) => call.path === `${base}/frame`).length).toBeGreaterThan(3);
+  fireEvent.click(frame, { clientX: 50, clientY: 50 });
+  expect(calls.some((call) => call.path === `${base}/input`)).toBe(false);
+  expect(done()).toBeEnabled();
+  fireEvent.click(done());
+  await tick();
+  expect(screen.getByRole("alert")).toHaveTextContent("잠시 후 다시 시도해 주세요");
+  expect(done()).toBeEnabled();
+  expect(calls.filter((call) => call.path === `${base}/resume`)).toHaveLength(1);
+  fireEvent.click(done());
+  await tick();
+  expect(calls.filter((call) => call.path === `${base}/resume`).map((call) => ({
+    proof: call.body.frame_token, controller: call.body.control_token,
+  }))).toEqual(Array(2).fill({ proof: "proof-2", controller: "held-controller" }));
+  expect(calls.filter((call) => call.path === `${base}/takeover`)).toHaveLength(1);
 });
 
 it("keeps a member's draft on an engine refusal and exposes no settings entry", async () => {

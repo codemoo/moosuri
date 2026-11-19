@@ -15,9 +15,15 @@ type Action =
 type Identity = { workspace_id: string; revision: number; request_id: string };
 type ResumeReceipt = Identity & { control_token: string; frame_token: string };
 const interval = 1800;
+const controlRefreshMs = 6500;
+const proofMaxAgeMs = 30000;
+const proofRefreshMarginMs = 5000;
+const proofDispatchMarginMs = 1000;
 const statusFailure = "브라우저 연결 상태를 확인하지 못했습니다.";
 const frameFailure = "브라우저 화면을 불러오지 못했습니다.";
 const paused = "조작권이나 화면이 바뀌었습니다. 최신 화면을 확인해 주세요.";
+const workerBusy = "브라우저가 화면을 처리하고 있습니다. 잠시 후 다시 시도해 주세요.";
+const frameBusy = "브라우저 화면을 준비하는 중입니다.";
 
 function frameMatches(workspace: PersonalBrowserWorkspace | null, frame: PersonalBrowserFrame) {
   return browserCanWatch(workspace) && workspace?.id === frame.workspace_id &&
@@ -39,6 +45,7 @@ export function usePersonalBrowser(
     frame: PersonalBrowserFrame | null;
     preview: Pick<PersonalBrowserFrame, "png_base64"> | null;
     controls: boolean;
+    canUseFrame: boolean;
     busy: Action["kind"] | null;
     error: string;
     canRetryResume: boolean;
@@ -57,6 +64,9 @@ export function usePersonalBrowser(
     let live = true;
     let status: PersonalBrowserStatus | null = null;
     let frame: PersonalBrowserFrame | null = null;
+    let takingFrame = false;
+    let capturedAt = 0;
+    let proof: { token: string; expiresAt: number } | null = null;
     let preview: Pick<PersonalBrowserFrame, "png_base64"> | null = null;
     let token: string | null = null;
     let busy: Action["kind"] | null = null;
@@ -73,10 +83,13 @@ export function usePersonalBrowser(
     let pageHidden = false;
     const visible = () => !pageHidden && document.visibilityState === "visible";
     const workspace = () => status?.configured ? status.workspace : null;
+    const proofFresh = () => !!frame && !takingFrame && !!proof &&
+      proof.expiresAt - performance.now() > proofDispatchMarginMs;
 
     function render() {
       if (!live) return;
       setView({ thread: thread!, status, frame, preview, controls: !!token && watch.current,
+        canUseFrame: proofFresh(),
         busy, error, canRetryResume: !!resume });
     }
 
@@ -86,6 +99,9 @@ export function usePersonalBrowser(
       if (previous && value.workspace?.id === previous.id && value.workspace.revision < previous.revision) return;
       status = value;
       const next = workspace();
+      if (!next || !previous || next.id !== previous.id || next.active_tab_id !== previous.active_tab_id) {
+        proof = null;
+      }
       if (!next || !previous || next.id !== previous.id || next.revision !== previous.revision ||
           next.active_tab_id !== previous.active_tab_id) {
         frame = null;
@@ -142,9 +158,15 @@ export function usePersonalBrowser(
         const previewKey = `${value.id}:${value.revision}:${value.active_tab_id}`;
         const previewable = ["reading", "ready", "completed"].includes(value.state);
         const showPreview = cardPreviewAllowed && previewable && seenPreview !== previewKey;
-        const watchFrame = watch.current && (!token || !frame);
+        const now = performance.now();
+        const watchFrame = watch.current && (!token || !frame ||
+          now - capturedAt >= controlRefreshMs ||
+          !!proof && proof.expiresAt - now <= proofRefreshMarginMs);
         if (!watchFrame && !showPreview) return;
         readingFrame = true;
+        takingFrame = true;
+        const requestedAt = performance.now();
+        render();
         const nextFrame = await scope.request<PersonalBrowserFrame>(`${base}/frame`, "GET", undefined,
           current.signal, { timeoutMs: 12000 });
         if (!live || current.signal.aborted || !visible()) return;
@@ -155,21 +177,40 @@ export function usePersonalBrowser(
           render();
           return;
         }
-        if (watch.current) frame = nextFrame;
+        if (watch.current) {
+          frame = nextFrame;
+          capturedAt = requestedAt;
+          if (nextFrame.proof_valid_for_ms !== undefined && Number.isFinite(nextFrame.proof_valid_for_ms)) {
+            proof = { token: nextFrame.frame_token,
+              expiresAt: requestedAt + Math.max(0, Math.min(proofMaxAgeMs, nextFrame.proof_valid_for_ms)) };
+          } else if (proof?.token !== nextFrame.frame_token) {
+            // Older runtimes can reissue unchanged proofs without extending their life.
+            proof = { token: nextFrame.frame_token, expiresAt: requestedAt + proofMaxAgeMs };
+          }
+        }
         if (showPreview || (watch.current && previewable)) {
           preview = { png_base64: nextFrame.png_base64 };
           seenPreview = previewKey;
         }
-        if (error === frameFailure) error = "";
+        if ([frameBusy, frameFailure].includes(error)) error = "";
         render();
       } catch (failure) {
         if (!live || current.signal.aborted || isAborted(failure) || handleAccess(failure, !readingFrame)) return;
+        if (failure instanceof ApiFailure && failure.code === "browser_busy") {
+          if (error !== workerBusy) error = frameBusy;
+          render();
+          return;
+        }
         frame = null;
         if (readingFrame) preview = null;
         else token = null;
         error = readingFrame ? frameFailure : statusFailure;
         render();
       } finally {
+        if (takingFrame) {
+          takingFrame = false;
+          render();
+        }
         observing = null;
         if (live && !denied && visible() && (status?.configured || rerun || !!error)) {
           timer = window.setTimeout(observe, rerun ? 0 : interval);
@@ -185,18 +226,19 @@ export function usePersonalBrowser(
           (value.state === "outcome_unknown" && action.kind !== "close")) return;
       const heldToken = token;
       const seenFrame = frame;
+      const previousResume = resume;
       const suffix = action.kind;
       let body: Identity & Record<string, unknown> = {
         workspace_id: value.id, revision: value.revision, request_id: crypto.randomUUID(),
       };
       switch (action.kind) {
         case "input":
-          if (!heldToken || !seenFrame || seenFrame.frame_token !== action.frame.frame_token ||
+          if (!heldToken || !proofFresh() || !seenFrame || seenFrame.frame_token !== action.frame.frame_token ||
               !frameMatches(value, seenFrame)) return;
           body = { ...body, control_token: heldToken, frame_token: seenFrame.frame_token, input: action.input };
           break;
         case "resume":
-          if (!resume && (!heldToken || !seenFrame || !frameMatches(value, seenFrame))) return;
+          if (!resume && (!heldToken || !proofFresh() || !seenFrame || !frameMatches(value, seenFrame))) return;
           if (!resume && heldToken && seenFrame) {
             resume = { ...body, control_token: heldToken, frame_token: seenFrame.frame_token };
           }
@@ -238,6 +280,11 @@ export function usePersonalBrowser(
       } catch (failure) {
         if (!live || isAborted(failure) || handleAccess(failure, false)) return;
         frame = null;
+        if (failure instanceof ApiFailure && failure.code === "browser_busy") {
+          if (action.kind === "resume") resume = previousResume;
+          error = workerBusy;
+          return;
+        }
         token = null;
         if (failure instanceof ApiFailure && failure.status < 500) {
           if (action.kind === "resume") resume = null;
@@ -265,6 +312,7 @@ export function usePersonalBrowser(
       observing?.abort();
       token = null;
       frame = null;
+      proof = null;
       preview = null;
       seenPreview = "";
       render();
@@ -289,6 +337,7 @@ export function usePersonalBrowser(
       resume = null;
       token = null;
       frame = null;
+      proof = null;
       preview = null;
       status = null;
       setView(null);
@@ -300,7 +349,7 @@ export function usePersonalBrowser(
           denied = false;
           frame = null;
           seenPreview = "";
-          if ([statusFailure, frameFailure, paused].includes(error)) error = "";
+          if ([statusFailure, frameFailure, frameBusy, workerBusy, paused].includes(error)) error = "";
           render();
         }
         void observe();
@@ -355,6 +404,7 @@ export function usePersonalBrowser(
     frame: watching ? current?.frame ?? null : null,
     preview: current?.preview ?? null,
     controls: watching && !!current?.controls,
+    canUseFrame: watching && !!current?.canUseFrame,
     busy: current?.busy ?? null,
     error: current?.error ?? "",
     canRetryResume: !!current?.canRetryResume,

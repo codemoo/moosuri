@@ -42,7 +42,8 @@ function FrameView({ frame, controlling, busy, send, skipClickUntil }: {
   skipClickUntil: RefObject<number>;
 }) {
   const screen = useRef<HTMLImageElement>(null);
-  const touch = useRef<{ x: number; y: number } | null>(null);
+  const touch = useRef<{ x: number; y: number; proof: string } | null>(null);
+  const pressed = useRef<string | null>(null);
   const keys: typeof browserKeys = { ...browserKeys, Delete: "delete", Home: "home", End: "end",
     PageUp: "page_up", PageDown: "page_down", " ": "space" };
   function keyDown(event: KeyboardEvent<HTMLImageElement>) {
@@ -75,22 +76,28 @@ function FrameView({ frame, controlling, busy, send, skipClickUntil }: {
       width={frame.width} height={frame.height} draggable={false}
       tabIndex={controlling ? 0 : undefined} data-controlling={controlling || undefined}
       onKeyDown={keyDown}
+      onPointerDown={() => { pressed.current = frame.frame_token; }}
+      onPointerCancel={() => { pressed.current = null; }}
       onClick={(event) => {
-        if (!controlling || busy || Date.now() < skipClickUntil.current) return;
+        const initialProof = pressed.current;
+        pressed.current = null;
+        if (!controlling || busy || Date.now() < skipClickUntil.current ||
+            (initialProof !== null && initialProof !== frame.frame_token)) return;
         event.currentTarget.focus({ preventScroll: true });
         const input = browserClick(frame, event.currentTarget, event.clientX, event.clientY);
         if (input) send(input);
       }}
       onTouchStart={(event) => {
         const point = event.touches.length === 1 ? event.touches[0] : null;
-        touch.current = controlling && !busy && point ? { x: point.clientX, y: point.clientY } : null;
+        touch.current = controlling && !busy && point
+          ? { x: point.clientX, y: point.clientY, proof: frame.frame_token } : null;
       }}
       onTouchCancel={() => { touch.current = null; }}
       onTouchEnd={(event) => {
         const start = touch.current;
         touch.current = null;
         const point = event.changedTouches[0];
-        if (!controlling || busy || !start || !point) return;
+        if (!controlling || busy || !start || !point || start.proof !== frame.frame_token) return;
         const x = start.x - point.clientX;
         const y = start.y - point.clientY;
         if (Math.hypot(x, y) < 12) return;
@@ -119,6 +126,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
   const value = browser.status?.workspace;
   const frame = browser.frame;
   const busy = !!browser.busy;
+  const canUseFrame = browser.canUseFrame && !busy;
   const available = !!value && !["stopping", "closed"].includes(value.state);
   const watchable = browserCanWatch(value ?? null);
   const canTake = watchable && !!value && ["reading", "ready", "completed", "user_control"].includes(value.state);
@@ -142,7 +150,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
   }, [frame, browser.controls]);
 
   function input(event: BrowserInput) {
-    if (!browser.controls || !frame || busy) return;
+    if (!browser.controls || !frame || !canUseFrame) return;
     focusFrame.current = document.activeElement?.matches(".member-browser-screen img") ?? false;
     browser.mutate({ kind: "input", input: event, frame });
   }
@@ -232,7 +240,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
         {value?.reason && browserReasons[value.reason] && <p role="status">{browserReasons[value.reason]}</p>}
         {(watchable || value?.state === "starting") && (
           <div className="member-browser-screen">
-            {frame ? <FrameView frame={frame} controlling={browser.controls} busy={busy}
+            {frame ? <FrameView frame={frame} controlling={browser.controls} busy={!canUseFrame}
               send={input} skipClickUntil={skipClickUntil} /> :
               <p role="status">{busy ? "화면을 갱신하는 중…" : "브라우저 화면을 기다리는 중…"}</p>}
           </div>
@@ -242,7 +250,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
             <p>직접 조작하는 동안 무수리의 브라우저 사용이 일시 정지됩니다.</p>
             <form onSubmit={(event) => {
               event.preventDefault();
-              if (composing.current || busy || !frame || !text.current) return;
+              if (composing.current || !canUseFrame || !text.current) return;
               const value = text.current.value;
               if (!value || new TextEncoder().encode(value).length > 4096) return;
               text.current.value = "";
@@ -254,19 +262,19 @@ export function PersonalBrowserViewer({ browser, onClose }: {
                   autoComplete="off" placeholder="전송 후 입력값을 지웁니다"
                   onCompositionStart={() => { composing.current = true; }}
                   onCompositionEnd={() => { composing.current = false; }} />
-                <button type="submit" disabled={busy || !frame}>입력</button>
+                <button type="submit" disabled={!canUseFrame}>입력</button>
               </div>
             </form>
             <div className="member-browser-actions" role="group" aria-label="브라우저 키와 스크롤">
               {(["tab", "backspace", "enter"] as const).map((key) => (
-                <button type="button" key={key} disabled={busy || !frame}
+                <button type="button" key={key} disabled={!canUseFrame}
                   onClick={() => input({ kind: "key", key })}>
                   {{ tab: "Tab", backspace: "Backspace", enter: "Enter" }[key]}
                 </button>
               ))}
-              <button type="button" disabled={busy || !frame} aria-label="브라우저 위로 스크롤"
+              <button type="button" disabled={!canUseFrame} aria-label="브라우저 위로 스크롤"
                 onClick={() => input(browserScroll(0, -500))}>↑</button>
-              <button type="button" disabled={busy || !frame} aria-label="브라우저 아래로 스크롤"
+              <button type="button" disabled={!canUseFrame} aria-label="브라우저 아래로 스크롤"
                 onClick={() => input(browserScroll(0, 500))}>↓</button>
             </div>
           </div>
@@ -289,7 +297,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
           <button type="button" className="member-browser-primary" disabled={busy}
             onClick={() => browser.mutate({ kind: "resume" })}>완료 결과 다시 확인</button>
         ) : browser.controls ? (
-          <button type="button" className="member-browser-primary" disabled={busy || !frame || !location}
+          <button type="button" className="member-browser-primary" disabled={!canUseFrame || !location}
             onClick={() => browser.mutate({ kind: "resume" })}>완료</button>
         ) : canTake && (
           <button type="button" className="member-browser-primary" disabled={busy}

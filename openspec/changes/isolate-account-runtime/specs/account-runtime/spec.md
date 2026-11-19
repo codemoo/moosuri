@@ -130,3 +130,18 @@ The personal runtime SHALL bind browser work to the authenticated member, runtim
 #### Scenario: Concurrent sessions and worker loss
 - **WHEN** another member requests the frame, a superseded controller submits input, or Chromium exits after a possible submission
 - **THEN** foreign access and stale input are rejected, ambiguous effects remain unresolved, and reconnecting does not replay the action
+
+### Requirement: Installation-managed Google Workspace setup
+The installation SHALL expose web OAuth client registration only to the current installation administrator and SHALL distribute validated app configuration to eligible member runtimes. Google login, account choices and personal grants SHALL remain separate from assistant inference.
+
+#### Scenario: Prepare a project and resume
+- **WHEN** an administrator runs the Google Cloud preparation command again using the same project ID
+- **THEN** the command reuses the active project and verifies the five required Workspace APIs before reporting readiness.
+
+#### Scenario: Import an existing web client
+- **WHEN** the administrator submits a web client for the exact installation callback
+- **THEN** the gateway stores it privately, accepts an equivalent retry, rejects a conflicting registration and returns only setup status and the callback.
+
+#### Scenario: Existing and newly provisioned members
+- **WHEN** an eligible active member joins the managed relay before or after installation setup
+- **THEN** the member can start their own Google consent without operator registration commands. A different manually configured client and its existing grants are preserved.

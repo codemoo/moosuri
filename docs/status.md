@@ -2,7 +2,7 @@
 
 2026-11-19. 운영 Linux의 공개 HTTPS를 **Kiri 0.2.1 회원별 런타임**으로 전환했다. 운영자가 데이터 초기화를 선택하여 새 개인 볼륨과 관리자 계정으로 시작했다. 기존 dev.30 중앙 서비스는 중지하고 자동 기동을 해제했다. 이전 데이터를 유지하며 절체하는 작업은 [OpenSpec 작업표](../openspec/changes/isolate-account-runtime/tasks.md)에서 추적한다.
 
-공개 주소에서 관리자 로그인과 로컬 Qwen3-4B-Instruct-2507의 산술 응답을 확인했다. 검증 대화를 삭제한 뒤 대화 목록은 비어 있었다. Gmail은 회원별 릴레이와 실행 파일을 배포했으며, 운영 Google 웹 OAuth 클라이언트 등록과 첫 회원 동의가 남아 있다. [회원별 Gmail 등록](../deployment/kiri/google.md)
+공개 주소에서 관리자 로그인과 로컬 Qwen3-4B-Instruct-2507의 산술 응답을 확인했다. 검증 대화를 삭제한 뒤 대화 목록은 비어 있었다. Gmail·Drive·Docs·Slides·Sheets용 회원 이미지, 게이트웨이와 GWS 릴레이를 배포했다. 리눅스 이미지에서 합성 회원으로 다섯 서비스의 OAuth 시작 주소와 권한을 검증했다. 운영 회원은 기존 볼륨과 UID로 기동했고, 운영 Google 웹 OAuth 클라이언트 등록과 첫 회원 동의가 남아 있다. [회원별 Google Workspace 등록](../deployment/kiri/google.md)
 
 ## 회원별 Kiri 개발판
 

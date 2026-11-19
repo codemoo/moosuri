@@ -3,7 +3,7 @@ html:has(.member-workspace), body:has(.member-workspace) {
   overscroll-behavior: none;
 }
 .member-workspace {
-  --chat-canvas: #181819;
+  --chat-canvas: var(--member-canvas);
   --chat-glass: rgb(56 56 56 / .8);
   --chat-answer: #1f1f20;
   --chat-outgoing: #0074e8;
@@ -78,13 +78,13 @@ html:has(.member-workspace), body:has(.member-workspace) {
 }
 .member-topbar button:hover::before { background: #414142; }
 .member-topbar .member-add-chat { padding: 0; }
-.member-chat-avatar, .member-view-title {
+.member-chat-avatar {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
 }
 .member-chat-avatar { border-radius: 50%; }
-.member-view-title { font-size: 16px; }
+
 .member-body {
   grid-area: main;
   display: flex;
@@ -109,13 +109,13 @@ html:has(.member-workspace), body:has(.member-workspace) {
   padding: 0;
   max-height: 100%;
   box-sizing: border-box;
-  width: min(340px, calc(100% - 16px));
-  max-width: min(340px, calc(100% - 16px));
+  width: min(360px, calc(100% - 16px));
+  max-width: min(360px, calc(100% - 16px));
   height: 100%;
   margin: 0;
-  background: var(--paper);
-  border: 0;
-  border-radius: 0 var(--radius-container) var(--radius-container) 0;
+  background: var(--member-canvas);
+  border: 1px solid var(--member-divider);
+  border-radius: 0 24px 24px 0;
   color: var(--ink);
 }
 .member-drawer > div:first-child {
@@ -142,10 +142,49 @@ html:has(.member-workspace), body:has(.member-workspace) {
   flex: none;
 }
 .member-drawer-header h2 {
-  font-size: 17px;
+  font-size: 24px;
   font-weight: 650;
 }
-.member-drawer-header img { border-radius: var(--radius-element); }
+
+.member-drawer-tools {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0 4px;
+}
+.member-thread-search {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0 14px;
+  border-radius: 24px;
+  color: var(--member-secondary);
+  background: var(--member-field);
+}
+.member-thread-search:focus-within { outline: 2px solid var(--accent); }
+.member-thread-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 0;
+  margin: 0;
+  border: 0;
+  outline: none;
+  font-size: 16px;
+  background: transparent;
+  color: var(--member-text);
+}
+.member-account-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  font-size: 16px;
+  background: var(--member-field);
+}
 .member-drawer-scroll {
   flex: 1;
   min-height: 0;
@@ -153,16 +192,17 @@ html:has(.member-workspace), body:has(.member-workspace) {
   overflow: auto;
   overscroll-behavior: contain;
 }
-.member-drawer-scroll .member-drawer-new {
+.member-drawer-tools .member-drawer-new {
   justify-content: flex-start;
   min-height: 44px;
   gap: 10px;
   padding-inline: 12px;
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--member-sheet);
+  color: var(--member-text);
+  border-radius: 14px;
 }
 .member-drawer-label {
-  margin: 20px 8px 4px;
+  margin: 4px 8px;
   color: var(--muted);
   font-size: 12px;
 }
@@ -196,7 +236,7 @@ html:has(.member-workspace), body:has(.member-workspace) {
   padding-top: 12px;
   font-size: 14px;
 }
-.member-drawer-account > div { min-width: 0; }
+.member-drawer-account > div { min-width: 0; flex: 1; }
 .member-drawer-account :is(strong, small) {
   display: block;
   overflow: hidden;
@@ -347,4 +387,26 @@ html:has(.member-workspace), body:has(.member-workspace) {
   .member-composer { padding: 0 12px 14px; }
   .member-workspace[style*="--workspace-height"] .member-navigation { display: none; }
   .member-workspace[style*="--workspace-height"] .member-composer { padding-bottom: 6px; }
+}
+
+@media (min-width: 1100px) {
+  .member-workspace:not([data-view="chat"]) .member-body { grid-row: 1 / -1; }
+  .member-workspace:not([data-view="chat"]) .member-topbar {
+    z-index: 1;
+    grid-column: 2;
+    width: max-content;
+    align-self: start;
+  }
+  .member-page { padding-top: 42px; }
+}
+@media (max-width: 767px) {
+  .member-workspace .member-drawer {
+    inset: auto 0 0;
+    margin: auto 0 0;
+    width: 100%;
+    max-width: none;
+    height: min(82%, 760px);
+    border-radius: 24px 24px 0 0;
+  }
+  .member-drawer-layout { padding: 12px 16px max(12px, env(safe-area-inset-bottom)); }
 }

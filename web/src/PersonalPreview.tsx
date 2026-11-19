@@ -48,7 +48,7 @@ function draftStorage() {
 function Brand() {
   return (
     <span className="preview-brand">
-      <img src="/moosuri-icon-192.png" alt="" width="32" height="32" />
+      <img src="/moosuri-icon-192.png" alt="" width="48" height="48" />
       Moosuri
     </span>
   );
@@ -158,8 +158,8 @@ export default function PersonalPreview() {
           />
         ) : (
           <>
-            <header className="preview-header"><Brand /></header>
             <main>
+              <Brand />
               {error && (
                 <p role="alert" className="preview-error">
                   {error}
@@ -880,8 +880,8 @@ function Workspace({
       {view !== "chat" && (
         <div className="member-panel">
           {view === "admin" && admin ? (
-            <>
-              <nav className="preview-view-nav" aria-label="설치 관리">
+            <div className="member-settings-layout">
+              <nav className="member-settings-tabs" aria-label="설치 관리">
                 <button aria-pressed={adminTab === "members"} onClick={() => setAdminTab("members")}>회원 관리</button>
                 <button aria-pressed={adminTab === "engine"} onClick={() => setAdminTab("engine")}>어시스턴트 엔진</button>
               </nav>
@@ -890,7 +890,7 @@ function Workspace({
               ) : (
                 <PersonalEngineSettings account={session.user.id} expired={expired} unavailable={leaveManagement} />
               )}
-            </>
+            </div>
           ) : view === "mail" ? (
             <PersonalGoogle
               session={session}
@@ -929,9 +929,7 @@ function Workspace({
               }}
             />
           ) : view === "memory" ? (
-            <section className="preview-memory-panel">
-              <PersonalMemories accountId={session.user.id} onExpired={expired} />
-            </section>
+            <PersonalMemories accountId={session.user.id} onExpired={expired} />
           ) : null}
         </div>
       )}

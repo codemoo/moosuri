@@ -37,18 +37,25 @@ export function PersonalWorkspaceChrome({
   const workspace = useWorkspaceViewport();
   const drawerId = useId();
   const [drawer, setDrawer] = useState(false);
+  const [query, setQuery] = useState("");
   const views = Object.keys(destinations) as MemberView[];
+  const search = query.trim().normalize("NFKC").toLocaleLowerCase();
+  const visibleThreads = threads.filter(thread => thread.title.normalize("NFKC").toLocaleLowerCase().includes(search));
+  function toggleDrawer(open: boolean) {
+    setDrawer(open);
+    if (!open) setQuery("");
+  }
 
   function navigate(destination: MemberView) {
-    setDrawer(false);
+    toggleDrawer(false);
     onNavigate(destination);
   }
   function newChat() {
-    setDrawer(false);
+    toggleDrawer(false);
     onNew();
   }
   return (
-    <div className="member-workspace" ref={workspace}>
+    <div className="member-workspace" data-view={view} ref={workspace}>
       <nav className="member-navigation" aria-label="주 메뉴">
         {views.filter(destination => destination !== "admin" || admin).map(destination => (
           <button key={destination} type="button" aria-label={destinations[destination].label}
@@ -65,7 +72,7 @@ export function PersonalWorkspaceChrome({
           onClick={event => { event.currentTarget.focus({ preventScroll: true }); setDrawer(true); }}>
           <Icon icon="menu" size="sm" color="inherit" /><span className="member-switcher-name">Moosuri</span>
         </button>
-        <h1 className={view === "chat" ? "sr-only" : "member-view-title"}>{title}</h1>
+        {view === "chat" && <h1 className="sr-only">{title}</h1>}
         {view === "chat" && <>
           <img className="member-chat-avatar" src="/moosuri-icon-192.png" width="44" height="44" alt="Moosuri" />
           <button type="button" className="member-add-chat" aria-label="새 대화" title="새 대화"
@@ -74,32 +81,38 @@ export function PersonalWorkspaceChrome({
       </header>
       <main className="member-body">{children}</main>
       <Dialog isOpen={drawer} id={drawerId} aria-label="대화 및 설정" padding={0}
-        className="member-drawer" width={340} maxHeight="100%"
-        position={{start: 0, top: 0, bottom: 0}} onOpenChange={setDrawer}>
+        className="member-drawer" width={360} maxHeight="100%"
+        position={{start: 0, top: 0, bottom: 0}} onOpenChange={toggleDrawer}>
         <div className="member-drawer-layout">
           <header className="member-drawer-header">
-            <h2><img src="/moosuri-icon-192.png" width="32" height="32" alt="" />Moosuri</h2>
+            <h2>대화</h2>
             <Button className="member-header-button" variant="ghost" label="닫기" isIconOnly
-              icon={<Icon icon="close" color="inherit" />} onClick={() => setDrawer(false)} />
+              icon={<Icon icon="close" color="inherit" />} onClick={() => toggleDrawer(false)} />
           </header>
-          <div className="member-drawer-scroll">
+          <div className="member-drawer-tools">
+            <label className="member-thread-search"><WorkspaceIcon name="search" />
+              <input type="search" value={query} onChange={event => setQuery(event.target.value)}
+                placeholder="대화 검색" aria-label="대화 검색" />
+            </label>
             <Button className="member-drawer-new" label="새 대화" icon={<WorkspaceIcon name="new" />}
               variant="primary" width="100%" isDisabled={loading || busy} onClick={newChat} />
-            <h3 className="member-drawer-label">최근 대화</h3>
+          </div>
+          <div className="member-drawer-scroll">
+            <h3 className="member-drawer-label">{search ? "검색 결과" : "최근 대화"}</h3>
             <nav aria-label="대화 목록" className="member-thread-list">
               {loading && <p role="status">대화 불러오는 중…</p>}
-              {!loading && threads.length === 0 && <p>아직 대화가 없습니다.</p>}
-              {threads.map((thread) => {
+              {!loading && visibleThreads.length === 0 && <p role="status">{search ? "일치하는 대화가 없습니다." : "아직 대화가 없습니다."}</p>}
+              {visibleThreads.map((thread) => {
                 const isCurrent = view === "chat" && selected === thread.id;
                 return (
                   <div className="member-thread-row" key={thread.id}>
                     <Button label={thread.title} variant="ghost" width="100%"
-                      className="member-thread-button" aria-current={isCurrent ? "page" : undefined}
-                      onClick={() => { setDrawer(false); onThread(thread.id); }} />
+                      className="member-thread-button" icon={<WorkspaceIcon name="bubble" />} aria-current={isCurrent ? "page" : undefined}
+                      onClick={() => { toggleDrawer(false); onThread(thread.id); }} />
                     {isCurrent && (
                       <Button variant="ghost" className="member-header-button" label="대화 삭제" isIconOnly
                         tooltip="대화 삭제" icon={<Icon icon="close" color="inherit" />}
-                        isDisabled={busy} onClick={() => { setDrawer(false); onDelete(); }} />
+                        isDisabled={busy} onClick={() => { toggleDrawer(false); onDelete(); }} />
                     )}
                   </div>
                 );
@@ -107,6 +120,7 @@ export function PersonalWorkspaceChrome({
             </nav>
           </div>
           <footer className="member-drawer-account">
+            <span className="member-account-avatar" aria-hidden="true">{Array.from(user.name.trim())[0] || "M"}</span>
             <div><strong>{user.name}</strong><small>{user.email}</small></div>
             <Button variant="ghost" label="로그아웃" onClick={onSignOut} />
           </footer>

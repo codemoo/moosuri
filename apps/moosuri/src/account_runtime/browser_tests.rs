@@ -242,7 +242,7 @@ fn model_fixture(
                     );
                     let data: Value = serde_json::from_str(context).unwrap();
                     assert_eq!(data["public_link_titles"], json!([]));
-                    json!({"answer":"The morning bus leaves at 08:15.","needs_user":false})
+                    json!({"answer":"The morning bus leaves at 08:15.","needs_user":false,"follow_index":0})
                 };
                 json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":rev,"model":"fixture","effort":null,"outcome":"completed","output":answer.to_string(),"receipt":{"state":"settled","input_tokens":90,"output_tokens":12,"charged_tokens":102}})
             };

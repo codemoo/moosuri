@@ -34,7 +34,7 @@ fn scalar(c: &Connection, query: &str) -> Check<i64> {
 }
 pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
-        (81..=86).contains(&schema),
+        (81..=87).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
     )?;
     let mut v: Value = serde_json::from_str(&read(
@@ -53,6 +53,18 @@ pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
         let base = load(root, schema - 1)?;
         for key in ["migrations", "tables"] {
             let mut merged = array(&base, key)?.clone();
+            if key == "tables" && v.get("updated_tables").is_some() {
+                let mut replaced = BTreeSet::new();
+                for update in array(&v, "updated_tables")? {
+                    let name = field(update, "name")?;
+                    ensure(replaced.insert(name), "duplicate updated table name")?;
+                    let previous = merged
+                        .iter_mut()
+                        .find(|row| row["name"] == name)
+                        .ok_or("updated table missing from base schema")?;
+                    *previous = update.clone();
+                }
+            }
             merged.extend(array(&v, key)?.iter().cloned());
             if key == "tables" {
                 merged.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
@@ -68,7 +80,7 @@ pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
                 83 => 204,
                 84 => 207,
                 85 => 208,
-                86 => 209,
+                86 | 87 => 209,
                 _ => unreachable!(),
             },
         "inventory manifest table count mismatch",
@@ -570,9 +582,9 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             "--schema" if selected.is_none() => {
                 selected = Some(
                     iter.next()
-                        .ok_or("--schema requires 81 through 86")?
+                        .ok_or("--schema requires 81 through 87")?
                         .parse::<i64>()
-                        .map_err(|_| "--schema requires 81 through 86")?,
+                        .map_err(|_| "--schema requires 81 through 87")?,
                 );
             }
             "--snapshot" if snapshot.is_none() => {
@@ -583,7 +595,7 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             }
             _ => {
                 return Err(
-                    "usage: account-runtime-inventory [--schema 81|82|83|84|85|86] [--snapshot DIRECTORY]"
+                    "usage: account-runtime-inventory [--schema 81|82|83|84|85|86|87] [--snapshot DIRECTORY]"
                         .into(),
                 );
             }
@@ -946,7 +958,7 @@ mod tests {
         let dir = Scratch::new();
         assert!(snapshot_files(&dir.0, &artifact_manifest(&root()).unwrap()).is_err());
         assert!(
-            load(&root(), 86)
+            load(&root(), 88)
                 .unwrap_err()
                 .contains("unsupported inventory schema")
         );

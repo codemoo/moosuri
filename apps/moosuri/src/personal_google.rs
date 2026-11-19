@@ -1,5 +1,6 @@
 //! Private member Google adapter. Browser DTOs never carry broker grants.
 mod local_gws;
+mod workspace;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -8,11 +9,15 @@ use axum::{
     routing::{get, post},
 };
 pub(crate) use local_gws::registered_client;
-use moosuri_connectors::gmail::{READ_SCOPE, SecretString};
+#[cfg(test)]
+use moosuri_connectors::gmail::READ_SCOPE;
+use moosuri_connectors::gmail::SecretString;
+use moosuri_store::MemberGoogleService as Service;
 use moosuri_store::{Store, StoreError, UserContext, personal_volume::VolumeOwner};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{path::PathBuf, sync::Arc};
 use uuid::Uuid;
+use workspace::WorkspaceStatus;
 use zeroize::Zeroizing;
 
 const BASE: &str = "/api/v1/personal/google";
@@ -40,6 +45,8 @@ struct Started {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Completed {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    service: Option<Service>,
     connection_id: Uuid,
     epoch: i64,
     mailbox: String,
@@ -62,7 +69,7 @@ impl Connection {
     }
 }
 impl Started {
-    fn valid(&self) -> bool {
+    fn valid(&self, service: Service) -> bool {
         if !hex64(&self.flow_id) || self.authorization_url.len() > 8192 {
             return false;
         }
@@ -112,7 +119,11 @@ impl Started {
         {
             return false;
         }
-        fields.get("scope").map(String::as_str) == Some(READ_SCOPE)
+        fields["scope"]
+            == match service {
+                Service::Gmail => service.scope().to_owned(),
+                _ => local_gws::workspace::scopes(service).join(" "),
+            }
             && fields.get("response_type").map(String::as_str) == Some("code")
             && fields.get("access_type").map(String::as_str) == Some("offline")
             && fields.get("prompt").map(String::as_str) == Some("consent select_account")
@@ -146,8 +157,9 @@ pub fn public_response(
     bytes: &[u8],
 ) -> Result<Vec<u8>, StatusCode> {
     let invalid = StatusCode::BAD_GATEWAY;
+    let scoped = workspace::action(path);
     if method == Method::POST
-        && path == format!("{BASE}/disconnect")
+        && (path == format!("{BASE}/disconnect") || matches!(scoped, Some((_, "disconnect"))))
         && status == StatusCode::NO_CONTENT
     {
         return if bytes.is_empty() {
@@ -166,20 +178,34 @@ pub fn public_response(
         }
         return encode(&value);
     }
+    if method == Method::GET && path == workspace::STATUS_PATH {
+        let status: WorkspaceStatus = decode(bytes)?;
+        if !status.valid() {
+            return Err(invalid);
+        }
+        return encode(&status);
+    }
     if method != Method::POST {
         return Err(invalid);
     }
-    match path {
-        "/api/v1/personal/google/start" => {
+    let (service, action) = scoped.unwrap_or((
+        Service::Gmail,
+        path.strip_prefix("/api/v1/personal/google/")
+            .ok_or(invalid)?,
+    ));
+    match action {
+        "start" => {
             let v: Started = decode(bytes)?;
-            if !v.valid() {
+            if !v.valid(service) {
                 return Err(invalid);
             }
             encode(&v)
         }
-        "/api/v1/personal/google/complete" => {
+        "complete" => {
             let v: Completed = decode(bytes)?;
-            if v.connection_id.is_nil()
+            if v.service != (service != Service::Gmail).then_some(service)
+                || (service != Service::Gmail && v.continuation.is_some())
+                || v.connection_id.is_nil()
                 || v.epoch <= 0
                 || !mailbox(&v.mailbox)
                 || !hex64(&v.flow_id)
@@ -191,7 +217,12 @@ pub fn public_response(
             }
             encode(&v)
         }
-        "/api/v1/personal/google/inbox" => {
+        "read" if service != Service::Gmail => {
+            let data =
+                local_gws::workspace::WorkspaceData::parse(service, bytes).map_err(|_| invalid)?;
+            encode(&data)
+        }
+        "inbox" if service == Service::Gmail => {
             #[derive(Deserialize, Serialize)]
             #[serde(untagged)]
             enum Answer {
@@ -207,7 +238,7 @@ pub fn public_response(
             }
             encode(&v)
         }
-        "/api/v1/personal/google/history" => {
+        "history" if service == Service::Gmail => {
             if bytes.len() > 1024 * 1024 {
                 return Err(invalid);
             }
@@ -264,6 +295,7 @@ fn response(status: StatusCode, bytes: Vec<u8>) -> Response {
 
 #[derive(Clone)]
 struct Google {
+    service: Service,
     store: Store,
     owner: VolumeOwner,
     backend: Backend,
@@ -352,6 +384,11 @@ enum Operation<'a> {
         refresh_token: Secret<'a>,
         refresh_binding: &'a str,
     },
+    WorkspaceRead {
+        access_token: Secret<'a>,
+        access_binding: &'a str,
+        resource_id: Option<&'a str>,
+    },
     InboxPage {
         access_token: Secret<'a>,
         access_binding: &'a str,
@@ -359,6 +396,8 @@ enum Operation<'a> {
 }
 #[derive(Serialize)]
 struct BrokerRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service: Option<Service>,
     v: u32,
     request_id: Uuid,
     owner: Owner,
@@ -367,6 +406,13 @@ struct BrokerRequest<'a> {
     operation: &'a Operation<'a>,
 }
 impl Google {
+    fn path(&self, action: &str) -> String {
+        if self.service == Service::Gmail {
+            format!("{BASE}/{action}")
+        } else {
+            format!("{BASE}/{}/{action}", self.service.as_str())
+        }
+    }
     async fn user(&self, headers: &HeaderMap) -> Result<UserContext, Failure> {
         let user = moosuri_server::personal_request_user(&self.store, headers).await?;
         if user.account().id != self.owner.account.to_string() {
@@ -382,6 +428,7 @@ impl Google {
     ) -> Result<Zeroizing<Vec<u8>>, Failure> {
         let broker_request = |operation| {
             serde_json::to_vec(&BrokerRequest {
+                service: (self.service != Service::Gmail).then_some(self.service),
                 v: 1,
                 request_id: id,
                 owner: Owner {
@@ -396,16 +443,20 @@ impl Google {
             .map(Zeroizing::new)
             .map_err(|_| Failure(StatusCode::SERVICE_UNAVAILABLE, "unavailable"))
         };
-        let unavailable = |_| Failure(StatusCode::SERVICE_UNAVAILABLE, "google_unavailable");
+        let unavailable = |_: &str| Failure(StatusCode::SERVICE_UNAVAILABLE, "google_unavailable");
         let reply = match &self.backend {
             Backend::Local { config, proxy } => {
-                let local = local_gws::LocalGws::load(
+                let local = local_gws::LocalGws::load_for(
+                    self.service,
                     config,
                     std::path::Path::new("/usr/local/bin/gws"),
                     proxy.address(),
                 )
                 .map_err(configuration_failure)?;
                 local.raw(self.owner, id, revision, operation).await?
+            }
+            Backend::Broker { .. } if self.service != Service::Gmail => {
+                return Err(unavailable("unsupported"));
             }
             Backend::Broker { socket, uid } => {
                 crate::runtime_google::personal_call(socket, *uid, &broker_request(&operation)?)
@@ -459,8 +510,18 @@ impl Google {
             || redirect.fragment().is_some()
             || !redirect.username().is_empty()
             || redirect.password().is_some()
-            || app.scope != READ_SCOPE
-            || app.operations != ["authorization_url", "exchange", "refresh", "inbox_page"]
+            || app.scope != self.service.scope()
+            || app.operations
+                != [
+                    "authorization_url",
+                    "exchange",
+                    "refresh",
+                    if self.service == Service::Gmail {
+                        "inbox_page"
+                    } else {
+                        "workspace_read"
+                    },
+                ]
         {
             return Err(Failure(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -515,6 +576,7 @@ struct Capture {
 
 pub fn routes(store: Store, owner: VolumeOwner, socket: PathBuf, broker_uid: u32) -> Router {
     router(Google {
+        service: Service::Gmail,
         store,
         owner,
         backend: Backend::Broker {
@@ -531,6 +593,7 @@ pub fn local_routes(
     proxy: crate::gws_relay::MemberProxy,
 ) -> Router {
     router(Google {
+        service: Service::Gmail,
         store,
         owner,
         backend: Backend::Local {
@@ -547,6 +610,7 @@ pub(crate) fn routes_with_test_transport(
     transport: TestTransport,
 ) -> Router {
     router(Google {
+        service: Service::Gmail,
         store,
         owner,
         backend: Backend::Fixture(transport),
@@ -555,7 +619,7 @@ pub(crate) fn routes_with_test_transport(
 }
 /// Deterministic private broker fixture for gateway/session acceptance only.
 fn router(state: Google) -> Router {
-    Router::new()
+    let mut routes = Router::new()
         .route(BASE, get(status))
         .route("/api/v1/personal/google/start", post(start))
         .route("/internal/google/capture", post(capture))
@@ -563,14 +627,33 @@ fn router(state: Google) -> Router {
         .route("/api/v1/personal/google/inbox", post(inbox))
         .route("/api/v1/personal/google/history", post(thread_history))
         .route("/api/v1/personal/google/disconnect", post(disconnect))
-        .layer(DefaultBodyLimit::max(8192))
-        .with_state(state)
+        .route(workspace::STATUS_PATH, get(workspace::status))
+        .with_state(state.clone());
+    for service in Service::WORKSPACE {
+        let state = Google {
+            service,
+            ..state.clone()
+        };
+        routes = routes.merge(
+            Router::new()
+                .route(&state.path("start"), post(start))
+                .route(&state.path("complete"), post(complete))
+                .route(&state.path("disconnect"), post(disconnect))
+                .route(&state.path("read"), post(workspace::read))
+                .route(
+                    &format!("/internal/google/{}/capture", service.as_str()),
+                    post(capture),
+                )
+                .with_state(state),
+        );
+    }
+    routes.layer(DefaultBodyLimit::max(8192))
 }
 fn browser<T: Serialize>(path: &str, value: &T) -> Result<Response, Failure> {
     let bytes = encode(value).map_err(|s| Failure(s, "unavailable"))?;
     let bytes = public_response(
         path,
-        &if path == BASE {
+        &if path == BASE || path == workspace::STATUS_PATH {
             Method::GET
         } else {
             Method::POST
@@ -609,9 +692,12 @@ async fn start(
         .try_lock()
         .map_err(|_| Failure(StatusCode::CONFLICT, "conflict"))?;
     let app = g.describe().await?;
+    if input.read.is_some() && g.service != Service::Gmail {
+        return Err(StoreError::InvalidInput.into());
+    }
     let pending = g
         .store
-        .start_member_google_oauth(&user, g.owner, app.app_revision)
+        .start_member_service_oauth(&user, g.owner, g.service, app.app_revision)
         .await?;
     if let Some(read) = input.read {
         if let Err(e) = g
@@ -658,21 +744,21 @@ async fn start(
             "google_unavailable",
         ));
     }
-    browser("/api/v1/personal/google/start", &value)
+    browser(&g.path("start"), &value)
 }
 async fn capture(State(g): State<Google>, Json(input): Json<Capture>) -> Result<Response, Failure> {
     if !hex64(&input.state) {
         return Err(StoreError::InvalidInput.into());
     }
-    let result = if let Some(code) = input.code {
-        if code.expose().len() > 4096 || code.expose().chars().any(char::is_control) {
-            return Err(StoreError::InvalidInput.into());
-        }
-        Some(g.store.capture_mail_oauth(input.state, code).await?)
-    } else {
-        g.store.cancel_mail_oauth_state(input.state).await?;
-        None
-    };
+    if input.code.as_ref().is_some_and(|code| {
+        code.expose().len() > 4096 || code.expose().chars().any(char::is_control)
+    }) {
+        return Err(StoreError::InvalidInput.into());
+    }
+    let result = g
+        .store
+        .capture_member_service_oauth(g.service, input.state, input.code)
+        .await?;
     Ok(response(
         StatusCode::OK,
         serde_json::json!({"handle":result})
@@ -696,7 +782,7 @@ async fn complete(
     let app = g.describe().await?;
     let exchange = g
         .store
-        .claim_member_google_oauth(&user, g.owner, app.app_revision, input.handle)
+        .claim_member_service_oauth(&user, g.owner, g.service, app.app_revision, input.handle)
         .await?;
     let flow_id = exchange.flow_id();
     let id = exchange
@@ -717,14 +803,18 @@ async fn complete(
         .store
         .complete_member_google_oauth(exchange, grant)
         .await?;
-    let continuation = g
-        .store
-        .member_google_read_continuation(&user, g.owner, flow_id.clone())
-        .await?;
+    let continuation = if g.service == Service::Gmail {
+        g.store
+            .member_google_read_continuation(&user, g.owner, flow_id.clone())
+            .await?
+    } else {
+        None
+    };
     let c = connection(settled)?.ok_or(Failure(StatusCode::CONFLICT, "conflict"))?;
     browser(
-        "/api/v1/personal/google/complete",
+        &g.path("complete"),
         &Completed {
+            service: (g.service != Service::Gmail).then_some(g.service),
             connection_id: c.connection_id,
             epoch: c.epoch,
             mailbox: c.mailbox,
@@ -814,10 +904,36 @@ async fn live_inbox(
     input: &Selected,
     refresh: bool,
 ) -> Result<Inbox, Failure> {
+    let binding = read_binding(g, user, revision, input, refresh).await?;
+    let page: BrokerReply<Inbox> = g
+        .call(
+            Some(revision),
+            Operation::InboxPage {
+                access_token: Secret(&binding.access_token),
+                access_binding: &binding.access_binding,
+            },
+        )
+        .await?;
+    g.store.check_member_google_read(&binding).await?;
+    if !page.result.mailbox.eq_ignore_ascii_case(&binding.mailbox) {
+        return Err(Failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "google_unavailable",
+        ));
+    }
+    Ok(page.result)
+}
+async fn read_binding(
+    g: &Google,
+    user: &UserContext,
+    revision: Uuid,
+    input: &Selected,
+    refresh: bool,
+) -> Result<moosuri_store::MemberGoogleBinding, Failure> {
     if refresh {
         let lease = g
             .store
-            .claim_member_google_refresh(user, g.owner, revision)
+            .claim_member_service_refresh(user, g.owner, g.service, revision)
             .await?;
         let id = lease.request_id;
         let attempt = g
@@ -850,7 +966,7 @@ async fn live_inbox(
     }
     let binding = g
         .store
-        .member_google_read_binding(user, g.owner, revision)
+        .member_service_read_binding(user, g.owner, g.service, revision)
         .await?;
     selected(
         input,
@@ -860,23 +976,7 @@ async fn live_inbox(
             mailbox: binding.mailbox.clone(),
         }),
     )?;
-    let page: BrokerReply<Inbox> = g
-        .call(
-            Some(revision),
-            Operation::InboxPage {
-                access_token: Secret(&binding.access_token),
-                access_binding: &binding.access_binding,
-            },
-        )
-        .await?;
-    g.store.check_member_google_read(&binding).await?;
-    if !page.result.mailbox.eq_ignore_ascii_case(&binding.mailbox) {
-        return Err(Failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "google_unavailable",
-        ));
-    }
-    Ok(page.result)
+    Ok(binding)
 }
 async fn disconnect(
     State(g): State<Google>,
@@ -889,7 +989,7 @@ async fn disconnect(
         return Err(StoreError::InvalidInput.into());
     }
     g.store
-        .disconnect_member_google(&user, g.owner, input.connection_id, input.epoch)
+        .disconnect_member_service(&user, g.owner, g.service, input.connection_id, input.epoch)
         .await?;
     Ok(response(StatusCode::NO_CONTENT, Vec::new()))
 }
@@ -966,7 +1066,11 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let payload=URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({"v":1,"owner":owner,"app_revision":revision,"purpose":purpose,"mailbox":mailbox,"token_tag":URL_SAFE_NO_PAD.encode(ring::hmac::sign(&key,token.as_bytes()).as_ref()),"expires_at":now+lifetime})).unwrap());
+        let mut claims = json!({"v":1,"owner":owner,"app_revision":revision,"purpose":purpose,"mailbox":mailbox,"token_tag":URL_SAFE_NO_PAD.encode(ring::hmac::sign(&key,token.as_bytes()).as_ref()),"expires_at":now+lifetime});
+        if purpose.contains(':') {
+            claims["subject"] = json!("synthetic-subject");
+        }
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
         format!(
             "{payload}.{}",
             URL_SAFE_NO_PAD.encode(ring::hmac::sign(&key, payload.as_bytes()).as_ref())
@@ -995,6 +1099,10 @@ mod tests {
                     return Err("synthetic_unavailable");
                 }
                 let r: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                let service: Service = r
+                    .get("service")
+                    .map(|s| serde_json::from_value(s.clone()).unwrap())
+                    .unwrap_or(Service::Gmail);
                 let op = &r["operation"];
                 let mut owner = r["owner"].clone();
                 owner["generation"] = r["generation"].clone();
@@ -1002,10 +1110,33 @@ mod tests {
                 let mailbox = mailbox.as_str();
                 let result = match op["kind"].as_str().unwrap() {
                     "describe" => {
-                        json!({"client_id":"synthetic-client","redirect_uri":redirect_uri,"scope":READ_SCOPE,"operations":["authorization_url","exchange","refresh","inbox_page"]})
+                        json!({"client_id":"synthetic-client","redirect_uri":redirect_uri,"scope":service.scope(),"operations":["authorization_url","exchange","refresh",if service == Service::Gmail {"inbox_page"} else {"workspace_read"}]})
                     }
                     "authorization_url" => {
-                        json!({"authorization_url":GmailClient::authorization_url_scoped("synthetic-client",&redirect_uri,op["state"].as_str().unwrap(),op["verifier"].as_str().unwrap(),&[READ_SCOPE]).unwrap()})
+                        let mut url = url::Url::parse(
+                            &GmailClient::authorization_url_scoped(
+                                "synthetic-client",
+                                &redirect_uri,
+                                op["state"].as_str().unwrap(),
+                                op["verifier"].as_str().unwrap(),
+                                &[READ_SCOPE],
+                            )
+                            .unwrap(),
+                        )
+                        .unwrap();
+                        if service != Service::Gmail {
+                            let mut fields = url
+                                .query_pairs()
+                                .into_owned()
+                                .collect::<std::collections::BTreeMap<_, _>>();
+                            fields.insert(
+                                "scope".into(),
+                                local_gws::workspace::scopes(service).join(" "),
+                            );
+                            url.set_query(None);
+                            url.query_pairs_mut().extend_pairs(fields);
+                        }
+                        json!({"authorization_url":url.as_str()})
                     }
                     "exchange" | "refresh" => {
                         let refresh = op["kind"] == "refresh";
@@ -1013,7 +1144,22 @@ mod tests {
                             fake.refreshes.fetch_add(1, Ordering::SeqCst);
                         }
                         let lifetime = if refresh { 3600 } else { 30 };
-                        json!({"access_token":"PRIVATE_ACCESS_CANARY","refresh_token":if refresh {serde_json::Value::Null}else{json!("PRIVATE_REFRESH_CANARY")},"expires_in":lifetime,"scopes":[READ_SCOPE],"mailbox":mailbox,"access_binding":receipt(&owner,revision,"access",mailbox,"PRIVATE_ACCESS_CANARY",lifetime),"refresh_binding":receipt(&owner,revision,"refresh",mailbox,"PRIVATE_REFRESH_CANARY",400*24*3600)})
+                        json!({"access_token":"PRIVATE_ACCESS_CANARY","refresh_token":if refresh {serde_json::Value::Null}else{json!("PRIVATE_REFRESH_CANARY")},"expires_in":lifetime,"scopes":[service.scope()],"mailbox":mailbox,"access_binding":receipt(&owner,revision,&service.binding_purpose("access"),mailbox,"PRIVATE_ACCESS_CANARY",lifetime),"refresh_binding":receipt(&owner,revision,&service.binding_purpose("refresh"),mailbox,"PRIVATE_REFRESH_CANARY",400*24*3600)})
+                    }
+                    "workspace_read" => {
+                        fake.reads.fetch_add(1, Ordering::SeqCst);
+                        let id = &op["resource_id"];
+                        match service {
+                            Service::Drive => {
+                                json!({"files":[{"id":"file1","name":"sample","mime_type":"text/plain"}],"has_more":false})
+                            }
+                            Service::Docs => json!({"id":id,"title":"Document"}),
+                            Service::Slides => json!({"id":id,"title":"Slides","slide_count":3}),
+                            Service::Sheets => {
+                                json!({"id":id,"title":"Sheet","sheets":[{"title":"first","index":0}]})
+                            }
+                            Service::Gmail => panic!("unexpected Workspace read for Gmail"),
+                        }
                     }
                     "inbox_page" => {
                         fake.reads.fetch_add(1, Ordering::SeqCst);
@@ -1670,6 +1816,172 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn workspace_consent_read_and_withdrawal_are_service_specific() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, owner, token) = member(&dir.path().join("member")).await;
+        let fake = Arc::new(Fake::default());
+        let app = routes_with_test_transport(store, owner, transport(fake.clone(), Uuid::new_v4()));
+        let gmail = connect(&app, owner, &token).await;
+        let mut previous = String::new();
+        for service in Service::WORKSPACE {
+            let base = format!("{BASE}/{}", service.as_str());
+            let started = value(
+                request(
+                    &app,
+                    owner,
+                    &token,
+                    &format!("{base}/start"),
+                    "POST",
+                    json!({}),
+                )
+                .await,
+            )
+            .await;
+            let url = url::Url::parse(started["authorization_url"].as_str().unwrap()).unwrap();
+            let state = url
+                .query_pairs()
+                .find(|(k, _)| k == "state")
+                .unwrap()
+                .1
+                .into_owned();
+            assert!(
+                public_response(
+                    &format!("{BASE}/start"),
+                    &Method::POST,
+                    StatusCode::OK,
+                    &serde_json::to_vec(&started).unwrap()
+                )
+                .is_err()
+            );
+            assert_eq!(
+                request(
+                    &app,
+                    owner,
+                    &token,
+                    "/internal/google/capture",
+                    "POST",
+                    json!({"state":state,"code":null})
+                )
+                .await
+                .status(),
+                StatusCode::CONFLICT
+            );
+            let captured = value(
+                request(
+                    &app,
+                    owner,
+                    &token,
+                    &format!("/internal/google/{}/capture", service.as_str()),
+                    "POST",
+                    json!({"state":state,"code":"synthetic-code"}),
+                )
+                .await,
+            )
+            .await;
+            let handle = json!({"handle":captured["handle"]});
+            assert_eq!(
+                request(
+                    &app,
+                    owner,
+                    &token,
+                    &format!("{BASE}/complete"),
+                    "POST",
+                    handle.clone()
+                )
+                .await
+                .status(),
+                StatusCode::CONFLICT
+            );
+            let complete = request(
+                &app,
+                owner,
+                &token,
+                &format!("{base}/complete"),
+                "POST",
+                handle,
+            )
+            .await;
+            assert_eq!(complete.status(), StatusCode::OK);
+            let grant = value(complete).await;
+            assert_eq!(grant["service"], service.as_str());
+            let mut input = json!({"connection_id":grant["connection_id"],"epoch":grant["epoch"]});
+            if !previous.is_empty() {
+                assert_eq!(
+                    request(
+                        &app,
+                        owner,
+                        &token,
+                        &format!("{previous}/disconnect"),
+                        "POST",
+                        input.clone()
+                    )
+                    .await
+                    .status(),
+                    StatusCode::CONFLICT
+                );
+            }
+            if service != Service::Drive {
+                input["resource_id"] = json!("resource_42");
+            }
+            let result = request(&app, owner, &token, &format!("{base}/read"), "POST", input).await;
+            assert_eq!(result.status(), StatusCode::OK);
+            let read = value(result).await;
+            if service == Service::Drive {
+                assert_eq!(read["files"][0]["id"], "file1");
+            } else {
+                assert_eq!(read["id"], "resource_42");
+            }
+            previous = base;
+        }
+        let connections = value(
+            request(
+                &app,
+                owner,
+                &token,
+                workspace::STATUS_PATH,
+                "GET",
+                json!({}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(connections["connections"].as_array().unwrap().len(), 4);
+        let drive = &connections["connections"][0];
+        assert_eq!(
+            request(
+                &app,
+                owner,
+                &token,
+                &format!("{BASE}/drive/disconnect"),
+                "POST",
+                json!({"connection_id":drive["connection_id"],"epoch":drive["epoch"]})
+            )
+            .await
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        let after = value(
+            request(
+                &app,
+                owner,
+                &token,
+                workspace::STATUS_PATH,
+                "GET",
+                json!({}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(after["connections"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            value(request(&app, owner, &token, BASE, "GET", json!({})).await).await["connection"]["connection_id"],
+            gmail["connection_id"]
+        );
+        assert_eq!(fake.refreshes.load(Ordering::SeqCst), 4);
+        assert_eq!(fake.reads.load(Ordering::SeqCst), 4);
+    }
+
     #[test]
     fn browser_allowlist_reconstructs_only_fixed_public_shapes() {
         let id = Uuid::new_v4();
@@ -1768,7 +2080,7 @@ mod tests {
             authorization_url: auth,
             flow_id: Store::mail_oauth_flow_id(&state),
         };
-        assert!(v.valid());
+        assert!(v.valid(Service::Gmail));
         let mut url = url::Url::parse(&v.authorization_url).unwrap();
         url.query_pairs_mut().append_pair("access_token", "SECRET");
         assert!(
@@ -1776,7 +2088,7 @@ mod tests {
                 authorization_url: url.into(),
                 flow_id: v.flow_id.clone()
             }
-            .valid()
+            .valid(Service::Gmail)
         );
         let broad = GmailClient::authorization_url_scoped(
             "synthetic-client",
@@ -1791,7 +2103,7 @@ mod tests {
                 authorization_url: broad,
                 flow_id: v.flow_id
             }
-            .valid()
+            .valid(Service::Gmail)
         );
     }
 }

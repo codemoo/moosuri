@@ -16,7 +16,7 @@ cargo run --locked -p xtask -- account-runtime-inventory --schema 81 --snapshot 
 
 The default schema follows the newest source migration; unknown versions fail.
 An explicit supported `--schema` replays only that pinned baseline. Schema81 has
-202 application tables, including virtual FTS, schema82 has 203, schema83 has 204, schema84 has 207, schema85 has 208 and schema86 has 209. All six have 34
+202 application tables, including virtual FTS, schema82 has 203, schema83 has 204, schema84 has 207, schema85 has 208 and schemas 86–87 have 209. All seven have 34
 tables with neither `tenant_id` nor `account_id`. SQLite internal tables and the
 five FTS shadow tables are excluded using SQLite's actual table kinds, rather
 than a name-prefix guess. Schema82 extends the frozen 81 classification with its

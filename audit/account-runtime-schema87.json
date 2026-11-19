@@ -1,0 +1,67 @@
+{
+  "format": 1,
+  "schema": 87,
+  "base_schema": 86,
+  "migrations": [
+    {
+      "name": "0087_member_workspace_grants.sql",
+      "sha256": "5faf0b3c3af566ebb6eef16379d0bc4da5ebb8ea7f543b58fc0d0f3e8f6bd17b"
+    }
+  ],
+  "tables": [],
+  "updated_tables": [
+    {
+      "name": "member_google_grants",
+      "kind": "table",
+      "sql_sha256": "2fb74afe1347767b49b62ce4492dabb5b834b500a71bdef19f9ff604ab7361f4",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_grants",
+      "key_transition": "Encrypted tokens and signed receipts bind each member, service, volume, generation and OAuth app. Reauthorize on migration or key change. Exclude from knowledge archives.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "app_revision",
+        "app_version",
+        "connection_id",
+        "epoch",
+        "credential_version",
+        "auth_epoch",
+        "consent_digest",
+        "mailbox",
+        "status",
+        "cipher",
+        "expires_at",
+        "refresh_nonce",
+        "refresh_request_id",
+        "refresh_phase",
+        "service"
+      ]
+    },
+    {
+      "name": "member_google_oauth",
+      "kind": "table",
+      "sql_sha256": "46a9886b91d665b845501b66fbb81f89a998b38306c4a8ab92c14889155f35ca",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_oauth",
+      "key_transition": "Expire incomplete consent and captured callbacks on cutover. Obtain fresh consent in the destination session.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "state_hash",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "app_revision",
+        "app_version",
+        "epoch",
+        "service"
+      ]
+    }
+  ],
+  "schema_sha256": "794616302e003cbc8b688cc70e9f6345a4f1ef0bdebe0e2dbae17280522c56f0"
+}

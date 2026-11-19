@@ -395,3 +395,65 @@ async fn restart_discards_unknown_refresh_but_keeps_ordinary_encrypted_grants() 
     assert!(s.claim_member_google_refresh(&u, o, app).await.is_err());
     assert!(s.member_google_read_binding(&u, o, app).await.is_err());
 }
+#[tokio::test]
+async fn schema86_consent_and_grant_keep_their_gmail_binding_on_upgrade() {
+    let _guard = TEST_LOCK.lock().await;
+    let (dir, s, u, o, app) = setup().await;
+    let first = connect(&s, &u, o, app).await;
+    let pending = s.start_member_google_oauth(&u, o, app).await.unwrap();
+    s.call(move |db| {
+        // The member identity is installed separately from the shared migration registry.
+        let identity: String = db.conn.query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='personal_runtime_identity'",
+            [],
+            |r| r.get(0),
+        )?;
+        crate::schema::tests::replace_with_predecessor(&mut db.conn, 86);
+        db.conn.execute_batch(&identity)?;
+        db.conn.execute(
+            "INSERT INTO personal_runtime_identity VALUES(1,?1,?2)",
+            params![o.volume.to_string(), o.generation as i64],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    drop(s);
+    let s = o.open_verified(dir.path()).await.unwrap();
+    let current = s.member_google_read_binding(&u, o, app).await.unwrap();
+    assert_eq!(first.connection_id, Some(current.connection_id));
+    assert_eq!(current.access_token.expose(), ACCESS);
+    for service in Service::WORKSPACE {
+        assert!(
+            !s.member_service_status(&u, o, service, app)
+                .await
+                .unwrap()
+                .connected
+        );
+        assert!(
+            s.capture_member_service_oauth(service, pending.state.clone(), None)
+                .await
+                .is_err()
+        );
+    }
+    let handle = s
+        .capture_member_service_oauth(
+            Service::Gmail,
+            pending.state,
+            Some(SecretString::new("synthetic-code".into()).unwrap()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let exchange = s
+        .claim_member_google_oauth(&u, o, app, handle)
+        .await
+        .unwrap();
+    let id = exchange.member_google_request_id().unwrap();
+    assert!(
+        s.complete_member_google_oauth(exchange, carrier(id, reply(id, o, app, Some(REFRESH))))
+            .await
+            .unwrap()
+            .connected
+    );
+}

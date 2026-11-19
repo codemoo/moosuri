@@ -10,7 +10,8 @@ mod connection_help;
 mod member_google;
 pub use member_google::reads::*;
 pub use member_google::{
-    MemberGoogleBinding, MemberGoogleGrant, MemberGoogleRefresh, MemberGoogleStatus,
+    MemberGoogleBinding, MemberGoogleGrant, MemberGoogleRefresh, MemberGoogleService,
+    MemberGoogleStatus,
 };
 mod external;
 pub(crate) mod gws;
@@ -473,18 +474,48 @@ impl Store {
         state: String,
         code: SecretString,
     ) -> Result<(String, bool)> {
+        self.capture_oauth_result(state, Some(code), None)
+            .await
+            .and_then(|(handle, setup)| Ok((handle.ok_or(StoreError::Corrupt)?, setup)))
+    }
+    pub async fn capture_member_service_oauth(
+        &self,
+        service: MemberGoogleService,
+        state: String,
+        code: Option<SecretString>,
+    ) -> Result<Option<String>> {
+        self.capture_oauth_result(state, code, Some(service))
+            .await
+            .map(|(handle, _)| handle)
+    }
+    async fn capture_oauth_result(
+        &self,
+        state: String,
+        code: Option<SecretString>,
+        service: Option<MemberGoogleService>,
+    ) -> Result<(Option<String>, bool)> {
         if state.len() != 64 {
             return Err(StoreError::InvalidInput);
         }
-
         self.call(move|db|{
             let digest=hash(&state);
+            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if let Some(service)=service {
+                let bound: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM member_google_oauth WHERE state_hash=?1 AND service=?2)", params![digest,service.as_str()],|r|r.get(0))?;
+                if !bound {return Err(StoreError::Conflict);}
+            }
+            let Some(code)=code else {
+                if tx.execute("DELETE FROM mail_oauth_sessions WHERE state_hash=?1 AND claimed=0 AND expires_at>?2",params![digest,now()?])?!=1 {return Err(StoreError::Conflict);}
+                tx.commit()?;
+                return Ok((None,false));
+            };
             let handle=random()?;
             let cipher=providers::encrypt(&db.provider_key,code.expose().as_bytes(),&oauth_aad(&digest,"code"))?;
-            if db.conn.execute("UPDATE mail_oauth_sessions SET code=?2,result_hash=?3 WHERE state_hash=?1 AND expires_at>?4 AND code IS NULL AND claimed=0",params![digest,cipher,hash(&handle),now()?])?!=1{
+            if tx.execute("UPDATE mail_oauth_sessions SET code=?2,result_hash=?3 WHERE state_hash=?1 AND expires_at>?4 AND code IS NULL AND claimed=0",params![digest,cipher,hash(&handle),now()?])?!=1{
                 return Err(StoreError::Conflict)}
-            let setup_return=db.conn.query_row("SELECT setup_return FROM mail_oauth_sessions WHERE state_hash=?1",[digest],|r|r.get::<_,bool>(0))?;
-            Ok((handle,setup_return))}
+            let setup_return=tx.query_row("SELECT setup_return FROM mail_oauth_sessions WHERE state_hash=?1",[digest],|r|r.get::<_,bool>(0))?;
+            tx.commit()?;
+            Ok((Some(handle),setup_return))}
         ).await
     }
 

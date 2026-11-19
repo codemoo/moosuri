@@ -161,7 +161,7 @@ fn view(
     if s.owner.volume != o.volume || s.owner.generation != o.generation {
         return Err(StoreError::Conflict);
     }
-    let current = row(c, u)?;
+    let current = row(c, u, Service::Gmail)?;
     let source =
         current
             .as_ref()
@@ -240,7 +240,7 @@ impl Store {
         let u = u.clone();
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=authority(&tx,&u,o)?;intent(&tx,&u,&v)?;
-            let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM member_google_oauth m JOIN mail_oauth_sessions s USING(state_hash) WHERE m.state_hash=?1 AND m.tenant_id=?2 AND m.account_id=?3 AND m.volume_id=?4 AND m.generation=?5 AND m.app_revision=?6 AND s.session_digest=?7 AND s.auth_epoch=?8 AND s.claimed=0 AND s.expires_at>unixepoch())",params![hash(&state),u.tenant.0,u.account.id,o.volume.to_string(),o.generation as i64,app.to_string(),u.digest.as_slice(),u.epoch],|r|r.get(0))?;
+            let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM member_google_oauth m JOIN mail_oauth_sessions s USING(state_hash) WHERE m.service='gmail' AND m.state_hash=?1 AND m.tenant_id=?2 AND m.account_id=?3 AND m.volume_id=?4 AND m.generation=?5 AND m.app_revision=?6 AND s.session_digest=?7 AND s.auth_epoch=?8 AND s.claimed=0 AND s.expires_at>unixepoch())",params![hash(&state),u.tenant.0,u.account.id,o.volume.to_string(),o.generation as i64,app.to_string(),u.digest.as_slice(),u.epoch],|r|r.get(0))?;
             if !valid{return Err(StoreError::Conflict);}
             if tx.query_row("SELECT count(*) FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2",params![u.tenant.0,u.account.id],|r|r.get::<_,i64>(0))?>=1024{return Err(StoreError::Busy);}
             tx.execute("INSERT INTO member_google_thread_reads(tenant_id,account_id,request_id,thread_id,volume_id,generation,auth_epoch,session_digest,app_revision,flow_id,phase,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'awaiting_consent',unixepoch(),unixepoch())",params![u.tenant.0,u.account.id,v.request_id.to_string(),v.thread_id.to_string(),o.volume.to_string(),o.generation as i64,u.epoch,u.digest.as_slice(),app.to_string(),Store::mail_oauth_flow_id(&state)])?;
@@ -270,7 +270,7 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=authority(&tx,&u,o)?;intent(&tx,&u,&v)?;
             let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3)",params![u.tenant.0,u.account.id,v.request_id.to_string()],|r|r.get(0))?;
             if exists {let s=saved(&tx,&u,v.request_id)?;if s.intent.thread_id!=v.thread_id||s.owner.volume!=o.volume||s.owner.generation!=o.generation||s.app!=app||s.id!=Some(id)||s.epoch!=Some(epoch){return Err(StoreError::Conflict);}let same:bool=tx.query_row("SELECT session_digest=?4 AND auth_epoch=?5 FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",params![u.tenant.0,u.account.id,v.request_id.to_string(),u.digest.as_slice(),u.epoch],|r|r.get(0))?;if !same{return Err(StoreError::Conflict);}if s.phase!="ready" {let v=view(&tx,&db.provider_key,&u,o,v.request_id)?;tx.commit()?;return Ok(MemberGoogleReadAdmission::Existing(v));}}
-            let r=live(&tx,&u,o,app,true)?;if r.id!=Some(id)||r.epoch!=epoch{return Err(StoreError::Conflict);}
+            let r=live(&tx,&u,o,app,Service::Gmail,true)?;if r.id!=Some(id)||r.epoch!=epoch{return Err(StoreError::Conflict);}
             if !exists {if tx.query_row("SELECT count(*) FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2",params![u.tenant.0,u.account.id],|r|r.get::<_,i64>(0))?>=1024{return Err(StoreError::Busy);}tx.execute("INSERT INTO member_google_thread_reads(tenant_id,account_id,request_id,thread_id,volume_id,generation,auth_epoch,session_digest,app_revision,connection_id,source_epoch,phase,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'ready',unixepoch(),unixepoch())",params![u.tenant.0,u.account.id,v.request_id.to_string(),v.thread_id.to_string(),o.volume.to_string(),o.generation as i64,u.epoch,u.digest.as_slice(),app.to_string(),id.to_string(),epoch])?;}
             tx.execute("UPDATE member_google_thread_reads SET phase='dispatched',updated_at=unixepoch() WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3 AND phase='ready'",params![u.tenant.0,u.account.id,v.request_id.to_string()])?;
             tx.commit()?;Ok(MemberGoogleReadAdmission::Fresh(MemberGoogleReadLease{user:u,owner:o,app,intent:v,id,epoch}))
@@ -283,7 +283,7 @@ impl Store {
     ) -> Result<MemberGoogleThreadRead> {
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=authority(&tx,&lease.user,lease.owner)?;intent(&tx,&u,&lease.intent)?;
-            let s=saved(&tx,&u,lease.intent.request_id)?;let r=row(&tx,&u)?.ok_or(StoreError::Conflict)?;
+            let s=saved(&tx,&u,lease.intent.request_id)?;let r=row(&tx,&u,Service::Gmail)?.ok_or(StoreError::Conflict)?;
             if s.phase!="dispatched"||!same_source(&s,&r,&u)||s.app!=lease.app||s.id!=Some(lease.id)||s.epoch!=Some(lease.epoch){return Err(StoreError::Conflict);}
             let (phase,cipher)=if let Some(result)=result {
                 if !result.valid()||r.mailbox.as_ref().is_none_or(|m|!m.eq_ignore_ascii_case(&result.mailbox)){return Err(StoreError::InvalidInput);}

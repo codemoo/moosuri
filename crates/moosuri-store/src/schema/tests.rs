@@ -151,7 +151,7 @@ fn registry_covers_every_sql_file_in_order_without_byte_changes() {
         assert_eq!(*version, migration.version);
         assert_eq!(sql, migration.sql);
     }
-    assert_eq!(CURRENT_VERSION, 86);
+    assert_eq!(CURRENT_VERSION, 87);
     assert!(after(CURRENT_VERSION, 0).unwrap().is_empty());
 }
 

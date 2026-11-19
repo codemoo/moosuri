@@ -573,7 +573,20 @@ async fn observed(
     };
     let (answer, needs_user, applied, reason) = match generated {
         Some(answer) => (
-            format!("{}\n\n{}", scrub_urls(&answer.answer), p.url),
+            if previous.is_empty() {
+                format!("{}\n\n{}", scrub_urls(&answer.answer), p.url)
+            } else {
+                let mut text = scrub_urls(&answer.answer);
+                for reading in &previous {
+                    if let (Some(url), Some(excerpt)) =
+                        (reading["url"].as_str(), reading["visible_text"].as_str())
+                    {
+                        append_browser_source(&mut text, url, excerpt);
+                    }
+                }
+                append_browser_source(&mut text, &p.url, &p.text);
+                text
+            },
             answer.needs_user,
             j.guidance.len(),
             "waiting_for_user",
@@ -623,6 +636,16 @@ async fn observed(
         .personal_browser_finish(scope, j.view, request, Some(answer), applied)
         .await?;
     Ok(status_view(s, Some(view)))
+}
+// A comparison keeps verifiable excerpts from both pages even if a small model omits a detail.
+fn append_browser_source(text: &mut String, url: &str, excerpt: &str) {
+    let excerpt = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = excerpt.chars();
+    let mut snippet: String = chars.by_ref().take(200).collect();
+    if chars.next().is_some() {
+        snippet.push('…');
+    }
+    text.push_str(&format!("\n\n{url}\n{snippet}"));
 }
 fn publish_tab(job: &mut Job, id: Uuid, page: &moosuri_connectors::browser::capsule::RenderedPage) {
     let v = &mut job.view;

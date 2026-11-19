@@ -232,7 +232,7 @@ fn model_fixture(
                             context.contains("Platform 7")
                                 && context.contains("Afternoon bus 14:30")
                         );
-                        json!({"answer":"The 14:30 bus leaves from platform 7.","needs_user":false})
+                        json!({"answer":"It leaves from platform 7.","needs_user":false})
                     }
                 } else {
                     assert!(
@@ -560,7 +560,12 @@ async fn private_browser_frames_while_model_chooses_observed_public_detail() {
         .await
         .unwrap();
     assert_eq!(history.turns.len(), 1);
-    assert!(history.turns[0].assistant[0].text.contains("platform 7"));
+    let answer = &history.turns[0].assistant[0].text;
+    assert!(answer.contains("platform 7") && answer.contains("14:30"));
+    assert!(
+        answer.contains("https://example.org/timetable")
+            && answer.contains("https://example.org/detail")
+    );
     // A second task receives human control while a delayed model is proposing its link.
     // The already dispatched result has no authority over the new controller or its tab.
     let next = json!({"request_id":Uuid::new_v4(),"url":"https://example.org/timetable","text":"Find platform details"});

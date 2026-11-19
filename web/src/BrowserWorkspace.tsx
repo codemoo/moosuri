@@ -214,7 +214,9 @@ function Workspace(props: Props & { threadId: string }) {
     let running = false;
     let rerun = false;
     let relevant = true;
+    let disposed = false;
     async function poll() {
+      if (disposed) return;
       if (running) {
         rerun = true;
         return;
@@ -255,7 +257,7 @@ function Workspace(props: Props & { threadId: string }) {
       } finally {
         running = false;
         if (
-          live.current &&
+          !disposed && live.current &&
           !blocked.current &&
           relevant &&
           document.visibilityState === "visible"
@@ -281,6 +283,7 @@ function Workspace(props: Props & { threadId: string }) {
     document.addEventListener("visibilitychange", visibility);
     void poll();
     return () => {
+      disposed = true;
       live.current = false;
       generation.current++;
       token.current = null;

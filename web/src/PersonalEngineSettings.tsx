@@ -102,7 +102,7 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
   const installationDefault = engine?.default_stale ? null : engine?.default_choice ?? engine?.host_default;
   const revision = `${engine?.connection_revision}:${engine?.revision}`;
   return (
-    <section className="preview-gate preview-engine" aria-labelledby="preview-engine-title">
+    <section className="member-section preview-engine" aria-labelledby="preview-engine-title">
       <h1 id="preview-engine-title">어시스턴트 엔진</h1>
       {error && <p role="alert" className="preview-error">{error}</p>}
       {notice && <p role="status">{notice}</p>}
@@ -141,7 +141,7 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
           )}
         </>
       )}
-      <button type="button" disabled={busy} onClick={() => {
+      <button className="secondary" type="button" disabled={busy} onClick={() => {
         setError("");
         setNotice("");
         setRefresh(value => value + 1);
@@ -171,7 +171,7 @@ function ChoiceForm({title, choices, current, inherited, inheritLabel, stale, en
     if (!busy && valid) save(choice, active);
   }
   return (
-    <form aria-label={title} onSubmit={submit}>
+    <form className="admin-card" aria-label={title} onSubmit={submit}>
       <h2>{title}</h2>
       {stale && <p role="status">엔진 연결이 바뀌었습니다. 사용할 모델과 추론 강도를 확인한 뒤 저장해 주세요.</p>}
       {enabled !== undefined && (
@@ -208,7 +208,10 @@ function ChoiceForm({title, choices, current, inherited, inheritLabel, stale, en
         </select>
       </label>
       {!choice && inherited && <p>상속값 {description(inherited)}</p>}
-      <button disabled={busy || !valid || (!stale && sameChoice(choice, current) && active === (enabled ?? true))}>
+      <button
+        className="primary"
+        disabled={busy || !valid || (!stale && sameChoice(choice, current) && active === (enabled ?? true))}
+      >
         {enabled === undefined ? "회원 설정 저장" : "설치 설정 저장"}
       </button>
     </form>

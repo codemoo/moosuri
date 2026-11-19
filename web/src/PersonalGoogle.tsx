@@ -88,10 +88,13 @@ export function clearPersonalGoogle() {
 }
 export function GoogleReadHistory({ reads }: { reads: ThreadGoogleRead[] }) {
   return (
-    <div aria-label="이 대화의 메일 확인 기록">
+    <div
+      aria-label="이 대화의 메일 확인 기록"
+      className="preview-google-history"
+    >
       {reads.length > 0 && <h3>저장된 메일 확인 기록 · 최근 20개</h3>}
       {reads.map((r) => (
-        <article key={r.request_id} className="preview-google-read">
+        <article key={r.request_id}>
           <strong>받은편지함 확인</strong>
           <p>
             조회 요청:{" "}
@@ -106,7 +109,7 @@ export function GoogleReadHistory({ reads }: { reads: ThreadGoogleRead[] }) {
                 확인했습니다. 전체 메일에서 가장 최근인 항목을 뜻하지 않습니다.
               </p>
               {r.result.messages.length ? (
-                <ul>
+                <ul className="member-mail-list">
                   {r.result.messages.map((m) => (
                     <li key={m.id}>
                       <strong>{m.subject || "제목 없음"}</strong>
@@ -359,48 +362,61 @@ export default function PersonalGoogle({
     }
   }
   return (
-    <section aria-label="받은편지함" className="preview-gate">
+    <section aria-label="받은편지함" className="member-section">
       <h1>받은편지함</h1>
       {connection && <p>{connection.mailbox}</p>}
       {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">확인 중…</p>}
-      {enabled && (
-        <>
-          <button
-            disabled={busy}
-            onClick={() =>
-              void action(readIntent || connection ? "read" : "connect")
-            }
-          >
-            {connection
-              ? "메일 확인"
-              : readIntent
-                ? "Google로 연결하고 이 대화에서 메일 확인"
-                : "Google 연결"}
-          </button>
-          {readIntent && !connection && (
-            <button disabled={busy} onClick={() => void action("connect")}>
-              Google 연결만
+      <div className="member-inbox-actions">
+        {enabled && (
+          <>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() =>
+                void action(readIntent || connection ? "read" : "connect")
+              }
+            >
+              {connection
+                ? "메일 확인"
+                : readIntent
+                  ? "Google로 연결하고 이 대화에서 메일 확인"
+                  : "Google 연결"}
             </button>
-          )}
-        </>
-      )}
-      {connection && (
-        <button disabled={busy} onClick={() => void action("disconnect")}>
-          연결 해제
-        </button>
-      )}
-      {!enabled && !busy && (
-        <button onClick={() => void update()}>연결 상태 다시 확인</button>
-      )}
+            {readIntent && !connection && (
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() => void action("connect")}
+              >
+                Google 연결만
+              </button>
+            )}
+          </>
+        )}
+        {connection && (
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() => void action("disconnect")}
+          >
+            연결 해제
+          </button>
+        )}
+        {!enabled && !busy && (
+          <button className="secondary" onClick={() => void update()}>
+            연결 상태 다시 확인
+          </button>
+        )}
+      </div>
       {inbox && (
-        <>
+        <div className="admin-card member-inbox-results">
           <p>
             받은편지함 첫 페이지에서 최대 5건을 확인했습니다. 전체 메일에서 가장
             최근인 항목을 뜻하지 않습니다.
           </p>
           {inbox.messages.length ? (
-            <ul>
+            <ul className="member-mail-list">
               {inbox.messages.map((m) => (
                 <li key={m.id}>
                   <strong>{m.subject || "제목 없음"}</strong>
@@ -413,7 +429,7 @@ export default function PersonalGoogle({
             <p>확인한 페이지에 받은 메일이 없습니다.</p>
           )}
           {inbox.has_more && <p>다음 페이지에 메일이 더 있습니다.</p>}
-        </>
+        </div>
       )}
     </section>
   );

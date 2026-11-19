@@ -171,14 +171,17 @@ export default function PersonalAdmin({
     });
   }
   return (
-    <section aria-label="회원 관리" className="preview-gate">
+    <section aria-label="회원 관리" className="member-section">
       <h1>회원 관리</h1>
-      {error && <p role="status">{error}</p>}
+      {error && <p className="preview-error" role="status">{error}</p>}
       {pending && !busy && (
-        <button onClick={() => void submit(pending)}>변경 결과 확인</button>
+        <button className="secondary" onClick={() => void submit(pending)}>
+          변경 결과 확인
+        </button>
       )}
       {busy && <p role="status">확인 중…</p>}
       <form
+        className="admin-card invite-form"
         onSubmit={(e) => {
           e.preventDefault();
           void invite();
@@ -207,7 +210,10 @@ export default function PersonalAdmin({
             onChange={(e) => setEmail(e.target.value)}
           />
         </label>
-        <button disabled={busy || !!pending || !name.trim() || !email.trim()}>
+        <button
+          className="primary"
+          disabled={busy || !!pending || !name.trim() || !email.trim()}
+        >
           {inviteId ? "초대 접수 확인" : "회원 초대"}
         </button>
       </form>
@@ -235,6 +241,7 @@ export default function PersonalAdmin({
             )}
             {m.suspended && (
               <button
+                className="secondary"
                 disabled={busy || !!pending || !!inviteId}
                 onClick={() => change(m, "resume")}
               >
@@ -245,6 +252,7 @@ export default function PersonalAdmin({
               <div>
                 {(m.admin || m.eligible) && (
                   <button
+                    className="secondary"
                     disabled={busy || !!pending || !!inviteId}
                     onClick={() => change(m, m.admin ? "demote" : "promote")}
                   >
@@ -252,6 +260,7 @@ export default function PersonalAdmin({
                   </button>
                 )}
                 <button
+                  className="danger"
                   disabled={busy || !!pending || !!inviteId}
                   onClick={() => change(m, "suspend")}
                 >

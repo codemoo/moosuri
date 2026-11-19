@@ -323,6 +323,7 @@ export function MemoryForm({
   update,
   saved,
   onExpired,
+  defer,
   openEvidence,
 }: {
   accountId: string;
@@ -330,6 +331,7 @@ export function MemoryForm({
   update: DraftSetter;
   saved: (document: MemoryDocument) => void;
   onExpired: () => void;
+  defer?: () => void;
   openEvidence?: (sourceId: string, revision: number) => void;
 }) {
   const scope = useScope(accountId, `memory-editor:${state.id ?? "new"}`);
@@ -352,12 +354,13 @@ export function MemoryForm({
     );
   }
   function field(value: Partial<MemoryDraft>) {
-    patch({ draft: { ...state.draft, ...value } });
+    patch({ draft: { ...state.draft, ...value }, dirty: true });
   }
   const frozen = state.issue === "uncertain";
+  const unchangedMemberEdit = !!defer && state.id !== null && !state.dirty && !frozen;
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (lock.current || state.issue === "conflict") return;
+    if (lock.current || state.issue === "conflict" || unchangedMemberEdit) return;
     setError("");
     const problem = memoryProblem(state.draft);
     if (problem) {
@@ -389,6 +392,8 @@ export function MemoryForm({
           : "/knowledge/memories",
         request.id ? "PUT" : "POST",
         body,
+        undefined,
+        defer ? { timeoutMs: 30000 } : undefined,
       );
       update((current) =>
         current.memory?.request?.request_id === request.request_id
@@ -411,7 +416,7 @@ export function MemoryForm({
                   ...current.memory,
                   issue: uncertain
                     ? "uncertain"
-                    : error instanceof ApiFailure && error.status === 409
+                    : error instanceof ApiFailure && error.status === 409 && (!defer || state.id !== null)
                       ? "conflict"
                       : null,
                   request: uncertain ? request : null,
@@ -419,7 +424,12 @@ export function MemoryForm({
               }
             : current,
         );
-        if (!isAborted(error)) setError(knowledgeError(error));
+        if (!isAborted(error)) {
+          const createConflict = defer && state.id === null && error instanceof ApiFailure && error.status === 409;
+          setError(createConflict
+            ? "새 기억을 저장할 수 없습니다. 작성한 내용은 유지했습니다."
+            : knowledgeError(error));
+        }
       }
     } finally {
       lock.current = false;
@@ -451,18 +461,18 @@ export function MemoryForm({
       <div className="section-heading">
         <div>
           <h3>{state.id ? "기억 수정" : "기억 작성"}</h3>
-          <p>
+          {!defer && <p>
             {state.draft.evidence.length
               ? "선택한 원문의 실제 구간을 근거로 저장합니다."
               : "원문 근거 없이 내가 직접 기록하는 기억입니다."}
-          </p>
+          </p>}
         </div>
         <button
           className="text-button"
-          disabled={busy}
-          onClick={() => patch({ open: false })}
+          disabled={busy && !defer}
+          onClick={defer ?? (() => patch({ open: false }))}
         >
-          접기
+          {defer ? "닫기" : "접기"}
         </button>
       </div>
       {error && (
@@ -497,7 +507,7 @@ export function MemoryForm({
           />
         </label>
         <details>
-          <summary>화자·유효 기간</summary>
+          <summary>{defer ? "화자·유효 기간 (선택)" : "화자·유효 기간"}</summary>
           <label>
             기억 화자 (선택)
             <input
@@ -558,10 +568,10 @@ export function MemoryForm({
             </p>
           </div>
         )}
-        <p className="fine">
+        {!defer && <p className="fine">
           기억 내용은 4KiB, 근거를 포함한 전체 작성 내용은 16KiB 이내로
           저장합니다.
-        </p>
+        </p>}
         <div className="knowledge-actions">
           {state.issue === "conflict" ? (
             <button
@@ -573,7 +583,7 @@ export function MemoryForm({
               최신 기억과 비교
             </button>
           ) : (
-            <button className="primary" disabled={busy}>
+            <button className="primary" disabled={busy || unchangedMemberEdit}>
               {busy
                 ? "저장 확인 중…"
                 : frozen

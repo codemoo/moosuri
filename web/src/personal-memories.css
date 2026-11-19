@@ -1,0 +1,28 @@
+.member-library-memory .member-library-toolbar {
+  flex-direction: row;
+}
+
+.member-library-memory .member-library-inline-action {
+  flex: none;
+}
+
+.member-library-memory .member-library-inline-action[type="submit"] {
+  border: 1px solid var(--library-divider);
+  background: var(--library-sheet);
+}
+
+.member-library-memory .member-library-inline-action[type="submit"]:enabled {
+  color: var(--library-text);
+}
+
+.member-library-memory .member-library-inline-action[type="submit"]:hover:enabled {
+  background: var(--library-hover);
+}
+
+.member-library-memory .member-memory-drawer .fine {
+  overflow-wrap: anywhere;
+}
+
+.member-library-memory .member-memory-drawer .knowledge-editor .knowledge-actions {
+  margin-top: 4px;
+}

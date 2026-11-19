@@ -7,6 +7,7 @@ import type {
   KnowledgeQuery,
   KnowledgeSearch,
   MemoryDocument,
+  MemoryDraft,
   MemoryHistory,
   MemoryPage,
   SourceDocument,
@@ -40,6 +41,17 @@ type Danger =
   | { kind: "source" | "memory"; id: string; revision: number; label: string }
   | { kind: "collection"; collection: KnowledgeCollection };
 
+const memoryListPath = "/knowledge/memories";
+const memorySearchPageLimit = 10;
+const normalizeMemorySearch = (text: string) =>
+  text.normalize("NFKC").toLocaleLowerCase();
+
+function matchesMemorySearch(draft: MemoryDraft, query: string) {
+  return [draft.subject, draft.text, draft.speaker].some((value) =>
+    value && normalizeMemorySearch(value).includes(query),
+  );
+}
+
 export function KnowledgeView({
   accountId,
   mode,
@@ -70,6 +82,7 @@ export function KnowledgeView({
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState("");
+  const [memoryListError, setMemoryListError] = useState("");
   const [notice, setNotice] = useState("");
   const [source, setSource] = useState<Resource | null>(null);
   const [memory, setMemory] = useState<Resource | null>(null);
@@ -78,6 +91,9 @@ export function KnowledgeView({
   const mutationLock = useRef(false);
   const [query, setQuery] = useState("");
   const [memoryFilter, setMemoryFilter] = useState("");
+  const [memoryQuery, setMemoryQuery] = useState("");
+  const memorySearchField = useRef<HTMLInputElement>(null);
+  const editorDismissed = useRef(false);
   const [koreanAliases, setKoreanAliases] = useState(false);
   const [speaker, setSpeaker] = useState("");
   const [subject, setSubject] = useState("");
@@ -119,7 +135,7 @@ export function KnowledgeView({
     setValidAt(null);
     setObservedFrom(null);
     setObservedUntil(null);
-    setPageStack([null]);
+    setPageStack((current) => current.length > 1 ? [null] : current);
     setSource(null);
     setMemory(null);
     setError("");
@@ -179,32 +195,56 @@ export function KnowledgeView({
       return;
     }
     setLoading(true);
-    setError("");
+    if (manualMemoriesOnly) setMemoryListError("");
+    else setError("");
     const base =
       mode === "source"
         ? `/knowledge/collections/${encodeURIComponent(collectionId!)}/sources`
-        : "/knowledge/memories";
-    void scope
-      .request<SourcePage | MemoryPage>(
-        `${base}${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+        : memoryListPath;
+    const pageUrl = (cursor: string | null | undefined) =>
+      `${base}${cursor ? `?after=${encodeURIComponent(cursor)}` : ""}`;
+    async function loadMemberSearch(cursor: string | null | undefined) {
+      const query = normalizeMemorySearch(memoryQuery);
+      for (let pageNumber = 1; ; pageNumber++) {
+        const page: MemoryPage = await scope.request<MemoryPage>(
+          pageUrl(cursor), "GET", undefined, controller.signal,
+        );
+        const items = page.items.filter(({ draft }) => matchesMemorySearch(draft, query));
+        if (items.length || !page.next_after || pageNumber === memorySearchPageLimit)
+          return { ...page, items };
+        cursor = page.next_after;
+      }
+    }
+    const request = manualMemoriesOnly && memoryQuery
+      ? loadMemberSearch(after)
+      : scope.request<SourcePage | MemoryPage>(
+        pageUrl(after),
         "GET",
         undefined,
         controller.signal,
-      )
+      );
+    void request
       .then((value) => {
+        if (controller.signal.aborted) return;
         if (mode === "source") setSources(value as SourcePage);
         else setMemories(value as MemoryPage);
         setLoading(false);
       })
       .catch((error) => {
-        if (!isAborted(error)) {
-          if (manualMemoriesOnly) setMemories(null);
+        if (controller.signal.aborted || isAborted(error)) return;
+        if (manualMemoriesOnly) {
+          setMemories(null);
+          if (error instanceof ApiFailure && error.status === 401) onExpired();
+          else if (error instanceof ApiFailure && error.status === 409)
+            setMemoryListError("기억 목록이 바뀌었습니다. 처음부터 다시 불러와 주세요.");
+          else setMemoryListError(memoryQuery ? "기억을 검색하지 못했습니다." : "기억 목록을 불러오지 못했습니다.");
+        } else {
           fail(error);
-          setLoading(false);
         }
+        setLoading(false);
       });
     return () => controller.abort();
-  }, [mode, collectionId, pageStack, scope, refresh, manualMemoriesOnly]);
+  }, [mode, collectionId, pageStack, scope, refresh, manualMemoriesOnly, memoryQuery]);
   async function refreshCollection(id: string) {
     try {
       const value = await scope.request<{ collections: KnowledgeCollection[] }>(
@@ -352,19 +392,35 @@ export function KnowledgeView({
       if (generation === searchGeneration.current) setSearching(false);
     }
   }
+  function resumeAssertion() {
+    editorDismissed.current = false;
+    updateDrafts((current) => ({
+      ...current,
+      memory: current.memory ? { ...current.memory, open: true } : null,
+    }));
+  }
   function startAssertion(document?: MemoryDocument) {
     if (drafts.memory) {
-      updateDrafts((current) => ({
-        ...current,
-        memory: current.memory ? { ...current.memory, open: true } : null,
-      }));
+      resumeAssertion();
       if (drafts.memory.id !== (document?.id ?? null))
         setError(
           "작성 중인 기억을 먼저 저장하거나 작성 내용을 지워 주세요. 기존 수정안은 유지했습니다.",
         );
       return;
     }
+    editorDismissed.current = false;
     updateDrafts((current) => ({ ...current, memory: startMemory(document) }));
+  }
+  function deferMemberEditor() {
+    editorDismissed.current = true;
+    setError("");
+    setMemory(null);
+    updateDrafts((current) => ({
+      ...current,
+      memory: current.memory && (current.memory.dirty || current.memory.request)
+        ? { ...current.memory, open: false }
+        : null,
+    }));
   }
   function addEvidence(evidence: EvidenceRef, title: string) {
     if (drafts.memory?.issue === "uncertain") {
@@ -397,6 +453,7 @@ export function KnowledgeView({
         memory: {
           ...editor,
           open: true,
+          dirty: true,
           draft: {
             ...editor.draft,
             subject: editor.draft.subject || title,
@@ -472,6 +529,8 @@ export function KnowledgeView({
           `/knowledge/${target.kind === "source" ? "sources" : "memories"}/${encodeURIComponent(target.id)}`,
           "DELETE",
           { expected_revision: target.revision },
+          undefined,
+          manualMemoriesOnly ? { timeoutMs: 30000 } : undefined,
         );
         if (target.kind === "source") {
           updateDrafts((current) => ({
@@ -488,7 +547,13 @@ export function KnowledgeView({
             ...current,
             memory: current.memory?.id === target.id ? null : current.memory,
           }));
-          setNotice("기억과 수정 이력을 지웠습니다. 원문은 유지됩니다.");
+          if (manualMemoriesOnly) {
+            setMemories((current) => current && {
+              ...current,
+              items: current.items.filter((item) => item.id !== target.id),
+            });
+            setNotice("기억과 수정 이력을 지웠습니다.");
+          } else setNotice("기억과 수정 이력을 지웠습니다. 원문은 유지됩니다.");
         }
       }
       setSource(null);
@@ -496,7 +561,14 @@ export function KnowledgeView({
       setDanger(null);
       refreshLists();
     } catch (error) {
-      fail(error);
+      if (manualMemoriesOnly && error instanceof ApiFailure && error.status === 409) {
+        setMemory(null);
+        setDanger(null);
+        setNotice("기억이 다른 곳에서 변경되었습니다. 목록에서 최신 내용을 확인해 주세요.");
+        refreshLists();
+      } else if (manualMemoriesOnly && !isAborted(error) && !(error instanceof ApiFailure && error.status === 401)) {
+        setError("기억이 지워졌는지 확인하지 못했습니다. 같은 삭제 요청을 다시 시도할 수 있습니다.");
+      } else fail(error);
     } finally {
       mutationLock.current = false;
       setBusy(false);
@@ -516,10 +588,12 @@ export function KnowledgeView({
       update={updateDrafts}
       onExpired={onExpired}
       saved={(value) => {
-        setMemory({ id: value.id, revision: value.revision });
+        if (!manualMemoriesOnly || !editorDismissed.current)
+          setMemory({ id: value.id, revision: value.revision });
         setNotice("기억을 저장했습니다.");
         refreshLists();
       }}
+      defer={manualMemoriesOnly ? deferMemberEditor : undefined}
       openEvidence={manualMemoriesOnly ? undefined : (id, revision) => setSource({ id, revision })}
     />
   );
@@ -528,6 +602,7 @@ export function KnowledgeView({
       key={`${memory.id}:${memory.revision}`}
       accountId={accountId}
       resource={memory}
+      member={manualMemoriesOnly}
       onExpired={onExpired}
       close={() => setMemory(null)}
       edit={startAssertion}
@@ -567,7 +642,7 @@ export function KnowledgeView({
           disabled={loading}
           onClick={() => setPageStack((current) => current.slice(0, -1))}
         >
-          이전 목록
+          {manualMemoriesOnly && memoryQuery ? "이전 결과" : "이전 목록"}
         </button>
       )}
       {next && (
@@ -576,18 +651,13 @@ export function KnowledgeView({
           disabled={loading}
           onClick={() => setPageStack((current) => [...current, next])}
         >
-          다음 목록
+          {manualMemoriesOnly && memoryQuery ? (memories?.items.length ? "다음 결과" : "검색 계속") : "다음 목록"}
         </button>
       )}
     </>
   );
   if (manualMemoriesOnly) {
-    const filterText = memoryFilter.trim().normalize("NFKC").toLocaleLowerCase();
-    const items = (memories?.items ?? []).filter(({ draft }) =>
-      [draft.subject, draft.text, draft.speaker].some((value) =>
-        value?.normalize("NFKC").toLocaleLowerCase().includes(filterText),
-      ),
-    );
+    const items = memories?.items ?? [];
     const editing = !!drafts.memory?.open;
     return (
       <section className="member-page member-library member-library-memory knowledge-view" aria-label="기억">
@@ -598,33 +668,71 @@ export function KnowledgeView({
             aria-haspopup="dialog"
             onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true });
-              startAssertion();
+              setError("");
+              if (drafts.memory) resumeAssertion();
+              else startAssertion();
             }}
           >
             <WorkspaceIcon name="new" />
             {drafts.memory ? "기억 작성 이어가기" : "기억 추가"}
           </button>
         </div>
-        <div className="member-library-toolbar">
+        <form
+          className="member-library-toolbar"
+          role="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setMemoryQuery(memoryFilter.trim());
+            reload();
+          }}
+        >
           <div className="member-library-filter">
             <WorkspaceIcon name="search" />
             <input
               type="search"
-              aria-label="현재 목록에서 기억 필터링"
-              placeholder="현재 목록에서 기억 찾기"
+              ref={memorySearchField}
+              aria-label="기억 검색어"
+              placeholder="주제, 내용, 화자 검색"
               value={memoryFilter}
-              onChange={(event) => setMemoryFilter(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                setMemoryFilter(value);
+                if (!value && memoryQuery) {
+                  setMemoryQuery("");
+                  reload();
+                }
+              }}
             />
           </div>
-          <button type="button" className="member-library-icon-button" aria-label="목록 새로고침" title="목록 새로고침" disabled={busy || loading} onClick={reload}>
-            <WorkspaceIcon name="refresh" />
+          <button type="submit" className="member-library-inline-action" disabled={!memoryFilter.trim()}>
+            검색
           </button>
-        </div>
+          {memoryQuery ? (
+            <button type="button" className="member-library-inline-action" onClick={() => {
+              memorySearchField.current?.focus({ preventScroll: true });
+              setMemoryFilter("");
+              setMemoryQuery("");
+              reload();
+            }} aria-label="검색 지우기">
+              지우기
+            </button>
+          ) : (
+            <button type="button" className="member-library-icon-button" aria-label="목록 새로고침" title="목록 새로고침" disabled={busy || loading} onClick={reload}>
+              <WorkspaceIcon name="refresh" />
+            </button>
+          )}
+        </form>
+        {memoryQuery && <p className="member-library-status">“{memoryQuery}” 검색 결과</p>}
         {error && !danger && !editing && <p className="notice" role="alert">{error}</p>}
         {notice && <p className="member-library-status" role="status">{notice}</p>}
         <section className="member-page-list member-library-list" aria-label="기억 목록" aria-busy={loading}>
           {loading ? (
-            <p className="member-library-empty" role="status">목록을 불러오는 중…</p>
+            <p className="member-library-empty" role="status">{memoryQuery ? "기억을 검색하는 중…" : "목록을 불러오는 중…"}</p>
+          ) : memoryListError ? (
+            <div className="member-library-empty">
+              <p role="alert">{memoryListError}</p>
+              <button type="button" className="member-library-inline-action" onClick={reload}>다시 시도</button>
+            </div>
           ) : items.length ? (
             items.map((item) => (
               <button
@@ -649,28 +757,26 @@ export function KnowledgeView({
             ))
           ) : (
             <p className="member-library-empty">
-              {!memories && error
-                ? "기억 목록을 불러오지 못했습니다."
-                : filterText && memories?.items.length
-                  ? "현재 목록에 일치하는 기억이 없습니다."
+              {memoryQuery
+                ? next
+                  ? "이 구간에 일치하는 기억이 없습니다. 다음 구간을 검색할 수 있습니다."
+                  : pageStack.length > 1
+                    ? "더 이상 일치하는 기억이 없습니다."
+                    : "일치하는 기억이 없습니다."
                   : pageStack.length > 1
                     ? "이 페이지에 표시할 기억이 없습니다."
                     : "아직 기록한 기억이 없습니다."}
             </p>
           )}
         </section>
-        {(pageStack.length > 1 || next) && <div className="knowledge-pagination member-library-pagination">{pagination}</div>}
+        {!memoryListError && (pageStack.length > 1 || next) && <div className="knowledge-pagination member-library-pagination">{pagination}</div>}
         <MemberMemoryDrawer
           open={editing || !!memoryDetail}
           editing={editing}
           close={() => {
             setError("");
-            if (editing) {
-              updateDrafts((current) => ({
-                ...current,
-                memory: current.memory && { ...current.memory, open: false },
-              }));
-            } else setMemory(null);
+            if (editing) deferMemberEditor();
+            else setMemory(null);
           }}
         >
           {editing && error && !danger && <p className="notice" role="alert">{error}</p>}
@@ -1290,6 +1396,7 @@ function SourceDetail({
 function MemoryDetail({
   accountId,
   resource,
+  member = false,
   onExpired,
   close,
   edit,
@@ -1298,6 +1405,7 @@ function MemoryDetail({
 }: {
   accountId: string;
   resource: Resource;
+  member?: boolean;
   onExpired: () => void;
   close: () => void;
   edit: (document: MemoryDocument) => void;
@@ -1310,26 +1418,38 @@ function MemoryDetail({
   );
   const [document, setDocument] = useState<MemoryDocument | null>(null);
   const [error, setError] = useState("");
+  const [readAttempt, setReadAttempt] = useState(0);
   const [history, setHistory] = useState<MemoryHistory | null>(null);
   const [loading, setLoading] = useState(false);
   const lock = useRef(false);
   useEffect(() => {
+    const controller = new AbortController();
+    const version = member ? "" : `?revision=${resource.revision}`;
+    setError("");
     void scope
       .request<MemoryDocument>(
-        `/knowledge/memories/${encodeURIComponent(resource.id)}?revision=${resource.revision}`,
+        `${memoryListPath}/${encodeURIComponent(resource.id)}${version}`,
+        "GET",
+        undefined,
+        controller.signal,
       )
       .then(setDocument)
       .catch((error) => {
-        if (!isAborted(error)) {
+        if (!controller.signal.aborted && !isAborted(error)) {
           if (error instanceof ApiFailure && error.status === 401) onExpired();
+          else if (member) setError(error instanceof ApiFailure && error.status === 404
+            ? "이 기억을 더 이상 열 수 없습니다."
+            : "기억을 불러오지 못했습니다.");
           else setError(knowledgeError(error));
         }
       });
-  }, [scope, resource.id, resource.revision]);
+    return () => controller.abort();
+  }, [scope, resource.id, resource.revision, member, readAttempt]);
   async function loadHistory(before?: number) {
     if (lock.current) return;
     lock.current = true;
     setLoading(true);
+    if (member) setError("");
     try {
       const value = await scope.request<MemoryHistory>(
         `/knowledge/memories/${encodeURIComponent(resource.id)}/history${before ? `?before=${before}` : ""}`,
@@ -1342,6 +1462,7 @@ function MemoryDetail({
     } catch (error) {
       if (!isAborted(error)) {
         if (error instanceof ApiFailure && error.status === 401) onExpired();
+        else if (member) setError("수정 이력을 불러오지 못했습니다. 다시 시도해 주세요.");
         else setError(knowledgeError(error));
       }
     } finally {
@@ -1354,7 +1475,7 @@ function MemoryDetail({
       <div className="section-heading">
         <h3>{document?.draft.subject ?? "기억"}</h3>
         <button className="text-button" onClick={close}>
-          기억 닫기
+          {member ? "닫기" : "기억 닫기"}
         </button>
       </div>
       {error && (
@@ -1371,12 +1492,16 @@ function MemoryDetail({
           )}
           {document.extraction_origin&&<p className="fine">자료에서 추출한 사실 · 표시된 작성자: {document.extraction_origin.reported_speaker}. 확인된 신원이라는 뜻은 아닙니다.</p>}
           <p className="knowledge-body">{document.draft.text}</p>
-          <p className="fine">
-            {document.draft.evidence.length
-              ? "원문 근거가 연결된 기억"
-              : "내가 직접 기록한 기억"}
-            {document.draft.speaker ? ` · ${document.draft.speaker}` : ""}
-          </p>
+          {member ? (
+            <MemberMemoryMetadata draft={document.draft} />
+          ) : (
+            <p className="fine">
+              {document.draft.evidence.length
+                ? "원문 근거가 연결된 기억"
+                : "내가 직접 기록한 기억"}
+              {document.draft.speaker ? ` · ${document.draft.speaker}` : ""}
+            </p>
+          )}
           {document.draft.evidence.map((item) => (
             <div
               className="evidence-card"
@@ -1398,9 +1523,15 @@ function MemoryDetail({
             <button
               className="text-button"
               disabled={loading}
-              onClick={() => loadHistory()}
+              aria-expanded={member ? !!history : undefined}
+              onClick={() => {
+                if (member && history) {
+                  setHistory(null);
+                  setError("");
+                } else void loadHistory();
+              }}
             >
-              수정 이력
+              {member && loading ? "이력 불러오는 중…" : member && history ? "이력 접기" : "수정 이력"}
             </button>
             <button
               className="text-button destructive-text"
@@ -1411,7 +1542,9 @@ function MemoryDetail({
           </div>
         </>
       ) : (
-        !error && <p role="status">기억을 불러오는 중…</p>
+        error
+          ? member && <button className="text-button" onClick={() => setReadAttempt((value) => value + 1)}>다시 시도</button>
+          : <p role="status">기억을 불러오는 중…</p>
       )}
       {history && (
         <div className="memory-history" aria-label="기억 수정 이력">
@@ -1438,6 +1571,21 @@ function MemoryDetail({
         </div>
       )}
     </section>
+  );
+}
+
+function MemberMemoryMetadata({ draft }: { draft: MemoryDraft }) {
+  return (
+    <>
+      {draft.speaker && <p className="fine">화자 {draft.speaker}</p>}
+      {draft.valid_from !== null && (
+        <p className="fine">유효 시작 {new Date(draft.valid_from * 1000).toLocaleString()}</p>
+      )}
+      {draft.valid_until !== null && (
+        <p className="fine">유효 종료 {new Date(draft.valid_until * 1000).toLocaleString()}</p>
+      )}
+      {draft.evidence.length > 0 && <h4>연결한 근거</h4>}
+    </>
   );
 }
 

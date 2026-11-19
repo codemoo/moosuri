@@ -25,6 +25,7 @@ export type MemoryWrite = {
 };
 export type MemoryEditorState = {
   open: boolean;
+  dirty: boolean;
   id: string | null;
   expected_revision: number | null;
   draft: MemoryDraft;
@@ -62,6 +63,7 @@ export const initialKnowledgeDrafts = (): KnowledgeDrafts => ({
 export function startMemory(document?: MemoryDocument): MemoryEditorState {
   return {
     open: true,
+    dirty: false,
     id: document?.id ?? null,
     expected_revision: document?.revision ?? null,
     draft: document

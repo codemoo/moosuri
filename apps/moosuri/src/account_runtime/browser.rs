@@ -16,7 +16,12 @@ use moosuri_store::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex, Weak},
+};
+use tokio::sync::Mutex as DispatchLock;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -27,6 +32,7 @@ pub(super) struct Service {
     pub(super) uid: u32,
     pub(super) model: Option<moosuri_server::personal_text::Options>,
     frames: Arc<tokio::sync::Semaphore>,
+    dispatch: Arc<Mutex<HashMap<String, Weak<DispatchLock<()>>>>>,
 }
 pub(super) fn routes(
     store: Store,
@@ -47,7 +53,40 @@ pub(super) fn routes(
             uid,
             model,
             frames: Arc::new(tokio::sync::Semaphore::new(1)),
+            dispatch: Default::default(),
         })
+}
+/// Serialize broker effects for a single workspace. A stop first fences the job in SQLite,
+/// then waits only for its previous broker dispatch. An opening worker cannot outlive the stop.
+async fn broker_action<T: serde::de::DeserializeOwned>(
+    s: &Service,
+    scope: &Scope,
+    v: &Workspace,
+    op: &str,
+    args: Value,
+) -> Result<T, Failure> {
+    let lock = {
+        let mut locks = s.dispatch.lock().map_err(|_| Failure::Unavailable)?;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        match locks.get(&v.id).and_then(Weak::upgrade) {
+            Some(lock) => lock,
+            None => {
+                let lock = Arc::new(DispatchLock::new(()));
+                locks.insert(v.id.clone(), Arc::downgrade(&lock));
+                lock
+            }
+        }
+    };
+    let _guard = lock.lock().await;
+    let current = s
+        .store
+        .personal_browser_current(scope.clone())
+        .await?
+        .ok_or(Failure::Stale)?;
+    if current.view.id != v.id || current.view.revision != v.revision {
+        return Err(Failure::Stale);
+    }
+    wire::call(s, &v.id, op, args).await
 }
 pub(super) enum Failure {
     Invalid,
@@ -293,7 +332,8 @@ async fn start(
                     Admission::Fresh(j) => j,
                 };
                 let result =
-                    wire::call::<Opened>(&s, &j.view.id, "open", json!({"url":input.url})).await;
+                    broker_action::<Opened>(&s, &scope, &j.view, "open", json!({"url":input.url}))
+                        .await;
                 let opened = match result {
                     Ok(x) => x,
                     Err(err) => {
@@ -327,47 +367,79 @@ async fn observed(
     wait: bool,
     epoch: Option<i64>,
 ) -> Reply {
-    let p = obs.page;
-    let v = &mut j.view;
-    let tab = tab.to_string();
-    v.url = p.url.clone();
-    v.title = p.title.clone();
-    if let Some(t) = v.tabs.iter_mut().find(|t| t.id == tab) {
-        t.title = p.title.clone();
-        t.url = p.url.clone();
-    } else {
-        v.tabs.push(Tab {
-            id: tab.clone(),
-            title: p.title.clone(),
-            url: p.url.clone(),
-        });
-    }
-    v.active_tab_id = Some(tab);
-    v.links = if j.human_touched {
-        vec![]
-    } else {
-        p.links
+    let mut tab = tab;
+    let mut p = obs.page;
+    let mut previous = Vec::new();
+    let generated = loop {
+        publish_tab(&mut j, tab, &p);
+        j = s
+            .store
+            .personal_browser_publish(scope.clone(), request, j.view)
+            .await?;
+        if wait {
+            break None;
+        }
+        let candidates = if previous.len() < 2 && !j.human_touched && j.remaining_reads > 0 {
+            p.links
+                .iter()
+                .filter(|link| {
+                    public_read_link(&p.url, &link.url)
+                        && !j.view.tabs.iter().any(|tab| tab.url == link.url)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let titles = candidates
             .iter()
-            .take(24)
-            .map(|l| Link {
-                url: l.url.clone(),
-                text: l.text.clone(),
-            })
-            .collect()
-    };
-    let mut j = s
-        .store
-        .personal_browser_publish(scope.clone(), request, j.view)
-        .await?;
-    let generated = if wait {
-        None
-    } else {
-        browser_model::answer(s, &j, &p, epoch).await
+            .map(|link| link.text.clone())
+            .collect::<Vec<_>>();
+        let decision = browser_model::answer(s, &j, &p, epoch, &titles, &previous).await;
+        let Some(index) = decision.as_ref().and_then(|d| d.follow_index) else {
+            break decision;
+        };
+        let Some(link) = candidates.get(index) else {
+            break None;
+        };
+        let url = link.url.clone();
+        match s
+            .store
+            .personal_browser_follow_observed(
+                scope.clone(),
+                request,
+                j.view.revision,
+                url.clone(),
+                j.guidance.len(),
+            )
+            .await
+        {
+            Ok(job) => j = job,
+            // New human direction supersedes the proposed navigation.
+            Err(StoreError::Conflict) => {
+                break None;
+            }
+            Err(e) => return Err(e.into()),
+        }
+        let next: Opened = match broker_action(
+            s,
+            &scope,
+            &j.view,
+            "follow",
+            json!({"tab_id":tab,"url":url}),
+        )
+        .await
+        {
+            Ok(next) => next,
+            Err(e) => return failed(s, scope, j.view, request, e, Some("ready")).await,
+        };
+        previous.push(json!({"url":p.url,"title":p.title,"visible_text":p.text.chars().take(1600).collect::<String>()}));
+        tab = next.tab_id;
+        p = next.observation.page;
     };
     let (answer, needs_user, applied, reason) = match generated {
-        Some((answer, needs_user)) => (
-            format!("{answer}\n\n{}", p.url),
-            needs_user,
+        Some(answer) => (
+            format!("{}\n\n{}", answer.answer, p.url),
+            answer.needs_user,
             j.guidance.len(),
             "waiting_for_user",
         ),
@@ -397,6 +469,71 @@ async fn observed(
         .personal_browser_finish(scope, j.view, request, Some(answer), applied)
         .await?;
     Ok(status_view(s, Some(view)))
+}
+fn publish_tab(job: &mut Job, id: Uuid, page: &moosuri_connectors::browser::capsule::RenderedPage) {
+    let v = &mut job.view;
+    let tab = Tab {
+        id: id.to_string(),
+        url: page.url.clone(),
+        title: page.title.clone(),
+    };
+    v.url = tab.url.clone();
+    v.title = tab.title.clone();
+    v.active_tab_id = Some(tab.id.clone());
+    if let Some(previous) = v.tabs.iter_mut().find(|other| other.id == tab.id) {
+        *previous = tab;
+    } else {
+        v.tabs.push(tab);
+    }
+    v.links = if job.human_touched {
+        vec![]
+    } else {
+        page.links
+            .iter()
+            .take(4)
+            .map(|l| Link {
+                url: l.url.clone(),
+                text: l.text.clone(),
+            })
+            .collect()
+    };
+}
+/// Model navigation uses uncredentialed, on-site document links from this exact observation.
+/// Form submissions, action links and parameterized URLs require a human controller.
+fn public_read_link(source: &str, target: &str) -> bool {
+    let (Ok(base), Ok(url)) = (url::Url::parse(source), url::Url::parse(target)) else {
+        return false;
+    };
+    let path = url.path().to_ascii_lowercase();
+    url.origin() == base.origin()
+        && matches!(url.scheme(), "http" | "https")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && !path.contains('%')
+        && ![
+            "login",
+            "logout",
+            "sign-in",
+            "signin",
+            "signout",
+            "delete",
+            "remove",
+            "unsubscribe",
+            "checkout",
+            "purchase",
+            "payment",
+            "confirm",
+            "submit",
+            "authorize",
+            "oauth",
+            "token",
+            "booking",
+            "reserve",
+        ]
+        .iter()
+        .any(|term| path.contains(term))
 }
 async fn failed(
     s: &Service,
@@ -530,7 +667,7 @@ async fn dispatch(s: Service, scope: Scope, op: String, a: Action, epoch: Option
         "resume" => "selected",
         s => s,
     };
-    let result = wire::call::<Value>(&s, &j.view.id, wire_op, args).await;
+    let result = broker_action::<Value>(&s, &scope, &j.view, wire_op, args).await;
     let result = match result {
         Ok(r) => r,
         Err(Failure::Missing) if op == "close" => json!({"stopped":true}),

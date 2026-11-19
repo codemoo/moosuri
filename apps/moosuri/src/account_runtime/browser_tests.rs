@@ -114,9 +114,15 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
             let mut line = String::new();
             stream.read_line(&mut line).await.unwrap();
             let r: Value = serde_json::from_str(&line).unwrap();
-            let observation = || json!({"page":{"title":"Timetable","url":url,"text":if filtered{"Morning bus 08:15"}else{"Afternoon bus 14:30"},"warning":"","retrieved_at_unix_ms":1234,"links":[],"truncated":false}});
+            let observation = || json!({"page":{"title":"Timetable","url":url,"text":if filtered{"Morning bus 08:15"}else{"Afternoon bus 14:30"},"warning":"","retrieved_at_unix_ms":1234,"links":[{"text":"Timetable details","url":"https://example.org/detail"}],"truncated":false}});
             let value = match r["op"].as_str().unwrap() {
                 "open" => json!({"tab_id":tab,"observation":observation()}),
+                "follow" => {
+                    assert_eq!(r["url"], "https://example.org/detail");
+                    assert_eq!(r["tab_id"], tab.to_string());
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    json!({"tab_id":Uuid::new_v4(),"observation":{"page":{"url":"https://example.org/detail","title":"Details","text":"Platform 7","links":[],"truncated":false,"warning":"","retrieved_at_unix_ms":1235}}})
+                }
                 "frame" => {
                     json!({"url":url,"width":1280,"height":900,"frame_token":"f".repeat(64),"png_base64":"cG5n"})
                 }
@@ -156,13 +162,32 @@ fn model_fixture(path: &std::path::Path) -> moosuri_server::personal_text::Optio
                 json!({"v":1,"state":"selection","connection_revision":rev,"selection_epoch":3,"model":"fixture","effort":null,"kind":"compatible"})
             } else {
                 let context = r["messages"][1]["text"].as_str().unwrap();
-                assert!(context.contains("Morning bus 08:15") && context.contains("morning only"));
-                assert!(
-                    !context.contains("14:30")
-                        && !context.contains("frame_token")
-                        && !context.contains("insert_text")
-                );
-                json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":rev,"model":"fixture","effort":null,"outcome":"completed","output":json!({"answer":"The morning bus leaves at 08:15.","needs_user":false}).to_string(),"receipt":{"state":"settled","input_tokens":90,"output_tokens":12,"charged_tokens":102}})
+                let answer = if context.contains("Find platform details") {
+                    if r["ordinal"] == 0 {
+                        assert!(context.contains("Timetable details"));
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        json!({"answer":"Check the time and platform on its details page.","needs_user":false,"follow_index":0})
+                    } else {
+                        assert!(
+                            context.contains("Platform 7")
+                                && context.contains("Afternoon bus 14:30")
+                        );
+                        json!({"answer":"The 14:30 bus leaves from platform 7.","needs_user":false})
+                    }
+                } else {
+                    assert!(
+                        context.contains("Morning bus 08:15") && context.contains("morning only")
+                    );
+                    assert!(
+                        !context.contains("14:30")
+                            && !context.contains("frame_token")
+                            && !context.contains("insert_text")
+                    );
+                    let data: Value = serde_json::from_str(context).unwrap();
+                    assert_eq!(data["public_link_titles"], json!([]));
+                    json!({"answer":"The morning bus leaves at 08:15.","needs_user":false})
+                };
+                json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":rev,"model":"fixture","effort":null,"outcome":"completed","output":answer.to_string(),"receipt":{"state":"settled","input_tokens":90,"output_tokens":12,"charged_tokens":102}})
             };
             stream
                 .write_all(format!("{value}\n").as_bytes())
@@ -182,7 +207,8 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
     let root = temp.path().canonicalize().unwrap();
     let apath = root.join("a");
     let bpath = root.join("b");
-    let (a, b) = tokio::join!(member(&apath), member(&bpath));
+    let a = member(&apath).await;
+    let b = member(&bpath).await;
     let socket = root.join("browser.sock");
     let reads = browser_fixture(&socket);
     let model = model_fixture(&root.join("model.sock"));
@@ -336,4 +362,71 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
         .0,
         StatusCode::UNAUTHORIZED
     );
+}
+
+#[tokio::test]
+async fn private_browser_frames_while_model_chooses_observed_public_detail() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let a = member(&root.join("a")).await;
+    let socket = root.join("browser.sock");
+    let follows = browser_fixture(&socket);
+    let model = model_fixture(&root.join("model.sock"));
+    let app = moosuri_server::personal_service_router(
+        a.store.clone(),
+        None,
+        routes(
+            a.store.clone(),
+            a.owner,
+            Some(socket),
+            unsafe { libc::geteuid() },
+            Some(model),
+        ),
+    );
+    let base = format!("/api/v1/threads/{}/browser", a.thread);
+    let body = json!({"request_id":Uuid::new_v4(),"text":"Find platform details","url":"https://example.org/timetable"});
+    let open = request(&app, "POST", &base, a.owner.account, &a.token, body.clone());
+    let watch = async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let v = request(&app, "GET", &base, a.owner.account, &a.token, Value::Null)
+                    .await
+                    .1;
+                if v["workspace"]["state"] == "reading" {
+                    assert_eq!(
+                        request(
+                            &app,
+                            "GET",
+                            &format!("{base}/frame"),
+                            a.owner.account,
+                            &a.token,
+                            Value::Null
+                        )
+                        .await
+                        .0,
+                        StatusCode::OK
+                    );
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+        })
+        .await
+        .unwrap()
+    };
+    let ((status, active), ()) = tokio::join!(open, watch);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(active["workspace"]["state"], "completed");
+    assert_eq!(active["workspace"]["tabs"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        request(&app, "POST", &base, a.owner.account, &a.token, body)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(follows.load(Ordering::SeqCst), 1);
+    let u = a.store.authenticate(a.token).await.unwrap();
+    let history = a.store.conversation(&u, a.thread, None).await.unwrap();
+    assert_eq!(history.turns.len(), 1);
+    assert!(history.turns[0].assistant[0].text.contains("platform 7"));
 }

@@ -34,9 +34,7 @@ pub struct Job {
 }
 fn current(c: &Connection, scope: &Scope) -> Result<Option<Job>> {
     scope.authorize(c)?;
-    let row = c.query_row("SELECT b.view,r.user_text,b.human_touched,b.remaining_reads,r.auth_epoch FROM personal_browser_jobs b JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id WHERE b.tenant_id=?1 AND b.thread_id=?2 AND r.account_id=?3 AND b.volume_id=?4 AND b.generation=?5 ORDER BY r.sequence DESC LIMIT 1",
-        params![scope.user.tenant.0,scope.thread,scope.user.account.id,scope.owner.volume.to_string(),scope.owner.generation as i64],
-        |r| Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get::<_,i64>(4)?))).optional()?;
+    let row = c.query_row("SELECT b.view,r.user_text,b.human_touched,b.remaining_reads,r.auth_epoch FROM personal_browser_jobs b JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id WHERE b.tenant_id=?1 AND b.thread_id=?2 AND r.account_id=?3 AND b.volume_id=?4 AND b.generation=?5 ORDER BY r.sequence DESC LIMIT 1", params![scope.user.tenant.0, scope.thread, scope.user.account.id, scope.owner.volume.to_string(), scope.owner.generation as i64], |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, i64>(4)?))).optional()?;
     let Some((encoded, original, human_touched, remaining_reads, epoch)) = row else {
         return Ok(None);
     };
@@ -44,7 +42,7 @@ fn current(c: &Connection, scope: &Scope) -> Result<Option<Job>> {
         return Ok(None);
     }
     let view: Workspace = serde_json::from_str(&encoded).map_err(|_| StoreError::Corrupt)?;
-    let guidance=c.prepare("SELECT text FROM run_instructions WHERE tenant_id=?1 AND run_id=?2 AND state!='closed' ORDER BY sequence")?.query_map(params![scope.user.tenant.0,view.run_id],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let guidance = c.prepare("SELECT text FROM run_instructions WHERE tenant_id=?1 AND run_id=?2 AND state!='closed' ORDER BY sequence")?.query_map(params![scope.user.tenant.0, view.run_id], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(Some(Job {
         view,
         original,
@@ -92,30 +90,72 @@ impl Store {
         if text.trim().is_empty() || text.len() > 8192 || url.len() > 2048 || request.is_nil() {
             return Err(StoreError::InvalidInput);
         }
-        self.call(move|db|{
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let previous=current(&tx,&scope)?;
-            let u=&scope.user;
-            let digest=Sha256::digest(serde_json::to_vec(&("browser-v1",&url,&text,wait)).map_err(|_|StoreError::Corrupt)?);
-            if let Some(job)=previous {
-                if job.view.request_id==request.to_string() {
-                    let same:bool=tx.query_row("SELECT payload_digest=?3 FROM chat_runs WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,job.view.run_id,digest.as_slice()],|r|r.get(0))?;
-                    return if same{Ok(Admission::Existing(job))}else{Err(StoreError::Conflict)};
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let previous = current(&tx, &scope)?;
+            let u = &scope.user;
+            let digest = Sha256::digest(serde_json::to_vec(&("browser-v1", &url, &text, wait)).map_err(|_| StoreError::Corrupt)?);
+            if let Some(job) = previous {
+                if job.view.request_id == request.to_string() {
+                    let same: bool = tx.query_row("SELECT payload_digest=?3 FROM chat_runs WHERE tenant_id=?1 AND id=?2", params![u.tenant.0, job.view.run_id, digest.as_slice()], |r| r.get(0))?;
+                    return if same {
+                        Ok(Admission::Existing(job))
+                    } else {
+                        Err(StoreError::Conflict)
+                    };
                 }
-                if !matches!(job.view.state.as_str(),"closed"|"outcome_unknown"){return Err(StoreError::Conflict);}
+                if !matches!(job.view.state.as_str(), "closed" | "outcome_unknown") {
+                    return Err(StoreError::Conflict);
+                }
             }
-            let run_id=Uuid::new_v4().to_string();
-            let model=ModelChoice{ source:Default::default(),provider_name:"Browser observation".into(),provider_id:"personal-browser".into(),provider_revision:1,kind:ProviderKind::Compatible,model:"browser-read".into(),effort:None,verified_at:0,function_tools:false };
-            let view=Workspace{id:Uuid::new_v4().to_string(),run_id:run_id.clone(),thread_id:scope.thread.clone(),request_id:request.to_string(),state:"starting".into(),revision:1,url,title:String::new(),tabs:vec![],active_tab_id:None,links:vec![],reason:None};
-            let sequence:i64=tx.query_row("UPDATE threads SET chat_turn_seq=chat_turn_seq+1,updated_at=unixepoch() WHERE tenant_id=?1 AND id=?2 RETURNING chat_turn_seq",params![u.tenant.0,scope.thread],|r|r.get(0))?;
-            let order=chat::next_order(&tx)?;
-            tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'running',1,unixepoch(),?12)",params![u.tenant.0,run_id,u.account.id,scope.thread,request.to_string(),digest.as_slice(),sequence,text,serde_json::to_string(&model).map_err(|_|StoreError::Corrupt)?,u.digest.as_slice(),u.epoch,order])?;
-            tx.execute("INSERT INTO personal_browser_jobs(tenant_id,run_id,thread_id,volume_id,generation,view,pending,remaining_reads) VALUES(?1,?2,?3,?4,?5,?6,?7,5)",params![u.tenant.0,run_id,scope.thread,scope.owner.volume.to_string(),scope.owner.generation as i64,serde_json::to_string(&view).map_err(|_|StoreError::Corrupt)?,request.to_string()])?;
-            let run=chat::load_run(&tx,&u.tenant.0,&run_id)?;
-            chat::emit(&tx,&run,ChatChange::Turn{turn:chat::turn(&tx,&run)?})?;
+            let run_id = Uuid::new_v4().to_string();
+            let model = ModelChoice {
+                source: Default::default(),
+                provider_name: "Browser observation".into(),
+                provider_id: "personal-browser".into(),
+                provider_revision: 1,
+                kind: ProviderKind::Compatible,
+                model: "browser-read".into(),
+                effort: None,
+                verified_at: 0,
+                function_tools: false,
+            };
+            let view = Workspace {
+                id: Uuid::new_v4().to_string(),
+                run_id: run_id.clone(),
+                thread_id: scope.thread.clone(),
+                request_id: request.to_string(),
+                state: "starting".into(),
+                revision: 1,
+                url,
+                title: String::new(),
+                tabs: vec![],
+                active_tab_id: None,
+                links: vec![],
+                reason: None,
+            };
+            let sequence: i64 = tx.query_row("UPDATE threads SET chat_turn_seq=chat_turn_seq+1,updated_at=unixepoch() WHERE tenant_id=?1 AND id=?2 RETURNING chat_turn_seq", params![u.tenant.0, scope.thread], |r| r.get(0))?;
+            let order = chat::next_order(&tx)?;
+            tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'running',1,unixepoch(),?12)", params![u.tenant.0, run_id, u.account.id, scope.thread, request.to_string(), digest.as_slice(), sequence, text, serde_json::to_string(&model).map_err(|_| StoreError::Corrupt)?, u.digest.as_slice(), u.epoch, order])?;
+            tx.execute("INSERT INTO personal_browser_jobs(tenant_id,run_id,thread_id,volume_id,generation,view,pending,remaining_reads) VALUES(?1,?2,?3,?4,?5,?6,?7,5)", params![u.tenant.0, run_id, scope.thread, scope.owner.volume.to_string(), scope.owner.generation as i64, serde_json::to_string(&view).map_err(|_| StoreError::Corrupt)?, request.to_string()])?;
+            let run = chat::load_run(&tx, &u.tenant.0, &run_id)?;
+            chat::emit(
+                &tx,
+                &run,
+                ChatChange::Turn {
+                    turn: chat::turn(&tx, &run)?,
+                },
+            )?;
             tx.commit()?;
-            Ok(Admission::Fresh(Job{view,original:text,guidance:vec![],human_touched:false,remaining_reads:5}))
-        }).await
+            Ok(Admission::Fresh(Job {
+                view,
+                original: text,
+                guidance: vec![],
+                human_touched: false,
+                remaining_reads: 5,
+            }))
+        })
+        .await
     }
     pub async fn personal_browser_guide(
         &self,
@@ -127,21 +167,30 @@ impl Store {
         if text.trim().is_empty() || text.len() > 2000 || request.is_nil() {
             return Err(StoreError::InvalidInput);
         }
-        self.call(move|db|{
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let job=current(&tx,&scope)?.ok_or(StoreError::NotFound)?;
-            if job.view.id!=id{return Err(StoreError::Conflict);}
-            let tenant=&scope.user.tenant.0;
-            let run=chat::load_run(&tx,tenant,&job.view.run_id)?;
-            if let Some(old)=crate::run_instructions::receipts(&tx,&run)?.into_iter().find(|r|r.request_id==request.to_string()) {
-                return if old.text==text{Ok(job)}else{Err(StoreError::Conflict)};
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let job = current(&tx, &scope)?.ok_or(StoreError::NotFound)?;
+            if job.view.id != id {
+                return Err(StoreError::Conflict);
             }
-            if !matches!(job.view.state.as_str(),"starting"|"reading"|"ready"|"user_control")||!run.state.active()||job.guidance.len()>=8{return Err(StoreError::Conflict);}
-            tx.execute("INSERT INTO run_instructions(tenant_id,run_id,request_id,attempt,execution_attempt,sequence,text,state,session_digest,auth_epoch) VALUES(?1,?2,?3,1,1,?4,?5,'received',?6,?7)",params![tenant,run.id,request.to_string(),job.guidance.len() as i64+1,text,scope.user.digest.as_slice(),scope.user.epoch])?;
-            let updated=current(&tx,&scope)?.ok_or(StoreError::NotFound)?;
+            let tenant = &scope.user.tenant.0;
+            let run = chat::load_run(&tx, tenant, &job.view.run_id)?;
+            if let Some(old) = crate::run_instructions::receipts(&tx, &run)?.into_iter().find(|r| r.request_id == request.to_string()) {
+                return if old.text == text {
+                    Ok(job)
+                } else {
+                    Err(StoreError::Conflict)
+                };
+            }
+            if !matches!(job.view.state.as_str(), "starting" | "reading" | "ready" | "user_control") || !run.state.active() || job.guidance.len() >= 8 {
+                return Err(StoreError::Conflict);
+            }
+            tx.execute("INSERT INTO run_instructions(tenant_id,run_id,request_id,attempt,execution_attempt,sequence,text,state,session_digest,auth_epoch) VALUES(?1,?2,?3,1,1,?4,?5,'received',?6,?7)", params![tenant, run.id, request.to_string(), job.guidance.len() as i64 + 1, text, scope.user.digest.as_slice(), scope.user.epoch])?;
+            let updated = current(&tx, &scope)?.ok_or(StoreError::NotFound)?;
             tx.commit()?;
             Ok(updated)
-        }).await
+        })
+        .await
     }
     pub async fn personal_browser_reserve(
         &self,
@@ -150,54 +199,78 @@ impl Store {
         op: &'static str,
         token: Option<String>,
     ) -> Result<Admission> {
-        self.call(move|db|{
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let mut job=current(&tx,&scope)?.ok_or(StoreError::NotFound)?;
-            if job.view.id!=version.workspace_id || version.request_id.is_nil(){return Err(StoreError::Conflict);}
-            let tenant=&scope.user.tenant.0; let run=&job.view.run_id;
-            let id=version.request_id.to_string();
-            let previous:Option<String>=tx.query_row("SELECT operation FROM personal_browser_actions WHERE tenant_id=?1 AND run_id=?2 AND request_id=?3",params![tenant,run,id],|r|r.get(0)).optional()?;
-            if let Some(old)=previous{
-                return if old==op && matches!(op,"resume"|"close"){Ok(Admission::Existing(job))}else{Err(StoreError::Conflict)};
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut job = current(&tx, &scope)?.ok_or(StoreError::NotFound)?;
+            if job.view.id != version.workspace_id || version.request_id.is_nil() {
+                return Err(StoreError::Conflict);
             }
-            if job.view.revision!=version.revision{return Err(StoreError::Conflict);}
-            let (pending,count):(Option<String>,i64)=tx.query_row("SELECT pending,(SELECT count(*) FROM personal_browser_actions a WHERE a.tenant_id=b.tenant_id AND a.run_id=b.run_id) FROM personal_browser_jobs b WHERE tenant_id=?1 AND run_id=?2",params![tenant,run],|r|Ok((r.get(0)?,r.get(1)?)))?;
-            if pending.is_some()||count>=4096&&op!="close"{return Err(StoreError::Conflict);}
-            let valid=match op {
-                "takeover"=>matches!(job.view.state.as_str(),"ready"|"completed"|"user_control"),
-                "input"|"resume"|"switch"|"close_tab"=>job.view.state=="user_control",
-                "follow"=>!job.human_touched && matches!(job.view.state.as_str(),"ready"|"completed"),
-                "close"=>job.view.state!="closed",
-                _=>false,
+            let tenant = &scope.user.tenant.0;
+            let run = &job.view.run_id;
+            let id = version.request_id.to_string();
+            let previous: Option<String> = tx.query_row("SELECT operation FROM personal_browser_actions WHERE tenant_id=?1 AND run_id=?2 AND request_id=?3", params![tenant, run, id], |r| r.get(0)).optional()?;
+            if let Some(old) = previous {
+                return if old == op && matches!(op, "resume" | "close") {
+                    Ok(Admission::Existing(job))
+                } else {
+                    Err(StoreError::Conflict)
+                };
+            }
+            if job.view.revision != version.revision {
+                return Err(StoreError::Conflict);
+            }
+            let (pending, count): (Option<String>, i64) = tx.query_row("SELECT pending,(SELECT count(*) FROM personal_browser_actions a WHERE a.tenant_id=b.tenant_id AND a.run_id=b.run_id) FROM personal_browser_jobs b WHERE tenant_id=?1 AND run_id=?2", params![tenant, run], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let interruptible = op == "close" || (job.view.state == "reading" && op == "takeover");
+            if pending.is_some() && !interruptible || count >= 4096 && op != "close" {
+                return Err(StoreError::Conflict);
+            }
+            let valid = match op {
+                "takeover" => matches!(job.view.state.as_str(), "reading" | "ready" | "completed" | "user_control"),
+                "input" | "resume" | "switch" | "close_tab" => job.view.state == "user_control",
+                "follow" => !job.human_touched && matches!(job.view.state.as_str(), "ready" | "completed"),
+                "close" => !matches!(job.view.state.as_str(), "closed" | "stopping"),
+                _ => false,
             };
-            if !valid{return Err(StoreError::Conflict);}
-            if matches!(op,"input"|"resume"|"switch"|"close_tab"){
-                let secret=token.as_deref().ok_or(StoreError::Forbidden)?;
-                let ok:bool=tx.query_row("SELECT coalesce(controller_digest=?3 AND controller_session=?4 AND controller_until>unixepoch(),0) FROM personal_browser_jobs WHERE tenant_id=?1 AND run_id=?2",params![tenant,run,Sha256::digest(secret.as_bytes()).as_slice(),scope.user.digest.as_slice()],|r|r.get(0))?;
-                if !ok{return Err(StoreError::Forbidden);}
+            if !valid {
+                return Err(StoreError::Conflict);
             }
-            if matches!(op,"resume"|"follow"){
-                if job.remaining_reads<=0 {return Err(StoreError::BudgetExhausted);}
-                tx.execute("UPDATE personal_browser_jobs SET remaining_reads=remaining_reads-1 WHERE tenant_id=?1 AND run_id=?2",params![tenant,run])?;
-                job.remaining_reads-=1;
-                job.view.state="resuming".into();
+            if matches!(op, "input" | "resume" | "switch" | "close_tab") {
+                let secret = token.as_deref().ok_or(StoreError::Forbidden)?;
+                let ok: bool = tx.query_row("SELECT coalesce(controller_digest=?3 AND controller_session=?4 AND controller_until>unixepoch(),0) FROM personal_browser_jobs WHERE tenant_id=?1 AND run_id=?2", params![tenant, run, Sha256::digest(secret.as_bytes()).as_slice(), scope.user.digest.as_slice()], |r| r.get(0))?;
+                if !ok {
+                    return Err(StoreError::Forbidden);
+                }
             }
-            if op=="takeover"{
-                let new_token=token.as_deref().ok_or(StoreError::InvalidInput)?;
-                tx.execute("UPDATE personal_browser_jobs SET human_touched=1,controller_digest=?3,controller_session=?4,controller_until=unixepoch()+600 WHERE tenant_id=?1 AND run_id=?2",params![tenant,run,Sha256::digest(new_token.as_bytes()).as_slice(),scope.user.digest.as_slice()])?;
-                job.view.state="user_control".into();
+            if matches!(op, "resume" | "follow") {
+                if job.remaining_reads <= 0 {
+                    return Err(StoreError::BudgetExhausted);
+                }
+                tx.execute("UPDATE personal_browser_jobs SET remaining_reads=remaining_reads-1 WHERE tenant_id=?1 AND run_id=?2", params![tenant, run])?;
+                job.remaining_reads -= 1;
+                job.view.state = "resuming".into();
+            }
+            if op == "close" {
+                job.view.state = "stopping".into();
+            }
+            if op == "takeover" {
+                let new_token = token.as_deref().ok_or(StoreError::InvalidInput)?;
+                tx.execute("UPDATE personal_browser_jobs SET human_touched=1,controller_digest=?3,controller_session=?4,controller_until=unixepoch()+600 WHERE tenant_id=?1 AND run_id=?2", params![tenant, run, Sha256::digest(new_token.as_bytes()).as_slice(), scope.user.digest.as_slice()])?;
+                job.view.state = "user_control".into();
                 job.view.links.clear();
-                job.human_touched=true;
-                let loaded=chat::load_run(&tx,tenant,run)?;
-                if !loaded.state.active(){chat::transition(&tx,&loaded,RunState::Running,None)?;}
+                job.human_touched = true;
+                let loaded = chat::load_run(&tx, tenant, run)?;
+                if !loaded.state.active() {
+                    chat::transition(&tx, &loaded, RunState::Running, None)?;
+                }
             }
-            tx.execute("INSERT INTO personal_browser_actions VALUES(?1,?2,?3,?4)",params![tenant,run,id,op])?;
-            tx.execute("UPDATE personal_browser_jobs SET pending=?3 WHERE tenant_id=?1 AND run_id=?2",params![tenant,run,(op!="takeover").then_some(id)])?;
-            job.view.revision+=1;
-            save(&tx,&scope,&job.view)?;
+            tx.execute("INSERT INTO personal_browser_actions VALUES(?1,?2,?3,?4)", params![tenant, run, id, op])?;
+            tx.execute("UPDATE personal_browser_jobs SET pending=?3 WHERE tenant_id=?1 AND run_id=?2", params![tenant, run, (op != "takeover").then_some(id)])?;
+            job.view.revision += 1;
+            save(&tx, &scope, &job.view)?;
             tx.commit()?;
             Ok(Admission::Fresh(job))
-        }).await
+        })
+        .await
     }
     /// An observation and the corresponding chat answer commit together, conditioned on the same dispatch.
     pub async fn personal_browser_finish(
@@ -208,44 +281,105 @@ impl Store {
         answer: Option<String>,
         applied: usize,
     ) -> Result<Workspace> {
-        self.call(move|db|{
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let current=current(&tx,&scope)?.ok_or(StoreError::NotFound)?;
-            if current.view.id!=view.id||current.view.revision!=view.revision{return Err(StoreError::Conflict);}
-            let tenant=&scope.user.tenant.0;
-            if tx.execute("UPDATE personal_browser_jobs SET pending=NULL WHERE tenant_id=?1 AND run_id=?2 AND pending=?3",params![tenant,view.run_id,request.to_string()])?!=1{return Err(StoreError::Conflict);}
-            let run=chat::load_run(&tx,tenant,&view.run_id)?;
-            let mut view=view;
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let current = current(&tx, &scope)?.ok_or(StoreError::NotFound)?;
+            if current.view.id != view.id || current.view.revision != view.revision {
+                return Err(StoreError::Conflict);
+            }
+            let tenant = &scope.user.tenant.0;
+            if tx.execute("UPDATE personal_browser_jobs SET pending=NULL WHERE tenant_id=?1 AND run_id=?2 AND pending=?3", params![tenant, view.run_id, request.to_string()])? != 1 {
+                return Err(StoreError::Conflict);
+            }
+            let run = chat::load_run(&tx, tenant, &view.run_id)?;
+            let mut view = view;
             // Instructions arriving after the model request need another explicit read.
-            let complete=view.state=="completed" && current.guidance.len()==applied;
-            if view.state=="completed" && !complete {
-                view.state="ready".into();view.reason=Some("new_guidance".into());
+            let complete = view.state == "completed" && current.guidance.len() == applied;
+            if view.state == "completed" && !complete {
+                view.state = "ready".into();
+                view.reason = Some("new_guidance".into());
             }
-            if let Some(answer)=answer{
-                let item=if complete{"browser-answer"}else{"browser-observation"};
+            if let Some(answer) = answer {
+                let item = if complete {
+                    "browser-answer"
+                } else {
+                    "browser-observation"
+                };
                 // The selected page replaces the prior draft/answer of this same job.
-                tx.execute("DELETE FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item IN('browser-answer','browser-observation')",params![tenant,run.id])?;
-                let mut rest=answer.as_str();
+                tx.execute("DELETE FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item IN('browser-answer','browser-observation')", params![tenant, run.id])?;
+                let mut rest = answer.as_str();
                 while !rest.is_empty() {
-                    let mut end=rest.len().min(8192);
-                    while !rest.is_char_boundary(end){end-=1;}
-                    chat::apply_patches(&tx,&run,vec![chat::OutputPatch::Append{item:item.into(),text:rest[..end].into(),phase:Some(if complete{MessagePhase::FinalAnswer}else{MessagePhase::Commentary}),refusal:false}])?;
-                    rest=&rest[end..];
+                    let mut end = rest.len().min(8192);
+                    while !rest.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    chat::apply_patches(
+                        &tx,
+                        &run,
+                        vec![chat::OutputPatch::Append {
+                            item: item.into(),
+                            text: rest[..end].into(),
+                            phase: Some(if complete {
+                                MessagePhase::FinalAnswer
+                            } else {
+                                MessagePhase::Commentary
+                            }),
+                            refusal: false,
+                        }],
+                    )?;
+                    rest = &rest[end..];
                 }
-                tx.execute("UPDATE run_instructions SET state='applied' WHERE tenant_id=?1 AND run_id=?2 AND sequence<=?3",params![tenant,run.id,applied as i64])?;
+                tx.execute("UPDATE run_instructions SET state='applied' WHERE tenant_id=?1 AND run_id=?2 AND sequence<=?3", params![tenant, run.id, applied as i64])?;
             }
-            let next=match view.state.as_str(){"completed"=>Some((RunState::Completed,None)),"outcome_unknown"=>Some((RunState::OutcomeUnknown,Some(chat::RunFailure::ConnectionFailed))),"closed" if run.state.active()=>Some((RunState::Cancelled,None)),_=>None};
-            if let Some((state,error))=next {chat::transition(&tx,&run,state,error)?;}
-            if view.state!="user_control"{tx.execute("UPDATE personal_browser_jobs SET controller_digest=NULL,controller_session=NULL,controller_until=NULL WHERE tenant_id=?1 AND run_id=?2",params![tenant,run.id])?;}
-            view.revision+=1;
-            save(&tx,&scope,&view)?;
+            let next = match view.state.as_str() {
+                "completed" => Some((RunState::Completed, None)),
+                "outcome_unknown" => Some((RunState::OutcomeUnknown, Some(chat::RunFailure::ConnectionFailed))),
+                "closed" if run.state.active() => Some((RunState::Cancelled, None)),
+                _ => None,
+            };
+            if let Some((state, error)) = next {
+                chat::transition(&tx, &run, state, error)?;
+            }
+            if view.state != "user_control" {
+                tx.execute("UPDATE personal_browser_jobs SET controller_digest=NULL,controller_session=NULL,controller_until=NULL WHERE tenant_id=?1 AND run_id=?2", params![tenant, run.id])?;
+            }
+            view.revision += 1;
+            save(&tx, &scope, &view)?;
             tx.commit()?;
             Ok(view)
-        }).await
+        })
+        .await
     }
 }
 
 impl Store {
+    /// Commit the exact public link and its read budget before asking the broker to follow it.
+    pub async fn personal_browser_follow_observed(
+        &self,
+        scope: Scope,
+        request: Uuid,
+        revision: i64,
+        url: String,
+        guidance_count: usize,
+    ) -> Result<Job> {
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut j = current(&tx, &scope)?.ok_or(StoreError::NotFound)?;
+            if j.view.revision != revision || j.view.state != "reading" || j.human_touched || j.guidance.len() != guidance_count || !j.view.links.iter().any(|l| l.url == url) || j.view.tabs.iter().any(|t| t.url == url) {
+                return Err(StoreError::Conflict);
+            }
+            if tx.execute("UPDATE personal_browser_jobs SET remaining_reads=remaining_reads-1 WHERE tenant_id=?1 AND run_id=?2 AND pending=?3 AND remaining_reads>0 AND human_touched=0", params![scope.user.tenant.0, j.view.run_id, request.to_string()])? != 1 {
+                return Err(StoreError::Conflict);
+            }
+            j.remaining_reads -= 1;
+            j.view.state = "resuming".into();
+            j.view.revision += 1;
+            save(&tx, &scope, &j.view)?;
+            tx.commit()?;
+            Ok(j)
+        })
+        .await
+    }
     /// The first valid frame can be streamed while the pinned model prepares its answer.
     pub async fn personal_browser_publish(
         &self,
@@ -284,21 +418,33 @@ impl Store {
         expected: i64,
         mut view: Workspace,
     ) -> Result<Workspace> {
-        self.call(move|db|{
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let job=current(&tx,&scope)?.ok_or(StoreError::NotFound)?;
-            if job.view.id!=view.id || job.view.revision!=expected{return Ok(job.view);}
-            let (pending,expired):(Option<String>,bool)=tx.query_row("SELECT pending,coalesce(controller_until<=unixepoch(),0) FROM personal_browser_jobs WHERE tenant_id=?1 AND run_id=?2",params![scope.user.tenant.0,view.run_id],|r|Ok((r.get(0)?,r.get(1)?)))?;
-            if pending.is_some(){return Ok(job.view);}
-            if expired && view.state=="user_control"{view.state="ready".into();view.reason=Some("controller_expired".into());}
-            if view.state=="outcome_unknown" && job.view.state!=view.state{
-                let run=chat::load_run(&tx,&scope.user.tenant.0,&view.run_id)?;
-                if run.state.active(){chat::transition(&tx,&run,RunState::OutcomeUnknown,Some(chat::RunFailure::ConnectionFailed))?;}
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let job = current(&tx, &scope)?.ok_or(StoreError::NotFound)?;
+            if job.view.id != view.id || job.view.revision != expected {
+                return Ok(job.view);
             }
-            if view.state!=job.view.state||view.active_tab_id!=job.view.active_tab_id||view.tabs!=job.view.tabs{
-                view.revision+=1;save(&tx,&scope,&view)?;
+            let (pending, expired): (Option<String>, bool) = tx.query_row("SELECT pending,coalesce(controller_until<=unixepoch(),0) FROM personal_browser_jobs WHERE tenant_id=?1 AND run_id=?2", params![scope.user.tenant.0, view.run_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            if pending.is_some() {
+                return Ok(job.view);
             }
-            tx.commit()?;Ok(view)
-        }).await
+            if expired && view.state == "user_control" {
+                view.state = "ready".into();
+                view.reason = Some("controller_expired".into());
+            }
+            if view.state == "outcome_unknown" && job.view.state != view.state {
+                let run = chat::load_run(&tx, &scope.user.tenant.0, &view.run_id)?;
+                if run.state.active() {
+                    chat::transition(&tx, &run, RunState::OutcomeUnknown, Some(chat::RunFailure::ConnectionFailed))?;
+                }
+            }
+            if view.state != job.view.state || view.active_tab_id != job.view.active_tab_id || view.tabs != job.view.tabs {
+                view.revision += 1;
+                save(&tx, &scope, &view)?;
+            }
+            tx.commit()?;
+            Ok(view)
+        })
+        .await
     }
 }

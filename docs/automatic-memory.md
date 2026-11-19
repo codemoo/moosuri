@@ -1,6 +1,6 @@
 # Memories from opted-in source collections
 
-A collection can use a verified shared, personal compatible, Claude subscription or ChatGPT subscription model. Enabling extraction freezes the granting account, collection, provider revision, model and effort. Each source revision uses a single data-only model decision. The service checks the grant before dispatch and before saving quoted facts. Disconnecting or withdrawing the collection invalidates pending work. The 1,024 output tokens reserved per job are an accounting reservation on subscription routes that do not enforce a requested output limit. Usage from the provider is recorded.
+A collection can use a verified shared, personal compatible, Claude subscription or ChatGPT subscription model. Enabling extraction authorizes the granting account, collection and exact connection revision. Within that shared connection, new extraction jobs use the administrator's current tool-verified model and effort. Each source revision uses a single data-only model decision. The service checks the grant before dispatch and before saving quoted facts. Disconnecting or withdrawing the collection invalidates pending work. The 1,024 output tokens reserved per job are an accounting reservation on subscription routes that do not enforce a requested output limit. Usage from the provider is recorded.
 
 
 In `/app/knowledge`, select a connected collection and open **자료에서 기억 만들기**.
@@ -14,8 +14,8 @@ excluded by a separate model decision, whose semantic accuracy remains fallible.
 Turning the setting on applies to newly committed source revisions. It does not
 process old history. Open a particular source and press **이 자료에서 기억 찾기**
 to request that exact current revision. An enabled setting persists logout;
-password/recovery, collection disconnection and provider changes fence old work.
-Re-enabling creates a new policy epoch instead of reviving old jobs. Native tools
+password/recovery, collection disconnection and provider withdrawal fence old work.
+Changing the installation connection or its revision pauses future extraction until the owner explicitly enables it against that connection. Re-enabling creates a new policy epoch. Native tools
 and conversational memory commands do not gain any new authority.
 
 The worker reads complete literal paragraphs with their UTF-8 byte spans, preserving
@@ -40,8 +40,11 @@ to refresh a pending result.
 ## Authority, cost and interruption
 
 An explicit authenticated setting creates a Store-issued background grant tied to
-account epoch, collection identity, policy revision and frozen verified model
-binding. Normal ingestion revisions do not change that policy epoch. Background
+account epoch, collection identity, policy revision and verified connection.
+Each job records the exact model and effort at claim. A change before dispatch
+releases the claim so the job can be measured and admitted under the new choice.
+Already dispatched work settles against its recorded model and continues to require
+valid account, source and connection authority. Normal ingestion revisions do not change the policy epoch. Background
 work does not fabricate a session or act under an administrator's user context.
 It rechecks current authority/source/provider before dispatch and commit. Changes
 to unrelated account knowledge also conservatively fence an acquired job to keep

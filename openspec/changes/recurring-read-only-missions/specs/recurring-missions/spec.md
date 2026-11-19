@@ -2,7 +2,7 @@
 
 ### Requirement: Explicit immutable owner templates
 
-The system SHALL admit a recurring read-only mission only through a current owner-authenticated save. It SHALL pin owner epoch, schedule revision, provider/model/effort and admitted read-only profile, and SHALL NOT manufacture a session or substitute a current default during polling.
+The system SHALL admit a recurring read-only mission only through a current owner-authenticated save. It SHALL pin owner epoch, schedule revision, authorized provider connection revision and admitted read-only profile without manufacturing a session. When a shared installation connection is authorized, each new occurrence SHALL pin the current verified model and effort for that exact connection. Personal connections SHALL remain owner-bound.
 
 #### Scenario: Generic reminder authority cannot become mission authority
 
@@ -13,6 +13,13 @@ The system SHALL admit a recurring read-only mission only through a current owne
 
 - **WHEN** the pinned provider or owner authority is withdrawn
 - **THEN** no new model dispatch SHALL use a replacement binding and current results SHALL retain truthful withdrawal/unknown state.
+
+#### Scenario: The administrator changes the installed model or connection
+
+- **WHEN** a different tool-verified pair is selected on the same authorized connection revision
+- **THEN** new occurrences SHALL use the selected pair and preserve existing occurrence receipts and owner grants.
+- **WHEN** the configured connection revision differs from the authorized one
+- **THEN** the schedule SHALL pause before dispatch until the owner authorizes the installed connection for future occurrences.
 
 ### Requirement: Bounded occurrence-bound admission
 

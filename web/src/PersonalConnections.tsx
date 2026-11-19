@@ -1,23 +1,27 @@
-import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 import { googleReturn, usePersonalGoogle } from "./PersonalGoogle";
 import { WorkspaceIcon } from "./WorkspaceNavigation";
+import gmailMark from "./connector-marks/gmail.png?no-inline";
+import driveMark from "./connector-marks/drive.png?no-inline";
+import calendarMark from "./connector-marks/calendar.png?no-inline";
+import slackMark from "./connector-marks/slack.png?no-inline";
 
 const candidates = [
-  { id: "drive", name: "Google Drive", icon: "drive", description: "드라이브에 있는 파일과 문서를 검색합니다." },
-  { id: "calendar", name: "Google Calendar", icon: "calendar", description: "예정된 일정을 조회하고 새 일정을 추가합니다." },
-  { id: "slack", name: "Slack", icon: "slack", description: "워크스페이스의 채널과 메시지를 검색합니다." },
+  { id: "drive", name: "Google Drive", mark: driveMark, description: "드라이브에 있는 파일과 문서를 검색합니다." },
+  { id: "calendar", name: "Google Calendar", mark: calendarMark, description: "예정된 일정을 조회하고 새 일정을 추가합니다." },
+  { id: "slack", name: "Slack", mark: slackMark, description: "워크스페이스의 채널과 메시지를 검색합니다." },
 ] as const;
 
 type Connector = {
   id: string;
   name: string;
-  icon: ComponentProps<typeof WorkspaceIcon>["name"];
+  mark?: string;
   description?: string;
 };
-const gmail: Connector = { id: "gmail", name: "Gmail", icon: "mail" };
-const vault: Connector = { id: "vault", name: "볼트", icon: "vault" };
+const gmail: Connector = { id: "gmail", name: "Gmail", mark: gmailMark };
+const vault: Connector = { id: "vault", name: "볼트" };
 const connectors: readonly Connector[] = [gmail, vault, ...candidates];
 
 export function PersonalConnections({
@@ -47,7 +51,7 @@ export function PersonalConnections({
     return (
       <li key={connector.id}>
         <button className="member-library-row member-connector-row" data-candidate={!!connector.description || undefined} onClick={() => setSelected(connector)}>
-          <span className="member-library-well" data-icon={connector.icon}><WorkspaceIcon name={connector.icon} /></span>
+          <ConnectorMark mark={connector.mark} />
           <span className="member-library-row-copy">
             <strong>{connector.name}</strong>
             {description && <span>{description}</span>}
@@ -74,7 +78,7 @@ export function PersonalConnections({
           if (selected && !props.readIntent) setSelected(null);
           else onBack();
         }}><WorkspaceIcon name="back" /></button>
-        <h1>{selected?.name ?? "연결된 서비스"}</h1>
+        <h1>{selected?.name ?? "커넥터"}</h1>
       </header>
       {selected ? (
         selected.id === gmail.id ? (
@@ -107,7 +111,15 @@ export function PersonalConnections({
           <>
             <ConnectorDetail connector={vault} status={vaultLabel} busy={vaultStatus.status === "checking"}>
               {vaultStatus.status === "setup_required" && <span>설치 관리자가 볼트에 회원 인증을 연결해야 합니다.</span>}
+              {vaultStatus.siteOrigin && <span>독립 볼트에서는 별도로 로그인합니다.</span>}
             </ConnectorDetail>
+            {vaultStatus.siteOrigin && (
+              <div className="member-connector-actions">
+                <a className="member-page-action" href={vaultStatus.siteOrigin} target="_blank" rel="noopener noreferrer">
+                  독립 볼트 열기
+                </a>
+              </div>
+            )}
             {vaultStatus.status === "error" && (
               <div className="member-connector-actions">
                 <button className="member-page-action" onClick={vaultStatus.retry}>다시 확인</button>
@@ -125,7 +137,7 @@ export function PersonalConnections({
           <label className="member-library-filter">
             <WorkspaceIcon name="search" />
             <input type="search" value={query} onChange={(event) => setQuery(event.target.value)}
-              placeholder="서비스 검색" aria-label="서비스 검색" />
+              placeholder="커넥터 검색" aria-label="커넥터 검색" />
           </label>
           <div className="member-connection-switch" role="group" aria-label="서비스 목록">
             <button aria-pressed={view === "available"} onClick={() => setView("available")}>사용 가능</button>
@@ -153,12 +165,20 @@ export function PersonalConnections({
   );
 }
 
+function ConnectorMark({ mark }: { mark?: string }) {
+  return (
+    <span className="member-library-well" aria-hidden="true">
+      {mark ? <img src={mark} alt="" /> : <WorkspaceIcon name="vault" />}
+    </span>
+  );
+}
+
 function ConnectorDetail({
   connector, status, busy, children,
 }: { connector: Connector; status: string; busy?: boolean; children?: ReactNode }) {
   return <section className="member-page-list member-library-list" aria-label={connector.name} aria-busy={busy}>
     <div className="member-library-row">
-      <span className="member-library-well" data-icon={connector.icon}><WorkspaceIcon name={connector.icon} /></span>
+      <ConnectorMark mark={connector.mark} />
       <div className="member-library-row-copy">
         <strong>{connector.name}</strong>
         <span role="status">{status}</span>
@@ -168,23 +188,41 @@ function ConnectorDetail({
   </section>;
 }
 
+function separateHttpsOrigin(value: unknown) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value && url.origin !== location.origin
+      ? url.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+type VaultConnectionState =
+  | { status: "checking" | "error"; siteOrigin?: never }
+  | { status: "setup_required"; siteOrigin: string | null };
+
 function useVaultConnection(account: string, expired: () => void) {
   const scope = useScope(account, "personal-vault");
-  const [status, setStatus] = useState<"checking" | "setup_required" | "error">("checking");
+  const [connection, setConnection] = useState<VaultConnectionState>({ status: "checking" });
   async function refresh() {
-    setStatus("checking");
+    setConnection({ status: "checking" });
     try {
-      const { state } = await scope.request<{ state: string }>("/personal/vault");
-      setStatus(state === "setup_required" ? state : "error");
+      const { state, site_origin } = await scope.request<{ state: string; site_origin?: unknown }>("/personal/vault");
+      setConnection(state === "setup_required"
+        ? { status: state, siteOrigin: separateHttpsOrigin(site_origin) }
+        : { status: "error" });
     } catch (error) {
       if (isAborted(error)) return;
       if (error instanceof ApiFailure && error.status === 401) expired();
-      else setStatus("error");
+      else setConnection({ status: "error" });
     }
   }
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 0);
     return () => clearTimeout(timer);
   }, [scope, expired]);
-  return { status, retry: () => void refresh() };
+  return { ...connection, retry: () => void refresh() };
 }

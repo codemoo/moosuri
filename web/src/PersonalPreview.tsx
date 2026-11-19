@@ -871,7 +871,7 @@ function Workspace({
   const thread = threads.find((item) => item.id === selected);
   const heading = view === "chat" ? thread?.title ?? "새 대화"
     : view === "memory" ? "기억"
-    : view === "connections" ? "연결된 서비스"
+    : view === "connections" ? "커넥터"
     : "관리";
   return (
     <PersonalWorkspaceChrome view={view} title={heading} admin={admin} threads={threads}

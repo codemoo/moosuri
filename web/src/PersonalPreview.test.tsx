@@ -26,6 +26,7 @@ let current: (ReturnType<typeof session> & { installation_admin?: boolean }) | n
 let mailReads: ThreadGoogleRead[];
 let connectedMailbox: string | null;
 let vaultUnreachable: boolean;
+let vaultOrigin: string | undefined;
 let mailFailure: boolean,
   mailHang: boolean,
   readHang: boolean,
@@ -74,6 +75,7 @@ beforeEach(() => {
   mailReads = [];
   connectedMailbox = "mailbox@example.test";
   vaultUnreachable = false;
+  vaultOrigin = undefined;
   mailFailure = false;
   mailHang = false;
   readHang = false;
@@ -136,7 +138,7 @@ beforeEach(() => {
       if (path === "/personal/vault") {
         return vaultUnreachable
           ? Response.json({ code: "unavailable" }, { status: 503 })
-          : Response.json({ state: "setup_required" });
+          : Response.json({ state: "setup_required", site_origin: vaultOrigin });
       }
       if (path === "/personal/google/complete")
         return Response.json({
@@ -652,7 +654,7 @@ it("shows actual service connections and disconnects Gmail without reading mail"
   expect(screen.queryByRole("button", { name: "메일" })).not.toBeInTheDocument();
   await user.click(nav);
   expect(nav).toHaveAttribute("aria-current", "page");
-  await screen.findByRole("heading", { name: "연결된 서비스" });
+  await screen.findByRole("heading", { name: "커넥터" });
   expect(screen.getByRole("button", { name: "사용 가능" })).toHaveAttribute("aria-pressed", "true");
   await user.click(screen.getByRole("button", { name: "연결됨" }));
   expect(screen.queryByRole("button", { name: /볼트/ })).not.toBeInTheDocument();
@@ -698,11 +700,39 @@ it("distinguishes unavailable vault status from confirmed setup requirements", a
   expect(vault.queryByRole("button")).not.toBeInTheDocument();
 });
 
+it("opens the configured independent HTTPS vault while keeping member setup status", async () => {
+  vaultOrigin = "https://vault.example.test";
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "연결" }));
+  await user.click(screen.getByRole("button", { name: /볼트/ }));
+  await screen.findByText("회원 인증 연결 필요");
+  const link = screen.getByRole("link", { name: "독립 볼트 열기" });
+  expect(link).toHaveAttribute("href", "https://vault.example.test");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  expect(screen.getByText("독립 볼트에서는 별도로 로그인합니다.")).toBeInTheDocument();
+});
+
+it.each([
+  "vault.example.test", "http://vault.example.test", location.origin,
+  "https://user:password@vault.example.test", "https://vault.example.test/account",
+  "https://vault.example.test?user=test", "https://vault.example.test#signin",
+])("does not link to an unsafe vault origin (%s)", async (origin) => {
+  vaultOrigin = origin;
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "연결" }));
+  await user.click(screen.getByRole("button", { name: /볼트/ }));
+  await screen.findByText("회원 인증 연결 필요");
+  expect(screen.queryByRole("link", { name: "독립 볼트 열기" })).not.toBeInTheDocument();
+});
+
 it("searches candidate services and returns to the filtered list from details", async () => {
   const user = userEvent.setup();
   mount();
   await user.click(await screen.findByRole("button", { name: "연결" }));
-  const search = screen.getByRole("searchbox", { name: "서비스 검색" });
+  const search = screen.getByRole("searchbox", { name: "커넥터 검색" });
   await user.type(search, "unknown");
   await screen.findByText("검색어와 일치하는 서비스가 없습니다.");
   await user.clear(search);
@@ -712,7 +742,7 @@ it("searches candidate services and returns to the filtered list from details", 
   expect(screen.getByRole("heading", { name: "Slack" })).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Slack" })).toHaveTextContent("도입 후보");
   await user.click(screen.getByRole("button", { name: "뒤로" }));
-  expect(screen.getByRole("searchbox", { name: "서비스 검색" })).toHaveValue("slack");
+  expect(screen.getByRole("searchbox", { name: "커넥터 검색" })).toHaveValue("slack");
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   expect(await composer()).toBeInTheDocument();
 });

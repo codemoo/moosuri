@@ -19,6 +19,8 @@
 
 Muse의 데스크톱 화면(1440×900)에서 72px 탐색 레일, 중앙에 가까운 탐색 항목, 아래쪽 768×58px 한 줄 입력창을 확인했다. 모바일(390×844)은 좌우 12px 여백에서 한 줄 입력을 유지했다. 무수리는 Astryx의 `AppShell`, `TopNav`, `SideNav`, `SideNavItem`, `Dialog`, `ChatComposer`로 이 배치를 구현했다. 모바일은 왼쪽 위의 무수리 아이콘에서 탐색·이전 대화·설정을 열고, 아래쪽에는 입력창을 둔다. 입력창의 본문 슬롯에서 한국어 조합 입력과 계정별 초안 저장을 처리한다. [Muse](https://muse.ai/) · [Astryx v0.7.16](https://github.com/meta/astryx/tree/v0.7.16)
 
+회원별 Kiri 배포에서 공개 주소는 `web/personal.html`을 제공한다. 이 진입점과 기존 웹 진입점은 같은 Astryx Neutral 테마, Pretendard 글꼴, 무수리 색상, 뷰포트 처리를 사용한다. Kiri 화면의 내비게이션과 입력창에는 개인 서비스에서 실행할 수 있는 동작만 표시한다.
+
 ## 아이콘
 
 2026-11-18 ImageGen으로 접힌 옷깃을 추상화했다. Muse 파비콘의 간결한 윤곽과 Pickle의 작고 둥근 브랜드 형태를 참고했다. 그림에는 넓은 청록 띠 두 줄과 안쪽으로 접히는 선 하나만 들어간다. [Muse 파비콘](https://muse.ai/favicon.ico) · [Pickle 앱 소개](https://pickle.com/og/main_thumbnail_agent.jpg)

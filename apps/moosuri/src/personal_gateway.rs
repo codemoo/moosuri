@@ -988,7 +988,10 @@ async fn public_shell(
         "/" | "/preview" | "/app" | "/login" | "/personal.html"
     ) {
         "/personal.html"
-    } else if matches!(path, "/moosuri-icon-192.png" | "/moosuri-icon-512.png") {
+    } else if matches!(
+        path,
+        "/moosuri-icon-192.png" | "/moosuri-icon-512.png" | "/personal.webmanifest"
+    ) {
         path
     } else if path.strip_prefix("/assets/").is_some_and(|name| {
         !name.is_empty()
@@ -2499,7 +2502,25 @@ mod tests {
             .await
             .unwrap();
         let html = std::str::from_utf8(&bytes).unwrap();
-        assert!(html.contains("텍스트 미리보기"));
+        assert!(html.contains("<title>Moosuri</title>"));
+        assert!(html.contains("href=\"/personal.webmanifest\""));
+        let manifest = request(
+            &gateway,
+            "/personal.webmanifest",
+            Method::GET,
+            h.clone(),
+            "",
+        )
+        .await;
+        assert_eq!(manifest.status(), StatusCode::OK);
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(manifest.into_body(), 8192)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest["start_url"], "/app");
+        assert!(manifest.get("share_target").is_none());
         let script = html
             .split("src=\"")
             .nth(1)

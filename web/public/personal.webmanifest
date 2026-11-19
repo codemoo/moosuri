@@ -1,0 +1,26 @@
+{
+  "id": "/app",
+  "name": "Moosuri",
+  "short_name": "Moosuri",
+  "description": "나와 가족을 위한 개인 비서",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#151515",
+  "theme_color": "#151515",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "/moosuri-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/moosuri-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

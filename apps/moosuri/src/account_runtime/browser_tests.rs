@@ -221,7 +221,10 @@ fn model_fixture(
                 assert!(!context.contains("CANARY"));
                 let answer = if context.contains("Find platform details") {
                     if r["ordinal"] == 0 {
-                        assert!(context.contains("Timetable details"));
+                        assert_eq!(
+                            serde_json::from_str::<Value>(context).unwrap()["public_links"],
+                            json!([{"index":0,"title":"Timetable details"}])
+                        );
                         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                         json!({"answer":"Check the time and platform on its details page.","needs_user":false,"follow_index":0})
                     } else {
@@ -241,7 +244,7 @@ fn model_fixture(
                             && !context.contains("insert_text")
                     );
                     let data: Value = serde_json::from_str(context).unwrap();
-                    assert_eq!(data["public_link_titles"], json!([]));
+                    assert_eq!(data["public_links"], json!([]));
                     json!({"answer":"The morning bus leaves at 08:15.","needs_user":false,"follow_index":0})
                 };
                 json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":rev,"model":"fixture","effort":null,"outcome":"completed","output":answer.to_string(),"receipt":{"state":"settled","input_tokens":90,"output_tokens":12,"charged_tokens":102}})

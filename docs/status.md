@@ -1,6 +1,8 @@
 # 현재 상태
 
-2026-11-19. 운영 Linux는 **dev.30 · SQLite schema 81**이다. 회원별 Kiri 런타임은 별도 설치에서 시험하는 소스 개발판이다. 운영 계정 절체는 [OpenSpec 작업표](../openspec/changes/isolate-account-runtime/tasks.md)에서 추적한다.
+2026-11-19. 운영 Linux의 공개 HTTPS를 **Kiri 0.2.1 회원별 런타임**으로 전환했다. 운영자가 데이터 초기화를 선택하여 새 개인 볼륨과 관리자 계정으로 시작했다. 기존 dev.30 중앙 서비스는 중지하고 자동 기동을 해제했다. 이전 데이터를 유지하며 절체하는 작업은 [OpenSpec 작업표](../openspec/changes/isolate-account-runtime/tasks.md)에서 추적한다.
+
+공개 주소에서 관리자 로그인과 로컬 Qwen3-4B-Instruct-2507의 산술 응답을 확인했다. 검증 대화를 삭제한 뒤 대화 목록은 비어 있었다. Gmail은 회원별 릴레이와 실행 파일을 배포했으며, 운영 Google 웹 OAuth 클라이언트 등록과 첫 회원 동의가 남아 있다. [회원별 Gmail 등록](../deployment/kiri/google.md)
 
 ## 회원별 Kiri 개발판
 

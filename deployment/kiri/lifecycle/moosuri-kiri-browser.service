@@ -1,0 +1,21 @@
+[Unit]
+Description=Moosuri member browser relay
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+StateDirectory=moosuri-kiri-browser
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/moosuri runtime-browser-relay --registry /var/lib/moosuri-control/registry --lifecycle-config /etc/moosuri/kiri-members.json --socket-dir /var/lib/moosuri-kiri-browser --capsule-config /etc/moosuri/browser.json
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=90
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

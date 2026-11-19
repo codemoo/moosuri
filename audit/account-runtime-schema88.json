@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "schema": 88,
+  "base_schema": 87,
+  "migrations": [
+    {
+      "name": "0088_personal_browser_jobs.sql",
+      "sha256": "7f795ef077ef29936e9e1bc0022d2a5b6122a64c987b621788f3b38c2437cb74"
+    }
+  ],
+  "tables": [
+    {
+      "name": "personal_browser_jobs",
+      "kind": "table",
+      "sql_sha256": "7cd3f3b36c895ac7267670b43e7a076ec9b6d9b636568b0ac6abb3fc694f7560",
+      "scope": "personal",
+      "owner_query": "SELECT b.rowid AS rid,r.account_id,b.tenant_id FROM personal_browser_jobs b JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id AND r.thread_id=b.thread_id",
+      "key_transition": "Fence browser work and revoke live control on restore. Never reissue controller handles or replay an uncertain input.",
+      "verification": "Reconcile every row to its conversation and exact owning chat run. A retained view is not a live Chromium session.",
+      "on_failure": "Stop extraction and quarantine ambiguous browser ownership.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "thread_id",
+        "volume_id",
+        "generation",
+        "view",
+        "human_touched",
+        "controller_digest",
+        "controller_session",
+        "controller_until",
+        "pending",
+        "remaining_reads"
+      ]
+    },
+    {
+      "name": "personal_browser_actions",
+      "kind": "table",
+      "sql_sha256": "395d46a0e03d45d49ed0c57ba22f67be1e610c97ea9027c2923107e9ab41b450",
+      "scope": "personal",
+      "owner_query": "SELECT a.rowid AS rid,r.account_id,a.tenant_id FROM personal_browser_actions a JOIN personal_browser_jobs b ON b.tenant_id=a.tenant_id AND b.run_id=a.run_id JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id AND r.thread_id=b.thread_id",
+      "key_transition": "Fence browser work and revoke live control on restore. Never reissue controller handles or replay an uncertain input.",
+      "verification": "Reconcile every row to its conversation and exact owning chat run. A retained view is not a live Chromium session.",
+      "on_failure": "Stop extraction and quarantine ambiguous browser ownership.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "request_id",
+        "operation"
+      ]
+    }
+  ],
+  "schema_sha256": "63c0dfb8efa2dc6559639e1a805b5bf08fd48b263604208c9dcc73d73bedb17e"
+}

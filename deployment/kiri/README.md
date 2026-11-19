@@ -85,6 +85,8 @@ Linux Kiri 안의 두 실제 클라이언트에서 무수리 Rust 모델 서비�
 
 ## 회원별 Google Workspace 연결
 
+채팅에서 공유 화면을 보고 직접 조작하는 방법과 Linux 릴레이 구성은 [회원 작업 브라우저](browser.md)를 따른다.
+
 개인 컨테이너에 Google 웹 클라이언트를 등록하고, 회원이 서비스별로 동의하면 그 컨테이너의 GWS에서 Gmail·Drive·Docs·Slides·Sheets를 사용한다. 설치자 구성과 회원의 연결 흐름은 [Google Workspace 연결](google.md)을 따른다.
 
 ## 개인 암호 볼트 연결 상태

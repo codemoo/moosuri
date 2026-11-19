@@ -31,6 +31,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 mod admin;
+mod browser;
 mod google;
 mod memory;
 
@@ -326,14 +327,24 @@ impl Gateway {
         if stream.peer_cred().map_err(|_| unavailable)?.uid() != uid {
             return Err(unavailable);
         }
-        let timeout = if path.ends_with("/text-preview") {
+        let browser =
+            path.starts_with("/api/v1/threads/") && path.split('/').nth(5) == Some("browser");
+        let timeout = if browser {
+            if path.ends_with("/frame") { 8 } else { 85 }
+        } else if path.ends_with("/text-preview") {
             85
         } else if path.starts_with("/api/v1/personal/google") {
             75
         } else {
             10
         };
-        let limit = if path.starts_with("/api/v1/threads")
+        let limit = if browser {
+            if path.ends_with("/frame") {
+                4 * 1024 * 1024
+            } else {
+                256 * 1024
+            }
+        } else if path.starts_with("/api/v1/threads")
             || path.starts_with("/api/v1/knowledge/memories")
         {
             MAX_THREAD_BODY
@@ -359,7 +370,7 @@ impl Gateway {
                 .header("X-Moosuri-Account", &a.account_id);
             if let Some(token) = session {
                 req = req.header(header::COOKIE, format!("{SESSION}={token}"));
-                if path.ends_with("/text-preview") {
+                if browser || path.ends_with("/text-preview") {
                     req = req.header(
                         moosuri_server::personal_text::SESSION_EPOCH_HEADER,
                         a.epoch.to_string(),
@@ -1118,6 +1129,7 @@ fn router(g: Gateway) -> Router {
         .fallback(public_shell)
         .layer(DefaultBodyLimit::max(4096))
         .merge(memory::routes())
+        .merge(browser::routes())
         .merge(google::routes())
         .merge(admin::routes())
         .with_state(g)

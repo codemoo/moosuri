@@ -75,6 +75,14 @@ class Public(BaseHTTPRequestHandler):
 <button style="position:absolute;left:20px;top:110px;width:200px;height:30px">Sign in fixture</button></form>'''
             if self.path == "/workspace-persistent-login":
                 data = data.replace(b'action="/workspace-auth"', b'action="/workspace-persistent-auth"')
+        elif self.path == "/kiri-schedule":
+            data = b'''<!doctype html><title>Schedule</title>
+<p id="schedule">Afternoon 15:40</p>
+<button style="position:absolute;left:20px;top:60px;width:200px;height:30px"
+ onclick="document.getElementById('schedule').textContent='Morning 09:15'">Show morning</button>
+<a target="_blank" href="/kiri-detail" style="position:absolute;left:20px;top:110px;width:200px;height:30px">Schedule details</a>'''
+        elif self.path == "/kiri-detail":
+            data = b"<!doctype html><title>Schedule details</title><p>Platform 7</p>"
         elif self.path == "/workspace-shift":
             data = b'''<title>Shifted geometry fixture</title><button id="move" style="position:absolute;left:20px;top:60px;width:200px;height:30px">Move target</button>
 <script>setTimeout(()=>document.getElementById('move').style.left='220px',2000)</script>'''

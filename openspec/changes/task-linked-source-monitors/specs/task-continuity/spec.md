@@ -60,8 +60,8 @@ atomically record the admitted fingerprint and child identity.
 
 ### Requirement: Current permission at delivery
 
-Monitor dispatch, result publication, notification reads and queued Push delivery
-SHALL require current owner permission and resource scope. Ordinary source updates
+The system SHALL check current owner permission and resource scope at monitor dispatch,
+result publication, notification reads and queued Push delivery. Ordinary source updates
 SHALL remain distinguishable from withdrawal of the original authority.
 
 #### Scenario: Permission changes after publication

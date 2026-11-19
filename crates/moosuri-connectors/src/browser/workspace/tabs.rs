@@ -29,7 +29,7 @@ impl BrowserWorkspace {
         }
         // Chrome itself starts with an empty page. Every page subsequently created
         // inside this isolated browser belongs to the workspace, including noopener links.
-        self.initial_targets = bounded!(self, self.targets())?
+        self.ignored_targets = bounded!(self, self.targets())?
             .iter()
             .map(|target| string(target, "targetId"))
             .collect::<Result<_, _>>()?;
@@ -73,13 +73,15 @@ impl BrowserWorkspace {
             .iter()
             .filter_map(|t| t["targetId"].as_str())
             .collect();
+        self.ignored_targets
+            .retain(|target| live.contains(target.as_str()));
         self.session
             .targets
             .retain(|_, t| live.contains(t.target.as_str()));
         let mut tabs = Vec::new();
         for info in &infos {
             let target = string(info, "targetId")?;
-            if self.initial_targets.contains(&target) {
+            if self.ignored_targets.contains(&target) {
                 continue;
             }
             let known = self
@@ -99,6 +101,7 @@ impl BrowserWorkspace {
                     .cdp
                     .command("Target.closeTarget", json!({"targetId":target}), None)
                     .await?;
+                self.ignored_targets.insert(target);
                 if let Some(id) = known {
                     self.session.targets.remove(&id);
                 }
@@ -113,6 +116,7 @@ impl BrowserWorkspace {
                     .cdp
                     .command("Target.closeTarget", json!({"targetId":target}), None)
                     .await?;
+                self.ignored_targets.insert(target);
                 continue;
             };
             tabs.push(WorkspaceTab { tab_id: id, url });
@@ -176,7 +180,18 @@ impl BrowserWorkspace {
             self.proof = None;
             self.last_links = None;
             let handle = self.current.take().ok_or(BrowserError::InvalidHandle)?;
+            // closeTarget acknowledges initiation. Chrome may still list the page
+            // until its renderer exits, especially for a site-opened popup. Never
+            // reattach to this target as a new tab during that interval.
+            let target = self
+                .session
+                .targets
+                .get(&id)
+                .ok_or(BrowserError::InvalidHandle)?
+                .target
+                .clone();
             self.session.close(&handle).await?;
+            self.ignored_targets.insert(target);
             self.sync_tabs().await
         })
     }

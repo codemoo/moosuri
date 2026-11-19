@@ -97,6 +97,10 @@ async fn fixture() -> (
                 let method = request["method"].as_str().unwrap();
                 state.commands.push(method.into());
                 let result = match method {
+                    "Target.getTargets" => {
+                        json!({"targetInfos":[{"type":"page","targetId":"target","url":state.url}]})
+                    }
+                    "Target.closeTarget" => json!({"success":true}),
                     "Page.getFrameTree" => {
                         json!({"frameTree":{"frame":{"id":"frame","loaderId":state.loader,"url":state.url}}})
                     }
@@ -213,7 +217,7 @@ async fn fixture() -> (
             session,
             current: Some(handle),
             proof: None,
-            initial_targets: HashSet::new(),
+            ignored_targets: HashSet::new(),
             last_links: None,
             human_interacted: false,
         },
@@ -510,6 +514,26 @@ async fn passive_tab_refresh_preserves_unspent_controller_proof_until_geometry_c
     assert_ne!(
         workspace.tab_frame(tab).await.unwrap().frame_token,
         live.frame_token
+    );
+    workspace.shutdown().await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn closing_tab_still_listed_by_chrome_cannot_be_readopted_as_popup() {
+    let (mut workspace, state, server) = fixture().await;
+    let tab = workspace.current.as_ref().unwrap().page;
+    let tabs = workspace.close_tab(tab).await.unwrap();
+    assert!(tabs.active_tab.is_none());
+    assert!(tabs.tabs.is_empty());
+    assert!(workspace.tabs().await.unwrap().tabs.is_empty());
+    assert!(
+        !state
+            .lock()
+            .unwrap()
+            .commands
+            .iter()
+            .any(|cmd| cmd == "Target.attachToTarget")
     );
     workspace.shutdown().await;
     server.abort();

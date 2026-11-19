@@ -8,7 +8,7 @@ pub enum TabCommand {
     Open {
         url: String,
     },
-    Tabs,
+    Tabs {},
     Frame {
         tab_id: Uuid,
     },
@@ -35,7 +35,7 @@ pub enum TabCommand {
     CloseTab {
         tab_id: Uuid,
     },
-    Stop,
+    Stop {},
 }
 
 fn validated_tabs(value: Value) -> Result<Value, BrowserError> {
@@ -77,9 +77,11 @@ fn selected_observation(value: Value) -> Result<Value, BrowserError> {
     Ok(json!(obs))
 }
 
+type CheckReply = fn(Value) -> Result<Value, BrowserError>;
+
 impl CapsuleWorkspace {
     pub async fn tab_command(&mut self, cmd: TabCommand) -> Result<Value, BrowserError> {
-        let (body, limit, check): (_, _, fn(Value) -> Result<Value, BrowserError>) = match cmd {
+        let (body, limit, check): (_, _, CheckReply) = match cmd {
             TabCommand::Open { url } => (
                 json!({"op":"workspace_start_tabs","url":public_url(&url)?.as_str()}),
                 MAX_RESPONSE,
@@ -90,7 +92,7 @@ impl CapsuleWorkspace {
                 MAX_RESPONSE,
                 validate_opened,
             ),
-            TabCommand::Tabs => (json!({"op":"workspace_tabs"}), 16384, validated_tabs),
+            TabCommand::Tabs {} => (json!({"op":"workspace_tabs"}), 16384, validated_tabs),
             TabCommand::Switch { tab_id, to_tab_id } => (
                 json!({"op":"workspace_switch","tab_id":tab_id,"to_tab_id":to_tab_id}),
                 16384,
@@ -145,7 +147,7 @@ impl CapsuleWorkspace {
                     },
                 )
             }
-            TabCommand::Stop => return Err(BrowserError::InvalidHandle),
+            TabCommand::Stop {} => return Err(BrowserError::InvalidHandle),
         };
         let value = self.request(body, limit).await?;
         self.checked(check(value))

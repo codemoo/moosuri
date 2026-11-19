@@ -130,7 +130,7 @@ async fn dispatch(
 ) -> Result<Value, &'static str> {
     let id = request.workspace;
     sessions.retain(|_, s| s.epoch == initial && !s.worker.is_closed());
-    if matches!(request.command, TabCommand::Stop) {
+    if matches!(request.command, TabCommand::Stop {}) {
         if let Some(live) = sessions.remove(&id) {
             live.worker.shutdown().await.map_err(code)?;
         }
@@ -203,29 +203,46 @@ async fn serve_client(
     {
         return;
     }
-    let result= async {
-        let request=Request::parse(&bytes)?;
-        if request.generation != b.generation {return Err("forbidden");}
+    let result = async {
+        let request = Request::parse(&bytes)?;
+        if request.generation != b.generation {
+            return Err("forbidden");
+        }
         // Fail fast instead of queueing old frame captures, clicks, or controller requests.
-        let mut sessions=sessions.try_lock().map_err(|_|"capacity")?;
-        let initial=host.current(b).await.ok_or("forbidden")?;
-        if stop.is_cancelled(){return Err("forbidden");}
-        let id=request.workspace;
-        let mut extra=[0;1];
-        let fenced=async {loop{
-            tokio::time::sleep(POLL).await;
-            if host.current(b).await != Some(initial){return;}
-        }};
-        let res=tokio::select!{biased;
-            _=stop.cancelled()=>None,
-            _=reader.read(&mut extra)=>None,
-            _=fenced=>None,
-            result=timeout(OP_DEADLINE,dispatch(&host,b,initial,request,&mut sessions,&stop))=>result.ok(),
+        let mut sessions = sessions.try_lock().map_err(|_| "capacity")?;
+        let initial = host.current(b).await.ok_or("forbidden")?;
+        if stop.is_cancelled() {
+            return Err("forbidden");
+        }
+        let id = request.workspace;
+        let mut extra = [0; 1];
+        let fenced = async {
+            loop {
+                tokio::time::sleep(POLL).await;
+                if host.current(b).await != Some(initial) {
+                    return;
+                }
+            }
         };
-        let Some(result)=res else {sessions.remove(&id);return Err("unavailable");};
-        if stop.is_cancelled() || host.current(b).await != Some(initial) {sessions.remove(&id);return Err("forbidden");}
+        let operation = dispatch(&host, b, initial, request, &mut sessions, &stop);
+        let result = tokio::select! {
+            biased;
+            _ = stop.cancelled() => None,
+            _ = reader.read(&mut extra) => None,
+            _ = fenced => None,
+            result = timeout(OP_DEADLINE, operation) => result.ok(),
+        };
+        let Some(result) = result else {
+            sessions.remove(&id);
+            return Err("unavailable");
+        };
+        if stop.is_cancelled() || host.current(b).await != Some(initial) {
+            sessions.remove(&id);
+            return Err("forbidden");
+        }
         result
-    }.await;
+    }
+    .await;
     let reply = match result {
         Ok(value) => json!({"ok":true,"result":value}),
         Err(code) => json!({"ok":false,"code":code}),
@@ -247,22 +264,26 @@ async fn serve_member(
     let mut clients = JoinSet::new();
     let mut audit = interval(POLL);
     loop {
-        tokio::select! {biased;
-            _=stop.cancelled()=>break,
-            Some(_)=clients.join_next(),if !clients.is_empty()=>{},
-            _=audit.tick()=>{
+        tokio::select! {
+            biased;
+            _ = stop.cancelled() => break,
+            Some(_) = clients.join_next(), if !clients.is_empty() => {},
+            _ = audit.tick() => {
                 if sessions.try_lock().is_ok_and(|map| !map.is_empty()) {
-                    let current=host.current(b).await;
-                    if let Ok(mut map)=sessions.try_lock() {
-                        map.retain(|_,s|Some(s.epoch)==current && !s.worker.is_closed());
+                    let current = host.current(b).await;
+                    if let Ok(mut map) = sessions.try_lock() {
+                        map.retain(|_, s| Some(s.epoch) == current && !s.worker.is_closed());
                     }
                 }
             }
-            next=listener.accept(),if clients.len()<6=>{
-                let Ok((stream,_))=next else {break;};
-                let Ok(slot)=host.clients.clone().try_acquire_owned() else {continue;};
-                let task=serve_client(stream,host.clone(),b,sessions.clone(),stop.clone());
-                clients.spawn(async move{let _slot=slot;task.await});
+            next = listener.accept(), if clients.len() < 6 => {
+                let Ok((stream, _)) = next else { break };
+                let Ok(slot) = host.clients.clone().try_acquire_owned() else { continue };
+                let task = serve_client(stream, host.clone(), b, sessions.clone(), stop.clone());
+                clients.spawn(async move {
+                    let _slot = slot;
+                    task.await;
+                });
             }
         }
     }
@@ -378,13 +399,19 @@ pub async fn run(options: &Options) -> Result<(), String> {
     tokio::pin!(signal);
     let result = loop {
         tokio::select! {
-            _=&mut signal=>break Ok(()),
-            _=poll.tick()=>{
-                let (r,c,s)=(options.registry.clone(),options.lifecycle_config.clone(),options.socket_dir.clone());
-                let desired=tokio::task::spawn_blocking(move||crate::kiri_lifecycle::browser_bindings(&r,&c,&s)).await;
-                match desired{
-                    Ok(Ok(bindings))=>if let Err(e)=reconcile(&host,&options.socket_dir,&mut members,bindings).await {break Err(e);},
-                    _=>break Err("browser_relay_enrollment_invalid".into()),
+            _ = &mut signal => break Ok(()),
+            _ = poll.tick() => {
+                let registry = options.registry.clone();
+                let config = options.lifecycle_config.clone();
+                let root = options.socket_dir.clone();
+                let desired = tokio::task::spawn_blocking(move ||
+                    crate::kiri_lifecycle::browser_bindings(&registry, &config, &root)
+                ).await;
+                let Ok(Ok(bindings)) = desired else {
+                    break Err("browser_relay_enrollment_invalid".into());
+                };
+                if let Err(error) = reconcile(&host, &options.socket_dir, &mut members, bindings).await {
+                    break Err(error);
                 }
             }
         }

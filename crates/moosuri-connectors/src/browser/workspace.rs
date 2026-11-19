@@ -35,7 +35,7 @@ pub struct BrowserWorkspace {
     session: BrowserSession,
     current: Option<PageHandle>,
     proof: Option<FrameProof>,
-    initial_targets: HashSet<String>,
+    ignored_targets: HashSet<String>,
     last_links: Option<(Identity, Vec<String>)>,
     human_interacted: bool,
 }
@@ -61,7 +61,7 @@ impl BrowserWorkspace {
             session: BrowserSession::launch_bounded(config, cancellation, MAXIMUM).await?,
             current: None,
             proof: None,
-            initial_targets: HashSet::new(),
+            ignored_targets: HashSet::new(),
             last_links: None,
             human_interacted: false,
         })

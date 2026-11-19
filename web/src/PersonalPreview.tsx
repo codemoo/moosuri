@@ -896,6 +896,7 @@ function Workspace({
             </div>
           ) : view === "connections" ? (
             <PersonalConnections
+              installationAdmin={admin}
               onBack={() => navigate("chat")}
               session={session}
               expired={expired}

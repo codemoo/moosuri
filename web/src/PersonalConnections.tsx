@@ -40,8 +40,8 @@ function searchText(value: string) {
 }
 
 export function PersonalConnections({
-  onBack, ...props
-}: Parameters<typeof usePersonalGoogle>[0] & { onBack: () => void }) {
+  onBack, installationAdmin = false, ...props
+}: Parameters<typeof usePersonalGoogle>[0] & { onBack: () => void; installationAdmin?: boolean }) {
   const [workspaceReturn] = useState(() => workspaceGoogleReturn(props.session));
   const [selected, setSelected] = useState<Connector | null>(
     () => workspaceReturn ? workspaceConnectors.find(({ id }) => id === workspaceReturn.service) ?? null
@@ -59,19 +59,25 @@ export function PersonalConnections({
   );
   const connected = [...(google.connection ? [gmail] : []), ...workspaceConnectors.filter(({ id }) => workspace.connections[id])];
   const found = (view === "available" ? connectors : connected).filter(matches);
+  const unavailable = "이 서버에서 Google 로그인을 아직 사용할 수 없습니다.";
   const gmailStatus = google.status === "checking" ? "연결 상태 확인 중…"
-    : google.status === "disabled" ? "설치 관리자가 Google 연결을 활성화하면 사용할 수 있습니다."
+    : google.status === "disabled" ? unavailable
     : google.status === "error" ? "연결 상태를 확인할 수 없습니다."
     : google.connection ? "연결됨" : "연결된 계정이 없습니다.";
   const workspaceService = selected && isWorkspaceGoogleService(selected.id) ? selected.id : null;
   const workspaceGrant = workspaceService ? workspace.connections[workspaceService] : null;
   const workspaceStatus = workspace.status === "checking" ? "연결 상태 확인 중…"
-    : workspace.status === "disabled" ? "현재 이 설치에서 Google Workspace 연결을 사용할 수 없습니다."
+    : workspace.status === "disabled" ? unavailable
     : workspace.status === "error" ? "연결 상태를 확인할 수 없습니다."
     : "연결된 계정이 없습니다.";
   const vaultLabel = vaultStatus.status === "checking" ? "연결 상태 확인 중…"
     : vaultStatus.status === "setup_required" ? "회원 인증 연결 필요"
     : "연결 상태를 확인할 수 없습니다.";
+
+  const setupGuide = installationAdmin && (
+    <a className="member-page-action" href="https://github.com/codemoo/moosuri/blob/main/deployment/kiri/google.md"
+      target="_blank" rel="noopener noreferrer">Google 로그인 설정 안내</a>
+  );
 
   function row(connector: Connector, description?: string, trailing?: string, candidate = false) {
     return (
@@ -124,6 +130,7 @@ export function PersonalConnections({
                   </button>
                 )
               )}
+              {google.status === "disabled" && setupGuide}
               {(google.status === "error" || google.status === "disabled") && !google.busy && (
                 <button className="member-page-action" onClick={google.retry}>다시 확인</button>
               )}
@@ -147,6 +154,7 @@ export function PersonalConnections({
               ) : (
                 <button className="member-page-action" disabled={workspace.busy} onClick={() => void workspace.action(workspaceService, "connect")}>Google 연결</button>
               ))}
+              {workspace.status === "disabled" && setupGuide}
               {(workspace.status === "error" || workspace.status === "disabled") && !workspace.busy && (
                 <button className="member-page-action" onClick={() => void workspace.retry()}>다시 확인</button>
               )}

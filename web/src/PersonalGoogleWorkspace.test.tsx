@@ -49,10 +49,10 @@ function storePending(overrides = {}) {
   return pending;
 }
 
-function mount() {
+function mount(installationAdmin = false) {
   const returned = vi.fn();
   return { returned, ...render(<StrictMode><PersonalConnections
-    session={session} expired={vi.fn()} onBack={vi.fn()} returned={returned}
+    installationAdmin={installationAdmin} session={session} expired={vi.fn()} onBack={vi.fn()} returned={returned}
   /></StrictMode>) };
 }
 
@@ -165,11 +165,21 @@ it.each([404, 503])("shows member-safe Workspace status without changing Gmail a
   mount();
   await user.click(await screen.findByRole("button", { name: /Google Slides/ }));
   const detail = within(screen.getByRole("region", { name: "Google Slides" }));
-  await detail.findByText(workspaceStatus === 404 ? /현재 이 설치에서 Google Workspace 연결을 사용할 수 없습니다/ : /연결 상태를 확인할 수 없습니다/);
+  await detail.findByText(workspaceStatus === 404 ? /이 서버에서 Google 로그인을 아직 사용할 수 없습니다/ : /연결 상태를 확인할 수 없습니다/);
   expect(screen.queryByRole("button", { name: "Google 연결" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Google 로그인 설정 안내" })).not.toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "다시 확인" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   await user.click(await screen.findByRole("button", { name: /Gmail gmail@example.test/ }));
   expect(await screen.findByRole("button", { name: "연결 해제" })).toBeEnabled();
   expect(calls.every(({ method }) => method === "GET")).toBe(true);
+});
+
+it("links the installation administrator to Google web sign-in setup when unavailable", async () => {
+  setup({ workspaceStatus: 404 });
+  mount(true);
+  await userEvent.setup().click(await screen.findByRole("button", { name: /Google Slides/ }));
+  expect(await screen.findByRole("link", { name: "Google 로그인 설정 안내" })).toHaveAttribute(
+    "href", "https://github.com/codemoo/moosuri/blob/main/deployment/kiri/google.md"
+  );
 });

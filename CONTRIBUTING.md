@@ -1,6 +1,6 @@
 # Contributing to moosuri
 
-Start with [README](README.md) and [current status](docs/status.md). The development preview includes bounded agent/model execution, a separate vault service/client and per-user community package management alongside the account/API/CLI and React foundation. Their full contracts and release gates remain incomplete; current status distinguishes implemented slices from pending integration and future work. See [development](docs/development.md) for the exact runnable boundary. Do not report proposed checks as passing product tests.
+Start with the [README](README.md) and [current support](docs/status.md) to identify the runtime your change affects. Build and run it with the [development guide](docs/development.md). Record changes to supported behavior in the feature contract and update the current status when deployment, verification or an outstanding limitation changes.
 
 ## Model selection
 

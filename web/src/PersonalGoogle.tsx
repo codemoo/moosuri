@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { SessionView } from "../shared/api-types";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
+import { workspaceGoogleReturn } from "./personal-google-workspace";
 import { WorkspaceIcon } from "./WorkspaceNavigation";
 import "./personal-library.css";
 
@@ -70,6 +71,7 @@ function uncertain(p: Pending) {
   }
 }
 export function googleReadDestination(s: SessionView): GoogleReadIntent | null {
+  if (workspaceGoogleReturn(s)) return null;
   const p = stored();
   return belongs(p, s) && intent(p.read) ? p.read : null;
 }
@@ -172,7 +174,7 @@ export function usePersonalGoogle({
     uncertain?: boolean,
     draft?: string,
   ) => void;
-}) {
+}, followReturn = true) {
   const scope = useScope(session.user.id, "personal-google");
   const [connection, setConnection] = useState<Grant | null>(null);
   const [notice, setNotice] = useState("");
@@ -257,6 +259,10 @@ export function usePersonalGoogle({
     const timer = window.setTimeout(
       () =>
         void (async () => {
+          if (!followReturn) {
+            await update();
+            return;
+          }
           const fields = new URLSearchParams(location.hash.slice(1)),
             p = stored();
           if (!fields.has("google_handle") && !fields.has("google_denied")) {
@@ -329,7 +335,7 @@ export function usePersonalGoogle({
       0,
     );
     return () => clearTimeout(timer);
-  }, [scope, session.user.id, session.chat_draft_scope]);
+  }, [scope, session.user.id, session.chat_draft_scope, followReturn]);
   async function action(name: "connect" | "read" | "disconnect") {
     if (lock.current || busy) return;
     lock.current = true;

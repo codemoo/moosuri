@@ -2,16 +2,26 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 import { googleReturn, usePersonalGoogle } from "./PersonalGoogle";
+import { isWorkspaceGoogleService, usePersonalGoogleWorkspace, workspaceGoogleReturn } from "./personal-google-workspace";
 import { WorkspaceIcon } from "./WorkspaceNavigation";
 import gmailMark from "./connector-marks/gmail.png?no-inline";
 import driveMark from "./connector-marks/drive.png?no-inline";
+import docsMark from "./connector-marks/docs.png?no-inline";
+import slidesMark from "./connector-marks/slides.png?no-inline";
+import sheetsMark from "./connector-marks/sheets.png?no-inline";
 import calendarMark from "./connector-marks/calendar.png?no-inline";
 import slackMark from "./connector-marks/slack.png?no-inline";
 
 const candidates = [
-  { id: "drive", name: "Google Drive", mark: driveMark, description: "드라이브에 있는 파일과 문서를 검색합니다." },
   { id: "calendar", name: "Google Calendar", mark: calendarMark, description: "예정된 일정을 조회하고 새 일정을 추가합니다." },
   { id: "slack", name: "Slack", mark: slackMark, description: "워크스페이스의 채널과 메시지를 검색합니다." },
+] as const;
+
+const workspaceConnectors = [
+  { id: "drive", name: "Google Drive", mark: driveMark, description: "Drive 파일의 읽기 권한을 연결합니다.", aliases: ["구글 드라이브"] },
+  { id: "docs", name: "Google Docs", mark: docsMark, description: "Docs 문서의 읽기 권한을 연결합니다.", aliases: ["구글 문서", "구글 독스", "Google Documents"] },
+  { id: "slides", name: "Google Slides", mark: slidesMark, description: "Slides 프레젠테이션의 읽기 권한을 연결합니다.", aliases: ["구글 슬라이드", "구글 프레젠테이션", "Google Presentations"] },
+  { id: "sheets", name: "Google Sheets", mark: sheetsMark, description: "Sheets 스프레드시트의 읽기 권한을 연결합니다.", aliases: ["구글 시트", "구글 스프레드시트", "Google Spreadsheets"] },
 ] as const;
 
 type Connector = {
@@ -19,38 +29,54 @@ type Connector = {
   name: string;
   mark?: string;
   description?: string;
+  aliases?: readonly string[];
 };
 const gmail: Connector = { id: "gmail", name: "Gmail", mark: gmailMark };
 const vault: Connector = { id: "vault", name: "볼트" };
-const connectors: readonly Connector[] = [gmail, vault, ...candidates];
+const connectors: readonly Connector[] = [gmail, ...workspaceConnectors, vault, ...candidates];
+
+function searchText(value: string) {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, "");
+}
 
 export function PersonalConnections({
   onBack, ...props
 }: Parameters<typeof usePersonalGoogle>[0] & { onBack: () => void }) {
-  const google = usePersonalGoogle(props);
-  const vaultStatus = useVaultConnection(props.session.user.id, props.expired);
+  const [workspaceReturn] = useState(() => workspaceGoogleReturn(props.session));
   const [selected, setSelected] = useState<Connector | null>(
-    () => props.readIntent || googleReturn() ? gmail : null,
+    () => workspaceReturn ? workspaceConnectors.find(({ id }) => id === workspaceReturn.service) ?? null
+      : props.readIntent || googleReturn() ? gmail : null,
   );
+  const [workspaceEnabled, setWorkspaceEnabled] = useState(() => selected !== gmail);
+  const google = usePersonalGoogle(props, !workspaceReturn);
+  const workspace = usePersonalGoogleWorkspace({ session: props.session, expired: props.expired, enabled: workspaceEnabled, returned: workspaceReturn });
+  const vaultStatus = useVaultConnection(props.session.user.id, props.expired);
   const [view, setView] = useState<"available" | "connected">("available");
   const [query, setQuery] = useState("");
-  const search = query.trim().normalize("NFKC").toLocaleLowerCase();
-  const matches = (connector: Connector) => [connector.name, connector.description].some(
-    (value) => value?.normalize("NFKC").toLocaleLowerCase().includes(search),
+  const search = searchText(query);
+  const matches = (connector: Connector) => [connector.name, connector.description ?? "", ...(connector.aliases ?? [])].some(
+    (value) => searchText(value).includes(search),
   );
-  const found = (view === "available" ? connectors : google.connection ? [gmail] : []).filter(matches);
+  const connected = [...(google.connection ? [gmail] : []), ...workspaceConnectors.filter(({ id }) => workspace.connections[id])];
+  const found = (view === "available" ? connectors : connected).filter(matches);
   const gmailStatus = google.status === "checking" ? "연결 상태 확인 중…"
     : google.status === "disabled" ? "설치 관리자가 Google 연결을 활성화하면 사용할 수 있습니다."
     : google.status === "error" ? "연결 상태를 확인할 수 없습니다."
     : google.connection ? "연결됨" : "연결된 계정이 없습니다.";
+  const workspaceService = selected && isWorkspaceGoogleService(selected.id) ? selected.id : null;
+  const workspaceGrant = workspaceService ? workspace.connections[workspaceService] : null;
+  const workspaceStatus = workspace.status === "checking" ? "연결 상태 확인 중…"
+    : workspace.status === "disabled" ? "현재 이 설치에서 Google Workspace 연결을 사용할 수 없습니다."
+    : workspace.status === "error" ? "연결 상태를 확인할 수 없습니다."
+    : "연결된 계정이 없습니다.";
   const vaultLabel = vaultStatus.status === "checking" ? "연결 상태 확인 중…"
     : vaultStatus.status === "setup_required" ? "회원 인증 연결 필요"
     : "연결 상태를 확인할 수 없습니다.";
 
-  function row(connector: Connector, description?: string, trailing?: string) {
+  function row(connector: Connector, description?: string, trailing?: string, candidate = false) {
     return (
       <li key={connector.id}>
-        <button className="member-library-row member-connector-row" data-candidate={!!connector.description || undefined} onClick={() => setSelected(connector)}>
+        <button className="member-library-row member-connector-row" data-candidate={candidate || undefined} onClick={() => setSelected(connector)}>
           <ConnectorMark mark={connector.mark} />
           <span className="member-library-row-copy">
             <strong>{connector.name}</strong>
@@ -75,8 +101,10 @@ export function PersonalConnections({
     <div className="member-page member-library member-connections">
       <header className="member-page-heading member-connection-header">
         <button className="member-library-icon-button" aria-label="뒤로" onClick={() => {
-          if (selected && !props.readIntent) setSelected(null);
-          else onBack();
+          if (selected && !props.readIntent) {
+            setSelected(null);
+            setWorkspaceEnabled(true);
+          } else onBack();
         }}><WorkspaceIcon name="back" /></button>
         <h1>{selected?.name ?? "커넥터"}</h1>
       </header>
@@ -106,6 +134,26 @@ export function PersonalConnections({
               )}
             </div>
             {google.notice && <p className="member-library-status" role="status">{google.notice}</p>}
+          </>
+        ) : workspaceService ? (
+          <>
+            <ConnectorDetail connector={selected} status={workspaceGrant ? "연결됨" : workspaceStatus} busy={workspace.busy}>
+              {workspaceGrant && <span>{workspaceGrant.mailbox}</span>}
+              <span>{selected.description}</span>
+            </ConnectorDetail>
+            <div className="member-connector-actions">
+              {workspace.status === "ready" && (workspaceGrant ? (
+                <button className="member-page-action" disabled={workspace.busy} onClick={() => void workspace.action(workspaceService, "disconnect")}>연결 해제</button>
+              ) : (
+                <button className="member-page-action" disabled={workspace.busy} onClick={() => void workspace.action(workspaceService, "connect")}>Google 연결</button>
+              ))}
+              {(workspace.status === "error" || workspace.status === "disabled") && !workspace.busy && (
+                <button className="member-page-action" onClick={() => void workspace.retry()}>다시 확인</button>
+              )}
+            </div>
+            {workspace.notice?.service === workspaceService && (
+              <p className="member-library-status" role="status">{workspace.notice.message}</p>
+            )}
           </>
         ) : selected.id === vault.id ? (
           <>
@@ -142,19 +190,28 @@ export function PersonalConnections({
             <button aria-pressed={view === "available"} onClick={() => setView("available")}>사용 가능</button>
             <button aria-pressed={view === "connected"} onClick={() => setView("connected")}>연결됨</button>
           </div>
+          {workspace.notice?.service === null && <p className="member-library-status" role="status">{workspace.notice.message}</p>}
           {view === "available" ? (
             <>
-              {group("추천 · 도입 후보", candidates.filter(matches).map((connector) => row(connector, connector.description)))}
-              {group("생산성", found.includes(gmail) ? [row(gmail, google.connection?.mailbox, google.status === "ready" && !google.connection ? "연결" : "보기")] : [])}
+              {group("추천 · 도입 후보", candidates.filter(matches).map((connector) => row(connector, connector.description, undefined, true)))}
+              {group("생산성", [
+                ...(found.includes(gmail) ? [row(gmail, google.connection?.mailbox, google.status === "ready" && !google.connection ? "연결" : "보기")] : []),
+                ...workspaceConnectors.filter(matches).map((connector) => {
+                  const grant = workspace.connections[connector.id];
+                  return row(connector, grant?.mailbox ?? workspaceStatus, workspace.status === "ready" && !grant ? "연결" : "보기");
+                }),
+              ])}
               {group("보안", found.includes(vault) ? [row(vault, vaultLabel, "보기")] : [])}
             </>
           ) : found.length > 0 && (
-            <ul className="member-page-list member-library-list">{found.map((connector) => row(connector, google.connection?.mailbox))}</ul>
+            <ul className="member-page-list member-library-list">{found.map((connector) => row(connector,
+              isWorkspaceGoogleService(connector.id) ? workspace.connections[connector.id]?.mailbox : google.connection?.mailbox,
+            ))}</ul>
           )}
           {found.length === 0 && (
             <p className="member-library-status member-connector-empty" role="status">
-              {view === "connected" && google.status === "checking" ? "연결된 서비스를 확인 중…"
-                : view === "connected" && google.status === "error" ? "연결 상태를 확인할 수 없습니다."
+              {view === "connected" && (google.status === "checking" || workspace.status === "checking") ? "연결된 서비스를 확인 중…"
+                : view === "connected" && (google.status === "error" || workspace.status === "error") ? "연결 상태를 확인할 수 없습니다."
                 : search ? "검색어와 일치하는 서비스가 없습니다." : "연결된 서비스가 없습니다."}
             </p>
           )}

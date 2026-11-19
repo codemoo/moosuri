@@ -25,6 +25,7 @@ import {
   type GoogleReadIntent,
   type ThreadGoogleRead,
 } from "./PersonalGoogle";
+import { clearWorkspaceGoogle, workspaceGoogleReturn } from "./personal-google-workspace";
 import { PersonalConnections } from "./PersonalConnections";
 import PersonalAdmin from "./PersonalAdmin";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
@@ -70,6 +71,7 @@ export default function PersonalPreview() {
     for (const s of scopes) s.close();
     recovery.clear();
     clearPersonalGoogle();
+    clearWorkspaceGoogle();
     setDraftSession(null);
     setSession(null);
     setEpoch((v) => v + 1);
@@ -378,7 +380,7 @@ function Workspace({
     [reading, setReading] = useState(false),
     [mutating, setMutating] = useState(false);
   const [view, setView] = useState<MemberView>(() =>
-      googleReturn() ? "connections" : "chat",
+      googleReturn() || workspaceGoogleReturn(session) ? "connections" : "chat",
     ),
     [refresh, setRefresh] = useState(0);
   const [admin, setAdmin] = useState(session.installation_admin === true);

@@ -131,6 +131,7 @@ beforeEach(() => {
             mailbox: connectedMailbox,
           } : null,
         });
+      if (path === "/personal/google/workspace") return Response.json({ connections: [] });
       if (path === "/personal/google/disconnect") {
         connectedMailbox = null;
         return new Response(null, { status: 204 });

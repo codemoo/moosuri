@@ -1,8 +1,6 @@
 //! Shared provider settings. Server-managed encryption is separate from the user vault.
 use super::*;
-mod assignments;
 mod personal;
-use assignments::{member_selection, require_member_choice};
 use chacha20poly1305::{
     KeyInit, XChaCha20Poly1305, XNonce,
     aead::{Aead, Payload},
@@ -420,11 +418,11 @@ fn admin_selection(conn: &Connection, user: &UserContext) -> Result<Option<Model
         .or(selected(conn, Some(user))?))
 }
 fn effective_selection(conn: &Connection, user: &UserContext) -> Result<Option<ModelSelection>> {
-    let selection = match user.account.role {
-        Role::Admin => admin_selection(conn, user)?,
-        Role::Member => member_selection(conn, &user.tenant.0, &user.account.id)?,
-    };
-    Ok(selection.or(selected(conn, None)?))
+    let installation = selected(conn, None)?;
+    if installation.is_some() || user.account.role == Role::Member {
+        return Ok(installation);
+    }
+    admin_selection(conn, user)
 }
 fn selection_choice(
     conn: &Connection,
@@ -456,18 +454,22 @@ fn settings(conn: &Connection, user: &UserContext) -> Result<ModelSettings> {
             selection: None,
             effective: available_choice(conn, user)?,
             choices: Vec::new(),
+            installation_default: None,
         });
     }
     let selection = admin_selection(conn, user)?;
-    let effective = selection.clone().or(selected(conn, None)?);
+    let installation_default = selected(conn, None)?;
+    let effective = installation_default.as_ref().or(selection.as_ref());
     let mut all = choices(conn, None)?;
     all.extend(personal_choices(conn, user)?);
     all.extend(subscriptions::choices(conn, user)?);
     all.extend(crate::claude_execution::choices(conn, user)?);
+    let effective = effective.and_then(|s| all.iter().find(|c| matches_selection(c, s)).cloned());
     Ok(ModelSettings {
         selection,
-        effective: effective.and_then(|s| all.iter().find(|c| matches_selection(c, &s)).cloned()),
+        effective,
         choices: all,
+        installation_default,
     })
 }
 fn summary(conn: &Connection, row: Revision) -> Result<ProviderSummary> {
@@ -809,6 +811,29 @@ pub(super) fn selected_choice(conn: &Connection, user: &UserContext) -> Result<M
     available_choice(conn, user)?.ok_or(StoreError::ModelRequired)
 }
 
+// Durable work keeps its exact pin. An installation selection must authorize
+// the pin at dispatch, including work admitted under the retired member policy.
+fn require_model_policy(
+    conn: &Connection,
+    tenant: &str,
+    account: &str,
+    choice: &ModelChoice,
+) -> Result<()> {
+    let role: String = conn
+        .query_row(
+            "SELECT role FROM accounts WHERE tenant_id=?1 AND id=?2 AND status='active' AND deleted=0",
+            params![tenant, account],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(StoreError::Conflict)?;
+    match selected(conn, None)? {
+        Some(installation) if matches_selection(choice, &installation) => Ok(()),
+        None if role == "admin" => Ok(()),
+        _ => Err(StoreError::Conflict),
+    }
+}
+
 pub(super) fn binding_for_owner_choice(
     conn: &Connection,
     key: &[u8; 32],
@@ -816,7 +841,7 @@ pub(super) fn binding_for_owner_choice(
     account: &str,
     choice: &ModelChoice,
 ) -> Result<ProviderBinding> {
-    require_member_choice(conn, tenant, account, choice)?;
+    require_model_policy(conn, tenant, account, choice)?;
     match choice.source {
         ModelSource::Shared => binding_for_choice(conn, key, choice),
         ModelSource::PersonalChatGpt => subscriptions::binding(conn, tenant, account, choice),

@@ -526,10 +526,6 @@ pub fn router_with_runtime(
         .route("/api/v1/admin/users", get(users).post(create_user))
         .route("/api/v1/admin/users/{id}/manage", post(accounts::manage))
         .route(
-            "/api/v1/admin/accounts/{id}/model",
-            get(providers::account_assignment).put(providers::set_account_assignment),
-        )
-        .route(
             "/api/v1/admin/providers",
             get(providers::list).post(providers::create),
         )

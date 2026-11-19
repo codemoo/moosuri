@@ -1,4 +1,4 @@
-//! Admin-owned connections and model assignments. No provider body or
+//! Admin-owned connections and the installation model. No provider body or
 //! API credential crosses this boundary in a response, trace or error.
 use super::*;
 pub(super) mod personal;
@@ -175,36 +175,6 @@ pub(super) async fn set_preference(
         state
             .store
             .set_model_preference(&user, input.selection)
-            .await?,
-    )
-    .into_response())
-}
-
-pub(super) async fn account_assignment(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(account): Path<String>,
-) -> HttpResult {
-    let actor = current_admin(&state, &headers).await?;
-    Ok(Json(
-        state
-            .store
-            .account_model_assignment(&actor, account)
-            .await?,
-    )
-    .into_response())
-}
-pub(super) async fn set_account_assignment(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(account): Path<String>,
-    Json(input): Json<SelectionInput>,
-) -> HttpResult {
-    let actor = current_admin(&state, &headers).await?;
-    Ok(Json(
-        state
-            .store
-            .set_account_model_assignment(&actor, account, input.selection)
             .await?,
     )
     .into_response())

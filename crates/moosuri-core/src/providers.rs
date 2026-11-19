@@ -90,6 +90,9 @@ pub struct ModelSettings {
     pub selection: Option<ModelSelection>,
     pub effective: Option<ModelChoice>,
     pub choices: Vec<ModelChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub installation_default: Option<ModelSelection>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

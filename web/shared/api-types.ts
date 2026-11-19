@@ -207,7 +207,7 @@ export type ModelChoice = { source?: ModelSource, provider_id: string, provider_
 function_tools: boolean, };
 export type ProviderSummary = { id: string, name: string, revision: number, config: ProviderConfig, enabled: boolean, has_credential: boolean, choices: Array<ModelChoice>, is_default: boolean, };
 export type ProvidersResponse = { providers: Array<ProviderSummary>, default_selection: ModelSelection | null, };
-export type ModelSettings = { selection: ModelSelection | null, effective: ModelChoice | null, choices: Array<ModelChoice>, };
+export type ModelSettings = { selection: ModelSelection | null, effective: ModelChoice | null, choices: Array<ModelChoice>, installation_default?: ModelSelection, };
 export type ModelCatalogEntry = { id: string, name: string, efforts: Array<string>, default_effort: string | null, };
 export type ModelCatalog = { models: Array<ModelCatalogEntry>, truncated: boolean, };
 export type QuotaScope = "personal_subscription" | "shared_provider_key";

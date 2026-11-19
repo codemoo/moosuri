@@ -5,12 +5,24 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
+import { SLIDE_RULES_ID, slideRulesCss } from "./node_modules/@astryxdesign/core/dist/Layer/layerSlideRules.js";
 const root = dirname(fileURLToPath(import.meta.url));
+// Astryx checks this id before injecting its positioning sheet. Serve its own
+// rules from a same-origin asset so the member shell can keep its strict CSP.
+const layerCss = slideRulesCss();
+const layerAsset = `assets/astryx-layer-${createHash("sha256").update(layerCss).digest("hex").slice(0, 16)}.css`;
 export default defineConfig({
   plugins: [react(), {
     name: "moosuri-public-shell",
     apply: "build",
     enforce: "post",
+    buildStart() {
+      this.emitFile({ type: "asset", fileName: layerAsset, source: layerCss });
+    },
+    transformIndexHtml(_html, ctx) {
+      if (ctx.path !== "/personal.html") return;
+      return [{ tag: "link", attrs: { id: SLIDE_RULES_ID, rel: "stylesheet", href: `/${layerAsset}` }, injectTo: "head" }];
+    },
     generateBundle: {
       order: "post",
       async handler(_options, bundle) {

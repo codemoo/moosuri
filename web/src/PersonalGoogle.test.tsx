@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PersonalConnections } from "./PersonalConnections";
+import { googleReturn } from "./PersonalGoogle";
 import type { SessionView } from "../shared/api-types";
 const key = "moosuri.personal.google-read.v1",
   flow = "a".repeat(64),
@@ -158,4 +159,18 @@ it("denial clears pending read without a provider read", async () => {
   await screen.findByText(/취소됐습니다/);
   expect(calls.map((c) => c.path)).toEqual(["/api/v1/personal/google"]);
   expect(sessionStorage.getItem(key)).toBeNull();
+});
+
+it("clears an interrupted manual callback on the next status visit", async () => {
+  const calls = setup({ manual: true });
+  history.replaceState(null, "", "/");
+  const pending = JSON.parse(sessionStorage.getItem(key)!);
+  sessionStorage.setItem(key, JSON.stringify({ ...pending, phase: "completing", expires: 1 }));
+  expect(googleReturn()).toBe(false);
+  sessionStorage.setItem(key, JSON.stringify({ ...pending, phase: "completing" }));
+  expect(googleReturn()).toBe(true);
+  mount();
+  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
+  expect(googleReturn()).toBe(false);
+  expect(calls.some(call => /\/(inbox|complete)$/.test(call.path))).toBe(false);
 });

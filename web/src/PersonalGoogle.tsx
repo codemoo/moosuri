@@ -75,10 +75,11 @@ export function googleReadDestination(s: SessionView): GoogleReadIntent | null {
 }
 export function googleReturn() {
   const p = new URLSearchParams(location.hash.slice(1));
+  const pending = stored();
   return (
     p.has("google_handle") ||
     p.has("google_denied") ||
-    ["completing", "reading", "uncertain"].includes(stored()?.phase ?? "")
+    (!!pending && pending.expires > Date.now() && ["completing", "reading", "uncertain"].includes(pending.phase))
   );
 }
 export function clearPersonalGoogle() {
@@ -269,6 +270,9 @@ export function usePersonalGoogle({
               returned?.(destination, true, p.draft);
               setBusy(false);
               return;
+            }
+            if (p && (!belongs(p, session) || (p.phase === "completing" && !p.read))) {
+              clearPersonalGoogle();
             }
             await update(readIntent ?? undefined);
             return;

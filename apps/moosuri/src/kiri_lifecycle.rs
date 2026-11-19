@@ -47,6 +47,7 @@ struct Config {
     allocations_root: PathBuf,
     model_sockets_root: Option<PathBuf>,
     google_sockets_root: Option<PathBuf>,
+    browser_sockets_root: Option<PathBuf>,
     image: String,
     #[serde(default = "engine_socket")]
     engine_socket: PathBuf,
@@ -74,6 +75,9 @@ struct Member {
     enable_google_readonly: bool,
     #[serde(default)]
     enable_local_gws: bool,
+    /// None inherits this installation's browser setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    browser_enabled: Option<bool>,
 }
 fn engine_socket() -> PathBuf {
     "/run/kiri/docker.sock".into()
@@ -91,6 +95,11 @@ fn disk() -> u64 {
     10 << 30
 }
 impl Config {
+    fn browser_root(&self, member: &Member) -> Option<&PathBuf> {
+        self.browser_sockets_root
+            .as_ref()
+            .filter(|_| member.browser_enabled != Some(false))
+    }
     fn provision(&self, m: &Member) -> kiri_provision::Options {
         kiri_provision::Options {
             experimental: true,
@@ -105,6 +114,7 @@ impl Config {
             } else {
                 None
             },
+            browser_sockets_root: self.browser_root(m).cloned(),
             enable_local_gws: m.enable_local_gws,
             enable_text_preview: m.enable_text_preview,
             uid: m.uid,
@@ -131,6 +141,7 @@ impl Config {
         .into_iter()
         .chain(self.model_sockets_root.iter())
         .chain(self.google_sockets_root.iter())
+        .chain(self.browser_sockets_root.iter())
         {
             plain_absolute(p)?;
         }
@@ -149,6 +160,7 @@ impl Config {
                 || !emails.insert(m.email.to_ascii_lowercase())
                 || (m.enable_text_preview && self.model_sockets_root.is_none())
                 || (m.enable_google_readonly && self.google_sockets_root.is_none())
+                || (m.browser_enabled == Some(true) && self.browser_sockets_root.is_none())
                 || (m.enable_google_readonly && m.enable_local_gws)
             {
                 return Err("kiri_lifecycle_invalid_or_duplicate_member".into());
@@ -244,6 +256,37 @@ fn load(path: &Path, private_directory: &Path) -> Result<Config, String> {
     let mut config: Config = read_json(path)?;
     onboard::include(&mut config, path, private_directory)?;
     Ok(config)
+}
+/// The relay consumes the same installation profile as the provisioner. Membership
+/// may exist before activation so that the socket is ready for the initial mount.
+/// Each actual request still needs a live route and the matching kernel peer UID.
+pub(crate) fn browser_bindings(
+    registry: &Path,
+    config: &Path,
+    socket_root: &Path,
+) -> Result<Vec<crate::runtime_google::Binding>, String> {
+    let c = load(config, socket_root)?;
+    if c.registry_directory != registry || c.browser_sockets_root.as_deref() != Some(socket_root) {
+        return Err("browser_relay_installation_mismatch".into());
+    }
+    let mut bindings = Vec::new();
+    for member in c.members.iter().filter(|m| c.browser_root(m).is_some()) {
+        let allocation = match runtime_registry::lookup_allocated_id(registry, member.account_id) {
+            Ok(a) if a.generation == member.generation => a,
+            Ok(_) | Err(moosuri_store::StoreError::NotFound) => continue,
+            Err(_) => return Err("browser_relay_registry_unavailable".into()),
+        };
+        bindings.push(crate::runtime_google::Binding {
+            account_id: member.account_id,
+            tenant_id: Uuid::parse_str(&allocation.tenant_id)
+                .map_err(|_| "browser_relay_owner_invalid")?,
+            volume_id: Uuid::parse_str(&allocation.volume_id)
+                .map_err(|_| "browser_relay_owner_invalid")?,
+            generation: allocation.generation,
+            peer_uid: member.uid,
+        });
+    }
+    Ok(bindings)
 }
 fn lock_state(root: &Path) -> Result<File, String> {
     trusted_path(root, true)?;
@@ -455,6 +498,7 @@ mod tests {
                 enable_text_preview: false,
                 enable_google_readonly: false,
                 enable_local_gws: false,
+                browser_enabled: None,
             },
             Member {
                 account_id: Uuid::new_v4(),
@@ -464,6 +508,7 @@ mod tests {
                 enable_text_preview: false,
                 enable_google_readonly: false,
                 enable_local_gws: false,
+                browser_enabled: None,
             },
         ];
         assert!(c.validate().is_err());
@@ -519,6 +564,7 @@ mod tests {
             enable_text_preview: false,
             enable_google_readonly: false,
             enable_local_gws: false,
+            browser_enabled: None,
         });
         let states = cycle(&c, &CancellationToken::new()).await;
         assert_eq!(states[0].state, "not_active");

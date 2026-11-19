@@ -78,6 +78,9 @@ fn operation_lock(options: &Options) -> Result<File, String> {
 fn profile(options: &Options) -> Value {
     let p = &options.profile;
     let mut profile = json!({"name":options.name.trim(),"email":p.email.trim().to_ascii_lowercase(),"uid":p.uid,"image":p.image,"registry":p.registry_directory,"mounts":p.mounts_root,"ipc":p.ipc_root,"allocations":p.allocations_root,"model":p.model_sockets_root,"google":p.google_sockets_root,"text_preview":p.enable_text_preview,"engine":p.engine_socket,"memory":p.memory_bytes,"cpu":p.nano_cpus,"pids":p.pids,"disk":p.max_volume_bytes});
+    if let Some(browser) = &p.browser_sockets_root {
+        profile["browser"] = json!(browser);
+    }
     if p.enable_local_gws {
         profile["local_gws"] = json!(true);
     }

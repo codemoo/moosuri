@@ -50,6 +50,9 @@ pub struct Options {
     /// Mount this owner's socket directory from the dedicated Google broker or relay root.
     #[arg(long)]
     pub google_sockets_root: Option<PathBuf>,
+    /// Root-owned directory of member-specific browser relay sockets.
+    #[arg(long)]
+    pub browser_sockets_root: Option<PathBuf>,
     /// Use GWS inside the member runtime and the mounted socket for Google egress.
     #[arg(long, requires = "google_sockets_root")]
     pub enable_local_gws: bool,
@@ -92,6 +95,7 @@ struct Expected {
     scratch: PathBuf,
     model: Option<PathBuf>,
     google: Option<PathBuf>,
+    browser: Option<PathBuf>,
     local_gws: bool,
     text_preview: bool,
     memory: u64,
@@ -133,6 +137,9 @@ impl Expected {
         } else if self.google.is_some() {
             command.push("--google-readonly".into());
         }
+        if self.browser.is_some() {
+            command.push("--browser".into());
+        }
         json!(command)
     }
     fn create(&self) -> Value {
@@ -146,6 +153,9 @@ impl Expected {
         }
         if let Some(google) = &self.google {
             binds.push(format!("{}:/google:ro", google.display()));
+        }
+        if let Some(browser) = &self.browser {
+            binds.push(format!("{}:/browser:ro", browser.display()));
         }
         json!({"Image": self.image, "Entrypoint": [ENTRYPOINT], "Cmd": self.command(),
             "User": format!("{}:{}",self.uid,self.uid), "WorkingDir": "/", "Env": self.env,
@@ -293,6 +303,11 @@ fn expected_member(args: &Options, initialized: bool) -> Result<(Expected, Engin
         .as_deref()
         .map(|root| broker_directory(root, &account, args.uid, "google.sock"))
         .transpose()?;
+    let browser = args
+        .browser_sockets_root
+        .as_deref()
+        .map(|root| broker_directory(root, &account, args.uid, "browser.sock"))
+        .transpose()?;
     let expected = Expected {
         name: format!("moosuri-member-{account}"),
         image: args.image.clone(),
@@ -305,6 +320,7 @@ fn expected_member(args: &Options, initialized: bool) -> Result<(Expected, Engin
         ipc,
         scratch,
         google,
+        browser,
         model,
         local_gws: args.enable_local_gws,
         text_preview: args.enable_text_preview,
@@ -847,7 +863,11 @@ fn verify_inspect(v: &Value, e: &Expected) -> Result<(), String> {
     let mounts = v["Mounts"]
         .as_array()
         .ok_or("kiri_provision_mount_inspect_missing")?;
-    if mounts.len() != 3 + usize::from(e.model.is_some()) + usize::from(e.google.is_some()) {
+    if mounts.len()
+        != 3 + usize::from(e.model.is_some())
+            + usize::from(e.google.is_some())
+            + usize::from(e.browser.is_some())
+    {
         return Err("kiri_provision_inspected_mount_conflict".into());
     }
     let mut required = vec![
@@ -860,6 +880,9 @@ fn verify_inspect(v: &Value, e: &Expected) -> Result<(), String> {
     }
     if let Some(model) = &e.model {
         required.push(("/model", model, false));
+    }
+    if let Some(browser) = &e.browser {
+        required.push(("/browser", browser, false));
     }
     for (dest, source, writable) in required {
         let m = mounts
@@ -902,6 +925,7 @@ mod tests {
             scratch: "/srv/synthetic/scratch".into(),
             model: None,
             google: None,
+            browser: None,
             local_gws: false,
             text_preview: false,
             memory: 67108864,
@@ -925,7 +949,26 @@ mod tests {
         if let Some(google) = &e.google {
             v["Mounts"].as_array_mut().unwrap().push(json!({"Destination":"/google","Type":"bind","Source":google,"RW":false,"Propagation":"rprivate"}));
         }
+        if let Some(browser) = &e.browser {
+            v["Mounts"].as_array_mut().unwrap().push(json!({"Destination":"/browser","Type":"bind","Source":browser,"RW":false,"Propagation":"rprivate"}));
+        }
         v
+    }
+    #[test]
+    fn browser_socket_is_readonly_and_bound_to_the_expected_member() {
+        let mut e = expected();
+        let old_reservation = e.reservation();
+        e.browser = Some("/srv/browser/member".into());
+        assert_eq!(e.reservation(), old_reservation);
+        assert_eq!(e.command().as_array().unwrap().last().unwrap(), "--browser");
+        let mut actual = inspect(&e, true);
+        assert!(verify_inspect(&actual, &e).is_ok());
+        let last = actual["Mounts"].as_array_mut().unwrap().last_mut().unwrap();
+        last["Source"] = json!("/srv/browser/other");
+        assert!(verify_inspect(&actual, &e).is_err());
+        let mut actual = inspect(&e, true);
+        actual["Mounts"].as_array_mut().unwrap().last_mut().unwrap()["RW"] = json!(true);
+        assert!(verify_inspect(&actual, &e).is_err());
     }
     #[test]
     fn google_readonly_socket_mount_must_match_profile() {

@@ -81,6 +81,7 @@ pub(super) fn include(
         .into_iter()
         .chain(config.model_sockets_root.iter().map(PathBuf::as_path))
         .chain(config.google_sockets_root.iter().map(PathBuf::as_path))
+        .chain(config.browser_sockets_root.iter().map(PathBuf::as_path))
         {
             separate(root, other)?;
         }
@@ -179,6 +180,7 @@ pub async fn run(o: &Options) -> Result<(), String> {
         enable_text_preview: o.enable_text_preview,
         enable_google_readonly: o.enable_google_readonly,
         enable_local_gws: o.enable_local_gws,
+        browser_enabled: None,
     };
     if !matching(&config, &m)? {
         config.members.push(m.clone());
@@ -195,12 +197,29 @@ pub async fn run(o: &Options) -> Result<(), String> {
         uid: o.uid,
         capacity_bytes: config.max_volume_bytes,
     };
+    let account = m.account_id;
     let uid = o.uid;
     tokio::task::spawn_blocking(move || kiri_storage::prepare(&storage, &allocation, uid))
         .await
         .map_err(|_| "onboard_storage_worker_failed")??;
     let profile = config.provision(&m);
     register(&o.config, &o.operations_root, &config, m)?;
+    if let Some(root) = profile.browser_sockets_root.as_ref() {
+        // The relay discovers this newly durable enrollment on its next pass.
+        // The same invitation can be retried if the relay is temporarily offline.
+        let path = root.join(account.to_string()).join("browser.sock");
+        tokio::time::timeout(Duration::from_secs(12), async {
+            while !path
+                .try_exists()
+                .map_err(|_| "onboard_browser_socket_unavailable")?
+            {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            Ok::<_, String>(())
+        })
+        .await
+        .map_err(|_| "onboard_browser_relay_not_ready_retry_same_invitation")??;
+    }
     kiri_invite::run(&kiri_invite::Options {
         request_id: o.request_id,
         name: invite.name,

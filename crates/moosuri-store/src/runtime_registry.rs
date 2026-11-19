@@ -3,13 +3,20 @@ use crate::{Result, StoreError, email_valid, files};
 use fs2::FileExt;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
-use std::{fs, os::unix::fs::MetadataExt, path::Path, time::Duration};
+use std::{
+    fs,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    path::Path,
+    time::Duration,
+};
 use uuid::Uuid;
 
 pub mod admin;
 pub mod engine;
 
 const REGISTRY: &str = "account-runtimes.sqlite";
+pub const GOOGLE_WEB_CLIENT_FILE: &str = "google-web-client.json";
+pub const GOOGLE_WEB_CLIENT_PENDING_FILE: &str = ".google-web-client.pending";
 const APP_ID: i64 = 0x4d535252;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -32,13 +39,34 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
         return Err(StoreError::InvalidInput);
     }
     // Serialize the directory inspection with journal creation and unlink.
-    let directory = fs::File::open(root).map_err(|_| StoreError::Unavailable)?;
+    let directory = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(root)
+        .map_err(|_| StoreError::Unavailable)?;
     FileExt::lock_exclusive(&directory).map_err(|_| StoreError::Unavailable)?;
+    let opened = directory.metadata().map_err(|_| StoreError::Unavailable)?;
+    if opened.dev() != meta.dev()
+        || opened.ino() != meta.ino()
+        || opened.uid() != meta.uid()
+        || opened.mode() & 0o077 != 0
+    {
+        return Err(StoreError::InvalidInput);
+    }
     for item in fs::read_dir(root).map_err(|_| StoreError::Unavailable)? {
         let item = item.map_err(|_| StoreError::Unavailable)?;
+        let name = item.file_name();
+        // Google setup checks these independently so that a bad client file or
+        // an interrupted replacement cannot stop unrelated member routing.
+        if matches!(
+            name.to_str(),
+            Some(GOOGLE_WEB_CLIENT_FILE | GOOGLE_WEB_CLIENT_PENDING_FILE)
+        ) {
+            continue;
+        }
         let m = fs::symlink_metadata(item.path()).map_err(|_| StoreError::InvalidInput)?;
         if !matches!(
-            item.file_name().to_str(),
+            name.to_str(),
             Some("account-runtimes.sqlite" | "account-runtimes.sqlite-journal")
         ) || !m.is_file()
             || m.nlink() != 1

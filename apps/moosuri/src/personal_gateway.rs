@@ -33,6 +33,7 @@ use zeroize::Zeroizing;
 mod admin;
 mod browser;
 mod google;
+mod google_setup;
 mod memory;
 
 const ROUTER: &str = "__Host-moosuri_route";
@@ -1131,6 +1132,7 @@ fn router(g: Gateway) -> Router {
         .merge(memory::routes())
         .merge(browser::routes())
         .merge(google::routes())
+        .merge(google_setup::routes())
         .merge(admin::routes())
         .with_state(g)
 }
@@ -2540,6 +2542,129 @@ mod tests {
             assert_eq!(policy.effort, selected.effort);
         }
     }
+    async fn check_google_setup_administration(
+        g: &Gateway,
+        registry: &Path,
+        admin: &HeaderMap,
+        member: &HeaderMap,
+    ) {
+        use serde_json::json;
+        const ENDPOINT: &str = "/api/v1/personal/admin/google-setup";
+        let redirect = "https://assistant.example.test/api/v1/mail/oauth/callback";
+        let view = |configured| json!({"configured":configured,"redirect_uri":redirect});
+        let client = |id: &str, secret: &str, redirect: &str| json!({"web":{"client_id":id,"client_secret":secret,"redirect_uris":[redirect]}});
+        let envelope = |raw: &str| json!({"web_client_json":raw}).to_string();
+        let raw = client("fixture-id", "fixture-secret", redirect);
+        let upload = envelope(&raw.to_string());
+        let submit = |h: HeaderMap, body: String| async move {
+            request(g, ENDPOINT, Method::POST, h, &body).await
+        };
+        let status = |h: HeaderMap| request(g, ENDPOINT, Method::GET, h, "");
+        let path = registry.join(runtime_registry::GOOGLE_WEB_CLIENT_FILE);
+        assert_eq!(status(headers()).await.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(status(member.clone()).await.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            submit(member.clone(), upload.clone()).await.status(),
+            StatusCode::FORBIDDEN
+        );
+        let mut cross_site = admin.clone();
+        cross_site.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://other.test"),
+        );
+        assert_eq!(
+            submit(cross_site, upload.clone()).await.status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(json(status(admin.clone()).await).await, view(false));
+        for (body, code) in [
+            (
+                envelope(r#"{"installed":{"client_secret":"fixture-secret"}}"#),
+                "invalid_google_client_file",
+            ),
+            (
+                envelope(&" ".repeat(16 * 1024 + 1)),
+                "invalid_google_client_file",
+            ),
+            (
+                envelope(
+                    &client(
+                        "fixture-id",
+                        "fixture-secret",
+                        &format!("{redirect}?different"),
+                    )
+                    .to_string(),
+                ),
+                "google_redirect_uri_mismatch",
+            ),
+        ] {
+            let rejected = submit(admin.clone(), body).await;
+            assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(json(rejected).await, json!({"code":code}));
+        }
+        assert!(!path.exists());
+
+        let pending = registry.join(runtime_registry::GOOGLE_WEB_CLIENT_PENDING_FILE);
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&pending)
+            .unwrap()
+            .write_all(b"interrupted upload")
+            .unwrap();
+        let mut extra = raw.clone();
+        extra["web"]["auth_uri"] = json!("https://untrusted.example.test");
+        let upload_with_metadata = envelope(&extra.to_string());
+        let (first, retry) = tokio::join!(
+            submit(admin.clone(), upload_with_metadata),
+            submit(admin.clone(), upload.clone()),
+        );
+        for saved in [first, retry] {
+            assert_eq!(saved.status(), StatusCode::OK);
+            assert_eq!(saved.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(json(saved).await, view(true));
+        }
+        assert!(!pending.exists());
+        let metadata = fs::metadata(&path).unwrap();
+        assert_eq!(metadata.mode() & 0o7777, 0o600);
+        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+        assert_eq!(metadata.nlink(), 1);
+        let stored: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(stored, raw);
+        let repeat = submit(admin.clone(), upload.clone()).await;
+        assert_eq!(repeat.status(), StatusCode::OK);
+        assert_eq!(fs::metadata(&path).unwrap().ino(), metadata.ino());
+        let conflict = submit(
+            admin.clone(),
+            envelope(&client("fixture-id", "different-secret", redirect).to_string()),
+        )
+        .await;
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            json(conflict).await,
+            json!({"code":"google_setup_already_configured"})
+        );
+        assert_eq!(fs::metadata(&path).unwrap().ino(), metadata.ino());
+        assert_eq!(json(status(admin.clone()).await).await, view(true));
+
+        let outside = registry.parent().unwrap().join("existing-client");
+        fs::rename(&path, &outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &path).unwrap();
+        for response in [
+            status(admin.clone()).await,
+            submit(admin.clone(), upload).await,
+        ] {
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                json(response).await,
+                json!({"code":"google_setup_storage_unavailable"})
+            );
+        }
+        assert!(fs::symlink_metadata(&path).unwrap().is_symlink());
+        fs::remove_file(&path).unwrap();
+        fs::rename(&outside, &path).unwrap();
+    }
     #[tokio::test]
     async fn private_member_session_and_host_role_control_web_admin_even_after_demotion() {
         use moosuri_store::runtime_registry::admin as control;
@@ -2578,6 +2703,7 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         check_engine_administration(&g, &options.registry, &a, &b, &auth[0].0, &auth[1].0).await;
+        check_google_setup_administration(&g, &options.registry, &auth[0].0, &auth[1].0).await;
         let rows = json(list).await;
         let row = |id: &str| {
             rows["members"]
@@ -2635,6 +2761,15 @@ mod tests {
                 .status(),
             StatusCode::FORBIDDEN
         );
+        let google_setup = "/api/v1/personal/admin/google-setup";
+        for (method, body) in [(Method::GET, ""), (Method::POST, "{}")] {
+            assert_eq!(
+                request(&g, google_setup, method, auth[0].0.clone(), body)
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
         let list = json(request(&g, collection, Method::GET, auth[1].0.clone(), "").await).await;
         let current = list["members"]
             .as_array()

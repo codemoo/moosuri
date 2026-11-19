@@ -200,6 +200,17 @@ pub fn list_members(root: &Path, s: &AdminSession) -> Result<Vec<Member>> {
     Ok(q.query_map([], decode_member)?
         .collect::<std::result::Result<Vec<_>, _>>()?)
 }
+/// Run bounded local Google setup I/O while the administrator role is pinned.
+/// The callback must not call the registry again or perform any network I/O.
+pub fn with_google_setup<T>(
+    root: &Path,
+    s: &AdminSession,
+    action: impl FnOnce(&fs::File) -> T,
+) -> Result<T> {
+    let (directory, db) = open(root, false)?;
+    check(&db, s)?;
+    Ok(action(&directory))
+}
 /// Safe local operator metadata, never sufficient to authorize a web action.
 pub fn status(root: &Path, account: Uuid) -> Result<Member> {
     let (_lock, c) = open(root, false)?;

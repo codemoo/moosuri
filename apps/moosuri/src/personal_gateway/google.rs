@@ -5,7 +5,7 @@ use super::*;
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use serde_json::{Value, json};
 
-const CALLBACK: &str = "/api/v1/mail/oauth/callback";
+pub(super) const CALLBACK: &str = "/api/v1/mail/oauth/callback";
 const BASE: &str = "/api/v1/personal/google";
 const TTL: u64 = 600;
 const AAD: &[u8] = b"moosuri/personal/google/gmail-readonly/callback/v1";

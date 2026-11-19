@@ -5,7 +5,7 @@ use moosuri_store::runtime_registry::engine;
 use moosuri_store::{StoreError, runtime_registry::admin as control};
 use serde_json::json;
 
-fn error(e: StoreError) -> StatusCode {
+pub(super) fn error(e: StoreError) -> StatusCode {
     match e {
         StoreError::Unauthorized => StatusCode::UNAUTHORIZED,
         StoreError::Forbidden => StatusCode::FORBIDDEN,
@@ -79,6 +79,26 @@ pub(super) fn routes() -> Router<Gateway> {
         .route("/api/v1/personal/admin/invitations", post(endpoint))
         .layer(DefaultBodyLimit::max(4096))
 }
+pub(super) async fn authenticated_session(
+    g: &Gateway,
+    headers: &HeaderMap,
+) -> Result<(SessionAllocation, moosuri_core::SessionView), StatusCode> {
+    let (allocation, session) = authenticated_allocation(g, headers, true).await?;
+    let (status, body, _) = g
+        .proxy(
+            &allocation,
+            Method::GET,
+            "/api/v1/auth/session",
+            None,
+            Some(&session),
+        )
+        .await?;
+    if status != StatusCode::OK {
+        return Err(status);
+    }
+    let view = member_session_view(&body, &allocation)?;
+    Ok((allocation, view))
+}
 async fn endpoint(
     State(g): State<Gateway>,
     method: Method,
@@ -120,20 +140,7 @@ async fn endpoint(
                 _ => return Err(StatusCode::NOT_FOUND),
             }
         };
-        let (a, session) = authenticated_allocation(&g, &headers, true).await?;
-        let (status, bytes, _) = g
-            .proxy(
-                &a,
-                Method::GET,
-                "/api/v1/auth/session",
-                None,
-                Some(&session),
-            )
-            .await?;
-        if status != StatusCode::OK {
-            return Err(status);
-        }
-        let view = member_session_view(&bytes, &a)?;
+        let (a, view) = authenticated_session(&g, &headers).await?;
         let root = g.registry.clone();
         let out = tokio::task::spawn_blocking(move || {
             let pin = control::checked_session(&root, &a, &view)

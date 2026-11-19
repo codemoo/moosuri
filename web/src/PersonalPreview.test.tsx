@@ -707,11 +707,11 @@ it("opens the configured independent HTTPS vault while keeping member setup stat
   await user.click(await screen.findByRole("button", { name: "연결" }));
   await user.click(screen.getByRole("button", { name: /볼트/ }));
   await screen.findByText("회원 인증 연결 필요");
-  const link = screen.getByRole("link", { name: "독립 볼트 열기" });
+  const link = screen.getByRole("link", { name: "볼트 사이트 보기" });
   expect(link).toHaveAttribute("href", "https://vault.example.test");
   expect(link).toHaveAttribute("target", "_blank");
   expect(link).toHaveAttribute("rel", "noopener noreferrer");
-  expect(screen.getByText("독립 볼트에서는 별도로 로그인합니다.")).toBeInTheDocument();
+  expect(screen.getByText("현재 설치의 회원 세션과 볼트가 연결되지 않았습니다.")).toBeInTheDocument();
 });
 
 it.each([
@@ -725,7 +725,7 @@ it.each([
   await user.click(await screen.findByRole("button", { name: "연결" }));
   await user.click(screen.getByRole("button", { name: /볼트/ }));
   await screen.findByText("회원 인증 연결 필요");
-  expect(screen.queryByRole("link", { name: "독립 볼트 열기" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "볼트 사이트 보기" })).not.toBeInTheDocument();
 });
 
 it("searches candidate services and returns to the filtered list from details", async () => {

@@ -110,13 +110,12 @@ export function PersonalConnections({
         ) : selected.id === vault.id ? (
           <>
             <ConnectorDetail connector={vault} status={vaultLabel} busy={vaultStatus.status === "checking"}>
-              {vaultStatus.status === "setup_required" && <span>설치 관리자가 볼트에 회원 인증을 연결해야 합니다.</span>}
-              {vaultStatus.siteOrigin && <span>독립 볼트에서는 별도로 로그인합니다.</span>}
+              {vaultStatus.status === "setup_required" && <span>현재 설치의 회원 세션과 볼트가 연결되지 않았습니다.</span>}
             </ConnectorDetail>
             {vaultStatus.siteOrigin && (
               <div className="member-connector-actions">
                 <a className="member-page-action" href={vaultStatus.siteOrigin} target="_blank" rel="noopener noreferrer">
-                  독립 볼트 열기
+                  볼트 사이트 보기
                 </a>
               </div>
             )}

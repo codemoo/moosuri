@@ -113,3 +113,18 @@ A partial extraction SHALL name its supported data scope, preserve the exact Acc
 #### Scenario: Inspect the archive without the original source
 - **WHEN** the original synthetic source is unavailable
 - **THEN** verification can reconcile the archive's owner binding, exact retained rows, foreign keys, evidence, deletion state and rebuilt index while explicitly withholding runtime/cutover and authenticated-lineage claims
+
+### Requirement: Member-owned browser work in personal chat
+The personal runtime SHALL bind browser work to the authenticated member, runtime generation, conversation and original task. It SHALL expose a human viewer separately from model tools, stop model observation and input during takeover, and resume only from a confirmed checkpoint.
+
+#### Scenario: Inspect and dismiss a browser card
+- **WHEN** a member opens the preview of an active task and then dismisses the viewer
+- **THEN** the desktop side panel or narrow-screen full viewer closes, frame delivery ceases and the task remains accessible from the same chat
+
+#### Scenario: Change a filter and return control
+- **WHEN** the member changes a filter on the active page and confirms completion twice after a lost response
+- **THEN** the original task observes the current page once for that accepted continuation and returns the filtered result without creating another task or replaying input
+
+#### Scenario: Concurrent sessions and worker loss
+- **WHEN** another member requests the frame, a superseded controller submits input, or Chromium exits after a possible submission
+- **THEN** foreign access and stale input are rejected, ambiguous effects remain unresolved, and reconnecting does not replay the action

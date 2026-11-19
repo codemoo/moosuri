@@ -73,7 +73,8 @@ async fn due(s: &Store, t: i64) -> u32 {
 }
 
 #[tokio::test]
-async fn new_missions_use_the_installation_choice_and_old_schedule_pins_pause() {
+async fn recurring_uses_current_model_on_its_authorized_connection_and_rebinds_other_destinations()
+{
     let _g = TEST_LOCK.lock().await;
     let (_d, store, u) = setup().await;
     let mut replacement = store
@@ -105,29 +106,122 @@ async fn new_missions_use_the_installation_choice_and_old_schedule_pins_pause() 
         .unwrap();
     let at = now().unwrap() + 60;
     let old = store.create_recurring_mission(&u, input(at)).await.unwrap();
+    assert_eq!(due(&store, at).await, 1);
+    let first = exact(&store, "before-change").await;
     store
         .set_default_model(&u, Some(replacement.clone()))
         .await
         .unwrap();
 
-    let one_off = store.create_mission(&u, input(at).template).await.unwrap();
-    let claim = store.claim_agent_run().await.unwrap().unwrap();
-    assert_eq!(claim.binding.model, replacement.model);
-    store.delete_mission(&u, one_off.id).await.unwrap();
-
-    let current = store.create_recurring_mission(&u, input(at)).await.unwrap();
+    assert_eq!(due(&store, at + 60).await, 1);
+    let second = exact(&store, "after-change").await;
+    let current = store.recurring_missions(&u).await.unwrap().remove(0);
+    assert_eq!(current.schedule.id, old.schedule.id);
+    assert_eq!(current.schedule.revision, old.schedule.revision);
+    assert_eq!(current.schedule.state, "active");
     assert_eq!(current.model.model, replacement.model);
-    assert_eq!(due(&store, at).await, 1);
-    let old = store
-        .recurring_missions(&u)
+    assert_eq!(current.recent.len(), 2);
+
+    let provider = store
+        .create_provider(
+            &u,
+            crate::ProviderChange {
+                name: "Other installation endpoint".into(),
+                config: ProviderConfig {
+                    kind: ProviderKind::Compatible,
+                    base_url: Some("http://127.0.0.1:10/v1".into()),
+                    allowed_ips: vec!["127.0.0.1".into()],
+                    router_providers: vec![],
+                    zero_data_retention: false,
+                },
+                enabled: true,
+                credential: crate::CredentialChange::Clear,
+            },
+        )
         .await
-        .unwrap()
-        .into_iter()
-        .find(|recurring| recurring.schedule.id == old.schedule.id)
         .unwrap();
-    assert_eq!(old.schedule.state, "paused");
-    let occurrence = store.claim_agent_run().await.unwrap().unwrap();
-    assert_eq!(occurrence.binding.model, replacement.model);
+    let new_model = ModelSelection {
+        provider_id: provider.id,
+        provider_revision: 1,
+        model: "other-model".into(),
+        ..replacement.clone()
+    };
+    store
+        .record_model_probe(
+            &u,
+            new_model.provider_id.clone(),
+            1,
+            new_model.model.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .record_tool_probe(
+            &u,
+            new_model.provider_id.clone(),
+            1,
+            new_model.model.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_default_model(&u, Some(new_model.clone()))
+        .await
+        .unwrap();
+    assert_eq!(due(&store, at + 120).await, 0);
+    let paused = store.recurring_missions(&u).await.unwrap().remove(0);
+    assert_eq!(
+        paused.schedule.reason.as_deref(),
+        Some(MODEL_REAUTHORIZATION_REQUIRED)
+    );
+    assert!(
+        store
+            .control_recurring_mission(
+                &u,
+                old.schedule.id.clone(),
+                ScheduleControl {
+                    expected_revision: paused.schedule.revision,
+                    action: "resume".into(),
+                }
+            )
+            .await
+            .is_err()
+    );
+    let resumed = store
+        .control_recurring_mission(
+            &u,
+            old.schedule.id.clone(),
+            ScheduleControl {
+                expected_revision: paused.schedule.revision,
+                action: "rebind_model".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(resumed.schedule.state, "active");
+    assert_eq!(resumed.model.provider_id, new_model.provider_id);
+    assert_eq!(resumed.template.task, old.template.task);
+    assert_eq!(resumed.recent.len(), 2);
+    assert_eq!(due(&store, at + 180).await, 1);
+    let third = exact(&store, "after-rebind").await;
+    let tenant = u.tenant.0.clone();
+    store
+        .call(move |db| {
+            for (id, expected) in [
+                (first, "synthetic"),
+                (second, "replacement-model"),
+                (third, "other-model"),
+            ] {
+                let saved = crate::chat::load_run(&db.conn, &tenant, &id)?;
+                assert_eq!(saved.model.model, expected);
+                assert_eq!(saved.state, RunState::Completed);
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
 }
 
 async fn exact(s: &Store, call_id: &str) -> String {
@@ -310,8 +404,6 @@ async fn recurring_pinned_choice_busy_owner_fairness_and_latest_only() {
         .await
         .unwrap();
     s.create_mission(&u, input(at).template).await.unwrap();
-    // Changing default selection after explicit save cannot change the pinned recurring choice.
-    s.set_default_model(&u, None).await.unwrap();
     s.enqueue_scheduled_reminders_at(at + 120).await.unwrap();
     s.enqueue_scheduled_reminders_at(at + 120).await.unwrap();
     assert_eq!(s.poll_recurring_missions_at(at + 120).await.unwrap(), 1);

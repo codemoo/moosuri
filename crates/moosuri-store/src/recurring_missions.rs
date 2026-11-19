@@ -11,6 +11,27 @@ fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
 fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
     serde_json::from_str(v).map_err(|_| StoreError::Corrupt)
 }
+const MODEL_REAUTHORIZATION_REQUIRED: &str = "model_reauthorization_required";
+
+pub(super) fn can_rebind_model(schedule: &ScheduleView) -> bool {
+    schedule.state == "paused"
+        && matches!(
+            schedule.reason.as_deref(),
+            Some(MODEL_REAUTHORIZATION_REQUIRED | "provider_unavailable")
+        )
+}
+
+fn with_model(mut saved: serde_json::Value, choice: &ModelChoice) -> Result<serde_json::Value> {
+    let fields = saved.as_object_mut().ok_or(StoreError::Corrupt)?;
+    fields.remove("source");
+    let serde_json::Value::Object(model) =
+        serde_json::to_value(choice).map_err(|_| StoreError::Corrupt)?
+    else {
+        return Err(StoreError::Corrupt);
+    };
+    fields.extend(model);
+    Ok(saved)
+}
 pub(crate) fn is_recurring(c: &Connection, t: &str, id: &str) -> Result<bool> {
     Ok(c.query_row(
         "SELECT EXISTS(SELECT 1 FROM recurring_missions WHERE tenant_id=?1 AND schedule_id=?2)",
@@ -34,11 +55,16 @@ fn view(c: &Connection, u: &UserContext, id: &str) -> Result<RecurringMissionVie
     let recent=c.prepare("SELECT o.occurrence_id,o.mission_id,m.state,o.notification_id,o.publication_state='exact_unchanged',o.scheduled_for FROM recurring_mission_occurrences o JOIN missions m ON m.tenant_id=o.tenant_id AND m.id=o.mission_id WHERE o.tenant_id=?1 AND o.schedule_id=?2 ORDER BY o.scheduled_for DESC,o.occurrence_id DESC LIMIT 20")?.query_map(params![u.tenant.0,id],|r|Ok(RecurringMissionOccurrence{occurrence_id:r.get(0)?,mission_id:r.get(1)?,state:r.get(2)?,notification_id:r.get(3)?,exact_unchanged:r.get(4)?,scheduled_for:r.get(5)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let occurrences=c.prepare("SELECT id,revision,scheduled_for,local_slot,state,reason,notification_id,delayed,coalesce((SELECT source_suppressed FROM local_notifications n WHERE n.tenant_id=reminder_occurrences.tenant_id AND n.id=reminder_occurrences.notification_id),0) FROM reminder_occurrences WHERE tenant_id=?1 AND schedule_id=?2 ORDER BY created_at DESC,id DESC LIMIT 50")?.query_map(params![u.tenant.0,id],|r|Ok(ScheduleOccurrence{id:r.get(0)?,revision:r.get(1)?,scheduled_for:r.get(2)?,local_slot:r.get(3)?,state:r.get(4)?,reason:r.get(5)?,notification_id:r.get(6)?,delayed:r.get(7)?,notification_suppressed:r.get(8)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;
     let skipped_ranges=c.prepare("SELECT from_slot,to_slot,count,reason,revision FROM reminder_skipped_ranges WHERE tenant_id=?1 AND schedule_id=?2 ORDER BY created_at DESC,id DESC LIMIT 50")?.query_map(params![u.tenant.0,id],|r|Ok(ScheduleSkippedRange{from_slot:r.get(0)?,to_slot:r.get(1)?,count:r.get(2)?,reason:r.get(3)?,revision:r.get(4)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    let authorized = decode(&model)?;
+    let choice = providers::background_choice(c, &authorized)
+        .ok()
+        .flatten()
+        .unwrap_or(authorized);
     Ok(RecurringMissionView {
         missing_skills: skills::missing(c, &u.tenant.0, &model)?,
         schedule,
         template: decode(&template)?,
-        model: decode(&model)?,
+        model: choice,
         changes_only: changes,
         recent,
         history: ScheduleHistory {
@@ -197,13 +223,25 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
             fence_children(c, &t, &schedule)?;
             continue;
         }
-        let choice: ModelChoice = decode(&model)?;
-        if crate::missions::require_model(c, key, &t, &account, &choice).is_err() {
-            c.execute("UPDATE reminder_schedules SET state='paused',reason='provider_unavailable',revision=revision+1 WHERE tenant_id=?1 AND id=?2",params![t,schedule])?;
-            c.execute("UPDATE reminder_occurrences SET state='skipped',reason='provider_unavailable',updated_at=?3 WHERE tenant_id=?1 AND id=?2",params![t,occurrence,time])?;
-            fence_children(c, &t, &schedule)?;
-            continue;
-        }
+        let authorized = decode(&model)?;
+        let choice = match providers::background_choice(c, &authorized) {
+            Ok(Some(choice))
+                if crate::missions::require_model(c, key, &t, &account, &choice).is_ok() =>
+            {
+                choice
+            }
+            failure => {
+                let reason = if matches!(failure, Ok(None)) {
+                    MODEL_REAUTHORIZATION_REQUIRED
+                } else {
+                    "provider_unavailable"
+                };
+                c.execute("UPDATE reminder_schedules SET state='paused',reason=?3,revision=revision+1,updated_at=?4 WHERE tenant_id=?1 AND id=?2",params![t,schedule,reason,time])?;
+                c.execute("UPDATE reminder_occurrences SET state='skipped',reason=?3,updated_at=?4 WHERE tenant_id=?1 AND id=?2",params![t,occurrence,reason,time])?;
+                fence_children(c, &t, &schedule)?;
+                continue;
+            }
+        };
         let pinned: serde_json::Value =
             serde_json::from_str(&model).map_err(|_| StoreError::Corrupt)?;
         let pending = pinned
@@ -221,7 +259,7 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
         let mut input: MissionCreate = decode(&template)?;
         input.request_id = occurrence.clone();
         crate::task_monitors::prepare(c, &t, &schedule, &mut input)?;
-        let model = skills::admission_model(c, &t, &model)?;
+        let model = with_model(skills::admission_model(c, &t, &model)?, &choice)?;
         // A zero digest is a non-session marker; durable authority never uses chat session auth.
         let id = crate::missions::create_pinned_in(
             c,
@@ -365,6 +403,7 @@ pub(crate) fn create_owner_in(
                 if old!=digest{return Err(StoreError::Conflict)}
                 return view(tx,u,&id)
             }
+    let choice = providers::background_choice(tx, &choice)?.ok_or(StoreError::Conflict)?;
     crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &choice)?;
     let profile = crate::missions::connected::admit_profile(
         tx,
@@ -408,10 +447,18 @@ pub(crate) fn control_owner_in(
     key: &[u8; 32],
     u: &UserContext,
     id: &str,
-    input: ScheduleControl,
+    mut input: ScheduleControl,
 ) -> Result<RecurringMissionView> {
     let old = view(tx, u, id)?;
+    let rebind = input.action == "rebind_model";
+    if rebind {
+        if !can_rebind_model(&old.schedule) {
+            return Err(StoreError::Conflict);
+        }
+        input.action = "resume".into();
+    }
     if input.action == "resume" {
+        crate::task_monitors::require_schedule_policy(tx, &u.tenant.0, id)?;
         let model: String = tx.query_row(
             "SELECT model FROM recurring_missions WHERE tenant_id=?1 AND schedule_id=?2",
             params![u.tenant.0, id],
@@ -427,7 +474,21 @@ pub(crate) fn control_owner_in(
             return Err(StoreError::Conflict);
         }
         skills::resume_eligible(tx, &u.tenant.0, id)?;
-        crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &old.model)?;
+        let authorized = decode(&model)?;
+        let choice = if rebind {
+            providers::installation_choice(tx)?
+        } else {
+            providers::background_choice(tx, &authorized)?
+        }
+        .ok_or(StoreError::Conflict)?;
+        crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &choice)?;
+        if rebind {
+            let model = with_model(decode(&model)?, &choice)?;
+            tx.execute(
+                "UPDATE recurring_missions SET model=?3 WHERE tenant_id=?1 AND schedule_id=?2",
+                params![u.tenant.0, id, encode(&model)?],
+            )?;
+        }
     }
     let changed = crate::schedules::control_recurring_in(tx, u, id, &input, now()?)?;
     if changed.revision != old.schedule.revision {
@@ -446,7 +507,8 @@ pub(crate) fn edit_owner_in(
 ) -> Result<RecurringMissionView> {
     let old = view(tx, u, id)?;
     skills::resume_eligible(tx, &u.tenant.0, id)?;
-    crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &old.model)?;
+    let choice = providers::background_choice(tx, &old.model)?.ok_or(StoreError::Conflict)?;
+    crate::missions::require_model(tx, key, &u.tenant.0, &u.account.id, &choice)?;
     input.draft.message = "예약한 읽기 업무".into();
     crate::schedules::edit_recurring_in(tx, u, id, &input, now()?)?;
     fence_children(tx, &u.tenant.0, id)?;

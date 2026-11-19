@@ -13,7 +13,7 @@ function validMonitor(v:unknown):v is TaskMonitor {
 type Props={accountId:string;missionId?:string;missionIds?:string[];onExpired:()=>void};
 const results:Record<string,string>={queued:"확인 대기",planning:"확인 준비 중",executing:"자료 확인 중",verifying:"결과 확인 중",achieved:"변경 확인 완료",partial:"일부 결과 · 검토 필요",failed:"확인을 마치지 못했어요",unknown:"결과 확인 필요",cancelled:"확인 취소",quarantined:"자료 변경으로 재검토 필요",missing_evidence:"근거 확인 필요",paused:"잠시 멈춤",waiting:"연결 대기"};
 const states:Record<string,string>={proposed:"후속 확인 제안",active:"허용한 범위 확인 중",paused:"후속 확인 일시 중지",stopped:"확인 중지",withdrawn:"권한 또는 자료 연결 철회",expired:"허용 기간 만료"};
-const reasons:Record<string,string>={coverage_limited_needs_review:"변경 자료가 검토 한도를 넘었어요. 전체를 확인하지 않았으니 직접 검토해 주세요.",membership_removed_needs_review:"스레드 자료가 제거되었어요. 남은 자료를 다시 읽지 않았으니 직접 검토해 주세요.",permission_or_source_unavailable:"자료·연결·계정 권한 또는 유효 기간이 바뀌어 중지했어요.",permission_unavailable:"원래 허용한 권한을 더 사용할 수 없어 중지했어요."};
+const reasons:Record<string,string>={coverage_limited_needs_review:"변경 자료가 검토 한도를 넘었어요. 전체를 확인하지 않았으니 직접 검토해 주세요.",membership_removed_needs_review:"스레드 자료가 제거되었어요. 남은 자료를 다시 읽지 않았으니 직접 검토해 주세요.",permission_or_source_unavailable:"자료·연결·계정 권한 또는 유효 기간이 바뀌어 중지했어요.",permission_unavailable:"원래 허용한 권한을 더 사용할 수 없어 중지했어요.",model_reauthorization_required:"이 후속 확인의 자료를 현재 설치 모델 연결에 보내려면 승인해 주세요.",provider_unavailable:"확인에 필요한 모델을 사용할 수 없어요. 연결을 확인한 뒤 재개해 주세요."};
 export function TaskMonitors(props:Props){return <Contents key={props.accountId} {...props}/>}
 function Contents({accountId,missionId,missionIds,onExpired}:Props){
  const scope=useScope(accountId,"task-monitors");const [items,setItems]=useState<TaskMonitor[]>([]),[error,setError]=useState("");const alive=useRef(true),reading=useRef<Promise<void>|null>(null),generation=useRef(0);
@@ -35,6 +35,7 @@ function Monitor({monitor:m,scope,refresh,failure}:{monitor:TaskMonitor;scope:Re
  <ul>{m.sources.map(s=><li key={s.id}>{s.title}</li>)}</ul>
  <details><summary>무엇을 확인하나요?</summary><p>허용한 저장 자료의 변화만 확인하고, 변경이 없으면 모델을 호출하지 않아요. 한 번에 확인할 수 있는 양을 넘으면 직접 검토가 필요하다고 알려드려요. 메일 발송이나 일정 변경은 하지 않아요.</p></details>
  {m.reason&&<p role="status">{reasons[m.reason]??(m.reason==="coalesced_existing_monitor"?"이미 진행 중인 후속 확인에 연결했어요. 기존 확인 간격과 종료 시각을 유지해요.":"후속 확인을 중지했어요.")}</p>}
+ {m.state==="paused"&&["model_reauthorization_required","provider_unavailable"].includes(m.reason??"")&&<button disabled={busy} onClick={()=>void send(`/task-monitors/${m.id}/rebind-model`,{expected_revision:m.revision})}>설치 모델 연결을 승인하고 재개</button>}
  {m.last_checked_at&&<p>최근 자료 변경 확인: {new Date(m.last_checked_at*1000).toLocaleString()}</p>}
  {m.state==="proposed"&&<form onSubmit={e=>{e.preventDefault();void send(`/task-monitors/${m.id}/accept`,{request_id:crypto.randomUUID(),expected_revision:m.revision,cadence_seconds:cadence,expires_at:m.existing_monitor_id?m.expires_at:Math.floor(Date.now()/1000)+days*86400,reuse,read:true,check:true,notify:true})}}>
  {!m.existing_monitor_id&&<><label>확인 간격<select disabled={busy} value={cadence} onChange={e=>{setCadence(Number(e.target.value));draft()}}><option value={300}>5분</option><option value={3600}>1시간</option><option value={86400}>하루</option></select></label>

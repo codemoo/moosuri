@@ -382,6 +382,21 @@ fn policy_current(c: &Connection, t: &str, id: &str, at: i64) -> Result<bool> {
     let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM task_monitors m JOIN task_monitor_policies p ON p.tenant_id=m.tenant_id AND p.id=m.policy_id JOIN accounts a ON a.tenant_id=m.tenant_id AND a.id=m.account_id JOIN missions parent ON parent.tenant_id=m.tenant_id AND parent.id=m.parent_mission_id WHERE m.tenant_id=?1 AND m.id=?2 AND m.state='active' AND p.state='active' AND p.expires_at>?3 AND p.account_id=m.account_id AND p.auth_epoch=a.auth_epoch AND a.status='active' AND a.recovery_required=0 AND a.must_change_password=0 AND (a.temporary_expires_at IS NULL OR a.temporary_expires_at>?3) AND parent.state!='deleted' AND parent.state!='cancelled' AND m.acceptance_revision=coalesce((SELECT max(x.revision) FROM mission_acceptances x WHERE x.tenant_id=m.tenant_id AND x.mission_id=m.parent_mission_id),1))",params![t,id,at],|r|r.get(0))?;
     Ok(valid && current_members(c, t, id).is_ok())
 }
+pub(super) fn require_schedule_policy(c: &Connection, tenant: &str, schedule: &str) -> Result<()> {
+    let monitor: Option<String> = c
+        .query_row(
+            "SELECT id FROM task_monitors WHERE tenant_id=?1 AND schedule_id=?2",
+            params![tenant, schedule],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(id) = monitor
+        && !policy_current(c, tenant, &id, now()?)?
+    {
+        return Err(StoreError::Conflict);
+    }
+    Ok(())
+}
 /// One retirement decision for admission/reuse; this never refreshes permission.
 fn retain_current_policy(c: &Connection, t: &str, id: &str, at: i64) -> Result<bool> {
     if policy_current(c, t, id, at)? {
@@ -778,6 +793,50 @@ impl Store {
         self.call(move|db|{let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=validate(&tx,&u,true,false)?;owned(&tx,&u,&id)?;let old=view(&tx,&u.tenant.0,&id)?;if old.revision!=input.expected_revision {if old.state=="stopped"&&old.revision==input.expected_revision+1&&old.reason.as_deref()==Some(if input.revoke_policy{"policy_revoked"}else{"owner_stopped"}){return Ok(old)}return Err(StoreError::Conflict)}
         if input.revoke_policy && let Some(policy)=old.policy_id {tx.execute("UPDATE task_monitor_policies SET state='revoked' WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,policy])?;let others=tx.prepare("SELECT id FROM task_monitors WHERE tenant_id=?1 AND policy_id=?2 AND state='active'")?.query_map(params![u.tenant.0,policy],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;for other in others{stop(&tx,&u.tenant.0,&other,"stopped","policy_revoked")?;}}
         stop(&tx,&u.tenant.0,&id,"stopped",if input.revoke_policy{"policy_revoked"}else{"owner_stopped"})?;let out=view(&tx,&u.tenant.0,&id)?;tx.commit()?;Ok(out)}).await
+    }
+    pub async fn rebind_task_monitor_model(
+        &self,
+        user: &UserContext,
+        id: String,
+        expected_revision: i64,
+    ) -> Result<TaskMonitorView> {
+        let user = user.clone();
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let user = validate(&tx, &user, true, false)?;
+            owned(&tx, &user, &id)?;
+            let tenant = &user.tenant.0;
+            let current = view(&tx, tenant, &id)?;
+            if current.revision != expected_revision || current.state != "paused" {
+                return Err(StoreError::Conflict);
+            }
+            let schedule_id: String = tx.query_row(
+                "SELECT schedule_id FROM task_monitors WHERE tenant_id=?1 AND id=?2",
+                params![tenant, id],
+                |row| row.get(0),
+            )?;
+            let schedule = crate::schedules::recurring_view(&tx, &user, &schedule_id)?;
+            crate::recurring_missions::control_owner_in(
+                &tx,
+                &db.provider_key,
+                &user,
+                &schedule_id,
+                ScheduleControl {
+                    action: "rebind_model".into(),
+                    expected_revision: schedule.revision,
+                },
+            )?;
+            tx.execute(
+                "UPDATE task_monitors SET revision=revision+1 WHERE tenant_id=?1 AND id=?2",
+                params![tenant, id],
+            )?;
+            let changed = view(&tx, tenant, &id)?;
+            tx.commit()?;
+            Ok(changed)
+        })
+        .await
     }
     pub async fn resolve_task_monitor(
         &self,

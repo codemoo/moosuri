@@ -424,6 +424,24 @@ pub(super) fn installation_choice(conn: &Connection) -> Result<Option<ModelChoic
         .map(|selection| verified(conn, &selection))
         .transpose()
 }
+pub(super) fn same_provider(a: &ModelChoice, b: &ModelChoice) -> bool {
+    a.source == b.source
+        && a.provider_id == b.provider_id
+        && a.provider_revision == b.provider_revision
+}
+
+/// A background grant authorizes a specific connection. Model and effort may
+/// track the installation choice within that connection.
+pub(super) fn background_choice(
+    conn: &Connection,
+    authorized: &ModelChoice,
+) -> Result<Option<ModelChoice>> {
+    match installation_choice(conn)? {
+        Some(choice) => Ok(same_provider(&choice, authorized).then_some(choice)),
+        None if authorized.source == ModelSource::Shared => Err(StoreError::ModelRequired),
+        None => Ok(Some(authorized.clone())),
+    }
+}
 fn selection_choice(
     conn: &Connection,
     user: &UserContext,

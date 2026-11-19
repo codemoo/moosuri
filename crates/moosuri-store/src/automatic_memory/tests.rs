@@ -57,7 +57,7 @@ fn change(revision: i64, enabled: bool) -> MemoryExtractionChange {
 }
 
 #[tokio::test]
-async fn installation_model_change_fences_extraction_and_new_grants_use_the_new_model() {
+async fn installation_model_updates_new_extraction_and_preserves_dispatched_origin() {
     let _g = TEST_LOCK.lock().await;
     let d = directory();
     let store = Store::open(d.path()).unwrap();
@@ -94,33 +94,79 @@ async fn installation_model_change_fences_extraction_and_new_grants_use_the_new_
         .set_memory_extraction(&u, c.id.clone(), change(0, true))
         .await
         .unwrap();
-    source(&store, &u, &c, "I prefer trains.", None).await;
+    let first = source(&store, &u, &c, "I prefer trains.", None).await;
     let old = store.claim_memory_extraction().await.unwrap().unwrap();
     assert_eq!(old.binding.model, "synthetic");
+    assert!(
+        store
+            .admit_memory_extraction(&old.lease, 1200)
+            .await
+            .unwrap()
+    );
 
     store
         .set_default_model(&u, Some(replacement.clone()))
         .await
         .unwrap();
-    assert!(matches!(
-        store.admit_memory_extraction(&old.lease, 1200).await,
-        Err(StoreError::Conflict)
-    ));
+    assert_eq!(
+        store
+            .finish_memory_extraction(&old.lease, vec![0], RunUsage::default())
+            .await
+            .unwrap(),
+        1
+    );
 
-    store
-        .set_memory_extraction(&u, c.id.clone(), change(1, true))
-        .await
-        .unwrap();
     let c = updated_collection(&store, &u, &c.id).await;
-    source(&store, &u, &c, "I travel on Fridays.", None).await;
+    let second = source(&store, &u, &c, "I travel on Fridays.", None).await;
     let current = store.claim_memory_extraction().await.unwrap().unwrap();
     assert_eq!(current.binding.model, replacement.model);
+    let original = ModelSelection {
+        model: "synthetic".into(),
+        ..replacement.clone()
+    };
+    store.set_default_model(&u, Some(original)).await.unwrap();
     assert!(
-        store
+        !store
             .admit_memory_extraction(&current.lease, 1200)
             .await
             .unwrap()
     );
+
+    store
+        .set_default_model(&u, Some(replacement.clone()))
+        .await
+        .unwrap();
+    let reclaimed = store.claim_memory_extraction().await.unwrap().unwrap();
+    assert_eq!(reclaimed.binding.model, replacement.model);
+    assert!(
+        store
+            .admit_memory_extraction(&reclaimed.lease, 1200)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        store
+            .finish_memory_extraction(&reclaimed.lease, vec![0], RunUsage::default())
+            .await
+            .unwrap(),
+        1
+    );
+
+    let generation = store
+        .memory_extraction_status(&u, c.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(generation.revision, 1);
+    let tenant = u.tenant.0.clone();
+    store.call(move |db| {
+        let calls: i64 = db.conn.query_row("SELECT sum(calls) FROM automatic_memory_budget WHERE tenant_id=?1", [&tenant], |r| r.get(0))?;
+        assert_eq!(calls, 2);
+        for (source, expected) in [(first, "synthetic"), (second, "replacement-model")] {
+            let recorded: String = db.conn.query_row("SELECT json_extract(model,'$.model') FROM automatic_memory_origins WHERE tenant_id=?1 AND source_id=?2", params![tenant,source], |r| r.get(0))?;
+            assert_eq!(recorded, expected);
+        }
+        Ok(())
+    }).await.unwrap();
 }
 
 async fn collection(store: &Store, u: &UserContext) -> KnowledgeCollection {

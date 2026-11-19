@@ -72,8 +72,8 @@ enum WorkerRequest {
 }
 
 enum Worker {
-    Read(BrowserSession),
-    Workspace(BrowserWorkspace),
+    Read(Box<BrowserSession>),
+    Workspace(Box<BrowserWorkspace>),
 }
 impl Worker {
     fn expires_in(&self) -> std::time::Duration {
@@ -147,11 +147,11 @@ async fn main() {
     let launched = if workspace {
         BrowserWorkspace::launch(config, cancellation.clone())
             .await
-            .map(Worker::Workspace)
+            .map(|session| Worker::Workspace(Box::new(session)))
     } else {
         BrowserSession::launch(config, cancellation.clone())
             .await
-            .map(Worker::Read)
+            .map(|session| Worker::Read(Box::new(session)))
     };
     let mut session = match launched {
         Ok(session) => session,

@@ -20,7 +20,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 mod profiles;
 pub use workspace::{
-    CapsuleWorkspace, WorkspaceFrame, WorkspaceInput, WorkspaceKey, WorkspaceObservation,
+    CapsuleWorkspace, OpenedTab, TabCommand, WorkspaceFrame, WorkspaceInput, WorkspaceKey,
+    WorkspaceObservation, WorkspaceTab, WorkspaceTabs,
 };
 const SECCOMP_DIGEST: &str = "18c6523f4de6aebb9d220d98fea8a03edb381d97237f954ed9d1f47d233f661c";
 const OWNER: &str = "io.moosuri.browser.owner";
@@ -66,6 +67,7 @@ pub struct CapsuleReader {
     config: Arc<CapsuleConfig>,
     pin: String,
     capacity: Arc<Semaphore>,
+    member_start: Arc<tokio::sync::Mutex<()>>,
     profile_cursor: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(test)]
     fixture: Option<Arc<Fixture>>,
@@ -167,6 +169,7 @@ impl CapsuleReader {
             config: Arc::new(config),
             pin,
             capacity: Arc::new(Semaphore::new(2)),
+            member_start: Arc::new(tokio::sync::Mutex::new(())),
             profile_cursor: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             #[cfg(test)]
             fixture: None,

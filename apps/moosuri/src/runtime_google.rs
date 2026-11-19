@@ -590,6 +590,13 @@ pub(super) async fn listener(
     root: &Path,
     b: Binding,
 ) -> Result<(UnixListener, SocketGuard), String> {
+    listener_named(root, b, "google.sock").await
+}
+pub(super) async fn listener_named(
+    root: &Path,
+    b: Binding,
+    filename: &'static str,
+) -> Result<(UnixListener, SocketGuard), String> {
     let leaf = root.join(b.account_id.to_string());
     match fs::create_dir(&leaf) {
         Ok(()) => {
@@ -610,7 +617,7 @@ pub(super) async fn listener(
     {
         return Err("google_socket_directory_invalid".into());
     }
-    let path = leaf.join("google.sock");
+    let path = leaf.join(filename);
     if path.as_os_str().len() > 100 {
         return Err("google_socket_path_too_long".into());
     }

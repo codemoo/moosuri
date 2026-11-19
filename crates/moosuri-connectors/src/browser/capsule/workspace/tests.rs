@@ -306,3 +306,34 @@ async fn persistent_recovery_requires_worker_capability_and_blank_does_not_open_
     worker.blank().await.unwrap();
     worker.shutdown().await.unwrap();
 }
+
+#[test]
+fn surviving_member_containers_reserve_their_installation_slots_after_a_broker_restart() {
+    assert_eq!(free_member_slot("member-", b"").unwrap(), "member-0");
+    assert_eq!(
+        free_member_slot(
+            "member-",
+            b"member-0
+"
+        )
+        .unwrap(),
+        "member-1"
+    );
+    assert_eq!(
+        free_member_slot(
+            "member-",
+            b"member-1
+member-0
+"
+        ),
+        Err(BrowserError::Capacity)
+    );
+    assert_eq!(
+        free_member_slot(
+            "member-",
+            b"unexpected
+"
+        ),
+        Err(BrowserError::IsolationRequired)
+    );
+}

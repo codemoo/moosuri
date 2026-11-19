@@ -213,6 +213,9 @@ async fn fixture() -> (
             session,
             current: Some(handle),
             proof: None,
+            initial_targets: HashSet::new(),
+            last_links: None,
+            human_interacted: false,
         },
         state,
         server,
@@ -470,4 +473,44 @@ fn snapshot_absent_string_sentinels_are_field_aware_and_bad_indexes_fail() {
         project_observation("https://example.org/", &ax(), &snapshot),
         Err(BrowserError::Protocol)
     ));
+}
+
+#[tokio::test]
+async fn passive_tab_refresh_preserves_unspent_controller_proof_until_geometry_changes() {
+    let (mut workspace, state, server) = fixture().await;
+    let tab = workspace.current.as_ref().unwrap().page;
+    let controller = workspace.tab_frame(tab).await.unwrap();
+    state.lock().unwrap().screenshot = 2;
+    let passive = workspace.tab_frame(tab).await.unwrap();
+    assert_eq!(controller.frame_token, passive.frame_token);
+    assert_ne!(controller.png_base64, passive.png_base64);
+    workspace
+        .input(
+            &controller.frame_token,
+            WorkspaceInput::Click { x: 1, y: 2 },
+        )
+        .await
+        .unwrap();
+    let live = workspace.tab_frame(tab).await.unwrap();
+    assert_ne!(live.frame_token, controller.frame_token);
+    assert!(matches!(
+        workspace
+            .input(
+                &controller.frame_token,
+                WorkspaceInput::Click { x: 1, y: 2 }
+            )
+            .await,
+        Err(BrowserError::StalePage)
+    ));
+    assert_eq!(
+        workspace.tab_frame(tab).await.unwrap().frame_token,
+        live.frame_token
+    );
+    state.lock().unwrap().shifted = true;
+    assert_ne!(
+        workspace.tab_frame(tab).await.unwrap().frame_token,
+        live.frame_token
+    );
+    workspace.shutdown().await;
+    server.abort();
 }

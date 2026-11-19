@@ -28,6 +28,36 @@ enum WorkerRequest {
     WorkspaceOpen {
         url: String,
     },
+    WorkspaceStartTabs {
+        url: String,
+    },
+    WorkspaceTabs,
+    WorkspaceSwitch {
+        tab_id: Uuid,
+        to_tab_id: Uuid,
+    },
+    WorkspaceCloseTab {
+        tab_id: Uuid,
+    },
+    WorkspaceFollow {
+        tab_id: Uuid,
+        url: String,
+    },
+    WorkspaceTabObserve {
+        tab_id: Uuid,
+    },
+    WorkspaceTabFrame {
+        tab_id: Uuid,
+    },
+    WorkspaceTabSelected {
+        tab_id: Uuid,
+        frame_token: String,
+    },
+    WorkspaceTabInput {
+        tab_id: Uuid,
+        frame_token: String,
+        input: WorkspaceInput,
+    },
     WorkspaceBlank,
     WorkspaceObserve,
     WorkspaceObserveSelected {
@@ -63,6 +93,7 @@ fn code(error: &BrowserError) -> &'static str {
     match error {
         BrowserError::StalePage => "stale_page",
         BrowserError::InvalidHandle => "invalid_handle",
+        BrowserError::Capacity => "capacity",
         BrowserError::InvalidUrl => "invalid_url",
         BrowserError::ForbiddenDestination => "forbidden_destination",
         BrowserError::OutputTooLarge => "output_too_large",
@@ -171,6 +202,15 @@ async fn main() {
             (Worker::Read(s), Ok(WorkerRequest::Screenshot { handle })) => s.screenshot(&handle).await.map(|v| json!({"handle":v.handle,"mime":"image/png","base64":base64::engine::general_purpose::STANDARD.encode(v.png)})),
             (Worker::Read(s), Ok(WorkerRequest::Close { handle })) => s.close(&handle).await.map(|_|json!({"closed":true})),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceOpen { url })) => s.open(&url).await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceStartTabs {url})) => s.start_tabs(&url).await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceTabs)) => s.tabs().await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceSwitch{tab_id,to_tab_id})) => s.switch(tab_id,to_tab_id).await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceCloseTab{tab_id})) => s.close_tab(tab_id).await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceFollow{tab_id,url})) => s.follow(tab_id,&url).await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceTabObserve{tab_id})) => async { s.require_tab(tab_id)?; s.permit_agent_read()?; s.observe().await.map(|v|json!(v)) }.await,
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceTabFrame{tab_id})) => s.tab_frame(tab_id).await.map(|v|json!(v)),
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceTabSelected{tab_id,frame_token})) => async { s.require_tab(tab_id)?; s.observe_selected(&frame_token).await.map(|v|json!(v)) }.await,
+            (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceTabInput{tab_id,frame_token,input})) => async { s.require_tab(tab_id)?; s.input(&frame_token,input).await.map(|_|json!({"accepted":true})) }.await,
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceBlank)) => s.blank().await.map(|_|json!({"blank":true})),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceObserve)) => s.observe().await.map(|v|json!(v)),
             (Worker::Workspace(s), Ok(WorkerRequest::WorkspaceObserveSelected{expected_frame_token})) => s.observe_selected(&expected_frame_token).await.map(|v|json!(v)),
@@ -179,7 +219,7 @@ async fn main() {
             _ => Err(BrowserError::Protocol),
         };
         let fatal = workspace
-            && matches!(&result, Err(e) if !matches!(e, BrowserError::StalePage | BrowserError::InvalidHandle | BrowserError::InvalidUrl | BrowserError::ForbiddenDestination));
+            && matches!(&result, Err(e) if !matches!(e, BrowserError::Capacity | BrowserError::StalePage | BrowserError::InvalidHandle | BrowserError::InvalidUrl | BrowserError::ForbiddenDestination));
         let value = match result {
             Ok(value) => json!({"ok":true,"result":value}),
             Err(error) => json!({"ok":false,"error":error.to_string(),"code":code(&error)}),

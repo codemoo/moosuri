@@ -11,13 +11,30 @@ The backend creates a separate capsule per tenant. Typed Rust methods are
 An opaque page UUID, worker generation and navigation generation bind every handle.
 Cross-worker/closed handles fail; changed main-frame loader/frame identity fails.
 The one-shot mode permits at most four created tabs and a 120-second lifetime.
-The `--workspace` mode retains one profile/page, with a maximum eight-hour worker
+The `--workspace` mode retains one profile per workspace, with a maximum eight-hour worker
 lifetime and thirty-minute idle cleanup in the app broker. Operations, CDP messages,
 text, links and PNGs remain bounded. Human frames travel only through authenticated
 no-store endpoints into React memory, never model tool text or ordinary artifacts.
 The app exposes `browser_read` for fresh reads and `browser_open`/`browser_observe`/
 `browser_handoff` for persistent workspaces. Low-level input and screenshot APIs
 remain human-only.
+
+Kiri runs `moosuri runtime-browser-relay --registry PATH --socket-dir PATH --lifecycle-config PATH --capsule-config PATH`
+on Linux. Use the same registry and lifecycle enrollment as member provisioning,
+a dedicated root-owned 0700 socket root and a private JSON file containing the
+verified capsule configuration. The relay discovers new member allocations every
+second. It binds one UID-owned `browser.sock` inside each root-owned UUID directory.
+Only this directory is mounted in its member runtime. A ready registry allocation,
+matching generation, OS peer UID and current route epoch are required. Two fixed
+Docker container slots per installation also count surviving workers after restart.
+
+The member protocol opens an ephemeral profile for each task. Each profile
+tracks up to four tabs, including public pages opened by the site. Switching or
+closing the active tab clears its input proof. Closing the last tab shuts down
+the worker. Read navigation creates a new tab for a named, currently rendered,
+same-origin link observed in the current document. After the first human input
+the worker accepts further model observations only through explicit frame-bound
+selection and disables autonomous link navigation for that workspace.
 
 `MOOSURI_BROWSER_JAVASCRIPT=enabled` enables actual page scripts only after the
 operator has verified this deployment. The default `disabled` capability reports

@@ -19,6 +19,7 @@ include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 mod account_runtime;
 mod backup_live;
 mod backup_snapshots;
+mod browser_relay;
 mod calls;
 mod engine_login;
 mod gws_inbox;
@@ -91,6 +92,8 @@ enum Command {
     RuntimeModelCall(runtime_model::ClientOptions),
     /// Forward opaque TLS from an allocated member to allowed Google endpoints.
     RuntimeGwsRelay(gws_relay::Options),
+    /// Serve isolated Chromium workspaces to enrolled member runtimes.
+    RuntimeBrowserRelay(browser_relay::Options),
     /// Serve fixed read-only Google OAuth/Gmail egress to isolated members.
     RuntimeGoogle(runtime_google::Options),
     /// Read public Google broker configuration or build a consent URL.
@@ -433,6 +436,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::RuntimeBrowserRelay(options) = &cli.command {
+        return browser_relay::run(options).await;
+    }
     if let Command::RuntimeGwsRelay(options) = &cli.command {
         return gws_relay::run(options).await;
     }
@@ -622,7 +628,8 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::RuntimeGwsRelay(_)
+        Command::RuntimeBrowserRelay(_)
+        | Command::RuntimeGwsRelay(_)
         | Command::RuntimeGoogle(_)
         | Command::RuntimeGoogleCall(_)
         | Command::EngineLoginWorker(_)

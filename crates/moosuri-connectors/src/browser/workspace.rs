@@ -5,6 +5,7 @@ use capsule::{
     RenderedLink, RenderedPage, WorkspaceFrame, WorkspaceInput, WorkspaceKey, WorkspaceObservation,
 };
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 const MAXIMUM: Duration = Duration::from_secs(capsule::workspace::WORKSPACE_MAX_SECONDS);
 const FRAME_MAX_AGE: Duration = Duration::from_secs(30);
@@ -34,6 +35,9 @@ pub struct BrowserWorkspace {
     session: BrowserSession,
     current: Option<PageHandle>,
     proof: Option<FrameProof>,
+    initial_targets: HashSet<String>,
+    last_links: Option<(Identity, Vec<String>)>,
+    human_interacted: bool,
 }
 macro_rules! bounded {
     ($this:ident, $operation:expr) => {{
@@ -47,6 +51,7 @@ macro_rules! bounded {
         result
     }};
 }
+mod tabs;
 impl BrowserWorkspace {
     pub async fn launch(
         config: BrowserConfig,
@@ -56,6 +61,9 @@ impl BrowserWorkspace {
             session: BrowserSession::launch_bounded(config, cancellation, MAXIMUM).await?,
             current: None,
             proof: None,
+            initial_targets: HashSet::new(),
+            last_links: None,
+            human_interacted: false,
         })
     }
     /// Fresh target only, with no prior URL, POST, input or handle restored.
@@ -156,6 +164,16 @@ impl BrowserWorkspace {
         if self.refresh().await? != identity {
             return Err(BrowserError::StalePage);
         }
+        self.last_links = Some((
+            identity,
+            observation
+                .page
+                .links
+                .iter()
+                .filter(|entry| !entry.text.trim().is_empty())
+                .map(|entry| entry.url.clone())
+                .collect(),
+        ));
         Ok(observation)
     }
     /// Human selection is bound to the exact document last shown by the viewer.
@@ -169,18 +187,21 @@ impl BrowserWorkspace {
         &mut self,
         expected: &str,
     ) -> Result<WorkspaceObservation, BrowserError> {
-        let proof = self
+        if self
             .proof
-            .take()
-            .filter(|p| p.token == expected)
-            .ok_or(BrowserError::StalePage)?;
+            .as_ref()
+            .is_none_or(|proof| proof.token != expected)
+        {
+            return Err(BrowserError::StalePage);
+        }
+        let proof = self.proof.take().ok_or(BrowserError::StalePage)?;
         if proof.captured_at.elapsed() > FRAME_MAX_AGE || self.refresh().await? != proof.identity {
             return Err(BrowserError::StalePage);
         }
         self.observe_inner().await
     }
     pub async fn frame(&mut self) -> Result<WorkspaceFrame, BrowserError> {
-        bounded!(self, self.frame_inner())
+        bounded!(self, self.frame_inner(false))
     }
     async fn geometry(&mut self) -> Result<(Identity, String), BrowserError> {
         let identity = self.refresh().await?;
@@ -238,19 +259,37 @@ impl BrowserWorkspace {
         }
         Ok((identity, data, geometry))
     }
-    async fn frame_inner(&mut self) -> Result<WorkspaceFrame, BrowserError> {
-        self.proof = None;
+    pub async fn tab_frame(&mut self, tab_id: Uuid) -> Result<WorkspaceFrame, BrowserError> {
+        self.require_tab(tab_id)?;
+        bounded!(self, self.frame_inner(true))
+    }
+
+    async fn frame_inner(&mut self, share_unchanged: bool) -> Result<WorkspaceFrame, BrowserError> {
         let (identity, png_base64, geometry) = self.capture().await?;
-        let frame_token = format!(
-            "{:x}",
-            Sha256::digest(format!("{}:{geometry}", Uuid::new_v4()))
-        );
-        self.proof = Some(FrameProof {
-            token: frame_token.clone(),
-            identity: identity.clone(),
-            geometry,
-            captured_at: Instant::now(),
+        let proof_is_current = self.proof.as_ref().is_some_and(|proof| {
+            proof.identity == identity
+                && proof.geometry == geometry
+                && proof.captured_at.elapsed() < FRAME_MAX_AGE
         });
+        if !share_unchanged || !proof_is_current {
+            self.proof = Some(FrameProof {
+                token: format!(
+                    "{:x}",
+                    Sha256::digest(format!("{}:{geometry}", Uuid::new_v4()))
+                ),
+                identity: identity.clone(),
+                geometry,
+                captured_at: Instant::now(),
+            });
+        }
+        // Refreshing pixels in another viewer preserves an unchanged controller
+        // proof without extending its original lifetime or reviving a spent proof.
+        let frame_token = self
+            .proof
+            .as_ref()
+            .ok_or(BrowserError::StalePage)?
+            .token
+            .clone();
         Ok(WorkspaceFrame {
             png_base64,
             width: 1280,
@@ -274,11 +313,14 @@ impl BrowserWorkspace {
         input: WorkspaceInput,
     ) -> Result<(), BrowserError> {
         // Consume before any await. Neither stale input nor uncertain dispatch is replayed.
-        let proof = self
+        if self
             .proof
-            .take()
-            .filter(|p| p.token == expected)
-            .ok_or(BrowserError::StalePage)?;
+            .as_ref()
+            .is_none_or(|proof| proof.token != expected)
+        {
+            return Err(BrowserError::StalePage);
+        }
+        let proof = self.proof.take().ok_or(BrowserError::StalePage)?;
         if proof.captured_at.elapsed() > FRAME_MAX_AGE {
             return Err(BrowserError::StalePage);
         }
@@ -293,6 +335,8 @@ impl BrowserWorkspace {
             return Err(BrowserError::StalePage);
         }
         let sid = self.sid()?;
+        self.human_interacted = true;
+        self.last_links = None;
         match input {
             WorkspaceInput::Click { x, y } => {
                 self.session
@@ -554,6 +598,7 @@ fn project_observation(
     let mut excluded_backend = std::collections::HashSet::new();
     let mut visible = String::new();
     let mut links = Vec::new();
+    let mut link_backends = HashMap::new();
     let mut truncated = false;
     for (doc_index, document) in documents.iter().enumerate() {
         let nodes = &document["nodes"];
@@ -616,6 +661,13 @@ fn project_observation(
                         if let Ok(link_url) = base.join(value)
                             && let Ok(link_url) = net::public_url(link_url.as_str())
                         {
+                            // Only a named accessibility link with a visible layout box is eligible for follow.
+                            if !attrs.iter().any(|(k, _)| {
+                                matches!(*k, "download" | "ping" | "onclick" | "role")
+                            }) && let Some(backend) = backends[index].as_u64()
+                            {
+                                link_backends.insert(backend, (index, links.len()));
+                            }
                             links.push(RenderedLink {
                                 text: String::new(),
                                 url: link_url.to_string(),
@@ -638,6 +690,20 @@ fn project_observation(
         let styles = layout["styles"].as_array().ok_or(BrowserError::Protocol)?;
         if texts.len() != indexes.len() || styles.len() != indexes.len() {
             return Err(BrowserError::Protocol);
+        }
+        if doc_index == 0 {
+            let mut visible_links = HashSet::new();
+            for (i, index) in indexes.iter().enumerate() {
+                if let (Some(index), Some(style)) = (index.as_u64(), styles[i].as_array())
+                    && style.len() == 3
+                    && optional(&style[0])? != "none"
+                    && optional(&style[1])? == "visible"
+                    && optional(&style[2])?.parse::<f64>().is_ok_and(|v| v > 0.0)
+                {
+                    visible_links.insert(index as usize);
+                }
+            }
+            link_backends.retain(|_, (index, _)| visible_links.contains(index));
         }
         for (offset, node_index) in indexes.iter().enumerate() {
             let index = node_index.as_u64().ok_or(BrowserError::Protocol)? as usize;
@@ -769,6 +835,13 @@ fn project_observation(
             continue;
         }
         let id = node["nodeId"].as_str().ok_or(BrowserError::Protocol)?;
+        if role == "link"
+            && let Some((_, i)) = node["backendDOMNodeId"]
+                .as_u64()
+                .and_then(|b| link_backends.get(&b))
+        {
+            links[*i].text = name.clone();
+        }
         let row = json!({"node":id,"parent":parents.get(id),"role":role,"name":name}).to_string();
         if tree.len() + row.len() > 2800 {
             truncated = true;

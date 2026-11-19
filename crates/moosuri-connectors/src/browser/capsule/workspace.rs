@@ -1,6 +1,8 @@
 //! A task-owned, bounded browser process. Frames and input belong to human UI only.
 use super::*;
+mod tabs;
 use base64::Engine;
+pub use tabs::TabCommand;
 use tokio::sync::{mpsc, oneshot};
 
 pub const WORKSPACE_IDLE_SECONDS: u64 = 30 * 60;
@@ -20,6 +22,24 @@ pub struct WorkspaceFrame {
     pub height: u32,
     pub url: String,
     pub frame_token: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceTab {
+    pub tab_id: Uuid,
+    pub url: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceTabs {
+    pub active_tab: Option<Uuid>,
+    pub tabs: Vec<WorkspaceTab>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenedTab {
+    pub tab_id: Uuid,
+    pub observation: WorkspaceObservation,
 }
 /// Human UI input only. Never expose this API as an agent/model tool.
 /// Debug is intentionally absent because InsertText can contain a secret.
@@ -100,7 +120,35 @@ impl CapsuleReader {
         account: Uuid,
         cancel: &CancellationToken,
     ) -> Result<CapsuleWorkspace, BrowserError> {
-        self.start_workspace_inner(account, None, cancel).await
+        self.start_workspace_inner(account, None, None, cancel)
+            .await
+    }
+    /// Each slot is also an installation-scoped Docker container name. A stopped
+    /// broker cannot forget an orphaned worker and oversubscribe the next process.
+    pub async fn start_member_workspace(
+        &self,
+        account: Uuid,
+        cancel: &CancellationToken,
+    ) -> Result<CapsuleWorkspace, BrowserError> {
+        let _start = self.member_start.lock().await;
+        let prefix = format!("moosuri-kiri-browser-{}-", self.config.owner.simple());
+        let names = docker_output(
+            &[
+                "container",
+                "ls",
+                "--all",
+                "--format",
+                "{{.Names}}",
+                "--filter",
+                &format!("name=^/{prefix}[01]$"),
+            ],
+            cancel,
+            Duration::from_secs(3),
+        )
+        .await?;
+        let slot = free_member_slot(&prefix, &names)?;
+        self.start_workspace_inner(account, None, Some(slot), cancel)
+            .await
     }
     pub async fn start_profile_workspace(
         &self,
@@ -108,13 +156,14 @@ impl CapsuleReader {
         workspace: Uuid,
         cancel: &CancellationToken,
     ) -> Result<CapsuleWorkspace, BrowserError> {
-        self.start_workspace_inner(account, Some(workspace), cancel)
+        self.start_workspace_inner(account, Some(workspace), None, cancel)
             .await
     }
     async fn start_workspace_inner(
         &self,
         account: Uuid,
         profile: Option<Uuid>,
+        member_slot: Option<String>,
         cancel: &CancellationToken,
     ) -> Result<CapsuleWorkspace, BrowserError> {
         if profile.is_some() && !self.config.recover_workspaces {
@@ -141,7 +190,7 @@ impl CapsuleReader {
         tokio::spawn(async move {
             let _capacity = capacity;
             let result = this
-                .workspace_actor(account, profile, actor_cancel, rx, started)
+                .workspace_actor(account, profile, member_slot, actor_cancel, rx, started)
                 .await;
             let _ = finished.send(result);
         });
@@ -157,6 +206,7 @@ impl CapsuleReader {
         &self,
         account: Uuid,
         profile: Option<Uuid>,
+        member_slot: Option<String>,
         cancel: CancellationToken,
         mut requests: mpsc::Receiver<Request>,
         started: oneshot::Sender<Result<(), BrowserError>>,
@@ -182,7 +232,7 @@ impl CapsuleReader {
             return Ok(());
         }
         let identity = Uuid::new_v4();
-        let name = format!("moosuri-browser-workspace-{identity}");
+        let name = member_slot.unwrap_or_else(|| format!("moosuri-browser-workspace-{identity}"));
         let mut command = self.worker_command(account, identity, &name, profile);
         command
             .arg("--workspace")
@@ -266,6 +316,7 @@ impl CapsuleReader {
                             } else {
                                 Err(match response["code"].as_str() {
                                     Some("stale_page") => BrowserError::StalePage,
+                                    Some("capacity") => BrowserError::Capacity,
                                     Some("invalid_handle") => BrowserError::InvalidHandle,
                                     Some("invalid_url") => BrowserError::InvalidUrl,
                                     Some("forbidden_destination") => {
@@ -281,7 +332,7 @@ impl CapsuleReader {
                             _ = tokio::time::sleep_until(maximum) => Err(BrowserError::Expired),
                             result = tokio::time::timeout(Duration::from_secs(40), operation) => result.unwrap_or(Err(BrowserError::Timeout)),
                         };
-                        let poisoned = matches!(&result, Err(e) if !matches!(e, BrowserError::StalePage | BrowserError::InvalidHandle | BrowserError::InvalidUrl | BrowserError::ForbiddenDestination));
+                        let poisoned = matches!(&result, Err(e) if !matches!(e, BrowserError::Capacity | BrowserError::StalePage | BrowserError::InvalidHandle | BrowserError::InvalidUrl | BrowserError::ForbiddenDestination));
                         if request.reply.send(result).is_err() || poisoned {
                             break;
                         }
@@ -309,6 +360,21 @@ impl CapsuleReader {
         cleanup
     }
 }
+fn free_member_slot(prefix: &str, names: &[u8]) -> Result<String, BrowserError> {
+    let names = std::str::from_utf8(names).map_err(|_| BrowserError::Protocol)?;
+    let slots = [format!("{prefix}0"), format!("{prefix}1")];
+    if names
+        .lines()
+        .any(|name| !slots.iter().any(|slot| slot == name))
+    {
+        return Err(BrowserError::IsolationRequired);
+    }
+    slots
+        .into_iter()
+        .find(|slot| !names.lines().any(|name| slot == name))
+        .ok_or(BrowserError::Capacity)
+}
+
 impl CapsuleWorkspace {
     /// True once cancellation or actor termination makes further dispatch impossible.
     pub fn is_closed(&self) -> bool {

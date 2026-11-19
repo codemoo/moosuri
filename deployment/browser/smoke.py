@@ -263,6 +263,58 @@ def check_page(reply):
     return result
 
 
+def exercise_member_tabs(harness):
+    worker = Worker(harness, workspace=True)
+    start = "https://93.184.216.34/kiri-schedule"
+    detail = "https://93.184.216.34/kiri-detail"
+
+    def ask(op, **args):
+        reply = worker.ask(dict(op="workspace_" + op, **args))
+        assert reply.get("ok"), (op, reply.get("code"))
+        return reply["result"]
+
+    def rejected(op, code, **args):
+        reply = worker.ask(dict(op="workspace_" + op, **args))
+        assert not reply.get("ok") and reply.get("code") == code, (op, reply.get("code"))
+
+    try:
+        opened = ask("start_tabs", url=start)
+        first = opened["tab_id"]
+        assert any(link["url"] == detail and link["text"].strip()
+                   for link in opened["observation"]["page"]["links"])
+        rejected("follow", "forbidden_destination", tab_id=first, url=start + "/unobserved")
+        ask("tab_observe", tab_id=first)
+        old = ask("tab_frame", tab_id=first)["frame_token"]
+        second = ask("follow", tab_id=first, url=detail)["tab_id"]
+        assert second != first
+        assert ask("tabs")["active_tab"] == second
+        ask("switch", tab_id=second, to_tab_id=first)
+        click = {"kind": "click", "x": 80, "y": 125}
+        rejected("tab_input", "stale_page", tab_id=first, frame_token=old, input=click)
+        fresh = ask("tab_frame", tab_id=first)["frame_token"]
+        ask("tab_input", tab_id=first, frame_token=fresh, input=click)
+        # The site itself opens this third tab through a trusted human gesture.
+        deadline = time.monotonic() + 5
+        while True:
+            tabs = ask("tabs")["tabs"]
+            if len(tabs) == 3:
+                break
+            assert time.monotonic() < deadline, "site-opened tab missing"
+            time.sleep(0.1)
+        popup = next(t["tab_id"] for t in tabs if t["tab_id"] not in (first, second))
+        ask("switch", tab_id=first, to_tab_id=popup)
+        assert ask("tab_frame", tab_id=popup)["url"] == detail
+        rejected("follow", "forbidden_destination", tab_id=popup, url=start)
+        rejected("tab_observe", "forbidden_destination", tab_id=popup)
+        state = ask("close_tab", tab_id=popup)
+        for n in (2, 1):
+            assert len(state["tabs"]) == n
+            state = ask("close_tab", tab_id=state["active_tab"])
+        assert state == {"active_tab": None, "tabs": []}
+    finally:
+        worker.stop()
+
+
 def main():
     harness = Harness()
     configured = False
@@ -304,6 +356,7 @@ def main():
         # CA/system trust is active only in the test image; this validates the
         # synthetic leaf SAN/chain before Chromium uses its private NSS database.
         harness.proxy_exec("import urllib.request;u=urllib.request.build_opener(urllib.request.ProxyHandler({}));assert b'Workspace login fixture' in u.open('https://93.184.216.34/workspace-login',timeout=2).read(4096)")
+        exercise_member_tabs(harness)
         workspace = Worker(harness, workspace=True)
         for changing_page, action in [
             ("workspace-shift", {"kind": "click", "x": 50, "y": 75}),

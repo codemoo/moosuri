@@ -333,6 +333,15 @@ impl BrowserSession {
             .command("Target.createTarget", json!({"url":"about:blank"}), None)
             .await?;
         let target = string(&result, "targetId")?;
+        self.attach_page(target, Some(url)).await
+    }
+    // Popup pages are already navigating. Apply the same target settings without
+    // replaying their request or replacing their document.
+    async fn attach_page(
+        &mut self,
+        target: String,
+        url: Option<&str>,
+    ) -> Result<PageHandle, BrowserError> {
         let result = self
             .cdp
             .command(
@@ -376,7 +385,7 @@ impl BrowserSession {
                 Some(&session),
             )
             .await?;
-        if url != "about:blank" {
+        if let Some(url) = url.filter(|url| *url != "about:blank") {
             self.cdp.before_navigation(&session);
             let navigation = self
                 .cdp

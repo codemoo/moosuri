@@ -1,13 +1,13 @@
 import {StrictMode,useEffect,useLayoutEffect,useRef,useState} from "react";
 import {createRoot} from "react-dom/client";
 import {WorkerClient,VaultFailure} from "./worker-client";
-import type {Draft,Owner,Preview,Receipt,Summary,Command,CurrentSession} from "./types";
-import {VaultField,VaultIcon,VaultList,displayAddress,itemName} from "./workspace";
+import type {Draft,EntryDetails,Owner,Preview,Receipt,Summary,Command,CurrentSession} from "./types";
+import {VaultField,VaultIcon,VaultList,itemName} from "./workspace";
 import "./style.css";
 const empty:Draft={kind:"login",title:"",username:"",url:"",notes:"",favorite:false,expires_at:"",secret:"",totp:""};
 const emptyPreview:Preview={eligible:0,duplicates:0,filtered:0,rows:[]};
 type Field="secret"|"username"|"url"|"notes";
-type Detail={item:string;revision:number;url:string;username:string;failed:boolean};
+type Detail=EntryDetails&{item:string;revision:number;failed:boolean};
 const errorText=(e:unknown)=>e instanceof Error&&e.message==="vault_authentication_failed"?"비밀번호 또는 복구 키를 확인해 주세요.":e instanceof Error&&e.message==="vault_conflict"?"다른 창에서 변경되었습니다. 잠근 뒤 다시 열어 주세요.":e instanceof Error&&e.message==="vault_limit"?"파일 또는 선택한 항목이 저장 가능한 범위를 넘었습니다.":e instanceof Error&&["vault_invalid_input","vault_unsupported","vault_kdf_policy"].includes(e.message)?"입력 또는 파일 형식을 확인해 주세요.":"연결을 확인하지 못했습니다. 잠시 뒤 다시 시도해 주세요.";
 function App(){
   const searchOwner=useRef(0),importCancel=useRef(false);
@@ -31,8 +31,10 @@ function App(){
   function clearSelection(){setSelected(null);setDetail(null);setOtp(null);setConfirmDelete(false);hideReveal()}
   function lock(reason="vault_locked"){
     generation.current++;client.current?.close();client.current=null;pendingStartup.current=null;
-    setUnlocked(false);setBusy(false);setPassword("");setRecovery(null);setVerify("");setItems([]);setQuery("");clearSelection();setDraft(null);setEditing(null);setPreview(null);setRows([]);setImporting(false);setSettings(false);setNewPassword("");setUncertain(false);setArchiveFile(null);setArchiveSecret("");setArchiveRecovery(false);setArchiveChecked(false);setSearchOpen(false);listScroll.current=0;
-    setNotice(reason==="vault_saved_refresh_unlock"?"변경사항을 저장했습니다. 다른 변경도 있어 다시 열어 주세요.":reason==="vault_unauthorized"?"비서에서 로그인한 뒤 볼트를 다시 연결해 주세요.":reason==="vault_unavailable"?"연결을 확인할 수 없어 볼트를 잠갔습니다.":reason==="vault_generation_changed"?"다른 창에서 볼트 보호 설정이 바뀌어 잠갔습니다. 현재 비밀번호 또는 복구 키로 다시 열어 주세요.":"볼트가 잠겼습니다.");
+    setUnlocked(false);setBusy(false);setPassword("");setRecovery(null);setVerify("");setItems([]);setQuery("");clearSelection();setDraft(null);setEditing(null);
+    setPreview(null);setRows([]);setImporting(false);setUsername("");setFilterExact(false);setImported(0);importCancel.current=true;
+    setSettings(false);setNewPassword("");setUncertain(false);setArchiveFile(null);setArchiveSecret("");setArchiveRecovery(false);setArchiveChecked(false);setSearchOpen(false);listScroll.current=0;
+    setNotice(reason==="vault_saved_refresh_unlock"?"변경사항을 저장했습니다. 다른 변경도 있어 다시 열어 주세요.":reason==="vault_unauthorized"?"볼트 인증을 확인할 수 없어 잠갔습니다.":reason==="vault_unavailable"?"연결을 확인할 수 없어 볼트를 잠갔습니다.":reason==="vault_generation_changed"?"다른 창에서 볼트 보호 설정이 바뀌어 잠갔습니다. 현재 비밀번호 또는 복구 키로 다시 열어 주세요.":"볼트가 잠겼습니다.");
     if(reason==="vault_unauthorized")setConnected(false);
   }
   async function start(){
@@ -57,13 +59,18 @@ function App(){
     finally{if(epoch===generation.current)setBusy(false)}
   }
   async function list(text=query){const epoch=generation.current,sequence=++searchOwner.current;const result=await run<Summary[]>({op:"list",query:text});if(epoch===generation.current&&sequence===searchOwner.current)setItems(result)}
-  useEffect(()=>{if(!unlocked||frozen)return;const timer=setTimeout(()=>{void list(query).catch(()=>{})},250);return()=>{clearTimeout(timer);searchOwner.current++}},[query,unlocked,frozen]);
+  useEffect(()=>{
+    if(!unlocked||frozen)return;
+    const epoch=generation.current;
+    const timer=setTimeout(()=>{if(epoch===generation.current)void list(query).catch(()=>{})},250);
+    return()=>{clearTimeout(timer);searchOwner.current++};
+  },[query,unlocked,frozen]);
   async function saved(){const epoch=generation.current;await list();if(epoch!==generation.current)return;setInitialized(true);setUnlocked(true);setRecovery(null);setVerify("");setDraft(null);setEditing(null);setConfirmDelete(false);setUncertain(false);setOldPending([]);if(importing){const status=await run<{committed:number}>({op:"csv_status"});setImported(status.committed)}setNotice("저장했습니다.")}
   async function publish(){await run({op:"publish"});await saved()}
   useEffect(()=>{
     let live=true;
     void fetch("/public/config",{cache:"no-store"}).then(r=>r.json()).then(v=>{if(live&&typeof v.assistant_origin==="string")setAssistant(v.assistant_origin)}).catch(()=>{});
-    void start().catch(()=>{if(live){client.current?.close();client.current=null;setConnected(false);setNotice("비서에서 볼트를 연결해 주세요.")}});
+    void start().catch(()=>{if(live){client.current?.close();client.current=null;setConnected(false)}});
     return()=>{live=false;generation.current++;pendingStartup.current=null;client.current?.close();client.current=null};
   },[]);
   useEffect(()=>{
@@ -91,27 +98,35 @@ function App(){
     const {id,revision}=selectedItem;
     const epoch=generation.current;
     let live=true;
-    const url=run<string>({op:"reveal",item:id,field:"url"});
-    const username=run<string>({op:"reveal",item:id,field:"username"});
-    void Promise.all([url,username]).then(([url,username])=>{
-      if(live&&epoch===generation.current)setDetail({item:id,revision,url,username,failed:false});
+    void run<EntryDetails>({op:"view_details",item:id}).then(fields=>{
+      if(live&&epoch===generation.current)setDetail({...fields,item:id,revision,failed:false});
     }).catch(()=>{
-      if(live&&epoch===generation.current)setDetail({item:id,revision,url:"",username:"",failed:true});
+      if(live&&epoch===generation.current)setDetail({item:id,revision,host:"",has_url:false,username:"",failed:true});
     });
     return()=>{live=false};
   },[showingDetail,selectedItem?.id,selectedItem?.revision,detailAttempt]);
   useEffect(()=>{
     setOtp(null);if(!showingDetail||!selectedItem?.has_totp||frozen)return;let live=true,last=0,working=false;const epoch=generation.current;
-    const update=async()=>{if(working||document.hidden||Date.now()<last)return;working=true;try{const value=await run<{code:string;valid_from:number;valid_until:number}>({op:"totp",item:selectedItem.id});if(live&&epoch===generation.current){setOtp(value);last=value.valid_until*1000}}catch{}finally{working=false}};
+    const update=async()=>{if(working||document.hidden||Date.now()<last||epoch!==generation.current)return;working=true;try{const value=await run<{code:string;valid_from:number;valid_until:number}>({op:"totp",item:selectedItem.id});if(live&&epoch===generation.current){setOtp(value);last=value.valid_until*1000}}catch{}finally{working=false}};
     void update();const timer=setInterval(()=>void update(),1000);window.addEventListener("focus",update);
     return()=>{live=false;clearInterval(timer);window.removeEventListener("focus",update)};
   },[selected,showingDetail,frozen,selectedItem?.has_totp]);
   async function reveal(field:Field){if(!selected)return;await perform(async()=>{const sequence=++revealOwner.current;const value=await run<string>({op:"reveal",item:selected,field});if(sequence===revealOwner.current)setRevealed({value,until:Date.now()+15000})})}
   async function copy(field:Field|"code"){if(!selected)return;await perform(async()=>{
+    const epoch=generation.current;
     if(field==="code"){
-      for(let attempt=0;attempt<2;attempt++){const value=await run<{code:string;valid_until:number}>({op:"totp",item:selected});await navigator.clipboard.writeText(value.code);if(Date.now()<value.valid_until*1000){setNotice("현재 인증 코드를 복사했습니다.");return}}
+      for(let attempt=0;attempt<2;attempt++){
+        const value=await run<{code:string;valid_until:number}>({op:"totp",item:selected});
+        await navigator.clipboard.writeText(value.code);
+        if(epoch!==generation.current)return;
+        if(Date.now()<value.valid_until*1000){setNotice("현재 인증 코드를 복사했습니다.");return}
+      }
       setNotice("코드가 갱신되었습니다. 다시 복사해 주세요.");
-    }else{const value=await run<string>({op:"reveal",item:selected,field});await navigator.clipboard.writeText(value);setNotice("복사했습니다. 클립보드에는 기기 설정에 따라 남을 수 있습니다.")}
+    }else{
+      const value=await run<string>({op:"reveal",item:selected,field});
+      await navigator.clipboard.writeText(value);
+      if(epoch===generation.current)setNotice("복사했습니다. 클립보드에는 기기 설정에 따라 남을 수 있습니다.");
+    }
   })}
   async function keyChange(op:string){await perform(async()=>{
     const result=await run<{recovery:string|null;needs_verification:boolean}>({op,...(op==="prepare_password"||op==="prepare_rotation"?{password:newPassword}:{})});setNewPassword("");
@@ -172,17 +187,20 @@ function App(){
           else lock();
         }}><VaultIcon name="back"/></button>}
       <h1>{titles[screen]}</h1>
-      {screen==="list"&&<button className="vault-icon-button" type="button" aria-label="새 항목" disabled={frozen} onClick={()=>openListAction(()=>{
-        setDraft({...empty});setEditing(null);
-      })}><VaultIcon name="add"/></button>}
-      {showingDetail&&selectedItem&&<button className="vault-icon-button" type="button" aria-label="수정" disabled={frozen||confirmDelete} onClick={()=>void openEdit(selectedItem)}><VaultIcon name="edit"/></button>}
+      <div className="vault-nav-actions">
+        <button className="vault-icon-button" type="button" aria-label="잠그기" title="잠그기" onClick={()=>lock()}><VaultIcon name="lock"/></button>
+        {screen==="list"&&<button className="vault-icon-button" type="button" aria-label="새 항목" disabled={frozen} onClick={()=>openListAction(()=>{
+          setDraft({...empty});setEditing(null);
+        })}><VaultIcon name="add"/></button>}
+        {showingDetail&&selectedItem&&<button className="vault-icon-button" type="button" aria-label="수정" disabled={frozen||confirmDelete} onClick={()=>void openEdit(selectedItem)}><VaultIcon name="edit"/></button>}
+      </div>
     </header>:<>
       <header><a className="brand" href={assistant||"#"}>무수리 <span>볼트</span></a><div className="header-actions">{connected&&<><button onClick={()=>lock()} disabled={!unlocked&&!recovery}>잠그기</button><button className="quiet" onClick={disconnect}>연결 끊기</button></>}</div></header>
       <div className="intro"><span className="eyebrow">나만 여는 보관함</span><h1>소중한 정보는 내 기기에서</h1><p>계정 로그인과 볼트 열기는 별개입니다. 볼트 비밀번호와 복구 키로만 내용을 열 수 있습니다.</p></div>
     </>}
     {notice&&<p className="notice" role="status">{notice}</p>}
     {uncertain&&<div className="reconcile"><strong>저장을 확인하는 중입니다</strong><p>암호문은 새로 만들지 않고 같은 저장을 확인합니다.</p><button disabled={busy} onClick={()=>void perform(async()=>{await run({op:"reconcile"});await saved()})}>저장 결과 확인</button><button disabled={busy} onClick={()=>void perform(async()=>{await run({op:"cancel"});if(importing){const status=await run<{committed:number}>({op:"csv_status"});setImported(status.committed)}setUncertain(false);setRecovery(null);await run({op:"refresh"});if(unlocked)await list();setNotice("확인된 저장 상태를 반영했습니다.")})}>미완료 저장 취소</button></div>}
-    {!connected?<section className="gate"><h2>비서에서 연결하세요</h2><p>비서에 로그인한 계정으로 볼트를 연결하면 이 창에서 안전하게 열 수 있습니다.</p>{assistant&&<a className="primary link-button" href={`${assistant}/app`}>비서로 돌아가기</a>}</section>:
+    {!connected?<section className="gate"><h2>볼트 인증이 필요합니다</h2><p>이 사이트를 열려면 무수리에서 발급한 볼트 세션이 필요합니다.</p>{assistant&&<a className="primary link-button" href={`${assistant}/app`}>무수리로 돌아가기</a>}</section>:
       recovery!==null?<section className="gate recovery"><h2>복구 키를 안전하게 보관하세요</h2><p>볼트 비밀번호를 잊었을 때 필요합니다. 기록한 키를 아래에 한 번 입력해 확인해 주세요.</p><textarea aria-label="새 복구 키" value={recovery} readOnly spellCheck={false}/><label>기록한 복구 키<input autoComplete="off" spellCheck={false} value={verify} onChange={e=>setVerify(e.target.value)}/></label><div className="actions"><button className="primary" disabled={busy||!verify} onClick={()=>void perform(async()=>{await run({op:"verify_recovery",recovery:verify.trim()});await publish()})}>저장하고 열기</button><button disabled={busy||uncertain} onClick={()=>void perform(async()=>{await run({op:"cancel"});setRecovery(null);setVerify("")})}>취소</button></div></section>:
       !unlocked?<section className="gate"><h2>{initialized?"볼트 열기":"내 볼트 만들기"}</h2><form onSubmit={e=>{e.preventDefault();void perform(async()=>{
         if(initialized){await run({op:"unlock",secret:password,recovery:useRecovery});setPassword("");setUnlocked(true);await list()}
@@ -222,9 +240,9 @@ function App(){
           </form>
         </section>}
         {showingDetail&&selectedItem&&<section className="vault-detail" aria-label="보관 항목 상세">
-          {(fields?.url||selectedItem.kind==="login")&&<div className="vault-card">
-            <VaultField name="주소" disabled={frozen} onReveal={fields?.url?()=>void reveal("url"):undefined} onCopy={fields?.url?()=>void copy("url"):undefined}>
-              {fields?.url?displayAddress(fields.url):fields&&!fields.failed?"주소 없음":itemName(selectedItem)}
+          {(fields?.has_url||selectedItem.kind==="login")&&<div className="vault-card">
+            <VaultField name="주소" disabled={frozen} onReveal={fields?.has_url?()=>void reveal("url"):undefined} onCopy={fields?.has_url?()=>void copy("url"):undefined}>
+              {fields?.has_url?fields.host||"저장된 주소":fields&&!fields.failed?"주소 없음":itemName(selectedItem)}
             </VaultField>
           </div>}
           {fields?.failed&&<div className="vault-card vault-row vault-field">
@@ -246,8 +264,8 @@ function App(){
           {selectedItem.kind==="login"&&<section className="vault-permission" aria-labelledby="permission-heading">
             <h2 id="permission-heading" className="vault-caption">에이전트 권한</h2>
             <div className="vault-card vault-row vault-permission-status">
-              <span>항상 확인</span>
-              <small>로그인 정보는 보관함에서 직접 확인하거나 복사할 수 있습니다.</small>
+              <span>직접 사용</span>
+              <small>이 로그인은 보관함에서 직접 열어 확인하거나 복사할 수 있습니다.</small>
             </div>
           </section>}
           {otp&&<div className="otp">
@@ -279,7 +297,6 @@ function App(){
         <button type="button" disabled={frozen} onClick={()=>openImport("archive")}>암호화 파일 가져오기<VaultIcon name="next"/></button>
         <button type="button" disabled={frozen} onClick={()=>openImport("legacy_v1")}>구 v1 볼트 파일 이전<VaultIcon name="next"/></button>
         <button type="button" disabled={frozen} onClick={()=>void exportArchive()}>암호화 파일 내보내기</button>
-        <button type="button" onClick={()=>lock()}>잠그기</button>
         <button type="button" onClick={disconnect}>연결 끊기</button>
       </div>
       <h2>볼트 보호 설정</h2><label>새 볼트 비밀번호<input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} autoComplete="new-password"/></label><div className="actions"><button disabled={frozen||preview!==null||newPassword.length<12} onClick={()=>void keyChange("prepare_password")}>비밀번호 변경</button><button disabled={frozen||preview!==null} onClick={()=>void keyChange("prepare_recovery")}>복구 키 새로 만들기</button><button disabled={frozen||preview!==null||newPassword.length<12} onClick={()=>void keyChange("prepare_rotation")}>모든 항목의 보호 키 교체</button></div><p className="hint">비밀번호만 변경하면 이미 보관된 옛 사본의 보호 키는 유지됩니다. 키 노출이 의심되면 보호 키를 교체하세요. 이미 내려받은 사본을 소프트웨어로 지울 수는 없습니다.</p></section>}

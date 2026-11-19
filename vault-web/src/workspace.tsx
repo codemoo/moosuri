@@ -11,18 +11,7 @@ export function itemName(item: Summary) {
   return item.title || "이름 없는 항목";
 }
 
-export function displayAddress(address: string) {
-  try {
-    const hasScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(address);
-    const url = new URL(hasScheme ? address : `https://${address}`);
-    if (url.protocol === "http:" || url.protocol === "https:") return url.host;
-  } catch {
-    // Addresses from older imports can use formats that URL does not parse.
-  }
-  return "저장된 주소";
-}
-
-export function VaultIcon({name}: {name: "back" | "next" | "add" | "edit" | "search" | "menu"}) {
+export function VaultIcon({name}: {name: "back" | "next" | "add" | "edit" | "search" | "menu" | "lock"}) {
   return <span className={`vault-icon icon-${name}`} aria-hidden="true"/>;
 }
 

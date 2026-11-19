@@ -63,13 +63,21 @@ html:has(.vault-unlocked) {
   accent-color: #c5dcff;
 }
 .vault-unlocked .vault-nav {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) 46px;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 0;
+  padding: 4px 0;
   border: 0;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+  background: var(--vault-bg);
+}
+.vault-nav-actions {
+  display: flex;
+  gap: 6px;
 }
 .vault-nav h1 {
   margin: 0;
@@ -157,6 +165,23 @@ html:has(.vault-unlocked) {
   top: 3px;
   transform: rotate(-45deg);
   background: currentColor;
+}
+.icon-lock::before {
+  width: 7px;
+  height: 10px;
+  left: 6px;
+  top: 1px;
+  border: 1.6px solid currentColor;
+  border-radius: 6px 6px 0 0;
+}
+.icon-lock::after {
+  width: 13px;
+  height: 9px;
+  left: 3px;
+  top: 9px;
+  border: 1.6px solid currentColor;
+  border-radius: 3px;
+  background: #151515;
 }
 .icon-search::before {
   top: 3px;

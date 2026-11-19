@@ -1,5 +1,6 @@
 export type Owner={account:string;tenant:string;installation:string;epoch:number};
 export type Summary={id:string;revision:number;title:string;kind:"login"|"api_key"|"note";favorite:boolean;expires_at:string;has_totp:boolean};
+export type EntryDetails={username:string;host:string;has_url:boolean};
 export type Receipt={operation:string;payload_sha256:string;state:string;header_sha256:string;inventory_sha256:string;commitment:string|null};
 export type Operation={kind:"key"|"put"|"delete";id:string}&Record<string,unknown>;
 export type State={owner:Owner;header:unknown|null;header_sha256:string;inventory_sha256:string;items:unknown[];pending:Receipt[]};

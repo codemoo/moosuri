@@ -172,7 +172,12 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
             let directory = owner
                 .verified_member_directory(&options.root)
                 .map_err(|_| "invalid_member_volume")?;
-            gws_setup::configure(&directory, redirect_uri, std::io::stdin().lock())?;
+            gws_setup::configure(
+                &directory,
+                redirect_uri,
+                std::io::stdin().lock(),
+                gws_setup::ExistingClient::Rotate,
+            )?;
             println!("ok");
             return Ok(());
         }
@@ -196,6 +201,7 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
                     .verified_member_directory(&options.root)
                     .map_err(|_| "invalid_member_volume")?;
                 let proxy = crate::gws_relay::start_member("/google/google.sock".into(), 0).await?;
+                gws_setup::sync_from_installation(directory.clone());
                 crate::personal_google::local_routes(
                     store.clone(),
                     owner,

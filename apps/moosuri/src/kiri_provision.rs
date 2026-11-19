@@ -622,6 +622,23 @@ fn validate_initialized_data(root: &Path, expected: &str, uid: u32) -> Result<()
     // The runtime verifies DB owner rows under its writer lock before socket binding.
     Ok(())
 }
+// Older allocations may predate the optional Google mount. The host record
+// remains unchanged; every live mount is still matched by container inspection.
+fn reservation_matches(existing: &Value, desired: &Value, local_gws: bool) -> bool {
+    if existing == desired {
+        return true;
+    }
+    if !local_gws || existing.get("google").is_some() {
+        return false;
+    }
+    let mut previous = desired.clone();
+    previous
+        .as_object_mut()
+        .and_then(|fields| fields.remove("google"))
+        .is_some()
+        && previous == *existing
+}
+
 fn reserve_host(args: &Options, e: &Expected) -> Result<(), String> {
     let want = e.reservation();
     let mut found = false;
@@ -649,7 +666,7 @@ fn reserve_host(args: &Options, e: &Expected) -> Result<(), String> {
         )
         .map_err(|_| "kiri_provision_allocation_corrupt")?;
         if entry.path() == path {
-            if row != want {
+            if !reservation_matches(&row, &want, e.local_gws) {
                 return Err("kiri_provision_uid_assignment_conflict".into());
             }
             found = true;
@@ -989,6 +1006,22 @@ mod tests {
         assert!(reconcile(&engine, &e, true).is_err());
         worker.join().unwrap();
     }
+    #[test]
+    fn old_reservation_can_gain_only_the_verified_google_mount() {
+        let mut e = expected();
+        let original = e.reservation();
+        e.google = Some("/srv/google/member".into());
+        let desired = e.reservation();
+        assert!(reservation_matches(&original, &desired, true));
+        assert!(!reservation_matches(&original, &desired, false));
+        let mut changed = original.clone();
+        changed["volume"] = json!("another-volume");
+        assert!(!reservation_matches(&changed, &desired, true));
+        let mut another = desired.clone();
+        another["google"] = json!("/srv/another/member");
+        assert!(!reservation_matches(&another, &desired, true));
+    }
+
     #[test]
     fn local_gws_uses_only_the_member_relay_mount_and_its_own_startup_mode() {
         let mut e = expected();

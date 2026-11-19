@@ -10,10 +10,41 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::{
     fs::File,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    time::Duration,
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
+
+/// An unavailable or not-yet-configured relay must not prevent the member
+/// from serving login or recovering its volume. Retry after activation or temporary storage failures.
+pub(super) fn sync_from_installation(directory: PathBuf) {
+    tokio::spawn(async move {
+        let mut conflict_reported = false;
+        loop {
+            if let Some((callback, client)) =
+                crate::gws_relay::registration(Path::new("/google/google.sock"), 0).await
+            {
+                let directory = directory.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    configure(
+                        &directory,
+                        &callback,
+                        client.as_slice(),
+                        ExistingClient::Preserve,
+                    )
+                })
+                .await;
+                let conflict = matches!(result, Ok(Err("member_google_client_conflict")));
+                if conflict && !conflict_reported {
+                    eprintln!("member_google_client_conflict");
+                }
+                conflict_reported = conflict;
+            }
+            tokio::time::sleep(Duration::from_secs(15)).await;
+        }
+    });
+}
 
 #[derive(Serialize)]
 struct Registration<'a> {
@@ -23,10 +54,16 @@ struct Registration<'a> {
     capability_key: &'a str,
 }
 
+pub(super) enum ExistingClient {
+    Preserve,
+    Rotate,
+}
+
 pub(super) fn configure(
     directory: &Path,
     redirect_uri: &str,
     input: impl Read,
+    existing: ExistingClient,
 ) -> Result<(), &'static str> {
     let invalid = "invalid_google_web_client";
     let redirect = url::Url::parse(redirect_uri).map_err(|_| invalid)?;
@@ -61,6 +98,9 @@ pub(super) fn configure(
                 && old.client_secret.expose() == app.client_secret.expose() =>
         {
             return Ok(());
+        }
+        Ok(_) if matches!(existing, ExistingClient::Preserve) => {
+            return Err("member_google_client_conflict");
         }
         Ok(_) | Err("google_setup_required") => (),
         Err(e) => return Err(e),
@@ -115,7 +155,7 @@ mod tests {
         let dir = owner.verified_member_directory(&root).unwrap();
         let redirect = "https://assistant.example.test/api/v1/mail/oauth/callback";
         let data=serde_json::json!({"web":{"client_id":"fixture","client_secret":"fixture","redirect_uris":[redirect]}}).to_string();
-        configure(&dir, redirect, data.as_bytes()).unwrap();
+        configure(&dir, redirect, data.as_bytes(), ExistingClient::Preserve).unwrap();
         let other = VolumeOwner {
             account: Uuid::new_v4(),
             ..owner
@@ -140,23 +180,67 @@ mod tests {
             serde_json::json!({"web":{"client_id":id,"client_secret":"fixture","redirect_uris":[redirect]}}).to_string()
         };
         let path = dir.join(GWS_DIRECTORY).join("gws-client.json");
-        configure(&dir, redirect, input("one").as_bytes()).unwrap();
+        configure(
+            &dir,
+            redirect,
+            input("one").as_bytes(),
+            ExistingClient::Preserve,
+        )
+        .unwrap();
         let original = std::fs::read(&path).unwrap();
-        configure(&dir, redirect, input("one").as_bytes()).unwrap();
+        configure(
+            &dir,
+            redirect,
+            input("one").as_bytes(),
+            ExistingClient::Preserve,
+        )
+        .unwrap();
         assert_eq!(original, std::fs::read(&path).unwrap());
-        configure(&dir, redirect, input("two").as_bytes()).unwrap();
+        assert_eq!(
+            configure(
+                &dir,
+                redirect,
+                input("two").as_bytes(),
+                ExistingClient::Preserve
+            ),
+            Err("member_google_client_conflict")
+        );
+        assert_eq!(original, std::fs::read(&path).unwrap());
+        configure(
+            &dir,
+            redirect,
+            input("two").as_bytes(),
+            ExistingClient::Rotate,
+        )
+        .unwrap();
         let current = std::fs::read(&path).unwrap();
         let data = |s: &[u8]| serde_json::from_slice::<serde_json::Value>(s).unwrap();
         for field in ["app_revision", "capability_key"] {
             assert_ne!(data(&original)[field], data(&current)[field]);
         }
-        assert!(configure(&dir, redirect, vec![b' '; 16385].as_slice()).is_err());
+        assert!(
+            configure(
+                &dir,
+                redirect,
+                vec![b' '; 16385].as_slice(),
+                ExistingClient::Preserve
+            )
+            .is_err()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), current);
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(configure(&dir, redirect, input("two").as_bytes()).is_err());
+        assert!(
+            configure(
+                &dir,
+                redirect,
+                input("two").as_bytes(),
+                ExistingClient::Rotate
+            )
+            .is_err()
+        );
     }
 }

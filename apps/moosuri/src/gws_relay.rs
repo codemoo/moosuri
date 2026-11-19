@@ -7,7 +7,7 @@ use fs2::FileExt;
 use moosuri_store::runtime_registry;
 use serde::Deserialize;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     os::unix::fs::{FileTypeExt, MetadataExt},
@@ -22,7 +22,12 @@ use tokio::{
     task::{JoinHandle, JoinSet},
     time::{sleep, timeout},
 };
+use uuid::Uuid;
+use zeroize::Zeroizing;
 
+const REGISTRATION: [u8; 4] = *b"GR01";
+const CLIENT_LIMIT: usize = 16384;
+const CALLBACK_LIMIT: usize = 2048;
 const REQUEST_LIMIT: u64 = 4096;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -45,8 +50,15 @@ pub struct Options {
     #[arg(long)]
     pub socket_dir: PathBuf,
     /// Private JSON file containing the registered member bindings.
-    #[arg(long)]
-    pub config: PathBuf,
+    #[arg(
+        long,
+        required_unless_present = "lifecycle_config",
+        conflicts_with = "lifecycle_config"
+    )]
+    pub config: Option<PathBuf>,
+    /// Discover existing and newly enrolled members from the trusted Kiri profile.
+    #[arg(long, required_unless_present = "config")]
+    pub lifecycle_config: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -113,8 +125,8 @@ fn trusted_ancestors(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn load_bindings(options: &Options) -> Result<Vec<Binding>, String> {
-    let config: Config = serde_json::from_slice(&private_bytes(&options.config, 64 * 1024)?)
+fn load_bindings(options: &Options, path: &Path) -> Result<Vec<Binding>, String> {
+    let config: Config = serde_json::from_slice(&private_bytes(path, 64 * 1024)?)
         .map_err(|_| "gws_relay_config_invalid")?;
     if config.bindings.is_empty() || config.bindings.len() > 128 {
         return Err("gws_relay_config_invalid".into());
@@ -153,42 +165,113 @@ pub async fn run(options: &Options) -> Result<(), String> {
     {
         return Err("gws_relay_dedicated_socket_root_required".into());
     }
-    for path in [&options.registry, &options.socket_dir, &options.config] {
+    let config = options
+        .config
+        .as_ref()
+        .or(options.lifecycle_config.as_ref())
+        .ok_or("gws_relay_config_required")?;
+    for path in [&options.registry, &options.socket_dir, config] {
         trusted_ancestors(path)?;
     }
 
     let lock = File::open(&options.socket_dir).map_err(|_| "gws_relay_socket_unavailable")?;
     lock.try_lock_exclusive()
         .map_err(|_| "gws_relay_already_running")?;
-    let bindings = load_bindings(options)?;
-    let mut listeners = Vec::with_capacity(bindings.len());
-    let mut sockets = Vec::with_capacity(bindings.len());
-    for binding in bindings {
-        let (socket, guard) = timeout(REQUEST_TIMEOUT, listener(&options.socket_dir, binding))
-            .await
-            .map_err(|_| "gws_relay_socket_unavailable")??;
-        listeners.push((binding, socket));
-        sockets.push(guard);
-    }
-
     let registry = Arc::new(options.registry.clone());
     let slots = Arc::new(Semaphore::new(TOTAL_CONNECTIONS));
-    let mut tasks = JoinSet::new();
-    for (binding, socket) in listeners {
-        tasks.spawn(serve_binding(
+    let mut members = BTreeMap::new();
+    if let Some(path) = options.config.as_ref() {
+        let bindings = load_bindings(options, path)?;
+        reconcile_listeners(
+            &options.socket_dir,
+            &registry,
+            &slots,
+            &mut members,
+            bindings,
+            None,
+        )
+        .await?;
+    }
+    let signal = crate::shutdown_signal();
+    tokio::pin!(signal);
+    let mut poll = tokio::time::interval(Duration::from_secs(3));
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = &mut signal => return Ok(()),
+            _ = poll.tick() => {
+                if let Some(config) = options.lifecycle_config.clone() {
+                    let root = options.socket_dir.clone();
+                    let registry_path = registry.clone();
+                    let (bindings, callback) = tokio::task::spawn_blocking(move ||
+                        crate::kiri_lifecycle::gws_bindings(&registry_path, &config, &root)
+                    ).await.map_err(|_| "gws_relay_enrollment_unavailable")??;
+                    reconcile_listeners(&options.socket_dir, &registry, &slots, &mut members, bindings, Some(callback)).await?;
+                } else if members.values().any(|m| m.task.is_finished()) {
+                    return Err("gws_relay_listener_stopped".into());
+                }
+            }
+        }
+    }
+}
+
+struct MemberListener {
+    binding: Binding,
+    callback: Option<String>,
+    task: JoinHandle<()>,
+    _guard: crate::runtime_google::SocketGuard,
+}
+
+impl Drop for MemberListener {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn reconcile_listeners(
+    root: &Path,
+    registry: &Arc<PathBuf>,
+    slots: &Arc<Semaphore>,
+    members: &mut BTreeMap<Uuid, MemberListener>,
+    desired: Vec<Binding>,
+    callback: Option<String>,
+) -> Result<(), String> {
+    members.retain(|_, m| {
+        desired.contains(&m.binding) && callback == m.callback && !m.task.is_finished()
+    });
+    for binding in desired {
+        if members.contains_key(&binding.account_id) {
+            continue;
+        }
+        let bound = timeout(REQUEST_TIMEOUT, listener(root, binding))
+            .await
+            .map_err(|_| "gws_relay_socket_unavailable".to_owned())
+            .and_then(|result| result);
+        let (socket, guard) = match bound {
+            Ok(bound) => bound,
+            // One unavailable mount must not interrupt other members. The
+            // lifecycle worker reports that member waiting and both retry.
+            Err(_) if callback.is_some() => continue,
+            Err(error) => return Err(error),
+        };
+        let task = tokio::spawn(serve_binding(
             socket,
             registry.clone(),
             binding,
             slots.clone(),
+            callback.clone().map(Arc::new),
         ));
+        members.insert(
+            binding.account_id,
+            MemberListener {
+                binding,
+                callback: callback.clone(),
+                task,
+                _guard: guard,
+            },
+        );
     }
-    let result = tokio::select! {
-        _ = crate::shutdown_signal() => Ok(()),
-        _ = tasks.join_next() => Err("gws_relay_listener_stopped".into()),
-    };
-    tasks.shutdown().await;
-    drop(sockets);
-    result
+    Ok(())
 }
 
 async fn serve_binding(
@@ -196,6 +279,7 @@ async fn serve_binding(
     registry: Arc<PathBuf>,
     binding: Binding,
     slots: Arc<Semaphore>,
+    callback: Option<Arc<String>>,
 ) {
     let mut clients = JoinSet::new();
     loop {
@@ -204,7 +288,7 @@ async fn serve_binding(
             accepted = listener.accept(), if clients.len() < MEMBER_CONNECTIONS => {
                 let Ok((stream, _)) = accepted else { break };
                 let Ok(slot) = slots.clone().try_acquire_owned() else { continue };
-                let admission = Admission { registry: registry.clone(), binding, slot: Arc::new(slot) };
+                let admission = Admission { registry: registry.clone(), binding, slot: Arc::new(slot), callback: callback.clone() };
                 clients.spawn(relay_connection(stream, admission, dial_google));
             }
         }
@@ -216,6 +300,7 @@ struct Admission {
     registry: Arc<PathBuf>,
     binding: Binding,
     slot: Arc<OwnedSemaphorePermit>,
+    callback: Option<Arc<String>>,
 }
 
 impl Admission {
@@ -224,6 +309,7 @@ impl Admission {
             registry,
             binding,
             slot,
+            ..
         } = self.clone();
         // A registry lock may outlive the async timeout. Keep a global permit
         // until the blocking check returns, including after task cancellation.
@@ -259,6 +345,10 @@ async fn relay_connection<F>(
     let ready = timeout(CONNECT_TIMEOUT, async {
         let mut frame = [0; 4];
         stream.read_exact(&mut frame).await.ok()?;
+        if frame == REGISTRATION {
+            send_registration(&mut stream, &admission).await?;
+            return None;
+        }
         let destination = Destination::from_frame(frame)?;
         let initial = admission.epoch().await?;
         let upstream = dial(destination).await?;
@@ -275,6 +365,68 @@ async fn relay_connection<F>(
             _ = admission.wait_until_fenced(initial) => {}
         }
     }
+}
+
+// This request has no target/path field. Its listener fixes the member and
+// installation. The shared app is the only secret the host can return.
+async fn send_registration(stream: &mut UnixStream, admission: &Admission) -> Option<()> {
+    let callback = admission.callback.as_deref()?;
+    let epoch = admission.epoch().await?;
+    let path = admission.registry.join("google-web-client.json");
+    let destination = callback.clone();
+    let slot = admission.slot.clone();
+    let client = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        let client =
+            crate::runtime_google::private_bytes_with_mode(&path, CLIENT_LIMIT, Some(0o600))
+                .ok()?;
+        moosuri_connectors::gmail::OAuthClient::from_web_client_json(
+            std::str::from_utf8(&client).ok()?,
+            &destination,
+        )
+        .ok()?;
+        Some(client)
+    })
+    .await
+    .ok()??;
+    if admission.epoch().await != Some(epoch) {
+        return None;
+    }
+    stream
+        .write_u16(callback.len().try_into().ok()?)
+        .await
+        .ok()?;
+    stream.write_u16(client.len().try_into().ok()?).await.ok()?;
+    stream.write_all(callback.as_bytes()).await.ok()?;
+    stream.write_all(&client).await.ok()?;
+    Some(())
+}
+
+/// Read a bounded app snapshot exclusively from the authenticated host relay.
+/// Member-local configuration verifies the JSON and callback again before applying.
+pub(crate) async fn registration(
+    socket: &Path,
+    broker_uid: u32,
+) -> Option<(String, Zeroizing<Vec<u8>>)> {
+    timeout(REQUEST_TIMEOUT, async {
+        let mut stream = broker_stream(socket, broker_uid).await?;
+        stream.write_all(&REGISTRATION).await.ok()?;
+        let callback_len = stream.read_u16().await.ok()? as usize;
+        let client_len = stream.read_u16().await.ok()? as usize;
+        if !(1..=CALLBACK_LIMIT).contains(&callback_len)
+            || !(1..=CLIENT_LIMIT).contains(&client_len)
+        {
+            return None;
+        }
+        let mut callback = vec![0; callback_len];
+        let mut client = Zeroizing::new(vec![0; client_len]);
+        stream.read_exact(&mut callback).await.ok()?;
+        stream.read_exact(&mut client).await.ok()?;
+        Some((String::from_utf8(callback).ok()?, client))
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 fn is_public(ip: IpAddr) -> bool {
@@ -445,6 +597,12 @@ async fn connect_relay(
     broker_uid: u32,
     destination: Destination,
 ) -> Option<UnixStream> {
+    let mut stream = broker_stream(socket, broker_uid).await?;
+    stream.write_all(&destination.frame()).await.ok()?;
+    (stream.read_u8().await.ok()? == 1).then_some(stream)
+}
+
+async fn broker_stream(socket: &Path, broker_uid: u32) -> Option<UnixStream> {
     let m = fs::symlink_metadata(socket).ok()?;
     if !m.file_type().is_socket()
         || m.uid() != unsafe { libc::geteuid() }
@@ -453,12 +611,11 @@ async fn connect_relay(
     {
         return None;
     }
-    let mut stream = UnixStream::connect(socket).await.ok()?;
+    let stream = UnixStream::connect(socket).await.ok()?;
     if stream.peer_cred().map(|cred| cred.uid()).ok() != Some(broker_uid) {
         return None;
     }
-    stream.write_all(&destination.frame()).await.ok()?;
-    (stream.read_u8().await.ok()? == 1).then_some(stream)
+    Some(stream)
 }
 
 #[cfg(test)]

@@ -37,6 +37,7 @@ fn admit(registry: PathBuf, binding: Binding) -> Admission {
     Admission {
         registry: Arc::new(registry),
         binding,
+        callback: None,
         slot: Arc::new(Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap()),
     }
 }
@@ -374,4 +375,120 @@ async fn member_connection_limit_queues_a_new_tunnel_until_a_slot_is_available()
     let mut response = [0; ESTABLISHED.len()];
     queued.read_exact(&mut response).await.unwrap();
     assert_eq!(response.as_slice(), ESTABLISHED);
+}
+
+#[tokio::test]
+async fn managed_bindings_add_and_remove_sockets_without_restarting_other_members() {
+    let (_temp, root) = socket_directory();
+    let registry = root.join("registry");
+    let (_, _, first) = allocation(&registry);
+    let second = Binding {
+        account_id: Uuid::new_v4(),
+        ..first
+    };
+    let registry = Arc::new(registry);
+    let slots = Arc::new(Semaphore::new(4));
+    let callback = Some("https://example.test/api/v1/mail/oauth/callback".to_owned());
+    let mut members = BTreeMap::new();
+
+    reconcile_listeners(
+        &root,
+        &registry,
+        &slots,
+        &mut members,
+        vec![first],
+        callback.clone(),
+    )
+    .await
+    .unwrap();
+    let path = |b: Binding| root.join(b.account_id.to_string()).join("google.sock");
+    let original = fs::symlink_metadata(path(first)).unwrap().ino();
+    reconcile_listeners(
+        &root,
+        &registry,
+        &slots,
+        &mut members,
+        vec![first, second],
+        callback.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(fs::symlink_metadata(path(first)).unwrap().ino(), original);
+    assert!(path(second).exists());
+    reconcile_listeners(
+        &root,
+        &registry,
+        &slots,
+        &mut members,
+        vec![second],
+        callback,
+    )
+    .await
+    .unwrap();
+    assert!(!path(first).exists());
+    assert!(path(second).exists());
+    drop(members);
+    assert!(!path(second).exists());
+}
+
+#[tokio::test]
+async fn managed_registration_is_bounded_and_requires_the_expected_broker() {
+    let (_temp, root) = socket_directory();
+    let path = root.join("fixture.sock");
+    let relay = UnixListener::bind(&path).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let client = tokio::spawn({
+        let path = path.clone();
+        async move { registration(&path, uid() ^ 1).await }
+    });
+    let (mut socket, _) = relay.accept().await.unwrap();
+    assert_eq!(socket.read(&mut [0; 4]).await.unwrap(), 0);
+    assert!(client.await.unwrap().is_none());
+    let client = tokio::spawn(async move { registration(&path, uid()).await });
+    let (mut socket, _) = relay.accept().await.unwrap();
+    let mut frame = [0; 4];
+    socket.read_exact(&mut frame).await.unwrap();
+    assert_eq!(frame, REGISTRATION);
+    socket.write_u16(1).await.unwrap();
+    socket.write_u16((CLIENT_LIMIT + 1) as u16).await.unwrap();
+    assert!(client.await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn active_member_receives_only_the_exact_installation_registration() {
+    let (_temp, root) = socket_directory();
+    let registry = root.join("registry");
+    let (request, a, b) = allocation(&registry);
+    let callback = "https://example.test/api/v1/mail/oauth/callback";
+    let fixture = serde_json::json!({"web":{"client_id":"synthetic","client_secret":"synthetic","redirect_uris":[callback]}}).to_string();
+    let installed = registry.join("google-web-client.json");
+    let mut members = BTreeMap::new();
+    reconcile_listeners(
+        &root,
+        &Arc::new(registry.clone()),
+        &Arc::new(Semaphore::new(4)),
+        &mut members,
+        vec![b],
+        Some(callback.into()),
+    )
+    .await
+    .unwrap();
+    let socket = root.join(b.account_id.to_string()).join("google.sock");
+    assert!(registration(&socket, uid()).await.is_none());
+    runtime_registry::activate_invitation(&registry, request, &a).unwrap();
+    assert!(registration(&socket, uid()).await.is_none());
+    fs::write(&installed, fixture.as_bytes()).unwrap();
+    fs::set_permissions(&installed, fs::Permissions::from_mode(0o600)).unwrap();
+    let (received, app) = registration(&socket, uid()).await.unwrap();
+    assert_eq!(received, callback);
+    assert_eq!(app.as_slice(), fixture.as_bytes());
+    fs::write(
+        &installed,
+        fixture.replace("example.test", "different.test"),
+    )
+    .unwrap();
+    assert!(registration(&socket, uid()).await.is_none());
+    fs::write(&installed, fixture.as_bytes()).unwrap();
+    runtime_registry::set_routing(&registry, &a, false).unwrap();
+    assert!(registration(&socket, uid()).await.is_none());
 }

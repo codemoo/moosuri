@@ -1,0 +1,20 @@
+[Unit]
+Description=Moosuri member Google Workspace relay
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+RuntimeDirectory=moosuri-kiri-google
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/local/bin/moosuri runtime-gws-relay --registry /var/lib/moosuri-kiri-control/registry --lifecycle-config /etc/moosuri-kiri/kiri-members.json --socket-dir /run/moosuri-kiri-google
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

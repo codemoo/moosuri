@@ -95,7 +95,13 @@ fn matching(config: &Config, member: &Member) -> Result<bool, String> {
     });
     match (members.next(), members.next()) {
         (None, None) => Ok(false),
-        (Some(p), None) if p == member => Ok(true),
+        (Some(p), None)
+            if p.account_id == member.account_id
+                && p.generation == member.generation
+                && config.provision(p) == config.provision(member) =>
+        {
+            Ok(true)
+        }
         _ => Err("onboard_member_conflicts_with_recovery_profile".into()),
     }
 }
@@ -204,21 +210,35 @@ pub async fn run(o: &Options) -> Result<(), String> {
         .map_err(|_| "onboard_storage_worker_failed")??;
     let profile = config.provision(&m);
     register(&o.config, &o.operations_root, &config, m)?;
+    // Register first so the relays can discover this reserved member. On
+    // timeout, the durable enrollment is reused by the same invitation.
+    let mut sockets = Vec::new();
     if let Some(root) = profile.browser_sockets_root.as_ref() {
-        // The relay discovers this newly durable enrollment on its next pass.
-        // The same invitation can be retried if the relay is temporarily offline.
-        let path = root.join(account.to_string()).join("browser.sock");
+        sockets.push((
+            root,
+            "browser.sock",
+            "onboard_browser_relay_not_ready_retry_same_invitation",
+        ));
+    }
+    if config.public_origin.is_some() {
+        if let Some(root) = profile.google_sockets_root.as_ref() {
+            sockets.push((
+                root,
+                "google.sock",
+                "onboard_gws_relay_not_ready_retry_same_invitation",
+            ));
+        }
+    }
+    for (root, socket, reason) in sockets {
+        let path = root.join(account.to_string()).join(socket);
         tokio::time::timeout(Duration::from_secs(12), async {
-            while !path
-                .try_exists()
-                .map_err(|_| "onboard_browser_socket_unavailable")?
-            {
+            while !path.try_exists().map_err(|_| reason)? {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
             Ok::<_, String>(())
         })
         .await
-        .map_err(|_| "onboard_browser_relay_not_ready_retry_same_invitation")??;
+        .map_err(|_| reason)??;
     }
     kiri_invite::run(&kiri_invite::Options {
         request_id: o.request_id,

@@ -47,6 +47,8 @@ struct Config {
     allocations_root: PathBuf,
     model_sockets_root: Option<PathBuf>,
     google_sockets_root: Option<PathBuf>,
+    // Exact HTTPS origin from the installation's trusted gateway configuration.
+    public_origin: Option<String>,
     browser_sockets_root: Option<PathBuf>,
     image: String,
     #[serde(default = "engine_socket")]
@@ -100,6 +102,24 @@ impl Config {
             .as_ref()
             .filter(|_| member.browser_enabled != Some(false))
     }
+    fn gws_callback(&self) -> Result<Option<String>, String> {
+        let Some(origin) = self.public_origin.as_deref() else {
+            return Ok(None);
+        };
+        let url = url::Url::parse(origin).map_err(|_| "kiri_lifecycle_public_origin_invalid")?;
+        if url.scheme() != "https"
+            || url.host_str().is_none()
+            || url.origin().ascii_serialization() != origin
+            || origin.len() > 2000
+            || self.google_sockets_root.is_none()
+        {
+            return Err("kiri_lifecycle_public_origin_or_google_root_invalid".into());
+        }
+        Ok(Some(format!("{origin}/api/v1/mail/oauth/callback")))
+    }
+    fn local_gws(&self, member: &Member) -> bool {
+        member.enable_local_gws || self.public_origin.is_some()
+    }
     fn provision(&self, m: &Member) -> kiri_provision::Options {
         kiri_provision::Options {
             experimental: true,
@@ -109,13 +129,13 @@ impl Config {
             ipc_root: self.ipc_root.clone(),
             allocations_root: self.allocations_root.clone(),
             model_sockets_root: self.model_sockets_root.clone(),
-            google_sockets_root: if m.enable_google_readonly || m.enable_local_gws {
+            google_sockets_root: if m.enable_google_readonly || self.local_gws(m) {
                 self.google_sockets_root.clone()
             } else {
                 None
             },
             browser_sockets_root: self.browser_root(m).cloned(),
-            enable_local_gws: m.enable_local_gws,
+            enable_local_gws: self.local_gws(m),
             enable_text_preview: m.enable_text_preview,
             uid: m.uid,
             image: self.image.clone(),
@@ -128,6 +148,7 @@ impl Config {
         }
     }
     fn validate(&self) -> Result<(), String> {
+        self.gws_callback()?;
         if self.version != 1 || self.members.len() > 128 {
             return Err("kiri_lifecycle_invalid_config".into());
         }
@@ -161,7 +182,7 @@ impl Config {
                 || (m.enable_text_preview && self.model_sockets_root.is_none())
                 || (m.enable_google_readonly && self.google_sockets_root.is_none())
                 || (m.browser_enabled == Some(true) && self.browser_sockets_root.is_none())
-                || (m.enable_google_readonly && m.enable_local_gws)
+                || (m.enable_google_readonly && self.local_gws(m))
             {
                 return Err("kiri_lifecycle_invalid_or_duplicate_member".into());
             }
@@ -269,19 +290,41 @@ pub(crate) fn browser_bindings(
     if c.registry_directory != registry || c.browser_sockets_root.as_deref() != Some(socket_root) {
         return Err("browser_relay_installation_mismatch".into());
     }
+    relay_bindings(&c, |m| c.browser_root(m).is_some())
+}
+pub(crate) fn gws_bindings(
+    registry: &Path,
+    config: &Path,
+    socket_root: &Path,
+) -> Result<(Vec<crate::runtime_google::Binding>, String), String> {
+    let c = load(config, socket_root)?;
+    if c.registry_directory != registry || c.google_sockets_root.as_deref() != Some(socket_root) {
+        return Err("gws_relay_installation_mismatch".into());
+    }
+    let callback = c
+        .gws_callback()?
+        .ok_or("gws_relay_public_origin_required")?;
+    Ok((relay_bindings(&c, |m| c.local_gws(m))?, callback))
+}
+
+fn relay_bindings(
+    c: &Config,
+    enabled: impl Fn(&Member) -> bool,
+) -> Result<Vec<crate::runtime_google::Binding>, String> {
+    let registry = &c.registry_directory;
     let mut bindings = Vec::new();
-    for member in c.members.iter().filter(|m| c.browser_root(m).is_some()) {
+    for member in c.members.iter().filter(|m| enabled(m)) {
         let allocation = match runtime_registry::lookup_allocated_id(registry, member.account_id) {
             Ok(a) if a.generation == member.generation => a,
             Ok(_) | Err(moosuri_store::StoreError::NotFound) => continue,
-            Err(_) => return Err("browser_relay_registry_unavailable".into()),
+            Err(_) => return Err("kiri_relay_registry_unavailable".into()),
         };
         bindings.push(crate::runtime_google::Binding {
             account_id: member.account_id,
             tenant_id: Uuid::parse_str(&allocation.tenant_id)
-                .map_err(|_| "browser_relay_owner_invalid")?,
+                .map_err(|_| "kiri_relay_owner_invalid")?,
             volume_id: Uuid::parse_str(&allocation.volume_id)
-                .map_err(|_| "browser_relay_owner_invalid")?,
+                .map_err(|_| "kiri_relay_owner_invalid")?,
             generation: allocation.generation,
             peer_uid: member.uid,
         });
@@ -547,6 +590,39 @@ mod tests {
         assert_eq!(disabled.google_sockets_root, None);
         c.members[0].enable_google_readonly = true;
         assert!(c.validate().is_err());
+    }
+    #[test]
+    fn managed_gws_inherits_existing_and_new_enrollments_from_the_exact_gateway_origin() {
+        let mut c = configuration(Path::new("/srv/registry"));
+        c.google_sockets_root = Some("/srv/relay".into());
+        c.members = serde_json::from_value(json!([
+            {"account_id":Uuid::new_v4(),"generation":1,"email":"a@example.invalid","uid":10001,"enable_local_gws":true},
+            {"account_id":Uuid::new_v4(),"generation":1,"email":"b@example.invalid","uid":10002}
+        ])).unwrap();
+        c.public_origin = Some("https://example.test:8443".into());
+        assert_eq!(
+            c.gws_callback().unwrap().as_deref(),
+            Some("https://example.test:8443/api/v1/mail/oauth/callback")
+        );
+        assert!(c.validate().is_ok());
+        for member in &c.members {
+            let p = c.provision(member);
+            assert!(p.enable_local_gws);
+            assert_eq!(p.google_sockets_root, c.google_sockets_root);
+        }
+        c.members[0].enable_google_readonly = true;
+        assert!(c.validate().is_err());
+        c.members[0].enable_google_readonly = false;
+        for origin in [
+            "http://example.test",
+            "https://user@example.test",
+            "https://example.test/",
+            "https://example.test?a=b",
+            "https://example.test/path",
+        ] {
+            c.public_origin = Some(origin.into());
+            assert!(c.validate().is_err());
+        }
     }
     #[tokio::test]
     async fn reserved_fenced_or_stale_generation_cannot_be_autoactivated() {

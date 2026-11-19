@@ -56,7 +56,7 @@ struct Config {
     redirect_uri: String,
     bindings: Vec<Binding>,
 }
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Binding {
     pub(super) account_id: Uuid,
@@ -188,6 +188,13 @@ pub(super) fn private_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn private_bytes(path: &Path, cap: usize) -> Result<Zeroizing<Vec<u8>>, String> {
+    private_bytes_with_mode(path, cap, None)
+}
+pub(super) fn private_bytes_with_mode(
+    path: &Path,
+    cap: usize,
+    mode: Option<u32>,
+) -> Result<Zeroizing<Vec<u8>>, String> {
     if !path.is_absolute() || fs::canonicalize(path).ok().as_deref() != Some(path) {
         return Err("google_file_invalid".into());
     }
@@ -200,6 +207,7 @@ pub(super) fn private_bytes(path: &Path, cap: usize) -> Result<Zeroizing<Vec<u8>
     if !m.is_file()
         || m.uid() != unsafe { libc::geteuid() }
         || m.mode() & 0o077 != 0
+        || mode.is_some_and(|required| m.mode() & 0o7777 != required)
         || m.nlink() != 1
         || m.len() > cap as u64
     {

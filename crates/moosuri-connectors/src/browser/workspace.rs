@@ -35,6 +35,7 @@ pub struct BrowserWorkspace {
     session: BrowserSession,
     current: Option<PageHandle>,
     proof: Option<FrameProof>,
+    prior_proof: Option<FrameProof>,
     ignored_targets: HashSet<String>,
     last_links: Option<(Identity, Vec<String>)>,
     human_interacted: bool,
@@ -53,6 +54,30 @@ macro_rules! bounded {
 }
 mod tabs;
 impl BrowserWorkspace {
+    fn clear_proofs(&mut self) {
+        self.proof = None;
+        self.prior_proof = None;
+    }
+
+    // At most two overlapping captures for the same geometry. Either accepted
+    // input consumes both, while an unrelated stale gesture consumes neither.
+    fn take_proof(&mut self, expected: &str) -> Result<FrameProof, BrowserError> {
+        let current = self.proof.as_ref().is_some_and(|p| p.token == expected);
+        let prior = self
+            .prior_proof
+            .as_ref()
+            .is_some_and(|p| p.token == expected);
+        if !current && !prior {
+            return Err(BrowserError::StalePage);
+        }
+        let selected = if current {
+            self.proof.take()
+        } else {
+            self.prior_proof.take()
+        };
+        self.clear_proofs();
+        selected.ok_or(BrowserError::StalePage)
+    }
     pub async fn launch(
         config: BrowserConfig,
         cancellation: CancellationToken,
@@ -61,6 +86,7 @@ impl BrowserWorkspace {
             session: BrowserSession::launch_bounded(config, cancellation, MAXIMUM).await?,
             current: None,
             proof: None,
+            prior_proof: None,
             ignored_targets: HashSet::new(),
             last_links: None,
             human_interacted: false,
@@ -68,7 +94,7 @@ impl BrowserWorkspace {
     }
     /// Fresh target only, with no prior URL, POST, input or handle restored.
     pub async fn blank(&mut self) -> Result<(), BrowserError> {
-        self.proof = None;
+        self.clear_proofs();
         self.current = Some(bounded!(self, self.session.create_page("about:blank"))?);
         Ok(())
     }
@@ -83,7 +109,7 @@ impl BrowserWorkspace {
         bounded!(self, self.open_inner(&url))
     }
     async fn open_inner(&mut self, url: &str) -> Result<WorkspaceObservation, BrowserError> {
-        self.proof = None;
+        self.clear_proofs();
         if self.current.is_none() {
             self.current = Some(self.session.create_page(url).await?);
         } else {
@@ -146,12 +172,12 @@ impl BrowserWorkspace {
         target.frame = identity.frame.clone();
         target.loader = identity.loader.clone();
         if self.proof.as_ref().is_some_and(|p| p.identity != identity) {
-            self.proof = None;
+            self.clear_proofs();
         }
         Ok(identity)
     }
     async fn observe_inner(&mut self) -> Result<WorkspaceObservation, BrowserError> {
-        self.proof = None;
+        self.clear_proofs();
         let identity = self.refresh().await?;
         let sid = self.sid()?;
         let ax = self
@@ -187,14 +213,7 @@ impl BrowserWorkspace {
         &mut self,
         expected: &str,
     ) -> Result<WorkspaceObservation, BrowserError> {
-        if self
-            .proof
-            .as_ref()
-            .is_none_or(|proof| proof.token != expected)
-        {
-            return Err(BrowserError::StalePage);
-        }
-        let proof = self.proof.take().ok_or(BrowserError::StalePage)?;
+        let proof = self.take_proof(expected)?;
         if proof.captured_at.elapsed() > FRAME_MAX_AGE || self.refresh().await? != proof.identity {
             return Err(BrowserError::StalePage);
         }
@@ -254,7 +273,7 @@ impl BrowserWorkspace {
         }
         let (after_identity, after_geometry) = self.geometry().await?;
         if after_identity != identity || after_geometry != geometry {
-            self.proof = None;
+            self.clear_proofs();
             return Err(BrowserError::StalePage);
         }
         Ok((identity, data, geometry))
@@ -271,7 +290,16 @@ impl BrowserWorkspace {
                 && proof.geometry == geometry
                 && proof.captured_at.elapsed() < FRAME_MAX_AGE
         });
-        if !share_unchanged || !proof_is_current {
+        let renew = self
+            .proof
+            .as_ref()
+            .is_some_and(|p| p.captured_at.elapsed() >= FRAME_MAX_AGE / 2);
+        if !share_unchanged || !proof_is_current || renew {
+            self.prior_proof = if share_unchanged && proof_is_current {
+                self.proof.take()
+            } else {
+                None
+            };
             self.proof = Some(FrameProof {
                 token: format!(
                     "{:x}",
@@ -282,8 +310,7 @@ impl BrowserWorkspace {
                 captured_at: Instant::now(),
             });
         }
-        // Refreshing pixels in another viewer preserves an unchanged controller
-        // proof without extending its original lifetime or reviving a spent proof.
+        // The old capture keeps its original expiry during a handoff to the new frame.
         let frame_token = self
             .proof
             .as_ref()
@@ -313,14 +340,7 @@ impl BrowserWorkspace {
         input: WorkspaceInput,
     ) -> Result<(), BrowserError> {
         // Consume before any await. Neither stale input nor uncertain dispatch is replayed.
-        if self
-            .proof
-            .as_ref()
-            .is_none_or(|proof| proof.token != expected)
-        {
-            return Err(BrowserError::StalePage);
-        }
-        let proof = self.proof.take().ok_or(BrowserError::StalePage)?;
+        let proof = self.take_proof(expected)?;
         if proof.captured_at.elapsed() > FRAME_MAX_AGE {
             return Err(BrowserError::StalePage);
         }

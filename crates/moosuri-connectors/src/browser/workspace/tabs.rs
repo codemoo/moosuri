@@ -128,7 +128,7 @@ impl BrowserWorkspace {
             .is_none_or(|h| !tabs.iter().any(|t| t.tab_id == h.page))
         {
             self.current = None;
-            self.proof = None;
+            self.clear_proofs();
             self.last_links = None;
             if let Some(tab) = tabs.first() {
                 self.activate(tab.tab_id).await?;
@@ -141,12 +141,12 @@ impl BrowserWorkspace {
     }
 
     async fn activate(&mut self, id: Uuid) -> Result<(), BrowserError> {
+        self.clear_proofs();
         let target = self
             .session
             .targets
             .get(&id)
             .ok_or(BrowserError::StalePage)?;
-        self.proof = None;
         self.last_links = None;
         self.session
             .cdp
@@ -177,7 +177,7 @@ impl BrowserWorkspace {
         bounded!(self, async {
             self.sync_tabs().await?;
             self.require_tab(id)?;
-            self.proof = None;
+            self.clear_proofs();
             self.last_links = None;
             let handle = self.current.take().ok_or(BrowserError::InvalidHandle)?;
             // closeTarget acknowledges initiation. Chrome may still list the page

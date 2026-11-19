@@ -217,6 +217,7 @@ async fn fixture() -> (
             session,
             current: Some(handle),
             proof: None,
+            prior_proof: None,
             ignored_targets: HashSet::new(),
             last_links: None,
             human_interacted: false,
@@ -488,6 +489,10 @@ async fn passive_tab_refresh_preserves_unspent_controller_proof_until_geometry_c
     let passive = workspace.tab_frame(tab).await.unwrap();
     assert_eq!(controller.frame_token, passive.frame_token);
     assert_ne!(controller.png_base64, passive.png_base64);
+    workspace.proof.as_mut().unwrap().captured_at = Instant::now() - FRAME_MAX_AGE / 2;
+    let renewed = workspace.tab_frame(tab).await.unwrap();
+    assert_ne!(renewed.frame_token, controller.frame_token);
+
     workspace
         .input(
             &controller.frame_token,

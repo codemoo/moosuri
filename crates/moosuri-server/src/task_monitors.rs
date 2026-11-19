@@ -5,6 +5,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/api/v1/task-monitors", get(list))
         .route("/api/v1/task-monitors/{id}/accept", post(accept))
         .route("/api/v1/task-monitors/{id}/stop", post(stop))
+        .route("/api/v1/task-monitors/{id}/resume", post(resume))
         .route(
             "/api/v1/task-monitors/{id}/rebind-model",
             post(rebind_model),
@@ -42,20 +43,37 @@ async fn stop(
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RebindModel {
+struct Resume {
     expected_revision: i64,
+}
+async fn resume(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<Resume>,
+) -> HttpResult {
+    resume_with_model(s, headers, id, input, false).await
 }
 async fn rebind_model(
     State(s): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(input): Json<RebindModel>,
+    Json(input): Json<Resume>,
+) -> HttpResult {
+    resume_with_model(s, headers, id, input, true).await
+}
+async fn resume_with_model(
+    s: AppState,
+    headers: HeaderMap,
+    id: String,
+    input: Resume,
+    rebind_model: bool,
 ) -> HttpResult {
     let user = current(&s, &headers).await?;
     let _gate = s.delivery.write().await;
     let monitor = s
         .store
-        .rebind_task_monitor_model(&user, id, input.expected_revision)
+        .resume_task_monitor(&user, id, input.expected_revision, rebind_model)
         .await?;
     s.runtime.wake();
     Ok(Json(monitor).into_response())

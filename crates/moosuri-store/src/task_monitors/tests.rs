@@ -842,3 +842,163 @@ async fn expired_reusable_monitor_does_not_swallow_the_next_completed_tasks_prop
     assert_ne!(renewed.policy_id, active.policy_id);
     assert!(renewed.observations.is_empty());
 }
+
+#[tokio::test]
+async fn monitor_reuse_requires_the_original_connection_and_owner_rebinds_future_reviews() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, store, user) = crate::missions::tests::setup().await;
+    let source = seed(&store, &user).await;
+    finish(&store, &user, &source).await;
+    let proposal = store.task_monitors(&user).await.unwrap().remove(0);
+    let active = store
+        .accept_task_monitor(&user, proposal.id.clone(), accept(&proposal))
+        .await
+        .unwrap();
+    let stop = |expected_revision| TaskMonitorControl {
+        expected_revision,
+        revoke_policy: false,
+    };
+    store
+        .stop_task_monitor(&user, active.id.clone(), stop(active.revision))
+        .await
+        .unwrap();
+
+    let original = store
+        .model_settings(&user)
+        .await
+        .unwrap()
+        .installation_default
+        .unwrap();
+    let another_pair = ModelSelection {
+        model: "same-connection".into(),
+        ..original.clone()
+    };
+    let verify = async |model: &ModelSelection| {
+        store
+            .record_model_probe(
+                &user,
+                model.provider_id.clone(),
+                model.provider_revision,
+                model.model.clone(),
+                model.effort.clone(),
+            )
+            .await
+            .unwrap();
+        store
+            .record_tool_probe(
+                &user,
+                model.provider_id.clone(),
+                model.provider_revision,
+                model.model.clone(),
+                model.effort.clone(),
+            )
+            .await
+            .unwrap();
+        store
+            .set_default_model(&user, Some(model.clone()))
+            .await
+            .unwrap();
+    };
+    verify(&another_pair).await;
+    let same_provider = finish(&store, &user, &source).await;
+    let reused = store
+        .task_monitors(&user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.parent_mission_id == same_provider.id)
+        .unwrap();
+    assert_eq!(reused.state, "active");
+    assert_eq!(reused.policy_id, active.policy_id);
+    store
+        .stop_task_monitor(&user, reused.id.clone(), stop(reused.revision))
+        .await
+        .unwrap();
+
+    let provider = store
+        .create_provider(
+            &user,
+            crate::ProviderChange {
+                name: "Different authorized destination".into(),
+                config: ProviderConfig {
+                    kind: ProviderKind::Compatible,
+                    base_url: Some("http://127.0.0.1:10/v1".into()),
+                    allowed_ips: vec!["127.0.0.1".into()],
+                    router_providers: vec![],
+                    zero_data_retention: false,
+                },
+                enabled: true,
+                credential: crate::CredentialChange::Clear,
+            },
+        )
+        .await
+        .unwrap();
+    let another_provider = ModelSelection {
+        provider_id: provider.id,
+        provider_revision: 1,
+        model: "different-connection".into(),
+        effort: None,
+        ..original.clone()
+    };
+    verify(&another_provider).await;
+    let new_task = finish(&store, &user, &source).await;
+    let pending = store
+        .task_monitors(&user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.parent_mission_id == new_task.id)
+        .unwrap();
+    assert_eq!(pending.state, "proposed");
+    assert!(pending.policy_id.is_none());
+    let monitor = store
+        .accept_task_monitor(&user, pending.id.clone(), accept(&pending))
+        .await
+        .unwrap();
+    assert_ne!(monitor.policy_id, active.policy_id);
+
+    store
+        .set_default_model(&user, Some(original.clone()))
+        .await
+        .unwrap();
+    revise_source(&store, &user, &source, "The checked answer changed.").await;
+    let due = now().unwrap() + 61;
+    store.enqueue_scheduled_reminders_at(due).await.unwrap();
+    assert_eq!(store.poll_recurring_missions_at(due).await.unwrap(), 0);
+    let paused = store
+        .task_monitors(&user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.id == monitor.id)
+        .unwrap();
+    assert_eq!(paused.state, "paused");
+    assert_eq!(
+        paused.reason.as_deref(),
+        Some("model_reauthorization_required")
+    );
+    assert!(
+        store
+            .resume_task_monitor(&user, monitor.id.clone(), paused.revision, false)
+            .await
+            .is_err()
+    );
+    let resumed = store
+        .resume_task_monitor(&user, monitor.id.clone(), paused.revision, true)
+        .await
+        .unwrap();
+    assert_eq!(resumed.state, "active");
+    assert_eq!(resumed.policy_id, paused.policy_id);
+    assert_eq!(resumed.expires_at, paused.expires_at);
+    assert_eq!(resumed.cadence_seconds, paused.cadence_seconds);
+    assert_eq!(resumed.sources[0].id, paused.sources[0].id);
+    assert_eq!(resumed.observations.len(), paused.observations.len());
+    store
+        .enqueue_scheduled_reminders_at(due + 60)
+        .await
+        .unwrap();
+    assert_eq!(store.poll_recurring_missions_at(due + 60).await.unwrap(), 1);
+    let next = store.claim_agent_run().await.unwrap().unwrap();
+    assert_eq!(next.binding.id, original.provider_id);
+    assert_eq!(next.binding.model, original.model);
+}

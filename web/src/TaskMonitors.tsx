@@ -35,6 +35,7 @@ function Monitor({monitor:m,scope,refresh,failure}:{monitor:TaskMonitor;scope:Re
  <ul>{m.sources.map(s=><li key={s.id}>{s.title}</li>)}</ul>
  <details><summary>무엇을 확인하나요?</summary><p>허용한 저장 자료의 변화만 확인하고, 변경이 없으면 모델을 호출하지 않아요. 한 번에 확인할 수 있는 양을 넘으면 직접 검토가 필요하다고 알려드려요. 메일 발송이나 일정 변경은 하지 않아요.</p></details>
  {m.reason&&<p role="status">{reasons[m.reason]??(m.reason==="coalesced_existing_monitor"?"이미 진행 중인 후속 확인에 연결했어요. 기존 확인 간격과 종료 시각을 유지해요.":"후속 확인을 중지했어요.")}</p>}
+ {m.state==="paused"&&m.reason==="provider_unavailable"&&<button disabled={busy} onClick={()=>void send(`/task-monitors/${m.id}/resume`,{expected_revision:m.revision})}>다음 확인부터 재개</button>}
  {m.state==="paused"&&["model_reauthorization_required","provider_unavailable"].includes(m.reason??"")&&<button disabled={busy} onClick={()=>void send(`/task-monitors/${m.id}/rebind-model`,{expected_revision:m.revision})}>설치 모델 연결을 승인하고 재개</button>}
  {m.last_checked_at&&<p>최근 자료 변경 확인: {new Date(m.last_checked_at*1000).toLocaleString()}</p>}
  {m.state==="proposed"&&<form onSubmit={e=>{e.preventDefault();void send(`/task-monitors/${m.id}/accept`,{request_id:crypto.randomUUID(),expected_revision:m.revision,cadence_seconds:cadence,expires_at:m.existing_monitor_id?m.expires_at:Math.floor(Date.now()/1000)+days*86400,reuse,read:true,check:true,notify:true})}}>

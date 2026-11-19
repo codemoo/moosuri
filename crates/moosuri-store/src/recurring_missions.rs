@@ -13,7 +13,7 @@ fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
 }
 const MODEL_REAUTHORIZATION_REQUIRED: &str = "model_reauthorization_required";
 
-pub(super) fn can_rebind_model(schedule: &ScheduleView) -> bool {
+fn can_rebind_model(schedule: &ScheduleView) -> bool {
     schedule.state == "paused"
         && matches!(
             schedule.reason.as_deref(),
@@ -238,7 +238,6 @@ fn poll(c: &Connection, key: &[u8; 32], time: i64) -> Result<u32> {
                 };
                 c.execute("UPDATE reminder_schedules SET state='paused',reason=?3,revision=revision+1,updated_at=?4 WHERE tenant_id=?1 AND id=?2",params![t,schedule,reason,time])?;
                 c.execute("UPDATE reminder_occurrences SET state='skipped',reason=?3,updated_at=?4 WHERE tenant_id=?1 AND id=?2",params![t,occurrence,reason,time])?;
-                fence_children(c, &t, &schedule)?;
                 continue;
             }
         };

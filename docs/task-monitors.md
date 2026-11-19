@@ -14,7 +14,7 @@ The monitor rechecks owner epoch, parent acceptance, source connection/configura
 
 Observation acknowledgement dismisses its notice. An optional note stays local to the next changed review and grants no additional authority or global memory.
 
-The authenticated API provides GET `/api/v1/task-monitors` and POST `/{id}/accept`, `/{id}/stop`, `/{id}/rebind-model` and `/{id}/observations/{ordinal}/resolve`. The follow-up panel is available in the task workspace and alongside the originating conversation. It shows proposals, the source scope, cadence/expiry, optional reuse, observations and stop/revoke controls. One list panel avoids one request per historical card. A resolved observation can retain an owner correction for the next changed review.
+The authenticated API provides GET `/api/v1/task-monitors` and POST `/{id}/accept`, `/{id}/stop`, `/{id}/rebind-model` `/{id}/resume` and `/{id}/observations/{ordinal}/resolve`. The follow-up panel is available in the task workspace and alongside the originating conversation. It shows proposals, the source scope, cadence/expiry, optional reuse, observations and stop/revoke controls. One list panel avoids one request per historical card. A resolved observation can retain an owner correction for the next changed review.
 
 Schema73 follows the real live-guidance migration72 in ordinary startup and encrypted restore. Restore pauses schedules and advances owner epochs; old monitoring permission cannot restart automatically. Already-published notice suppression preserves its immutable original source flag.
 

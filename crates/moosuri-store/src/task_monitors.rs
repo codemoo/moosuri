@@ -320,7 +320,22 @@ pub(crate) fn propose(
         "INSERT INTO task_monitor_links VALUES(?1,?2,?3,?4,?5)",
         params![r.tenant, r.account, parent, rev, id],
     )?;
-    let policy:Option<String>=c.query_row("SELECT id FROM task_monitor_policies WHERE tenant_id=?1 AND account_id=?2 AND scope_digest=?3 AND auth_epoch=?4 AND reusable=1 AND state='active' AND expires_at>?5 ORDER BY expires_at DESC,id LIMIT 1",params![r.tenant,r.account,scope,r.epoch,now()?],|v|v.get(0)).optional()?;
+    // Reuse a prior approval only if its activated monitor history proves the
+    // same connection revision. Old or conflicting provenance needs a new approval.
+    let policy: Option<String> = c.query_row(
+        "SELECT p.id FROM task_monitor_policies p JOIN task_monitors m
+         ON m.tenant_id=p.tenant_id AND m.account_id=p.account_id AND m.policy_id=p.id
+         AND m.scope_digest=p.scope_digest AND m.schedule_id IS NOT NULL
+         WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.scope_digest=?3 AND p.auth_epoch=?4
+         AND p.reusable=1 AND p.state='active' AND p.expires_at>?5
+         GROUP BY p.id
+         HAVING count(*)=sum(CASE WHEN coalesce(json_extract(m.model,'$.source'),'shared')=coalesce(json_extract(?6,'$.source'),'shared')
+         AND json_extract(m.model,'$.provider_id')=json_extract(?6,'$.provider_id')
+         AND json_extract(m.model,'$.provider_revision')=json_extract(?6,'$.provider_revision') THEN 1 ELSE 0 END)
+         ORDER BY p.expires_at DESC,p.id LIMIT 1",
+        params![r.tenant, r.account, scope, r.epoch, now()?, enc(&r.model)?],
+        |row| row.get(0),
+    ).optional()?;
     if let Some(policy) = policy {
         c.execute_batch("SAVEPOINT monitor_optional_activation")?;
         match activate(c, &r.tenant, &id, &policy) {
@@ -794,11 +809,12 @@ impl Store {
         if input.revoke_policy && let Some(policy)=old.policy_id {tx.execute("UPDATE task_monitor_policies SET state='revoked' WHERE tenant_id=?1 AND id=?2",params![u.tenant.0,policy])?;let others=tx.prepare("SELECT id FROM task_monitors WHERE tenant_id=?1 AND policy_id=?2 AND state='active'")?.query_map(params![u.tenant.0,policy],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;for other in others{stop(&tx,&u.tenant.0,&other,"stopped","policy_revoked")?;}}
         stop(&tx,&u.tenant.0,&id,"stopped",if input.revoke_policy{"policy_revoked"}else{"owner_stopped"})?;let out=view(&tx,&u.tenant.0,&id)?;tx.commit()?;Ok(out)}).await
     }
-    pub async fn rebind_task_monitor_model(
+    pub async fn resume_task_monitor(
         &self,
         user: &UserContext,
         id: String,
         expected_revision: i64,
+        rebind_model: bool,
     ) -> Result<TaskMonitorView> {
         let user = user.clone();
         self.call(move |db| {
@@ -824,7 +840,12 @@ impl Store {
                 &user,
                 &schedule_id,
                 ScheduleControl {
-                    action: "rebind_model".into(),
+                    action: if rebind_model {
+                        "rebind_model"
+                    } else {
+                        "resume"
+                    }
+                    .into(),
                     expected_revision: schedule.revision,
                 },
             )?;

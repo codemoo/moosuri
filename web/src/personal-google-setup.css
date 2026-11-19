@@ -1,0 +1,79 @@
+.personal-google-setup .google-setup-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+  margin: 0;
+  padding-inline-start: 22px;
+  color: var(--muted);
+}
+
+.google-setup-progress [aria-current="step"] {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.google-setup-panel,
+.google-setup-form,
+.google-setup-field {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.google-setup-panel {
+  padding: 16px;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+.google-setup-panel h2 {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.google-setup-panel :is(h2, p, ul) {
+  margin: 0;
+}
+
+.google-setup-panel details > :is(p, ul) {
+  margin-block-start: 8px;
+}
+
+.google-setup-panel summary {
+  cursor: pointer;
+}
+
+.google-setup-field {
+  gap: 6px;
+  font-weight: 600;
+}
+
+.google-setup-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-element);
+  color: var(--ink);
+  background: var(--raised);
+  font: inherit;
+  font-weight: 400;
+}
+
+.google-setup-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.google-setup-buttons a {
+  text-decoration: none;
+}
+
+.google-setup-buttons .member-page-action {
+  min-height: 44px;
+  white-space: normal;
+}

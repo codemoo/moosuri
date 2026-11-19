@@ -40,8 +40,8 @@ function searchText(value: string) {
 }
 
 export function PersonalConnections({
-  onBack, installationAdmin = false, ...props
-}: Parameters<typeof usePersonalGoogle>[0] & { onBack: () => void; installationAdmin?: boolean }) {
+  onBack, openGoogleSetup, ...props
+}: Parameters<typeof usePersonalGoogle>[0] & { onBack: () => void; openGoogleSetup?: () => void }) {
   const [workspaceReturn] = useState(() => workspaceGoogleReturn(props.session));
   const [selected, setSelected] = useState<Connector | null>(
     () => workspaceReturn ? workspaceConnectors.find(({ id }) => id === workspaceReturn.service) ?? null
@@ -74,9 +74,8 @@ export function PersonalConnections({
     : vaultStatus.status === "setup_required" ? "회원 인증 연결 필요"
     : "연결 상태를 확인할 수 없습니다.";
 
-  const setupGuide = installationAdmin && (
-    <a className="member-page-action" href="https://github.com/codemoo/moosuri/blob/main/deployment/kiri/google.md"
-      target="_blank" rel="noopener noreferrer">Google 로그인 설정 안내</a>
+  const setupGuide = openGoogleSetup && (
+    <button className="member-page-action" onClick={openGoogleSetup}>Google 설치 설정 열기</button>
   );
 
   function row(connector: Connector, description?: string, trailing?: string, candidate = false) {

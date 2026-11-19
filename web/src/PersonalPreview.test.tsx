@@ -553,6 +553,24 @@ it("lets the administrator recover and save one installation model after a revis
     { revision: 5, connection_revision: "connection-five", enabled: true, default_choice: low },
   ]);
 });
+it("opens the Google installer through the administrator area and returns to member connectors", async () => {
+  current = { ...session(), installation_admin: true };
+  const path = "/personal/admin/google-setup";
+  adminEngine = (request) => {
+    if (request === "/personal/admin/members") return Response.json({ members: [] });
+    expect(request).toBe(path);
+    return Response.json({ configured: true, redirect_uri: "https://kiri.example.test/api/v1/mail/oauth/callback" });
+  };
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "관리" }));
+  expect(calls.some(call => call.path === path)).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Google 커넥터" }));
+  await screen.findByText("Google 앱 설정이 등록되어 있습니다.");
+  expect(calls.filter(call => call.path === path).every(call => call.account === aid && call.method === "GET")).toBe(true);
+  await user.click(screen.getByRole("button", { name: "커넥터 열기" }));
+  expect(await screen.findByRole("heading", { name: "커넥터" })).toBeVisible();
+});
 it("logs in, replaces a temporary password and sends through the explicit text-only route", async () => {
   current = null;
   restrictLogin = true;

@@ -1,7 +1,6 @@
 //! Installation roles are authoritative in the host registry. A cookie only
 //! locates the private service that can validate the current member login.
 use super::*;
-use moosuri_core::SessionView;
 use moosuri_store::runtime_registry::engine;
 use moosuri_store::{StoreError, runtime_registry::admin as control};
 use serde_json::json;
@@ -16,20 +15,12 @@ fn error(e: StoreError) -> StatusCode {
         _ => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
-fn private_view(bytes: &[u8], a: &Allocation) -> Result<SessionView, StatusCode> {
-    let view: SessionView =
-        serde_json::from_slice(bytes).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    if view.user.id != a.account_id {
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-    Ok(view)
-}
 pub(super) async fn public_session(
     g: &Gateway,
     a: &Allocation,
     body: &[u8],
 ) -> Result<Vec<u8>, StatusCode> {
-    let view = private_view(body, a)?;
+    let view = member_session_view(body, a)?;
     let root = g.registry.clone();
     let allocation = a.clone();
     tokio::task::spawn_blocking(move || {
@@ -148,7 +139,7 @@ async fn endpoint(
         if status != StatusCode::OK {
             return Err(status);
         }
-        let view = private_view(&bytes, &a)?;
+        let view = member_session_view(&bytes, &a)?;
         let root = g.registry.clone();
         let out = tokio::task::spawn_blocking(move || {
             let pin = control::checked_session(&root, &a, &view)

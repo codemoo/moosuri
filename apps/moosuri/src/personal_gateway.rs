@@ -764,6 +764,70 @@ async fn authenticated_allocation(
     let a = active(g, &route).await?;
     Ok((a, session))
 }
+fn member_session_view(
+    bytes: &[u8],
+    allocation: &Allocation,
+) -> Result<moosuri_core::SessionView, StatusCode> {
+    let view: moosuri_core::SessionView =
+        serde_json::from_slice(bytes).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if view.user.id != allocation.account_id {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    Ok(view)
+}
+
+async fn vault_status(
+    State(g): State<Gateway>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    #[derive(Serialize)]
+    #[serde(tag = "state", rename_all = "snake_case")]
+    enum VaultStatus {
+        SetupRequired,
+    }
+
+    let result = async {
+        if method != Method::GET {
+            return Err(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        g.headers(&headers, &method)?;
+        if uri.query().is_some() || !body.is_empty() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let _permit = g
+            .inflight
+            .try_acquire()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let (allocation, session) = authenticated_allocation(&g, &headers, true).await?;
+        let upstream = g
+            .proxy(
+                &allocation,
+                Method::GET,
+                "/api/v1/auth/session",
+                None,
+                Some(&session),
+            )
+            .await;
+        recheck(&g, &allocation).await?;
+        let (status, bytes, _) = upstream?;
+        if status != StatusCode::OK {
+            return Err(status);
+        }
+        let view = member_session_view(&bytes, &allocation)?;
+        if view.password_change_required || view.user.must_change_password {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        let body = serde_json::to_vec(&VaultStatus::SetupRequired)
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        Ok(response(StatusCode::OK, body))
+    }
+    .await;
+    result.unwrap_or_else(failure)
+}
+
 async fn handler(
     State(g): State<Gateway>,
     method: Method,
@@ -1014,6 +1078,7 @@ fn router(g: Gateway) -> Router {
         .route("/api/v1/auth/session", get(handler))
         .route("/api/v1/auth/password", post(handler))
         .route("/api/v1/auth/logout", post(handler))
+        .route("/api/v1/personal/vault", get(vault_status))
         .route("/api/v1/threads", get(handler).post(handler))
         .route("/api/v1/threads/{id}", delete(handler))
         .route("/api/v1/threads/{id}/messages", get(handler))
@@ -1585,6 +1650,88 @@ mod tests {
         );
         h
     }
+    #[tokio::test]
+    async fn vault_status_requires_a_current_private_member_session() {
+        const PATH: &str = "/api/v1/personal/vault";
+        let temp = tempfile::tempdir().unwrap();
+        let options = options(&temp.path().canonicalize().unwrap());
+        let g = Gateway::new(&options).unwrap();
+        assert_eq!(
+            request(&g, PATH, Method::GET, headers(), "").await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+
+        let mut members = Vec::new();
+        for email in ["a@example.test", "b@example.test"] {
+            let (allocation, store, task) = real_member(&options, email).await;
+            let login = request(
+                &g,
+                "/api/v1/auth/login",
+                Method::POST,
+                headers(),
+                &serde_json::json!({"email":email,"password":"Synthetic-password-42"}).to_string(),
+            )
+            .await;
+            assert_eq!(login.status(), StatusCode::OK);
+            let member = authenticated(&cookies(&login), &allocation);
+            let status = request(&g, PATH, Method::GET, member.clone(), "").await;
+            assert_eq!(status.status(), StatusCode::OK);
+            assert_eq!(status.headers()[header::CACHE_CONTROL], "no-store");
+            assert!(!status.headers().contains_key(header::SET_COOKIE));
+            assert_eq!(
+                json(status).await,
+                serde_json::json!({"state":"setup_required"})
+            );
+            members.push((allocation, store, task, member));
+        }
+        let (_, store_a, task_a, a) = &members[0];
+        let (allocation_b, _, task_b, b) = &members[1];
+        let mut mixed = a.clone();
+        mixed.insert("x-moosuri-account", b["x-moosuri-account"].clone());
+        assert_eq!(
+            request(&g, PATH, Method::GET, mixed, "").await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let mut foreign = a.clone();
+        foreign.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://other.example.test"),
+        );
+        assert_eq!(
+            request(&g, PATH, Method::GET, foreign, "").await.status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            request(&g, PATH, Method::POST, a.clone(), "{}")
+                .await
+                .status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert_eq!(
+            request(&g, "/api/v1/vault/handoff", Method::POST, a.clone(), "{}")
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+
+        // The signed route stays valid after the private store revokes the session.
+        let session = cookie(a, SESSION, 128).unwrap();
+        let user = store_a.authenticate(session).await.unwrap();
+        store_a.logout(&user).await.unwrap();
+        assert!(authenticated_allocation(&g, a, true).await.is_ok());
+        assert_eq!(
+            request(&g, PATH, Method::GET, a.clone(), "").await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        runtime_registry::set_routing(&options.registry, allocation_b, false).unwrap();
+        assert_eq!(
+            request(&g, PATH, Method::GET, b.clone(), "").await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        task_a.abort();
+        task_b.abort();
+    }
+
     async fn check_memory_lifecycle(g: &Gateway, a: &HeaderMap, b: &HeaderMap) {
         const BASE: &str = "/api/v1/knowledge/memories";
         let draft = |text: &str| {

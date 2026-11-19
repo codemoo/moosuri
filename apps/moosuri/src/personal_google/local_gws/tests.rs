@@ -552,12 +552,23 @@ async fn workspace_oauth_requires_exact_scopes_and_a_verified_stable_subject() {
     let owner = owner();
     let verifier = secret(&"v".repeat(43));
     let state = "b".repeat(64);
-    let call = |operation| gws.raw(owner, Uuid::new_v4(), Some(gws.revision), operation);
+    async fn call(
+        gws: &LocalGws,
+        owner: VolumeOwner,
+        operation: Operation<'_>,
+    ) -> Result<Zeroizing<Vec<u8>>, Failure> {
+        gws.raw(owner, Uuid::new_v4(), Some(gws.revision), operation)
+            .await
+    }
     let consent: BrokerReply<Authorization> = decode(
-        &call(Operation::AuthorizationUrl {
-            state: &state,
-            verifier: Secret(&verifier),
-        })
+        &call(
+            &gws,
+            owner,
+            Operation::AuthorizationUrl {
+                state: &state,
+                verifier: Secret(&verifier),
+            },
+        )
         .await
         .ok()
         .unwrap(),
@@ -585,10 +596,14 @@ async fn workspace_oauth_requires_exact_scopes_and_a_verified_stable_subject() {
     for code in ["unverified-code", "broader-code", "underprivileged-code"] {
         let code = secret(code);
         assert!(
-            call(Operation::Exchange {
-                code: Secret(&code),
-                verifier: Secret(&verifier)
-            })
+            call(
+                &gws,
+                owner,
+                Operation::Exchange {
+                    code: Secret(&code),
+                    verifier: Secret(&verifier)
+                }
+            )
             .await
             .is_err()
         );
@@ -596,10 +611,14 @@ async fn workspace_oauth_requires_exact_scopes_and_a_verified_stable_subject() {
     for (code, should_refresh) in [("valid-code", true), ("switched-code", false)] {
         let code = secret(code);
         let initial: BrokerReply<Grant> = decode(
-            &call(Operation::Exchange {
-                code: Secret(&code),
-                verifier: Secret(&verifier),
-            })
+            &call(
+                &gws,
+                owner,
+                Operation::Exchange {
+                    code: Secret(&code),
+                    verifier: Secret(&verifier),
+                },
+            )
             .await
             .ok()
             .unwrap(),
@@ -609,10 +628,14 @@ async fn workspace_oauth_requires_exact_scopes_and_a_verified_stable_subject() {
         assert_eq!(initial.result.scopes, [service.scope()]);
         assert_eq!(initial.result.mailbox, EMAIL);
         let refresh = initial.result.refresh_token.unwrap();
-        let refreshed = call(Operation::Refresh {
-            refresh_token: Secret(&refresh),
-            refresh_binding: &initial.result.refresh_binding,
-        })
+        let refreshed = call(
+            &gws,
+            owner,
+            Operation::Refresh {
+                refresh_token: Secret(&refresh),
+                refresh_binding: &initial.result.refresh_binding,
+            },
+        )
         .await;
         assert_eq!(refreshed.is_ok(), should_refresh);
     }

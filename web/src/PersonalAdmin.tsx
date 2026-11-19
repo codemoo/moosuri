@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
+import "./personal-management.css";
 
 export const adminBase = "/personal/admin";
 export type Member = {
@@ -171,106 +172,119 @@ export default function PersonalAdmin({
     });
   }
   return (
-    <section aria-label="회원 관리" className="member-section">
-      <h1>회원 관리</h1>
+    <section aria-labelledby="member-management-title" className="member-page member-management">
+      <header className="member-page-heading">
+        <h1 id="member-management-title">회원 관리</h1>
+      </header>
       {error && <p className="preview-error" role="status">{error}</p>}
       {pending && !busy && (
-        <button className="secondary" onClick={() => void submit(pending)}>
+        <button className="member-page-action" onClick={() => void submit(pending)}>
           변경 결과 확인
         </button>
       )}
-      {busy && <p role="status">확인 중…</p>}
-      <form
-        className="admin-card invite-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void invite();
-        }}
-      >
-        <label>
-          이름
-          <input
-            value={name}
-            maxLength={200}
-            autoComplete="off"
-            required
-            disabled={!!inviteId}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <label>
-          이메일
-          <input
-            type="email"
-            value={email}
-            maxLength={254}
-            autoComplete="off"
-            required
-            disabled={!!inviteId}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </label>
-        <button
-          className="primary"
-          disabled={busy || !!pending || !name.trim() || !email.trim()}
+      {busy && <p className="management-note" role="status">확인 중…</p>}
+      <section className="management-group" aria-labelledby="member-invite-title">
+        <h2 id="member-invite-title">초대</h2>
+        <form
+          className="member-page-list management-list"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void invite();
+          }}
         >
-          {inviteId ? "초대 접수 확인" : "회원 초대"}
-        </button>
-      </form>
-      {receipt && <p role="status">{receipt}</p>}
-      <ul className="preview-members">
-        {members.map((m) => (
-          <li key={m.account_id}>
-            <strong>
-              {m.invitation_name
-                ? m.invitation_name + " · " + m.email
-                : m.email}
-            </strong>
-            <span>
-              {m.suspended
-                ? "정지"
-                : !m.ready
-                  ? "준비 중"
-                  : m.admin
-                    ? "관리자"
-                    : "회원"}
-              {m.account_id === account ? " · 나" : ""}
-            </span>
-            {m.invitation_request_id && !m.ready && (
-              <small>요청 번호 {m.invitation_request_id}</small>
-            )}
-            {m.suspended && (
-              <button
-                className="secondary"
-                disabled={busy || !!pending || !!inviteId}
-                onClick={() => change(m, "resume")}
-              >
-                {labels.resume}
-              </button>
-            )}
-            {!m.suspended && m.ready && (
-              <div>
-                {(m.admin || m.eligible) && (
+          <label className="management-row management-field">
+            <span>이름</span>
+            <input
+              value={name}
+              maxLength={200}
+              autoComplete="off"
+              required
+              disabled={!!inviteId}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          <label className="management-row management-field">
+            <span>이메일</span>
+            <input
+              type="email"
+              value={email}
+              maxLength={254}
+              autoComplete="off"
+              required
+              disabled={!!inviteId}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <div className="management-row management-footer">
+            <button
+              className="member-page-action management-primary"
+              disabled={busy || !!pending || !name.trim() || !email.trim()}
+            >
+              {inviteId ? "초대 접수 확인" : "회원 초대"}
+            </button>
+          </div>
+        </form>
+        {receipt && <p className="management-note" role="status">{receipt}</p>}
+      </section>
+      <section className="management-group" aria-labelledby="member-list-title">
+        <h2 id="member-list-title">회원 목록</h2>
+        {members.length > 0 ? (
+          <ul className="member-page-list management-list">
+            {members.map((m) => (
+              <li className="management-row management-person" key={m.account_id}>
+                <div className="management-person-details">
+                  <strong>{m.invitation_name || m.email}</strong>
+                  {m.invitation_name && <span>{m.email}</span>}
+                  <span>
+                    {m.suspended
+                      ? "정지"
+                      : !m.ready
+                        ? "준비 중"
+                        : m.admin
+                          ? "관리자"
+                          : "회원"}
+                    {m.account_id === account ? " · 나" : ""}
+                  </span>
+                  {m.invitation_request_id && !m.ready && (
+                    <small>요청 번호 {m.invitation_request_id}</small>
+                  )}
+                </div>
+                {m.suspended && (
                   <button
-                    className="secondary"
+                    className="member-page-action"
                     disabled={busy || !!pending || !!inviteId}
-                    onClick={() => change(m, m.admin ? "demote" : "promote")}
+                    onClick={() => change(m, "resume")}
                   >
-                    {m.admin ? labels.demote : labels.promote}
+                    {labels.resume}
                   </button>
                 )}
-                <button
-                  className="danger"
-                  disabled={busy || !!pending || !!inviteId}
-                  onClick={() => change(m, "suspend")}
-                >
-                  {labels.suspend}
-                </button>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
+                {!m.suspended && m.ready && (
+                  <div className="management-person-actions">
+                    {(m.admin || m.eligible) && (
+                      <button
+                        className="member-page-action"
+                        disabled={busy || !!pending || !!inviteId}
+                        onClick={() => change(m, m.admin ? "demote" : "promote")}
+                      >
+                        {m.admin ? labels.demote : labels.promote}
+                      </button>
+                    )}
+                    <button
+                      className="member-page-action management-danger"
+                      disabled={busy || !!pending || !!inviteId}
+                      onClick={() => change(m, "suspend")}
+                    >
+                      {labels.suspend}
+                    </button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : !busy && !error && (
+          <p className="member-page-list management-row management-note">표시할 회원이 없습니다.</p>
+        )}
+      </section>
     </section>
   );
 }

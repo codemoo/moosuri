@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 import type { Member } from "./PersonalAdmin";
+import "./personal-management.css";
 
 type Choice = { model: string; effort: string | null };
 type Engine = {
@@ -102,50 +103,73 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
   const installationDefault = engine?.default_stale ? null : engine?.default_choice ?? engine?.host_default;
   const revision = `${engine?.connection_revision}:${engine?.revision}`;
   return (
-    <section className="member-section preview-engine" aria-labelledby="preview-engine-title">
-      <h1 id="preview-engine-title">어시스턴트 엔진</h1>
+    <section className="member-page member-management" aria-labelledby="preview-engine-title">
+      <header className="member-page-heading">
+        <h1 id="preview-engine-title">어시스턴트 엔진</h1>
+        <button className="member-page-action" type="button" disabled={busy} onClick={() => {
+          setError("");
+          setNotice("");
+          setRefresh(value => value + 1);
+        }}>엔진 설정 새로고침</button>
+      </header>
       {error && <p role="alert" className="preview-error">{error}</p>}
-      {notice && <p role="status">{notice}</p>}
-      {!engine && busy && <p role="status">엔진 설정 확인 중…</p>}
-      {engine && !engine.configured && (
-        <p>서버에 엔진 연결이 준비되지 않았습니다. 설치 서버에서 엔진 연결을 설정한 뒤 새로고침해 주세요.</p>
+      {notice && <p className="management-note" role="status">{notice}</p>}
+      {!engine && busy && <p className="management-note" role="status">엔진 설정 확인 중…</p>}
+      {engine && (
+        <section className="management-group" aria-labelledby="engine-connection-title">
+          <h2 id="engine-connection-title">연결 상태</h2>
+          {engine.configured ? (
+            <div className="member-page-list management-row management-connection">
+              <span>연결 방식 {engine.kind ?? "확인 필요"}</span>
+              <span className="management-note">{engine.enabled ? "사용 중" : "일시 중지"}</span>
+            </div>
+          ) : (
+            <p className="member-page-list management-row management-note">
+              서버에 엔진 연결이 준비되지 않았습니다. 설치 서버에서 엔진 연결을 설정한 뒤 새로고침해 주세요.
+            </p>
+          )}
+        </section>
       )}
       {engine?.configured && (
         <>
-          <p>연결 방식 {engine.kind ?? "확인 필요"} · {engine.enabled ? "사용 중" : "일시 중지"}</p>
-          <ChoiceForm key={revision} title="설치 기본 설정"
-            choices={engine.choices} current={engine.default_choice}
-            inherited={engine.host_default} inheritLabel="서버 기본값 사용" stale={engine.default_stale}
-            enabled={engine.enabled} busy={busy}
-            save={(choice, enabled) => void save({ enabled, default_choice: choice })}
-          />
-          <label className="preview-engine-members">
-            회원
-            <select value={member?.account_id ?? ""} disabled={busy || available.length === 0}
-              onChange={event => setAccountId(event.target.value)}>
-              <option value="">회원 선택</option>
-              {available.map(value => (
-                <option key={value.account_id} value={value.account_id}>
-                  {value.invitation_name ? `${value.invitation_name} · ` : ""}
-                  {value.email}{value.suspended ? " · 정지" : value.ready ? "" : " · 준비 중"}
-                </option>
-              ))}
-            </select>
-          </label>
-          {member && (
-            <ChoiceForm key={`${revision}:${member.account_id}:${member.generation}`} title="회원 설정"
-              choices={engine.choices} current={assignment?.choice ?? null} stale={assignment?.stale}
-              inherited={installationDefault} inheritLabel="설치 기본값 사용" busy={busy}
-              save={choice => void save({ account_id: member.account_id, generation: member.generation, choice })}
-            />
-          )}
+          <section className="management-group" aria-labelledby="engine-default-title">
+            <h2 id="engine-default-title">설치 기본 설정</h2>
+            <div className="member-page-list">
+              <ChoiceForm key={revision} title="설치 기본 설정"
+                choices={engine.choices} current={engine.default_choice}
+                inherited={engine.host_default} inheritLabel="서버 기본값 사용" stale={engine.default_stale}
+                enabled={engine.enabled} busy={busy}
+                save={(choice, enabled) => void save({ enabled, default_choice: choice })}
+              />
+            </div>
+          </section>
+          <section className="management-group" aria-labelledby="engine-member-title">
+            <h2 id="engine-member-title">회원 설정</h2>
+            <div className="member-page-list management-list">
+              <label className="management-row management-field">
+                <span>회원</span>
+                <select value={member?.account_id ?? ""} disabled={busy || available.length === 0}
+                  onChange={event => setAccountId(event.target.value)}>
+                  <option value="">회원 선택</option>
+                  {available.map(value => (
+                    <option key={value.account_id} value={value.account_id}>
+                      {value.invitation_name ? `${value.invitation_name} · ` : ""}
+                      {value.email}{value.suspended ? " · 정지" : value.ready ? "" : " · 준비 중"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {member && (
+                <ChoiceForm key={`${revision}:${member.account_id}:${member.generation}`} title="회원 설정"
+                  choices={engine.choices} current={assignment?.choice ?? null} stale={assignment?.stale}
+                  inherited={installationDefault} inheritLabel="설치 기본값 사용" busy={busy}
+                  save={choice => void save({ account_id: member.account_id, generation: member.generation, choice })}
+                />
+              )}
+            </div>
+          </section>
         </>
       )}
-      <button className="secondary" type="button" disabled={busy} onClick={() => {
-        setError("");
-        setNotice("");
-        setRefresh(value => value + 1);
-      }}>엔진 설정 새로고침</button>
     </section>
   );
 }
@@ -171,18 +195,17 @@ function ChoiceForm({title, choices, current, inherited, inheritLabel, stale, en
     if (!busy && valid) save(choice, active);
   }
   return (
-    <form className="admin-card" aria-label={title} onSubmit={submit}>
-      <h2>{title}</h2>
-      {stale && <p role="status">엔진 연결이 바뀌었습니다. 사용할 모델과 추론 강도를 확인한 뒤 저장해 주세요.</p>}
+    <form className="management-list" aria-label={title} onSubmit={submit}>
+      {stale && <p className="management-row management-note" role="status">엔진 연결이 바뀌었습니다. 사용할 모델과 추론 강도를 확인한 뒤 저장해 주세요.</p>}
       {enabled !== undefined && (
-        <label className="preview-engine-toggle">
+        <label className="management-row management-toggle">
+          <span>어시스턴트 사용</span>
           <input type="checkbox" checked={active} disabled={busy}
             onChange={event => setActive(event.target.checked)} />
-          어시스턴트 사용
         </label>
       )}
-      <label>
-        모델
+      <label className="management-row management-field">
+        <span>모델</span>
         <select value={choice?.model ?? ""} disabled={busy} onChange={event => {
           const selected = choices.filter(value => value.model === event.target.value);
           setChoice(selected.find(value => value.effort === null) ?? selected[0] ?? null);
@@ -194,8 +217,8 @@ function ChoiceForm({title, choices, current, inherited, inheritLabel, stale, en
           {models.map(model => <option key={model}>{model}</option>)}
         </select>
       </label>
-      <label>
-        추론 강도
+      <label className="management-row management-field">
+        <span>추론 강도</span>
         <select value={choice?.effort ?? ""} disabled={busy || levels.length === 0}
           onChange={event => setChoice(levels.find(value => (value.effort ?? "") === event.target.value) ?? null)}>
           {!choice && <option value="">{inherited?.effort ?? "기본값"}</option>}
@@ -207,13 +230,15 @@ function ChoiceForm({title, choices, current, inherited, inheritLabel, stale, en
           ))}
         </select>
       </label>
-      {!choice && inherited && <p>상속값 {description(inherited)}</p>}
-      <button
-        className="primary"
-        disabled={busy || !valid || (!stale && sameChoice(choice, current) && active === (enabled ?? true))}
-      >
-        {enabled === undefined ? "회원 설정 저장" : "설치 설정 저장"}
-      </button>
+      {!choice && inherited && <p className="management-row management-note">상속값 {description(inherited)}</p>}
+      <div className="management-row management-footer">
+        <button
+          className="member-page-action management-primary"
+          disabled={busy || !valid || (!stale && sameChoice(choice, current) && active === (enabled ?? true))}
+        >
+          {enabled === undefined ? "회원 설정 저장" : "설치 설정 저장"}
+        </button>
+      </div>
     </form>
   );
 }

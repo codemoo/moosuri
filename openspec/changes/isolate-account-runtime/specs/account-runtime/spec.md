@@ -75,6 +75,17 @@ The gateway SHALL route a provider callback only to its original purpose, accoun
 - **WHEN** member A starts Google consent and returns after switching the web app to B
 - **THEN** neither B's session nor B's mail connection changes, and the callback alone does not resume A's request
 
+### Requirement: Personal service connection status
+The personal connector catalog SHALL show the current member's service account and connection status. Searching, inspecting a connector, or completing a connection started from the catalog SHALL NOT read inbox contents.
+
+#### Scenario: Inspect a linked Gmail account
+- **WHEN** a member opens the connected list and selects Gmail
+- **THEN** the mailbox identity and connection controls are available, and opening the screen does not dispatch a mail read
+
+#### Scenario: Vault site configured before Kiri session integration
+- **WHEN** the member opens the vault connector and a separate HTTPS vault origin is configured
+- **THEN** the UI identifies the missing member-session integration and may open the configured site without carrying session credentials
+
 ### Requirement: Independently recoverable personal state
 The migration SHALL establish an authenticated child backup baseline from a fenced parent checkpoint before enabling writes. Account deletion and vault revocation SHALL remain deliverable after the account runtime is removed.
 

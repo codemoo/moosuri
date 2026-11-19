@@ -1201,7 +1201,7 @@ mod tests {
         fs::set_permissions(&p, fs::Permissions::from_mode(0o700)).unwrap();
         p
     }
-    fn options(parent: &Path) -> Options {
+    pub(super) fn options(parent: &Path) -> Options {
         Options {
             public_origin: "https://assistant.example.test".into(),
             vault_site_origin: None,

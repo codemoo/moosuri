@@ -9,16 +9,36 @@ const CALLBACK: &str = "/api/v1/mail/oauth/callback";
 const BASE: &str = "/api/v1/personal/google";
 const TTL: u64 = 600;
 const AAD: &[u8] = b"moosuri/personal/google/gmail-readonly/callback/v1";
+// Positions are persisted in short-lived sealed callback envelopes. Append only.
+const WORKSPACE_SERVICES: [&str; 4] = ["drive", "docs", "slides", "sheets"];
+const WORKSPACE_BASE: &str = "/api/v1/personal/workspace";
+
+fn service_for_path(path: &str) -> Option<&'static str> {
+    let relative = path.strip_prefix(WORKSPACE_BASE)?.strip_prefix('/')?;
+    let name = relative.split('/').next()?;
+    WORKSPACE_SERVICES
+        .iter()
+        .copied()
+        .find(|service| *service == name)
+}
+
 pub(super) fn routes() -> Router<Gateway> {
-    Router::new()
+    let mut router = Router::new()
         .route(CALLBACK, get(callback))
         .route(BASE, get(member))
         .route("/api/v1/personal/google/start", post(member))
         .route("/api/v1/personal/google/complete", post(member))
         .route("/api/v1/personal/google/inbox", post(member))
         .route("/api/v1/personal/google/history", post(member))
-        .route("/api/v1/personal/google/disconnect", post(member))
-        .layer(DefaultBodyLimit::max(4096))
+        .route("/api/v1/personal/google/disconnect", post(member));
+    for service in WORKSPACE_SERVICES {
+        let base = format!("{WORKSPACE_BASE}/{service}");
+        router = router.route(&base, get(member));
+        for action in ["start", "complete", "read", "disconnect"] {
+            router = router.route(&format!("{base}/{action}"), post(member));
+        }
+    }
+    router.layer(DefaultBodyLimit::max(4096))
 }
 fn cipher(g: &Gateway) -> Result<LessSafeKey, StatusCode> {
     let master = hmac::Key::new(hmac::HMAC_SHA256, &g.key);
@@ -30,7 +50,12 @@ fn cipher(g: &Gateway) -> Result<LessSafeKey, StatusCode> {
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(LessSafeKey::new(key))
 }
-fn seal(g: &Gateway, a: &SessionAllocation, state: &str) -> Result<String, StatusCode> {
+fn seal(
+    g: &Gateway,
+    a: &SessionAllocation,
+    state: &str,
+    service: Option<&str>,
+) -> Result<String, StatusCode> {
     let mut nonce = [0u8; 12];
     SystemRandom::new()
         .fill(&mut nonce)
@@ -50,6 +75,13 @@ fn seal(g: &Gateway, a: &SessionAllocation, state: &str) -> Result<String, Statu
     }
     data.extend_from_slice(state.as_bytes());
     data.extend_from_slice(&a.epoch.to_be_bytes());
+    if let Some(service) = service {
+        let index = WORKSPACE_SERVICES
+            .iter()
+            .position(|name| *name == service)
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        data.push(index as u8);
+    }
     cipher(g)?
         .seal_in_place_append_tag(
             Nonce::assume_unique_for_key(nonce),
@@ -61,7 +93,7 @@ fn seal(g: &Gateway, a: &SessionAllocation, state: &str) -> Result<String, Statu
     frame.extend_from_slice(&data);
     Ok(URL_SAFE_NO_PAD.encode(frame))
 }
-fn open(g: &Gateway, state: &str) -> Result<(Route, String), StatusCode> {
+fn open(g: &Gateway, state: &str) -> Result<(Route, String, Option<&'static str>), StatusCode> {
     if state.len() > 256 {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -69,7 +101,7 @@ fn open(g: &Gateway, state: &str) -> Result<(Route, String), StatusCode> {
         .decode(state)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     // 3 UUIDs, generation, expiry, 64 lowercase hex state bytes, AEAD overhead.
-    if ![12 + 128 + 16, 12 + 136 + 16].contains(&frame.len()) {
+    if ![12 + 128 + 16, 12 + 136 + 16, 12 + 137 + 16].contains(&frame.len()) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let (nonce, data) = frame.split_at_mut(12);
@@ -94,9 +126,18 @@ fn open(g: &Gateway, state: &str) -> Result<(Route, String), StatusCode> {
     let inner = std::str::from_utf8(&plain[64..128])
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .to_owned();
+    let service = plain
+        .get(136)
+        .map(|index| {
+            WORKSPACE_SERVICES
+                .get(usize::from(*index))
+                .copied()
+                .ok_or(StatusCode::BAD_REQUEST)
+        })
+        .transpose()?;
     Ok((
         Route {
-            epoch: if plain.len() == 136 {
+            epoch: if plain.len() >= 136 {
                 i64::from_be_bytes(plain[128..136].try_into().unwrap())
             } else {
                 0
@@ -109,9 +150,15 @@ fn open(g: &Gateway, state: &str) -> Result<(Route, String), StatusCode> {
             session_hash: String::new(),
         },
         inner,
+        service,
     ))
 }
-fn consent_url(g: &Gateway, a: &SessionAllocation, bytes: &[u8]) -> Result<Response, StatusCode> {
+fn consent_url(
+    g: &Gateway,
+    a: &SessionAllocation,
+    bytes: &[u8],
+    service: Option<&str>,
+) -> Result<Response, StatusCode> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Start {
@@ -130,7 +177,7 @@ fn consent_url(g: &Gateway, a: &SessionAllocation, bytes: &[u8]) -> Result<Respo
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
     let inner = fields.get("state").ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let envelope = seal(g, a, inner)?;
+    let envelope = seal(g, a, inner, service)?;
     fields.insert("state".into(), envelope);
     url.query_pairs_mut().clear().extend_pairs(fields);
     Ok(response(
@@ -183,7 +230,7 @@ async fn member(
         }
         let bytes = crate::personal_google::public_response(uri.path(), &method, status, &bytes)?;
         if uri.path().ends_with("/start") {
-            return consent_url(&g, &a, &bytes);
+            return consent_url(&g, &a, &bytes, service_for_path(uri.path()));
         }
         Ok(response(status, bytes))
     }
@@ -216,18 +263,16 @@ async fn callback(
             .inflight
             .try_acquire()
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        let (route, inner) = open(&g, &input.state)?;
+        let (route, inner, service) = open(&g, &input.state)?;
         let a = active(&g, &route).await?;
         let flow = moosuri_store::Store::mail_oauth_flow_id(&inner);
         let payload = Zeroizing::new(json!({"state":inner,"code":input.code}).to_string());
+        let capture = match service {
+            Some(name) => format!("/internal/workspace/{name}/capture"),
+            None => "/internal/google/capture".to_owned(),
+        };
         let result = g
-            .proxy(
-                &a,
-                Method::POST,
-                "/internal/google/capture",
-                Some(payload.as_bytes()),
-                None,
-            )
+            .proxy(&a, Method::POST, &capture, Some(payload.as_bytes()), None)
             .await;
         recheck(&g, &a).await?;
         let (status, bytes, _) = result?;
@@ -245,6 +290,10 @@ async fn callback(
                 .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
             format!("/#google_handle={handle}&flow={flow}")
         };
+        let path = match service {
+            Some(name) => format!("{path}&service={name}"),
+            None => path,
+        };
         Ok(axum::response::Redirect::to(&path).into_response())
     }
     .await;
@@ -256,4 +305,44 @@ async fn callback(
         HeaderValue::from_static("no-referrer"),
     );
     res
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    #[test]
+    fn callback_envelope_binds_the_connector_and_preserves_old_gmail_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let g = Gateway::new(&super::super::tests::options(&root)).unwrap();
+        let member = SessionAllocation {
+            allocation: Allocation {
+                account_id: Uuid::new_v4().to_string(),
+                tenant_id: Uuid::new_v4().to_string(),
+                volume_id: Uuid::new_v4().to_string(),
+                generation: 7,
+            },
+            epoch: 9,
+        };
+        let state = "c".repeat(64);
+        for service in [
+            None,
+            Some("drive"),
+            Some("docs"),
+            Some("slides"),
+            Some("sheets"),
+        ] {
+            let token = seal(&g, &member, &state, service).unwrap();
+            let (route, recovered, target) = open(&g, &token).unwrap();
+            assert_eq!((route.generation, route.epoch), (7, 9));
+            assert_eq!(recovered, state);
+            assert_eq!(target, service);
+            let mut tampered = URL_SAFE_NO_PAD.decode(token).unwrap();
+            let last = tampered.len() - 1;
+            tampered[last] ^= 1;
+            assert!(open(&g, &URL_SAFE_NO_PAD.encode(tampered)).is_err());
+        }
+        assert!(seal(&g, &member, &state, Some("other")).is_err());
+    }
 }

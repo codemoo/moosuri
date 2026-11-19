@@ -229,8 +229,12 @@
   color: var(--library-text);
 }
 
+.member-connections .member-library-filter {
+  flex-direction: row;
+}
+
 .member-connections .member-library-filter input {
-  min-height: 46px;
+  min-height: 42px;
 }
 
 .member-connection-switch {
@@ -250,6 +254,7 @@
   color: var(--library-secondary);
   font-size: 14px;
   font-weight: 600;
+  transition: none;
 }
 
 .member-connection-switch button[aria-pressed="true"] {

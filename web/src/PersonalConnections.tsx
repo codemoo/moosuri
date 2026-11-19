@@ -180,8 +180,7 @@ function ConnectorDetail({
     <div className="member-library-row">
       <ConnectorMark mark={connector.mark} />
       <div className="member-library-row-copy">
-        <strong>{connector.name}</strong>
-        <span role="status">{status}</span>
+        <strong role="status">{status}</strong>
         {children}
       </div>
     </div>

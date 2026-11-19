@@ -878,7 +878,7 @@ function Workspace({
       onNavigate={navigate} onThread={openThread} onNew={() => openThread(null)}
       onDelete={() => void remove()} onSignOut={onSignOut}>
       {view !== "chat" && (
-        <div className="member-panel">
+        <div key={view} className="member-panel">
           {view === "admin" && admin ? (
             <div className="member-settings-layout">
               <nav className="member-settings-tabs" aria-label="설치 관리">

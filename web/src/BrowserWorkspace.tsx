@@ -7,6 +7,7 @@ import type {
 } from "../shared/api-types";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
+import { browserClick, browserFrameSource, browserKeys, browserLocation, browserScroll, validBrowserFrame, type BrowserInput } from "./browser-frame";
 import "./browser-workspace.css";
 import { SelectedBrowserMission } from "./SelectedBrowserMission";
 
@@ -16,11 +17,6 @@ type Props = {
   onExpired: () => void;
   onChanged?: () => void;
 };
-type Input =
-  | { kind: "click"; x: number; y: number }
-  | { kind: "insert_text"; text: string }
-  | { kind: "key"; key: string }
-  | { kind: "scroll"; delta_x: number; delta_y: number };
 const labels: Record<BrowserWorkspaceView["state"], string> = {
   starting: "브라우저 준비 중",
   ready: "브라우저 준비됨",
@@ -34,17 +30,7 @@ const terminal = (workspace: BrowserWorkspaceView) =>
   ["closed", "expired", "outcome_unknown"].includes(workspace.state);
 const refreshingFrame = "페이지가 바뀌고 있습니다. 화면을 다시 확인할게요.";
 function publicUrl(text: string) {
-  try {
-    const url = new URL(text);
-    return text.length <= 2048 &&
-      ["http:", "https:"].includes(url.protocol) &&
-      !url.username &&
-      !url.password
-      ? url.href
-      : null;
-  } catch {
-    return null;
-  }
+  return browserLocation(text)?.href ?? null;
 }
 function safeLocation(text?: string | null) {
   if (text === "about:blank") return "빈 페이지";
@@ -217,15 +203,7 @@ function Workspace(props: Props & { threadId: string }) {
       workspace.current?.revision !== result.revision
     )
       return;
-    if (
-      !Number.isInteger(result.width) ||
-      !Number.isInteger(result.height) ||
-      result.width <= 0 ||
-      result.height <= 0 ||
-      !result.frame_token ||
-      !/^[A-Za-z0-9+/=]+$/.test(result.png_base64)
-    )
-      throw new Error("invalid_frame");
+    if (!validBrowserFrame(result)) throw new Error("invalid_frame");
     pixels.current = result;
     setFrame(result);
     setError((previous) => previous === refreshingFrame ? "" : previous);
@@ -344,7 +322,7 @@ function Workspace(props: Props & { threadId: string }) {
   }
   async function mutate(
     kind: "takeover" | "input" | "navigate" | "resume" | "close" | "create" | "recover",
-    input?: Input,
+    input?: BrowserInput,
   ) {
     if (
       locked.current ||
@@ -475,17 +453,7 @@ function Workspace(props: Props & { threadId: string }) {
       event.nativeEvent.isComposing
     )
       return;
-    const keys: Record<string, string> = {
-      Enter: "enter",
-      Tab: "tab",
-      Backspace: "backspace",
-      Escape: "escape",
-      ArrowUp: "arrow_up",
-      ArrowDown: "arrow_down",
-      ArrowLeft: "arrow_left",
-      ArrowRight: "arrow_right",
-    };
-    const key = keys[event.key];
+    const key = browserKeys[event.key];
     if (key) {
       event.preventDefault();
       void mutate("input", { kind: "key", key });
@@ -588,7 +556,7 @@ function Workspace(props: Props & { threadId: string }) {
                 {frame ? (
                   <img
                     ref={imageField}
-                    src={`data:image/png;base64,${frame.png_base64}`}
+                    src={browserFrameSource(frame)}
                     alt="개인 브라우저의 현재 화면"
                     draggable={false}
                     tabIndex={controlling ? 0 : -1}
@@ -598,33 +566,10 @@ function Workspace(props: Props & { threadId: string }) {
                     onKeyDown={keyboard}
                     onClick={(event) => {
                       if (!controlling || busy) return;
-                      const bounds =
-                        event.currentTarget.getBoundingClientRect();
-                      if (!bounds.width || !bounds.height) return;
+                      const input = browserClick(frame, event.currentTarget, event.clientX, event.clientY);
+                      if (!input) return;
                       event.currentTarget.focus();
-                      void mutate("input", {
-                        kind: "click",
-                        x: Math.min(
-                          frame.width - 1,
-                          Math.max(
-                            0,
-                            Math.floor(
-                              ((event.clientX - bounds.left) * frame.width) /
-                                bounds.width,
-                            ),
-                          ),
-                        ),
-                        y: Math.min(
-                          frame.height - 1,
-                          Math.max(
-                            0,
-                            Math.floor(
-                              ((event.clientY - bounds.top) * frame.height) /
-                                bounds.height,
-                            ),
-                          ),
-                        ),
-                      });
+                      void mutate("input", input);
                     }}
                     onWheel={(event) => {
                       if (
@@ -639,17 +584,7 @@ function Workspace(props: Props & { threadId: string }) {
                           : event.deltaMode === 2
                             ? frame.height
                             : 1;
-                      void mutate("input", {
-                        kind: "scroll",
-                        delta_x: Math.max(
-                          -2000,
-                          Math.min(2000, Math.round(event.deltaX * scale)),
-                        ),
-                        delta_y: Math.max(
-                          -2000,
-                          Math.min(2000, Math.round(event.deltaY * scale)),
-                        ),
-                      });
+                      void mutate("input", browserScroll(event.deltaX * scale, event.deltaY * scale));
                     }}
                   />
                 ) : (

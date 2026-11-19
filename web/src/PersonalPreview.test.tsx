@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import PersonalPreview, { PREVIEW_DRAFT_KEY } from "./PersonalPreview";
 import type { ThreadGoogleRead } from "./PersonalGoogle";
+import type { PersonalBrowserWorkspace } from "./personal-browser";
 const aid = "11111111-1111-4111-8111-111111111111",
   bid = "22222222-2222-4222-8222-222222222222",
   tid = "33333333-3333-4333-8333-333333333333";
@@ -41,6 +42,7 @@ let pendingCapability: Promise<Response> | undefined;
 let adminEngine: ((path: string, method: string, body: any) => Response) | undefined;
 let previewRefused: boolean;
 let obsoleteCapabilityFields: boolean;
+let browserRoute: ((path: string, method: string, body: any) => Response | Promise<Response>) | undefined;
 const turn = (id: string, text: string, state = "completed") => ({
   sequence: 1,
   user_text: text,
@@ -92,6 +94,7 @@ beforeEach(() => {
   adminEngine = undefined;
   previewRefused = false;
   obsoleteCapabilityFields = false;
+  browserRoute = undefined;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -215,6 +218,9 @@ beforeEach(() => {
           turns: hideHistory ? [] : turns,
           next_before: paginate && !path.includes("?before=") ? 1 : null,
         });
+      if (/^\/threads\/[^/]+\/browser(?:\/|$)/.test(path)) {
+        return browserRoute?.(path, method, body) ?? Response.json({ code: "not_found" }, { status: 404 });
+      }
       if (path.match(/^\/threads\/[^/]+\/text-preview$/) && method === "POST") {
         if (previewRefused)
           return Response.json({ code: "personal_text_model_unavailable" }, { status: 422 });
@@ -269,6 +275,137 @@ async function openDrawer(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "대화 및 설정" }));
   return within(await screen.findByRole("dialog", { name: "대화 및 설정" }));
 }
+
+it("routes a browser request and guidance into one run and resumes the viewed tab with an idempotent receipt", async () => {
+  const workspaceId = "55555555-5555-4555-8555-555555555555";
+  const base = `/threads/${tid}/browser`;
+  const firstUrl = "https://timetable.example.test/";
+  const secondUrl = "https://timetable.example.test/morning";
+  let work: PersonalBrowserWorkspace | null = null;
+  let firstResume = true;
+  let staleFrame = false;
+  let freshFrame = 0;
+  const replies = "Morning departures begin at 08:00.";
+  const previewImage = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tH1sAAAAASUVORK5CYII=";
+  const state = () => Response.json({ configured: true, workspace: work });
+  browserRoute = (path, method, body) => {
+    if (path === base && method === "GET") return state();
+    if (path === base && body.url) {
+      expect(body).toMatchObject({ url: firstUrl, wait_for_user: true });
+      const run = turn(body.request_id, body.text, "running");
+      work = {
+        id: workspaceId, request_id: body.request_id, run_id: run.run.id,
+        thread_id: tid, state: "ready", revision: 1, title: "Timetable", url: firstUrl,
+        active_tab_id: "main", reason: null, links: [],
+        tabs: [{ id: "main", title: "Timetable", url: firstUrl }, { id: "morning", title: "Morning", url: secondUrl }],
+      };
+      turns = [run];
+      return state();
+    }
+    if (path === base) {
+      expect(body.workspace_id).toBe(workspaceId);
+      turns[0].run.instructions = [{ request_id: body.request_id, text: body.text, state: "received" }];
+      return state();
+    }
+    if (path === `${base}/frame` && method === "GET") {
+      const tab = staleFrame ? "main" : work!.active_tab_id;
+      staleFrame = false;
+      return Response.json({ workspace_id: workspaceId, revision: work!.revision,
+        tab_id: tab, frame_token: `frame-${++freshFrame}`, url: work!.url,
+        png_base64: previewImage, width: 900, height: 600 });
+    }
+    if (path === `${base}/takeover`) {
+      work = { ...work!, state: "user_control", revision: 2 };
+      return Response.json({ workspace: work, control_token: "private-controller" });
+    }
+    if (path === `${base}/tabs`) {
+      expect(body).toMatchObject({ workspace_id: workspaceId, control_token: "private-controller",
+        action: "switch", tab_id: "morning", revision: 2 });
+      work = { ...work!, active_tab_id: "morning", url: secondUrl, revision: 3 };
+      staleFrame = true;
+      return state();
+    }
+    if (path === `${base}/input`) {
+      expect(body).toMatchObject({ workspace_id: workspaceId, control_token: "private-controller",
+        frame_token: `frame-${freshFrame}`, revision: 3, input: { kind: "scroll", delta_x: 0, delta_y: 300 } });
+      return state();
+    }
+    if (path === `${base}/resume`) {
+      expect(body).toMatchObject({ workspace_id: workspaceId, control_token: "private-controller", revision: 3 });
+      if (firstResume) {
+        firstResume = false;
+        return Promise.reject(new TypeError("synthetic lost receipt"));
+      }
+      work = { ...work!, state: "completed", revision: 4 };
+      turns[0].run.state = "completed";
+      turns[0].run.instructions[0].state = "applied";
+      turns[0].assistant = [{ id: "browser-answer", text: replies }];
+      return state();
+    }
+    if (path === `${base}/close`) {
+      work = { ...work!, state: "closed", revision: 5 };
+      return state();
+    }
+    throw new Error(`Unexpected browser route ${method} ${path}`);
+  };
+  const user = userEvent.setup();
+  mount();
+  const draft = await composer();
+  await waitFor(() => expect(draft).toBeEnabled());
+  fireEvent.change(draft, { target: { value: "브라우저에서 https://timetable.example.test 열어 주세요. 직접 조건을 바꿀게요." } });
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await user.click(await screen.findByRole("button", { name: "미리 보기 열기" }));
+  const viewer = within(screen.getByRole("complementary", { name: "개인 브라우저 작업 공간" }));
+  await viewer.findByRole("img");
+  expect(sessionStorage.getItem(PREVIEW_DRAFT_KEY)).not.toContain(previewImage);
+  expect(viewer.queryByRole("button", { name: "완료" })).not.toBeInTheDocument();
+  fireEvent.change(draft, { target: { value: "오전만 봐줘" } });
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  expect(await screen.findByText("추가 지시 접수됨 · 아직 반영 전")).toBeVisible();
+  await user.click(viewer.getByRole("button", { name: "브라우저 제어" }));
+  await waitFor(() => expect(viewer.getByRole("button", { name: "완료" })).toBeEnabled());
+  await user.click(viewer.getByRole("button", { name: "Morning" }));
+  await viewer.findByText("브라우저 화면을 불러오지 못했습니다.");
+  expect(viewer.queryByRole("img")).not.toBeInTheDocument();
+  await user.click(viewer.getByRole("button", { name: "새로고침" }));
+  const image = await viewer.findByRole("img");
+  vi.spyOn(image, "getBoundingClientRect").mockReturnValue({ width: 450, height: 300 } as DOMRect);
+  fireEvent.touchStart(image, { touches: [{ clientX: 60, clientY: 220 }] });
+  fireEvent.touchEnd(image, { changedTouches: [{ clientX: 60, clientY: 70 }] });
+  await waitFor(() => expect(calls.some((call) => call.path === `${base}/input`)).toBe(true));
+  await waitFor(() => expect(viewer.getByRole("button", { name: "완료" })).toBeEnabled());
+  await user.click(viewer.getByRole("button", { name: "완료" }));
+  await user.click(await viewer.findByRole("button", { name: "완료 결과 다시 확인" }));
+  expect(await screen.findByText(replies)).toBeVisible();
+  expect(screen.getByText("추가 지시 반영됨")).toBeVisible();
+  const resumes = calls.filter((call) => call.path === `${base}/resume`);
+  expect(resumes.map((call) => call.body)).toEqual([resumes[0].body, resumes[0].body]);
+  expect(calls.some((call) => call.path === `/threads/${tid}/text-preview`)).toBe(false);
+  expect(sessionStorage.getItem(PREVIEW_DRAFT_KEY)).not.toContain("private-controller");
+  await user.click(viewer.getByRole("button", { name: "뷰어 닫기" }));
+  expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  expect(calls.some((call) => call.path === `${base}/close`)).toBe(false);
+  await user.click(screen.getByRole("button", { name: "미리 보기 열기" }));
+  await user.click(within(screen.getByRole("complementary", { name: "개인 브라우저 작업 공간" })).getByRole("button", { name: "작업 중지" }));
+  expect(await screen.findAllByText("브라우저 작업 중지됨")).toHaveLength(2);
+});
+
+it("keeps an ordinary reference in chat and preserves a browser draft when the capability is unavailable", async () => {
+  const user = userEvent.setup();
+  mount();
+  const draft = await composer();
+  await waitFor(() => expect(draft).toBeEnabled());
+  fireEvent.change(draft, { target: { value: "Translate this sentence: our address is https://example.test." } });
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await screen.findByText(/Synthetic reply/);
+  fireEvent.change(draft, { target: { value: "Open example.test in the browser" } });
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("브라우저 작업을 사용할 수 없습니다");
+  expect(draft).toHaveValue("Open example.test in the browser");
+  const posts = calls.filter((call) => call.method === "POST" && /\/(?:text-preview|browser)$/.test(call.path));
+  expect(posts.map((call) => call.path)).toEqual([`/threads/${tid}/text-preview`, `/threads/${tid}/browser`]);
+  expect(posts[1].body.url).toBe("https://example.test/");
+});
 
 it("keeps a member's draft on an engine refusal and exposes no settings entry", async () => {
   previewRefused = true;

@@ -3,6 +3,7 @@ import type { InstructionMemory, InstructionTarget } from "./run-instructions";
  * Storage is touched only after server authentication. No localStorage/cache/media bodies. */
 import type { SessionView } from "../shared/api-types";
 import type { ChatMemory, PendingSend, PendingThreadCreation } from "./ChatPanel";
+import { browserLocation } from "./browser-frame";
 export const CHAT_DRAFT_KEY = "moosuri.chat-drafts.v1";
 export const CHAT_DRAFT_TTL = 8 * 60 * 60 * 1000;
 export const CHAT_DRAFT_MAX_BYTES = 128 * 1024;
@@ -49,10 +50,21 @@ function creation(v: unknown): PendingThreadCreation | null {
 }
 /** Rebuild a closed carrier. Persisted bytes never authorize an automatic POST. */
 function pending(v: unknown): PendingSend | null {
-    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "status"]) ||
+    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "status"]) ||
         !uuid(v.request_id) || !text(v.text) || !v.text.trim() || !["sending", "accepted", "uncertain"].includes(String(v.status)))
         return null;
     const out: PendingSend = { request_id: v.request_id, text: v.text, status: "uncertain" };
+    if (v.browser_request !== undefined) {
+        const request = v.browser_request;
+        if (!object(request)) return null;
+        if (request.kind === "start" && exact(request, ["kind", "url", "wait_for_user"]) &&
+            typeof request.url === "string" && browserLocation(request.url)?.href === request.url &&
+            typeof request.wait_for_user === "boolean")
+            out.browser_request = { kind: "start", url: request.url, wait_for_user: request.wait_for_user };
+        else if (request.kind === "guide" && exact(request, ["kind", "workspace_id"]) && uuid(request.workspace_id))
+            out.browser_request = { kind: "guide", workspace_id: request.workspace_id };
+        else return null;
+    }
     if (v.attachments !== undefined) {
         if (!Array.isArray(v.attachments) || v.attachments.length > 4 || !v.attachments.every(target) || new Set(v.attachments.map(x => x.id)).size !== v.attachments.length)
             return null;

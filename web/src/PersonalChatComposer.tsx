@@ -1,14 +1,15 @@
 import { Icon } from "@astryxdesign/core/Icon";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 export function PersonalChatComposer({
-  draft, disabled, busy, onDraft, onSend,
+  draft, disabled, busy, onDraft, onSend, browserMode,
 }: {
   draft: string;
   disabled: boolean;
   busy: boolean;
   onDraft: (value: string) => void;
   onSend: () => void;
+  browserMode?: ReactNode;
 }) {
   const editor = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
@@ -24,6 +25,7 @@ export function PersonalChatComposer({
 
   return (
     <footer className="member-composer">
+      {browserMode}
       <form className="member-composer-dock" onSubmit={(event) => {
         event.preventDefault();
         if (canSend && !composing.current) onSend();

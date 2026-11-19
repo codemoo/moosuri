@@ -32,6 +32,10 @@ import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
 import { PersonalChatComposer } from "./PersonalChatComposer";
 import { PersonalWorkspaceChrome, type MemberView } from "./PersonalWorkspaceChrome";
+import { PersonalBrowserCard, PersonalBrowserViewer } from "./PersonalBrowser";
+import { browserEndpoint, browserIntent, browserNeedsGuidance, type PersonalBrowserStatus } from "./personal-browser";
+import { usePersonalBrowser } from "./usePersonalBrowser";
+import { InstructionReceipts } from "./RunInstructions";
 type SessionView = BaseSessionView & { installation_admin?: boolean };
 export const PREVIEW_DRAFT_KEY = "moosuri.personal-preview-drafts.v1";
 function draftStorage() {
@@ -385,6 +389,11 @@ function Workspace({
     [refresh, setRefresh] = useState(0);
   const [admin, setAdmin] = useState(session.installation_admin === true);
   const [adminTab, setAdminTab] = useState<"members" | "engine">("members");
+  const [watchThread, setWatchThread] = useState<string | null>(null);
+  const [browserChoice, setBrowserChoice] = useState<{
+    thread: string | null; mode: "chat" | "start" | "guide";
+  } | null>(null);
+  const browserOpenButton = useRef<HTMLElement | null>(null);
   const [openInbox, setOpenInbox] = useState<
     (GoogleReadIntent & { draft: string }) | null
   >(null);
@@ -411,12 +420,24 @@ function Workspace({
   const followTail = useRef(true);
   const olderScroll = useRef<{ top: number; height: number } | null>(null);
   const currentPage = page?.thread_id === selected ? page : null;
+  const watching = view === "chat" && !!selected && watchThread === selected;
+  const browser = usePersonalBrowser(session.user.id, view === "chat" ? selected : null, watching, expired,
+    (thread) => { if (selectedRef.current === thread) void history(thread); });
+  const browserWork = browser.status?.workspace ?? null;
+  const acceptsGuidance = browserNeedsGuidance(browserWork);
+  const preferredMode = browserChoice?.thread === selected ? browserChoice.mode : undefined;
+  const browserMode = preferredMode === "chat" ? "chat"
+    : acceptsGuidance ? "guide" : preferredMode === "start" ? "start" : "chat";
   const pending = selected ? memory.pending[selected] : undefined,
     draft = memory.drafts[selected ?? "new"] ?? "",
     ready =
       cap?.enabled &&
       cap.capability === "text_only_preview" &&
       cap.tools === false;
+  useEffect(() => {
+    if (selected && pending?.browser_request?.kind === "start" &&
+        browserWork?.request_id === pending.request_id) clearSend(selected, pending);
+  }, [selected, pending, browserWork?.request_id]);
   function fail(e: unknown) {
     if (isAborted(e)) return;
     if (e instanceof ApiFailure && e.status === 401) expired();
@@ -542,15 +563,22 @@ function Workspace({
   function reconcile(thread: string, turns: ChatTurn[]) {
     const value = memoryRef.current.pending[thread];
     if (!value) return;
+    if (value.browser_request?.kind === "guide" && turns.some((turn) =>
+      turn.run.instructions?.some((instruction) => instruction.request_id === value.request_id))) {
+      clearSend(thread, value);
+      return;
+    }
     const found = turns.find((t) => t.run.request_id === value.request_id);
-    if (found && !active(found))
-      change((m) => {
-        const pending = { ...m.pending },
-          drafts = { ...m.drafts };
-        delete pending[thread];
-        if (drafts[thread] === value.text) delete drafts[thread];
-        return { ...m, pending, drafts };
-      });
+    if (found && (!active(found) || value.browser_request?.kind === "start")) clearSend(thread, value);
+  }
+  function clearSend(thread: string, value: PendingSend, preserveDraft = false) {
+    change((m) => {
+      if (m.pending[thread]?.request_id !== value.request_id) return m;
+      const pending = { ...m.pending }, drafts = { ...m.drafts };
+      delete pending[thread];
+      if (!preserveDraft && drafts[thread] === value.text) delete drafts[thread];
+      return { ...m, pending, drafts };
+    });
   }
   async function history(thread: string, before?: number) {
     const version = ++historyVersion.current;
@@ -712,18 +740,35 @@ function Workspace({
   }
   async function send(event?: FormEvent, replay = false) {
     event?.preventDefault();
-    if (!ready || mutation.current || loading) return;
+    if (mutation.current || loading) return;
     let thread = selected;
     const old = thread ? memoryRef.current.pending[thread] : undefined;
     const text = memoryRef.current.drafts[thread ?? "new"] ?? "";
     if (old && !replay) return;
-    if (!old && currentPage?.turns.some(active)) return;
     if (!old && (!text.trim() || new TextEncoder().encode(text).length > 8192))
       return;
+    const intent = old || browserMode === "guide" || (preferredMode === "chat" && acceptsGuidance)
+      ? null : browserIntent(text, browserMode === "start");
+    if (intent && !intent.url) {
+      setError("브라우저로 열 http 또는 https 주소를 메시지에 넣어 주세요.");
+      return;
+    }
+    const browserRequest = old ? old.browser_request : (
+      browserMode === "guide" && browserWork
+        ? { kind: "guide" as const, workspace_id: browserWork.id }
+        : intent?.url ? { kind: "start" as const, url: intent.url, wait_for_user: intent.wait } : undefined
+    );
+    if (browserRequest?.kind === "guide" && new TextEncoder().encode(old?.text ?? text).length > 2000) {
+      setError("추가 지시가 너무 깁니다. 내용을 줄여 주세요.");
+      return;
+    }
+    if (!browserRequest && !ready) return;
+    if (!old && currentPage?.turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id)) return;
     const value: PendingSend = old ?? {
       request_id: crypto.randomUUID(),
       text,
       status: "sending",
+      ...(browserRequest ? { browser_request: browserRequest } : {}),
     };
     followTail.current = true;
     mutation.current = true;
@@ -745,6 +790,26 @@ function Workspace({
       pending: { ...m.pending, [destination]: { ...value, status: "sending" } },
     }));
     try {
+      if (value.browser_request) {
+        const body = value.browser_request.kind === "start"
+          ? { url: value.browser_request.url, wait_for_user: value.browser_request.wait_for_user }
+          : { workspace_id: value.browser_request.workspace_id };
+        const status = await scope.request<PersonalBrowserStatus>(
+          browserEndpoint(destination), "POST", { request_id: value.request_id, text: value.text, ...body },
+          undefined, { timeoutMs: 90000 },
+        );
+        browser.publish(destination, status);
+        if (!status.configured || !status.workspace) {
+          clearSend(destination, value, true);
+          setError("이 설치에서 브라우저 작업을 사용할 수 없습니다.");
+          return;
+        }
+        clearSend(destination, value);
+        setBrowserChoice(null);
+        if (selectedRef.current === destination) void history(destination);
+        void inventory().catch(fail);
+        return;
+      }
       const turn = await scope.request<ChatTurn>(
         `/threads/${encodeURIComponent(thread)}/text-preview`,
         "POST",
@@ -780,6 +845,15 @@ function Workspace({
       void inventory().catch(fail);
     } catch (e) {
       if (!isAborted(e)) {
+        if (value.browser_request && e instanceof ApiFailure &&
+            [400, 401, 403, 404, 409, 422, 429].includes(e.status)) {
+          clearSend(destination, value, true);
+          if (e.status === 401) expired();
+          else if ([403, 404].includes(e.status)) setError("이 대화에서 브라우저 작업을 사용할 수 없습니다.");
+          else if (e.status === 409) setError("브라우저 상태가 바뀌었습니다. 현재 작업을 확인해 주세요.");
+          else setError("브라우저 요청을 처리하지 못했습니다. 입력을 유지했습니다.");
+          return;
+        }
         if (
           e instanceof ApiFailure &&
           [400, 401, 403, 404, 422, 429].includes(e.status)
@@ -865,11 +939,21 @@ function Workspace({
     setSelected(id);
     navigate("chat");
   }
+  function openBrowser() {
+    if (!selected) return;
+    browserOpenButton.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setWatchThread(selected);
+  }
+  function closeBrowser() {
+    setWatchThread(null);
+    browserOpenButton.current?.focus({ preventScroll: true });
+    browserOpenButton.current = null;
+  }
   const turns = currentPage?.turns ?? [];
-  const hasActiveTurn = turns.some(active);
+  const hasActiveTurn = turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id);
   const optimistic = pending && !turns.some((turn) => turn.run.request_id === pending.request_id);
   const busy = loading || (selected !== null && reading && !currentPage);
-  const isEmpty = !busy && turns.length === 0 && !pending && googleReads.length === 0;
+  const isEmpty = !busy && turns.length === 0 && !pending && googleReads.length === 0 && !browserWork;
   const thread = threads.find((item) => item.id === selected);
   const heading = view === "chat" ? thread?.title ?? "새 대화"
     : view === "memory" ? "기억"
@@ -939,6 +1023,7 @@ function Workspace({
         </div>
       )}
       {view === "chat" && (
+        <div className="member-chat-layout">
         <section className="member-chat" aria-label="대화">
           <div className="member-chat-scroll" ref={chatScroll} tabIndex={0} aria-label="대화 기록"
             onScroll={(event) => {
@@ -952,7 +1037,10 @@ function Workspace({
                   {error && <p role="alert">{error}</p>}
                   {(capError || !pending) && (
                     <Button label="상태 새로고침" variant="ghost"
-                      isDisabled={loading || mutating} onClick={() => setRefresh((v) => v + 1)} />
+                      isDisabled={loading || mutating} onClick={() => {
+                        browser.refresh();
+                        setRefresh((v) => v + 1);
+                      }} />
                   )}
                 </div>
               )}
@@ -994,13 +1082,19 @@ function Workspace({
                       <span className="sr-only">나</span>
                       <p>{turn.user_text}</p>
                     </div>
+                    {turn.run.instructions && <InstructionReceipts receipts={turn.run.instructions} />}
                     <div className="member-reply">
                       <span className="sr-only">무수리</span>
                       {turn.assistant.map((message) => <p key={message.id}>{message.text}</p>)}
                       {turn.run.state !== "completed" && (
-                        <span className="member-chat-status" data-working={active(turn) || undefined}>{stateLabel(turn)}</span>
+                        <span className="member-chat-status" data-working={active(turn) || undefined}>
+                          {turn.run.id === browserWork?.run_id ? "브라우저 작업 진행 중" : stateLabel(turn)}
+                        </span>
                       )}
                     </div>
+                    {browserWork?.run_id === turn.run.id && (
+                      <PersonalBrowserCard browser={browser} pending={false} onOpen={openBrowser} />
+                    )}
                   </article>
                 ))}
                 {optimistic && (
@@ -1015,13 +1109,16 @@ function Workspace({
                       <p className="member-chat-status" data-working={pending.status === "sending" || undefined} role="status">
                         {pending.status === "uncertain"
                           ? "아직 전송 결과를 확인하지 못했습니다. 새 요청은 만들지 않았습니다."
-                          : "답변을 기다리는 중…"}
+                          : pending.browser_request ? "브라우저 요청을 확인하는 중…" : "답변을 기다리는 중…"}
                       </p>
                     )}
                     {pending.status !== "sending" && (
                       <div className="member-retry-actions">
                         <Button label="결과 확인" variant="ghost" isDisabled={reading || mutating}
-                          onClick={() => void history(selected)} />
+                          onClick={() => {
+                            if (pending.browser_request) browser.refresh();
+                            void history(selected);
+                          }} />
                         <Button label="동일 요청 다시 확인" variant="ghost" isDisabled={mutating}
                           onClick={() => void send(undefined, true)} />
                       </div>
@@ -1030,18 +1127,35 @@ function Workspace({
                 )}
                 {mailError && <p className="member-chat-status" role="status">{mailError}</p>}
                 {googleReads.length > 0 && <GoogleReadHistory reads={googleReads} />}
+                {!turns.some((turn) => turn.run.id === browserWork?.run_id) && (
+                  <PersonalBrowserCard browser={browser} pending={pending?.browser_request?.kind === "start"}
+                    onOpen={openBrowser} />
+                )}
               </div>
             </div>
           </div>
           {!loading && (
             <PersonalChatComposer key={selected ?? "new"} draft={draft}
-              disabled={!ready || !!pending || hasActiveTurn} busy={mutating}
+              disabled={(!ready && browserMode === "chat") || !!pending || hasActiveTurn} busy={mutating}
+              browserMode={
+                (browserMode !== "chat" || acceptsGuidance || browser.status?.configured || !selected) &&
+                <div className="member-browser-mode">
+                  {browserMode !== "chat" && <span>{browserMode === "guide" ? "브라우저 작업에 추가 지시" : "열 웹 주소와 작업을 입력하세요"}</span>}
+                  <button type="button" disabled={mutating || !!pending || hasActiveTurn}
+                    onClick={() => setBrowserChoice({ thread: selected, mode: browserMode === "chat"
+                      ? (acceptsGuidance ? "guide" : "start") : "chat" })}>
+                    {browserMode !== "chat" ? "일반 채팅" : acceptsGuidance ? "브라우저 작업에 지시" : "브라우저 작업"}
+                  </button>
+                </div>
+              }
               onDraft={(value) => change((m) => ({
                 ...m, drafts: { ...m.drafts, [selected ?? "new"]: value },
               }))}
               onSend={() => void send()} />
           )}
         </section>
+        {watching && <PersonalBrowserViewer key={selected} browser={browser} onClose={closeBrowser} />}
+        </div>
       )}
     </PersonalWorkspaceChrome>
   );

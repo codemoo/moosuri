@@ -30,6 +30,11 @@ template. It SHALL NOT authorize external effects or mail sending.
 - **THEN** it SHALL remain a proposal until explicit acceptance, even if an
   existing monitor can be coalesced after that decision.
 
+#### Scenario: A stopped monitor's reusable permission has a different connection
+
+- **WHEN** a new proposal would start a monitor under a different provider connection revision
+- **THEN** the saved reuse permission SHALL NOT activate it. The owner can choose to accept the proposal under the current connection.
+
 ### Requirement: Change-gated bounded execution
 
 The scheduler SHALL inspect bounded source metadata before model admission and
@@ -47,6 +52,11 @@ atomically record the admitted fingerprint and child identity.
 - **THEN** one bounded child SHALL read changed members only, retain exact source
   receipts, use only permitted source reads and arithmetic, and avoid replaying
   unchanged failed or unknown work. Coverage limits SHALL be explicit.
+
+#### Scenario: The installation chooses a model on a different connection
+
+- **WHEN** a changed observation needs inference under a different installation connection revision
+- **THEN** the monitor SHALL pause until its owner authorizes the connection. Existing scope, expiry and observations SHALL be retained.
 
 ### Requirement: Current permission at delivery
 

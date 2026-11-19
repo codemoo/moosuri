@@ -561,15 +561,15 @@ it("lets the administrator recover and save one installation model after a revis
     const editor = within(await screen.findByRole("form", { name: "설치 모델 설정" }));
     expect(editor.getByRole("status")).toHaveTextContent("엔진 연결이 바뀌었습니다.");
     await user.selectOptions(editor.getByLabelText("추론 강도"), "low");
-    await user.click(editor.getByRole("checkbox", { name: "어시스턴트 사용" }));
+    await user.click(editor.getByRole("checkbox", { name: "새 모델 요청 허용" }));
     await user.click(editor.getByRole("button", { name: "설치 설정 저장" }));
   }
   await save();
   expect(await screen.findByRole("alert")).toHaveTextContent("엔진 설정이 변경되었습니다.");
   await save();
-  await screen.findByText("엔진 설정을 저장했습니다.");
-  expect(screen.getByText("현재 설정 synthetic-model · low")).toBeInTheDocument();
-  expect(screen.getByText("호출 허용")).toBeInTheDocument();
+  await screen.findByText(/엔진 설정을 저장했습니다/);
+  expect(screen.getByText("synthetic-model · 낮음")).toBeInTheDocument();
+  expect(screen.getByText("허용")).toBeInTheDocument();
   expect(screen.queryByRole("form", { name: "회원 설정" })).not.toBeInTheDocument();
   const engineCalls = calls.slice(beforeEngine).filter(call => call.path.startsWith("/personal/admin/"));
   expect(engineCalls.every(call => call.path === path && call.account === aid)).toBe(true);

@@ -1,8 +1,8 @@
 # 모델·구독·Google 연결
 
-공용 API/local 연결과 개인 구독 연결을 분리한다. 설치 화면은 연결 방식→인증→실제 model 목록→기능 확인→기본 model/effort 순서다. 관리자가 허용한 범위에서 사용자별 기본값을 고를 수 있다. 모든 행은 구현 대상이며 현재 연결 완료를 뜻하지 않는다. 공식 자료는 [references](references.md)에 있다.
+공용 API/local 연결과 개인 구독 연결을 분리한다. 설치 화면은 연결 방식→인증→실제 model 목록→기능 확인→기본 model/effort 순서다. 설치 관리자만 모델과 추론 강도를 지정한다. 일반 회원은 이를 변경할 수 없으며, 모든 회원 컨테이너와 내부 작업은 새 추론 호출마다 관리자 설정을 따른다. 모든 행은 구현 대상이며 현재 연결 완료를 뜻하지 않는다. 공식 자료는 [references](references.md)에 있다.
 
-현재 구현된 설정·모델 목록·합성 text probe·사용자 선택은 [provider settings](provider-settings.md), 전송 계약은 [model transport](model-transport.md)에 있다. 합성 fixture/loopback 검증을 실계정 모델 성능·구독 인증·웹 대화 완료로 표시하지 않는다.
+현재 구현된 설정·모델 목록·합성 text probe·관리자 선택은 [provider settings](provider-settings.md), 전송 계약은 [model transport](model-transport.md)에 있다. 합성 fixture/loopback 검증을 실계정 모델 성능·구독 인증·웹 대화 완료로 표시하지 않는다.
 
 ## 지원 행렬
 

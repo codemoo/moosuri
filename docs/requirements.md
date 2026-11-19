@@ -7,7 +7,7 @@
 | R01 | 이름 `moosuri`, dev 아래 새 폴더, GitHub 공개 준비 | README, audit, public-release | 새 source/history, 개인 원본 반입0, 폴더와 계획 검증 |
 | R02 | Rust 재작성 | architecture | backend·agent·CLI·수집·이전 도구 Rust. 웹은 R03의 명시적 예외 |
 | R03 | 관리자·사용자 PWA 등 모든 웹 React | architecture, features F09/F16/F56 | React+TypeScript admin/app/vault, Python/Node backend 없음; Node는 웹 build/test 도구 |
-| R04 | 설치 간편, 설치 중 LLM 연결·기본 모델 | onboarding, providers | init→admin→연결→model/effort→접속, API/지원 구독/local 선택 |
+| R04 | 간편 설치, 설치 관리자만 LLM 모델·추론 강도 지정 | onboarding, providers | init→admin→연결→model/effort→접속, API/지원 구독/local 선택 |
 | R05 | LLM은 공용, 가족·친구 계정 여러 개 | accounts-isolation, providers | shared profile/한도·fair queue, 대화/메모리/credential 혼합0; 구독 공유는 실제 provider 범위 내 |
 | R06 | 계정은 이름·이메일, 임시 비번·첫 로그인 강제 변경 | onboarding, accounts-isolation | 초대/만료/일회·force-change 제한 session·rate limit·재발급/revoke |
 | R07 | 최초 관리자 하나, 비번 입력 또는 생략시 임시 비번 | onboarding | 최초 bootstrap 경합에서도 admin1, skip이면 안전 난수·1회표시·강제변경 |

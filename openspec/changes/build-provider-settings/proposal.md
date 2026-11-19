@@ -8,14 +8,14 @@ proof that a particular model/effort can answer.
 
 - Add admin provider profiles with encrypted credentials, immutable revisions,
   bounded catalog discovery and synthetic text-stream verification.
-- Add installation default and isolated per-user model/effort selections.
-- Add React management and preference screens and file-backed/HTTP/browser checks.
+- Give the installation administrator sole authority to set the model and reasoning effort for all members and internal inference.
+- Add React administrator connection and model settings and file-backed/HTTP/browser checks.
 - Keep actual conversation execution, subscription login and user vault separate.
 
 ## Capabilities
 
 ### New Capabilities
-- `provider-settings`: shared connections and independently verified user choices.
+- `provider-settings`: shared connections and administrator-selected, verified models.
 
 ### Modified Capabilities
 - None.

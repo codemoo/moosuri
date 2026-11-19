@@ -29,12 +29,16 @@ Catalog discovery MUST remain separate from text-stream verification. A verified
 - **WHEN** text is received without successful protocol completion
 - **THEN** the choice remains unverified
 
-### Requirement: Stable user preference
-User and installation selections MUST pin a verified revision. Invalid or disabled selections MUST NOT silently fall back to another provider or model.
+### Requirement: Administrator-controlled inference
+Only the installation administrator SHALL choose the model and reasoning effort. Every new assistant inference call SHALL resolve that verified selection, including calls from Kiri member containers, chat, browser steps, skills and background workers. An unavailable selection MUST NOT cause automatic fallback.
+
+#### Scenario: Member or skill requests another model
+- **WHEN** a member’s chat message, API request or installed skill names a different model or effort
+- **THEN** it cannot override the administrator’s selection for the next inference call
 
 #### Scenario: Selected connection is disabled
 - **WHEN** the user loads settings or resolves a model
-- **THEN** the preference remains visible but unavailable until explicitly reselected
+- **THEN** the selection stays unavailable until the administrator restores the connection or selects another verified model
 
 ### Requirement: Bounded discovery and probing
 Catalog and probe calls MUST use registered destinations, bounded time/body/concurrency and safe error codes, and MUST revalidate current account and provider state before publishing results.
@@ -43,9 +47,9 @@ Catalog and probe calls MUST use registered destinations, bounded time/body/conc
 - **WHEN** discovery reaches the model/page limit
 - **THEN** the response explicitly marks the catalog as truncated and does not follow arbitrary next URLs
 
-### Requirement: Owner-scoped model selection and capacity
+### Requirement: Administrator model controls and capacity
 
-The system SHALL present distinct model and effort controls and SHALL pin the chosen supported pair for new chat runs. It SHALL expose provider-reported capacity with its actual scope and reset time when available.
+The system SHALL present distinct model and effort controls to the administrator and SHALL pin the chosen supported pair for new chat runs. It SHALL expose provider-reported capacity with its actual scope and reset time when available.
 
 #### Scenario: Member has a historical self-selected model
 - **WHEN** the member signs in, chats, or calls a model preference or provider management API directly

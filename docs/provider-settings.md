@@ -1,5 +1,7 @@
 # Shared model connections
 
+Only the installation administrator chooses the model and reasoning effort. Members cannot select either through settings, chat instructions or API requests. Every new inference call uses the administrator’s selection, including browser planning and answers, skill execution, scheduled work and automatic memory extraction. If that selection is unavailable, the task reports the problem without switching models. Requests already sent keep their original model and usage record.
+
 In Kiri, the installation administrator selects the engine model and reasoning effort in the personal web’s administration page. Each member runtime obtains the selection from the installation broker. Browser planning, browser answers and ordinary chat use the effective pair at dispatch. [Kiri engine administration](../deployment/kiri/admin.md)
 
 In the standard server, the administrator manages installation API and local connections at `/admin/providers`. An installation default governs member and administrator inference. The owner-specific login options below require the credential owner's authorization. Members open their assistant directly.
@@ -18,8 +20,8 @@ subscription route reports its actual server setup state; see
 5. Verify the selected model/effort. The server sends only `Reply with the single word
    OK.`, up to 2,048 output tokens, with a 60-second limit. This can incur provider
    usage. No conversation or collected source is included.
-6. Choose a successfully verified combination as the installation default or your
-   personal selection. Unsupported effort is rejected; compatible text currently
+6. Choose a successfully verified combination as the installation default. On the standard server,
+   an administrator’s private selection applies only to that administrator when no installation default is configured. Unsupported effort is rejected; compatible text currently
    supports provider-default effort only.
 
 For private source/memory retrieval, use **도구 연결 확인** beside a verified choice.
@@ -30,7 +32,7 @@ tools; failed or revoked proof leaves capability off. New runs can use a verifie
 capability; old runs keep their original setting. See [knowledge agent](knowledge-agent.md).
 
 Model discovery returns at most 512 entries from a single page and 1 MiB. A truncated
-list is labeled; users can still enter an exact ID. Discovery is not a claim that a
+list is labeled. Administrators can still enter an exact ID. Discovery is not a claim that a
 model supports tools/media or the chosen effort. A probe confirms that the exact
 request completes as a text stream and reports the same exact model ID; it cannot prove a third-party server honored
 undisclosed internal settings. No automatic provider/model fallback is enabled. Alias-to-snapshot mappings are not
@@ -97,7 +99,7 @@ prompt, then complete official ChatGPT consent in the system browser. Tokens and
 OAuth callback parameters are not printed. The helper does not read Codex login
 files. For a separate Linux server, use the [personal server guide](#personal-server-chatgpt-guide) below.
 
-At `/settings/model`, open **내 모델 목록**, choose an exact slug and optional effort,
+As the administrator, at `/settings/model`, open **내 모델 목록**, choose an exact slug and optional effort,
 then **텍스트 연결 확인**. The fixed text probe uses only synthetic verification
 content. After proof, choose the personal model in **사용할 모델**. Catalog presence
 and OAuth alone never make a selectable verified choice. An identity-only login

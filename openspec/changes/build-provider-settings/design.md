@@ -11,8 +11,9 @@ vault/broker contract remains unchanged.
   Bind ciphertext to profile identity/revision/config; detect key loss and changes.
 - Editing a connection increments its revision and invalidates verified choices.
   Keeping a credential across a changed destination/config is rejected.
-- Default/user preferences pin a verified revision. Unavailable preferences remain
-  unavailable, even if another default exists; selecting a fresh choice is explicit.
+- Only the installation administrator selects a verified model and effort. New calls
+  resolve that selection centrally. Member preferences and task-level overrides
+  have no effect. An unavailable selection requires administrator action.
 - Discover at most one bounded catalog page. Truncation is visible and exact model
   IDs can be entered. Catalog discovery never claims tools/media/effort support.
 - Verification sends only a fixed synthetic prompt, requires a full completed text
@@ -24,7 +25,7 @@ vault/broker contract remains unchanged.
 
 ## Validation
 
-File-backed tests cover authorization, independent user selection, revision races,
+File-backed tests cover authorization, installation-wide selection, revision races,
 key permissions/loss and authenticated ciphertext. Loopback HTTP covers catalog,
 probe completion, malformed/refused output, revocation and safe errors. React tests
 cover setup, model selection, stale account requests and non-echoed key fields.

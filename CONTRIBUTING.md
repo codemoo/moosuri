@@ -2,6 +2,10 @@
 
 Start with [README](README.md) and [current status](docs/status.md). The development preview includes bounded agent/model execution, a separate vault service/client and per-user community package management alongside the account/API/CLI and React foundation. Their full contracts and release gates remain incomplete; current status distinguishes implemented slices from pending integration and future work. See [development](docs/development.md) for the exact runnable boundary. Do not report proposed checks as passing product tests.
 
+## Model selection
+
+Only the installation administrator can choose the assistant model and reasoning effort. Route each new inference call through the installation’s model resolver, including calls from Kiri member containers, browser steps, skills and background workers. Member settings, chat instructions and skill manifests cannot override the selection. If the configured model is unavailable, surface that state without switching models. [Engine policy](docs/provider-settings.md)
+
 ## A small contribution path
 
 1. Pick one issue or explain the concrete behavior in the PR. An issue is useful for coordination, not mandatory paperwork for a small fix.

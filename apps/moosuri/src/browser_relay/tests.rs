@@ -70,6 +70,9 @@ async fn socket_admission_binds_process_uid_registry_generation_and_epoch() {
         .unwrap();
         bytes.push(b'\n');
         let _ = stream.write_all(&bytes).await;
+        // A passive client may half-close after sending its one request. This
+        // must not cancel the underlying shared workspace.
+        let _ = stream.shutdown().await;
         let mut result = Vec::new();
         let _ = stream.read_to_end(&mut result).await;
         task.await.unwrap();

@@ -215,6 +215,12 @@ async fn serve_client(
             return Err("forbidden");
         }
         let id = request.workspace;
+        // Closing a viewer abandons its frame response. Let an already issued
+        // capture finish on the worker, whose protocol must consume that reply.
+        let passive_read = matches!(
+            request.command,
+            TabCommand::Frame { .. } | TabCommand::Tabs {}
+        );
         let mut extra = [0; 1];
         let fenced = async {
             loop {
@@ -228,7 +234,7 @@ async fn serve_client(
         let result = tokio::select! {
             biased;
             _ = stop.cancelled() => None,
-            _ = reader.read(&mut extra) => None,
+            _ = reader.read(&mut extra), if !passive_read => None,
             _ = fenced => None,
             result = timeout(OP_DEADLINE, operation) => result.ok(),
         };

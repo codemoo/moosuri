@@ -91,7 +91,7 @@ Linux Kiri 안의 두 실제 클라이언트에서 무수리 Rust 모델 서비�
 
 `GET /api/v1/personal/vault`는 현재 개인 세션과 라우팅 세대가 유효한 회원에게 `{"state":"setup_required"}`를 반환한다. [별도 암호 볼트 서비스](../../docs/vault-service-client.md)는 기존 중앙 런타임의 전용 어댑터에서 세션 교환·검증, 쓰기 승인, 철회·삭제 전달을 처리한다. 중앙 런타임이 정지된 설치에서는 그 어댑터도 동작하지 않는다. Kiri 회원용 어댑터 연결은 준비가 필요하다.
 
-운영자가 별도 볼트 사이트를 안내하려면 게이트웨이의 기존 `personal-gateway` 실행 명령에 `--vault-site-origin https://vault.example.test`를 추가하고 게이트웨이를 재시작한다. 예시 값은 실제 사이트의 HTTPS origin으로 바꾼다. 회원 웹과 다른 호스트를 사용하고 경로와 끝 슬래시를 생략한다. 상태 응답에는 외부 사이트 링크로 쓸 `site_origin`이 추가되며 `setup_required`가 유지된다. 사이트의 로그인은 기존 별도 인증 흐름을 따른다.
+운영자가 별도 볼트 사이트를 안내하려면 게이트웨이의 기존 `personal-gateway` 실행 명령에 `--vault-site-origin https://vault.example.test`를 추가하고 게이트웨이를 재시작한다. 예시 값은 실제 사이트의 HTTPS origin으로 바꾼다. 회원 웹과 다른 호스트를 사용하고 경로와 끝 슬래시를 생략한다. 상태 응답에는 외부 사이트 링크로 쓸 `site_origin`이 추가되며 `setup_required`가 유지된다. 사이트 주소는 로그인 권한을 부여하지 않는다. 새 볼트 세션에는 비서에서 발급한 일회용 인증 인계가 필요하다.
 
 ## 검증한 경계
 

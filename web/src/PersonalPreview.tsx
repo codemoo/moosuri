@@ -30,6 +30,7 @@ import { PersonalConnections } from "./PersonalConnections";
 import PersonalAdmin from "./PersonalAdmin";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
+import { initialKnowledgeDrafts } from "./KnowledgeState";
 import { PersonalChatComposer } from "./PersonalChatComposer";
 import { PersonalWorkspaceChrome, threadDisplayTitle, type MemberView } from "./PersonalWorkspaceChrome";
 import { PersonalBrowserCard, PersonalBrowserViewer } from "./PersonalBrowser";
@@ -383,6 +384,7 @@ function Workspace({
     [error, setError] = useState(""),
     [reading, setReading] = useState(false),
     [mutating, setMutating] = useState(false);
+  const [memoryDrafts, setMemoryDrafts] = useState(initialKnowledgeDrafts);
   const [view, setView] = useState<MemberView>(() =>
       googleReturn() || workspaceGoogleReturn(session) ? "connections" : "chat",
     ),
@@ -1037,7 +1039,8 @@ function Workspace({
               }}
             />
           ) : view === "memory" ? (
-            <PersonalMemories accountId={session.user.id} onExpired={expired} />
+            <PersonalMemories accountId={session.user.id} onExpired={expired}
+              drafts={memoryDrafts} updateDrafts={setMemoryDrafts} />
           ) : null}
         </div>
       )}

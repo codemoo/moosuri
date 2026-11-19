@@ -1,6 +1,6 @@
 //! A private browser job uses one ordinary chat turn across observation, human control and completion.
 use super::*;
-use crate::chat;
+use crate::{chat, personal_text_preview::ModelPin};
 use moosuri_core::{
     ChatChange, MessagePhase, ModelChoice, ProviderKind, RunState, personal_browser::Workspace,
 };
@@ -104,6 +104,29 @@ pub enum Admission {
     Fresh(Job),
     Existing(Job),
 }
+pub enum Output {
+    Observation(String),
+    Generated {
+        text: String,
+        model: ModelPin,
+        applied: usize,
+    },
+}
+
+fn observation_model() -> ModelChoice {
+    ModelChoice {
+        source: Default::default(),
+        provider_name: "Browser observation".into(),
+        provider_id: "personal-browser".into(),
+        provider_revision: 1,
+        kind: ProviderKind::Compatible,
+        model: "browser-read".into(),
+        effort: None,
+        verified_at: 0,
+        function_tools: false,
+    }
+}
+
 impl Store {
     pub async fn personal_browser_current(&self, scope: Scope) -> Result<Option<Job>> {
         self.call(move |db| {
@@ -154,17 +177,7 @@ impl Store {
                 return Err(StoreError::Busy);
             }
             let run_id = Uuid::new_v4().to_string();
-            let model = ModelChoice {
-                source: Default::default(),
-                provider_name: "Browser observation".into(),
-                provider_id: "personal-browser".into(),
-                provider_revision: 1,
-                kind: ProviderKind::Compatible,
-                model: "browser-read".into(),
-                effort: None,
-                verified_at: 0,
-                function_tools: false,
-            };
+            let model = observation_model();
             let view = Workspace {
                 id: Uuid::new_v4().to_string(),
                 run_id: run_id.clone(),
@@ -347,8 +360,7 @@ impl Store {
         scope: Scope,
         view: Workspace,
         request: Uuid,
-        answer: Option<String>,
-        applied: usize,
+        output: Option<Output>,
     ) -> Result<Workspace> {
         self.call(move |db| {
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -360,15 +372,38 @@ impl Store {
             if tx.execute("UPDATE personal_browser_jobs SET pending=NULL WHERE tenant_id=?1 AND run_id=?2 AND pending=?3", params![tenant, view.run_id, request.to_string()])? != 1 {
                 return Err(StoreError::Conflict);
             }
-            let run = chat::load_run(&tx, tenant, &view.run_id)?;
+            let mut run = chat::load_run(&tx, tenant, &view.run_id)?;
             let mut view = view;
+            let (text, applied) = match output {
+                Some(Output::Observation(text)) => {
+                    run.model = observation_model();
+                    (Some(text), 0)
+                }
+                Some(Output::Generated { text, model, applied }) => {
+                    run.model = ModelChoice {
+                        source: Default::default(),
+                        provider_name: "Deployment browser answer".into(),
+                        provider_id: model.connection_revision.to_string(),
+                        provider_revision: 1,
+                        kind: model.kind,
+                        model: model.model,
+                        effort: model.effort,
+                        verified_at: now()?,
+                        function_tools: false,
+                    };
+                    (Some(text), applied)
+                }
+                None => (None, 0),
+            };
             // Instructions arriving after the model request need another explicit read.
             let complete = view.state == "completed" && current.guidance.len() == applied;
             if view.state == "completed" && !complete {
                 view.state = "ready".into();
                 view.reason = Some("new_guidance".into());
             }
-            if let Some(answer) = answer {
+            if let Some(answer) = text {
+                let model = serde_json::to_string(&run.model).map_err(|_| StoreError::Corrupt)?;
+                tx.execute("UPDATE chat_runs SET model=?1 WHERE tenant_id=?2 AND id=?3", params![model, tenant, run.id])?;
                 let item = if complete {
                     "browser-answer"
                 } else {
@@ -648,8 +683,7 @@ mod tests {
                 scope.clone(),
                 completed.clone(),
                 request,
-                Some("Synthetic page evidence".into()),
-                0,
+                Some(Output::Observation("Synthetic page evidence".into())),
             )
             .await
             .unwrap();

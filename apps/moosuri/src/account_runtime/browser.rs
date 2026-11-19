@@ -11,7 +11,7 @@ use moosuri_connectors::browser::capsule::{WorkspaceFrame, WorkspaceInput, Works
 use moosuri_core::personal_browser::{Control, Frame, Link, Status, Tab, Workspace};
 use moosuri_store::{
     Store, StoreError,
-    personal_browser::{Admission, Job, Scope, Version},
+    personal_browser::{Admission, Job, Output, Scope, Version},
     personal_volume::VolumeOwner,
 };
 use serde::{Deserialize, Serialize};
@@ -529,9 +529,11 @@ async fn observed(
             .iter()
             .map(|link| link.text.clone())
             .collect::<Vec<_>>();
-        let decision = browser_model::answer(s, &scope, &j, &p, epoch, &titles, &previous).await;
-        let Some(index) = decision.as_ref().and_then(|d| d.follow_index) else {
-            break decision;
+        let index = match browser_model::answer(s, &scope, &j, &p, epoch, &titles, &previous).await
+        {
+            Some(browser_model::Decision::Follow(index)) => index,
+            Some(browser_model::Decision::Answer(answer, model)) => break Some((answer, model)),
+            None => break None,
         };
         let Some(link) = candidates.get(index) else {
             break None;
@@ -571,9 +573,9 @@ async fn observed(
         tab = next.tab_id;
         p = next.observation.page;
     };
-    let (answer, needs_user, applied, reason) = match generated {
-        Some(answer) => (
-            if previous.is_empty() {
+    let (output, needs_user, reason) = match generated {
+        Some((answer, model)) => {
+            let text = if previous.is_empty() {
                 format!("{}\n\n{}", scrub_urls(&answer.answer), p.url)
             } else {
                 let mut text = scrub_urls(&answer.answer);
@@ -586,11 +588,17 @@ async fn observed(
                 }
                 append_browser_source(&mut text, &p.url, &p.text);
                 text
-            },
-            answer.needs_user,
-            j.guidance.len(),
-            "waiting_for_user",
-        ),
+            };
+            (
+                Output::Generated {
+                    text,
+                    model,
+                    applied: j.guidance.len(),
+                },
+                answer.needs_user,
+                "waiting_for_user",
+            )
+        }
         None => {
             let text = p.text.chars().take(2000).collect::<String>();
             let note = if wait {
@@ -599,9 +607,8 @@ async fn observed(
                 "페이지에서 확인한 내용입니다. 모델 답변을 받지 못해 작업을 열어 두었습니다."
             };
             (
-                format!("{note}\n\n{}\n{}\n\n{text}", p.title, p.url),
+                Output::Observation(format!("{note}\n\n{}\n{}\n\n{text}", p.title, p.url)),
                 true,
-                0,
                 if wait {
                     "waiting_for_user"
                 } else {
@@ -633,7 +640,7 @@ async fn observed(
     let _guard = workspace.lock().await;
     let view = s
         .store
-        .personal_browser_finish(scope, j.view, request, Some(answer), applied)
+        .personal_browser_finish(scope, j.view, request, Some(output))
         .await?;
     Ok(status_view(s, Some(view)))
 }
@@ -751,7 +758,7 @@ async fn failed(
         v.reason = Some("browser_unavailable".into());
     }
     s.store
-        .personal_browser_finish(scope, v, request, None, 0)
+        .personal_browser_finish(scope, v, request, None)
         .await?;
     Err(error)
 }
@@ -927,7 +934,7 @@ async fn dispatch(
     }
     let view = s
         .store
-        .personal_browser_finish(scope, j.view, a.request_id, None, 0)
+        .personal_browser_finish(scope, j.view, a.request_id, None)
         .await?;
     Ok(status_view(&s, Some(view)))
 }

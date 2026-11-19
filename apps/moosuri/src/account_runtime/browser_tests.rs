@@ -201,22 +201,37 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
 }
 fn model_fixture(
     path: &std::path::Path,
-) -> (moosuri_server::personal_text::Options, Arc<AtomicUsize>) {
+    switch_after_planning: bool,
+) -> (
+    moosuri_server::personal_text::Options,
+    Arc<AtomicUsize>,
+    Uuid,
+) {
     let l = listener(path);
     let count = Arc::new(AtomicUsize::new(0));
     let calls = count.clone();
+    let initial_revision = Uuid::new_v4();
+    let final_revision = Uuid::new_v4();
     tokio::spawn(async move {
-        let rev = Uuid::new_v4();
         loop {
             let (stream, _) = l.accept().await.unwrap();
             let mut stream = BufReader::new(stream);
             let mut line = String::new();
             stream.read_line(&mut line).await.unwrap();
             let r: Value = serde_json::from_str(&line).unwrap();
+            let (revision, model, effort) =
+                if switch_after_planning && calls.load(Ordering::SeqCst) == 0 {
+                    (initial_revision, "claude-fixture-initial", "low")
+                } else {
+                    (final_revision, "claude-fixture-selected", "medium")
+                };
             let value = if r["operation"] == "selection" {
-                json!({"v":1,"state":"selection","connection_revision":rev,"selection_epoch":3,"model":"fixture","effort":null,"kind":"compatible"})
+                json!({"v":1,"state":"selection","connection_revision":revision,"selection_epoch":3,"model":model,"effort":effort,"kind":"anthropic"})
             } else {
                 calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(r["connection_revision"], revision.to_string());
+                assert_eq!(r["model"], model);
+                assert_eq!(r["effort"], effort);
                 let context = r["messages"][1]["text"].as_str().unwrap();
                 assert!(!context.contains("CANARY") && !context.contains("fixture-node-metadata"));
                 let answer = if context.contains("Find platform details") {
@@ -247,7 +262,7 @@ fn model_fixture(
                     assert!(data.get("available_documents").is_none());
                     json!({"answer":"The morning bus leaves at 08:15.","needs_user":false,"follow_index":0})
                 };
-                json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":rev,"model":"fixture","effort":null,"outcome":"completed","output":answer.to_string(),"receipt":{"state":"settled","input_tokens":90,"output_tokens":12,"charged_tokens":102}})
+                json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":revision,"model":model,"effort":effort,"outcome":"completed","output":answer.to_string(),"receipt":{"state":"settled","input_tokens":90,"output_tokens":12,"charged_tokens":102}})
             };
             stream
                 .write_all(format!("{value}\n").as_bytes())
@@ -262,6 +277,7 @@ fn model_fixture(
             max_output_tokens: 256,
         },
         count,
+        final_revision,
     )
 }
 #[tokio::test]
@@ -274,7 +290,7 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
     let b = member(&bpath).await;
     let socket = root.join("browser.sock");
     let reads = browser_fixture(&socket);
-    let (model, _) = model_fixture(&root.join("model.sock"));
+    let (model, model_calls, connection) = model_fixture(&root.join("model.sock"), false);
     let app = moosuri_server::personal_service_router(
         a.store.clone(),
         None,
@@ -327,6 +343,15 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
     let opened = wait_state(&app, &base, &a, "ready").await;
     let v = &opened["workspace"];
     assert_eq!(v["state"], "ready");
+    let user = a.store.authenticate(a.token.clone()).await.unwrap();
+    let history = a
+        .store
+        .conversation(&user, a.thread.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(history.turns[0].run.model.provider_id, "personal-browser");
+    assert_eq!(history.turns[0].run.model.verified_at, 0);
+    assert_eq!(model_calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         call(a.token.clone(), base.clone(), start).await.1["workspace"]["id"],
         v["id"]
@@ -440,6 +465,12 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
         .unwrap();
     assert_eq!(history.turns.len(), 1);
     let turn = &history.turns[0];
+    assert_eq!(turn.run.model.provider_id, connection.to_string());
+    assert_eq!(turn.run.model.model, "claude-fixture-selected");
+    assert_eq!(turn.run.model.effort.as_deref(), Some("medium"));
+    assert_eq!(turn.run.model.kind, moosuri_core::ProviderKind::Anthropic);
+    assert!(turn.run.model.verified_at > 0);
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
     assert!(!turn.user_text.contains("CANARY"));
     assert!(!v["url"].as_str().unwrap().contains("CANARY"));
     assert_eq!(turn.run.id, v["run_id"]);
@@ -498,7 +529,7 @@ async fn private_browser_frames_while_model_chooses_observed_public_detail() {
     let a = member(&root.join("a")).await;
     let socket = root.join("browser.sock");
     let follows = browser_fixture(&socket);
-    let (model, model_calls) = model_fixture(&root.join("model.sock"));
+    let (model, model_calls, connection) = model_fixture(&root.join("model.sock"), true);
     let app = moosuri_server::personal_service_router(
         a.store.clone(),
         None,
@@ -560,6 +591,11 @@ async fn private_browser_frames_while_model_chooses_observed_public_detail() {
         .await
         .unwrap();
     assert_eq!(history.turns.len(), 1);
+    let model = &history.turns[0].run.model;
+    assert_eq!(model.provider_id, connection.to_string());
+    assert_eq!(model.model, "claude-fixture-selected");
+    assert_eq!(model.effort.as_deref(), Some("medium"));
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
     let answer = &history.turns[0].assistant[0].text;
     assert!(answer.contains("platform 7") && answer.contains("14:30"));
     assert!(

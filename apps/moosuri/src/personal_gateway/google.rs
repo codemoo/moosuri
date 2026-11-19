@@ -291,7 +291,7 @@ async fn callback(
             format!("/#google_handle={handle}&flow={flow}")
         };
         let path = match service {
-            Some(name) => format!("{path}&service={name}"),
+            Some(name) => format!("{path}&google_service={name}"),
             None => path,
         };
         Ok(axum::response::Redirect::to(&path).into_response())

@@ -497,7 +497,7 @@ async fn observed(
     let generated = loop {
         p.url = display_url(&p.url);
         p.title = scrub_urls(&p.title);
-        p.text = scrub_urls(&p.text);
+        p.text = scrub_urls(&page_reading(&p.text));
         // Query-bearing links are not durable action targets; retain only exact safe URLs.
         p.links.retain(|l| display_url(&l.url) == l.url);
         for link in &mut p.links {
@@ -636,6 +636,24 @@ async fn observed(
         .personal_browser_finish(scope, j.view, request, Some(answer), applied)
         .await?;
     Ok(status_view(s, Some(view)))
+}
+// The Chromium worker projects both the accessibility tree and visible layout.
+// Keep machine node metadata out of evidence budgets, model prompts and chat excerpts.
+fn page_reading(projection: &str) -> String {
+    let Some((tree, visible)) = projection
+        .strip_prefix("Accessibility:\n")
+        .and_then(|s| s.split_once("\nVisible layout text:\n"))
+    else {
+        return projection.into();
+    };
+    if !visible.trim().is_empty() {
+        return visible.trim().to_owned();
+    }
+    tree.lines()
+        .filter_map(|row| serde_json::from_str::<serde_json::Value>(row).ok())
+        .filter_map(|node| node["name"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 // A comparison keeps verifiable excerpts from both pages even if a small model omits a detail.
 fn append_browser_source(text: &mut String, url: &str, excerpt: &str) {

@@ -135,7 +135,7 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
             let mut line = String::new();
             stream.read_line(&mut line).await.unwrap();
             let r: Value = serde_json::from_str(&line).unwrap();
-            let observation = || json!({"page":{"title":"Timetable","url":url,"text":if filtered{"Morning bus 08:15"}else{"Afternoon bus 14:30"},"warning":"","retrieved_at_unix_ms":1234,"links":[{"text":"Timetable details","url":"https://example.org/detail"}],"truncated":false}});
+            let observation = || json!({"page":{"title":"Timetable","url":url,"text":if filtered{"Accessibility:\n{\"name\":\"fixture-node-metadata\"}\n\nVisible layout text:\nMorning bus 08:15"}else{"Accessibility:\n{\"name\":\"fixture-node-metadata\"}\n\nVisible layout text:\nAfternoon bus 14:30"},"warning":"","retrieved_at_unix_ms":1234,"links":[{"text":"Timetable details","url":"https://example.org/detail"}],"truncated":false}});
             if (r["op"] == "stop" && std::mem::take(&mut busy_stop))
                 || (r["op"] == "input" && std::mem::take(&mut busy_input))
             {
@@ -218,7 +218,7 @@ fn model_fixture(
             } else {
                 calls.fetch_add(1, Ordering::SeqCst);
                 let context = r["messages"][1]["text"].as_str().unwrap();
-                assert!(!context.contains("CANARY"));
+                assert!(!context.contains("CANARY") && !context.contains("fixture-node-metadata"));
                 let answer = if context.contains("Find platform details") {
                     if r["ordinal"] == 0 {
                         assert_eq!(

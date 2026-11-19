@@ -31,6 +31,7 @@ pub struct Job {
     pub guidance: Vec<String>,
     pub human_touched: bool,
     pub remaining_reads: i64,
+    pending: Option<String>,
 }
 fn expire_workers(c: &Connection, owner: VolumeOwner) -> Result<()> {
     // Do not renew sessions merely because the background cleanup is running.
@@ -61,8 +62,8 @@ fn expire_workers(c: &Connection, owner: VolumeOwner) -> Result<()> {
 fn current(c: &Connection, scope: &Scope) -> Result<Option<Job>> {
     scope.authorize(c)?;
     expire_workers(c, scope.owner)?;
-    let row = c.query_row("SELECT b.view,r.user_text,b.human_touched,b.remaining_reads,r.auth_epoch FROM personal_browser_jobs b JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id WHERE b.tenant_id=?1 AND b.thread_id=?2 AND r.account_id=?3 AND b.volume_id=?4 AND b.generation=?5 ORDER BY r.sequence DESC LIMIT 1", params![scope.user.tenant.0, scope.thread, scope.user.account.id, scope.owner.volume.to_string(), scope.owner.generation as i64], |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, i64>(4)?))).optional()?;
-    let Some((encoded, original, human_touched, remaining_reads, epoch)) = row else {
+    let row = c.query_row("SELECT b.view,r.user_text,b.human_touched,b.remaining_reads,r.auth_epoch,b.pending FROM personal_browser_jobs b JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id WHERE b.tenant_id=?1 AND b.thread_id=?2 AND r.account_id=?3 AND b.volume_id=?4 AND b.generation=?5 ORDER BY r.sequence DESC LIMIT 1", params![scope.user.tenant.0, scope.thread, scope.user.account.id, scope.owner.volume.to_string(), scope.owner.generation as i64], |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, i64>(4)?,r.get::<_,Option<String>>(5)?))).optional()?;
+    let Some((encoded, original, human_touched, remaining_reads, epoch, pending)) = row else {
         return Ok(None);
     };
     if scope.user.epoch != epoch {
@@ -76,6 +77,7 @@ fn current(c: &Connection, scope: &Scope) -> Result<Option<Job>> {
         guidance,
         human_touched,
         remaining_reads,
+        pending,
     }))
 }
 fn save(c: &Connection, scope: &Scope, view: &Workspace) -> Result<()> {
@@ -196,7 +198,7 @@ impl Store {
                 original: text,
                 guidance: vec![],
                 human_touched: false,
-                remaining_reads: 5,
+                remaining_reads: 5,pending:Some(request.to_string()),
             }))
         })
         .await
@@ -316,6 +318,28 @@ impl Store {
             Ok(Admission::Fresh(job))
         })
         .await
+    }
+    /// The broker positively rejected the operation before dispatch. Undo only this receipt,
+    /// restoring the interrupted reservation as well as its frame revision and read budget.
+    pub async fn personal_browser_busy(
+        &self,
+        scope: Scope,
+        prior: Job,
+        revision: i64,
+        request: Uuid,
+    ) -> Result<()> {
+        self.call(move|db| {
+            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let current=current(&tx,&scope)?.ok_or(StoreError::NotFound)?;
+            if current.view.id!=prior.view.id||current.view.revision!=revision||current.pending!=Some(request.to_string()){
+                return Err(StoreError::Conflict);
+            }
+            let id=&prior.view.run_id;
+            tx.execute("UPDATE personal_browser_jobs SET pending=?3,remaining_reads=?4 WHERE tenant_id=?1 AND run_id=?2",params![scope.user.tenant.0,id,prior.pending,prior.remaining_reads])?;
+            tx.execute("DELETE FROM personal_browser_actions WHERE tenant_id=?1 AND run_id=?2 AND request_id=?3",params![scope.user.tenant.0,id,request.to_string()])?;
+            save(&tx,&scope,&prior.view)?;
+            tx.commit()?;Ok(())
+        }).await
     }
     /// An observation and the corresponding chat answer commit together, conditioned on the same dispatch.
     pub async fn personal_browser_finish(

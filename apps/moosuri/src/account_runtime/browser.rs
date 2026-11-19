@@ -32,6 +32,7 @@ pub(super) struct Service {
     pub(super) uid: u32,
     pub(super) model: Option<moosuri_server::personal_text::Options>,
     frames: Arc<tokio::sync::Semaphore>,
+    pub(super) broker_slot: Arc<DispatchLock<()>>,
     dispatch: Arc<Mutex<HashMap<String, Weak<DispatchLock<()>>>>>,
 }
 pub(super) fn routes(
@@ -48,6 +49,7 @@ pub(super) fn routes(
         uid,
         model,
         frames: Arc::new(tokio::sync::Semaphore::new(1)),
+        broker_slot: Default::default(),
         dispatch: Default::default(),
     });
     if state.socket.is_some() {
@@ -480,10 +482,13 @@ async fn observed(
             link.text = scrub_urls(&link.text);
         }
         publish_tab(&mut j, tab, &p);
+        let workspace = workspace_lock(s, &j.view.id)?;
+        let guard = workspace.lock().await;
         j = s
             .store
             .personal_browser_publish(scope.clone(), request, j.view)
             .await?;
+        drop(guard);
         if wait {
             break None;
         }
@@ -574,6 +579,9 @@ async fn observed(
     // Revalidate the host namespace and selected tab immediately before local settlement.
     let active: Tabs = match broker_action(s, &scope, &j.view, "tabs", json!({})).await {
         Ok(t) => t,
+        Err(Failure::Busy) => {
+            return failed(s, scope, j.view, request, Failure::Busy, Some("ready")).await;
+        }
         Err(e) => return failed(s, scope, j.view, request, e, None).await,
     };
     if active.active_tab != Some(tab)
@@ -586,6 +594,8 @@ async fn observed(
     }
     j.view.state = if needs_user { "ready" } else { "completed" }.into();
     j.view.reason = needs_user.then(|| reason.into());
+    let workspace = workspace_lock(s, &j.view.id)?;
+    let _guard = workspace.lock().await;
     let view = s
         .store
         .personal_browser_finish(scope, j.view, request, Some(answer), applied)
@@ -665,7 +675,10 @@ async fn failed(
     error: Failure,
     restore: Option<&str>,
 ) -> Reply {
-    if matches!(error, Failure::Stale | Failure::Invalid | Failure::Busy)
+    if matches!(error, Failure::Busy) && restore.is_none() {
+        v.state = "closed".into();
+        v.reason = Some("browser_busy".into());
+    } else if matches!(error, Failure::Stale | Failure::Invalid | Failure::Busy)
         && let Some(state) = restore
     {
         v.state = state.into();
@@ -755,6 +768,9 @@ async fn dispatch(
         }
         _ => {}
     }
+    // Keep a known non-dispatch rollback atomic relative to older background results.
+    let workspace = workspace_lock(&s, &a.workspace_id)?;
+    let dispatch_guard = workspace.lock().await;
     let prior = s
         .store
         .personal_browser_current(scope.clone())
@@ -795,12 +811,19 @@ async fn dispatch(
         "resume" => "selected",
         s => s,
     };
-    let result = broker_action::<Value>(&s, &scope, &j.view, wire_op, args).await;
+    let result = wire::call::<Value>(&s, &j.view.id, wire_op, args).await;
     let result = match result {
         Ok(r) => r,
+        Err(Failure::Busy) => {
+            s.store
+                .personal_browser_busy(scope, prior, j.view.revision, a.request_id)
+                .await?;
+            return Err(Failure::Busy);
+        }
         Err(Failure::Missing) if op == "close" => json!({"stopped":true}),
         Err(e) => return failed(&s, scope, j.view, a.request_id, e, Some(&prior.view.state)).await,
     };
+    drop(dispatch_guard);
     match op {
         "resume" | "follow" => {
             let parse = if op == "follow" {

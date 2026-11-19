@@ -28,6 +28,15 @@ pub(super) async fn call<T: DeserializeOwned>(
     op: &str,
     args: Value,
 ) -> Result<T, Failure> {
+    // The host has one command admission slot per member. Do not let overlapping frame polls
+    // race a mutation; queue one bounded mutation and discard obsolete passive captures.
+    let _slot = if matches!(op, "frame" | "tabs") {
+        s.broker_slot.try_lock().map_err(|_| Failure::Busy)?
+    } else {
+        tokio::time::timeout(std::time::Duration::from_secs(10), s.broker_slot.lock())
+            .await
+            .map_err(|_| Failure::Busy)?
+    };
     let retry = matches!(op, "tabs" | "frame");
     let mut answer = once(s, workspace, op, &args).await;
     if retry && matches!(answer, Err(Failure::Busy)) {

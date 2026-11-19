@@ -126,6 +126,8 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
         let detail = Uuid::new_v4();
         let mut active = tab;
         let mut busy_tabs = 0;
+        let mut busy_stop = true;
+        let mut busy_input = true;
         let mut checks = 0;
         loop {
             let (stream, _) = l.accept().await.unwrap();
@@ -134,6 +136,15 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
             stream.read_line(&mut line).await.unwrap();
             let r: Value = serde_json::from_str(&line).unwrap();
             let observation = || json!({"page":{"title":"Timetable","url":url,"text":if filtered{"Morning bus 08:15"}else{"Afternoon bus 14:30"},"warning":"","retrieved_at_unix_ms":1234,"links":[{"text":"Timetable details","url":"https://example.org/detail"}],"truncated":false}});
+            if (r["op"] == "stop" && std::mem::take(&mut busy_stop))
+                || (r["op"] == "input" && std::mem::take(&mut busy_input))
+            {
+                stream
+                    .write_all(b"{\"ok\":false,\"code\":\"capacity\"}\n")
+                    .await
+                    .unwrap();
+                continue;
+            }
             if r["op"] == "tabs" {
                 checks += 1;
                 if checks == 2 && active == tab {
@@ -338,6 +349,36 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
         StatusCode::FORBIDDEN
     );
     input["control_token"] = active["control_token"].clone();
+    // A host capture temporarily occupied the mutation slot. Neither rejection consumes
+    // this frame/controller nor creates an ambiguous physical effect.
+    let stop = version(&active["workspace"]);
+    assert_eq!(
+        call(second.token.clone(), format!("{base}/close"), stop)
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        call(second.token.clone(), format!("{base}/input"), input.clone())
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    let retained = request(
+        &app,
+        "GET",
+        &base,
+        a.owner.account,
+        &second.token,
+        Value::Null,
+    )
+    .await
+    .1;
+    assert_eq!(
+        retained["workspace"]["revision"],
+        active["workspace"]["revision"]
+    );
+    assert_eq!(retained["workspace"]["state"], "user_control");
     let (ok, changed) = call(second.token.clone(), format!("{base}/input"), input.clone()).await;
     assert_eq!(ok, StatusCode::OK);
     assert_eq!(
@@ -423,7 +464,7 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
         .0,
         StatusCode::CONFLICT
     );
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+    tokio::time::timeout(std::time::Duration::from_secs(13), async {
         while reads.load(Ordering::SeqCst) < 101 {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
@@ -516,7 +557,7 @@ async fn private_browser_frames_while_model_chooses_observed_public_detail() {
         .0,
         StatusCode::NOT_FOUND
     );
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+    tokio::time::timeout(std::time::Duration::from_secs(13), async {
         while follows.load(Ordering::SeqCst) < 101 {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }

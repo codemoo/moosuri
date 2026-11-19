@@ -440,7 +440,6 @@ impl Store {
             if !eligible(&db.conn, &u.tenant.0, &d.source.collection_id, &g)? {
                 return Err(StoreError::Conflict);
             }
-            select_extraction_model(&db.conn, &db.provider_key, &u.tenant.0, &g)?;
             enqueue(&db.conn, &u.tenant.0, &d.source.collection_id, &source)?;
             status(
                 &db.conn,

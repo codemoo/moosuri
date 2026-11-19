@@ -202,4 +202,24 @@
   }
   .member-browser-resize { display: none; }
   .member-browser-viewer button { min-height: 44px; }
+  .member-browser-screen img {
+    width: auto;
+    max-width: 100%;
+    max-height: calc(var(--workspace-height, 100dvh) * .55);
+    margin-inline: auto;
+  }
+}
+@media (min-width: 560px) and (max-width: 860px) and (max-height: 510px) {
+  .member-browser-content:has(.member-browser-input) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, .9fr);
+    align-items: start;
+    align-content: start;
+    gap: 8px 12px;
+  }
+  .member-browser-content > p, .member-browser-links { grid-column: 1 / -1; }
+  .member-browser-input { margin-top: 0; }
+  .member-browser-screen img {
+    max-height: max(80px, calc(var(--workspace-height, 100dvh) - 204px));
+  }
 }

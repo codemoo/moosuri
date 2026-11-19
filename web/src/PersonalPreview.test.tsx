@@ -295,7 +295,7 @@ it("routes a browser request and guidance into one run and resumes the viewed ta
       const run = turn(body.request_id, body.text, "running");
       work = {
         id: workspaceId, request_id: body.request_id, run_id: run.run.id,
-        thread_id: tid, state: "ready", revision: 1, title: "Timetable", url: firstUrl,
+        thread_id: tid, state: "reading", revision: 1, title: "Timetable", url: firstUrl,
         active_tab_id: "main", reason: null, links: [],
         tabs: [{ id: "main", title: "Timetable", url: firstUrl }, { id: "morning", title: "Morning", url: secondUrl }],
       };

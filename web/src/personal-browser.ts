@@ -2,7 +2,7 @@ import type { BrowserFrame } from "../shared/api-types";
 import { browserLocation } from "./browser-frame";
 
 export type PersonalBrowserState =
-  | "starting" | "reading" | "ready" | "user_control" | "resuming"
+  | "starting" | "reading" | "ready" | "user_control" | "resuming" | "stopping"
   | "completed" | "closed" | "outcome_unknown";
 export type PersonalBrowserTab = { id: string; url: string | null; title: string | null };
 export type PersonalBrowserWorkspace = {
@@ -35,7 +35,7 @@ export function browserNeedsGuidance(workspace: PersonalBrowserWorkspace | null)
 }
 
 export function browserCanWatch(workspace: PersonalBrowserWorkspace | null) {
-  return !!workspace?.active_tab_id && !["starting", "closed", "outcome_unknown"].includes(workspace.state);
+  return !!workspace?.active_tab_id && ["reading", "ready", "user_control", "completed"].includes(workspace.state);
 }
 
 export function browserIntent(text: string, selected = false): { url: string | null; wait: boolean } | null {
@@ -57,6 +57,7 @@ export const browserStateLabel: Record<PersonalBrowserState, string> = {
   ready: "브라우저에서 확인을 기다리는 중",
   user_control: "브라우저 직접 조작 중",
   resuming: "변경된 화면을 읽는 중",
+  stopping: "브라우저 작업을 중지하는 중",
   completed: "브라우저 읽기 완료",
   closed: "브라우저 작업 중지됨",
   outcome_unknown: "브라우저 상태 확인 필요",

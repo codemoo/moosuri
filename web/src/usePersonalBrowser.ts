@@ -95,7 +95,7 @@ export function usePersonalBrowser(
       if (next?.state !== "user_control") token = null;
       else if (ownControl && watch.current && visible()) token = ownControl;
       if (resume && (!next || resume.workspace_id !== next.id ||
-          ["resuming", "completed", "closed", "outcome_unknown"].includes(next.state))) {
+          ["resuming", "completed", "stopping", "closed", "outcome_unknown"].includes(next.state))) {
         resume = null;
         if (error.startsWith("완료 결과")) error = "";
       }
@@ -181,7 +181,8 @@ export function usePersonalBrowser(
     async function mutate(action: Action) {
       if (!live || denied || !visible() || !watch.current || busy) return;
       const value = workspace();
-      if (!value || value.state === "closed" || (value.state === "outcome_unknown" && action.kind !== "close")) return;
+      if (!value || ["stopping", "closed"].includes(value.state) ||
+          (value.state === "outcome_unknown" && action.kind !== "close")) return;
       const heldToken = token;
       const seenFrame = frame;
       const suffix = action.kind;
@@ -240,7 +241,9 @@ export function usePersonalBrowser(
         token = null;
         if (failure instanceof ApiFailure && failure.status < 500) {
           if (action.kind === "resume") resume = null;
-          error = failure.status === 409 && action.kind === "close"
+          error = failure.code === "browser_budget_exhausted"
+            ? "이 작업에서 사용할 수 있는 페이지 읽기 횟수를 모두 사용했습니다."
+            : failure.status === 409 && action.kind === "close"
             ? "브라우저에서 처리 중인 동작이 있습니다. 잠시 후 작업 중지를 다시 눌러 주세요."
             : [403, 409].includes(failure.status) ? paused : "브라우저 요청을 처리하지 못했습니다.";
         } else {

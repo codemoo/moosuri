@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import {
   browserClick, browserFrameSource, browserKeys, browserLocation, browserScroll,
   type BrowserInput,
@@ -11,6 +11,9 @@ const browserReasons: Partial<Record<string, string>> = {
   new_guidance: "새로 받은 추가 지시를 반영하려면 화면을 다시 확인해 주세요.",
   controller_expired: "조작권이 만료되었습니다. 이어서 조작하려면 제어권을 가져오세요.",
   browser_model_unavailable: "페이지는 열렸지만 어시스턴트의 답변을 받을 수 없습니다.",
+  browser_unavailable: "브라우저 연결이 끊겼습니다. 마지막 동작이 반영됐는지 확인할 수 없습니다.",
+  browser_worker_missing: "브라우저 세션이 종료되었습니다.",
+  browser_stale: "페이지가 바뀌었습니다. 최신 화면을 확인해 주세요.",
 };
 
 export function PersonalBrowserCard({ browser, pending, onOpen }: {
@@ -33,13 +36,13 @@ export function PersonalBrowserCard({ browser, pending, onOpen }: {
   );
 }
 
-function FrameView({ frame, controlling, busy, send }: {
+function FrameView({ frame, controlling, busy, send, skipClickUntil }: {
   frame: PersonalBrowserFrame; controlling: boolean; busy: boolean;
   send: (input: BrowserInput) => void;
+  skipClickUntil: RefObject<number>;
 }) {
   const screen = useRef<HTMLImageElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
-  const swipe = useRef(0);
   const keys: typeof browserKeys = { ...browserKeys, Delete: "delete", Home: "home", End: "end",
     PageUp: "page_up", PageDown: "page_down", " ": "space" };
   function keyDown(event: KeyboardEvent<HTMLImageElement>) {
@@ -73,7 +76,7 @@ function FrameView({ frame, controlling, busy, send }: {
       tabIndex={controlling ? 0 : undefined} data-controlling={controlling || undefined}
       onKeyDown={keyDown}
       onClick={(event) => {
-        if (!controlling || busy || Date.now() - swipe.current < 450) return;
+        if (!controlling || busy || Date.now() < skipClickUntil.current) return;
         event.currentTarget.focus({ preventScroll: true });
         const input = browserClick(frame, event.currentTarget, event.clientX, event.clientY);
         if (input) send(input);
@@ -93,7 +96,7 @@ function FrameView({ frame, controlling, busy, send }: {
         if (Math.hypot(x, y) < 12) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         if (!bounds.width || !bounds.height) return;
-        swipe.current = Date.now();
+        skipClickUntil.current = Date.now() + 450;
         send(browserScroll(x * frame.width / bounds.width, y * frame.height / bounds.height));
       }}
     />
@@ -112,10 +115,11 @@ export function PersonalBrowserViewer({ browser, onClose }: {
   const composing = useRef(false);
   const drag = useRef<number | null>(null);
   const focusFrame = useRef(false);
+  const skipClickUntil = useRef(0);
   const value = browser.status?.workspace;
   const frame = browser.frame;
   const busy = !!browser.busy;
-  const available = !!value && value.state !== "closed";
+  const available = !!value && !["stopping", "closed"].includes(value.state);
   const watchable = browserCanWatch(value ?? null);
   const canTake = watchable && !!value && ["reading", "ready", "completed", "user_control"].includes(value.state);
   const location = browserLocation(frame?.url ?? value?.url);
@@ -215,7 +219,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
                   onClick={() => browser.mutate({ kind: "tabs", action: "switch", tab_id: tab.id })}>
                   {label}
                 </button>
-                {browser.controls && <button type="button" aria-label={`${label} 탭 닫기`}
+                {browser.controls && active && <button type="button" aria-label={`${label} 탭 닫기`}
                   disabled={busy} onClick={() => browser.mutate({ kind: "tabs", action: "close", tab_id: tab.id })}>×</button>}
               </span>
             );
@@ -228,7 +232,8 @@ export function PersonalBrowserViewer({ browser, onClose }: {
         {value?.reason && browserReasons[value.reason] && <p role="status">{browserReasons[value.reason]}</p>}
         {(watchable || value?.state === "starting") && (
           <div className="member-browser-screen">
-            {frame ? <FrameView frame={frame} controlling={browser.controls} busy={busy} send={input} /> :
+            {frame ? <FrameView frame={frame} controlling={browser.controls} busy={busy}
+              send={input} skipClickUntil={skipClickUntil} /> :
               <p role="status">{busy ? "화면을 갱신하는 중…" : "브라우저 화면을 기다리는 중…"}</p>}
           </div>
         )}

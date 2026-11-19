@@ -758,6 +758,10 @@ function Workspace({
         ? { kind: "guide" as const, workspace_id: browserWork.id }
         : intent?.url ? { kind: "start" as const, url: intent.url, wait_for_user: intent.wait } : undefined
     );
+    if (!old && browserRequest?.kind === "start" && browser.status?.configured === false) {
+      setError("이 설치에서 브라우저 작업을 사용할 수 없습니다.");
+      return;
+    }
     if (browserRequest?.kind === "guide" && new TextEncoder().encode(old?.text ?? text).length > 2000) {
       setError("추가 지시가 너무 깁니다. 내용을 줄여 주세요.");
       return;
@@ -1083,15 +1087,17 @@ function Workspace({
                       <p>{turn.user_text}</p>
                     </div>
                     {turn.run.instructions && <InstructionReceipts receipts={turn.run.instructions} />}
-                    <div className="member-reply">
-                      <span className="sr-only">무수리</span>
-                      {turn.assistant.map((message) => <p key={message.id}>{message.text}</p>)}
-                      {turn.run.state !== "completed" && (
-                        <span className="member-chat-status" data-working={active(turn) || undefined}>
-                          {turn.run.id === browserWork?.run_id ? "브라우저 작업 진행 중" : stateLabel(turn)}
-                        </span>
-                      )}
-                    </div>
+                    {(turn.assistant.length > 0 || turn.run.id !== browserWork?.run_id) && (
+                      <div className="member-reply">
+                        <span className="sr-only">무수리</span>
+                        {turn.assistant.map((message) => <p key={message.id}>{message.text}</p>)}
+                        {turn.run.id !== browserWork?.run_id && turn.run.state !== "completed" && (
+                          <span className="member-chat-status" data-working={active(turn) || undefined}>
+                            {stateLabel(turn)}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {browserWork?.run_id === turn.run.id && (
                       <PersonalBrowserCard browser={browser} pending={false} onOpen={openBrowser} />
                     )}

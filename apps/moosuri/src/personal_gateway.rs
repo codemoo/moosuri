@@ -1650,31 +1650,16 @@ mod tests {
         );
         h
     }
-    #[tokio::test]
-    async fn vault_status_requires_a_current_private_member_session() {
-        const PATH: &str = "/api/v1/personal/vault";
-        let temp = tempfile::tempdir().unwrap();
-        let options = options(&temp.path().canonicalize().unwrap());
-        let g = Gateway::new(&options).unwrap();
+    const VAULT_STATUS: &str = "/api/v1/personal/vault";
+    async fn check_vault_status(g: &Gateway, a: &HeaderMap, b: &HeaderMap) {
         assert_eq!(
-            request(&g, PATH, Method::GET, headers(), "").await.status(),
+            request(g, VAULT_STATUS, Method::GET, headers(), "")
+                .await
+                .status(),
             StatusCode::UNAUTHORIZED
         );
-
-        let mut members = Vec::new();
-        for email in ["a@example.test", "b@example.test"] {
-            let (allocation, store, task) = real_member(&options, email).await;
-            let login = request(
-                &g,
-                "/api/v1/auth/login",
-                Method::POST,
-                headers(),
-                &serde_json::json!({"email":email,"password":"Synthetic-password-42"}).to_string(),
-            )
-            .await;
-            assert_eq!(login.status(), StatusCode::OK);
-            let member = authenticated(&cookies(&login), &allocation);
-            let status = request(&g, PATH, Method::GET, member.clone(), "").await;
+        for member in [a, b] {
+            let status = request(g, VAULT_STATUS, Method::GET, member.clone(), "").await;
             assert_eq!(status.status(), StatusCode::OK);
             assert_eq!(status.headers()[header::CACHE_CONTROL], "no-store");
             assert!(!status.headers().contains_key(header::SET_COOKIE));
@@ -1682,14 +1667,13 @@ mod tests {
                 json(status).await,
                 serde_json::json!({"state":"setup_required"})
             );
-            members.push((allocation, store, task, member));
         }
-        let (_, store_a, task_a, a) = &members[0];
-        let (allocation_b, _, task_b, b) = &members[1];
         let mut mixed = a.clone();
         mixed.insert("x-moosuri-account", b["x-moosuri-account"].clone());
         assert_eq!(
-            request(&g, PATH, Method::GET, mixed, "").await.status(),
+            request(g, VAULT_STATUS, Method::GET, mixed, "")
+                .await
+                .status(),
             StatusCode::UNAUTHORIZED
         );
         let mut foreign = a.clone();
@@ -1698,38 +1682,23 @@ mod tests {
             HeaderValue::from_static("https://other.example.test"),
         );
         assert_eq!(
-            request(&g, PATH, Method::GET, foreign, "").await.status(),
+            request(g, VAULT_STATUS, Method::GET, foreign, "")
+                .await
+                .status(),
             StatusCode::FORBIDDEN
         );
         assert_eq!(
-            request(&g, PATH, Method::POST, a.clone(), "{}")
+            request(g, VAULT_STATUS, Method::POST, a.clone(), "{}")
                 .await
                 .status(),
             StatusCode::METHOD_NOT_ALLOWED
         );
         assert_eq!(
-            request(&g, "/api/v1/vault/handoff", Method::POST, a.clone(), "{}")
+            request(g, "/api/v1/vault/handoff", Method::POST, a.clone(), "{}")
                 .await
                 .status(),
             StatusCode::NOT_FOUND
         );
-
-        // The signed route stays valid after the private store revokes the session.
-        let session = cookie(a, SESSION, 128).unwrap();
-        let user = store_a.authenticate(session).await.unwrap();
-        store_a.logout(&user).await.unwrap();
-        assert!(authenticated_allocation(&g, a, true).await.is_ok());
-        assert_eq!(
-            request(&g, PATH, Method::GET, a.clone(), "").await.status(),
-            StatusCode::UNAUTHORIZED
-        );
-        runtime_registry::set_routing(&options.registry, allocation_b, false).unwrap();
-        assert_eq!(
-            request(&g, PATH, Method::GET, b.clone(), "").await.status(),
-            StatusCode::UNAUTHORIZED
-        );
-        task_a.abort();
-        task_b.abort();
     }
 
     async fn check_memory_lifecycle(g: &Gateway, a: &HeaderMap, b: &HeaderMap) {
@@ -1825,6 +1794,7 @@ mod tests {
         }
         let a_headers = authenticated(&sessions[0], &a);
         let b_headers = authenticated(&sessions[1], &b);
+        check_vault_status(&g, &a_headers, &b_headers).await;
         let absent = request(
             &g,
             "/api/v1/text-preview",
@@ -1958,7 +1928,7 @@ mod tests {
             &g,
             "/api/v1/auth/password",
             Method::POST,
-            a_headers,
+            a_headers.clone(),
             r#"{"password":"Changed-synthetic-password-42"}"#,
         )
         .await;
@@ -1983,6 +1953,22 @@ mod tests {
         .await;
         assert_eq!(session.status(), StatusCode::OK);
         assert!(!session.headers().contains_key(header::SET_COOKIE));
+        // A password change revokes the private session without invalidating the
+        // signed route to that member, so the status must check both.
+        assert!(authenticated_allocation(&g, &a_headers, true).await.is_ok());
+        assert_eq!(
+            request(&g, VAULT_STATUS, Method::GET, a_headers, "")
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        runtime_registry::set_routing(&options.registry, &b, false).unwrap();
+        assert_eq!(
+            request(&g, VAULT_STATUS, Method::GET, b_headers, "")
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
         task_a.abort();
         task_b.abort();
     }

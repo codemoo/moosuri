@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Button } from "@astryxdesign/core/Button";
 import type {
   ChatPage,
   ChatTurn,
@@ -27,6 +28,8 @@ import PersonalGoogle, {
 import PersonalAdmin from "./PersonalAdmin";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
+import { PersonalChatComposer } from "./PersonalChatComposer";
+import { PersonalWorkspaceChrome, type MemberView } from "./PersonalWorkspaceChrome";
 type SessionView = BaseSessionView & { installation_admin?: boolean };
 export const PREVIEW_DRAFT_KEY = "moosuri.personal-preview-drafts.v1";
 function draftStorage() {
@@ -46,7 +49,7 @@ function Brand() {
   return (
     <span className="preview-brand">
       <img src="/moosuri-icon-192.png" alt="" width="32" height="32" />
-      Moosuri <small>텍스트 미리보기</small>
+      Moosuri
     </span>
   );
 }
@@ -139,19 +142,24 @@ export default function PersonalPreview() {
       }
     }
   }
+  const signedInMember = phase === "ready" && session &&
+    !session.password_change_required && !session.user.must_change_password;
   return (
     <ScopeRegistry.Provider value={scopes}>
-      <div className="preview-shell">
-        <header className="preview-header">
-          <Brand />
-          {session && (
-            <div>
-              <span>{session.user.name}</span>
-              <button onClick={() => void signOut()}>로그아웃</button>
-            </div>
-          )}
-        </header>
-        <main>
+      <div className={`preview-shell ${signedInMember ? "member-signed-in" : "member-auth"}`}>
+        {signedInMember ? (
+          <Workspace
+            key={`${session.user.id}-${epoch}`}
+            session={session}
+            recovery={draftSession}
+            expired={expired}
+            changedSession={signedIn}
+            onSignOut={() => void signOut()}
+          />
+        ) : (
+          <>
+            <header className="preview-header"><Brand /></header>
+            <main>
           {error && (
             <p role="alert" className="preview-error">
               {error}
@@ -186,10 +194,7 @@ export default function PersonalPreview() {
                 }}
               />
             ))}
-          {phase === "ready" &&
-            session &&
-            (session.password_change_required ||
-            session.user.must_change_password ? (
+          {phase === "ready" && session && (
               <Credentials
                 key={`password-${epoch}`}
                 session={session}
@@ -198,17 +203,12 @@ export default function PersonalPreview() {
                   announce();
                 }}
                 expired={expired}
+                onSignOut={() => void signOut()}
               />
-            ) : (
-              <Workspace
-                key={`${session.user.id}-${epoch}`}
-                session={session}
-                recovery={draftSession}
-                expired={expired}
-                changedSession={signedIn}
-              />
-            ))}
-        </main>
+            )}
+            </main>
+          </>
+        )}
       </div>
     </ScopeRegistry.Provider>
   );
@@ -248,10 +248,12 @@ function Credentials({
   session,
   done,
   expired,
+  onSignOut,
 }: {
   session?: SessionView;
   done: (v: SessionView) => void;
   expired?: () => void;
+  onSignOut?: () => void;
 }) {
   const scope = useScope(session?.user.id),
     [email, setEmail] = useState(""),
@@ -297,11 +299,7 @@ function Credentials({
   return (
     <section className="preview-gate">
       <h1>{session ? "임시 비밀번호 변경" : "내 무수리에 로그인"}</h1>
-      <p>
-        {session
-          ? "개인 대화를 시작하기 전에 새 비밀번호를 정해 주세요."
-          : "설치자가 초대한 계정으로 로그인하세요."}
-      </p>
+      {session && <p>개인 대화를 시작하기 전에 새 비밀번호를 정해 주세요.</p>}
       <form onSubmit={(e) => void submit(e)}>
         {!session && (
           <label>
@@ -336,6 +334,7 @@ function Credentials({
           {busy ? "확인 중…" : session ? "비밀번호 변경" : "로그인"}
         </button>
       </form>
+      {onSignOut && <Button variant="ghost" label="로그아웃" onClick={onSignOut} />}
     </section>
   );
 }
@@ -358,11 +357,13 @@ function Workspace({
   recovery,
   expired,
   changedSession,
+  onSignOut,
 }: {
   session: SessionView;
   recovery: ChatDraftSession | null;
   expired: () => void;
   changedSession: (v: SessionView) => void;
+  onSignOut: () => void;
 }) {
   const scope = useScope(session.user.id),
     [threads, setThreads] = useState<ThreadSummary[]>([]),
@@ -370,12 +371,12 @@ function Workspace({
     [memory, setMemory] = useState<ChatMemory>({ drafts: {}, pending: {} }),
     [page, setPage] = useState<ChatPage | null>(null),
     [cap, setCap] = useState<Capability | null>(),
+    [capError, setCapError] = useState(""),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [reading, setReading] = useState(false),
-    [mutating, setMutating] = useState(false),
-    [title, setTitle] = useState("새 텍스트 대화");
-  const [view, setView] = useState<"chat" | "memory" | "mail" | "admin">(() =>
+    [mutating, setMutating] = useState(false);
+  const [view, setView] = useState<MemberView>(() =>
       googleReturn() ? "mail" : "chat",
     ),
     [refresh, setRefresh] = useState(0);
@@ -403,6 +404,10 @@ function Workspace({
   const initialized = useRef(false),
     mutation = useRef(false),
     historyVersion = useRef(0);
+  const chatScroll = useRef<HTMLDivElement>(null);
+  const followTail = useRef(true);
+  const olderScroll = useRef<{ top: number; height: number } | null>(null);
+  const currentPage = page?.thread_id === selected ? page : null;
   const pending = selected ? memory.pending[selected] : undefined,
     draft = memory.drafts[selected ?? "new"] ?? "",
     ready =
@@ -442,6 +447,7 @@ function Workspace({
     let live = true;
     setLoading(true);
     setError("");
+    setCapError("");
     setCap(undefined);
     void scope
       .request<Capability>("/text-preview")
@@ -455,7 +461,7 @@ function Workspace({
           return;
         }
         if (e instanceof ApiFailure && e.status === 401) expired();
-        else setError("대화 가능 상태를 확인하지 못했습니다. 상태를 새로고침해 주세요.");
+        else setCapError("대화 가능 상태를 확인하지 못했습니다. 상태를 새로고침해 주세요.");
       });
     void scope
       .request<ThreadsResponse>("/threads")
@@ -482,8 +488,9 @@ function Workspace({
             result.threads.find((t) => t.id === googleThread.current)?.id ??
               created?.id ??
               restored?.selected ??
-              result.threads[0]?.id ??
-              null,
+              (restored?.memory.drafts.new || restored?.memory.threadCreation
+                ? null
+                : result.threads[0]?.id ?? null),
           );
           initialized.current = true;
         }
@@ -551,6 +558,10 @@ function Workspace({
       );
       if (version !== historyVersion.current || selectedRef.current !== thread)
         return;
+      if (before && chatScroll.current) {
+        const { scrollTop, scrollHeight } = chatScroll.current;
+        olderScroll.current = { top: scrollTop, height: scrollHeight };
+      }
       setPage((current) =>
         before && current?.thread_id === thread
           ? {
@@ -622,6 +633,20 @@ function Workspace({
       if (view === "chat") void mailHistory(selected);
     }
   }, [selected, scope, refresh, view]);
+  useLayoutEffect(() => {
+    followTail.current = true;
+    olderScroll.current = null;
+  }, [selected, view]);
+  useLayoutEffect(() => {
+    const element = chatScroll.current;
+    if (!element) return;
+    if (olderScroll.current) {
+      element.scrollTop = olderScroll.current.top + element.scrollHeight - olderScroll.current.height;
+      olderScroll.current = null;
+    } else if (followTail.current) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [currentPage, pending, googleReads, view]);
   useEffect(() => {
     if (!selected || reading || !page?.turns.some(active)) return;
     const timer = window.setInterval(() => void history(selected), 2000);
@@ -631,7 +656,7 @@ function Workspace({
     setError("");
     const value: PendingThreadCreation = memoryRef.current.threadCreation ?? {
       request_id: crypto.randomUUID(),
-      title: proposedTitle.trim() || "새 텍스트 대화",
+      title: proposedTitle.trim() || "새 대화",
       status: "sending",
     };
     change((m) => ({ ...m, threadCreation: value }));
@@ -661,12 +686,13 @@ function Workspace({
       return null;
     }
   }
-  async function create() {
-    if (mutation.current) return;
+  async function confirmThreadCreation() {
+    const previous = memoryRef.current.threadCreation;
+    if (!previous || mutation.current) return;
     mutation.current = true;
     setMutating(true);
     try {
-      await createThread(title);
+      await createThread(previous.title);
     } finally {
       mutation.current = false;
       setMutating(false);
@@ -679,7 +705,7 @@ function Workspace({
     const old = thread ? memoryRef.current.pending[thread] : undefined;
     const text = memoryRef.current.drafts[thread ?? "new"] ?? "";
     if (old && !replay) return;
-    if (!old && page?.turns.some(active)) return;
+    if (!old && currentPage?.turns.some(active)) return;
     if (!old && (!text.trim() || new TextEncoder().encode(text).length > 8192))
       return;
     const value: PendingSend = old ?? {
@@ -687,6 +713,7 @@ function Workspace({
       text,
       status: "sending",
     };
+    followTail.current = true;
     mutation.current = true;
     setMutating(true);
     if (!thread) {
@@ -817,45 +844,31 @@ function Workspace({
     setAdmin(false);
     setView("chat");
   }
+  function navigate(destination: MemberView) {
+    if (destination === "chat" && view === "admin") setRefresh((value) => value + 1);
+    if (destination === "mail") setOpenInbox(null);
+    setView(destination);
+  }
+  function openThread(id: string | null) {
+    setSelected(id);
+    navigate("chat");
+  }
+  const turns = currentPage?.turns ?? [];
+  const hasActiveTurn = turns.some(active);
+  const optimistic = pending && !turns.some((turn) => turn.run.request_id === pending.request_id);
+  const busy = loading || (selected !== null && reading && !currentPage);
+  const isEmpty = !busy && turns.length === 0 && !pending && googleReads.length === 0;
+  const thread = threads.find((item) => item.id === selected);
+  const heading = view === "chat" ? thread?.title ?? "새 대화"
+    : view === "memory" ? "기억"
+    : view === "mail" ? "메일"
+    : "관리";
   return (
-    <>
-      <nav className="preview-view-nav" aria-label="개인 공간">
-        <button aria-pressed={view === "chat"} onClick={() => {
-          if (view === "admin") setRefresh(value => value + 1);
-          setView("chat");
-        }}>
-          대화
-        </button>
-        <button
-          aria-pressed={view === "memory"}
-          onClick={() => setView("memory")}
-        >
-          기억
-        </button>
-        <button
-          aria-pressed={view === "mail"}
-          onClick={() => {
-            setOpenInbox(null);
-            setView("mail");
-          }}
-        >
-          메일
-        </button>
-        <button
-          disabled={mutating || loading}
-          onClick={() => setRefresh((v) => v + 1)}
-        >
-          상태 새로고침
-        </button>
-        {admin && (
-          <button
-            aria-pressed={view === "admin"}
-            onClick={() => setView("admin")}
-          >
-            관리
-          </button>
-        )}
-      </nav>
+    <PersonalWorkspaceChrome view={view} title={heading} admin={admin} threads={threads}
+      selected={selected} loading={loading} busy={mutating} user={session.user}
+      onNavigate={navigate} onThread={openThread} onNew={() => openThread(null)}
+      onDelete={() => void remove()} onSignOut={onSignOut}>
+      {view !== "chat" && <div className="member-panel">
       {view === "admin" && admin ? (
         <>
           <nav className="preview-view-nav" aria-label="설치 관리">
@@ -907,187 +920,119 @@ function Workspace({
         />
       ) : view === "memory" ? (
         <section className="preview-memory-panel">
-          <p className="preview-memory-note">
-            직접 저장한 기억을 편집하고 수정 이력을 확인할 수 있습니다.
-          </p>
           <PersonalMemories accountId={session.user.id} onExpired={expired} />
         </section>
-      ) : (
-        <div className="preview-workspace">
-          <aside aria-label="대화 목록">
-            <h1>내 대화</h1>
-            <label>
-              새 대화 제목
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                maxLength={200}
-                disabled={mutating || !!memory.threadCreation}
-              />
-            </label>
-            <button onClick={() => void create()} disabled={mutating}>
-              {memory.threadCreation
-                ? "같은 대화 만들기 다시 확인"
-                : "대화 만들기"}
-            </button>
-            <ul>
-              {threads.map((t) => (
-                <li key={t.id}>
-                  <button
-                    aria-current={selected === t.id ? "page" : undefined}
-                    onClick={() => setSelected(t.id)}
-                  >
-                    {t.title}
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {loading && <p role="status">대화 확인 중…</p>}
-          </aside>
-          <section className="preview-conversation" aria-label="텍스트 대화">
-            <div className="preview-capability">
-              <strong>텍스트 미리보기</strong>
-              <p>
-                메일 확인 결과는 이 대화에 별도로 표시되며 모델에 전달되지
-                않습니다. 발송·예약은 지원하지 않습니다.
-              </p>
-              {!loading && cap !== undefined && !ready && (
-                <>
-                  <p role="status">
-                    {admin ? "어시스턴트 엔진의 연결과 설정을 확인해 주세요."
-                      : "지금 답변을 받을 수 없습니다. 관리자에게 문의해 주세요."}
-                  </p>
-                  {admin && <button onClick={() => {
-                    setAdminTab("engine");
-                    setView("admin");
-                  }}>엔진 설정 열기</button>}
-                </>
-              )}
-            </div>
-            {error && (
-              <p role="alert" className="preview-error">
-                {error}
-              </p>
-            )}
-            {selected ? (
-              <>
-                <header className="preview-thread-header">
-                  <h2>
-                    {threads.find((t) => t.id === selected)?.title ?? "대화"}
-                  </h2>
-                  <button disabled={mutating} onClick={() => void remove()}>
-                    대화 삭제
-                  </button>
-                </header>
-                <div className="preview-turns" aria-live="polite">
-                  {page?.next_before && (
-                    <button
-                      disabled={reading}
-                      onClick={() =>
-                        void history(selected, page.next_before ?? undefined)
-                      }
-                    >
-                      이전 메시지
-                    </button>
+      ) : null}
+      </div>}
+      {view === "chat" && (
+        <section className="member-chat" aria-label="대화">
+          <div className="member-chat-scroll" ref={chatScroll} tabIndex={0} aria-label="대화 기록"
+            onScroll={(event) => {
+              const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
+              followTail.current = scrollHeight - scrollTop - clientHeight < 96;
+            }}>
+            <div className={`member-chat-content${isEmpty ? " member-chat-empty" : ""}`}>
+              {(capError || error) && (
+                <div className="member-chat-notice">
+                  {capError && <p role="alert">{capError}</p>}
+                  {error && <p role="alert">{error}</p>}
+                  {(capError || !pending) && (
+                    <Button label="상태 새로고침" variant="ghost"
+                      isDisabled={loading || mutating} onClick={() => setRefresh((v) => v + 1)} />
                   )}
-                  {reading && !page && <p role="status">대화 불러오는 중…</p>}
-                  {page?.turns.map((turn) => (
-                    <article key={turn.run.id}>
-                      <div className="preview-user">
-                        <strong>나</strong>
-                        <p>{turn.user_text}</p>
-                      </div>
-                      <div className="preview-assistant">
-                        <strong>무수리 · 텍스트</strong>
-                        {turn.assistant.map((m) => (
-                          <p key={m.id} className="preview-output">
-                            {m.text}
-                          </p>
-                        ))}
-                        <span className="preview-run-state">
-                          {stateLabel(turn)}
-                        </span>
-                      </div>
-                    </article>
-                  ))}
-                  {mailError && <p role="status">{mailError}</p>}
-                  <GoogleReadHistory reads={googleReads} />
                 </div>
-                {pending && (
-                  <div className="preview-pending" role="status">
-                    <p>
-                      {pending.status === "sending"
-                        ? "답변을 기다리는 중…"
-                        : pending.status === "accepted"
-                          ? "저장된 요청의 답변을 확인하고 있습니다."
-                          : "아직 전송 결과를 확인하지 못했습니다. 새 요청은 만들지 않았습니다."}
-                    </p>
+              )}
+              {!loading && cap !== undefined && !ready && (
+                <div className="member-chat-notice">
+                  <p role="status">{admin
+                    ? "어시스턴트 엔진의 연결과 설정을 확인해 주세요."
+                    : "지금 답변을 받을 수 없습니다. 관리자에게 문의해 주세요."}</p>
+                  {admin && (
+                    <Button label="엔진 설정 열기" variant="ghost" onClick={() => {
+                      setAdminTab("engine");
+                      setView("admin");
+                    }} />
+                  )}
+                </div>
+              )}
+              {busy && <p className="member-chat-status" role="status">대화 불러오는 중…</p>}
+              {isEmpty && (
+                <div className="chat-welcome">
+                  <img src="/moosuri-icon-192.png" width="52" height="52" alt="" />
+                  <h2>{session.user.name.split(" ")[0]}님, 무엇을 도와드릴까요?</h2>
+                </div>
+              )}
+              {!selected && memory.threadCreation?.status === "uncertain" && (
+                <div className="member-chat-notice">
+                  <p role="status">새 대화가 만들어졌는지 확인하지 못했습니다.</p>
+                  <Button label="같은 대화 만들기 다시 확인" variant="ghost"
+                    isDisabled={mutating} onClick={() => void confirmThreadCreation()} />
+                </div>
+              )}
+              {selected && currentPage?.next_before && (
+                <Button className="member-older" label="이전 메시지" variant="ghost" isDisabled={reading}
+                  onClick={() => void history(selected, currentPage.next_before ?? undefined)} />
+              )}
+              <div className="member-chat-turns" aria-live="polite">
+                {turns.map((turn) => (
+                  <article className="member-chat-turn" key={turn.run.id}>
+                    <div className="member-message">
+                      <span className="sr-only">나</span>
+                      <p>{turn.user_text}</p>
+                    </div>
+                    <div className="member-reply">
+                      <span className="sr-only">무수리</span>
+                      {turn.assistant.map((message) => <p key={message.id}>{message.text}</p>)}
+                      {turn.run.state !== "completed" && (
+                        <span className="member-chat-status">{stateLabel(turn)}</span>
+                      )}
+                    </div>
+                  </article>
+                ))}
+                {optimistic && (
+                  <div className="member-message">
+                    <span className="sr-only">나</span>
+                    <p>{pending.text}</p>
+                  </div>
+                )}
+                {selected && pending && (optimistic || pending.status !== "sending") && (
+                  <div className="member-pending">
+                    {optimistic && (
+                      <p className="member-chat-status" role="status">
+                        {pending.status === "uncertain"
+                          ? "아직 전송 결과를 확인하지 못했습니다. 새 요청은 만들지 않았습니다."
+                          : "답변을 기다리는 중…"}
+                      </p>
+                    )}
                     {pending.status !== "sending" && (
-                      <>
-                        <button
-                          disabled={reading || mutating}
-                          onClick={() => void history(selected)}
-                        >
-                          결과 확인
-                        </button>
-                        <button
-                          disabled={mutating}
-                          onClick={() => void send(undefined, true)}
-                        >
-                          동일 요청 다시 확인
-                        </button>
-                      </>
+                      <div className="member-retry-actions">
+                        <Button label="결과 확인" variant="ghost" isDisabled={reading || mutating}
+                          onClick={() => void history(selected)} />
+                        <Button label="동일 요청 다시 확인" variant="ghost" isDisabled={mutating}
+                          onClick={() => void send(undefined, true)} />
+                      </div>
                     )}
                   </div>
                 )}
-              </>
-            ) : (
-              !loading && <h2>내 텍스트 대화를 시작하세요</h2>
-            )}
-            {!loading && (
-              <form className="preview-composer" onSubmit={(e) => void send(e)}>
-                <label htmlFor="preview-message">메시지</label>
-                <textarea
-                  id="preview-message"
-                  value={draft}
-                  onChange={(e) =>
-                    change((m) => ({
-                      ...m,
-                      drafts: {
-                        ...m.drafts,
-                        [selected ?? "new"]: e.target.value,
-                      },
-                    }))
-                  }
-                  disabled={
-                    !ready || loading || !!pending || page?.turns.some(active)
-                  }
-                  maxLength={8192}
-                  rows={4}
-                />
-                {new TextEncoder().encode(draft).length > 8192 && (
-                  <p role="alert">메시지가 너무 깁니다. 내용을 줄여 주세요.</p>
-                )}
-                <button
-                  disabled={
-                    !ready ||
-                    mutating ||
-                    !!pending ||
-                    page?.turns.some(active) ||
-                    !draft.trim() ||
-                    new TextEncoder().encode(draft).length > 8192
-                  }
-                >
-                  보내기
-                </button>
-              </form>
-            )}
-          </section>
-        </div>
+                {mailError && <p className="member-chat-status" role="status">{mailError}</p>}
+                {googleReads.length > 0 && <GoogleReadHistory reads={googleReads} />}
+              </div>
+            </div>
+          </div>
+          {!loading && (
+            <PersonalChatComposer key={selected ?? "new"} draft={draft}
+              disabled={!ready || !!pending || hasActiveTurn} busy={mutating}
+              onDraft={(value) => change((m) => ({
+                ...m, drafts: { ...m.drafts, [selected ?? "new"]: value },
+              }))}
+              onSend={() => void send()} />
+          )}
+        </section>
       )}
-    </>
+    </PersonalWorkspaceChrome>
   );
 }
+
 function stateLabel(turn: ChatTurn) {
   return {
     queued: "대기 중",

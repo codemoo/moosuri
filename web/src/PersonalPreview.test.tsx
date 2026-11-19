@@ -499,71 +499,59 @@ it("keeps a member's draft on an engine refusal and exposes no settings entry", 
   expect(calls.some(call => call.path.startsWith("/personal/admin/"))).toBe(false);
 });
 
-it("lets an installation administrator recover a stale engine choice and assign a bound member after a revision conflict", async () => {
+it("lets the administrator recover and save one installation model after a revision conflict", async () => {
   current = { ...session(), installation_admin: true };
   const path = "/personal/admin/engine";
   const high = { model: "synthetic-model", effort: "high" };
   const low = { ...high, effort: "low" };
-  let memberChoice: typeof high | null = null;
+  let choice = high;
   let revision = 4;
-  let generation = 1;
   let connection = "connection-four";
   let stale = true;
   let enabled = false;
   adminEngine = (request, method, body) => {
-    if (request === "/personal/admin/members")
-      return Response.json({
-        members: [{ account_id: bid, generation, email: "guest@example.test", ready: false, suspended: false }],
-      });
+    if (request === "/personal/admin/members") return Response.json({ members: [] });
+    if (request !== path) return Response.json({ code: "not_found" }, { status: 404 });
     if (method === "POST") {
-      if (request === path + "/member" && generation === 1) {
-        generation++;
-        revision++;
+      revision++;
+      if (connection === "connection-four") {
         connection = "connection-five";
         return Response.json({ code: "conflict" }, { status: 409 });
       }
-      revision++;
-      if (request === path) {
-        enabled = body.enabled;
-        stale = false;
-      } else memberChoice = body.choice;
+      enabled = body.enabled;
+      choice = body.default_choice;
+      stale = false;
     }
     return Response.json({
       configured: true, enabled, revision, connection_revision: connection, kind: "chatgpt",
-      host_default: low, choices: [low, high], default_choice: high, default_stale: stale,
-      members: [{ account_id: bid, generation, choice: memberChoice, stale: false }],
+      host_default: low, choices: [low, high], default_choice: choice, default_stale: stale,
     });
   };
   const user = userEvent.setup();
   mount();
   await user.click(await screen.findByRole("button", { name: "관리" }));
+  const beforeEngine = calls.length;
   await user.click(screen.getByRole("button", { name: "어시스턴트 엔진" }));
-  const installation = within(await screen.findByRole("form", { name: "설치 기본 설정" }));
-  expect(installation.getByRole("status")).toHaveTextContent("엔진 연결이 바뀌었습니다.");
-  await user.click(installation.getByRole("checkbox", { name: "어시스턴트 사용" }));
-  await user.click(installation.getByRole("button", { name: "설치 설정 저장" }));
-  await screen.findByText("엔진 설정을 저장했습니다.");
-  expect(calls.find(call => call.path === path && call.method === "POST")?.body).toEqual({
-    revision: 4, connection_revision: "connection-four", enabled: true, default_choice: high,
-  });
-
-  await user.selectOptions(screen.getByLabelText("회원"), bid);
-  async function assign() {
-    const editor = within(await screen.findByRole("form", { name: "회원 설정" }));
-    await user.selectOptions(editor.getByLabelText("모델"), high.model);
-    await user.selectOptions(editor.getByLabelText("추론 강도"), "high");
-    await user.click(editor.getByRole("button", { name: "회원 설정 저장" }));
+  async function save() {
+    const editor = within(await screen.findByRole("form", { name: "설치 모델 설정" }));
+    expect(editor.getByRole("status")).toHaveTextContent("엔진 연결이 바뀌었습니다.");
+    await user.selectOptions(editor.getByLabelText("추론 강도"), "low");
+    await user.click(editor.getByRole("checkbox", { name: "어시스턴트 사용" }));
+    await user.click(editor.getByRole("button", { name: "설치 설정 저장" }));
   }
-  await assign();
-  expect(await screen.findByRole("alert")).toHaveTextContent("회원 정보가 변경되었습니다.");
-  await assign();
+  await save();
+  expect(await screen.findByRole("alert")).toHaveTextContent("엔진 설정이 변경되었습니다.");
+  await save();
   await screen.findByText("엔진 설정을 저장했습니다.");
-  const writes = calls.filter(call => call.path === path + "/member");
-  expect(writes.map(call => call.body)).toEqual([
-    { revision: 5, connection_revision: "connection-four", account_id: bid, generation: 1, choice: high },
-    { revision: 6, connection_revision: "connection-five", account_id: bid, generation: 2, choice: high },
+  expect(screen.getByText("현재 설정 synthetic-model · low")).toBeInTheDocument();
+  expect(screen.getByText("호출 허용")).toBeInTheDocument();
+  expect(screen.queryByRole("form", { name: "회원 설정" })).not.toBeInTheDocument();
+  const engineCalls = calls.slice(beforeEngine).filter(call => call.path.startsWith("/personal/admin/"));
+  expect(engineCalls.every(call => call.path === path && call.account === aid)).toBe(true);
+  expect(engineCalls.filter(call => call.method === "POST").map(call => call.body)).toEqual([
+    { revision: 4, connection_revision: "connection-four", enabled: true, default_choice: low },
+    { revision: 5, connection_revision: "connection-five", enabled: true, default_choice: low },
   ]);
-  expect(writes.every(call => call.account === aid)).toBe(true);
 });
 it("logs in, replaces a temporary password and sends through the explicit text-only route", async () => {
   current = null;

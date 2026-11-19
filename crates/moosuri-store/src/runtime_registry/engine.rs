@@ -22,13 +22,6 @@ struct Catalog {
     host_default: ModelChoice,
     choices: Vec<ModelChoice>,
 }
-#[derive(Serialize)]
-pub struct MemberChoice {
-    account_id: String,
-    generation: i64,
-    choice: Option<ModelChoice>,
-    stale: bool,
-}
 #[derive(Default, Serialize)]
 pub struct Settings {
     configured: bool,
@@ -40,7 +33,6 @@ pub struct Settings {
     choices: Vec<ModelChoice>,
     default_choice: Option<ModelChoice>,
     default_stale: bool,
-    members: Vec<MemberChoice>,
 }
 fn encode<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|_| StoreError::InvalidInput)
@@ -194,25 +186,6 @@ fn settings(c: &Connection) -> Result<Settings> {
     let Some(s) = current(c)? else {
         return Ok(Settings::default());
     };
-    let mut members = Vec::new();
-    let mut query = c.prepare(
-        "SELECT b.account_id,b.generation,b.choice,coalesce(b.choice_connection!=?1,0)
-         FROM engine_bindings b JOIN allocations a USING(account_id,tenant_id,volume_id,generation)
-         ORDER BY b.account_id",
-    )?;
-    let mut rows = query.query([&s.connection])?;
-    while let Some(r) = rows.next()? {
-        members.push(MemberChoice {
-            account_id: r.get(0)?,
-            generation: r.get(1)?,
-            choice: r
-                .get::<_, Option<String>>(2)?
-                .as_deref()
-                .map(parse)
-                .transpose()?,
-            stale: r.get(3)?,
-        });
-    }
     Ok(Settings {
         configured: true,
         enabled: s.enabled,
@@ -223,7 +196,6 @@ fn settings(c: &Connection) -> Result<Settings> {
         choices: s.catalog.choices,
         default_choice: s.selected,
         default_stale: s.stale,
-        members,
     })
 }
 pub fn read(root: &Path, actor: &AdminSession) -> Result<Settings> {
@@ -240,49 +212,27 @@ pub struct InstallationChange {
     #[serde(deserialize_with = "Option::deserialize")]
     pub default_choice: Option<ModelChoice>,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MemberChange {
-    pub revision: i64,
-    pub connection_revision: Uuid,
-    pub account_id: Uuid,
-    pub generation: i64,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub choice: Option<ModelChoice>,
-}
-pub enum Change {
-    Installation(InstallationChange),
-    Member(MemberChange),
-}
-pub fn change(root: &Path, actor: &AdminSession, change: Change) -> Result<Settings> {
+pub fn change(root: &Path, actor: &AdminSession, change: InstallationChange) -> Result<Settings> {
     let (_lock, mut db) = open(root, false)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     admin::check(&tx, actor)?;
     let s = current(&tx)?.ok_or(StoreError::NotFound)?;
-    let (revision, id, choice) = match &change {
-        Change::Installation(v) => (v.revision, v.connection_revision, &v.default_choice),
-        Change::Member(v) => (v.revision, v.connection_revision, &v.choice),
-    };
-    if revision != s.revision || id.to_string() != s.connection {
+    if change.revision != s.revision || change.connection_revision.to_string() != s.connection {
         return Err(StoreError::Conflict);
     }
-    if choice
+    if change
+        .default_choice
         .as_ref()
         .is_some_and(|c| !s.catalog.choices.contains(c))
     {
         return Err(StoreError::InvalidInput);
     }
-    let raw = choice.as_ref().map(encode).transpose()?;
-    let pin = choice.as_ref().map(|_| &s.connection);
-    match &change {
-        Change::Installation(v)=>{tx.execute("UPDATE engine_settings SET enabled=?1, default_choice=?2,default_connection=?3 WHERE singleton=1",params![v.enabled,raw,pin])?;},
-        Change::Member(v)=>{
-            if tx.execute("UPDATE engine_bindings SET choice=?1,choice_connection=?2 WHERE account_id=?3 AND generation=?4 AND EXISTS(SELECT 1 FROM allocations a WHERE a.account_id=engine_bindings.account_id AND (a.tenant_id,a.volume_id,a.generation)=(engine_bindings.tenant_id,engine_bindings.volume_id,engine_bindings.generation))",params![raw,pin,v.account_id.to_string(),v.generation])?!=1{return Err(StoreError::Conflict)}
-        }
-    }
+    let raw = change.default_choice.as_ref().map(encode).transpose()?;
+    let pin = raw.as_ref().map(|_| &s.connection);
     tx.execute(
-        "UPDATE engine_settings SET revision=revision+1 WHERE singleton=1",
-        [],
+        "UPDATE engine_settings SET revision=revision+1, enabled=?1, default_choice=?2,
+         default_connection=?3 WHERE singleton=1",
+        params![change.enabled, raw, pin],
     )?;
     let out = settings(&tx)?;
     tx.commit()?;
@@ -295,30 +245,21 @@ fn effective(c: &Connection, a: &Allocation) -> Result<Option<MemberModelPolicy>
     if !s.enabled {
         return Err(StoreError::Forbidden);
     }
-    let (choice, stale) = c
-        .query_row(
-            "SELECT choice,coalesce(choice_connection!=?5,0) FROM engine_bindings
-         WHERE account_id=?1 AND tenant_id=?2 AND volume_id=?3 AND generation=?4",
-            params![
-                a.account_id,
-                a.tenant_id,
-                a.volume_id,
-                a.generation,
-                s.connection
-            ],
-            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, bool>(1)?)),
-        )
-        .optional()?
-        .ok_or(StoreError::Forbidden)?;
-    if stale || (choice.is_none() && s.stale) {
+    // Existing registries may still store old member choices in these rows.
+    // The binding now authorizes the caller to use the installation choice.
+    let bound = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM engine_bindings
+         WHERE account_id=?1 AND tenant_id=?2 AND volume_id=?3 AND generation=?4)",
+        params![a.account_id, a.tenant_id, a.volume_id, a.generation],
+        |r| r.get::<_, bool>(0),
+    )?;
+    if !bound {
+        return Err(StoreError::Forbidden);
+    }
+    if s.stale {
         return Err(StoreError::Conflict);
     }
-    let chosen = choice
-        .as_deref()
-        .map(parse)
-        .transpose()?
-        .or(s.selected)
-        .unwrap_or(s.catalog.host_default);
+    let chosen = s.selected.unwrap_or(s.catalog.host_default);
     Ok(Some(MemberModelPolicy {
         connection_revision: s.connection.parse().map_err(|_| StoreError::Corrupt)?,
         model: chosen.model,

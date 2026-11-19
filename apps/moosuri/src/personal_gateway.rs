@@ -2436,13 +2436,19 @@ mod tests {
         publish(engine_id);
         let state = json(request(g, engine_url, Method::GET, admin.clone(), "").await).await;
         assert_eq!(state["configured"], true);
-        let assignment = serde_json::json!({"revision":state["revision"],"connection_revision":engine_id,"account_id":bid,"generation":b.generation,"choice":selected});
+        assert!(state.get("members").is_none());
+        let selection = serde_json::json!({
+            "revision": state["revision"],
+            "connection_revision": engine_id,
+            "enabled": true,
+            "default_choice": selected
+        });
         let submit = |headers, value: serde_json::Value| {
             let g = g.clone();
-            async move { request(&g, member_url, Method::POST, headers, &value.to_string()).await }
+            async move { request(&g, engine_url, Method::POST, headers, &value.to_string()).await }
         };
         assert_eq!(
-            submit(member.clone(), assignment.clone()).await.status(),
+            submit(member.clone(), selection.clone()).await.status(),
             StatusCode::FORBIDDEN
         );
         assert_eq!(
@@ -2451,46 +2457,57 @@ mod tests {
                 .status(),
             StatusCode::FORBIDDEN
         );
-        let mut unsupported = assignment.clone();
-        unsupported["choice"]["effort"] = "unsupported".into();
+        let mut member_selection = selection.clone();
+        member_selection["account_id"] = serde_json::json!(bid);
+        assert_eq!(
+            submit(admin.clone(), member_selection.clone())
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            request(
+                g,
+                member_url,
+                Method::POST,
+                admin.clone(),
+                &member_selection.to_string()
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        let mut unsupported = selection.clone();
+        unsupported["default_choice"]["effort"] = "unsupported".into();
         assert_eq!(
             submit(admin.clone(), unsupported).await.status(),
             StatusCode::BAD_REQUEST
         );
-        let saved = submit(admin.clone(), assignment.clone()).await;
+        let saved = submit(admin.clone(), selection.clone()).await;
         assert_eq!(saved.status(), StatusCode::OK);
         let revision = json(saved).await["revision"].clone();
         assert_eq!(
-            submit(admin.clone(), assignment).await.status(),
+            submit(admin.clone(), selection).await.status(),
             StatusCode::CONFLICT
         );
         publish(engine_id);
-        assert_eq!(
-            engine::member_model_policy(registry, bid)
+        for account in [aid, bid] {
+            let policy = engine::member_model_policy(registry, account)
                 .unwrap()
-                .unwrap()
-                .effort
-                .as_deref(),
-            Some("high")
-        );
-        assert_eq!(
-            engine::member_model_policy(registry, aid)
-                .unwrap()
-                .unwrap()
-                .model,
-            "model-a"
-        );
-        let pause = serde_json::json!({"revision":revision,"connection_revision":engine_id,"enabled":false,"default_choice":null});
-        let paused = request(
-            &g,
-            engine_url,
-            Method::POST,
-            admin.clone(),
-            &pause.to_string(),
-        )
-        .await;
-        assert_eq!(paused.status(), StatusCode::OK);
-        assert!(engine::member_model_policy(registry, bid).is_err());
+                .unwrap();
+            assert_eq!(policy.model, selected.model);
+            assert_eq!(policy.effort, selected.effort);
+        }
+        let pause = serde_json::json!({
+            "revision": revision,
+            "connection_revision": engine_id,
+            "enabled": false,
+            "default_choice": selected
+        });
+        assert_eq!(submit(admin.clone(), pause).await.status(), StatusCode::OK);
+        for account in [aid, bid] {
+            assert!(engine::member_model_policy(registry, account).is_err());
+        }
         let new_connection = Uuid::new_v4();
         publish(new_connection);
         assert!(
@@ -2506,31 +2523,22 @@ mod tests {
         );
         let state = json(request(g, engine_url, Method::GET, admin.clone(), "").await).await;
         assert_eq!(state["enabled"], false);
-        let resume = serde_json::json!({"revision":state["revision"],"connection_revision":new_connection,"enabled":true,"default_choice":selected});
-        let state = json(
-            request(
-                g,
-                engine_url,
-                Method::POST,
-                admin.clone(),
-                &resume.to_string(),
-            )
-            .await,
-        )
-        .await;
-        assert!(
-            engine::member_model_policy(registry, bid).is_err(),
-            "old connection assignment must be reviewed"
-        );
-        let reset = serde_json::json!({"revision":state["revision"],"connection_revision":new_connection,"account_id":bid,"generation":b.generation,"choice":null});
-        assert_eq!(submit(admin.clone(), reset).await.status(), StatusCode::OK);
-        assert_eq!(
-            engine::member_model_policy(registry, bid)
+        assert_eq!(state["default_stale"], true);
+        let resume = serde_json::json!({
+            "revision": state["revision"],
+            "connection_revision": new_connection,
+            "enabled": true,
+            "default_choice": selected
+        });
+        assert_eq!(submit(admin.clone(), resume).await.status(), StatusCode::OK);
+        for account in [aid, bid] {
+            let policy = engine::member_model_policy(registry, account)
                 .unwrap()
-                .unwrap()
-                .model,
-            "model-b"
-        );
+                .unwrap();
+            assert_eq!(policy.connection_revision, new_connection);
+            assert_eq!(policy.model, selected.model);
+            assert_eq!(policy.effort, selected.effort);
+        }
     }
     #[tokio::test]
     async fn private_member_session_and_host_role_control_web_admin_even_after_demotion() {

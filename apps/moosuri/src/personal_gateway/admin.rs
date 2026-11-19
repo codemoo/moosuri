@@ -60,7 +60,7 @@ struct Invite {
 enum Operation {
     List,
     Engine,
-    Configure(engine::Change),
+    Configure(engine::InstallationChange),
     Change(ChangeRequest),
     Invite(Invite),
 }
@@ -74,7 +74,6 @@ pub(super) fn routes() -> Router<Gateway> {
             "/api/v1/personal/admin/engine",
             get(endpoint).post(endpoint),
         )
-        .route("/api/v1/personal/admin/engine/member", post(endpoint))
         .route("/api/v1/personal/admin/members", get(endpoint))
         .route("/api/v1/personal/admin/members/change", post(endpoint))
         .route("/api/v1/personal/admin/invitations", post(endpoint))
@@ -108,12 +107,7 @@ async fn endpoint(
             match uri.path() {
                 "/api/v1/personal/admin/invitations" => Operation::Invite(decode(&body)?),
                 "/api/v1/personal/admin/members/change" => Operation::Change(decode(&body)?),
-                "/api/v1/personal/admin/engine" => {
-                    Operation::Configure(engine::Change::Installation(decode(&body)?))
-                }
-                "/api/v1/personal/admin/engine/member" => {
-                    Operation::Configure(engine::Change::Member(decode(&body)?))
-                }
+                "/api/v1/personal/admin/engine" => Operation::Configure(decode(&body)?),
                 _ => return Err(StatusCode::NOT_FOUND),
             }
         } else {

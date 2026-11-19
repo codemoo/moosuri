@@ -484,6 +484,78 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
 }
 
 #[test]
+fn installation_engine_choice_ignores_existing_member_overrides() {
+    use crate::runtime_registry::engine::{self, InstallationChange, ModelChoice};
+    let directory = root();
+    let registry = directory.path();
+    let (admin, view) = bootstrap_a(registry);
+    let member = allocate(registry, "b@example.test");
+    let unbound = allocate(registry, "c@example.test");
+    let session = checked_session(registry, &admin, &view).unwrap();
+    let accounts = [&admin, &member].map(|allocation| allocation.account_id.parse().unwrap());
+    let connection_revision = Uuid::new_v4();
+    let host = ModelChoice {
+        model: "host-model".into(),
+        effort: None,
+    };
+    let selected = ModelChoice {
+        model: "installation-model".into(),
+        effort: Some("high".into()),
+    };
+    engine::publish_models(
+        registry,
+        connection_revision,
+        moosuri_core::ProviderKind::OpenAi,
+        &host,
+        &[host.clone(), selected.clone()],
+        &accounts,
+    )
+    .unwrap();
+    {
+        let (_lock, c) = open(registry, false).unwrap();
+        let legacy_choice = serde_json::to_string(&host).unwrap();
+        for (account, previous_connection) in accounts
+            .into_iter()
+            .zip([connection_revision, Uuid::new_v4()])
+        {
+            c.execute(
+                "UPDATE engine_bindings SET choice=?1,choice_connection=?2 WHERE account_id=?3",
+                params![
+                    legacy_choice,
+                    previous_connection.to_string(),
+                    account.to_string()
+                ],
+            )
+            .unwrap();
+        }
+    }
+    let settings = serde_json::to_value(engine::read(registry, &session).unwrap()).unwrap();
+    assert!(settings.get("members").is_none());
+    engine::change(
+        registry,
+        &session,
+        InstallationChange {
+            revision: settings["revision"].as_i64().unwrap(),
+            connection_revision,
+            enabled: true,
+            default_choice: Some(selected.clone()),
+        },
+    )
+    .unwrap();
+    for account in accounts {
+        let actual = engine::member_model_policy(registry, account)
+            .unwrap()
+            .unwrap();
+        assert_eq!(actual.model, selected.model);
+        assert_eq!(actual.effort, selected.effort);
+    }
+    assert!(matches!(
+        engine::member_model_policy(registry, unbound.account_id.parse().unwrap()),
+        Err(StoreError::Forbidden)
+    ));
+}
+
+#[test]
 fn concurrent_first_setup_has_one_identity_and_retries_preserve_it() {
     let root = root();
     let ids = [Uuid::new_v4(), Uuid::new_v4()];

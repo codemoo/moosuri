@@ -31,12 +31,13 @@ The installation SHALL supply read-only shared modules and model availability, a
 - **AND** an unavailable worker leaves a fresh budget untouched and a duplicate request can still retrieve its original receipt
 - **AND** the upstream credential and CLI authentication environment remain on the host
 
-#### Scenario: Administrator assigns inference to a member
-- **WHEN** a current installation administrator assigns an available model and reasoning effort to a member or changes the installation default
-- **THEN** that member’s next new model call uses the assigned pair or inherits the installation default
+#### Scenario: Administrator selects the installation model and reasoning effort
+- **WHEN** a current installation administrator selects an available model and reasoning effort or selects the host default
+- **THEN** newly admitted model calls from every bound member and workload use the same installation choice
 - **AND** the broker checks the effective pair and the current account under the same lock as dispatch admission
 - **AND** a paused engine admits no new inference and stale administrator edits are rejected
-- **AND** a member cannot change the assignment or supply a different choice through the web or the model socket
+- **AND** prior member choices have no effect on the current installation and the gateway accepts only installation-wide settings
+- **AND** a member cannot choose a different pair through the web or the model socket
 
 #### Scenario: Rotate the installation model credential
 - **WHEN** two members use the same provider and its installation credential rotates

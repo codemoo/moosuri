@@ -355,13 +355,12 @@ async fn worker_acknowledgement_precedes_one_durable_dispatch_and_epoch_recheck(
         engine::change(
             &options.registry,
             &actor,
-            engine::Change::Member(engine::MemberChange {
+            engine::InstallationChange {
                 revision: settings_revision(&options, &actor),
                 connection_revision: config.connection_revision,
-                account_id: binding.account_id,
-                generation: binding.generation,
-                choice: Some(config.models[0].clone()),
-            }),
+                enabled: true,
+                default_choice: Some(config.models[0].clone()),
+            },
         )
         .unwrap();
         worker_send(&mut stream, json!(true)).await;

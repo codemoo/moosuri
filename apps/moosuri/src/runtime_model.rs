@@ -1295,7 +1295,7 @@ mod tests {
             .unwrap()
     }
     #[tokio::test]
-    async fn member_policy_reaches_local_provider_and_mismatch_cannot_dispatch() {
+    async fn installation_policy_reaches_upstream_for_both_members() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let (url, provider, upstream) = upstream().await;
@@ -1331,13 +1331,12 @@ mod tests {
         engine::change(
             &options.registry,
             &operator,
-            engine::Change::Member(engine::MemberChange {
+            engine::InstallationChange {
                 revision: settings_revision(&options, &operator),
                 connection_revision: config.connection_revision,
-                account_id: member.account_id,
-                generation: member.generation,
-                choice: Some(choice.clone()),
-            }),
+                enabled: true,
+                default_choice: Some(choice.clone()),
+            },
         )
         .unwrap();
         let selection = |b: &Binding| {
@@ -1351,11 +1350,11 @@ mod tests {
                 },
             )
         };
-        assert_eq!(selection(member).model, Some(choice.model.clone()));
-        assert_eq!(
-            selection(other).model.as_deref(),
-            Some(config.model.as_str())
-        );
+        for binding in [member, other] {
+            let selected = selection(binding);
+            assert_eq!(selected.model.as_deref(), Some(choice.model.as_str()));
+            assert_eq!(selected.effort, choice.effort);
+        }
         let mut previously_settled: Request = serde_json::from_slice(&prior).unwrap();
         let old_epoch = selection(member).selection_epoch.unwrap();
         previously_settled.selection_epoch = Some(old_epoch);
@@ -1368,14 +1367,12 @@ mod tests {
             broker.call(member, request(member)).await.state,
             "model_selection_changed"
         );
-        let mut unauthorized = request(other);
-        unauthorized.model = choice.model.clone();
         assert_eq!(
-            broker.call(other, unauthorized).await.state,
+            broker.call(other, request(other)).await.state,
             "model_selection_changed"
         );
         let mut authorized = request(member);
-        authorized.model = choice.model;
+        authorized.model = choice.model.clone();
         let mut forged =
             serde_json::from_slice::<Request>(&serde_json::to_vec(&authorized).unwrap()).unwrap();
         forged.effort = Some("high".into());
@@ -1384,7 +1381,9 @@ mod tests {
             "model_selection_changed"
         );
         assert_eq!(broker.call(member, authorized).await.state, "settled");
-        assert_eq!(broker.call(other, request(other)).await.state, "settled");
+        let mut authorized = request(other);
+        authorized.model = choice.model;
+        assert_eq!(broker.call(other, authorized).await.state, "settled");
         let stale = selection(other).selection_epoch.unwrap();
         use runtime_registry::admin;
         for change in [admin::Change::Suspend, admin::Change::Resume] {
@@ -1419,7 +1418,7 @@ mod tests {
         stale_call.selection_epoch = Some(stale);
         assert_eq!(broker.call(other, stale_call).await.state, "account_fenced");
         assert_eq!(provider.count.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.alternative_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.alternative_calls.load(Ordering::SeqCst), 2);
         upstream.abort();
     }
     fn select_binding(options: &Options, binding: &Binding) {

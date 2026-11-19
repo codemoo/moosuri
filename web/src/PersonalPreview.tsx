@@ -160,52 +160,52 @@ export default function PersonalPreview() {
           <>
             <header className="preview-header"><Brand /></header>
             <main>
-          {error && (
-            <p role="alert" className="preview-error">
-              {error}
-            </p>
-          )}
-          {phase === "boot" && (
-            <Boot
-              key={`boot-${epoch}`}
-              ready={signedIn}
-              login={() => setPhase("login")}
-              failed={(e) => {
-                setError(e);
-                setPhase("login");
-              }}
-            />
-          )}
-          {phase === "logout" && <p role="status">로그아웃 확인 중…</p>}
-          {phase === "login" &&
-            (logout.current ? (
-              <section className="preview-gate">
-                <h1>로그아웃 확인</h1>
-                <button onClick={() => void signOut()}>
-                  로그아웃 다시 확인
-                </button>
-              </section>
-            ) : (
-              <Credentials
-                key={`login-${epoch}`}
-                done={(v) => {
-                  signedIn(v);
-                  announce();
-                }}
-              />
-            ))}
-          {phase === "ready" && session && (
-              <Credentials
-                key={`password-${epoch}`}
-                session={session}
-                done={(v) => {
-                  signedIn(v);
-                  announce();
-                }}
-                expired={expired}
-                onSignOut={() => void signOut()}
-              />
-            )}
+              {error && (
+                <p role="alert" className="preview-error">
+                  {error}
+                </p>
+              )}
+              {phase === "boot" && (
+                <Boot
+                  key={`boot-${epoch}`}
+                  ready={signedIn}
+                  login={() => setPhase("login")}
+                  failed={(e) => {
+                    setError(e);
+                    setPhase("login");
+                  }}
+                />
+              )}
+              {phase === "logout" && <p role="status">로그아웃 확인 중…</p>}
+              {phase === "login" &&
+                (logout.current ? (
+                  <section className="preview-gate">
+                    <h1>로그아웃 확인</h1>
+                    <button onClick={() => void signOut()}>
+                      로그아웃 다시 확인
+                    </button>
+                  </section>
+                ) : (
+                  <Credentials
+                    key={`login-${epoch}`}
+                    done={(v) => {
+                      signedIn(v);
+                      announce();
+                    }}
+                  />
+                ))}
+              {phase === "ready" && session && (
+                  <Credentials
+                    key={`password-${epoch}`}
+                    session={session}
+                    done={(v) => {
+                      signedIn(v);
+                      announce();
+                    }}
+                    expired={expired}
+                    onSignOut={() => void signOut()}
+                  />
+                )}
             </main>
           </>
         )}
@@ -648,6 +648,15 @@ function Workspace({
     }
   }, [currentPage, pending, googleReads, view]);
   useEffect(() => {
+    const element = chatScroll.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const resize = new ResizeObserver(() => {
+      if (followTail.current) element.scrollTop = element.scrollHeight;
+    });
+    resize.observe(element);
+    return () => resize.disconnect();
+  }, [view]);
+  useEffect(() => {
     if (!selected || reading || !page?.turns.some(active)) return;
     const timer = window.setInterval(() => void history(selected), 2000);
     return () => window.clearInterval(timer);
@@ -868,62 +877,64 @@ function Workspace({
       selected={selected} loading={loading} busy={mutating} user={session.user}
       onNavigate={navigate} onThread={openThread} onNew={() => openThread(null)}
       onDelete={() => void remove()} onSignOut={onSignOut}>
-      {view !== "chat" && <div className="member-panel">
-      {view === "admin" && admin ? (
-        <>
-          <nav className="preview-view-nav" aria-label="설치 관리">
-            <button aria-pressed={adminTab === "members"} onClick={() => setAdminTab("members")}>회원 관리</button>
-            <button aria-pressed={adminTab === "engine"} onClick={() => setAdminTab("engine")}>어시스턴트 엔진</button>
-          </nav>
-          {adminTab === "members" ? (
-            <PersonalAdmin account={session.user.id} expired={expired} unavailable={leaveManagement} />
-          ) : (
-            <PersonalEngineSettings account={session.user.id} expired={expired} unavailable={leaveManagement} />
-          )}
-        </>
-      ) : view === "mail" ? (
-        <PersonalGoogle
-          session={session}
-          expired={expired}
-          readIntent={
-            openInbox
-              ? {
-                  thread_id: openInbox.thread_id,
-                  request_id: openInbox.request_id,
+      {view !== "chat" && (
+        <div className="member-panel">
+          {view === "admin" && admin ? (
+            <>
+              <nav className="preview-view-nav" aria-label="설치 관리">
+                <button aria-pressed={adminTab === "members"} onClick={() => setAdminTab("members")}>회원 관리</button>
+                <button aria-pressed={adminTab === "engine"} onClick={() => setAdminTab("engine")}>어시스턴트 엔진</button>
+              </nav>
+              {adminTab === "members" ? (
+                <PersonalAdmin account={session.user.id} expired={expired} unavailable={leaveManagement} />
+              ) : (
+                <PersonalEngineSettings account={session.user.id} expired={expired} unavailable={leaveManagement} />
+              )}
+            </>
+          ) : view === "mail" ? (
+            <PersonalGoogle
+              session={session}
+              expired={expired}
+              readIntent={
+                openInbox
+                  ? {
+                      thread_id: openInbox.thread_id,
+                      request_id: openInbox.request_id,
+                    }
+                  : null
+              }
+              readDraft={openInbox?.draft}
+              returned={(intent, uncertain, draftText) => {
+                if (
+                  googleIntent.current?.thread_id === intent.thread_id &&
+                  googleIntent.current?.request_id === intent.request_id &&
+                  typeof draftText === "string"
+                ) {
+                  completedGoogle.current = {
+                    intent,
+                    text: draftText,
+                    verified: !uncertain,
+                  };
+                  if (!uncertain) change(clearCompletedGoogleDraft);
                 }
-              : null
-          }
-          readDraft={openInbox?.draft}
-          returned={(intent, uncertain, draftText) => {
-            if (
-              googleIntent.current?.thread_id === intent.thread_id &&
-              googleIntent.current?.request_id === intent.request_id &&
-              typeof draftText === "string"
-            ) {
-              completedGoogle.current = {
-                intent,
-                text: draftText,
-                verified: !uncertain,
-              };
-              if (!uncertain) change(clearCompletedGoogleDraft);
-            }
-            googleThread.current = intent.thread_id;
-            setSelected(intent.thread_id);
-            setOpenInbox(null);
-            setView("chat");
-            setRefresh((v) => v + 1);
-            if (uncertain)
-              setError(
-                "저장된 메일 조회 결과만 확인합니다. 자동으로 다시 읽지 않았습니다.",
-              );
-          }}
-        />
-      ) : view === "memory" ? (
-        <section className="preview-memory-panel">
-          <PersonalMemories accountId={session.user.id} onExpired={expired} />
-        </section>
-      ) : null}
-      </div>}
+                googleThread.current = intent.thread_id;
+                setSelected(intent.thread_id);
+                setOpenInbox(null);
+                setView("chat");
+                setRefresh((v) => v + 1);
+                if (uncertain)
+                  setError(
+                    "저장된 메일 조회 결과만 확인합니다. 자동으로 다시 읽지 않았습니다.",
+                  );
+              }}
+            />
+          ) : view === "memory" ? (
+            <section className="preview-memory-panel">
+              <PersonalMemories accountId={session.user.id} onExpired={expired} />
+            </section>
+          ) : null}
+        </div>
+      )}
       {view === "chat" && (
         <section className="member-chat" aria-label="대화">
           <div className="member-chat-scroll" ref={chatScroll} tabIndex={0} aria-label="대화 기록"

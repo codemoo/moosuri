@@ -247,8 +247,9 @@
   background: var(--accent);
   color: var(--accent-ink);
 }
-.member-composer-input .member-composer-send:hover:enabled,
-.member-drawer-scroll .member-drawer-new:hover:enabled {
+.member-composer-input .member-composer-send[aria-disabled="true"] { opacity: 0.55; }
+.member-composer-input .member-composer-send:not([aria-disabled="true"]):hover,
+.member-drawer-scroll .member-drawer-new:not([aria-disabled="true"]):hover {
   background: color-mix(in srgb, var(--accent) 84%, white);
 }
 .member-composer > p { margin-top: 6px; font-size: 13px; color: var(--danger-ink); }

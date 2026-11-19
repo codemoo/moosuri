@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, render, screen, waitFor, cleanup, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, cleanup, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import PersonalPreview, { PREVIEW_DRAFT_KEY } from "./PersonalPreview";
@@ -249,6 +249,10 @@ function mount() {
 async function composer() {
   return await screen.findByRole("textbox", { name: "메시지" });
 }
+async function openDrawer(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "대화 및 설정" }));
+  return within(await screen.findByRole("dialog", { name: "대화 및 설정" }));
+}
 
 it("keeps a member's draft on an engine refusal and exposes no settings entry", async () => {
   previewRefused = true;
@@ -261,7 +265,7 @@ it("keeps a member's draft on an engine refusal and exposes no settings entry", 
   await user.click(screen.getByRole("button", { name: "보내기" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("입력을 유지했습니다.");
   expect(draft).toHaveValue("A personal request");
-  expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "보내기" })).toHaveAttribute("aria-disabled", "true");
   expect(screen.queryByRole("button", { name: "관리" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "엔진 설정 열기" })).not.toBeInTheDocument();
   expect(screen.queryByText(/synthetic-admin-model|synthetic-effort/)).not.toBeInTheDocument();
@@ -350,9 +354,7 @@ it("logs in, replaces a temporary password and sends through the explicit text-o
   await screen.findByRole("heading", { name: "임시 비밀번호 변경" });
   await user.type(screen.getByLabelText("새 비밀번호"), "Changed-password-42");
   await user.click(screen.getByRole("button", { name: "비밀번호 변경" }));
-  await screen.findByRole("heading", { name: "내 대화" });
-  expect(screen.getByText(/모델에 전달되지 않습니다/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "대화 만들기" }));
+  await screen.findByRole("heading", { name: "Member님, 무엇을 도와드릴까요?" });
   const input = await composer();
   await user.type(input, "Explain a queue");
   await user.click(screen.getByRole("button", { name: "보내기" }));
@@ -430,7 +432,8 @@ it("logout fences an in-flight response and its saved draft before another accou
   await user.type(await composer(), "PRIVATE A request");
   await user.click(screen.getByRole("button", { name: "보내기" }));
   await waitFor(() => expect(completeSend).not.toBeNull());
-  await user.click(screen.getByRole("button", { name: "로그아웃" }));
+  const drawer = await openDrawer(user);
+  await user.click(drawer.getByRole("button", { name: "로그아웃" }));
   await screen.findByRole("heading", { name: "내 무수리에 로그인" });
   expect(sessionStorage.getItem(PREVIEW_DRAFT_KEY)).toBeNull();
   const result = paid.values().next().value;
@@ -480,8 +483,9 @@ it("keeps private history visible when the preview is disabled and deletes only 
     screen.getByText("응답 확인 불가 · 자동 재시도 없음"),
   ).toBeInTheDocument();
   expect(await composer()).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "대화 삭제" }));
-  await screen.findByRole("heading", { name: "내 텍스트 대화를 시작하세요" });
+  const drawer = await openDrawer(user);
+  await user.click(drawer.getByRole("button", { name: "대화 삭제" }));
+  await screen.findByRole("heading", { name: "Member님, 무엇을 도와드릴까요?" });
   expect(
     calls
       .filter((c) => c.method === "DELETE")
@@ -734,4 +738,42 @@ it("opens a saved conversation while model discovery stalls and keeps it when di
     await screen.findByText("대화 가능 상태를 확인하지 못했습니다. 상태를 새로고침해 주세요."),
   ).toBeInTheDocument();
   expect(screen.getByText("Existing conversation")).toBeInTheDocument();
+});
+
+it("restores focus when choosing history and keeps the previous thread's draft", async () => {
+  const newThread = { id: bid, title: "Another conversation", created_at: 1, updated_at: 1 };
+  threads.push(newThread);
+  const user = userEvent.setup();
+  mount();
+  const editor = await composer();
+  await waitFor(() => expect(editor).toBeEnabled());
+  await user.type(editor, "Draft in the first conversation");
+
+  let drawer = await openDrawer(user);
+  await user.click(drawer.getByRole("button", { name: newThread.title }));
+  const trigger = screen.getByRole("button", { name: "대화 및 설정" });
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
+  expect(trigger).toHaveFocus();
+  expect(await composer()).toHaveValue("");
+
+  drawer = await openDrawer(user);
+  await user.click(drawer.getByRole("button", { name: "A private thread" }));
+  expect(await composer()).toHaveValue("Draft in the first conversation");
+});
+
+it("does not submit an Enter that completes Korean composition", async () => {
+  const user = userEvent.setup();
+  mount();
+  const editor = await composer();
+  await waitFor(() => expect(editor).toBeEnabled());
+  await user.type(editor, "한글 입력");
+  fireEvent.compositionStart(editor);
+  fireEvent.keyDown(editor, { key: "Enter" });
+  fireEvent.compositionEnd(editor);
+  expect(paid.size).toBe(0);
+
+  await user.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(paid.size).toBe(0);
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(paid.size).toBe(1));
 });

@@ -93,7 +93,7 @@ export function PersonalWorkspaceChrome({
         ))}
       </nav>
       <header className="member-topbar">
-        <button type="button" className="member-switcher" aria-label="대화 및 설정"
+        <button type="button" className="member-switcher" aria-label="대화 목록"
           aria-haspopup="dialog" aria-expanded={drawer} aria-controls={drawer ? drawerId : undefined}
           onClick={event => { event.currentTarget.focus({ preventScroll: true }); setDrawer(true); }}>
           <Icon icon="menu" size="sm" color="inherit" /><span className="member-switcher-name">Moosuri</span>
@@ -108,7 +108,7 @@ export function PersonalWorkspaceChrome({
         </>}
       </header>
       <main className="member-body">{children}</main>
-      <Dialog isOpen={drawer} id={drawerId} aria-label="대화 및 설정" padding={0}
+      <Dialog isOpen={drawer} id={drawerId} aria-label="대화 목록" padding={0}
         className="member-drawer" width={360} maxHeight="100%"
         position={{start: 0, top: 0, bottom: 0}} onOpenChange={toggleDrawer}>
         <div className="member-drawer-layout">

@@ -276,8 +276,8 @@ async function composer() {
   return await screen.findByRole("textbox", { name: "메시지" });
 }
 async function openDrawer(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "대화 및 설정" }));
-  return within(await screen.findByRole("dialog", { name: "대화 및 설정" }));
+  await user.click(screen.getByRole("button", { name: "대화 목록" }));
+  return within(await screen.findByRole("dialog", { name: "대화 목록" }));
 }
 
 it("routes a browser request and guidance into one run and resumes the viewed tab with an idempotent receipt", async () => {
@@ -1147,7 +1147,7 @@ it("restores focus when choosing history and keeps the previous thread's draft",
 
   let drawer = await openDrawer(user);
   await user.click(drawer.getByRole("button", { name: newThread.title }));
-  const trigger = screen.getByRole("button", { name: "대화 및 설정" });
+  const trigger = screen.getByRole("button", { name: "대화 목록" });
   await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
   expect(trigger).toHaveFocus();
   expect(await composer()).toHaveValue("");

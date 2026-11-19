@@ -6,7 +6,7 @@
 
 | 영역 | 확인한 동작 | 남은 일 |
 | --- | --- | --- |
-| 계정과 개인 데이터 | 로그인·대화·수동 기억·Google 권한은 회원 볼륨에 저장한다. 설치 관리자는 회원을 초대·정지하고 사용량을 확인한다. [관리 안내](../deployment/kiri/admin.md) | 현재 운영은 새 볼륨으로 시작했다. 기존 데이터와 키를 보존하는 전환 및 독립 복구는 일부 합성 자료로만 검증했다. [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md) |
+| 계정과 개인 데이터 | 로그인·대화·수동 기억·Google 권한은 회원 볼륨에 저장한다. 회원은 기억을 여러 페이지에 걸쳐 검색하고 같은 로그인 세션에서 화면을 오가며 초안을 이어 쓸 수 있다. 설치 관리자는 회원을 초대·정지하고 사용량을 확인한다. [관리 안내](../deployment/kiri/admin.md) | 현재 운영은 새 볼륨으로 시작했다. 기존 데이터와 키를 보존하는 전환 및 독립 복구는 일부 합성 자료로만 검증했다. [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md) |
 | 모델 | 설치 관리자만 모델과 추론 강도를 지정한다. 운영 회원 소켓에서 Claude Sonnet 5.5 / medium으로 산술 응답, 다음 문서 선택, 시간표의 출발 시각과 승강장 답변을 확인했다. 게이트웨이·모델 브로커·회원 컨테이너에서 같은 배포본을 확인했다. [엔진 설정](../deployment/kiri/admin.md) | 운영 ChatGPT 연결에는 별도 인증이 필요하다. [구독 연결](../deployment/kiri/subscriptions.md) |
 | 작업 브라우저 | 대화에서 공개 페이지 읽기를 맡기고 같은 탭을 보거나 직접 조작한 후 작업을 재개할 수 있다. Linux Chromium에서 회원 간 화면 격리를 확인했다. [사용 안내](../deployment/kiri/browser.md) | 실물 iOS·Android 재진입과 여러 회원이 동시에 사용할 때의 지연 측정이 남아 있다. |
 | Google Workspace | 관리자가 운영 커넥터 목록과 Google 서비스 상세에서 Cloud 프로젝트·API 5개 준비와 웹 클라이언트 등록을 시작할 수 있다. Linux 격리 시험에서 합성 클라이언트를 등록한 뒤 기존·신규 회원이 각각 별도 Google 동의를 시작했다. [회원별 연결 절차](../deployment/kiri/google.md) | 운영 설치에는 Google 웹 클라이언트가 아직 등록되지 않았다. 실제 Cloud 프로젝트 준비, 첫 회원 동의와 조회는 미검증이다. |

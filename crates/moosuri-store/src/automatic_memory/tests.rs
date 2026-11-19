@@ -55,6 +55,74 @@ fn change(revision: i64, enabled: bool) -> MemoryExtractionChange {
         daily_output_tokens: 4000,
     }
 }
+
+#[tokio::test]
+async fn installation_model_change_fences_extraction_and_new_grants_use_the_new_model() {
+    let _g = TEST_LOCK.lock().await;
+    let d = directory();
+    let store = Store::open(d.path()).unwrap();
+    let u = configured(&store).await;
+    let mut replacement = store
+        .model_settings(&u)
+        .await
+        .unwrap()
+        .installation_default
+        .unwrap();
+    replacement.model = "replacement-model".into();
+    store
+        .record_model_probe(
+            &u,
+            replacement.provider_id.clone(),
+            1,
+            replacement.model.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .record_tool_probe(
+            &u,
+            replacement.provider_id.clone(),
+            1,
+            replacement.model.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+    let c = collection(&store, &u).await;
+    store
+        .set_memory_extraction(&u, c.id.clone(), change(0, true))
+        .await
+        .unwrap();
+    source(&store, &u, &c, "I prefer trains.", None).await;
+    let old = store.claim_memory_extraction().await.unwrap().unwrap();
+    assert_eq!(old.binding.model, "synthetic");
+
+    store
+        .set_default_model(&u, Some(replacement.clone()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.admit_memory_extraction(&old.lease, 1200).await,
+        Err(StoreError::Conflict)
+    ));
+
+    store
+        .set_memory_extraction(&u, c.id.clone(), change(1, true))
+        .await
+        .unwrap();
+    let c = updated_collection(&store, &u, &c.id).await;
+    source(&store, &u, &c, "I travel on Fridays.", None).await;
+    let current = store.claim_memory_extraction().await.unwrap().unwrap();
+    assert_eq!(current.binding.model, replacement.model);
+    assert!(
+        store
+            .admit_memory_extraction(&current.lease, 1200)
+            .await
+            .unwrap()
+    );
+}
+
 async fn collection(store: &Store, u: &UserContext) -> KnowledgeCollection {
     store
         .create_collection(u, "Synthetic statements".into(), Uuid::new_v4().to_string())
@@ -851,6 +919,7 @@ async fn personal_compatible_grants_pin_owner_destination_and_fence_revoked_work
     let u = additional_admin(&store, "extraction-owner@example.test")
         .await
         .user;
+    store.set_default_model(&admin, None).await.unwrap();
     let other = member(&store, &admin, "extraction-other@example.test")
         .await
         .user;
@@ -932,8 +1001,8 @@ async fn personal_compatible_grants_pin_owner_destination_and_fence_revoked_work
         })
         .await
         .unwrap();
-    // The opted-in grant keeps its original private binding after a preference
-    // change; an available installation default cannot replace that grant.
+    // With no installation default, the opted-in grant keeps its private pin
+    // after the owner changes the model used for new chat runs.
     store.set_model_preference(&u, None).await.unwrap();
     let first = source(&store, &u, &c, "I prefer trains.", None).await;
     let claim = store.claim_memory_extraction().await.unwrap().unwrap();
@@ -1076,6 +1145,7 @@ async fn enable_requires_verified_function_tools_without_minting_a_grant() {
         .record_claude_probe(&u, claude, "claude-fixture".into())
         .await
         .unwrap();
+    store.set_default_model(&u, None).await.unwrap();
     store
         .set_model_preference(
             &u,
@@ -1104,12 +1174,12 @@ async fn enable_requires_verified_function_tools_without_minting_a_grant() {
 }
 
 #[tokio::test]
-async fn subscription_extraction_freezes_original_owner_proof_and_never_falls_back_to_shared_default()
- {
+async fn subscription_extraction_freezes_original_owner_proof() {
     let _g = TEST_LOCK.lock().await;
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
     let u = configured(&store).await;
+    store.set_default_model(&u, None).await.unwrap();
     for claude in [false, true] {
         let choice = if claude {
             let reference = store

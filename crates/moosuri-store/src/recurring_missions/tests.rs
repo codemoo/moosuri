@@ -71,6 +71,65 @@ async fn due(s: &Store, t: i64) -> u32 {
     s.enqueue_scheduled_reminders_at(t).await.unwrap();
     s.poll_recurring_missions_at(t).await.unwrap()
 }
+
+#[tokio::test]
+async fn new_missions_use_the_installation_choice_and_old_schedule_pins_pause() {
+    let _g = TEST_LOCK.lock().await;
+    let (_d, store, u) = setup().await;
+    let mut replacement = store
+        .model_settings(&u)
+        .await
+        .unwrap()
+        .installation_default
+        .unwrap();
+    replacement.model = "replacement-model".into();
+    store
+        .record_model_probe(
+            &u,
+            replacement.provider_id.clone(),
+            1,
+            replacement.model.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .record_tool_probe(
+            &u,
+            replacement.provider_id.clone(),
+            1,
+            replacement.model.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+    let at = now().unwrap() + 60;
+    let old = store.create_recurring_mission(&u, input(at)).await.unwrap();
+    store
+        .set_default_model(&u, Some(replacement.clone()))
+        .await
+        .unwrap();
+
+    let one_off = store.create_mission(&u, input(at).template).await.unwrap();
+    let claim = store.claim_agent_run().await.unwrap().unwrap();
+    assert_eq!(claim.binding.model, replacement.model);
+    store.delete_mission(&u, one_off.id).await.unwrap();
+
+    let current = store.create_recurring_mission(&u, input(at)).await.unwrap();
+    assert_eq!(current.model.model, replacement.model);
+    assert_eq!(due(&store, at).await, 1);
+    let old = store
+        .recurring_missions(&u)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|recurring| recurring.schedule.id == old.schedule.id)
+        .unwrap();
+    assert_eq!(old.schedule.state, "paused");
+    let occurrence = store.claim_agent_run().await.unwrap().unwrap();
+    assert_eq!(occurrence.binding.model, replacement.model);
+}
+
 async fn exact(s: &Store, call_id: &str) -> String {
     let claim = s.claim_agent_run().await.unwrap().unwrap();
     let ctx = s.agent_context(&claim.lease).await.unwrap();

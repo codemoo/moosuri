@@ -13,7 +13,7 @@ Google 로그인, 동의, 클라이언트 파일 처리는 공식 Google 탭과 
 
 ## Linux 호스트에서 회원 자동 등록 켜기
 
-Kiri 운영자는 게이트웨이·회원 이미지·수명주기·GWS 릴레이를 호환되는 버전으로 배포한다. 수명주기 JSON의 `public_origin`을 게이트웨이의 정확한 HTTPS origin과 일치시키고 `google_sockets_root`를 GWS 릴레이의 전용 소켓 디렉터리로 지정한다. GWS 릴레이를 같은 레지스트리와 같은 수명주기 JSON으로 실행한다. [systemd 예시](lifecycle/moosuri-kiri-gws.service) · [수명주기 설정](lifecycle/README.md)
+Kiri 운영자는 게이트웨이·회원 이미지·수명주기·GWS 릴레이와 같은 설정 파일을 읽는 브라우저 릴레이를 함께 업그레이드한다. 이전 브라우저 릴레이는 새 설정 키를 읽으면 종료되므로 회원 트래픽을 열기 전에 사용 중인 릴레이의 소켓까지 확인한다. 수명주기 JSON의 `public_origin`을 게이트웨이의 정확한 HTTPS origin과 일치시키고 `google_sockets_root`를 GWS 릴레이의 전용 소켓 디렉터리로 지정한다. GWS 릴레이를 같은 레지스트리와 같은 수명주기 JSON으로 실행한다. [systemd 예시](lifecycle/moosuri-kiri-gws.service) · [수명주기 설정](lifecycle/README.md)
 
 릴레이가 기존 회원과 새로 초대한 회원의 소켓을 준비한다. 활성화된 회원 컨테이너는 자기 소켓에서 등록을 받아 개인 볼륨에 적용한다. 기존 컨테이너에 GWS 마운트가 없다면 프로필과 이미지를 함께 업그레이드한다. 기존 수동 등록과 새 클라이언트가 다르면 그 회원의 기존 등록을 보존한다. 재기동 때에도 회원의 OAuth 동의와 갱신 토큰은 자기 볼륨에 남는다. 설치 등록 완료는 Google 실계정의 동의나 API 조회 성공과 구별한다.
 

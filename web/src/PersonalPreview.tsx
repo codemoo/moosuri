@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import type {
   ChatPage,
@@ -29,7 +29,6 @@ import { clearWorkspaceGoogle, workspaceGoogleReturn } from "./personal-google-w
 import { PersonalConnections } from "./PersonalConnections";
 import PersonalAdmin from "./PersonalAdmin";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
-import { PersonalGoogleSetup } from "./PersonalGoogleSetup";
 import { PersonalMemories } from "./PersonalMemories";
 import { PersonalChatComposer } from "./PersonalChatComposer";
 import { PersonalWorkspaceChrome, type MemberView } from "./PersonalWorkspaceChrome";
@@ -389,7 +388,8 @@ function Workspace({
     ),
     [refresh, setRefresh] = useState(0);
   const [admin, setAdmin] = useState(session.installation_admin === true);
-  const [adminTab, setAdminTab] = useState<"members" | "engine" | "google">("members");
+  const onAdminUnavailable = useCallback(() => setAdmin(false), []);
+  const [adminTab, setAdminTab] = useState<"members" | "engine">("members");
   const [watchThread, setWatchThread] = useState<string | null>(null);
   const [browserChoice, setBrowserChoice] = useState<{
     thread: string | null; mode: "chat" | "start" | "guide";
@@ -976,23 +976,17 @@ function Workspace({
               <nav className="member-settings-tabs" aria-label="설치 관리">
                 <button aria-pressed={adminTab === "members"} onClick={() => setAdminTab("members")}>회원 관리</button>
                 <button aria-pressed={adminTab === "engine"} onClick={() => setAdminTab("engine")}>어시스턴트 엔진</button>
-                <button aria-pressed={adminTab === "google"} onClick={() => setAdminTab("google")}>Google 커넥터</button>
               </nav>
               {adminTab === "members" ? (
                 <PersonalAdmin account={session.user.id} expired={expired} unavailable={leaveManagement} />
-              ) : adminTab === "engine" ? (
-                <PersonalEngineSettings account={session.user.id} expired={expired} unavailable={leaveManagement} />
               ) : (
-                <PersonalGoogleSetup account={session.user.id} expired={expired} unavailable={leaveManagement}
-                  onConnect={() => navigate("connections")} />
+                <PersonalEngineSettings account={session.user.id} expired={expired} unavailable={leaveManagement} />
               )}
             </div>
           ) : view === "connections" ? (
             <PersonalConnections
-              openGoogleSetup={admin ? () => {
-                setAdminTab("google");
-                navigate("admin");
-              } : undefined}
+              installationAdmin={admin}
+              onAdminUnavailable={onAdminUnavailable}
               onBack={() => navigate("chat")}
               session={session}
               expired={expired}

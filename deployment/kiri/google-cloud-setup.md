@@ -2,7 +2,7 @@
 
 ## Run the command from the setup wizard
 
-무수리의 **관리 → Google 커넥터**에서 복사한 명령을 아래 Cloud Shell 터미널에 붙여 넣고 Enter를 누릅니다. Google이 권한을 요청하면 프로젝트를 관리할 계정인지 확인하고 승인합니다.
+무수리의 **연결 → 커넥터 → Google Workspace 설정**에서 복사한 명령을 아래 Cloud Shell 터미널에 붙여 넣고 Enter를 누릅니다. Google이 권한을 요청하면 프로젝트를 관리할 계정인지 확인하고 승인합니다.
 
 The command uses your signed-in Google Cloud account. It opens the project ID shown in Moosuri, or creates it if needed, then enables and checks the Gmail, Drive, Docs, Slides and Sheets APIs. You can rerun the command with the same ID if you close the tab or a request is interrupted. It does not change your default gcloud project.
 

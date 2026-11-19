@@ -23,6 +23,7 @@ function setup({ grants = [docs, sheets], workspaceStatus = 200, loseCompletion 
     if (path === "/api/v1/personal/vault") return Response.json({ state: "setup_required" });
     calls.push({ path, method, body });
     expect(new Headers(init.headers).get("X-Moosuri-Account")).toBe(session.user.id);
+    if (path === "/api/v1/personal/admin/google-setup") return Response.json({ configured: true, redirect_uri: "https://example.test/api/v1/mail/oauth/callback" });
     if (path === base) return Response.json({ connection: gmail });
     if (path === base + "/workspace") return Response.json({ connections: grants }, { status: workspaceStatus });
     if (path === base + "/docs/disconnect") {
@@ -51,9 +52,8 @@ function storePending(overrides = {}) {
 
 function mount(installationAdmin = false) {
   const returned = vi.fn();
-  const openGoogleSetup = installationAdmin ? vi.fn() : undefined;
-  return { returned, openGoogleSetup, ...render(<StrictMode><PersonalConnections
-    openGoogleSetup={openGoogleSetup} session={session} expired={vi.fn()} onBack={vi.fn()} returned={returned}
+  return { returned, ...render(<StrictMode><PersonalConnections
+    installationAdmin={installationAdmin} session={session} expired={vi.fn()} onBack={vi.fn()} returned={returned}
   /></StrictMode>) };
 }
 
@@ -168,19 +168,22 @@ it.each([404, 503])("shows member-safe Workspace status without changing Gmail a
   const detail = within(screen.getByRole("region", { name: "Google Slides" }));
   await detail.findByText(workspaceStatus === 404 ? /이 서버에서 Google 로그인을 아직 사용할 수 없습니다/ : /연결 상태를 확인할 수 없습니다/);
   expect(screen.queryByRole("button", { name: "Google 연결" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Google 설치 설정 열기" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Google Workspace 설정" })).not.toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "다시 확인" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   await user.click(await screen.findByRole("button", { name: /Gmail gmail@example.test/ }));
   expect(await screen.findByRole("button", { name: "연결 해제" })).toBeEnabled();
   expect(calls.every(({ method }) => method === "GET")).toBe(true);
+  expect(calls.some(({ path }) => path.includes("/admin/"))).toBe(false);
 });
 
 it("links the installation administrator to Google web sign-in setup when unavailable", async () => {
   setup({ workspaceStatus: 404 });
-  const { openGoogleSetup } = mount(true);
+  mount(true);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: /Google Slides/ }));
-  await user.click(await screen.findByRole("button", { name: "Google 설치 설정 열기" }));
-  expect(openGoogleSetup).toHaveBeenCalledOnce();
+  await user.click(await screen.findByRole("button", { name: "Google Workspace 설정" }));
+  expect(await screen.findByText("Google 앱 설정이 등록되어 있습니다.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Google Slides 연결로 돌아가기" }));
+  expect(await screen.findByRole("heading", { name: "Google Slides" })).toBeVisible();
 });

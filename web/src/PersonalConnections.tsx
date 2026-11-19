@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 import { googleReturn, usePersonalGoogle } from "./PersonalGoogle";
 import { isWorkspaceGoogleService, usePersonalGoogleWorkspace, workspaceGoogleReturn } from "./personal-google-workspace";
+import { PersonalGoogleSetup, installationGoogleSetupPath } from "./PersonalGoogleSetup";
 import { WorkspaceIcon } from "./WorkspaceNavigation";
 import gmailMark from "./connector-marks/gmail.png?no-inline";
 import driveMark from "./connector-marks/drive.png?no-inline";
@@ -40,8 +41,8 @@ function searchText(value: string) {
 }
 
 export function PersonalConnections({
-  onBack, openGoogleSetup, ...props
-}: Parameters<typeof usePersonalGoogle>[0] & { onBack: () => void; openGoogleSetup?: () => void }) {
+  onBack, installationAdmin = false, onAdminUnavailable, ...props
+}: Parameters<typeof usePersonalGoogle>[0] & { onBack: () => void; installationAdmin?: boolean; onAdminUnavailable?: () => void }) {
   const [workspaceReturn] = useState(() => workspaceGoogleReturn(props.session));
   const [selected, setSelected] = useState<Connector | null>(
     () => workspaceReturn ? workspaceConnectors.find(({ id }) => id === workspaceReturn.service) ?? null
@@ -59,7 +60,39 @@ export function PersonalConnections({
   );
   const connected = [...(google.connection ? [gmail] : []), ...workspaceConnectors.filter(({ id }) => workspace.connections[id])];
   const found = (view === "available" ? connectors : connected).filter(matches);
-  const unavailable = "이 서버에서 Google 로그인을 아직 사용할 수 없습니다.";
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [installed, setInstalled] = useState<boolean | null>(null);
+  const scope = useScope(props.session.user.id, "connector-installation-status");
+  useEffect(() => {
+    if (!installationAdmin || setupOpen) return;
+    const controller = new AbortController();
+    void scope.request<{ configured: boolean }>(installationGoogleSetupPath, "GET", undefined, controller.signal)
+      .then(result => { if (!controller.signal.aborted) setInstalled(result.configured); })
+      .catch(error => {
+        if (controller.signal.aborted || isAborted(error)) return;
+        setInstalled(null);
+        if (error instanceof ApiFailure && error.status === 403) onAdminUnavailable?.();
+        if (error instanceof ApiFailure && error.status === 401) props.expired();
+      });
+    return () => controller.abort();
+  }, [scope, installationAdmin, setupOpen, onAdminUnavailable, props.expired]);
+
+  const refreshMemberServices = useRef(() => {});
+  useEffect(() => {
+    refreshMemberServices.current = () => {
+      if (google.status === "disabled") google.retry();
+      if (workspaceEnabled && workspace.status === "disabled") void workspace.retry();
+    };
+  });
+  useEffect(() => {
+    if (!installationAdmin || installed !== true || setupOpen) return;
+    // The member relay imports the shared configuration asynchronously.
+    const timers = [0, 4000, 10000, 18000].map(delay => window.setTimeout(() => refreshMemberServices.current(), delay));
+    return () => timers.forEach(clearTimeout);
+  }, [installationAdmin, installed, setupOpen, workspaceEnabled]);
+  const unavailable = installationAdmin && installed === false ? "Google Workspace 설치 설정이 필요합니다."
+    : installationAdmin && installed === true ? "이 회원의 Google 연결을 준비 중입니다."
+    : "이 서버에서 Google 로그인을 아직 사용할 수 없습니다.";
   const gmailStatus = google.status === "checking" ? "연결 상태 확인 중…"
     : google.status === "disabled" ? unavailable
     : google.status === "error" ? "연결 상태를 확인할 수 없습니다."
@@ -74,9 +107,17 @@ export function PersonalConnections({
     : vaultStatus.status === "setup_required" ? "회원 인증 연결 필요"
     : "연결 상태를 확인할 수 없습니다.";
 
-  const setupGuide = openGoogleSetup && (
-    <button className="member-page-action" onClick={openGoogleSetup}>Google 설치 설정 열기</button>
+  const setupGuide = installationAdmin && (
+    <button className="member-page-action" onClick={() => setSetupOpen(true)}>Google Workspace 설정</button>
   );
+
+  if (installationAdmin && setupOpen) {
+    return <PersonalGoogleSetup account={props.session.user.id} expired={props.expired}
+      unavailable={() => { setSetupOpen(false); onAdminUnavailable?.(); }}
+      onBack={() => setSetupOpen(false)}
+      onConnect={() => { setInstalled(true); setSetupOpen(false); }}
+      returnLabel={selected ? selected.name + " 연결로 돌아가기" : "커넥터 열기"} />;
+  }
 
   function row(connector: Connector, description?: string, trailing?: string, candidate = false) {
     return (
@@ -129,7 +170,7 @@ export function PersonalConnections({
                   </button>
                 )
               )}
-              {google.status === "disabled" && setupGuide}
+              {setupGuide}
               {(google.status === "error" || google.status === "disabled") && !google.busy && (
                 <button className="member-page-action" onClick={google.retry}>다시 확인</button>
               )}
@@ -153,7 +194,7 @@ export function PersonalConnections({
               ) : (
                 <button className="member-page-action" disabled={workspace.busy} onClick={() => void workspace.action(workspaceService, "connect")}>Google 연결</button>
               ))}
-              {workspace.status === "disabled" && setupGuide}
+              {setupGuide}
               {(workspace.status === "error" || workspace.status === "disabled") && !workspace.busy && (
                 <button className="member-page-action" onClick={() => void workspace.retry()}>다시 확인</button>
               )}
@@ -188,6 +229,11 @@ export function PersonalConnections({
         )
       ) : (
         <>
+          {installationAdmin && <button type="button" className="member-connector-setup" aria-label="Google Workspace 설정"
+            onClick={() => setSetupOpen(true)}>
+            <span><strong>Google Workspace 설정</strong><small>{installed === false ? "설치 설정 필요" : installed === true ? "설치 설정 완료" : "설치 관리"}</small></span>
+            <span aria-hidden="true" className="member-library-chevron" />
+          </button>}
           <label className="member-library-filter">
             <WorkspaceIcon name="search" />
             <input type="search" value={query} onChange={(event) => setQuery(event.target.value)}
@@ -200,15 +246,15 @@ export function PersonalConnections({
           {workspace.notice?.service === null && <p className="member-library-status" role="status">{workspace.notice.message}</p>}
           {view === "available" ? (
             <>
-              {group("추천 · 도입 후보", candidates.filter(matches).map((connector) => row(connector, connector.description, undefined, true)))}
               {group("생산성", [
-                ...(found.includes(gmail) ? [row(gmail, google.connection?.mailbox, google.status === "ready" && !google.connection ? "연결" : "보기")] : []),
+                ...(found.includes(gmail) ? [row(gmail, google.connection?.mailbox ?? gmailStatus, google.status === "ready" && !google.connection ? "연결" : "보기")] : []),
                 ...workspaceConnectors.filter(matches).map((connector) => {
                   const grant = workspace.connections[connector.id];
                   return row(connector, grant?.mailbox ?? workspaceStatus, workspace.status === "ready" && !grant ? "연결" : "보기");
                 }),
               ])}
               {group("보안", found.includes(vault) ? [row(vault, vaultLabel, "보기")] : [])}
+              {group("추천 · 도입 후보", candidates.filter(matches).map((connector) => row(connector, connector.description, undefined, true)))}
             </>
           ) : found.length > 0 && (
             <ul className="member-page-list member-library-list">{found.map((connector) => row(connector,

@@ -553,7 +553,7 @@ it("lets the administrator recover and save one installation model after a revis
     { revision: 5, connection_revision: "connection-five", enabled: true, default_choice: low },
   ]);
 });
-it("opens the Google installer through the administrator area and returns to member connectors", async () => {
+it("opens the Google installer inside the connector list and returns to member connectors", async () => {
   current = { ...session(), installation_admin: true };
   const path = "/personal/admin/google-setup";
   adminEngine = (request) => {
@@ -563,9 +563,9 @@ it("opens the Google installer through the administrator area and returns to mem
   };
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: "관리" }));
-  expect(calls.some(call => call.path === path)).toBe(false);
-  await user.click(screen.getByRole("button", { name: "Google 커넥터" }));
+  await user.click(await screen.findByRole("button", { name: "연결" }));
+  await screen.findByText("설치 설정 완료");
+  await user.click(screen.getByRole("button", { name: "Google Workspace 설정" }));
   await screen.findByText("Google 앱 설정이 등록되어 있습니다.");
   expect(calls.filter(call => call.path === path).every(call => call.account === aid && call.method === "GET")).toBe(true);
   await user.click(screen.getByRole("button", { name: "커넥터 열기" }));

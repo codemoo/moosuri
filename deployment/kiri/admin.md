@@ -12,7 +12,7 @@
 
 ## Google Workspace
 
-**관리 → Google 커넥터**에서 설치용 Google 프로젝트와 API를 준비하고 웹 클라이언트를 한 번 등록한다. 이후 회원은 각자의 연결 화면에서 Google 계정만 선택하고 동의한다. [초기 설정과 회원 연결](google.md)
+**연결 → 커넥터 → Google Workspace 설정**에서 설치용 Google 프로젝트와 API를 준비하고 웹 클라이언트를 한 번 등록한다. 이후 회원은 각자의 연결 화면에서 Google 계정만 선택하고 동의한다. [초기 설정과 회원 연결](google.md)
 
 ## 첫 관리자
 

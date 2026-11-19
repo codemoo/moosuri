@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
+import { WorkspaceIcon } from "./WorkspaceNavigation";
 import "./personal-management.css";
 import "./personal-google-setup.css";
 
-const path = "/personal/admin/google-setup";
+export const installationGoogleSetupPath = "/personal/admin/google-setup";
 const consoleOrigin = "https://console.cloud.google.com";
 const cloudShell = "https://shell.cloud.google.com/cloudshell/editor?" + new URLSearchParams({
   show: "terminal",
@@ -28,7 +29,7 @@ type Step = 0 | 1 | 2 | 3;
 type Method = "shell" | "console" | "import";
 type Draft = { project: string; step: Step; method: Method };
 type Status = { configured: boolean; redirect_uri: string };
-type Props = { account: string; expired: () => void; unavailable: () => void; onConnect: () => void };
+type Props = { account: string; expired: () => void; unavailable: () => void; onConnect: () => void; returnLabel?: string; onBack?: () => void };
 
 function suggestedProject() {
   const suffix = Array.from(crypto.getRandomValues(new Uint8Array(8)), byte => byte.toString(16).padStart(2, "0")).join("");
@@ -73,7 +74,7 @@ export function PersonalGoogleSetup(props: Props) {
   return <Setup key={props.account} {...props} />;
 }
 
-function Setup({ account, expired, unavailable, onConnect }: Props) {
+function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }: Props) {
   const scope = useScope(account, "installation-google-setup");
   const storageKey = "moosuri.personal.google-setup.v1." + account;
   const [draft, setDraft] = useState(() => loadDraft(storageKey));
@@ -121,7 +122,7 @@ function Setup({ account, expired, unavailable, onConnect }: Props) {
   useEffect(() => {
     const controller = new AbortController();
     setChecking(true);
-    void scope.request<Status>(path, "GET", undefined, controller.signal, { timeoutMs: 15000 })
+    void scope.request<Status>(installationGoogleSetupPath, "GET", undefined, controller.signal, { timeoutMs: 15000 })
       .then(setStatus)
       .catch(failure => showError(failure, "Google 설치 설정을 확인하지 못했습니다. 다시 확인해 주세요."))
       .finally(() => {
@@ -191,7 +192,7 @@ function Setup({ account, expired, unavailable, onConnect }: Props) {
     try {
       const web_client_json = await file.text();
       if (controller.signal.aborted) return;
-      const result = await scope.request<Status>(path, "POST", { web_client_json }, controller.signal, { timeoutMs: 20000 });
+      const result = await scope.request<Status>(installationGoogleSetupPath, "POST", { web_client_json }, controller.signal, { timeoutMs: 20000 });
       setStatus(result);
       setSaved(result.configured);
     } catch (failure) {
@@ -237,9 +238,10 @@ function Setup({ account, expired, unavailable, onConnect }: Props) {
     </li>)}</ul>
   </>;
   return (
-    <section className="member-page member-management personal-google-setup" aria-labelledby="google-setup-title" aria-busy={checking || busy}>
-      <header className="member-page-heading">
-        <h1 id="google-setup-title">Google 커넥터</h1>
+    <section className="member-page member-library member-management member-connections personal-google-setup" aria-labelledby="google-setup-title" aria-busy={checking || busy}>
+      <header className="member-page-heading member-connection-header">
+        {onBack && <button className="member-library-icon-button" aria-label="뒤로" onClick={onBack}><WorkspaceIcon name="back" /></button>}
+        <h1 id="google-setup-title">Google Workspace 설정</h1>
       </header>
       {error && !status?.configured && <p role="alert" className="preview-error">{error}</p>}
       {checking && <p role="status" className="management-note">Google 설치 설정 확인 중…</p>}
@@ -253,7 +255,7 @@ function Setup({ account, expired, unavailable, onConnect }: Props) {
           <p>커넥터에서 Gmail, Drive, Docs, Slides, Sheets를 선택하고 본인 Google 계정으로 연결하세요. 각 회원은 자신의 계정으로 동의합니다.</p>
           {callbackField}
           <div className="google-setup-buttons">
-            <button className="member-page-action management-primary" onClick={onConnect}>커넥터 열기</button>
+            <button className="member-page-action management-primary" onClick={onConnect}>{returnLabel ?? "커넥터 열기"}</button>
             {copyButton}
           </div>
           {copyNotice}

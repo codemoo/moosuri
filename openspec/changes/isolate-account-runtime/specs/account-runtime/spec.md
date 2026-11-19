@@ -138,6 +138,10 @@ The installation SHALL expose web OAuth client registration only to the current 
 - **WHEN** an administrator runs the Google Cloud preparation command again using the same project ID
 - **THEN** the command reuses the active project and verifies the five required Workspace APIs before reporting readiness.
 
+#### Scenario: Open setup from a connector
+- **WHEN** an installation administrator opens the connector list or a supported Google service
+- **THEN** the administrator can open installation setup there and return to the same list or service. An ordinary member sees only account connection controls.
+
 #### Scenario: Import an existing web client
 - **WHEN** the administrator submits a web client for the exact installation callback
 - **THEN** the gateway stores it privately, accepts an equivalent retry, rejects a conflicting registration and returns only setup status and the callback.

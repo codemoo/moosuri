@@ -484,3 +484,18 @@
     padding: max(14px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom));
   }
 }
+
+.member-connector-setup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--library-divider);
+  border-radius: 12px;
+}
+.member-connector-setup { background: var(--library-sheet); color: var(--library-text); text-align: start; }
+.member-connector-setup:hover { background: var(--library-hover); }
+.member-connector-setup > span:first-child { display: grid; gap: 4px; }
+.member-connector-setup small { color: var(--library-secondary); font-size: 13px; }

@@ -43,6 +43,7 @@ let adminEngine: ((path: string, method: string, body: any) => Response) | undef
 let previewRefused: boolean;
 let obsoleteCapabilityFields: boolean;
 let browserRoute: ((path: string, method: string, body: any) => Response | Promise<Response>) | undefined;
+let deleteThreadResponse: Response | undefined;
 const turn = (id: string, text: string, state = "completed") => ({
   sequence: 1,
   user_text: text,
@@ -95,6 +96,7 @@ beforeEach(() => {
   previewRefused = false;
   obsoleteCapabilityFields = false;
   browserRoute = undefined;
+  deleteThreadResponse = undefined;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -248,6 +250,7 @@ beforeEach(() => {
         return Response.json(result, { status: 201 });
       }
       if (path.match(/^\/threads\/[^/]+$/) && method === "DELETE") {
+        if (deleteThreadResponse) return deleteThreadResponse;
         threads = threads.filter((t) => t.id !== path.split("/")[2]);
         return new Response(null, { status: 204 });
       }
@@ -359,24 +362,28 @@ it("routes a browser request and guidance into one run and resumes the viewed ta
   const viewer = within(screen.getByRole("complementary", { name: "개인 브라우저 작업 공간" }));
   await viewer.findByRole("img");
   expect(sessionStorage.getItem(PREVIEW_DRAFT_KEY)).not.toContain(previewImage);
-  expect(viewer.queryByRole("button", { name: "완료" })).not.toBeInTheDocument();
+  expect(viewer.queryByRole("button", { name: "무수리에게 넘기기" })).not.toBeInTheDocument();
+  expect(draft).toHaveAttribute("placeholder", "브라우저 작업에 추가 지시하기");
+  fireEvent.change(draft, { target: { value: "가".repeat(667) } });
+  expect(screen.getByRole("alert")).toHaveTextContent("추가 지시가 너무 깁니다");
+  expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
   fireEvent.change(draft, { target: { value: "오전만 봐줘" } });
   await user.click(screen.getByRole("button", { name: "보내기" }));
   expect(await screen.findByText("추가 지시 접수됨 · 아직 반영 전")).toBeVisible();
-  await user.click(viewer.getByRole("button", { name: "브라우저 제어" }));
-  await waitFor(() => expect(viewer.getByRole("button", { name: "완료" })).toBeEnabled());
+  await user.click(viewer.getByRole("button", { name: "직접 조작 시작" }));
+  await waitFor(() => expect(viewer.getByRole("button", { name: "무수리에게 넘기기" })).toBeEnabled());
   await user.click(viewer.getByRole("button", { name: "Morning" }));
   await viewer.findByText("브라우저 화면을 불러오지 못했습니다.");
   expect(viewer.queryByRole("img")).not.toBeInTheDocument();
-  await user.click(viewer.getByRole("button", { name: "새로고침" }));
+  await user.click(viewer.getByRole("button", { name: "화면 새로고침" }));
   const image = await viewer.findByRole("img");
   vi.spyOn(image, "getBoundingClientRect").mockReturnValue({ width: 450, height: 300 } as DOMRect);
   fireEvent.touchStart(image, { touches: [{ clientX: 60, clientY: 220 }] });
   fireEvent.touchEnd(image, { changedTouches: [{ clientX: 60, clientY: 70 }] });
   await waitFor(() => expect(calls.some((call) => call.path === `${base}/input`)).toBe(true));
-  await waitFor(() => expect(viewer.getByRole("button", { name: "완료" })).toBeEnabled());
-  await user.click(viewer.getByRole("button", { name: "완료" }));
-  await user.click(await viewer.findByRole("button", { name: "완료 결과 다시 확인" }));
+  await waitFor(() => expect(viewer.getByRole("button", { name: "무수리에게 넘기기" })).toBeEnabled());
+  await user.click(viewer.getByRole("button", { name: "무수리에게 넘기기" }));
+  await user.click(await viewer.findByRole("button", { name: "넘긴 결과 다시 확인" }));
   expect(await screen.findByText(replies)).toBeVisible();
   expect(screen.getByText("추가 지시 반영됨")).toBeVisible();
   const resumes = calls.filter((call) => call.path === `${base}/resume`);
@@ -385,6 +392,7 @@ it("routes a browser request and guidance into one run and resumes the viewed ta
   expect(sessionStorage.getItem(PREVIEW_DRAFT_KEY)).not.toContain("private-controller");
   await user.click(viewer.getByRole("button", { name: "뷰어 닫기" }));
   expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "미리 보기 열기" })).toHaveFocus();
   expect(calls.some((call) => call.path === `${base}/close`)).toBe(false);
   await user.click(screen.getByRole("button", { name: "미리 보기 열기" }));
   await user.click(within(screen.getByRole("complementary", { name: "개인 브라우저 작업 공간" })).getByRole("button", { name: "작업 중지" }));
@@ -406,6 +414,23 @@ it("keeps an ordinary reference in chat and preserves a browser draft when the c
   const posts = calls.filter((call) => call.method === "POST" && /\/(?:text-preview|browser)$/.test(call.path));
   expect(posts.map((call) => call.path)).toEqual([`/threads/${tid}/text-preview`, `/threads/${tid}/browser`]);
   expect(posts[1].body.url).toBe("https://example.test/");
+});
+
+it("sends a browser-like draft as chat when the member explicitly switches back to chat", async () => {
+  browserRoute = () => Response.json({ configured: true, workspace: null });
+  const user = userEvent.setup();
+  mount();
+  const draft = await composer();
+  await user.click(await screen.findByRole("button", { name: "브라우저 작업" }));
+  const text = "Open example.test in the browser";
+  fireEvent.change(draft, { target: { value: text } });
+  await user.click(screen.getByRole("button", { name: "일반 채팅으로 전환" }));
+  expect(draft).toHaveValue(text);
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await screen.findByText(/Synthetic reply/);
+  const posts = calls.filter((call) => call.method === "POST" && /\/(?:text-preview|browser)$/.test(call.path));
+  expect(posts.map((call) => call.path)).toEqual([`/threads/${tid}/text-preview`]);
+  expect(posts[0].body.text).toBe(text);
 });
 
 it("renews an idle frame proof before Done, disallows old gestures, and retains control after a busy response", async () => {
@@ -455,9 +480,9 @@ it("renews an idle frame proof before Done, disallows old gestures, and retains 
   await tick();
   fireEvent.click(screen.getByRole("button", { name: "미리 보기 열기" }));
   await tick();
-  fireEvent.click(screen.getByRole("button", { name: "브라우저 제어" }));
+  fireEvent.click(screen.getByRole("button", { name: "직접 조작 시작" }));
   await tick();
-  const done = () => screen.getByRole("button", { name: "완료" });
+  const done = () => screen.getByRole("button", { name: "무수리에게 넘기기" });
   expect(done()).toBeEnabled();
   const frame = screen.getByRole("img", { name: "개인 브라우저의 현재 화면" });
   vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ width: 450, height: 300 } as DOMRect);
@@ -665,6 +690,8 @@ it("logout fences an in-flight response and its saved draft before another accou
   await user.type(await composer(), "PRIVATE A request");
   await user.click(screen.getByRole("button", { name: "보내기" }));
   await waitFor(() => expect(completeSend).not.toBeNull());
+  expect(await composer()).toHaveAttribute("readonly");
+  expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
   const drawer = await openDrawer(user);
   await user.click(drawer.getByRole("button", { name: "로그아웃" }));
   await screen.findByRole("heading", { name: "내 무수리에 로그인" });
@@ -696,7 +723,7 @@ it("logout fences an in-flight response and its saved draft before another accou
   ).toHaveLength(1);
   expect(calls.filter((c) => c.path === "/auth/logout")).toHaveLength(1);
 });
-it("keeps private history visible when the preview is disabled and deletes only the selected thread", async () => {
+it("keeps private history visible when chat is disabled and clears it after confirmed deletion", async () => {
   capEnabled = false;
   turns = [
     turn(
@@ -706,10 +733,6 @@ it("keeps private history visible when the preview is disabled and deletes only 
     ),
   ];
   const user = userEvent.setup();
-  vi.stubGlobal(
-    "confirm",
-    vi.fn(() => true),
-  );
   mount();
   await screen.findByText("Saved private request");
   expect(
@@ -717,7 +740,10 @@ it("keeps private history visible when the preview is disabled and deletes only 
   ).toBeInTheDocument();
   expect(await composer()).toBeDisabled();
   const drawer = await openDrawer(user);
+  await user.click(drawer.getByRole("button", { name: "A private thread 삭제" }));
   await user.click(drawer.getByRole("button", { name: "대화 삭제" }));
+  await drawer.findByText("아직 대화가 없습니다.");
+  await user.click(drawer.getByRole("button", { name: "닫기" }));
   await screen.findByText("무엇을 도와드릴까요?");
   expect(
     calls
@@ -729,6 +755,43 @@ it("keeps private history visible when the preview is disabled and deletes only 
       (c) => c.method === "POST" && c.path !== "/personal/google/history",
     ),
   ).toHaveLength(0);
+});
+
+it("confirms deletion of a searched conversation without selecting it or losing the current draft", async () => {
+  const backgroundThread = { id: bid, title: "Another conversation", created_at: 1, updated_at: 1 };
+  threads.push(backgroundThread);
+  const user = userEvent.setup();
+  mount();
+  const editor = await composer();
+  await user.type(editor, "Unsaved draft");
+  const drawer = await openDrawer(user);
+  const search = drawer.getByRole("searchbox", { name: "대화 검색" });
+  await user.type(search, "another");
+  const rowDelete = drawer.getByRole("button", { name: "Another conversation 삭제" });
+  await user.click(rowDelete);
+  const confirm = drawer.getByRole("region", { name: "대화를 삭제할까요?" });
+  expect(within(confirm).getByText(backgroundThread.title)).toBeVisible();
+  expect(within(confirm).getByRole("button", { name: "취소" })).toHaveFocus();
+  await user.click(within(confirm).getByRole("button", { name: "취소" }));
+  expect(rowDelete).toHaveFocus();
+  expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+
+  deleteThreadResponse = Response.json({ code: "unavailable" }, { status: 503 });
+  await user.click(rowDelete);
+  await user.click(drawer.getByRole("button", { name: "대화 삭제" }));
+  await drawer.findByRole("alert");
+  expect(threads).toHaveLength(2);
+  deleteThreadResponse = undefined;
+  await user.click(drawer.getByRole("button", { name: "대화 삭제" }));
+  await drawer.findByText("일치하는 대화가 없습니다.");
+  expect(search).toHaveValue("another");
+  expect(search).toHaveFocus();
+  await user.click(drawer.getByRole("button", { name: "닫기" }));
+
+  expect(screen.getByRole("heading", { name: "A private thread" })).toBeVisible();
+  expect(editor).toHaveValue("Unsaved draft");
+  expect(calls.filter((c) => c.method === "DELETE").map(({ path, account }) => ({ path, account })))
+    .toEqual(Array(2).fill({ path: `/threads/${bid}`, account: aid }));
 });
 
 it("opens manual memories in the authenticated account and returns to the same conversation", async () => {

@@ -2,19 +2,26 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 export function PersonalChatComposer({
-  draft, disabled, busy, onDraft, onSend, browserMode,
+  draft, disabled, busy, waiting, mode, onDraft, onSend, browserMode,
 }: {
   draft: string;
   disabled: boolean;
   busy: boolean;
+  waiting: string;
+  mode: "chat" | "start" | "guide";
   onDraft: (value: string) => void;
   onSend: () => void;
   browserMode?: ReactNode;
 }) {
   const editor = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
-  const tooLong = new TextEncoder().encode(draft).length > 8192;
+  const tooLong = new TextEncoder().encode(draft).length > (mode === "guide" ? 2000 : 8192);
   const canSend = !disabled && !busy && !tooLong && !!draft.trim();
+  const placeholder = disabled ? "답변을 받을 수 없습니다."
+    : busy ? waiting
+    : mode === "start" ? "웹 주소와 할 일을 입력하세요"
+    : mode === "guide" ? "브라우저 작업에 추가 지시하기"
+    : "메시지 보내기";
 
   useLayoutEffect(() => {
     const element = editor.current;
@@ -33,7 +40,7 @@ export function PersonalChatComposer({
         <label className="sr-only" htmlFor="preview-message">메시지</label>
         <textarea id="preview-message" ref={editor}
           value={draft} onChange={(event) => onDraft(event.target.value)}
-          placeholder="메시지 보내기" disabled={disabled}
+          placeholder={placeholder} disabled={disabled} readOnly={busy}
           maxLength={8192} rows={1}
           aria-describedby={tooLong ? "member-composer-limit" : undefined}
           aria-keyshortcuts="Enter Shift+Enter"
@@ -52,7 +59,9 @@ export function PersonalChatComposer({
         </button>
       </form>
       {tooLong && (
-        <p id="member-composer-limit" role="alert">메시지가 너무 깁니다. 내용을 줄여 주세요.</p>
+        <p id="member-composer-limit" role="alert">{mode === "guide"
+          ? "추가 지시가 너무 깁니다. 내용을 줄여 주세요."
+          : "메시지가 너무 깁니다. 내용을 줄여 주세요."}</p>
       )}
     </footer>
   );

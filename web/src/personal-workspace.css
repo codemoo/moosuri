@@ -77,13 +77,28 @@ html:has(.member-workspace), body:has(.member-workspace) {
   z-index: -1;
 }
 .member-topbar button:hover::before { background: #414142; }
-.member-topbar .member-add-chat { padding: 0; }
-.member-chat-avatar {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+.member-topbar:has(.member-chat-heading) {
+  display: grid;
+  grid-template-columns: minmax(44px, 1fr) minmax(0, 2fr) minmax(44px, 1fr);
+  column-gap: 8px;
 }
-.member-chat-avatar { border-radius: 50%; }
+.member-topbar .member-switcher { justify-self: start; }
+.member-topbar .member-add-chat { justify-self: end; padding: 0; }
+.member-chat-heading {
+  display: flex;
+  justify-self: center;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.member-chat-heading span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-chat-avatar { flex: none; border-radius: 50%; }
 
 .member-body {
   grid-area: main;
@@ -230,7 +245,50 @@ html:has(.member-workspace), body:has(.member-workspace) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.member-thread-row .member-header-button { flex: none; }
+.member-thread-row .member-thread-delete {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  color: var(--member-secondary);
+  background: transparent;
+  font-size: 13px;
+}
+.member-thread-row .member-thread-delete:is(:hover, :focus-visible) {
+  color: var(--member-text);
+  background: var(--member-sheet);
+}
+.member-thread-confirmation {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 14px;
+  border: 1px solid var(--member-divider);
+  border-radius: 14px;
+  background: var(--member-sheet);
+  overflow-wrap: anywhere;
+}
+.member-thread-confirmation h3 { margin: 0; font-size: 17px; }
+.member-thread-confirmation p { font-size: 14px; }
+.member-thread-confirmation p[role=alert] { color: var(--danger-ink); }
+.member-thread-confirmation > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.member-thread-confirmation button {
+  min-height: 44px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--member-field);
+  color: var(--member-text);
+}
+.member-thread-confirmation .member-thread-confirm-delete {
+  background: var(--danger-paper);
+  color: var(--danger-ink);
+}
 .member-drawer-account {
   border-top: 1px solid var(--line);
   padding-top: 12px;
@@ -381,7 +439,8 @@ html:has(.member-workspace), body:has(.member-workspace) {
     padding-bottom: env(safe-area-inset-bottom);
   }
   .member-navigation button { flex: 1; min-height: 52px; }
-  .member-navigation .member-nav-label { display: none; }
+  .member-navigation .member-nav-label { line-height: 1; }
+  .member-topbar:has(.member-chat-heading) { grid-template-columns: 44px minmax(0, 1fr) 44px; }
   .member-switcher .member-switcher-name { display: none; }
   .member-topbar .member-switcher { padding: 0; }
   .member-composer { padding: 0 12px 14px; }

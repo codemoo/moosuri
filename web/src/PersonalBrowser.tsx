@@ -17,7 +17,7 @@ const browserReasons: Partial<Record<string, string>> = {
 };
 
 export function PersonalBrowserCard({ browser, pending, onOpen }: {
-  browser: PersonalBrowser; pending: boolean; onOpen: () => void;
+  browser: PersonalBrowser; pending: boolean; onOpen: (trigger: HTMLButtonElement) => void;
 }) {
   const workspace = browser.status?.workspace;
   if (!workspace && !pending) return null;
@@ -29,7 +29,7 @@ export function PersonalBrowserCard({ browser, pending, onOpen }: {
         {workspace?.title && <span>{workspace.title}</span>}
       </div>
       {preview && <img src={browserFrameSource(preview)} alt="" />}
-      {workspace && <button type="button" onClick={onOpen}>
+      {workspace && <button type="button" onClick={(event) => onOpen(event.currentTarget)}>
         {["closed", "outcome_unknown"].includes(workspace.state) ? "브라우저 작업 보기" : "미리 보기 열기"}
       </button>}
     </article>
@@ -130,6 +130,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
   const available = !!value && !["stopping", "closed"].includes(value.state);
   const watchable = browserCanWatch(value ?? null);
   const canTake = watchable && !!value && ["reading", "ready", "completed", "user_control"].includes(value.state);
+  const handoff = browser.busy === "resume" || value?.state === "resuming";
   const location = browserLocation(frame?.url ?? value?.url);
   const title = frame?.url === "about:blank" ? "빈 페이지" : location?.hostname ?? "브라우저 작업";
 
@@ -207,7 +208,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
       <header className="member-browser-header">
         <div className="member-browser-location">
           <h2 title={location?.href}>{title}</h2>
-          {value && <p>{browserStateLabel[value.state]}</p>}
+          {value && <p role="status">{handoff ? "무수리가 변경된 화면을 읽고 있습니다…" : browserStateLabel[value.state]}</p>}
         </div>
         <div className="member-browser-actions">
           {location && <button type="button" onClick={() => void copy()}>주소 복사</button>}
@@ -238,6 +239,9 @@ export function PersonalBrowserViewer({ browser, onClose }: {
         {notice && <p role="status">{notice}</p>}
         {browser.error && <p className="member-browser-error" role="alert">{browser.error}</p>}
         {value?.reason && browserReasons[value.reason] && <p role="status">{browserReasons[value.reason]}</p>}
+        {value?.state === "ready" && canTake && (
+          <p>조건을 바꾸거나 입력하려면 직접 조작을 시작하세요.</p>
+        )}
         {(watchable || value?.state === "starting") && (
           <div className="member-browser-screen">
             {frame ? <FrameView frame={frame} controlling={browser.controls} busy={!canUseFrame}
@@ -247,7 +251,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
         )}
         {browser.controls && (
           <div className="member-browser-input">
-            <p>직접 조작하는 동안 무수리의 브라우저 사용이 일시 정지됩니다.</p>
+            <p>화면을 눌러 직접 조작하세요. 조작을 마치면 무수리에게 넘겨 이 화면에서 작업을 이어갈 수 있습니다.</p>
             <form onSubmit={(event) => {
               event.preventDefault();
               if (composing.current || !canUseFrame || !text.current) return;
@@ -292,16 +296,22 @@ export function PersonalBrowserViewer({ browser, onClose }: {
         )}
       </div>
       <footer className="member-browser-actions member-browser-footer">
-        <button type="button" disabled={busy} onClick={browser.refresh}>새로고침</button>
+        <button type="button" disabled={busy} onClick={browser.refresh}>화면 새로고침</button>
         {browser.canRetryResume ? (
           <button type="button" className="member-browser-primary" disabled={busy}
-            onClick={() => browser.mutate({ kind: "resume" })}>완료 결과 다시 확인</button>
+            onClick={() => browser.mutate({ kind: "resume" })}>넘긴 결과 다시 확인</button>
         ) : browser.controls ? (
           <button type="button" className="member-browser-primary" disabled={!canUseFrame || !location}
-            onClick={() => browser.mutate({ kind: "resume" })}>완료</button>
+            onClick={() => {
+              close.current?.focus({ preventScroll: true });
+              browser.mutate({ kind: "resume" });
+            }}>무수리에게 넘기기</button>
         ) : canTake && (
           <button type="button" className="member-browser-primary" disabled={busy}
-            onClick={() => browser.mutate({ kind: "takeover" })}>브라우저 제어</button>
+            onClick={() => {
+              focusFrame.current = true;
+              browser.mutate({ kind: "takeover" });
+            }}>직접 조작 시작</button>
         )}
       </footer>
     </aside>

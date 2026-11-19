@@ -1,13 +1,14 @@
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog } from "@astryxdesign/core/Dialog";
 import { Icon } from "@astryxdesign/core/Icon";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ThreadSummary } from "../shared/api-types";
 import { WorkspaceIcon } from "./WorkspaceNavigation";
 import { useWorkspaceViewport } from "./workspace-viewport";
 import "./personal-workspace.css";
 
 export type MemberView = "chat" | "memory" | "connections" | "admin";
+export const threadDisplayTitle = (title: string) => title.trim() || "제목 없는 대화";
 const destinations = {
   chat: { label: "대화", icon: <WorkspaceIcon name="bubble" /> },
   memory: { label: "기억", icon: <WorkspaceIcon name="notebook" /> },
@@ -31,19 +32,44 @@ export function PersonalWorkspaceChrome({
   onNavigate: (view: MemberView) => void;
   onThread: (id: string) => void;
   onNew: () => void;
-  onDelete: () => void;
+  onDelete: (id: string) => Promise<boolean>;
   onSignOut: () => void;
 }) {
   const workspace = useWorkspaceViewport();
   const drawerId = useId();
+  const confirmationId = useId();
   const [drawer, setDrawer] = useState(false);
   const [query, setQuery] = useState("");
+  const [deletion, setDeletion] = useState<{ thread: ThreadSummary; failed: boolean } | null>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const refocusDelete = useRef<HTMLElement | null>(null);
   const views = Object.keys(destinations) as MemberView[];
   const search = query.trim().normalize("NFKC").toLocaleLowerCase();
-  const visibleThreads = threads.filter(thread => thread.title.normalize("NFKC").toLocaleLowerCase().includes(search));
+  const visibleThreads = threads.filter(thread => threadDisplayTitle(thread.title).normalize("NFKC").toLocaleLowerCase().includes(search));
   function toggleDrawer(open: boolean) {
     setDrawer(open);
-    if (!open) setQuery("");
+    if (!open) {
+      setQuery("");
+      setDeletion(null);
+      refocusDelete.current = null;
+    }
+  }
+
+  useLayoutEffect(() => {
+    if (!drawer) return;
+    if (deletion) cancelButton.current?.focus({ preventScroll: true });
+    else if (refocusDelete.current) {
+      const target = refocusDelete.current.isConnected ? refocusDelete.current : searchInput.current;
+      target?.focus({ preventScroll: true });
+      refocusDelete.current = null;
+    }
+  }, [drawer, deletion]);
+
+  async function confirmDeletion() {
+    if (!deletion || busy) return;
+    const removed = await onDelete(deletion.thread.id);
+    setDeletion(current => current !== deletion ? current : removed ? null : { ...current, failed: true });
   }
 
   function navigate(destination: MemberView) {
@@ -72,9 +98,11 @@ export function PersonalWorkspaceChrome({
           onClick={event => { event.currentTarget.focus({ preventScroll: true }); setDrawer(true); }}>
           <Icon icon="menu" size="sm" color="inherit" /><span className="member-switcher-name">Moosuri</span>
         </button>
-        {view === "chat" && <h1 className="sr-only">{title}</h1>}
         {view === "chat" && <>
-          <img className="member-chat-avatar" src="/moosuri-icon-192.png" width="44" height="44" alt="Moosuri" />
+          <h1 className="member-chat-heading" title={title}>
+            <img className="member-chat-avatar" src="/moosuri-icon-192.png" width="28" height="28" alt="" />
+            <span>{title}</span>
+          </h1>
           <button type="button" className="member-add-chat" aria-label="새 대화" title="새 대화"
             disabled={loading || busy} onClick={newChat}><WorkspaceIcon name="new" /></button>
         </>}
@@ -91,29 +119,44 @@ export function PersonalWorkspaceChrome({
           </header>
           <div className="member-drawer-tools">
             <label className="member-thread-search"><WorkspaceIcon name="search" />
-              <input type="search" value={query} onChange={event => setQuery(event.target.value)}
+              <input ref={searchInput} type="search" disabled={!!deletion} value={query} onChange={event => setQuery(event.target.value)}
                 placeholder="대화 검색" aria-label="대화 검색" />
             </label>
             <Button className="member-drawer-new" label="새 대화" icon={<WorkspaceIcon name="new" />}
-              variant="primary" width="100%" isDisabled={loading || busy} onClick={newChat} />
+              variant="primary" width="100%" isDisabled={loading || busy || !!deletion} onClick={newChat} />
           </div>
           <div className="member-drawer-scroll">
-            <h3 className="member-drawer-label">{search ? "검색 결과" : "최근 대화"}</h3>
-            <nav aria-label="대화 목록" className="member-thread-list">
+            {deletion && (
+              <section className="member-thread-confirmation" aria-labelledby={confirmationId}>
+                <h3 id={confirmationId}>대화를 삭제할까요?</h3>
+                <p>{threadDisplayTitle(deletion.thread.title)}</p>
+                {deletion.failed && <p role="alert">대화 삭제 결과를 확인하지 못했습니다. 다시 시도해 주세요.</p>}
+                {busy && <p role="status">대화 삭제 중…</p>}
+                <div>
+                  <button ref={cancelButton} type="button" disabled={busy}
+                    onClick={() => setDeletion(null)}>취소</button>
+                  <button type="button" className="member-thread-confirm-delete"
+                    disabled={busy} onClick={() => void confirmDeletion()}>대화 삭제</button>
+                </div>
+              </section>
+            )}
+            <h3 className="member-drawer-label" hidden={!!deletion}>{search ? "검색 결과" : "최근 대화"}</h3>
+            <nav aria-label="대화 목록" className="member-thread-list" hidden={!!deletion}>
               {loading && <p role="status">대화 불러오는 중…</p>}
               {!loading && visibleThreads.length === 0 && <p role="status">{search ? "일치하는 대화가 없습니다." : "아직 대화가 없습니다."}</p>}
               {visibleThreads.map((thread) => {
                 const isCurrent = view === "chat" && selected === thread.id;
+                const title = threadDisplayTitle(thread.title);
                 return (
                   <div className="member-thread-row" key={thread.id}>
-                    <Button label={thread.title} variant="ghost" width="100%"
+                    <Button label={title} variant="ghost" width="100%"
                       className="member-thread-button" icon={<WorkspaceIcon name="bubble" />} aria-current={isCurrent ? "page" : undefined}
                       onClick={() => { toggleDrawer(false); onThread(thread.id); }} />
-                    {isCurrent && (
-                      <Button variant="ghost" className="member-header-button" label="대화 삭제" isIconOnly
-                        tooltip="대화 삭제" icon={<Icon icon="close" color="inherit" />}
-                        isDisabled={busy} onClick={() => { toggleDrawer(false); onDelete(); }} />
-                    )}
+                    <button type="button" className="member-thread-delete" aria-label={`${title} 삭제`}
+                      disabled={loading || busy} onClick={event => {
+                        refocusDelete.current = event.currentTarget;
+                        setDeletion({ thread, failed: false });
+                      }}>삭제</button>
                   </div>
                 );
               })}

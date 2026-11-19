@@ -31,7 +31,7 @@ import PersonalAdmin from "./PersonalAdmin";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
 import { PersonalChatComposer } from "./PersonalChatComposer";
-import { PersonalWorkspaceChrome, type MemberView } from "./PersonalWorkspaceChrome";
+import { PersonalWorkspaceChrome, threadDisplayTitle, type MemberView } from "./PersonalWorkspaceChrome";
 import { PersonalBrowserCard, PersonalBrowserViewer } from "./PersonalBrowser";
 import { browserEndpoint, browserIntent, browserNeedsGuidance, type PersonalBrowserStatus } from "./personal-browser";
 import { usePersonalBrowser } from "./usePersonalBrowser";
@@ -416,6 +416,7 @@ function Workspace({
   memoryRef.current = memory;
   const initialized = useRef(false),
     mutation = useRef(false),
+    threadInventoryVersion = useRef(0),
     historyVersion = useRef(0);
   const chatScroll = useRef<HTMLDivElement>(null);
   const followTail = useRef(true);
@@ -464,9 +465,9 @@ function Workspace({
     return { ...m, drafts };
   }
   async function inventory() {
+    const version = ++threadInventoryVersion.current;
     const result = await scope.request<ThreadsResponse>("/threads");
-    setThreads(result.threads);
-    return result.threads;
+    if (version === threadInventoryVersion.current) setThreads(result.threads);
   }
   useEffect(() => {
     let live = true;
@@ -488,10 +489,11 @@ function Workspace({
         if (e instanceof ApiFailure && e.status === 401) expired();
         else setCapError("대화 가능 상태를 확인하지 못했습니다. 상태를 새로고침해 주세요.");
       });
+    const inventoryVersion = ++threadInventoryVersion.current;
     void scope
       .request<ThreadsResponse>("/threads")
       .then((result) => {
-        if (!live) return;
+        if (!live || inventoryVersion !== threadInventoryVersion.current) return;
         setThreads(result.threads);
         if (!initialized.current) {
           const restored = recovery?.load(result.threads.map((t) => t.id));
@@ -709,6 +711,7 @@ function Workspace({
         undefined,
         { timeoutMs: 15000 },
       );
+      ++threadInventoryVersion.current;
       setThreads((current) => [
         created,
         ...current.filter((t) => t.id !== created.id),
@@ -748,7 +751,7 @@ function Workspace({
     if (old && !replay) return;
     if (!old && (!text.trim() || new TextEncoder().encode(text).length > 8192))
       return;
-    const intent = old || browserMode === "guide" || (preferredMode === "chat" && acceptsGuidance)
+    const intent = old || browserMode === "guide" || preferredMode === "chat"
       ? null : browserIntent(text, browserMode === "start");
     if (intent && !intent.url) {
       setError("브라우저로 열 http 또는 https 주소를 메시지에 넣어 주세요.");
@@ -901,10 +904,8 @@ function Workspace({
       setMutating(false);
     }
   }
-  async function remove() {
-    if (!selected || mutation.current) return;
-    const thread = selected;
-    if (!window.confirm("이 대화를 삭제할까요?")) return;
+  async function remove(thread: string) {
+    if (mutation.current || !threads.some((item) => item.id === thread)) return false;
     mutation.current = true;
     setMutating(true);
     try {
@@ -915,21 +916,27 @@ function Workspace({
         undefined,
         { timeoutMs: 15000 },
       );
-      change((m) => {
-        const drafts = { ...m.drafts },
-          pending = { ...m.pending };
-        delete drafts[thread];
-        delete pending[thread];
-        return { ...m, drafts, pending };
-      });
-      const remaining = await inventory();
-      setSelected(remaining[0]?.id ?? null);
     } catch (e) {
-      fail(e);
+      if (e instanceof ApiFailure && e.status === 401) expired();
+      if (!(e instanceof ApiFailure && e.status === 404)) return false;
     } finally {
       mutation.current = false;
       setMutating(false);
     }
+    ++threadInventoryVersion.current;
+    setThreads((current) => current.filter((item) => item.id !== thread));
+    const fallback = threads.find((item) => item.id !== thread)?.id ?? null;
+    setSelected((current) => current === thread ? fallback : current);
+    setWatchThread((current) => current === thread ? null : current);
+    setBrowserChoice((current) => current?.thread === thread ? null : current);
+    change((m) => {
+      const drafts = { ...m.drafts },
+        pending = { ...m.pending };
+      delete drafts[thread];
+      delete pending[thread];
+      return { ...m, drafts, pending };
+    });
+    return true;
   }
   function leaveManagement() {
     setAdmin(false);
@@ -944,9 +951,9 @@ function Workspace({
     setSelected(id);
     navigate("chat");
   }
-  function openBrowser() {
+  function openBrowser(trigger: HTMLElement) {
     if (!selected) return;
-    browserOpenButton.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    browserOpenButton.current = trigger;
     setWatchThread(selected);
   }
   function closeBrowser() {
@@ -958,9 +965,10 @@ function Workspace({
   const hasActiveTurn = turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id);
   const optimistic = pending && !turns.some((turn) => turn.run.request_id === pending.request_id);
   const busy = loading || (selected !== null && reading && !currentPage);
+  const composerBusy = busy || mutating || !!pending || hasActiveTurn;
   const isEmpty = !busy && turns.length === 0 && !pending && googleReads.length === 0 && !browserWork;
   const thread = threads.find((item) => item.id === selected);
-  const heading = view === "chat" ? thread?.title ?? "새 대화"
+  const heading = view === "chat" ? thread ? threadDisplayTitle(thread.title) : "새 대화"
     : view === "memory" ? "기억"
     : view === "connections" ? "커넥터"
     : "관리";
@@ -968,7 +976,7 @@ function Workspace({
     <PersonalWorkspaceChrome view={view} title={heading} admin={admin} threads={threads}
       selected={selected} loading={loading} busy={mutating} user={session.user}
       onNavigate={navigate} onThread={openThread} onNew={() => openThread(null)}
-      onDelete={() => void remove()} onSignOut={onSignOut}>
+      onDelete={remove} onSignOut={onSignOut}>
       {view !== "chat" && (
         <div key={view} className="member-panel">
           {view === "admin" && admin ? (
@@ -1127,8 +1135,10 @@ function Workspace({
                             if (pending.browser_request) browser.refresh();
                             void history(selected);
                           }} />
-                        <Button label="동일 요청 다시 확인" variant="ghost" isDisabled={mutating}
-                          onClick={() => void send(undefined, true)} />
+                        {pending.status === "uncertain" && (
+                          <Button label="동일 요청 다시 확인" variant="ghost" isDisabled={mutating}
+                            onClick={() => void send(undefined, true)} />
+                        )}
                       </div>
                     )}
                   </div>
@@ -1144,15 +1154,19 @@ function Workspace({
           </div>
           {!loading && (
             <PersonalChatComposer key={selected ?? "new"} draft={draft}
-              disabled={(!ready && browserMode === "chat") || !!pending || hasActiveTurn} busy={mutating}
+              disabled={!ready && browserMode === "chat"} busy={composerBusy}
+              waiting={busy ? "대화 불러오는 중…"
+                : pending?.status === "uncertain" ? "전송 결과를 확인해 주세요."
+                : pending?.browser_request ? "브라우저 요청을 확인하는 중…" : "답변을 기다리는 중…"}
+              mode={browserMode}
               browserMode={
                 (browserMode !== "chat" || acceptsGuidance || browser.status?.configured || !selected) &&
                 <div className="member-browser-mode">
-                  {browserMode !== "chat" && <span>{browserMode === "guide" ? "브라우저 작업에 추가 지시" : "열 웹 주소와 작업을 입력하세요"}</span>}
-                  <button type="button" disabled={mutating || !!pending || hasActiveTurn}
+                  {browserMode !== "chat" && <span>{browserMode === "guide" ? "브라우저에 추가 지시" : "브라우저 작업"}</span>}
+                  <button type="button" disabled={composerBusy}
                     onClick={() => setBrowserChoice({ thread: selected, mode: browserMode === "chat"
                       ? (acceptsGuidance ? "guide" : "start") : "chat" })}>
-                    {browserMode !== "chat" ? "일반 채팅" : acceptsGuidance ? "브라우저 작업에 지시" : "브라우저 작업"}
+                    {browserMode !== "chat" ? "일반 채팅으로 전환" : acceptsGuidance ? "브라우저 작업에 지시" : "브라우저 작업"}
                   </button>
                 </div>
               }

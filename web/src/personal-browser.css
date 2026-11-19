@@ -182,12 +182,13 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 4px;
   font-size: 12px;
   color: var(--member-secondary);
   margin: 0 0 5px;
 }
+.member-browser-mode span { margin-inline-end: auto; }
 .member-browser-mode button { min-height: 36px; }
 
 @media (max-width: 860px) {

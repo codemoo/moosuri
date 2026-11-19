@@ -248,7 +248,29 @@ fn scrub_urls(text: &str) -> String {
         offset = end;
     }
     out.push_str(&text[offset..]);
-    out
+    if !out.contains(['?', '#']) {
+        return out;
+    }
+    let mut safe = String::with_capacity(out.len());
+    for token in out.split_inclusive(char::is_whitespace) {
+        let word = token.trim_end();
+        let address = word.trim_start_matches(['(', '[', '<', '"', '\'', '`']);
+        if let Some((prefix, _)) = address.split_once(['?', '#'])
+            && !prefix.contains("://")
+            && url::Url::parse(&format!("https://{prefix}"))
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .is_some_and(|host| host.contains('.'))
+        {
+            safe.push_str(&word[..word.len() - address.len()]);
+            let url = display_url(&format!("https://{prefix}"));
+            safe.push_str(url.trim_start_matches("https://"));
+            safe.push_str(&token[word.len()..]);
+        } else {
+            safe.push_str(token);
+        }
+    }
+    safe
 }
 #[derive(Deserialize)]
 struct Tabs {

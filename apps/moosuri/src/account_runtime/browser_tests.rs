@@ -396,7 +396,7 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
             .0,
         StatusCode::CONFLICT
     );
-    let guide = json!({"request_id":Uuid::new_v4(),"text":"morning only","workspace_id":v["id"]});
+    let guide = json!({"request_id":Uuid::new_v4(),"text":"morning only example.org/info?grant=CANARY#secret","workspace_id":v["id"]});
     assert_eq!(
         call(second.token.clone(), base.clone(), guide).await.0,
         StatusCode::OK
@@ -443,6 +443,11 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
     assert_eq!(turn.assistant.len(), 1);
     assert!(turn.assistant[0].text.contains("08:15") && !turn.assistant[0].text.contains("14:30"));
     assert_eq!(turn.run.instructions.as_ref().unwrap()[0].state, "applied");
+    assert!(
+        !turn.run.instructions.as_ref().unwrap()[0]
+            .text
+            .contains("CANARY")
+    );
     a.store.logout(&second.user).await.unwrap();
     assert_eq!(
         request(

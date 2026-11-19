@@ -1,11 +1,12 @@
-import {render, screen, within} from "@testing-library/react";
+import {render, screen, waitFor, within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {expect, it, vi} from "vitest";
+import {afterEach, expect, it, vi} from "vitest";
 import {PersonalCompatibleSettings} from "./PersonalCompatibleSettings";
 import {QuotaPanel} from "./QuotaPanel";
 
 const response = (data:unknown) => new Response(JSON.stringify(data), {headers:{"Content-Type":"application/json"}});
 const base = "/api/v1/settings/compatible-providers";
+afterEach(() => vi.unstubAllGlobals());
 it("discovers a local model and adds a verified personal choice on request", async()=>{
   const p = {id:"local",revision:2,name:"Ollama",enabled:true,config:{kind:"compatible",base_url:"http://127.0.0.1:11434/v1"}};
   const requests:unknown[]=[];
@@ -13,17 +14,42 @@ it("discovers a local model and adds a verified personal choice on request", asy
     expect(new Headers(init.headers).get("X-Moosuri-Account")).toBe("owner");
     if(url===base && init.method==="POST"){requests.push(JSON.parse(String(init.body))); return response(p);}
     if(url===base) return response({providers:[],default_selection:null});
-    if(url.endsWith("/discover"))return response({candidates:[{name:p.name,base_url:p.config.base_url,models:[{id:"local-chat",name:"Local chat"}]}]});
+    if(url.endsWith("/discover"))return response({candidates:[{name:p.name,base_url:p.config.base_url,models:[{id:"local-other",name:"Other model"},{id:"local-chat",name:"Local chat"}]}]});
     if(url.endsWith("/local/probe")){requests.push(JSON.parse(String(init.body)));return response({});}
     throw new Error("unexpected");
   }));
   render(<PersonalCompatibleSettings accountId="owner" onExpired={vi.fn()} onVerified={vi.fn()}/>);
   const user=userEvent.setup();
-  await user.click(screen.getByRole("button",{name:"서버에서 로컬 모델 찾기"}));
+  await user.click(await screen.findByRole("button",{name:"서버에서 로컬 모델 찾기"}));
   expect(requests).toEqual([]);
-  await user.click(await screen.findByRole("button",{name:"모델 확인하고 연결"}));
+  await user.selectOptions(await screen.findByRole("combobox",{name:"Ollama 모델"}),"local-chat");
+  await user.click(screen.getByRole("button",{name:"연결 저장 및 모델 확인"}));
   await screen.findByText(/텍스트 응답을 확인했습니다/);
   expect(requests).toEqual([{name:"Ollama",base_url:p.config.base_url,enabled:true,credential:{action:"clear"}},{revision:2,model:"local-chat",effort:null}]);
+});
+it("keeps compatible connection controls out of an unauthorized session", async () => {
+  const fetcher = vi.fn(async () => new Response(null, {status:403}));
+  vi.stubGlobal("fetch", fetcher);
+  render(<PersonalCompatibleSettings accountId="member" onExpired={vi.fn()} onVerified={vi.fn()} />);
+  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+  expect(screen.queryByRole("region", {name:"개인 LLM 연결"})).not.toBeInTheDocument();
+});
+
+it("keeps a saved connection available when fetching the model catalog fails", async () => {
+  const provider = {id:"local",revision:1,name:"Local API",enabled:true,config:{kind:"compatible",base_url:"https://models.example.test/v1"}};
+  vi.stubGlobal("fetch", vi.fn(async (url:string, init:RequestInit) => {
+    if (url === base) return response(init.method === "POST" ? provider : {providers:[]});
+    return new Response(null, {status:502});
+  }));
+  render(<PersonalCompatibleSettings accountId="owner" onExpired={vi.fn()} onVerified={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", {name:"주소로 연결"}));
+  await user.type(screen.getByLabelText("연결 이름"), provider.name);
+  await user.type(screen.getByLabelText("API 기본 주소"), provider.config.base_url);
+  await user.click(screen.getByRole("button", {name:"연결 저장"}));
+  expect(await screen.findByRole("alert")).toHaveTextContent("모델 목록을 가져오지 못했습니다.");
+  expect(screen.getByRole("status")).toHaveTextContent("연결을 저장했습니다.");
+  expect(within(screen.getByRole("group", {name:provider.name})).getByLabelText("확인할 모델 ID")).toBeEnabled();
 });
 it("shows reported zero and reset time, and distinguishes an unknown subscription limit", async()=>{
   vi.stubGlobal("fetch",vi.fn(async(url:string)=>response(url.includes("/claude/")

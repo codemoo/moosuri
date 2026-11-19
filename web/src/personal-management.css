@@ -157,3 +157,67 @@ p.management-row {
     padding-block: 8px;
   }
 }
+
+.management-heading {
+  flex-wrap: wrap;
+}
+
+.management-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-inline: 12px 0;
+}
+
+.management-section-heading > h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.management-note a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+.management-definitions dt {
+  color: var(--muted);
+}
+
+.management-definitions dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.management-invitation-receipt {
+  display: grid;
+  gap: 8px;
+  padding-block: 12px;
+}
+
+.management-request {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.management-request code {
+  user-select: all;
+}
+
+.management-request p {
+  flex: 1 0 100%;
+}
+
+.compatible-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

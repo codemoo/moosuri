@@ -55,7 +55,9 @@ async fn connect_framing_accepts_only_canonical_google_https_authorities() {
     for denied in [
         "GET http://gmail.googleapis.com/ HTTP/1.1\r\n\r\n",
         "CONNECT gmail.googleapis.com:80 HTTP/1.1\r\n\r\n",
-        "CONNECT www.googleapis.com:443 HTTP/1.1\r\n\r\n",
+        "CONNECT storage.googleapis.com:443 HTTP/1.1\r\n\r\n",
+        "CONNECT drive.googleapis.com:443 HTTP/1.1\r\n\r\n",
+        "CONNECT www.googleapis.com:443/discovery/v1/apis HTTP/1.1\r\n\r\n",
         "CONNECT gmail.googleapis.com:0443 HTTP/1.1\r\n\r\n",
         "CONNECT gmail.googleapis.com.:443 HTTP/1.1\r\n\r\n",
         "CONNECT gmail.googleapis.com.example.test:443 HTTP/1.1\r\n\r\n",
@@ -175,7 +177,7 @@ async fn host_rejects_wrong_peer_invalid_selector_and_fenced_allocation() {
             Destination::Gmail.frame(),
         ),
         (binding, *b"BAD!"),
-        (binding, [b'G', b'W', b'1', 2]),
+        (binding, [b'G', b'W', b'1', 7]),
         (
             Binding {
                 generation: binding.generation + 1,

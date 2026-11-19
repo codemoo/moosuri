@@ -1,5 +1,6 @@
-//! Member-local readonly Gmail. The OAuth connector owns code exchange and
+//! Member-local Google reads. The OAuth connector owns code exchange and
 //! refresh. Only an access token goes into a short-lived gws process.
+pub(super) mod workspace;
 use super::{Failure, Inbox, Operation, Secret, StatusCode, decode, hex64};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::future::try_join_all;
@@ -9,7 +10,7 @@ use moosuri_connectors::{
     },
     model::CancellationToken,
 };
-use moosuri_store::{MemberGoogleInboxMessage, personal_volume::VolumeOwner};
+use moosuri_store::{MemberGoogleInboxMessage, MemberGoogleService, personal_volume::VolumeOwner};
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, value::RawValue};
@@ -26,6 +27,7 @@ use std::{
 };
 use tokio::{io::AsyncReadExt, process::Command};
 use uuid::Uuid;
+use workspace::{ProfileClient, WorkspaceData, WorkspaceRead};
 use zeroize::Zeroizing;
 
 const CONFIG_LIMIT: usize = 32 * 1024;
@@ -33,17 +35,21 @@ const OUTPUT_LIMIT: usize = 128 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const REFRESH_LIFETIME: u64 = 400 * 24 * 3600;
 const PAGE_SIZE: usize = 5;
-const DISCOVERY_PATH: &str = "/usr/local/share/moosuri/gmail-v1.json";
+const DISCOVERY_DIR: &str = "/usr/local/share/moosuri";
 const DISCOVERY_LIMIT: usize = 2 * 1024 * 1024;
-const DISCOVERY_DIGEST: [u8; 32] = [
-    0x83, 0x9b, 0x79, 0x63, 0xdf, 0x95, 0x48, 0x1f, 0x3c, 0xd2, 0xba, 0x7a, 0xa1, 0xe9, 0x06, 0xf1,
-    0xfc, 0x67, 0xc4, 0xae, 0x89, 0x71, 0x9d, 0x09, 0xbb, 0x73, 0x05, 0x04, 0x0e, 0x99, 0xf0, 0xfb,
-];
+
+#[derive(PartialEq, Eq)]
+struct Identity {
+    mailbox: String,
+    subject: Option<String>,
+}
 
 pub(super) struct LocalGws {
+    service: MemberGoogleService,
     revision: Uuid,
     app: OAuthClient,
     oauth: GmailClient,
+    profile: Option<ProfileClient>,
     key: hmac::Key,
     executable: PathBuf,
     proxy: String,
@@ -78,6 +84,8 @@ struct Binding {
     app_revision: Uuid,
     purpose: String,
     mailbox: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subject: Option<String>,
     token_tag: String,
     expires_at: u64,
 }
@@ -201,12 +209,45 @@ fn private_directory() -> Result<tempfile::TempDir, &'static str> {
     Ok(directory)
 }
 
-fn discovery_bytes() -> Result<Vec<u8>, &'static str> {
+struct Discovery {
+    version: &'static str,
+    digest: &'static str,
+}
+
+fn discovery(service: MemberGoogleService) -> Discovery {
+    let (version, digest) = match service {
+        MemberGoogleService::Gmail => (
+            "v1",
+            "839b7963df95481f3cd2ba7aa1e906f1fc67c4ae89719d09bb7305040e99f0fb",
+        ),
+        MemberGoogleService::Drive => (
+            "v3",
+            "7e37c8824e711efb33dd2dd9a6dee927673149744288129a3a1c32000b6e33b9",
+        ),
+        MemberGoogleService::Docs => (
+            "v1",
+            "1f1a507a4b6314ce3a613ecc92475a313ed88156f05526f0218452fa2de7db16",
+        ),
+        MemberGoogleService::Slides => (
+            "v1",
+            "bd90d71780ec5c30e9679d381d22dd99de24be6f67aff169f85d93350c7265a8",
+        ),
+        MemberGoogleService::Sheets => (
+            "v4",
+            "6ceb5292c8c01e02006ceca2d708cc70d050cec6a6398c2eef7f5150d3684baa",
+        ),
+    };
+    Discovery { version, digest }
+}
+
+fn discovery_bytes(service: MemberGoogleService) -> Result<Vec<u8>, &'static str> {
     let invalid = "member_gws_discovery_invalid";
+    let Discovery { version, digest } = discovery(service);
+    let path = Path::new(DISCOVERY_DIR).join(format!("{}-{version}.json", service.as_str()));
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(DISCOVERY_PATH)
+        .open(path)
         .map_err(|_| invalid)?;
     let metadata = file.metadata().map_err(|_| invalid)?;
     if !metadata.is_file()
@@ -220,13 +261,17 @@ fn discovery_bytes() -> Result<Vec<u8>, &'static str> {
     file.take((DISCOVERY_LIMIT + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|_| invalid)?;
-    if bytes.len() > DISCOVERY_LIMIT || Sha256::digest(&bytes).as_slice() != DISCOVERY_DIGEST {
+    if bytes.len() > DISCOVERY_LIMIT || format!("{:x}", Sha256::digest(&bytes)) != digest {
         return Err(invalid);
     }
     Ok(bytes)
 }
 
-fn seed_discovery(directory: &Path, bytes: &[u8]) -> Result<File, &'static str> {
+fn seed_discovery(
+    directory: &Path,
+    service: MemberGoogleService,
+    bytes: &[u8],
+) -> Result<File, &'static str> {
     let invalid = "member_gws_discovery_cache_unavailable";
     let directory = directory.join("cache");
     fs::create_dir(&directory).map_err(|_| invalid)?;
@@ -234,7 +279,11 @@ fn seed_discovery(directory: &Path, bytes: &[u8]) -> Result<File, &'static str> 
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(directory.join("gmail_v1.json"))
+        .open(directory.join(format!(
+            "{}_{}.json",
+            service.as_str(),
+            discovery(service).version
+        )))
         .map_err(|_| invalid)?;
     file.write_all(bytes).map_err(|_| invalid)?;
     Ok(file)
@@ -286,19 +335,27 @@ pub(crate) fn registered_client(
 }
 
 impl LocalGws {
-    pub(super) fn load(
+    pub(super) fn load_for(
+        service: MemberGoogleService,
         config_path: &Path,
         executable: &Path,
         proxy: SocketAddr,
     ) -> Result<Self, &'static str> {
         let (revision, app, key) = registered_client(config_path)?;
         let directory = private_directory()?;
-        let discovery_cache = seed_discovery(directory.path(), &discovery_bytes()?)?;
+        let discovery_cache =
+            seed_discovery(directory.path(), service, &discovery_bytes(service)?)?;
         Ok(Self {
+            service,
             revision,
             app,
             oauth: GmailClient::google_oauth_proxy(proxy)
                 .map_err(|_| "member_google_proxy_invalid")?,
+            profile: if service == MemberGoogleService::Gmail {
+                None
+            } else {
+                Some(ProfileClient::google(proxy)?)
+            },
             key,
             executable: executable_path(executable)?,
             proxy: format!("http://{proxy}"),
@@ -337,22 +394,26 @@ impl LocalGws {
                 json!({
                     "client_id": self.app.client_id,
                     "redirect_uri": self.app.redirect_uri,
-                    "scope": READ_SCOPE,
-                    "operations": ["authorization_url", "exchange", "refresh", "inbox_page"],
+                    "scope": self.service.scope(),
+                    "operations": ["authorization_url", "exchange", "refresh", self.read_operation()],
                 }),
             ),
             Operation::AuthorizationUrl { state, verifier } => {
                 if !hex64(state) {
                     return Err(unavailable());
                 }
-                let authorization_url = GmailClient::authorization_url_scoped(
-                    &self.app.client_id,
-                    &self.app.redirect_uri,
-                    state,
-                    verifier.0.expose(),
-                    &[READ_SCOPE],
-                )
-                .map_err(|_| unavailable())?;
+                let authorization_url = if self.service == MemberGoogleService::Gmail {
+                    GmailClient::authorization_url_scoped(
+                        &self.app.client_id,
+                        &self.app.redirect_uri,
+                        state,
+                        verifier.0.expose(),
+                        &[READ_SCOPE],
+                    )
+                    .map_err(|_| unavailable())?
+                } else {
+                    workspace::authorization_url(&self.app, self.service, state, verifier.0)?
+                };
                 self.reply(owner, id, json!({"authorization_url": authorization_url}))
             }
             Operation::Exchange { code, verifier } => {
@@ -368,23 +429,47 @@ impl LocalGws {
                 refresh_binding,
             } => {
                 let previous = refresh_token.0;
-                let expected_mailbox = self.verify(owner, "refresh", refresh_binding, previous)?;
+                let expected = self.verify(owner, "refresh", refresh_binding, previous)?;
                 let tokens = self
                     .oauth
                     .refresh(&self.app, previous, &CancellationToken::new())
                     .await
                     .map_err(|_| unavailable())?;
-                self.tokens(owner, id, tokens, Some((previous, &expected_mailbox)))
+                self.tokens(owner, id, tokens, Some((previous, &expected)))
                     .await
             }
             Operation::InboxPage {
                 access_token,
                 access_binding,
             } => {
-                let mailbox = self.verify(owner, "access", access_binding, access_token.0)?;
-                let page = self.inbox(mailbox, access_token.0).await?;
+                if self.service != MemberGoogleService::Gmail {
+                    return Err(unavailable());
+                }
+                let identity = self.verify(owner, "access", access_binding, access_token.0)?;
+                let page = self.inbox(identity.mailbox, access_token.0).await?;
                 self.reply(owner, id, page)
             }
+            Operation::WorkspaceRead {
+                access_token,
+                access_binding,
+                resource_id,
+            } => {
+                let read = WorkspaceRead::new(self.service, resource_id)?;
+                self.verify(owner, "access", access_binding, access_token.0)?;
+                let (args, params) = read.command();
+                self.refresh_discovery()?;
+                let bytes = self.command(args, params, access_token.0).await?;
+                let result: WorkspaceData = read.project(&bytes)?;
+                self.reply(owner, id, result)
+            }
+        }
+    }
+
+    fn read_operation(&self) -> &'static str {
+        if self.service == MemberGoogleService::Gmail {
+            "inbox_page"
+        } else {
+            "workspace_read"
         }
     }
 
@@ -417,7 +502,7 @@ impl LocalGws {
         &self,
         owner: Owner,
         purpose: &str,
-        mailbox: &str,
+        identity: &Identity,
         token: &SecretString,
         expires_at: u64,
     ) -> Result<String, Failure> {
@@ -425,8 +510,9 @@ impl LocalGws {
             v: 1,
             owner,
             app_revision: self.revision,
-            purpose: purpose.into(),
-            mailbox: mailbox.into(),
+            purpose: self.service.binding_purpose(purpose),
+            mailbox: identity.mailbox.clone(),
+            subject: identity.subject.clone(),
             token_tag: self.token_tag(token),
             expires_at,
         };
@@ -442,7 +528,7 @@ impl LocalGws {
         purpose: &str,
         receipt: &str,
         token: &SecretString,
-    ) -> Result<String, Failure> {
+    ) -> Result<Identity, Failure> {
         if receipt.len() > 4096 {
             return Err(unavailable());
         }
@@ -460,13 +546,21 @@ impl LocalGws {
         if claim.v != 1
             || claim.owner != owner
             || claim.app_revision != self.revision
-            || claim.purpose != purpose
+            || claim.purpose != self.service.binding_purpose(purpose)
+            || !match (self.service, &claim.subject) {
+                (MemberGoogleService::Gmail, None) => true,
+                (MemberGoogleService::Gmail, Some(_)) | (_, None) => false,
+                (_, Some(subject)) => workspace::valid_subject(subject),
+            }
             || claim.expires_at <= now()?
             || hmac::verify(&self.key, token.expose().as_bytes(), &tag).is_err()
         {
             return Err(unavailable());
         }
-        Ok(claim.mailbox)
+        Ok(Identity {
+            mailbox: claim.mailbox,
+            subject: claim.subject,
+        })
     }
 
     async fn tokens(
@@ -474,11 +568,14 @@ impl LocalGws {
         owner: Owner,
         id: Uuid,
         tokens: TokenSet,
-        prior: Option<(&SecretString, &str)>,
+        prior: Option<(&SecretString, &Identity)>,
     ) -> Result<Zeroizing<Vec<u8>>, Failure> {
         // Google may omit the scope on refresh. The authenticated prior grant
-        // proves in that case that the unchanged scope is Gmail read-only.
+        // proves in that case that the token is bound to this one service.
         let readonly = match tokens.scopes.as_deref() {
+            Some(scopes) if self.service != MemberGoogleService::Gmail => {
+                workspace::granted_scopes(self.service, scopes)
+            }
             Some([scope]) => scope == READ_SCOPE,
             None => prior.is_some(),
             _ => false,
@@ -492,23 +589,24 @@ impl LocalGws {
             .or(prior.map(|(token, _)| token))
             .ok_or_else(unavailable)?;
         let created_at = now()?;
-        let bytes = self.read(GmailRead::Profile, &tokens.access_token).await?;
-        let profile = MailboxProfile::from_gmail_json(&bytes).map_err(|_| unavailable())?;
-        let mailbox = profile.email_address;
-        if prior.is_some_and(|(_, expected)| !expected.eq_ignore_ascii_case(&mailbox)) {
+        let identity = self.identity(&tokens.access_token).await?;
+        if prior.is_some_and(|(_, expected)| {
+            expected.subject != identity.subject
+                || !expected.mailbox.eq_ignore_ascii_case(&identity.mailbox)
+        }) {
             return Err(unavailable());
         }
         let access_binding = self.bind(
             owner,
             "access",
-            &mailbox,
+            &identity,
             &tokens.access_token,
             created_at + tokens.expires_in,
         )?;
         let refresh_binding = self.bind(
             owner,
             "refresh",
-            &mailbox,
+            &identity,
             refresh,
             created_at + REFRESH_LIFETIME,
         )?;
@@ -519,12 +617,29 @@ impl LocalGws {
                 access_token: Secret(&tokens.access_token),
                 refresh_token: tokens.refresh_token.as_ref().map(Secret),
                 expires_in: tokens.expires_in,
-                scopes: [READ_SCOPE],
-                mailbox,
+                scopes: [self.service.scope()],
+                mailbox: identity.mailbox,
                 access_binding,
                 refresh_binding,
             },
         )
+    }
+
+    async fn identity(&self, token: &SecretString) -> Result<Identity, Failure> {
+        if self.service != MemberGoogleService::Gmail {
+            return self
+                .profile
+                .as_ref()
+                .ok_or_else(unavailable)?
+                .identity(token)
+                .await;
+        }
+        let bytes = self.read(GmailRead::Profile, token).await?;
+        let profile = MailboxProfile::from_gmail_json(&bytes).map_err(|_| unavailable())?;
+        Ok(Identity {
+            mailbox: profile.email_address,
+            subject: None,
+        })
     }
 
     async fn inbox(&self, mailbox: String, token: &SecretString) -> Result<Inbox, Failure> {
@@ -585,9 +700,7 @@ impl LocalGws {
             // gws 0.22.0 considers the cached schema stale after 24 hours.
             // Keep the image-verified file fresh before the first command of
             // a read so follow-up metadata calls use the same schema.
-            self.discovery_cache
-                .set_modified(SystemTime::now())
-                .map_err(|_| unavailable())?;
+            self.refresh_discovery()?;
         }
         let (args, params): (&[&str], Value) = match read {
             GmailRead::Profile => (
@@ -609,6 +722,21 @@ impl LocalGws {
                 }),
             ),
         };
+        self.command(args, params, token).await
+    }
+
+    fn refresh_discovery(&self) -> Result<(), Failure> {
+        self.discovery_cache
+            .set_modified(SystemTime::now())
+            .map_err(|_| unavailable())
+    }
+
+    async fn command(
+        &self,
+        args: &[&str],
+        params: Value,
+        token: &SecretString,
+    ) -> Result<Zeroizing<Vec<u8>>, Failure> {
         let private = self.directory.path();
         let mut cmd = Command::new(&self.executable);
         cmd.env_clear()

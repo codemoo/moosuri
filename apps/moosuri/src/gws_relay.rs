@@ -56,18 +56,38 @@ struct Config {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 enum Destination {
-    Token,
-    Gmail,
+    Token = 0,
+    Gmail = 1,
+    OpenId = 2,
+    Drive = 3,
+    Docs = 4,
+    Slides = 5,
+    Sheets = 6,
 }
 
 impl Destination {
-    const ALLOWED: [Self; 2] = [Self::Token, Self::Gmail];
+    const ALLOWED: [Self; 7] = [
+        Self::Token,
+        Self::Gmail,
+        Self::OpenId,
+        Self::Drive,
+        Self::Docs,
+        Self::Slides,
+        Self::Sheets,
+    ];
 
     fn authority(self) -> &'static str {
         match self {
             Self::Token => "oauth2.googleapis.com:443",
             Self::Gmail => "gmail.googleapis.com:443",
+            Self::OpenId => "openidconnect.googleapis.com:443",
+            // Drive v3's pinned discovery document uses this canonical HTTPS origin.
+            Self::Drive => "www.googleapis.com:443",
+            Self::Docs => "docs.googleapis.com:443",
+            Self::Slides => "slides.googleapis.com:443",
+            Self::Sheets => "sheets.googleapis.com:443",
         }
     }
 

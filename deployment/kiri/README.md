@@ -83,9 +83,9 @@ Linux Kiri 안의 두 실제 클라이언트에서 무수리 Rust 모델 서비�
 
 최초 설치 관리자를 지정한 뒤 회원의 개인 웹에서 초대 접수, 권한 변경, 정지와 해제를 진행한다. [설치 관리자 안내](admin.md)
 
-## 개인 Gmail 연결
+## 회원별 Google Workspace 연결
 
-개인 컨테이너에 Google 웹 클라이언트를 등록하고, 회원이 브라우저에서 동의하면 그 컨테이너의 GWS가 Gmail을 조회한다. 설치자 구성과 회원의 연결 흐름은 [개인 Gmail 연결](google.md)을 따른다.
+개인 컨테이너에 Google 웹 클라이언트를 등록하고, 회원이 서비스별로 동의하면 그 컨테이너의 GWS에서 Gmail·Drive·Docs·Slides·Sheets를 사용한다. 설치자 구성과 회원의 연결 흐름은 [Google Workspace 연결](google.md)을 따른다.
 
 ## 개인 암호 볼트 연결 상태
 

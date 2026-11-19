@@ -82,6 +82,11 @@ The personal connector catalog SHALL show the current member's service account a
 - **WHEN** a member opens the connected list and selects Gmail
 - **THEN** the mailbox identity and connection controls are available, and opening the screen does not dispatch a mail read
 
+#### Scenario: A member connects a second Google Workspace service
+- **WHEN** a member with an existing Gmail grant selects Drive, Docs, Slides or Sheets
+- **THEN** each connector requests its own read scope and records the verified Google account in the member runtime; disconnecting one leaves the others available
+- **AND** the authorization callback belongs to the original service, account, generation and session, and completing consent does not read a file
+
 #### Scenario: Vault site configured before Kiri session integration
 - **WHEN** the member opens the vault connector and a separate HTTPS vault origin is configured
 - **THEN** the UI identifies the missing member-session integration and may open the configured site without carrying session credentials

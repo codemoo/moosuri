@@ -38,6 +38,7 @@ The installation SHALL supply read-only shared modules and model availability, a
 - **AND** a paused engine admits no new inference and stale administrator edits are rejected
 - **AND** prior member choices have no effect on the current installation and the gateway accepts only installation-wide settings
 - **AND** a member cannot choose a different pair through the web or the model socket
+- **AND** an upstream response that explicitly reports a different model ID cannot supply a saved or displayed answer, and retrying that same call only retrieves its accounting receipt
 
 #### Scenario: Rotate the installation model credential
 - **WHEN** two members use the same provider and its installation credential rotates

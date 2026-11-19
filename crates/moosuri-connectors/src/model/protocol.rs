@@ -81,6 +81,8 @@ pub enum FinishOutcome {
     ContinuationRequired,
 }
 
+pub const MODEL_IDENTITY_MISMATCH: &str = "model_identity_mismatch";
+
 pub enum ModelEvent {
     Started {
         response_id: Option<String>,
@@ -289,6 +291,7 @@ pub struct StreamDecoder {
     protocol: Protocol,
     dialect: ResponsesDialect,
     expected_model: Option<String>,
+    model_mismatch: bool,
     tools: Option<tools::RoundState>,
     line: Vec<u8>,
     after_cr: bool,
@@ -317,6 +320,7 @@ impl StreamDecoder {
             protocol,
             dialect: ResponsesDialect::Api,
             expected_model: None,
+            model_mismatch: false,
             tools: None,
             line: Vec::new(),
             after_cr: false,
@@ -344,6 +348,12 @@ impl StreamDecoder {
     pub fn chatgpt_plan(model: &str) -> Self {
         let mut decoder = Self::new(Protocol::Responses);
         decoder.dialect = ResponsesDialect::ChatGptPlan;
+        decoder.expected_model = Some(model.into());
+        decoder
+    }
+
+    pub(super) fn check_reported_model(protocol: Protocol, model: &str) -> Self {
+        let mut decoder = Self::new(protocol);
         decoder.expected_model = Some(model.into());
         decoder
     }
@@ -536,6 +546,19 @@ impl StreamDecoder {
             self.tools = Some(state);
             return result;
         }
+        if self.dialect == ResponsesDialect::Api
+            && let Some(expected) = self.expected_model.as_deref()
+        {
+            let reported = match self.protocol {
+                Protocol::Responses => value.pointer("/response/model"),
+                Protocol::AnthropicMessages => value.pointer("/message/model"),
+                Protocol::OpenRouterChat | Protocol::ChatCompletions => value.get("model"),
+            };
+            if let Some(reported) = reported.filter(|model| !model.is_null()) {
+                self.model_mismatch |=
+                    reported.as_str().ok_or(ProtocolError::Protocol)? != expected;
+            }
+        }
         match self.protocol {
             Protocol::Responses => self.responses(name, &value, events),
             Protocol::AnthropicMessages => self.anthropic(name, &value, events),
@@ -577,7 +600,7 @@ impl StreamDecoder {
         if self.text_bytes > MAX_TEXT_BYTES {
             return Err(ProtocolError::LimitExceeded);
         }
-        if !text.is_empty() {
+        if !text.is_empty() && !self.model_mismatch {
             if refusal {
                 self.refusal = true;
             }
@@ -626,13 +649,20 @@ impl StreamDecoder {
         reason: &'static str,
         events: &mut Vec<ModelEvent>,
     ) {
-        if outcome == FinishOutcome::Completed && self.refusal {
+        if self.model_mismatch {
+            outcome = FinishOutcome::Incomplete;
+        } else if outcome == FinishOutcome::Completed && self.refusal {
             outcome = FinishOutcome::Refused;
         }
         self.terminal = true;
         events.push(ModelEvent::Finished {
             outcome,
-            native_reason: reason.to_owned(),
+            native_reason: if self.model_mismatch {
+                MODEL_IDENTITY_MISMATCH
+            } else {
+                reason
+            }
+            .to_owned(),
         });
     }
 
@@ -1143,10 +1173,11 @@ impl StreamDecoder {
             .as_ref()
             .zip(self.response_id.as_ref())
             .is_some_and(|(a, b)| a != b)
-            || model
-                .as_ref()
-                .zip(self.model.as_ref())
-                .is_some_and(|(a, b)| a != b)
+            || !self.model_mismatch
+                && model
+                    .as_ref()
+                    .zip(self.model.as_ref())
+                    .is_some_and(|(a, b)| a != b)
         {
             return Err(ProtocolError::Protocol);
         }
@@ -1505,6 +1536,32 @@ mod tests {
             })
             .unwrap_or_default()
     }
+
+    #[test]
+    fn optional_model_check_applies_to_an_id_first_reported_by_responses_terminal() {
+        let mut frames = response_frames(None, false);
+        frames[0]["response"]
+            .as_object_mut()
+            .unwrap()
+            .remove("model");
+        frames.last_mut().unwrap()["response"]["model"] = json!("different-model");
+        let bytes = wire(frames);
+        let mut checked =
+            StreamDecoder::check_reported_model(Protocol::Responses, "selected-model");
+        let events = push_ok(&mut checked, bytes.as_bytes());
+        assert_eq!(checked.finish(), Ok(()));
+        assert_eq!(last_usage(&events).input_tokens, Some(10));
+        assert_eq!(last_usage(&events).output_tokens, Some(3));
+        assert!(matches!(
+            events.last(),
+            Some(ModelEvent::Finished { outcome: FinishOutcome::Incomplete, native_reason })
+                if native_reason == MODEL_IDENTITY_MISMATCH
+        ));
+
+        let unchecked = decode(Protocol::Responses, &bytes, 32);
+        assert_eq!(terminal(&unchecked), FinishOutcome::Completed);
+    }
+
     fn response_frames(phase: Option<&str>, refusal: bool) -> Vec<Value> {
         response_frames_with_text(phase, refusal, "안녕 🌱")
     }

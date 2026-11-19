@@ -575,6 +575,29 @@ impl ModelClient {
         events: &mpsc::Sender<ModelEvent>,
         cancellation: &CancellationToken,
     ) -> Result<(), TransportError> {
+        self.stream_text_inner(request, events, cancellation, false)
+            .await
+    }
+
+    /// Reject a result when the upstream explicitly reports a different model ID.
+    /// A stream without a model ID can complete, but does not attest its identity.
+    pub async fn stream_text_matching_reported_model(
+        &self,
+        request: &TextRequest,
+        events: &mpsc::Sender<ModelEvent>,
+        cancellation: &CancellationToken,
+    ) -> Result<(), TransportError> {
+        self.stream_text_inner(request, events, cancellation, true)
+            .await
+    }
+
+    async fn stream_text_inner(
+        &self,
+        request: &TextRequest,
+        events: &mpsc::Sender<ModelEvent>,
+        cancellation: &CancellationToken,
+        check_reported_model: bool,
+    ) -> Result<(), TransportError> {
         if cancellation.is_cancelled() || events.is_closed() {
             return Err(TransportError::Cancelled);
         }
@@ -582,7 +605,17 @@ impl ModelClient {
             biased;
             _ = cancellation.cancelled() => Err(TransportError::Cancelled),
             _ = events.closed() => Err(TransportError::Cancelled),
-            result = tokio::time::timeout(self.limits.total, self.stream_inner(request, events)) => {
+            result = tokio::time::timeout(self.limits.total, async {
+                let body = self.encode_text_request(request)?;
+                let decoder = if self.dialect == ResponsesDialect::ChatGptPlan {
+                    StreamDecoder::chatgpt_plan(&request.model)
+                } else if check_reported_model {
+                    StreamDecoder::check_reported_model(self.protocol, &request.model)
+                } else {
+                    StreamDecoder::new(self.protocol)
+                };
+                self.stream_encoded(body, decoder, events).await
+            }) => {
                 result.map_err(|_| TransportError::Timeout)?
             }
         }
@@ -611,20 +644,6 @@ impl ModelClient {
                 &self.images,
             )?)
         }
-    }
-
-    async fn stream_inner(
-        &self,
-        request: &TextRequest,
-        events: &mpsc::Sender<ModelEvent>,
-    ) -> Result<(), TransportError> {
-        let body = self.encode_text_request(request)?;
-        let decoder = if self.dialect == ResponsesDialect::ChatGptPlan {
-            StreamDecoder::chatgpt_plan(&request.model)
-        } else {
-            StreamDecoder::new(self.protocol)
-        };
-        self.stream_encoded(body, decoder, events).await
     }
 
     /// Complete calls are returned only after a successful validated round. Event

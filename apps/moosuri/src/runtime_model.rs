@@ -8,7 +8,8 @@ use fs2::FileExt;
 use moosuri_connectors::model::{
     CancellationToken, ModelClient, Secret, TransportLimits,
     protocol::{
-        FinishOutcome, ModelEvent, TextCapabilities, TextMessage, TextRequest, TextRole, Usage,
+        FinishOutcome, MODEL_IDENTITY_MISMATCH, ModelEvent, TextCapabilities, TextMessage,
+        TextRequest, TextRole, Usage,
     },
 };
 use moosuri_core::{ProviderConfig, ProviderKind};
@@ -757,12 +758,13 @@ impl Broker {
         let executor = executor.expect("a fresh admission requires an executor");
         let (tx, mut rx) = mpsc::channel(32);
         let cancel = self.stop.child_token();
-        let (succeeded, (text, usage, outcome)) = tokio::join!(
+        let (succeeded, (text, usage, terminal)) = tokio::join!(
             async {
                 let succeeded = match executor {
-                    Executor::Api(client) => {
-                        client.stream_text(&request, &tx, &cancel).await.is_ok()
-                    }
+                    Executor::Api(client) => client
+                        .stream_text_matching_reported_model(&request, &tx, &cancel)
+                        .await
+                        .is_ok(),
                     Executor::Login {
                         route,
                         owner,
@@ -778,7 +780,7 @@ impl Broker {
             async {
                 let mut text = String::new();
                 let mut usage = Usage::default();
-                let mut outcome = None;
+                let mut terminal = None;
                 loop {
                     tokio::select! {
                         _=cancel.cancelled()=>break,
@@ -787,7 +789,9 @@ impl Broker {
                                 if text.len()+delta.len()>MAX_OUTPUT {cancel.cancel();break;}text.push_str(&delta);
                             }
                             Some(ModelEvent::UsageSnapshot(next))=>usage=next,
-                            Some(ModelEvent::Finished{outcome:next,..})=>{outcome=Some(next);}
+                            Some(ModelEvent::Finished { outcome, native_reason }) => {
+                                terminal = Some((outcome, native_reason == MODEL_IDENTITY_MISMATCH));
+                            }
                             None=>break,
                             _=>(),
                         }
@@ -796,10 +800,10 @@ impl Broker {
                 // EOF is required even after Finished: malformed trailing frames
                 // cannot turn a partial provider stream into a settled answer.
                 drop(rx);
-                (text, usage, outcome)
+                (text, usage, terminal)
             }
         );
-        if !succeeded || outcome.is_none() {
+        let Some((outcome, model_mismatch)) = terminal.filter(|_| succeeded) else {
             let receipt = self.ledger.lock().ok().and_then(|mut l| {
                 l.uncertain(&permit, usage.input_tokens, usage.output_tokens)
                     .ok()
@@ -807,7 +811,7 @@ impl Broker {
             return receipt
                 .map(|rct| Reply::receipt(r.call_id, rct))
                 .unwrap_or_else(|| Reply::error("ledger_unavailable"));
-        }
+        };
         let receipt = match self.ledger.lock().ok().and_then(|mut l| {
             l.settle(&permit, usage.input_tokens, usage.output_tokens)
                 .ok()
@@ -815,7 +819,7 @@ impl Broker {
             Some(r) => r,
             None => return Reply::error("ledger_unavailable"),
         };
-        if epoch(&self.registry, b) != Ok(start_epoch) {
+        if model_mismatch || epoch(&self.registry, b) != Ok(start_epoch) {
             return Reply::receipt(r.call_id, receipt);
         }
         Reply {
@@ -824,7 +828,7 @@ impl Broker {
             call_id: Some(r.call_id),
             output: Some(text),
             outcome: Some(
-                match outcome.unwrap() {
+                match outcome {
                     FinishOutcome::Completed => "completed",
                     FinishOutcome::Incomplete => "incomplete",
                     FinishOutcome::Refused => "refused",
@@ -1122,6 +1126,9 @@ mod tests {
     use axum::{Router, extract::State, http::HeaderMap, response::IntoResponse, routing::post};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Notify;
+    const REPORT_DIFFERENT_MODEL: usize = 3;
+    const OMIT_MODEL: usize = 4;
+    const REPORT_DIFFERENT_MODEL_WITH_USAGE: usize = 5;
     struct Provider {
         count: AtomicUsize,
         mode: AtomicUsize,
@@ -1151,11 +1158,12 @@ mod tests {
             }
             _ => panic!("unexpected synthetic model"),
         }
-        if p.mode.load(Ordering::SeqCst) == 2 {
+        let mode = p.mode.load(Ordering::SeqCst);
+        if mode == 2 {
             p.entered.notify_one();
             p.release.notified().await;
         }
-        let body = if p.mode.load(Ordering::SeqCst) == 1 {
+        let body = if mode == 1 {
             "data: {not-json}\n\n".to_owned()
         } else {
             concat!("data: {\"id\":\"fixture-id\",\"model\":\"synthetic-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"SYNTHETIC-ANSWER-CANARY\"},\"finish_reason\":null}]}\n\n",
@@ -1164,6 +1172,14 @@ mod tests {
             "data: [DONE]\n\n").to_owned()
         };
         let body = body.replace("synthetic-model", model);
+        let body = match mode {
+            REPORT_DIFFERENT_MODEL => body.replace(model, "synthetic-model-2026-01-01"),
+            OMIT_MODEL => body.replace(&format!("\"model\":\"{model}\","), ""),
+            REPORT_DIFFERENT_MODEL_WITH_USAGE => body
+                .replacen(&format!("\"model\":\"{model}\","), "", 2)
+                .replace(model, "synthetic-model-2026-01-01"),
+            _ => body,
+        };
         ([("content-type", "text/event-stream")], body)
     }
     async fn upstream() -> (String, Arc<Provider>, tokio::task::JoinHandle<()>) {
@@ -1294,6 +1310,39 @@ mod tests {
             .as_i64()
             .unwrap()
     }
+    #[tokio::test]
+    async fn reported_model_mismatch_withholds_output_and_settles_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let (url, provider, upstream) = upstream().await;
+        let (options, bindings) = fixture(&root, url);
+        let broker = ready_broker(&options);
+        let binding = &bindings[0];
+        for mode in [REPORT_DIFFERENT_MODEL, REPORT_DIFFERENT_MODEL_WITH_USAGE] {
+            provider.mode.store(mode, Ordering::SeqCst);
+            let call = request(binding);
+            let retry = serde_json::to_vec(&call).unwrap();
+            let rejected = broker.call(binding, call).await;
+            assert_eq!(rejected.state, "settled_response_unavailable");
+            assert!(rejected.output.is_none() && rejected.model.is_none());
+            assert_eq!(rejected.receipt.as_ref().unwrap()["charged_tokens"], 10);
+            let replay = broker
+                .call(binding, serde_json::from_slice(&retry).unwrap())
+                .await;
+            assert_eq!(replay.state, rejected.state);
+            assert_eq!(replay.receipt, rejected.receipt);
+        }
+        provider.mode.store(OMIT_MODEL, Ordering::SeqCst);
+        let unidentified = broker.call(binding, request(binding)).await;
+        assert_eq!(unidentified.state, "settled");
+        assert_eq!(
+            unidentified.output.as_deref(),
+            Some("SYNTHETIC-ANSWER-CANARY")
+        );
+        assert_eq!(provider.count.load(Ordering::SeqCst), 3);
+        upstream.abort();
+    }
+
     #[tokio::test]
     async fn installation_policy_reaches_upstream_for_both_members() {
         let temp = tempfile::tempdir().unwrap();

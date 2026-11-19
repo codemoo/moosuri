@@ -44,6 +44,7 @@ let previewRefused: boolean;
 let obsoleteCapabilityFields: boolean;
 let browserRoute: ((path: string, method: string, body: any) => Response | Promise<Response>) | undefined;
 let deleteThreadResponse: Response | undefined;
+let inventoryFailure: boolean;
 const turn = (id: string, text: string, state = "completed") => ({
   sequence: 1,
   user_text: text,
@@ -97,6 +98,7 @@ beforeEach(() => {
   obsoleteCapabilityFields = false;
   browserRoute = undefined;
   deleteThreadResponse = undefined;
+  inventoryFailure = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -199,7 +201,7 @@ beforeEach(() => {
           ...(obsoleteCapabilityFields ? { model: "synthetic-admin-model", effort: "synthetic-effort" } : {}),
         });
       if (path === "/threads" && method === "GET")
-        return Response.json({ threads });
+        return inventoryFailure ? new Response(null, { status: 503 }) : Response.json({ threads });
       if (path === "/threads" && method === "POST") {
         let t = threads.find((t) => t.id === body.request_id);
         if (!t) {
@@ -797,6 +799,7 @@ it("confirms deletion of a searched conversation without selecting it or losing 
   await drawer.findByRole("alert");
   expect(threads).toHaveLength(2);
   deleteThreadResponse = undefined;
+  inventoryFailure = false;
   await user.click(drawer.getByRole("button", { name: "대화 삭제" }));
   await drawer.findByText("일치하는 대화가 없습니다.");
   expect(search).toHaveValue("another");
@@ -1187,4 +1190,85 @@ it("does not submit an Enter that completes Korean composition", async () => {
   expect(paid.size).toBe(0);
   await user.keyboard("{Enter}");
   await waitFor(() => expect(paid.size).toBe(1));
+});
+
+it("puts a starter in the focused composer and keeps it through navigation without sending it", async () => {
+  threads = [];
+  const user = userEvent.setup();
+  mount();
+  const example = await screen.findByRole("button", { name: "문장 다듬기" });
+  await user.click(example);
+  const editor = await composer();
+  expect(editor).toHaveFocus();
+  expect(editor).toHaveValue("다음 문장을 자연스럽게 다듬어 줘.\n");
+  expect(screen.queryByRole("button", { name: "계획 세우기" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "기억" }));
+  await user.click(screen.getByRole("button", { name: "대화" }));
+  expect(await composer()).toHaveValue("다음 문장을 자연스럽게 다듬어 줘.\n");
+  expect(calls.some(({ path, method }) => path === "/threads" && method === "POST")).toBe(false);
+});
+
+it("groups conversations by local dates and keeps a draft available from a keyboard search", async () => {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  threads[0].updated_at = Math.floor(today.getTime() / 1000);
+  threads.push({ id: bid, title: "Another conversation", updated_at: Math.floor(yesterday.getTime() / 1000) });
+  const user = userEvent.setup();
+  mount();
+  await user.type(await composer(), "Synthetic draft");
+  const drawer = await openDrawer(user);
+  expect(drawer.getByRole("heading", { name: "오늘" })).toBeVisible();
+  expect(drawer.getByRole("heading", { name: "어제" })).toBeVisible();
+  expect(drawer.getByRole("button", { name: "A private thread" })).toHaveAccessibleDescription("작성 중인 메시지 있음");
+  const search = drawer.getByRole("searchbox", { name: "대화 검색" });
+  await user.type(search, "Another");
+  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  expect(search).toBeVisible();
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("heading", { name: "Another conversation" })).toBeVisible();
+  const reopened = await openDrawer(user);
+  await user.click(reopened.getByRole("button", { name: "A private thread" }));
+  expect(await composer()).toHaveValue("Synthetic draft");
+});
+
+it("makes an unavailable inventory distinguishable from empty history and retries it", async () => {
+  inventoryFailure = true;
+  const user = userEvent.setup();
+  mount();
+  expect(await screen.findByRole("alert")).toHaveTextContent("대화 목록을 불러오지 못했습니다.");
+  expect(await composer()).toBeDisabled();
+  const drawer = await openDrawer(user);
+  expect(drawer.getByRole("alert")).toHaveTextContent("대화 목록을 불러오지 못했습니다.");
+  expect(drawer.queryByText("아직 대화가 없습니다.")).not.toBeInTheDocument();
+  inventoryFailure = false;
+  await user.click(drawer.getByRole("button", { name: "다시 시도" }));
+  expect(await drawer.findByRole("button", { name: "A private thread" })).toBeVisible();
+});
+
+it("restores connector detail on reload and returns to the originating memory view", async () => {
+  const user = userEvent.setup();
+  const first = mount();
+  await composer();
+  const menu = () => within(screen.getByRole("navigation", { name: "주 메뉴" }));
+  await user.click(menu().getByRole("button", { name: "기억" }));
+  await user.click(menu().getByRole("button", { name: "연결" }));
+  await user.click(await screen.findByRole("button", { name: /^Gmail/ }));
+  expect(location.hash).toBe("#connections/gmail");
+  first.unmount();
+  mount();
+  await screen.findByRole("heading", { name: "Gmail" });
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  await screen.findByRole("heading", { name: "커넥터" });
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  await waitFor(() => expect(menu().getByRole("button", { name: "기억" })).toHaveAttribute("aria-current", "page"));
+  expect(calls.some(call => call.path === "/personal/google/inbox")).toBe(false);
+});
+
+it("opens an administrator bookmark as chat for an ordinary member", async () => {
+  history.replaceState(null, "", "/#admin/engine");
+  mount();
+  await composer();
+  expect(screen.queryByRole("button", { name: "관리" })).not.toBeInTheDocument();
+  expect(calls.some(call => call.path.startsWith("/personal/admin/"))).toBe(false);
 });

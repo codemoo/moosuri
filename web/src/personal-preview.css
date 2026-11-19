@@ -5,8 +5,10 @@
   --member-field: #303031;
   --member-divider: rgb(255 255 255 / .1);
   --member-text: #fafafa;
+  --member-accent: #b5e2cd;
   --member-secondary: #aaaab0;
 }
+.member-signed-in { --accent: var(--member-accent); --accent-ink: #16382c; }
 .member-page {
   width: min(100%, 776px);
   margin-inline: auto;
@@ -139,23 +141,20 @@
   .member-page-heading h1, h1.member-page-heading { font-size: 28px; line-height: 36px; }
   .member-settings-tabs { margin-block: 0 20px; }
 }
-@media (min-width: 1100px) {
+@media (min-width: 768px) {
   .member-settings-layout {
-    display: grid;
-    grid-template-columns: 166px minmax(0, 1fr);
-    align-items: start;
-    max-width: 912px;
-    margin: 68px auto 40px;
+    width: min(100%, 776px);
+    margin: 0 auto;
+    padding: 24px 24px 40px;
+  }
+  .member-settings-layout .member-settings-tabs { margin: 0 0 24px; }
+  .member-settings-layout .member-page { padding: 0; }
+  .member-auth > main {
+    width: min(100%, 420px);
+    padding: 40px 32px;
+    border: 1px solid var(--member-divider);
+    border-radius: 24px;
     background: var(--member-sheet);
-    border-radius: 28px;
   }
-  .member-settings-layout .member-settings-tabs {
-    display: grid;
-    width: auto;
-    margin: 22px 0 22px 12px;
-    background: transparent;
-  }
-  .member-settings-tabs button { text-align: left; }
-  .member-settings-layout .member-page { padding: 26px; }
-  .member-settings-layout .member-page-list { background: #2b2b2c; }
+  .member-auth input { background: var(--member-canvas); }
 }

@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { PersonalGoogleSetup } from "./PersonalGoogleSetup";
@@ -47,12 +47,16 @@ it("resumes the selected project and hands all five API activations and the OAut
   const view = mount();
   const project = await screen.findByRole("textbox", { name: "프로젝트 ID" });
   const consoleOrigin = "https://console.cloud.google.com";
+  const steps = within(screen.getByRole("list", { name: "Google Workspace 설정 단계" }));
+  expect(steps.getByText("Cloud 프로젝트")).toHaveAttribute("aria-current", "step");
   await user.click(screen.getByText("Google Cloud 콘솔에서 직접 준비"));
   expect(screen.getByRole("link", { name: "기존 프로젝트 선택" })).toHaveAttribute("href", consoleOrigin + "/cloud-resource-manager");
   expect(screen.getByRole("link", { name: "새 프로젝트 만들기" })).toHaveAttribute("href", consoleOrigin + "/projectcreate");
   await user.clear(project);
   await user.type(project, "demo-kiri");
   await user.click(screen.getByRole("button", { name: "프로젝트 사용" }));
+  expect(steps.getByText("API 사용 설정")).toHaveAttribute("aria-current", "step");
+  expect(screen.getByRole("heading", { name: "API 사용 설정" })).toHaveFocus();
   const enable = screen.getByRole("link", { name: "Google API 5개 사용 설정" });
   expect(enable).toHaveAttribute("target", "_blank");
   expect(enable).toHaveAttribute("rel", "noopener noreferrer");
@@ -144,7 +148,8 @@ it("copies the callback and imports an existing JSON through the account-scoped 
   expect(writeText).toHaveBeenCalledExactlyOnceWith(redirect_uri);
   await user.upload(screen.getByLabelText("Google 웹 클라이언트 JSON"), jsonFile(client));
   await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
-  expect(await screen.findByText("Google 앱 설정을 저장했습니다.")).toBeVisible();
+  const result = await screen.findByRole("heading", { name: "Google 앱 설정을 저장했습니다." });
+  expect(result).toHaveFocus();
   expect(requests).toEqual([{ method: "GET", account }, { method: "POST", body: { web_client_json: client }, account }]);
   expect(localStorage.getItem(draftKey)).toBeNull();
   expect(sessionStorage.length).toBe(0);

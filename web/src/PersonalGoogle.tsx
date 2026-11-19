@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionView } from "../shared/api-types";
+import { restoreConnectorAddress } from "./member-route";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
 import { workspaceGoogleReturn } from "./personal-google-workspace";
@@ -285,7 +286,7 @@ export function usePersonalGoogle({
           }
           const flow = fields.get("flow") ?? fields.get("google_denied"),
             handle = fields.get("google_handle");
-          history.replaceState(null, "", location.pathname);
+          restoreConnectorAddress("gmail");
           if (
             !belongs(p, session) ||
             p.flow !== flow ||

@@ -149,3 +149,18 @@ The installation SHALL expose web OAuth client registration only to the current 
 #### Scenario: Existing and newly provisioned members
 - **WHEN** an eligible active member joins the managed relay before or after installation setup
 - **THEN** the member can start their own Google consent without operator registration commands. A different manually configured client and its existing grants are preserved.
+
+
+### Requirement: Member workspace navigation
+
+The Kiri member workspace SHALL support browser back, forward and reload for the main views, connector detail, installation setup and engine settings. Navigation SHALL use only public screen and service names. Session authority SHALL govern every administration screen.
+
+#### Scenario: Returning from installation setup
+
+- **WHEN** an administrator opens Gmail, opens installation setup and goes back in the browser
+- **THEN** Gmail detail is visible again, and another back returns to the catalog without starting a Google authorization or inbox read.
+
+#### Scenario: Reopening an administrator destination
+
+- **WHEN** a member opens a saved engine settings URL
+- **THEN** an installation administrator can inspect the configured engine, while an ordinary member returns to chat without requesting administrator data.

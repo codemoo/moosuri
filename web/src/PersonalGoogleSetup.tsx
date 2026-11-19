@@ -90,7 +90,9 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
   const [saved, setSaved] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const callbackInput = useRef<HTMLInputElement>(null);
+  const titleHeading = useRef<HTMLHeadingElement>(null);
   const stepHeading = useRef<HTMLHeadingElement>(null);
+  const resultHeading = useRef<HTMLHeadingElement>(null);
   const focusStep = useRef(false);
   const upload = useRef<AbortController | null>(null);
   const { project, step, method } = draft;
@@ -102,6 +104,14 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
     upload.current?.abort();
     if (input.current) input.current.value = "";
   }), [scope]);
+
+  useLayoutEffect(() => {
+    titleHeading.current?.focus();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (saved) resultHeading.current?.focus();
+  }, [saved]);
 
   useLayoutEffect(() => {
     if (focusStep.current) {
@@ -123,8 +133,12 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
     const controller = new AbortController();
     setChecking(true);
     void scope.request<Status>(installationGoogleSetupPath, "GET", undefined, controller.signal, { timeoutMs: 15000 })
-      .then(setStatus)
-      .catch(failure => showError(failure, "Google 설치 설정을 확인하지 못했습니다. 다시 확인해 주세요."))
+      .then(result => { if (!controller.signal.aborted) setStatus(result); })
+      .catch(failure => {
+        if (controller.signal.aborted || isAborted(failure)) return;
+        setStatus(null);
+        showError(failure, "Google 설치 설정을 확인하지 못했습니다. 다시 확인해 주세요.");
+      })
       .finally(() => {
         if (!controller.signal.aborted) setChecking(false);
       });
@@ -238,12 +252,12 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
     </li>)}</ul>
   </>;
   return (
-    <section className="member-page member-library member-management member-connections personal-google-setup" aria-labelledby="google-setup-title" aria-busy={checking || busy}>
-      <header className="member-page-heading member-connection-header">
+    <section className="member-page member-library member-management member-connections personal-google-setup" aria-labelledby="google-setup-title">
+      <header className="member-page-heading google-setup-heading">
         {onBack && <button className="member-library-icon-button" aria-label="뒤로" onClick={onBack}><WorkspaceIcon name="back" /></button>}
-        <h1 id="google-setup-title">Google Workspace 설정</h1>
+        <h1 id="google-setup-title" tabIndex={-1} ref={titleHeading}>Google Workspace 설정</h1>
       </header>
-      {error && !status?.configured && <p role="alert" className="preview-error">{error}</p>}
+      {error && !status && <p role="alert" className="google-setup-error">{error}</p>}
       {checking && <p role="status" className="management-note">Google 설치 설정 확인 중…</p>}
       {!checking && !status && <button className="member-page-action" onClick={() => {
         setError("");
@@ -251,8 +265,10 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
       }}>설정 상태 다시 확인</button>}
       {!checking && status?.configured && (
         <div className="member-page-list google-setup-panel">
-          <p role="status"><strong>{saved ? "Google 앱 설정을 저장했습니다." : "Google 앱 설정이 등록되어 있습니다."}</strong></p>
-          <p>커넥터에서 Gmail, Drive, Docs, Slides, Sheets를 선택하고 본인 Google 계정으로 연결하세요. 각 회원은 자신의 계정으로 동의합니다.</p>
+          <h2 className="google-setup-result" tabIndex={-1} ref={resultHeading}>
+            {saved ? "Google 앱 설정을 저장했습니다." : "Google 앱 설정이 등록되어 있습니다."}
+          </h2>
+          <p>이제 각 회원은 커넥터에서 원하는 서비스를 선택하고 자신의 Google 계정으로 동의할 수 있습니다.</p>
           {callbackField}
           <div className="google-setup-buttons">
             <button className="member-page-action management-primary" onClick={onConnect}>{returnLabel ?? "커넥터 열기"}</button>
@@ -263,9 +279,17 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
       )}
       {!checking && status && !status.configured && (
         <>
-          <p className="management-note">설치에 사용할 Google 앱을 준비하세요. 새 브라우저 탭의 Google 공식 화면에서 로그인과 설정을 마치고 이 화면으로 돌아오세요.</p>
+          <p className="management-note">설치에 웹 클라이언트를 등록합니다. Google 설정을 새 탭에서 진행한 뒤 이 화면으로 돌아오세요.</p>
+          {method === "import" ? <p className="google-setup-progress-note">기존 웹 클라이언트 가져오기</p> : (
+            <ol className="google-setup-progress" aria-label="Google Workspace 설정 단계">
+              {steps.map((name, index) => (
+                <li key={name} aria-current={index === step ? "step" : undefined}>
+                  <span className="google-setup-step-number" aria-hidden="true">{index + 1}</span>{name}
+                </li>
+              ))}
+            </ol>
+          )}
           <section className="member-page-list google-setup-panel" aria-labelledby="google-setup-step">
-            <span className="google-setup-progress">{steps.length}단계 중 {step + 1}단계</span>
             <h2 tabIndex={-1} ref={stepHeading} id="google-setup-step">{steps[step]}</h2>
             {step > 0 && cloudProject && <p className="management-note">프로젝트 <strong>{cloudProject}</strong></p>}
             {step === 0 && (
@@ -273,7 +297,7 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
                 <p>제안된 ID로 새 프로젝트를 만들거나 기존 프로젝트의 ID를 입력하세요.</p>
                 <label className="google-setup-field">프로젝트 ID
                   <input value={projectInput} onChange={event => setProjectInput(event.target.value)} autoComplete="off" spellCheck={false}
-                    autoCapitalize="none" maxLength={30} aria-describedby={validProject ? undefined : "google-project-format"} />
+                    autoCapitalize="none" maxLength={30} aria-invalid={!validProject} aria-describedby={validProject ? undefined : "google-project-format"} />
                 </label>
                 {!validProject && <p className="management-note" id="google-project-format">영문 소문자로 시작하는 6~30자의 영문 소문자, 숫자, 하이픈을 입력하세요. 마지막에는 하이픈을 쓸 수 없습니다.</p>}
                 <div className="google-setup-buttons">
@@ -372,15 +396,17 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
                         setError("");
                       }} />
                   </label>
+                  {error && <p role="alert" className="google-setup-error">{error}</p>}
                   <div className="google-setup-buttons">
                     <button type="button" className="member-page-action" disabled={busy} onClick={() => go({ ...draft, step: method === "import" ? 0 : 2 })}>이전</button>
-                    <button className="member-page-action management-primary" disabled={busy || !fileSelected}>{busy ? "저장 중…" : "이 설치에 저장"}</button>
+                    <button type="submit" className="member-page-action management-primary" disabled={busy || !fileSelected}>이 설치에 저장</button>
                     {error && <button type="button" className="member-page-action" disabled={busy} onClick={() => {
                       setError("");
                       setFileSelected(false);
                       setRefresh(value => value + 1);
                     }}>설정 상태 다시 확인</button>}
                   </div>
+                  {busy && <p className="management-note" role="status">Google 앱 설정을 저장하고 있습니다…</p>}
                 </form>
               </>
             )}

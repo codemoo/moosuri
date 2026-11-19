@@ -1,6 +1,63 @@
+.member-connections.personal-google-setup {
+  gap: 16px;
+}
+
+.member-connections .google-setup-heading {
+  justify-content: flex-start;
+  margin-bottom: 0;
+}
+
+.member-connections .google-setup-heading h1 {
+  font-size: clamp(24px, 4vw, 32px);
+  line-height: 1.2;
+}
+
 .google-setup-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--library-divider);
+  border-radius: 12px;
+  background: var(--library-sheet);
+  list-style: none;
+}
+
+.google-setup-progress li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  color: var(--library-secondary);
   font-size: 13px;
-  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.google-setup-progress li[aria-current="step"] {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.google-setup-step-number {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--library-divider);
+  border-radius: 50%;
+  font-size: 11px;
+}
+
+.google-setup-progress-note {
+  margin: 0;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .google-setup-panel,
@@ -12,14 +69,20 @@
 }
 
 .google-setup-panel {
-  padding: 16px;
+  padding: 18px;
+  border: 1px solid var(--library-divider);
+  background: var(--library-sheet);
   overflow-wrap: anywhere;
   line-height: 1.55;
 }
 
 .google-setup-panel h2 {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 650;
+}
+
+.google-setup-result {
+  color: var(--accent);
 }
 
 .google-setup-panel :is(h2, p, ul) {
@@ -31,6 +94,7 @@
 }
 
 .google-setup-panel summary {
+  padding-block: 10px;
   cursor: pointer;
 }
 
@@ -53,6 +117,18 @@
   font-weight: 400;
 }
 
+.google-setup-field input[aria-invalid="true"] {
+  border-color: var(--notice-ink);
+}
+
+.google-setup-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-element);
+  color: var(--danger-ink);
+  background: var(--danger-paper);
+}
+
 .google-setup-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -66,9 +142,22 @@
 
 .google-setup-buttons .member-page-action {
   min-height: 44px;
+  max-width: 100%;
   white-space: normal;
+  text-align: center;
 }
 
 .google-setup-options .google-setup-buttons {
   margin-block-start: 8px;
+}
+
+.personal-google-setup :is(h1, h2, .member-page-action, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .google-setup-progress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

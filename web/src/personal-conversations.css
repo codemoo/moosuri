@@ -1,0 +1,119 @@
+.member-chat-title {
+  display: grid;
+  justify-self: center;
+  justify-items: center;
+  min-width: 0;
+  max-width: 100%;
+  text-align: center;
+}
+
+.member-chat-activity {
+  margin: 2px 0 0;
+  color: var(--member-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.member-chat-content[data-empty] {
+  justify-content: safe center;
+}
+
+.member-conversation-start {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  color: var(--member-text);
+  text-align: center;
+}
+
+.member-conversation-start img {
+  width: clamp(50px, 12vw, 64px);
+  height: auto;
+  border-radius: 20%;
+}
+
+.member-conversation-start h2 {
+  margin: 0;
+  font-size: clamp(23px, 4.6vw, 31px);
+  font-weight: 650;
+  letter-spacing: -.035em;
+  line-height: 1.25;
+}
+
+.member-chat-starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.member-chat-starters button {
+  min-height: 44px;
+  padding: 8px 15px;
+  border: 1px solid var(--member-divider);
+  border-radius: 999px;
+  background: var(--member-sheet);
+  color: var(--member-text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.member-chat-starters button:hover:enabled {
+  background: var(--member-field);
+}
+
+.member-history-group + .member-history-group {
+  margin-top: 14px;
+}
+
+.member-history-group .member-drawer-label {
+  margin-block: 4px 5px;
+  color: var(--member-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.member-history-group .member-thread-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--member-text);
+  font-size: 14px;
+  text-align: start;
+}
+
+.member-history-group .member-thread-button:hover {
+  background: var(--member-field);
+}
+
+.member-history-group .member-thread-button > svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  color: var(--member-secondary);
+}
+
+.member-history-title {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.member-history-meta {
+  flex: none;
+  color: var(--member-secondary);
+  font-size: 11px;
+}
+
+.member-history-meta:empty {
+  display: none;
+}
+
+.member-history-error {
+  padding: 8px;
+  color: var(--member-secondary);
+  font-size: 13px;
+}

@@ -106,13 +106,14 @@ it("returns the durable read to the original thread using only server continuati
     epoch: 3,
     read,
   });
-  expect(location.hash).toBe("");
+  expect(location.hash).toBe("#connections/gmail");
   expect(sessionStorage.getItem(key)).toBeNull();
 });
 it("manual connection never resumes a read", async () => {
   const calls = setup({ manual: true });
   mount();
   await screen.findByText(grant.mailbox);
+  expect(location.hash).toBe("#connections/gmail");
   expect(calls.map((c) => c.path)).toEqual([
     "/api/v1/personal/google/complete",
   ]);
@@ -149,7 +150,7 @@ it.each(["complete", "read"])(
     expect(calls.filter((c) => c.path.endsWith("/inbox"))).toHaveLength(
       lost === "read" ? 1 : 0,
     );
-    expect(location.hash).toBe("");
+    expect(location.hash).toBe("#connections/gmail");
   },
 );
 it("denial clears pending read without a provider read", async () => {

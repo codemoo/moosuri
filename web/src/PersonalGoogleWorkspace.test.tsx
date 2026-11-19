@@ -15,7 +15,7 @@ const docs = { service: "docs", connection_id: "docs-id", epoch: 3, mailbox: "do
 const sheets = { service: "sheets", connection_id: "sheets-id", epoch: 5, mailbox: "sheets@example.test" };
 const gmail = { connection_id: "gmail-id", epoch: 2, mailbox: "gmail@example.test" };
 
-function setup({ grants = [docs, sheets], workspaceStatus = 200, loseCompletion = false } = {}) {
+function setup({ grants = [docs, sheets], workspaceStatus = 200, loseCompletion = false, configured = true } = {}) {
   const calls: { path: string; method: string; body: unknown }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (path: string, init: RequestInit) => {
     const method = init.method ?? "GET";
@@ -23,7 +23,7 @@ function setup({ grants = [docs, sheets], workspaceStatus = 200, loseCompletion 
     if (path === "/api/v1/personal/vault") return Response.json({ state: "setup_required" });
     calls.push({ path, method, body });
     expect(new Headers(init.headers).get("X-Moosuri-Account")).toBe(session.user.id);
-    if (path === "/api/v1/personal/admin/google-setup") return Response.json({ configured: true, redirect_uri: "https://example.test/api/v1/mail/oauth/callback" });
+    if (path === "/api/v1/personal/admin/google-setup") return Response.json({ configured, redirect_uri: "https://example.test/api/v1/mail/oauth/callback" });
     if (path === base) return Response.json({ connection: gmail });
     if (path === base + "/workspace") return Response.json({ connections: grants }, { status: workspaceStatus });
     if (path === base + "/docs/disconnect") {
@@ -80,12 +80,15 @@ it("searches the four branded connectors and lists only their actual connected a
   }
   await user.clear(search);
   await user.click(screen.getByRole("button", { name: "연결됨" }));
-  expect(await screen.findByRole("button", { name: /Google Docs docs@example.test/ })).toBeVisible();
+  expect(await screen.findByRole("button", { name: /Google Docs docs@example.test 연결됨/ })).toBeVisible();
   expect(screen.getByRole("button", { name: /Google Sheets sheets@example.test/ })).toBeVisible();
   expect(screen.queryByRole("button", { name: /Google (Drive|Slides)/ })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Google Docs/ }));
   const detail = within(screen.getByRole("region", { name: "Google Docs" }));
+  expect(screen.getByRole("heading", { name: "Google Docs" })).toHaveFocus();
   expect(detail.getByRole("status")).toHaveTextContent("연결됨");
+  expect(detail.getByText("읽기 전용")).toBeVisible();
+  expect(detail.getByText("지정한 Docs 문서의 제목 조회")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "연결 해제" }));
   await detail.findByText("연결된 계정이 없습니다.");
   await user.click(screen.getByRole("button", { name: "뒤로" }));
@@ -124,7 +127,7 @@ it.each([false, true])("finishes a Docs callback once and reconciles status when
   const detail = within(screen.getByRole("region", { name: "Google Docs" }));
   await detail.findByText(docs.mailbox);
   if (loseCompletion) expect(screen.getByText(/연결 결과를 확인하지 못했습니다/)).toBeVisible();
-  expect(location.hash).toBe("");
+  expect(location.hash).toBe("#connections/docs");
   expect(sessionStorage.getItem(key)).toBeNull();
   expect(sessionStorage.getItem(gmailKey)).not.toBeNull();
   expect(returned).not.toHaveBeenCalled();
@@ -141,7 +144,7 @@ it.each([{ service: "sheets" }, { session: "different-session" }, { flow: "c".re
     history.replaceState(null, "", `/#google_service=docs&google_handle=${handle}&flow=${flow}`);
     mount();
     await screen.findByText(/연결을 시작한 계정/);
-    expect(location.hash).toBe("");
+    expect(location.hash).toBe("#connections/docs");
     expect(sessionStorage.getItem(key)).not.toBeNull();
     expect(calls.every(({ method }) => method === "GET")).toBe(true);
   },
@@ -155,7 +158,7 @@ it.each([`/#google_service=docs&google_denied=${flow}`, "/"])("checks status on 
   expect(screen.getByRole("heading", { name: "Google Docs" })).toBeVisible();
   await screen.findByText(url === "/" ? /연결 결과를 확인하지 못했습니다/ : /연결이 취소됐습니다/);
   await screen.findByRole("button", { name: "Google 연결" });
-  expect(location.hash).toBe("");
+  expect(location.hash).toBe("#connections/docs");
   expect(sessionStorage.getItem(key)).toBeNull();
   expect(calls.every(({ method }) => method === "GET")).toBe(true);
 });
@@ -186,4 +189,23 @@ it("links the installation administrator to Google web sign-in setup when unavai
   expect(await screen.findByText("Google 앱 설정이 등록되어 있습니다.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Google Slides 연결로 돌아가기" }));
   expect(await screen.findByRole("heading", { name: "Google Slides" })).toBeVisible();
+});
+
+it("keeps an unregistered installation distinct from each member connection and restores focus from details", async () => {
+  const calls = setup({ workspaceStatus: 404, configured: false });
+  mount(true);
+  const user = userEvent.setup();
+  const installation = within(screen.getByRole("region", { name: "Google Workspace 설치 설정" }));
+  expect(await installation.findByText("설치 설정 필요")).toBeVisible();
+  expect(await screen.findByRole("button", { name: /Gmail gmail@example.test 연결됨/ })).toBeVisible();
+  const slides = await screen.findByRole("button", { name: /Google Slides .*설치 설정 필요/ });
+  slides.focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("heading", { name: "Google Slides" })).toHaveFocus();
+  const detail = within(screen.getByRole("region", { name: "Google Slides" }));
+  expect(detail.getByRole("button", { name: "Google Workspace 설정" })).toBeEnabled();
+  expect(detail.queryByRole("button", { name: "Google 연결" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  expect(screen.getByRole("button", { name: /Google Slides .*설치 설정 필요/ })).toHaveFocus();
+  expect(calls.every(({ method }) => method === "GET")).toBe(true);
 });

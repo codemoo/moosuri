@@ -43,6 +43,8 @@ type Danger =
 
 const memoryListPath = "/knowledge/memories";
 const memorySearchPageLimit = 10;
+const memberMemoryDate = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" });
+const memberMemoryDateTime = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 const normalizeMemorySearch = (text: string) =>
   text.normalize("NFKC").toLocaleLowerCase();
 
@@ -662,10 +664,15 @@ export function KnowledgeView({
     return (
       <section className="member-page member-library member-library-memory knowledge-view" aria-label="기억">
         <div className="member-page-heading">
-          <h1>기억</h1>
+          <div>
+            <h1>기억</h1>
+            <p className="member-memory-intro">직접 기록한 기억을 찾고 수정할 수 있어요.</p>
+          </div>
           <button
+            type="button"
             className="member-page-action"
             aria-haspopup="dialog"
+            aria-describedby={drafts.memory ? "member-memory-draft" : undefined}
             onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true });
               setError("");
@@ -673,10 +680,16 @@ export function KnowledgeView({
               else startAssertion();
             }}
           >
-            <WorkspaceIcon name="new" />
+            {!drafts.memory && <WorkspaceIcon name="new" />}
             {drafts.memory ? "기억 작성 이어가기" : "기억 추가"}
           </button>
         </div>
+        {drafts.memory && (
+          <div className="member-memory-draft" id="member-memory-draft">
+            <span>{drafts.memory.issue === "uncertain" ? "저장 확인이 필요한 기억" : "작성 중인 기억"}</span>
+            <strong>{drafts.memory.draft.subject.trim() || "제목 없는 기억"}</strong>
+          </div>
+        )}
         <form
           className="member-library-toolbar"
           role="search"
@@ -750,23 +763,31 @@ export function KnowledgeView({
                 <span className="member-library-row-copy">
                   <strong>{item.draft.subject}</strong>
                   <span>{item.draft.text}</span>
-                  {item.status === "invalidated" && <small>근거 확인 필요</small>}
+                  <span className="member-memory-list-meta">
+                    {item.draft.speaker && <span>{item.draft.speaker}</span>}
+                    <MemoryTimestamp value={item.updated_at} />
+                    {item.status === "invalidated" && <small>근거 확인 필요</small>}
+                  </span>
                 </span>
                 <span className="member-library-chevron" aria-hidden="true" />
               </button>
             ))
-          ) : (
-            <p className="member-library-empty">
-              {memoryQuery
-                ? next
-                  ? "이 구간에 일치하는 기억이 없습니다. 다음 구간을 검색할 수 있습니다."
-                  : pageStack.length > 1
-                    ? "더 이상 일치하는 기억이 없습니다."
-                    : "일치하는 기억이 없습니다."
-                  : pageStack.length > 1
-                    ? "이 페이지에 표시할 기억이 없습니다."
-                    : "아직 기록한 기억이 없습니다."}
+          ) : memoryQuery ? (
+            <p className="member-library-empty" role="status">
+              {next
+                ? "이 구간에 일치하는 기억이 없습니다. 다음 구간을 검색할 수 있습니다."
+                : pageStack.length > 1
+                  ? "더 이상 일치하는 기억이 없습니다."
+                  : "일치하는 기억이 없습니다."}
             </p>
+          ) : pageStack.length > 1 ? (
+            <p className="member-library-empty" role="status">이 페이지에 표시할 기억이 없습니다.</p>
+          ) : (
+            <div className="member-library-empty member-memory-empty">
+              <span className="member-library-well"><WorkspaceIcon name="notebook" /></span>
+              <p role="status">아직 기록한 기억이 없습니다.</p>
+              {!drafts.memory && <p>다시 찾을 메모나 선호를 기록해 보세요.</p>}
+            </div>
           )}
         </section>
         {!memoryListError && (pageStack.length > 1 || next) && <div className="knowledge-pagination member-library-pagination">{pagination}</div>}
@@ -1493,7 +1514,7 @@ function MemoryDetail({
           {document.extraction_origin&&<p className="fine">자료에서 추출한 사실 · 표시된 작성자: {document.extraction_origin.reported_speaker}. 확인된 신원이라는 뜻은 아닙니다.</p>}
           <p className="knowledge-body">{document.draft.text}</p>
           {member ? (
-            <MemberMemoryMetadata draft={document.draft} />
+            <MemberMemoryMetadata memory={document} />
           ) : (
             <p className="fine">
               {document.draft.evidence.length
@@ -1552,6 +1573,7 @@ function MemoryDetail({
           {history.items.map((item) => (
             <article key={item.revision}>
               <p className="fine">
+                {member && <><MemoryTimestamp value={item.updated_at} withTime /> · </>}
                 저장 버전 {item.revision}
                 {item.status === "invalidated" ? " · 근거 확인 필요" : ""}
               </p>
@@ -1574,16 +1596,26 @@ function MemoryDetail({
   );
 }
 
-function MemberMemoryMetadata({ draft }: { draft: MemoryDraft }) {
+function MemoryTimestamp({ value, withTime = false }: { value: number; withTime?: boolean }) {
+  const date = new Date(value * 1000);
+  if (!Number.isFinite(date.getTime())) return null;
+  return <time dateTime={date.toISOString()}>{(withTime ? memberMemoryDateTime : memberMemoryDate).format(date)}</time>;
+}
+
+function MemberMemoryMetadata({ memory }: { memory: MemoryDocument }) {
+  const { draft } = memory;
   return (
     <>
-      {draft.speaker && <p className="fine">화자 {draft.speaker}</p>}
-      {draft.valid_from !== null && (
-        <p className="fine">유효 시작 {new Date(draft.valid_from * 1000).toLocaleString()}</p>
-      )}
-      {draft.valid_until !== null && (
-        <p className="fine">유효 종료 {new Date(draft.valid_until * 1000).toLocaleString()}</p>
-      )}
+      <dl className="member-memory-metadata">
+        <div><dt>마지막 저장</dt><dd><MemoryTimestamp value={memory.updated_at} withTime /></dd></div>
+        {draft.speaker && <div><dt>화자</dt><dd>{draft.speaker}</dd></div>}
+        {draft.valid_from !== null && (
+          <div><dt>유효 시작</dt><dd><MemoryTimestamp value={draft.valid_from} withTime /></dd></div>
+        )}
+        {draft.valid_until !== null && (
+          <div><dt>유효 종료</dt><dd><MemoryTimestamp value={draft.valid_until} withTime /></dd></div>
+        )}
+      </dl>
       {draft.evidence.length > 0 && <h4>연결한 근거</h4>}
     </>
   );

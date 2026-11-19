@@ -177,6 +177,27 @@ it("resumes the add drawer after Escape without losing its draft", async () => {
   expect(screen.queryByRole("dialog")).toBeNull();
   const resume = screen.getByRole("button", { name: "기억 작성 이어가기" });
   expect(resume).toHaveFocus();
+  expect(resume).toHaveAccessibleDescription("작성 중인 기억 A new note");
   await user.click(resume);
   expect(screen.getByLabelText("기억 주제")).toHaveValue("A new note");
+});
+
+it("shows saved memory metadata and timestamps on expandable revision history", async () => {
+  const current = { ...memory, revision: 2, updated_at: 200, draft: { ...memory.draft, text: "Ceylon" } };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(url.endsWith("/memories")
+    ? { items: [current], next_after: null }
+    : url.endsWith("/history") ? { items: [current, memory], next_before: null } : current)));
+  const user = userEvent.setup();
+  render(<PersonalMemories accountId="test-member" onExpired={vi.fn()} />);
+  const row = await screen.findByRole("button", { name: /Morning tea/ });
+  expect(within(row).getByText("Synthetic author")).toBeVisible();
+  expect(row.querySelector("time")).toHaveAttribute("datetime", new Date(200000).toISOString());
+  await user.click(row);
+  const detail = within(screen.getByRole("dialog", { name: "기억 읽기" }));
+  expect(await detail.findByText("마지막 저장")).toBeVisible();
+  await user.click(detail.getByRole("button", { name: "수정 이력" }));
+  const previous = (await detail.findByText("Assam")).closest("article");
+  expect(previous?.querySelector("time")).toHaveAttribute("datetime", new Date(100000).toISOString());
+  await user.click(detail.getByRole("button", { name: "이력 접기" }));
+  expect(detail.queryByText("Assam")).not.toBeInTheDocument();
 });

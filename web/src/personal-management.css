@@ -2,50 +2,80 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 20px;
+  gap: 24px;
   font-size: 14px;
 }
 
-.member-management > .member-page-action {
-  align-self: flex-start;
+.member-management h2 {
+  color: var(--member-text);
+  font-size: 16px;
+  font-weight: 620;
 }
 
-.management-group {
+.management-heading {
+  flex-wrap: wrap;
+}
+
+.management-heading .management-note {
+  margin-top: 6px;
+}
+
+.management-group,
+.management-roster-controls {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
 }
 
-.management-group > h2 {
-  padding-inline: 12px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
+.management-section-heading,
+.management-connection,
+.management-person-header,
+.management-footer,
+.management-person-actions,
+.management-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.management-section-heading,
+.management-connection,
+.management-person-header {
+  justify-content: space-between;
+}
+
+.management-footer {
+  justify-content: flex-end;
 }
 
 .management-list {
-  display: block;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+form.management-list {
+  display: block;
+}
+
 .management-list > * + * {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--member-divider);
 }
 
 .management-row {
   min-width: 0;
-  min-height: 52px;
-  padding: 4px 12px;
+  min-height: 54px;
+  padding: 10px 16px;
   overflow-wrap: anywhere;
 }
 
 .management-field {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 58%);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 64%);
   align-items: center;
-  gap: 8px 12px;
+  gap: 6px 12px;
   font-size: inherit;
 }
 
@@ -54,22 +84,25 @@
   min-width: 0;
   min-height: 44px;
   padding: 7px 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--member-divider);
   border-radius: var(--radius-element);
-  color: var(--ink);
-  background: var(--raised);
+  color: var(--member-text);
+  background: var(--member-field);
   font: inherit;
 }
 
-.management-field select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.management-field input::placeholder {
+  color: var(--member-secondary);
 }
 
-.management-toggle,
-.management-connection {
+.member-management :is(summary, input, select, button, a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.management-toggle {
   display: flex;
-  flex-flow: row wrap;
+  flex-direction: row;
   align-items: center;
   justify-content: space-between;
   gap: 8px 12px;
@@ -84,15 +117,10 @@
   flex: none;
   width: 20px;
   height: 20px;
-  min-height: auto;
+  min-height: 0;
   margin: 0;
+  padding: 0;
   accent-color: var(--accent);
-}
-
-.management-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
 }
 
 .member-management .management-primary {
@@ -100,82 +128,23 @@
   color: var(--accent-ink);
 }
 
-.member-management .management-primary:hover:enabled {
+.member-management .management-primary:hover:enabled:not([aria-disabled="true"]) {
   background: color-mix(in srgb, var(--accent) 84%, white);
+}
+
+.member-management button[aria-disabled="true"] {
+  opacity: .56;
+  cursor: not-allowed;
 }
 
 .member-management .management-danger {
   color: var(--danger-ink);
 }
 
-.management-note,
-.management-person-details span,
-.management-person-details small {
+.management-note {
   color: var(--muted);
   font-size: 13px;
   overflow-wrap: anywhere;
-}
-
-p.management-row {
-  display: flex;
-  align-items: center;
-  padding-block: 12px;
-}
-
-.management-group > p.management-note:not(.management-row) {
-  padding-inline: 12px;
-}
-
-.management-person {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px 16px;
-  padding-block: 8px;
-}
-
-.management-person-details {
-  display: grid;
-  flex: 1 1 200px;
-  min-width: 0;
-}
-
-.management-person-details strong {
-  font-weight: 600;
-}
-
-.management-person-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-}
-
-@media (max-width: 420px) {
-  .management-field {
-    grid-template-columns: minmax(0, 1fr);
-    padding-block: 8px;
-  }
-}
-
-.management-heading {
-  flex-wrap: wrap;
-}
-
-.management-section-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-inline: 12px 0;
-}
-
-.management-section-heading > h2 {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .management-note a {
@@ -183,36 +152,191 @@ p.management-row {
   text-underline-offset: 3px;
 }
 
-.management-definitions dt {
-  color: var(--muted);
+.management-feedback {
+  border-radius: 14px;
+  padding: 12px 16px;
+  background: var(--accent-bg);
+  color: var(--member-text);
+  overflow-wrap: anywhere;
 }
 
-.management-definitions dd {
-  margin: 0;
-  font-weight: 600;
+.management-invitation,
+.management-invitation-receipt,
+.management-engine-overview {
+  padding: 16px;
 }
 
-.management-invitation-receipt {
+.management-invitation:not([hidden]),
+.management-invitation-receipt,
+.management-engine-overview,
+.management-invite-form {
   display: grid;
+  gap: 12px;
+}
+
+.management-form-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 10px 12px;
+}
+
+.management-form-fields .management-field,
+.management-roster-controls .management-field {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.management-field > span {
+  font-weight: 550;
+}
+
+.management-filters {
+  gap: 4px 6px;
+}
+
+.member-management .management-filter {
+  border: 1px solid var(--member-divider);
+  padding-inline: 12px;
+  background: transparent;
+}
+
+.management-filter span {
+  color: var(--member-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.member-management .management-filter[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.management-person {
+  display: grid;
+  align-items: start;
   gap: 8px;
-  padding-block: 12px;
+  min-width: 0;
+  padding: 12px 16px;
+  overflow-wrap: anywhere;
+}
+
+.management-person-details {
+  display: grid;
+  flex: 1 1 160px;
+  min-width: 0;
+  gap: 2px;
+}
+
+.management-person-details strong {
+  font-weight: 620;
+}
+
+.management-status {
+  width: fit-content;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: var(--member-field);
+  color: var(--member-secondary);
+  font-size: 12px;
+  font-weight: 580;
+  line-height: 1.55;
+}
+
+.management-status[data-state="ready"] {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.management-status[data-state="suspended"],
+.management-status[data-state="stale"] {
+  background: var(--danger-paper);
+  color: var(--danger-ink);
+}
+
+.management-person-disclosure > summary,
+.management-engine-help > summary {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 44px;
+  padding-block: 11px;
+  cursor: pointer;
+  color: var(--member-text);
+}
+
+.management-person-disclosure[open] > :not(summary),
+.management-engine-help[open] > :not(summary) {
+  margin-bottom: 8px;
 }
 
 .management-request {
   display: flex;
-  flex: 1 0 100%;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
   min-width: 0;
 }
 
-.management-request code {
-  user-select: all;
+.management-request > span,
+.management-request > p {
+  flex-basis: 100%;
 }
 
-.management-request p {
-  flex: 1 0 100%;
+.management-request code {
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+.management-empty {
+  display: grid;
+  justify-items: start;
+  align-content: center;
+  gap: 10px;
+  min-height: 98px;
+  color: var(--member-secondary);
+}
+
+dialog.management-dialog {
+  border: 1px solid var(--member-divider);
+  background: var(--member-sheet);
+  color: var(--member-text);
+  padding: 20px;
+  overflow-wrap: anywhere;
+}
+
+.management-dialog > p {
+  display: grid;
+  gap: 4px;
+  margin-block: 12px 16px;
+}
+
+.management-dialog strong {
+  color: var(--member-text);
+}
+
+.management-engine-current {
+  display: grid;
+  gap: 4px;
+}
+
+.management-engine-request-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.management-current-model {
+  overflow-wrap: anywhere;
+  font-size: 20px;
+  font-weight: 620;
+}
+
+.management-save {
+  display: grid;
+  gap: 12px;
+}
+
+.management-save-copy {
+  display: grid;
+  gap: 4px;
 }
 
 .compatible-actions {
@@ -220,4 +344,15 @@ p.management-row {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+@media (max-width: 520px) {
+  .management-field,
+  .management-form-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .management-field :is(input, select) {
+    font-size: 16px;
+  }
 }

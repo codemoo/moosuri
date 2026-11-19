@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionView } from "../shared/api-types";
+import { restoreConnectorAddress } from "./member-route";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 
@@ -93,13 +94,13 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
     const pending = pendingFor(session);
     const notify = (message: string) => setNotice({ service, message });
     const uncertain = "Google 연결 결과를 확인하지 못했습니다. 현재 연결 상태를 다시 확인해 주세요.";
+    restoreConnectorAddress(service);
     if (!fields) {
       clearWorkspaceGoogle();
       notify(uncertain);
       return;
     }
 
-    history.replaceState(history.state, "", location.pathname + location.search);
     const handles = fields.getAll("google_handle");
     const denials = fields.getAll("google_denied");
     const flows = fields.getAll("flow");

@@ -1,0 +1,237 @@
+.member-connections.connector-page {
+  gap: 22px;
+}
+
+.member-connections .connector-heading {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 0;
+}
+
+.member-connections .connector-heading h1 {
+  font-size: clamp(24px, 4vw, 32px);
+  line-height: 1.2;
+}
+
+.member-connections .connector-heading h1:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.connector-installation p,
+.connector-detail-message,
+.connector-notice,
+.connector-empty {
+  margin: 0;
+  color: var(--library-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.connector-installation,
+.connector-detail {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--library-divider);
+  background: var(--library-sheet);
+}
+
+.connector-installation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+
+.connector-installation-copy {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: 1 1 320px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.connector-installation-copy p {
+  width: 100%;
+}
+
+.connector-installation h2,
+.connector-detail h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.connector-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.connector-controls .member-library-filter {
+  flex: 1 1 220px;
+  min-height: 46px;
+  border-radius: 12px;
+  background: var(--library-sheet);
+}
+
+.connector-controls .member-library-filter input {
+  min-height: 44px;
+}
+
+.connector-controls .member-connection-switch {
+  flex: 0 1 auto;
+  min-width: 156px;
+  padding: 2px;
+  border: 1px solid var(--library-divider);
+  border-radius: 12px;
+}
+
+.connector-controls .member-connection-switch button {
+  min-height: 40px;
+  border-radius: 9px;
+}
+
+.connector-page .member-connector-group h2 {
+  margin: 0;
+  color: var(--library-secondary);
+}
+
+.connector-page .member-connector-group .member-library-list {
+  border: 1px solid var(--library-divider);
+}
+
+.connector-page .member-connector-group .member-connector-row {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  min-height: 72px;
+}
+
+.connector-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 3px 8px;
+  border: 1px solid var(--library-divider);
+  border-radius: 999px;
+  background: var(--library-well);
+  color: var(--library-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.connector-badge[data-tone="connected"] {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.connector-badge[data-tone="attention"] {
+  background: var(--notice-paper);
+  color: var(--notice-ink);
+}
+
+.connector-detail {
+  display: grid;
+  gap: 16px;
+}
+
+.connector-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.connector-detail-title .member-library-well {
+  flex: none;
+  width: 46px;
+  height: 46px;
+}
+
+.connector-detail-title h2 {
+  margin-bottom: 4px;
+}
+
+.connector-detail dl {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.connector-detail dt {
+  font-size: 13px;
+  color: var(--library-secondary);
+}
+
+.connector-detail dd {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.connector-permission {
+  padding-top: 14px;
+  border-top: 1px solid var(--library-divider);
+}
+
+.connector-page .member-page-action {
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+}
+
+.connector-page .connector-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.connector-page .connector-primary:hover:enabled,
+.connector-page a.connector-primary:hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--library-sheet));
+}
+
+.connector-page :is(.member-page-action, .member-connection-switch button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.connector-notice,
+.connector-empty {
+  padding: 12px 14px;
+  border: 1px solid var(--library-divider);
+  border-radius: 12px;
+}
+
+@media (max-width: 480px) {
+  .member-connections.connector-page {
+    gap: 16px;
+  }
+
+  .connector-controls .member-connection-switch {
+    flex: 1 1 100%;
+  }
+
+  .connector-page .member-connector-group .member-connector-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 11px;
+    row-gap: 5px;
+  }
+
+  .member-connector-row .member-library-well,
+  .member-connector-row .member-library-chevron {
+    grid-row: 1 / 3;
+  }
+
+  .member-connector-row .member-library-chevron {
+    grid-column: 3;
+  }
+
+  .member-connector-row .connector-badge {
+    grid-column: 2;
+  }
+}

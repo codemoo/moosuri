@@ -26,6 +26,7 @@ import {
   type ThreadGoogleRead,
 } from "./PersonalGoogle";
 import { clearWorkspaceGoogle, workspaceGoogleReturn } from "./personal-google-workspace";
+import { useMemberRoute } from "./member-route";
 import { PersonalConnections } from "./PersonalConnections";
 import PersonalAdmin from "./PersonalAdmin";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
@@ -34,7 +35,7 @@ import { initialKnowledgeDrafts } from "./KnowledgeState";
 import { PersonalChatComposer } from "./PersonalChatComposer";
 import { PersonalWorkspaceChrome, threadDisplayTitle, type MemberView } from "./PersonalWorkspaceChrome";
 import { PersonalBrowserCard, PersonalBrowserViewer } from "./PersonalBrowser";
-import { browserEndpoint, browserIntent, browserNeedsGuidance, type PersonalBrowserStatus } from "./personal-browser";
+import { browserEndpoint, browserIntent, browserNeedsGuidance, browserStateLabel, type PersonalBrowserStatus } from "./personal-browser";
 import { usePersonalBrowser } from "./usePersonalBrowser";
 import { InstructionReceipts } from "./RunInstructions";
 type SessionView = BaseSessionView & { installation_admin?: boolean };
@@ -352,6 +353,10 @@ type Capability = {
   tools: boolean;
   automatic_retry: boolean;
 };
+const chatStarters = [
+  { label: "문장 다듬기", prompt: "다음 문장을 자연스럽게 다듬어 줘.\n" },
+  { label: "계획 세우기", prompt: "다음 일을 작은 단계로 나눠서 계획을 세워 줘.\n" },
+];
 const active = (turn: ChatTurn) =>
   ["queued", "running"].includes(turn.run.state);
 function moveNewDraft(memory: ChatMemory, thread: string): ChatMemory {
@@ -381,18 +386,29 @@ function Workspace({
     [cap, setCap] = useState<Capability | null>(),
     [capError, setCapError] = useState(""),
     [loading, setLoading] = useState(true),
+    [inventoryError, setInventoryError] = useState(false),
     [error, setError] = useState(""),
     [reading, setReading] = useState(false),
     [mutating, setMutating] = useState(false);
   const [memoryDrafts, setMemoryDrafts] = useState(initialKnowledgeDrafts);
-  const [view, setView] = useState<MemberView>(() =>
-      googleReturn() || workspaceGoogleReturn(session) ? "connections" : "chat",
-    ),
-    [refresh, setRefresh] = useState(0);
+  const [refresh, setRefresh] = useState(0);
   const connectorOrigin = useRef<MemberView>("chat");
   const [admin, setAdmin] = useState(session.installation_admin === true);
   const onAdminUnavailable = useCallback(() => setAdmin(false), []);
-  const [adminTab, setAdminTab] = useState<"members" | "engine">("members");
+  const { route, open } = useMemberRoute(admin, () => {
+    const workspace = workspaceGoogleReturn(session);
+    if (workspace) return { view: "connections", service: workspace.service ?? undefined };
+    return googleReturn() ? { view: "connections", service: "gmail" } : null;
+  });
+  const { view } = route;
+  const adminTab = route.engine ? "engine" : "members";
+  const lastEngineTab = useRef(false);
+  const previousView = useRef(view);
+  useEffect(() => {
+    if (view === "admin") lastEngineTab.current = !!route.engine;
+    if (view === "chat" && previousView.current === "admin") setRefresh(value => value + 1);
+    previousView.current = view;
+  }, [view, route.engine]);
   const [watchThread, setWatchThread] = useState<string | null>(null);
   const [browserChoice, setBrowserChoice] = useState<{
     thread: string | null; mode: "chat" | "start" | "guide";
@@ -401,6 +417,9 @@ function Workspace({
   const [openInbox, setOpenInbox] = useState<
     (GoogleReadIntent & { draft: string }) | null
   >(null);
+  useEffect(() => {
+    if (view !== "connections" || route.service !== "gmail") setOpenInbox(null);
+  }, [view, route.service]);
   const [googleReads, setGoogleReads] = useState<ThreadGoogleRead[]>([]);
   const [mailError, setMailError] = useState("");
   const mailVersion = useRef(0);
@@ -422,6 +441,7 @@ function Workspace({
     threadInventoryVersion = useRef(0),
     historyVersion = useRef(0);
   const chatScroll = useRef<HTMLDivElement>(null);
+  const chatEditor = useRef<HTMLTextAreaElement>(null);
   const followTail = useRef(true);
   const olderScroll = useRef<{ top: number; height: number } | null>(null);
   const currentPage = page?.thread_id === selected ? page : null;
@@ -470,11 +490,15 @@ function Workspace({
   async function inventory() {
     const version = ++threadInventoryVersion.current;
     const result = await scope.request<ThreadsResponse>("/threads");
-    if (version === threadInventoryVersion.current) setThreads(result.threads);
+    if (version === threadInventoryVersion.current) {
+      setThreads(result.threads);
+      setInventoryError(false);
+    }
   }
   useEffect(() => {
     let live = true;
     setLoading(true);
+    setInventoryError(false);
     setError("");
     setCapError("");
     setCap(undefined);
@@ -526,7 +550,9 @@ function Workspace({
         }
       })
       .catch((e) => {
-        if (live) fail(e);
+        if (!live || inventoryVersion !== threadInventoryVersion.current || isAborted(e)) return;
+        if (e instanceof ApiFailure && e.status === 401) expired();
+        else setInventoryError(true);
       })
       .finally(() => {
         if (live) setLoading(false);
@@ -747,7 +773,7 @@ function Workspace({
   }
   async function send(event?: FormEvent, replay = false) {
     event?.preventDefault();
-    if (mutation.current || loading) return;
+    if (mutation.current || loading || (inventoryError && !initialized.current)) return;
     let thread = selected;
     const old = thread ? memoryRef.current.pending[thread] : undefined;
     const text = memoryRef.current.drafts[thread ?? "new"] ?? "";
@@ -882,7 +908,7 @@ function Workspace({
               request_id: value.request_id,
             };
             connectorOrigin.current = "chat";
-            setView("connections");
+            open({ view: "connections", service: "gmail" });
           } else if (e.code === "personal_text_model_unavailable") {
             setCap(null);
             setError("답변을 받을 수 없어 메시지를 보내지 못했습니다. 입력을 유지했습니다.");
@@ -941,15 +967,22 @@ function Workspace({
   }
   function leaveManagement() {
     setAdmin(false);
-    setView("chat");
+    open({ view: "chat" });
   }
-  function navigate(destination: MemberView) {
-    if (destination === "chat" && view === "admin") setRefresh((value) => value + 1);
+  function navigate(destination: MemberView, back = false) {
     if (destination === "connections" && view !== "connections") {
       connectorOrigin.current = view;
       setOpenInbox(null);
     }
-    setView(destination);
+    open({ view: destination, engine: destination === "admin" && lastEngineTab.current }, back);
+  }
+  function leaveCatalog() {
+    const parent = window.history.state?.memberParent;
+    if (parent === "memory" || parent === "chat" || (admin && (parent === "admin" || parent === "admin/engine"))) {
+      window.history.back();
+      return;
+    }
+    navigate(connectorOrigin.current === "admin" && !admin ? "chat" : connectorOrigin.current, true);
   }
   function openThread(id: string | null) {
     setSelected(id);
@@ -970,7 +1003,20 @@ function Workspace({
   const optimistic = pending && !turns.some((turn) => turn.run.request_id === pending.request_id);
   const busy = loading || (selected !== null && reading && !currentPage);
   const composerBusy = busy || mutating || !!pending || hasActiveTurn;
-  const isEmpty = !busy && turns.length === 0 && !pending && googleReads.length === 0 && !browserWork;
+  const isEmpty = !busy && !inventoryError && !error && turns.length === 0 && !pending && googleReads.length === 0 && !browserWork;
+  const working = turns.find((turn) => active(turn) && turn.run.id !== browserWork?.run_id);
+  const chatActivity = browserWork && ["starting", "reading", "ready", "user_control", "resuming", "stopping"].includes(browserWork.state)
+    ? browserStateLabel[browserWork.state]
+    : working ? stateLabel(working)
+    : pending?.status === "uncertain" ? "전송 결과 확인 필요"
+    : pending?.browser_request ? "브라우저 요청을 확인하는 중"
+    : pending ? "답변을 기다리는 중" : undefined;
+  function useStarter(prompt: string) {
+    const key = selected ?? "new";
+    if (memoryRef.current.drafts[key] || !ready || composerBusy) return;
+    change((value) => ({ ...value, drafts: { ...value.drafts, [key]: prompt } }));
+    chatEditor.current?.focus({ preventScroll: true });
+  }
   const thread = threads.find((item) => item.id === selected);
   const heading = view === "chat" ? thread ? threadDisplayTitle(thread.title) : "새 대화"
     : view === "memory" ? "기억"
@@ -979,6 +1025,8 @@ function Workspace({
   return (
     <PersonalWorkspaceChrome view={view} title={heading} admin={admin} threads={threads}
       selected={selected} loading={loading} busy={mutating} user={session.user}
+      drafts={memory.drafts} inventoryError={inventoryError} chatActivity={chatActivity}
+      onRefreshThreads={() => setRefresh((value) => value + 1)}
       onNavigate={navigate} onThread={openThread} onNew={() => openThread(null)}
       onDelete={remove} onSignOut={onSignOut}>
       {view !== "chat" && (
@@ -986,8 +1034,8 @@ function Workspace({
           {view === "admin" && admin ? (
             <div className="member-settings-layout">
               <nav className="member-settings-tabs" aria-label="설치 관리">
-                <button aria-pressed={adminTab === "members"} onClick={() => setAdminTab("members")}>회원 관리</button>
-                <button aria-pressed={adminTab === "engine"} onClick={() => setAdminTab("engine")}>어시스턴트 엔진</button>
+                <button aria-pressed={adminTab === "members"} onClick={() => open({ view: "admin" })}>회원 관리</button>
+                <button aria-pressed={adminTab === "engine"} onClick={() => open({ view: "admin", engine: true })}>어시스턴트 엔진</button>
               </nav>
               {adminTab === "members" ? (
                 <PersonalAdmin account={session.user.id} expired={expired} unavailable={leaveManagement} />
@@ -997,9 +1045,10 @@ function Workspace({
             </div>
           ) : view === "connections" ? (
             <PersonalConnections
+              navigation={{ route, open }}
               installationAdmin={admin}
               onAdminUnavailable={onAdminUnavailable}
-              onBack={() => navigate(connectorOrigin.current === "admin" && !admin ? "chat" : connectorOrigin.current)}
+              onBack={leaveCatalog}
               session={session}
               expired={expired}
               readIntent={
@@ -1027,7 +1076,7 @@ function Workspace({
                 googleThread.current = intent.thread_id;
                 setSelected(intent.thread_id);
                 setOpenInbox(null);
-                setView("chat");
+                open({ view: "chat" });
                 setRefresh((v) => v + 1);
                 if (uncertain)
                   setError(
@@ -1049,12 +1098,13 @@ function Workspace({
               const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
               followTail.current = scrollHeight - scrollTop - clientHeight < 96;
             }}>
-            <div className="member-chat-content">
-              {(capError || error) && (
+            <div className="member-chat-content" data-empty={isEmpty || undefined}>
+              {(capError || error || inventoryError) && (
                 <div className="member-chat-notice">
+                  {inventoryError && <p role="alert">대화 목록을 불러오지 못했습니다.</p>}
                   {capError && <p role="alert">{capError}</p>}
                   {error && <p role="alert">{error}</p>}
-                  {(capError || !pending) && (
+                  {(capError || inventoryError || !pending) && (
                     <Button label="상태 새로고침" variant="ghost"
                       isDisabled={loading || mutating} onClick={() => {
                         browser.refresh();
@@ -1070,18 +1120,26 @@ function Workspace({
                     : "지금 답변을 받을 수 없습니다. 관리자에게 문의해 주세요."}</p>
                   {admin && (
                     <Button label="엔진 설정 열기" variant="ghost" onClick={() => {
-                      setAdminTab("engine");
-                      setView("admin");
+                      open({ view: "admin", engine: true });
                     }} />
                   )}
                 </div>
               )}
               {busy && <p className="member-chat-status" role="status">대화 불러오는 중…</p>}
               {isEmpty && (
-                <div className="member-first-message">
-                  <span className="member-sender">Moosuri</span>
-                  <p className="member-reply">무엇을 도와드릴까요?</p>
-                </div>
+                <section className="member-conversation-start" aria-labelledby="member-conversation-start-title">
+                  <img src="/moosuri-icon-192.png" width="64" height="64" alt="" />
+                  <h2 id="member-conversation-start-title">무엇을 도와드릴까요?</h2>
+                  {ready && browserMode === "chat" && !draft && (
+                    <div className="member-chat-starters" role="group" aria-label="메시지 작성 예시">
+                      {chatStarters.map(({ label, prompt }) => (
+                        <button key={label} type="button" onClick={() => useStarter(prompt)} disabled={composerBusy}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
               )}
               {!selected && memory.threadCreation?.status === "uncertain" && (
                 <div className="member-chat-notice">
@@ -1158,8 +1216,8 @@ function Workspace({
             </div>
           </div>
           {!loading && (
-            <PersonalChatComposer key={selected ?? "new"} draft={draft}
-              disabled={!ready && browserMode === "chat"} busy={composerBusy}
+            <PersonalChatComposer key={selected ?? "new"} editor={chatEditor} draft={draft}
+              disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat")} busy={composerBusy}
               waiting={busy ? "대화 불러오는 중…"
                 : pending?.status === "uncertain" ? "전송 결과를 확인해 주세요."
                 : pending?.browser_request ? "브라우저 요청을 확인하는 중…" : "답변을 기다리는 중…"}

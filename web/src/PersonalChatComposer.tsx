@@ -1,10 +1,11 @@
 import { Icon } from "@astryxdesign/core/Icon";
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 
 export function PersonalChatComposer({
-  draft, disabled, busy, waiting, mode, onDraft, onSend, browserMode,
+  draft, disabled, busy, waiting, mode, onDraft, onSend, browserMode, editor,
 }: {
   draft: string;
+  editor: RefObject<HTMLTextAreaElement | null>;
   disabled: boolean;
   busy: boolean;
   waiting: string;
@@ -13,7 +14,6 @@ export function PersonalChatComposer({
   onSend: () => void;
   browserMode?: ReactNode;
 }) {
-  const editor = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   const tooLong = new TextEncoder().encode(draft).length > (mode === "guide" ? 2000 : 8192);
   const canSend = !disabled && !busy && !tooLong && !!draft.trim();
@@ -28,7 +28,7 @@ export function PersonalChatComposer({
     if (!element) return;
     element.style.height = "auto";
     element.style.height = `${Math.min(144, Math.max(44, element.scrollHeight))}px`;
-  }, [draft]);
+  }, [draft, editor]);
 
   return (
     <footer className="member-composer">

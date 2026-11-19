@@ -424,12 +424,12 @@ it("renews an idle frame proof before Done, disallows old gestures, and retains 
     if (path === base) return status();
     if (path === `${base}/frame`) {
       const now = performance.now();
-      if (!proof || now >= minted + 30000) {
+      if (!proof || now >= minted + 15000) {
         proof++;
         minted = now;
       }
       return Response.json({ workspace_id: work.id, tab_id: "main", revision: work.revision,
-        frame_token: `proof-${proof}`, proof_valid_for_ms: 30000 - (now - minted),
+        frame_token: `proof-${proof}`,
         png_base64: "QUJD", width: 900, height: 600, url: work.url });
     }
     if (path === `${base}/takeover`) {

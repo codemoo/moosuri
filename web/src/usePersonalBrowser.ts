@@ -16,8 +16,8 @@ type Identity = { workspace_id: string; revision: number; request_id: string };
 type ResumeReceipt = Identity & { control_token: string; frame_token: string };
 const interval = 1800;
 const controlRefreshMs = 6500;
-const proofMaxAgeMs = 30000;
-const proofRefreshMarginMs = 5000;
+// The worker rotates unchanged proofs at 15s and accepts overlap up to their 30s expiry.
+const capturedProofLifetimeMs = 15000;
 const proofDispatchMarginMs = 1000;
 const statusFailure = "브라우저 연결 상태를 확인하지 못했습니다.";
 const frameFailure = "브라우저 화면을 불러오지 못했습니다.";
@@ -66,7 +66,6 @@ export function usePersonalBrowser(
     let frame: PersonalBrowserFrame | null = null;
     let takingFrame = false;
     let capturedAt = 0;
-    let proof: { token: string; expiresAt: number } | null = null;
     let preview: Pick<PersonalBrowserFrame, "png_base64"> | null = null;
     let token: string | null = null;
     let busy: Action["kind"] | null = null;
@@ -83,8 +82,8 @@ export function usePersonalBrowser(
     let pageHidden = false;
     const visible = () => !pageHidden && document.visibilityState === "visible";
     const workspace = () => status?.configured ? status.workspace : null;
-    const proofFresh = () => !!frame && !takingFrame && !!proof &&
-      proof.expiresAt - performance.now() > proofDispatchMarginMs;
+    const proofFresh = () => !!frame && !takingFrame &&
+      capturedAt + capturedProofLifetimeMs - performance.now() > proofDispatchMarginMs;
 
     function render() {
       if (!live) return;
@@ -99,9 +98,6 @@ export function usePersonalBrowser(
       if (previous && value.workspace?.id === previous.id && value.workspace.revision < previous.revision) return;
       status = value;
       const next = workspace();
-      if (!next || !previous || next.id !== previous.id || next.active_tab_id !== previous.active_tab_id) {
-        proof = null;
-      }
       if (!next || !previous || next.id !== previous.id || next.revision !== previous.revision ||
           next.active_tab_id !== previous.active_tab_id) {
         frame = null;
@@ -159,9 +155,7 @@ export function usePersonalBrowser(
         const previewable = ["reading", "ready", "completed"].includes(value.state);
         const showPreview = cardPreviewAllowed && previewable && seenPreview !== previewKey;
         const now = performance.now();
-        const watchFrame = watch.current && (!token || !frame ||
-          now - capturedAt >= controlRefreshMs ||
-          !!proof && proof.expiresAt - now <= proofRefreshMarginMs);
+        const watchFrame = watch.current && (!token || !frame || now - capturedAt >= controlRefreshMs);
         if (!watchFrame && !showPreview) return;
         readingFrame = true;
         takingFrame = true;
@@ -180,13 +174,6 @@ export function usePersonalBrowser(
         if (watch.current) {
           frame = nextFrame;
           capturedAt = requestedAt;
-          if (nextFrame.proof_valid_for_ms !== undefined && Number.isFinite(nextFrame.proof_valid_for_ms)) {
-            proof = { token: nextFrame.frame_token,
-              expiresAt: requestedAt + Math.max(0, Math.min(proofMaxAgeMs, nextFrame.proof_valid_for_ms)) };
-          } else if (proof?.token !== nextFrame.frame_token) {
-            // Older runtimes can reissue unchanged proofs without extending their life.
-            proof = { token: nextFrame.frame_token, expiresAt: requestedAt + proofMaxAgeMs };
-          }
         }
         if (showPreview || (watch.current && previewable)) {
           preview = { png_base64: nextFrame.png_base64 };
@@ -312,7 +299,6 @@ export function usePersonalBrowser(
       observing?.abort();
       token = null;
       frame = null;
-      proof = null;
       preview = null;
       seenPreview = "";
       render();
@@ -337,7 +323,6 @@ export function usePersonalBrowser(
       resume = null;
       token = null;
       frame = null;
-      proof = null;
       preview = null;
       status = null;
       setView(null);

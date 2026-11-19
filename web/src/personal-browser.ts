@@ -20,7 +20,7 @@ export type PersonalBrowserWorkspace = {
   links: { url: string; text: string }[];
 };
 export type PersonalBrowserStatus = { configured: boolean; workspace: PersonalBrowserWorkspace | null };
-export type PersonalBrowserFrame = BrowserFrame & { tab_id: string; proof_valid_for_ms?: number };
+export type PersonalBrowserFrame = BrowserFrame & { tab_id: string };
 export type PersonalBrowserControl = { workspace: PersonalBrowserWorkspace; control_token: string };
 export type PersonalBrowserRequest =
   | { kind: "start"; url: string; wait_for_user: boolean }

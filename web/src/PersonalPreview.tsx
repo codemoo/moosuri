@@ -942,7 +942,7 @@ function Workspace({
               const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
               followTail.current = scrollHeight - scrollTop - clientHeight < 96;
             }}>
-            <div className={`member-chat-content${isEmpty ? " member-chat-empty" : ""}`}>
+            <div className="member-chat-content">
               {(capError || error) && (
                 <div className="member-chat-notice">
                   {capError && <p role="alert">{capError}</p>}
@@ -968,9 +968,9 @@ function Workspace({
               )}
               {busy && <p className="member-chat-status" role="status">대화 불러오는 중…</p>}
               {isEmpty && (
-                <div className="chat-welcome">
-                  <img src="/moosuri-icon-192.png" width="52" height="52" alt="" />
-                  <h2>{session.user.name.split(" ")[0]}님, 무엇을 도와드릴까요?</h2>
+                <div className="member-first-message">
+                  <span className="member-sender">Moosuri</span>
+                  <p className="member-reply">무엇을 도와드릴까요?</p>
                 </div>
               )}
               {!selected && memory.threadCreation?.status === "uncertain" && (
@@ -995,7 +995,7 @@ function Workspace({
                       <span className="sr-only">무수리</span>
                       {turn.assistant.map((message) => <p key={message.id}>{message.text}</p>)}
                       {turn.run.state !== "completed" && (
-                        <span className="member-chat-status">{stateLabel(turn)}</span>
+                        <span className="member-chat-status" data-working={active(turn) || undefined}>{stateLabel(turn)}</span>
                       )}
                     </div>
                   </article>
@@ -1009,7 +1009,7 @@ function Workspace({
                 {selected && pending && (optimistic || pending.status !== "sending") && (
                   <div className="member-pending">
                     {optimistic && (
-                      <p className="member-chat-status" role="status">
+                      <p className="member-chat-status" data-working={pending.status === "sending" || undefined} role="status">
                         {pending.status === "uncertain"
                           ? "아직 전송 결과를 확인하지 못했습니다. 새 요청은 만들지 않았습니다."
                           : "답변을 기다리는 중…"}

@@ -3,8 +3,11 @@ import { TextInput } from "@astryxdesign/core/TextInput";
 import { useState } from "react";
 import type { ThreadSummary } from "../shared/api-types";
 
-type IconName = "chat" | "feed" | "idea" | "goal" | "library" | "search" | "new" | "mic" | "refresh";
+type IconName = "bubble" | "notebook" | "mail" | "chat" | "feed" | "idea" | "goal" | "library" | "search" | "new" | "mic" | "refresh";
 const paths: Record<IconName, string> = {
+  bubble: "M21 11.5a8.5 8.5 0 0 1-8.8 8.3 11 11 0 0 1-3.7-.7L4 21l1.2-4.4a8 8 0 0 1-2-5.1A8.6 8.6 0 0 1 12.2 3 8.6 8.6 0 0 1 21 11.5z",
+  notebook: "M6 4h12a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a3 3 0 0 1-3-3V6a2 2 0 0 1 2-2zm2 0v16m3-11h5m-5 4h4",
+  mail: "M3 6h18v12H3zm0 0 9 7 9-7",
   chat: "M4 5h16v11H9l-5 4z",
   feed: "M5 6h2m4 0h8M5 12h2m4 0h8M5 18h2m4 0h8",
   idea: "M9 21h6m-6-4v-2a6 6 0 1 1 6 0v2z",

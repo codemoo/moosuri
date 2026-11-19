@@ -265,7 +265,7 @@ it("keeps a member's draft on an engine refusal and exposes no settings entry", 
   await user.click(screen.getByRole("button", { name: "보내기" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("입력을 유지했습니다.");
   expect(draft).toHaveValue("A personal request");
-  expect(screen.getByRole("button", { name: "보내기" })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
   expect(screen.queryByRole("button", { name: "관리" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "엔진 설정 열기" })).not.toBeInTheDocument();
   expect(screen.queryByText(/synthetic-admin-model|synthetic-effort/)).not.toBeInTheDocument();
@@ -354,7 +354,7 @@ it("logs in, replaces a temporary password and sends through the explicit text-o
   await screen.findByRole("heading", { name: "임시 비밀번호 변경" });
   await user.type(screen.getByLabelText("새 비밀번호"), "Changed-password-42");
   await user.click(screen.getByRole("button", { name: "비밀번호 변경" }));
-  await screen.findByRole("heading", { name: "Member님, 무엇을 도와드릴까요?" });
+  await screen.findByText("무엇을 도와드릴까요?");
   const input = await composer();
   await user.type(input, "Explain a queue");
   await user.click(screen.getByRole("button", { name: "보내기" }));
@@ -485,7 +485,7 @@ it("keeps private history visible when the preview is disabled and deletes only 
   expect(await composer()).toBeDisabled();
   const drawer = await openDrawer(user);
   await user.click(drawer.getByRole("button", { name: "대화 삭제" }));
-  await screen.findByRole("heading", { name: "Member님, 무엇을 도와드릴까요?" });
+  await screen.findByText("무엇을 도와드릴까요?");
   expect(
     calls
       .filter((c) => c.method === "DELETE")

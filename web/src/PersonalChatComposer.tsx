@@ -1,5 +1,3 @@
-import { Button } from "@astryxdesign/core/Button";
-import { ChatComposer } from "@astryxdesign/core/Chat";
 import { Icon } from "@astryxdesign/core/Icon";
 import { useLayoutEffect, useRef } from "react";
 
@@ -26,35 +24,31 @@ export function PersonalChatComposer({
 
   return (
     <footer className="member-composer">
-      <ChatComposer className="member-composer-dock" elevation="none" onSubmit={() => {
+      <form className="member-composer-dock" onSubmit={(event) => {
+        event.preventDefault();
         if (canSend && !composing.current) onSend();
-      }} input={
-        <form className="member-composer-input" onSubmit={(event) => {
-          event.preventDefault();
-          if (canSend && !composing.current) onSend();
-        }}>
-          <label className="sr-only" htmlFor="preview-message">메시지</label>
-          <textarea id="preview-message" ref={editor}
-            value={draft} onChange={(event) => onDraft(event.target.value)}
-            placeholder="메시지를 입력하세요…" disabled={disabled}
-            maxLength={8192} rows={1}
-            aria-describedby={tooLong ? "member-composer-limit" : undefined}
-            aria-keyshortcuts="Enter Shift+Enter"
-            onCompositionStart={() => { composing.current = true; }}
-            onCompositionEnd={() => { composing.current = false; }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.shiftKey ||
-                  event.nativeEvent.isComposing || composing.current ||
-                  event.nativeEvent.keyCode === 229) return;
-              event.preventDefault();
-              if (canSend) onSend();
-            }}
-          />
-          <Button className="member-composer-send" variant="primary" type="submit"
-            label="보내기" isIconOnly isDisabled={!canSend}
-            icon={<Icon icon="arrowUp" size="md" color="inherit" />} />
-        </form>
-      } />
+      }}>
+        <label className="sr-only" htmlFor="preview-message">메시지</label>
+        <textarea id="preview-message" ref={editor}
+          value={draft} onChange={(event) => onDraft(event.target.value)}
+          placeholder="메시지 보내기" disabled={disabled}
+          maxLength={8192} rows={1}
+          aria-describedby={tooLong ? "member-composer-limit" : undefined}
+          aria-keyshortcuts="Enter Shift+Enter"
+          onCompositionStart={() => { composing.current = true; }}
+          onCompositionEnd={() => { composing.current = false; }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey ||
+                event.nativeEvent.isComposing || composing.current ||
+                event.nativeEvent.keyCode === 229) return;
+            event.preventDefault();
+            if (canSend) onSend();
+          }}
+        />
+        <button className="member-composer-send" type="submit" aria-label="보내기" disabled={!canSend}>
+          <Icon icon="arrowUp" size="md" color="inherit" />
+        </button>
+      </form>
       {tooLong && (
         <p id="member-composer-limit" role="alert">메시지가 너무 깁니다. 내용을 줄여 주세요.</p>
       )}

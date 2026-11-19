@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { SessionView } from "../shared/api-types";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
+import { WorkspaceIcon } from "./WorkspaceNavigation";
+import "./personal-library.css";
 
 const base = "/personal/google",
   flowKey = "moosuri.personal.google-read.v1";
@@ -86,45 +88,59 @@ export function clearPersonalGoogle() {
     /* storage unavailable */
   }
 }
-export function GoogleReadHistory({ reads }: { reads: ThreadGoogleRead[] }) {
+function InboxSummary({ inbox }: { inbox: Inbox }) {
   return (
-    <div
+    <>
+      <p className="member-library-caption">
+        받은편지함 첫 페이지에서 최대 5건을 확인했습니다. 전체 메일에서 가장 최근인 항목을 뜻하지 않습니다.
+      </p>
+      {inbox.messages.length ? (
+        <ul className="member-page-list member-library-list" aria-label="확인한 메일">
+          {inbox.messages.map((message) => (
+            <li className="member-library-row member-library-mail-row" key={message.id}>
+              <span className="member-library-well"><WorkspaceIcon name="mail" /></span>
+              <div className="member-library-row-copy">
+                <strong>{message.subject || "제목 없음"}</strong>
+                <span>{message.from}</span>
+              </div>
+              <small className="member-library-mail-date">{message.date}</small>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="member-page-list member-library-list member-library-empty">확인한 페이지에 받은 메일이 없습니다.</p>
+      )}
+      {inbox.has_more && <p className="member-library-caption">다음 페이지에 메일이 더 있습니다.</p>}
+    </>
+  );
+}
+
+export function GoogleReadHistory({ reads }: { reads: ThreadGoogleRead[] }) {
+  if (!reads.length) return null;
+  return (
+    <section
       aria-label="이 대화의 메일 확인 기록"
-      className="preview-google-history"
+      className="member-library member-library-history"
     >
-      {reads.length > 0 && <h3>저장된 메일 확인 기록 · 최근 20개</h3>}
+      <h3>저장된 메일 확인 기록 · 최근 20개</h3>
       {reads.map((r) => (
-        <article key={r.request_id}>
-          <strong>받은편지함 확인</strong>
-          <p>
-            조회 요청:{" "}
-            <time dateTime={new Date(r.created_at * 1000).toISOString()}>
-              {new Date(r.created_at * 1000).toLocaleString()}
-            </time>
-          </p>
+        <article className="member-library-history-entry" key={r.request_id}>
+          <div className="member-library-history-heading">
+            <span className="member-library-well"><WorkspaceIcon name="mail" /></span>
+            <div className="member-library-row-copy">
+              <strong>받은편지함 확인</strong>
+              <span>
+                {r.source && r.result && <>{r.source.mailbox} · </>}
+                <time dateTime={new Date(r.created_at * 1000).toISOString()}>
+                  {new Date(r.created_at * 1000).toLocaleString()}
+                </time>
+              </span>
+            </div>
+          </div>
           {r.result && r.source ? (
-            <>
-              <p>
-                {r.source.mailbox} · 받은편지함 첫 페이지에서 최대 5건을
-                확인했습니다. 전체 메일에서 가장 최근인 항목을 뜻하지 않습니다.
-              </p>
-              {r.result.messages.length ? (
-                <ul className="member-mail-list">
-                  {r.result.messages.map((m) => (
-                    <li key={m.id}>
-                      <strong>{m.subject || "제목 없음"}</strong>
-                      <div>{m.from}</div>
-                      <small>{m.date}</small>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p>확인한 페이지에 받은 메일이 없습니다.</p>
-              )}
-              {r.result.has_more && <p>다음 페이지에 메일이 더 있습니다.</p>}
-            </>
+            <InboxSummary inbox={r.result} />
           ) : (
-            <p>
+            <p className="member-library-caption">
               {r.state === "withdrawn"
                 ? "연결이 변경되거나 해제되어 이 결과를 제거했습니다."
                 : r.state === "awaiting_consent"
@@ -136,7 +152,7 @@ export function GoogleReadHistory({ reads }: { reads: ThreadGoogleRead[] }) {
           )}
         </article>
       ))}
-    </div>
+    </section>
   );
 }
 export default function PersonalGoogle({
@@ -362,74 +378,60 @@ export default function PersonalGoogle({
     }
   }
   return (
-    <section aria-label="받은편지함" className="member-section">
-      <h1>받은편지함</h1>
-      {connection && <p>{connection.mailbox}</p>}
-      {notice && <p role="status">{notice}</p>}
-      {busy && <p role="status">확인 중…</p>}
-      <div className="member-inbox-actions">
+    <section aria-label="받은편지함" className="member-page member-library member-library-mail">
+      <div className="member-page-heading">
+        <h1>받은편지함</h1>
         {enabled && (
-          <>
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={() =>
-                void action(readIntent || connection ? "read" : "connect")
-              }
-            >
-              {connection
-                ? "메일 확인"
-                : readIntent
-                  ? "Google로 연결하고 이 대화에서 메일 확인"
-                  : "Google 연결"}
-            </button>
-            {readIntent && !connection && (
-              <button
-                className="secondary"
-                disabled={busy}
-                onClick={() => void action("connect")}
-              >
-                Google 연결만
-              </button>
-            )}
-          </>
-        )}
-        {connection && (
           <button
-            className="secondary"
+            className="member-page-action"
             disabled={busy}
-            onClick={() => void action("disconnect")}
+            onClick={() => void action(readIntent || connection ? "read" : "connect")}
           >
-            연결 해제
-          </button>
-        )}
-        {!enabled && !busy && (
-          <button className="secondary" onClick={() => void update()}>
-            연결 상태 다시 확인
+            {connection
+              ? "메일 확인"
+              : readIntent
+                ? "Google로 연결하고 이 대화에서 메일 확인"
+                : "Google 연결"}
           </button>
         )}
       </div>
-      {inbox && (
-        <div className="admin-card member-inbox-results">
-          <p>
-            받은편지함 첫 페이지에서 최대 5건을 확인했습니다. 전체 메일에서 가장
-            최근인 항목을 뜻하지 않습니다.
-          </p>
-          {inbox.messages.length ? (
-            <ul className="member-mail-list">
-              {inbox.messages.map((m) => (
-                <li key={m.id}>
-                  <strong>{m.subject || "제목 없음"}</strong>
-                  <div>{m.from}</div>
-                  <small>{m.date}</small>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>확인한 페이지에 받은 메일이 없습니다.</p>
-          )}
-          {inbox.has_more && <p>다음 페이지에 메일이 더 있습니다.</p>}
+      <section className="member-page-list member-library-list" aria-label="Gmail 계정" aria-busy={busy}>
+        <div className="member-library-row member-library-account">
+          <span className="member-library-well"><WorkspaceIcon name="mail" /></span>
+          <div className="member-library-row-copy">
+            <strong>Gmail</strong>
+            <span>{connection?.mailbox ?? (busy ? "연결 상태 확인 중…" : "연결된 계정이 없습니다.")}</span>
+          </div>
+          {connection ? (
+            <button className="member-library-inline-action" disabled={busy} onClick={() => void action("disconnect")}>
+              연결 해제
+            </button>
+          ) : enabled && readIntent ? (
+            <button className="member-library-inline-action" disabled={busy} onClick={() => void action("connect")}>
+              Google 연결만
+            </button>
+          ) : null}
         </div>
+      </section>
+      {notice && <p className="member-library-status" role="status">{notice}</p>}
+      {busy && enabled && <p className="member-library-status" role="status">확인 중…</p>}
+      {!enabled && !busy && (
+        <button
+          className="member-library-inline-action member-library-retry"
+          onClick={() => {
+            setBusy(true);
+            setNotice("");
+            void update();
+          }}
+        >
+          연결 상태 다시 확인
+        </button>
+      )}
+      {inbox && (
+        <section className="member-library-mail-results" aria-label="메일 확인 결과">
+          <h2>메일 확인 결과</h2>
+          <InboxSummary inbox={inbox} />
+        </section>
       )}
     </section>
   );

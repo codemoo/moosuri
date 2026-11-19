@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { initialKnowledgeDrafts } from "./KnowledgeState";
 import { KnowledgeView } from "./KnowledgeView";
+import "./personal-library.css";
 
 type Props = { accountId: string; onExpired: () => void };
 

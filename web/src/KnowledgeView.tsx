@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type {
   ChatEvidence,
   EvidenceRef,
@@ -32,6 +32,7 @@ import {
 import "./knowledge.css";
 import { MemoryExtraction } from "./MemoryExtraction";
 import { SourceProvenance } from "./SourceProvenance";
+import { WorkspaceIcon } from "./WorkspaceNavigation";
 
 type Mode = "source" | "memory";
 type Resource = { id: string; revision: number };
@@ -76,6 +77,7 @@ export function KnowledgeView({
   const [busy, setBusy] = useState(false);
   const mutationLock = useRef(false);
   const [query, setQuery] = useState("");
+  const [memoryFilter, setMemoryFilter] = useState("");
   const [koreanAliases, setKoreanAliases] = useState(false);
   const [speaker, setSpeaker] = useState("");
   const [subject, setSubject] = useState("");
@@ -196,12 +198,13 @@ export function KnowledgeView({
       })
       .catch((error) => {
         if (!isAborted(error)) {
+          if (manualMemoriesOnly) setMemories(null);
           fail(error);
           setLoading(false);
         }
       });
     return () => controller.abort();
-  }, [mode, collectionId, pageStack, scope, refresh]);
+  }, [mode, collectionId, pageStack, scope, refresh, manualMemoriesOnly]);
   async function refreshCollection(id: string) {
     try {
       const value = await scope.request<{ collections: KnowledgeCollection[] }>(
@@ -505,9 +508,181 @@ export function KnowledgeView({
       setSource({ id: hit.id, revision: hit.revision });
     else setMemory({ id: hit.id, revision: hit.revision });
   }
-  const Container = manualMemoriesOnly ? "section" : "main";
+  const memoryEditor = drafts.memory && (drafts.memory.open || manualMemoriesOnly) && (
+    <MemoryForm
+      key={drafts.memory.id ?? "new"}
+      accountId={accountId}
+      state={drafts.memory}
+      update={updateDrafts}
+      onExpired={onExpired}
+      saved={(value) => {
+        setMemory({ id: value.id, revision: value.revision });
+        setNotice("기억을 저장했습니다.");
+        refreshLists();
+      }}
+      openEvidence={manualMemoriesOnly ? undefined : (id, revision) => setSource({ id, revision })}
+    />
+  );
+  const memoryDetail = memory && mode === "memory" && (
+    <MemoryDetail
+      key={`${memory.id}:${memory.revision}`}
+      accountId={accountId}
+      resource={memory}
+      onExpired={onExpired}
+      close={() => setMemory(null)}
+      edit={startAssertion}
+      evidence={manualMemoriesOnly ? undefined : (id, revision) => setSource({ id, revision })}
+      forget={(document) => {
+        setError("");
+        setDanger({
+          kind: "memory",
+          id: document.id,
+          revision: document.revision,
+          label: document.draft.subject,
+        });
+      }}
+    />
+  );
+  const confirmation = danger && (
+    <KnowledgeConfirm
+      danger={danger}
+      busy={busy}
+      error={error}
+      close={() => {
+        if (!busy) setDanger(null);
+      }}
+      confirm={destroy}
+    />
+  );
+  function reload() {
+    refreshLists();
+    setSource(null);
+    setMemory(null);
+  }
+  const pagination = (
+    <>
+      {pageStack.length > 1 && (
+        <button
+          className="text-button"
+          disabled={loading}
+          onClick={() => setPageStack((current) => current.slice(0, -1))}
+        >
+          이전 목록
+        </button>
+      )}
+      {next && (
+        <button
+          className="text-button"
+          disabled={loading}
+          onClick={() => setPageStack((current) => [...current, next])}
+        >
+          다음 목록
+        </button>
+      )}
+    </>
+  );
+  if (manualMemoriesOnly) {
+    const filterText = memoryFilter.trim().normalize("NFKC").toLocaleLowerCase();
+    const items = (memories?.items ?? []).filter(({ draft }) =>
+      [draft.subject, draft.text, draft.speaker].some((value) =>
+        value?.normalize("NFKC").toLocaleLowerCase().includes(filterText),
+      ),
+    );
+    const editing = !!drafts.memory?.open;
+    return (
+      <section className="member-page member-library member-library-memory knowledge-view" aria-label="기억">
+        <div className="member-page-heading">
+          <h1>기억</h1>
+          <button
+            className="member-page-action"
+            aria-haspopup="dialog"
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true });
+              startAssertion();
+            }}
+          >
+            <WorkspaceIcon name="new" />
+            {drafts.memory ? "기억 작성 이어가기" : "기억 추가"}
+          </button>
+        </div>
+        <div className="member-library-toolbar">
+          <div className="member-library-filter">
+            <WorkspaceIcon name="search" />
+            <input
+              type="search"
+              aria-label="현재 목록에서 기억 필터링"
+              placeholder="현재 목록에서 기억 찾기"
+              value={memoryFilter}
+              onChange={(event) => setMemoryFilter(event.target.value)}
+            />
+          </div>
+          <button type="button" className="member-library-icon-button" aria-label="목록 새로고침" title="목록 새로고침" disabled={busy || loading} onClick={reload}>
+            <WorkspaceIcon name="refresh" />
+          </button>
+        </div>
+        {error && !danger && !editing && <p className="notice" role="alert">{error}</p>}
+        {notice && <p className="member-library-status" role="status">{notice}</p>}
+        <section className="member-page-list member-library-list" aria-label="기억 목록" aria-busy={loading}>
+          {loading ? (
+            <p className="member-library-empty" role="status">목록을 불러오는 중…</p>
+          ) : items.length ? (
+            items.map((item) => (
+              <button
+                key={item.id}
+                className="member-library-row member-memory-row"
+                data-member-memory={item.id}
+                aria-haspopup="dialog"
+                onClick={(event) => {
+                  event.currentTarget.focus({ preventScroll: true });
+                  setError("");
+                  setMemory({ id: item.id, revision: item.revision });
+                }}
+              >
+                <span className="member-library-well"><WorkspaceIcon name="notebook" /></span>
+                <span className="member-library-row-copy">
+                  <strong>{item.draft.subject}</strong>
+                  <span>{item.draft.text}</span>
+                  {item.status === "invalidated" && <small>근거 확인 필요</small>}
+                </span>
+                <span className="member-library-chevron" aria-hidden="true" />
+              </button>
+            ))
+          ) : (
+            <p className="member-library-empty">
+              {!memories && error
+                ? "기억 목록을 불러오지 못했습니다."
+                : filterText && memories?.items.length
+                  ? "현재 목록에 일치하는 기억이 없습니다."
+                  : pageStack.length > 1
+                    ? "이 페이지에 표시할 기억이 없습니다."
+                    : "아직 기록한 기억이 없습니다."}
+            </p>
+          )}
+        </section>
+        {(pageStack.length > 1 || next) && <div className="knowledge-pagination member-library-pagination">{pagination}</div>}
+        <MemberMemoryDrawer
+          open={editing || !!memoryDetail}
+          editing={editing}
+          close={() => {
+            setError("");
+            if (editing) {
+              updateDrafts((current) => ({
+                ...current,
+                memory: current.memory && { ...current.memory, open: false },
+              }));
+            } else setMemory(null);
+          }}
+        >
+          {editing && error && !danger && <p className="notice" role="alert">{error}</p>}
+          <div hidden={!editing}>{memoryEditor}</div>
+          {!editing && memoryDetail}
+        </MemberMemoryDrawer>
+        {confirmation}
+      </section>
+    );
+  }
   return (
-    <Container className="admin-scroll knowledge-view">
+    <main className="admin-scroll knowledge-view">
       {error && !danger && (
         <p className="notice knowledge-alert" role="alert">
           {error}
@@ -606,11 +781,7 @@ export function KnowledgeView({
         <button
           className="text-button"
           disabled={busy}
-          onClick={() => {
-            refreshLists();
-            setSource(null);
-            setMemory(null);
-          }}
+          onClick={reload}
         >
           목록 새로고침
         </button>
@@ -732,22 +903,8 @@ export function KnowledgeView({
           }}
         />
       )}
-      {drafts.memory?.open && (
-        <MemoryForm
-          key={drafts.memory.id ?? "new"}
-          accountId={accountId}
-          state={drafts.memory}
-          update={updateDrafts}
-          onExpired={onExpired}
-          saved={(value) => {
-            setMemory({ id: value.id, revision: value.revision });
-            setNotice("기억을 저장했습니다.");
-            refreshLists();
-          }}
-          openEvidence={manualMemoriesOnly ? undefined : (id, revision) => setSource({ id, revision })}
-        />
-      )}
-      {!manualMemoriesOnly && <form
+      {memoryEditor}
+      <form
         className="knowledge-search admin-card"
         onSubmit={(event: FormEvent) => {
           event.preventDefault();
@@ -826,7 +983,7 @@ export function KnowledgeView({
             />
           </label>
         </details>
-      </form>}
+      </form>
       {search ? (
         <section className="admin-card knowledge-list" aria-label="검색 결과">
           <div className="section-heading">
@@ -916,26 +1073,7 @@ export function KnowledgeView({
           ) : (
             <p className="knowledge-empty">아직 기록한 기억이 없습니다.</p>
           )}
-          <div className="knowledge-pagination">
-            {pageStack.length > 1 && (
-              <button
-                className="text-button"
-                disabled={loading}
-                onClick={() => setPageStack((current) => current.slice(0, -1))}
-              >
-                이전 목록
-              </button>
-            )}
-            {next && (
-              <button
-                className="text-button"
-                disabled={loading}
-                onClick={() => setPageStack((current) => [...current, next])}
-              >
-                다음 목록
-              </button>
-            )}
-          </div>
+          <div className="knowledge-pagination">{pagination}</div>
         </section>
       )}
       {source && (
@@ -958,38 +1096,53 @@ export function KnowledgeView({
           }}
         />
       )}
-      {memory && mode === "memory" && (
-        <MemoryDetail
-          key={`${memory.id}:${memory.revision}`}
-          accountId={accountId}
-          resource={memory}
-          onExpired={onExpired}
-          close={() => setMemory(null)}
-          edit={startAssertion}
-          evidence={manualMemoriesOnly ? undefined : (id, revision) => setSource({ id, revision })}
-          forget={(document) => {
-            setError("");
-            setDanger({
-              kind: "memory",
-              id: document.id,
-              revision: document.revision,
-              label: document.draft.subject,
-            });
-          }}
-        />
-      )}
-      {danger && (
-        <KnowledgeConfirm
-          danger={danger}
-          busy={busy}
-          error={error}
-          close={() => {
-            if (!busy) setDanger(null);
-          }}
-          confirm={destroy}
-        />
-      )}
-    </Container>
+      {memoryDetail}
+      {confirmation}
+    </main>
+  );
+}
+
+function MemberMemoryDrawer({ open, editing, close, children }: {
+  open: boolean;
+  editing: boolean;
+  close: () => void;
+  children: ReactNode;
+}) {
+  const drawer = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = drawer.current!;
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      const page = dialog.parentElement;
+      const restoredRow = Array.from(page?.querySelectorAll<HTMLButtonElement>("[data-member-memory]") ?? [])
+        .find((row) => row.dataset.memberMemory === previous?.dataset.memberMemory);
+      const target = previous?.isConnected
+        ? previous
+        : restoredRow ?? page?.querySelector<HTMLButtonElement>(".member-page-action");
+      target?.focus({ preventScroll: true });
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const panel = drawer.current;
+    const field = editing && panel?.querySelector<HTMLInputElement>("input:enabled");
+    (field || panel?.querySelector<HTMLButtonElement>(".section-heading button"))?.focus();
+  }, [open, editing]);
+  return (
+    <dialog
+      ref={drawer}
+      className="member-memory-drawer"
+      aria-label={editing ? "기억 작성" : "기억 읽기"}
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
+    >
+      {children}
+    </dialog>
   );
 }
 

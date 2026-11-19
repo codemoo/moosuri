@@ -23,7 +23,9 @@
   overscroll-behavior: contain;
   padding-bottom: env(safe-area-inset-bottom);
 }
-.member-drawer {
+.member-workspace .member-drawer {
+  padding: 0;
+  max-height: 100%;
   box-sizing: border-box;
   width: min(340px, calc(100% - 16px));
   max-width: min(340px, calc(100% - 16px));
@@ -256,6 +258,8 @@
 
 @media (max-width: 767px) {
   .member-drawer .member-mobile-nav {
+    height: auto;
+    block-size: auto;
     display: flex;
     width: 100%;
     padding: 8px 0 0;

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Shared provider ownership
-Only an authenticated unrestricted administrator MUST create or edit shared connections. Only an authenticated unrestricted administrator MUST be able to change the installation default, manage a personal model connection, or assign a verified shared model and reasoning effort to a member. Ordinary members SHALL use their assignment or the installation default.
+Only an authenticated unrestricted administrator MUST create or edit shared connections. Only an authenticated unrestricted administrator MUST be able to change the installation default or manage an administrator-owned model connection. A configured installation default SHALL govern inference for every role. Historical member assignments SHALL have no effect.
 
 #### Scenario: Member attempts to replace a shared key
 - **WHEN** a member sends a provider mutation

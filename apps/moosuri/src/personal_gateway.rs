@@ -47,6 +47,9 @@ pub struct Options {
     /// Exact HTTPS public origin. The local front proxy must overwrite X-Real-IP.
     #[arg(long)]
     public_origin: String,
+    /// Exact HTTPS origin of a separate public vault site, for a link only.
+    #[arg(long)]
+    vault_site_origin: Option<String>,
     /// Existing private absolute installation registry directory.
     #[arg(long)]
     registry: PathBuf,
@@ -67,6 +70,7 @@ pub struct Options {
 struct Gateway {
     origin: String,
     host: String,
+    vault_site_origin: Option<String>,
     registry: PathBuf,
     ipc_root: PathBuf,
     key: Arc<Zeroizing<Vec<u8>>>,
@@ -172,9 +176,28 @@ impl Gateway {
         if options.public_origin != origin {
             return Err("public_origin_invalid".into());
         }
+        let vault_site_origin = options
+            .vault_site_origin
+            .as_deref()
+            .map(|site| {
+                let vault = url::Url::parse(site).map_err(|_| "vault_site_origin_invalid")?;
+                let member_host = url.host_str().map(|host| host.trim_end_matches('.'));
+                let distinct_host = vault
+                    .host_str()
+                    .is_some_and(|host| !host.ends_with('.') && Some(host) != member_host);
+                if vault.scheme() != "https"
+                    || !distinct_host
+                    || site != vault.origin().ascii_serialization()
+                {
+                    return Err("vault_site_origin_invalid");
+                }
+                Ok(site.to_owned())
+            })
+            .transpose()?;
         Ok(Self {
             host: origin[8..].into(),
             origin,
+            vault_site_origin,
             registry: options.registry.clone(),
             ipc_root: options.ipc_root.clone(),
             key: Arc::new(key(&options.socket_dir)?),
@@ -785,8 +808,11 @@ async fn vault_status(
 ) -> Response {
     #[derive(Serialize)]
     #[serde(tag = "state", rename_all = "snake_case")]
-    enum VaultStatus {
-        SetupRequired,
+    enum VaultStatus<'a> {
+        SetupRequired {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            site_origin: Option<&'a str>,
+        },
     }
 
     let result = async {
@@ -820,8 +846,10 @@ async fn vault_status(
         if view.password_change_required || view.user.must_change_password {
             return Err(StatusCode::FORBIDDEN);
         }
-        let body = serde_json::to_vec(&VaultStatus::SetupRequired)
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let body = serde_json::to_vec(&VaultStatus::SetupRequired {
+            site_origin: g.vault_site_origin.as_deref(),
+        })
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         Ok(response(StatusCode::OK, body))
     }
     .await;
@@ -1176,12 +1204,40 @@ mod tests {
     fn options(parent: &Path) -> Options {
         Options {
             public_origin: "https://assistant.example.test".into(),
+            vault_site_origin: None,
             registry: directory(parent, "registry"),
             ipc_root: directory(parent, "ipc"),
             socket_dir: directory(parent, "gateway"),
             proxy_socket_dir: None,
             proxy_gid: None,
         }
+    }
+    #[test]
+    fn vault_site_origin_must_be_an_exact_https_origin_on_a_distinct_host() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut options = options(&temp.path().canonicalize().unwrap());
+        for invalid in [
+            "http://vault.example.test",
+            "https://assistant.example.test",
+            "https://assistant.example.test:8443",
+            "https://assistant.example.test.",
+            "https://vault.example.test/",
+            "https://vault.example.test/login",
+            "https://vault.example.test?token=synthetic",
+            "https://vault.example.test#response",
+            "https://vault-user@vault.example.test",
+        ] {
+            options.vault_site_origin = Some(invalid.into());
+            assert_eq!(
+                Gateway::new(&options).err().unwrap(),
+                "vault_site_origin_invalid"
+            );
+        }
+        options.vault_site_origin = Some("https://vault.example.test".into());
+        assert_eq!(
+            Gateway::new(&options).unwrap().vault_site_origin,
+            options.vault_site_origin
+        );
     }
     #[tokio::test]
     async fn proxy_group_can_only_reach_the_socket_and_an_active_listener_is_preserved() {
@@ -1768,7 +1824,7 @@ mod tests {
     async fn actual_member_sockets_keep_cookie_locator_and_thread_history_private() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
-        let options = options(&root);
+        let mut options = options(&root);
         let (a, store_a, task_a) = real_member(&options, "a@example.test").await;
         let (b, _store_b, task_b) = real_member(&options, "b@example.test").await;
         let g = Gateway::new(&options).unwrap();
@@ -1795,6 +1851,20 @@ mod tests {
         let a_headers = authenticated(&sessions[0], &a);
         let b_headers = authenticated(&sessions[1], &b);
         check_vault_status(&g, &a_headers, &b_headers).await;
+        options.vault_site_origin = Some("https://vault.example.test".into());
+        let with_site = Gateway::new(&options).unwrap();
+        let status = request(&with_site, VAULT_STATUS, Method::GET, a_headers.clone(), "").await;
+        assert_eq!(status.status(), StatusCode::OK);
+        assert_eq!(
+            json(status).await,
+            serde_json::json!({"state":"setup_required","site_origin":"https://vault.example.test"})
+        );
+        let anonymous = request(&with_site, VAULT_STATUS, Method::GET, headers(), "").await;
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            json(anonymous).await,
+            serde_json::json!({"code":"unauthorized"})
+        );
         let absent = request(
             &g,
             "/api/v1/text-preview",

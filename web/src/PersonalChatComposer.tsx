@@ -40,7 +40,7 @@ export function PersonalChatComposer({
         <label className="sr-only" htmlFor="preview-message">메시지</label>
         <textarea id="preview-message" ref={editor}
           value={draft} onChange={(event) => onDraft(event.target.value)}
-          placeholder={placeholder} disabled={disabled} readOnly={busy}
+          placeholder={placeholder} disabled={disabled}
           maxLength={8192} rows={1}
           aria-describedby={tooLong ? "member-composer-limit" : undefined}
           aria-keyshortcuts="Enter Shift+Enter"

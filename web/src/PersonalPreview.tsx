@@ -582,7 +582,7 @@ function Workspace({
       if (m.pending[thread]?.request_id !== value.request_id) return m;
       const pending = { ...m.pending }, drafts = { ...m.drafts };
       delete pending[thread];
-      if (!preserveDraft && drafts[thread] === value.text) delete drafts[thread];
+      if (preserveDraft && drafts[thread] === undefined) drafts[thread] = value.text;
       return { ...m, pending, drafts };
     });
   }
@@ -796,10 +796,11 @@ function Workspace({
     }
     const destination = thread;
     setError("");
-    change((m) => ({
-      ...m,
-      pending: { ...m.pending, [destination]: { ...value, status: "sending" } },
-    }));
+    change((m) => {
+      const drafts = { ...m.drafts };
+      if (!old && drafts[destination] === value.text) delete drafts[destination];
+      return { ...m, drafts, pending: { ...m.pending, [destination]: { ...value, status: "sending" } } };
+    });
     try {
       if (value.browser_request) {
         const body = value.browser_request.kind === "start"
@@ -869,11 +870,7 @@ function Workspace({
           e instanceof ApiFailure &&
           [400, 401, 403, 404, 422, 429].includes(e.status)
         ) {
-          change((m) => {
-            const pending = { ...m.pending };
-            delete pending[destination];
-            return { ...m, pending };
-          });
+          clearSend(destination, value, true);
           if (e.status === 422 && e.code === "personal_inbox_requested") {
             setOpenInbox({
               thread_id: destination,

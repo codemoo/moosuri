@@ -683,6 +683,20 @@ it("recovers an unconfirmed send after refresh without an automatic POST and reu
   expect(await composer()).toHaveValue("");
   view.unmount();
 });
+it("keeps the next draft even when its text matches the request being acknowledged", async () => {
+  deferSend = true;
+  const user = userEvent.setup();
+  mount();
+  await user.type(await composer(), "Same question");
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await waitFor(() => expect(completeSend).not.toBeNull());
+  expect(await composer()).toHaveValue("");
+  await user.type(await composer(), "Same question");
+  expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
+  await act(async () => { completeSend!(Response.json(paid.values().next().value, { status: 201 })); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "보내기" })).toBeEnabled());
+  expect(await composer()).toHaveValue("Same question");
+});
 it("logout fences an in-flight response and its saved draft before another account signs in", async () => {
   deferSend = true;
   const user = userEvent.setup();
@@ -690,7 +704,8 @@ it("logout fences an in-flight response and its saved draft before another accou
   await user.type(await composer(), "PRIVATE A request");
   await user.click(screen.getByRole("button", { name: "보내기" }));
   await waitFor(() => expect(completeSend).not.toBeNull());
-  expect(await composer()).toHaveAttribute("readonly");
+  expect(await composer()).toHaveValue("");
+  await user.type(await composer(), "A private unsent follow-up");
   expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
   const drawer = await openDrawer(user);
   await user.click(drawer.getByRole("button", { name: "로그아웃" }));

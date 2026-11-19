@@ -11,10 +11,10 @@ const TTL: u64 = 600;
 const AAD: &[u8] = b"moosuri/personal/google/gmail-readonly/callback/v1";
 // Positions are persisted in short-lived sealed callback envelopes. Append only.
 const WORKSPACE_SERVICES: [&str; 4] = ["drive", "docs", "slides", "sheets"];
-const WORKSPACE_BASE: &str = "/api/v1/personal/workspace";
+const WORKSPACE_STATUS: &str = "/api/v1/personal/google/workspace";
 
 fn service_for_path(path: &str) -> Option<&'static str> {
-    let relative = path.strip_prefix(WORKSPACE_BASE)?.strip_prefix('/')?;
+    let relative = path.strip_prefix(BASE)?.strip_prefix('/')?;
     let name = relative.split('/').next()?;
     WORKSPACE_SERVICES
         .iter()
@@ -26,14 +26,14 @@ pub(super) fn routes() -> Router<Gateway> {
     let mut router = Router::new()
         .route(CALLBACK, get(callback))
         .route(BASE, get(member))
+        .route(WORKSPACE_STATUS, get(member))
         .route("/api/v1/personal/google/start", post(member))
         .route("/api/v1/personal/google/complete", post(member))
         .route("/api/v1/personal/google/inbox", post(member))
         .route("/api/v1/personal/google/history", post(member))
         .route("/api/v1/personal/google/disconnect", post(member));
     for service in WORKSPACE_SERVICES {
-        let base = format!("{WORKSPACE_BASE}/{service}");
-        router = router.route(&base, get(member));
+        let base = format!("{BASE}/{service}");
         for action in ["start", "complete", "read", "disconnect"] {
             router = router.route(&format!("{base}/{action}"), post(member));
         }
@@ -268,7 +268,7 @@ async fn callback(
         let flow = moosuri_store::Store::mail_oauth_flow_id(&inner);
         let payload = Zeroizing::new(json!({"state":inner,"code":input.code}).to_string());
         let capture = match service {
-            Some(name) => format!("/internal/workspace/{name}/capture"),
+            Some(name) => format!("/internal/google/{name}/capture"),
             None => "/internal/google/capture".to_owned(),
         };
         let result = g

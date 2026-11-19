@@ -359,6 +359,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 88,
         sql: include_str!("../../../migrations/assistant/0088_personal_browser_jobs.sql"),
     },
+    Migration {
+        version: 89,
+        sql: include_str!("../../../migrations/assistant/0089_personal_browser_lifecycle.sql"),
+    },
 ];
 
 pub(crate) const CURRENT_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].version;

@@ -32,8 +32,35 @@ pub struct Job {
     pub human_touched: bool,
     pub remaining_reads: i64,
 }
+fn expire_workers(c: &Connection, owner: VolumeOwner) -> Result<()> {
+    // Do not renew sessions merely because the background cleanup is running.
+    c.execute("UPDATE personal_browser_workers SET stopping=1 WHERE tenant_id=?1 AND volume_id=?2 AND generation=?3 AND stopping=0 AND (expires_at<=unixepoch() OR NOT EXISTS(SELECT 1 FROM sessions s JOIN accounts a ON a.id=s.account_id AND a.tenant_id=s.tenant_id WHERE s.digest=session_digest AND a.id=?4 AND a.status='active' AND a.auth_epoch=s.auth_epoch AND a.must_change_password=0 AND a.recovery_required=0 AND s.expires_at>unixepoch() AND (s.absolute_deadline IS NULL OR s.absolute_deadline>unixepoch())))", params![owner.tenant.to_string(), owner.volume.to_string(), owner.generation as i64, owner.account.to_string()])?;
+    let revoked = c.prepare("SELECT b.run_id,b.view FROM personal_browser_jobs b JOIN personal_browser_workers w ON w.tenant_id=b.tenant_id AND w.run_id=b.run_id WHERE w.volume_id=?1 AND w.generation=?2 AND w.stopping=1 AND json_extract(b.view,'$.state') NOT IN('closed','outcome_unknown')")?.query_map(params![owner.volume.to_string(), owner.generation as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for (id, encoded) in revoked {
+        let mut view: Workspace =
+            serde_json::from_str(&encoded).map_err(|_| StoreError::Corrupt)?;
+        view.state = "closed".into();
+        view.reason = Some("browser_authority_expired".into());
+        view.revision += 1;
+        view.tabs.clear();
+        view.links.clear();
+        view.active_tab_id = None;
+        let run = chat::load_run(c, &owner.tenant.to_string(), &id)?;
+        c.execute("UPDATE personal_browser_jobs SET view=?1,pending=NULL,controller_session=NULL,controller_digest=NULL,controller_until=NULL WHERE tenant_id=?2 AND run_id=?3", params![serde_json::to_string(&view).map_err(|_| StoreError::Corrupt)?, run.tenant, run.id])?;
+        if run.state.active() {
+            chat::transition(
+                c,
+                &run,
+                RunState::Cancelled,
+                Some(chat::RunFailure::AuthorityRevoked),
+            )?;
+        }
+    }
+    Ok(())
+}
 fn current(c: &Connection, scope: &Scope) -> Result<Option<Job>> {
     scope.authorize(c)?;
+    expire_workers(c, scope.owner)?;
     let row = c.query_row("SELECT b.view,r.user_text,b.human_touched,b.remaining_reads,r.auth_epoch FROM personal_browser_jobs b JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id WHERE b.tenant_id=?1 AND b.thread_id=?2 AND r.account_id=?3 AND b.volume_id=?4 AND b.generation=?5 ORDER BY r.sequence DESC LIMIT 1", params![scope.user.tenant.0, scope.thread, scope.user.account.id, scope.owner.volume.to_string(), scope.owner.generation as i64], |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, i64>(4)?))).optional()?;
     let Some((encoded, original, human_touched, remaining_reads, epoch)) = row else {
         return Ok(None);
@@ -77,7 +104,15 @@ pub enum Admission {
 }
 impl Store {
     pub async fn personal_browser_current(&self, scope: Scope) -> Result<Option<Job>> {
-        self.call(move |db| current(&db.conn, &scope)).await
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let job = current(&tx, &scope)?;
+            tx.commit()?;
+            Ok(job)
+        })
+        .await
     }
     pub async fn personal_browser_open(
         &self,
@@ -104,9 +139,17 @@ impl Store {
                         Err(StoreError::Conflict)
                     };
                 }
-                if !matches!(job.view.state.as_str(), "closed" | "outcome_unknown") {
+                if job.view.state == "completed" {
+                    // Opening the next explicitly requested task retires the previous preview and its profile.
+                    tx.execute("UPDATE personal_browser_workers SET stopping=1 WHERE workspace_id=?1", [&job.view.id])?;
+                    expire_workers(&tx, scope.owner)?;
+                } else if !matches!(job.view.state.as_str(), "closed" | "outcome_unknown") {
                     return Err(StoreError::Conflict);
                 }
+            }
+            let workers: i64 = tx.query_row("SELECT count(*) FROM personal_browser_workers WHERE volume_id=?1 AND generation=?2", params![scope.owner.volume.to_string(), scope.owner.generation as i64], |r| r.get(0))?;
+            if workers >= 4 {
+                return Err(StoreError::Busy);
             }
             let run_id = Uuid::new_v4().to_string();
             let model = ModelChoice {
@@ -138,6 +181,7 @@ impl Store {
             let order = chat::next_order(&tx)?;
             tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'running',1,unixepoch(),?12)", params![u.tenant.0, run_id, u.account.id, scope.thread, request.to_string(), digest.as_slice(), sequence, text, serde_json::to_string(&model).map_err(|_| StoreError::Corrupt)?, u.digest.as_slice(), u.epoch, order])?;
             tx.execute("INSERT INTO personal_browser_jobs(tenant_id,run_id,thread_id,volume_id,generation,view,pending,remaining_reads) VALUES(?1,?2,?3,?4,?5,?6,?7,5)", params![u.tenant.0, run_id, scope.thread, scope.owner.volume.to_string(), scope.owner.generation as i64, serde_json::to_string(&view).map_err(|_| StoreError::Corrupt)?, request.to_string()])?;
+            tx.execute("INSERT INTO personal_browser_workers(tenant_id,volume_id,generation,workspace_id,run_id,session_digest,expires_at) VALUES(?1,?2,?3,?4,?5,?6,unixepoch()+28800)", params![u.tenant.0, scope.owner.volume.to_string(), scope.owner.generation as i64, view.id, run_id, u.digest.as_slice()])?;
             let run = chat::load_run(&tx, &u.tenant.0, &run_id)?;
             chat::emit(
                 &tx,
@@ -253,6 +297,7 @@ impl Store {
                 job.view.state = "stopping".into();
             }
             if op == "takeover" {
+                tx.execute("UPDATE personal_browser_workers SET session_digest=?2 WHERE workspace_id=?1 AND stopping=0", params![job.view.id, scope.user.digest.as_slice()])?;
                 let new_token = token.as_deref().ok_or(StoreError::InvalidInput)?;
                 tx.execute("UPDATE personal_browser_jobs SET human_touched=1,controller_digest=?3,controller_session=?4,controller_until=unixepoch()+600 WHERE tenant_id=?1 AND run_id=?2", params![tenant, run, Sha256::digest(new_token.as_bytes()).as_slice(), scope.user.digest.as_slice()])?;
                 job.view.state = "user_control".into();
@@ -331,6 +376,11 @@ impl Store {
                 }
                 tx.execute("UPDATE run_instructions SET state='applied' WHERE tenant_id=?1 AND run_id=?2 AND sequence<=?3", params![tenant, run.id, applied as i64])?;
             }
+            if view.state == "closed" {
+                tx.execute("DELETE FROM personal_browser_workers WHERE workspace_id=?1", [&view.id])?;
+            } else if view.state == "outcome_unknown" {
+                tx.execute("UPDATE personal_browser_workers SET stopping=1 WHERE workspace_id=?1", [&view.id])?;
+            }
             let next = match view.state.as_str() {
                 "completed" => Some((RunState::Completed, None)),
                 "outcome_unknown" => Some((RunState::OutcomeUnknown, Some(chat::RunFailure::ConnectionFailed))),
@@ -353,6 +403,26 @@ impl Store {
 }
 
 impl Store {
+    /// This lease authorizes only destruction of known, no-longer-authorized workspace IDs.
+    pub async fn personal_browser_retired(&self, owner: VolumeOwner) -> Result<Vec<String>> {
+        self.call(move |db| {
+            let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            owner.check_identity(&tx, None)?;
+            expire_workers(&tx, owner)?;
+            let ids = tx.prepare("SELECT workspace_id FROM personal_browser_workers WHERE tenant_id=?1 AND volume_id=?2 AND generation=?3 AND stopping=1 ORDER BY expires_at LIMIT 4")?.query_map(params![owner.tenant.to_string(), owner.volume.to_string(), owner.generation as i64], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            tx.commit()?;
+            Ok(ids)
+        })
+        .await
+    }
+    pub async fn personal_browser_retired_ack(&self, owner: VolumeOwner, id: String) -> Result<()> {
+        self.call(move |db| {
+            owner.check_identity(&db.conn, None)?;
+            db.conn.execute("DELETE FROM personal_browser_workers WHERE tenant_id=?1 AND volume_id=?2 AND generation=?3 AND workspace_id=?4 AND stopping=1", params![owner.tenant.to_string(), owner.volume.to_string(), owner.generation as i64, id])?;
+            Ok(())
+        })
+        .await
+    }
     /// Commit the exact public link and its read budget before asking the broker to follow it.
     pub async fn personal_browser_follow_observed(
         &self,
@@ -433,6 +503,7 @@ impl Store {
                 view.reason = Some("controller_expired".into());
             }
             if view.state == "outcome_unknown" && job.view.state != view.state {
+                tx.execute("UPDATE personal_browser_workers SET stopping=1 WHERE workspace_id=?1", [&view.id])?;
                 let run = chat::load_run(&tx, &scope.user.tenant.0, &view.run_id)?;
                 if run.state.active() {
                     chat::transition(&tx, &run, RunState::OutcomeUnknown, Some(chat::RunFailure::ConnectionFailed))?;
@@ -446,5 +517,141 @@ impl Store {
             Ok(view)
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn personal_browser_worker_cap_expiry_and_move_to_next_job() {
+        let _guard = crate::tests::TEST_LOCK.lock().await;
+        let dir = crate::tests::directory();
+        let root = dir.path().canonicalize().unwrap();
+        let owner = VolumeOwner {
+            account: Uuid::new_v4(),
+            tenant: Uuid::new_v4(),
+            volume: Uuid::new_v4(),
+            generation: 1,
+        };
+        owner
+            .initialize(
+                &root,
+                "Member".into(),
+                "browser@example.test".into(),
+                "Temporary-browser-password-42".into(),
+            )
+            .await
+            .unwrap();
+        let store = owner.open_verified(&root).await.unwrap();
+        let login = store
+            .login(
+                "browser@example.test".into(),
+                "Temporary-browser-password-42".into(),
+            )
+            .await
+            .unwrap();
+        let user = store
+            .change_password(&login.user, "Changed-browser-password-42".into())
+            .await
+            .unwrap()
+            .user;
+        let mut jobs = Vec::new();
+        for i in 0..5 {
+            let thread = store
+                .create_thread(&user, format!("Work {i}"))
+                .await
+                .unwrap()
+                .id;
+            let scope = Scope {
+                owner,
+                user: user.clone(),
+                thread,
+            };
+            let request = Uuid::new_v4();
+            let result = store
+                .personal_browser_open(
+                    scope.clone(),
+                    request,
+                    "https://example.org/".into(),
+                    "Read it".into(),
+                    false,
+                )
+                .await;
+            if i == 4 {
+                assert!(matches!(result, Err(StoreError::Busy)));
+                break;
+            }
+            let Admission::Fresh(job) = result.unwrap() else {
+                panic!("expected fresh")
+            };
+            jobs.push((scope, request, job.view));
+        }
+        let (expired, _, view) = jobs.remove(0);
+        let id = view.id.clone();
+        store
+            .call(move |db| {
+                db.conn.execute(
+                    "UPDATE personal_browser_workers SET expires_at=0 WHERE workspace_id=?1",
+                    [id],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .personal_browser_current(expired.clone())
+                .await
+                .unwrap()
+                .unwrap()
+                .view
+                .state,
+            "closed"
+        );
+        assert_eq!(
+            store.personal_browser_retired(owner).await.unwrap(),
+            [view.id.clone()]
+        );
+        store
+            .personal_browser_retired_ack(owner, view.id)
+            .await
+            .unwrap();
+        let (scope, request, mut completed) = jobs.remove(0);
+        completed.state = "completed".into();
+        store
+            .personal_browser_finish(
+                scope.clone(),
+                completed.clone(),
+                request,
+                Some("Synthetic page evidence".into()),
+                0,
+            )
+            .await
+            .unwrap();
+        let new = store
+            .personal_browser_open(
+                scope.clone(),
+                Uuid::new_v4(),
+                "https://example.org/page2".into(),
+                "Read another page".into(),
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(new, Admission::Fresh(_)));
+        assert_eq!(
+            store.personal_browser_retired(owner).await.unwrap(),
+            [completed.id]
+        );
+        assert_eq!(
+            store
+                .conversation(&user, scope.thread, None)
+                .await
+                .unwrap()
+                .turns
+                .len(),
+            2
+        );
     }
 }

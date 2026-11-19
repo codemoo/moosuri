@@ -41,20 +41,52 @@ pub(super) fn routes(
     uid: u32,
     model: Option<moosuri_server::personal_text::Options>,
 ) -> Router {
+    let state = Arc::new(Service {
+        store,
+        owner,
+        socket,
+        uid,
+        model,
+        frames: Arc::new(tokio::sync::Semaphore::new(1)),
+        dispatch: Default::default(),
+    });
+    if state.socket.is_some() {
+        let weak = Arc::downgrade(&state);
+        tokio::spawn(async move {
+            loop {
+                {
+                    let Some(state) = weak.upgrade() else {
+                        break;
+                    };
+                    cleanup(&state).await;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+    }
     Router::new()
         .route("/api/v1/threads/{id}/browser", get(status).post(start))
         .route("/api/v1/threads/{id}/browser/frame", get(frame))
         .route("/api/v1/threads/{id}/browser/{operation}", post(mutate))
         .layer(DefaultBodyLimit::max(16 * 1024))
-        .with_state(Service {
-            store,
-            owner,
-            socket,
-            uid,
-            model,
-            frames: Arc::new(tokio::sync::Semaphore::new(1)),
-            dispatch: Default::default(),
-        })
+        .with_state(state)
+}
+async fn cleanup(s: &Service) {
+    let Ok(ids) = s.store.personal_browser_retired(s.owner).await else {
+        return;
+    };
+    for id in ids {
+        let Ok(lock) = workspace_lock(s, &id) else {
+            return;
+        };
+        let Ok(_guard) = lock.try_lock() else {
+            continue;
+        };
+        let result = wire::call::<Value>(s, &id, "stop", json!({})).await;
+        if matches!(&result, Err(Failure::Missing)) || result.is_ok_and(|r| r["stopped"] == true) {
+            let _ = s.store.personal_browser_retired_ack(s.owner, id).await;
+        }
+    }
 }
 /// Serialize broker effects for a single workspace. A stop first fences the job in SQLite,
 /// then waits only for its previous broker dispatch. An opening worker cannot outlive the stop.
@@ -65,18 +97,7 @@ async fn broker_action<T: serde::de::DeserializeOwned>(
     op: &str,
     args: Value,
 ) -> Result<T, Failure> {
-    let lock = {
-        let mut locks = s.dispatch.lock().map_err(|_| Failure::Unavailable)?;
-        locks.retain(|_, lock| lock.strong_count() > 0);
-        match locks.get(&v.id).and_then(Weak::upgrade) {
-            Some(lock) => lock,
-            None => {
-                let lock = Arc::new(DispatchLock::new(()));
-                locks.insert(v.id.clone(), Arc::downgrade(&lock));
-                lock
-            }
-        }
-    };
+    let lock = workspace_lock(s, &v.id)?;
     let _guard = lock.lock().await;
     let current = s
         .store
@@ -88,9 +109,25 @@ async fn broker_action<T: serde::de::DeserializeOwned>(
     }
     wire::call(s, &v.id, op, args).await
 }
+fn workspace_lock(s: &Service, id: &str) -> Result<Arc<DispatchLock<()>>, Failure> {
+    let lock = {
+        let mut locks = s.dispatch.lock().map_err(|_| Failure::Unavailable)?;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        match locks.get(id).and_then(Weak::upgrade) {
+            Some(lock) => lock,
+            None => {
+                let lock = Arc::new(DispatchLock::new(()));
+                locks.insert(id.to_owned(), Arc::downgrade(&lock));
+                lock
+            }
+        }
+    };
+    Ok(lock)
+}
 pub(super) enum Failure {
     Invalid,
     Stale,
+    Busy,
     Missing,
     Forbidden,
     Unavailable,
@@ -119,6 +156,7 @@ impl IntoResponse for Failure {
             Self::Invalid | Self::Store(StoreError::InvalidInput) => {
                 (StatusCode::BAD_REQUEST, "invalid_request")
             }
+            Self::Busy => (StatusCode::TOO_MANY_REQUESTS, "browser_busy"),
             Self::Missing => (StatusCode::SERVICE_UNAVAILABLE, "browser_worker_missing"),
             Self::Unknown => (StatusCode::SERVICE_UNAVAILABLE, "browser_outcome_unknown"),
             _ => (StatusCode::SERVICE_UNAVAILABLE, "browser_unavailable"),
@@ -164,6 +202,52 @@ fn epoch(h: &HeaderMap) -> Option<i64> {
         .ok()
         .filter(|v: &i64| *v >= 0 && values.next().is_none())
 }
+fn valid_png(encoded: &str, width: u32, height: u32) -> bool {
+    use base64::Engine;
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
+        return false;
+    };
+    bytes.len() >= 33
+        && bytes.starts_with(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR")
+        && bytes[16..20] == width.to_be_bytes()
+        && bytes[20..24] == height.to_be_bytes()
+}
+fn display_url(raw: &str) -> String {
+    if raw == "about:blank" {
+        return raw.into();
+    }
+    let Ok(mut url) = url::Url::parse(raw) else {
+        return String::new();
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return String::new();
+    }
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.into()
+}
+fn scrub_urls(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::new();
+    let mut offset = 0;
+    while let Some(start) = lower[offset..].find("http").map(|v| v + offset) {
+        if !lower[start..].starts_with("http://") && !lower[start..].starts_with("https://") {
+            out.push_str(&text[offset..start + 4]);
+            offset = start + 4;
+            continue;
+        }
+        let end = text[start..]
+            .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '\'' | '`'))
+            .map_or(text.len(), |e| start + e);
+        out.push_str(&text[offset..start]);
+        out.push_str(&display_url(&text[start..end]));
+        offset = end;
+    }
+    out.push_str(&text[offset..]);
+    out
+}
 #[derive(Deserialize)]
 struct Tabs {
     active_tab: Option<Uuid>,
@@ -183,7 +267,8 @@ fn tabs(view: &mut Workspace, t: Tabs) -> Result<(), Failure> {
     }
     view.active_tab_id = t.active_tab.map(|id| id.to_string());
     let mut mapped = Vec::new();
-    for tab in t.tabs {
+    for mut tab in t.tabs {
+        tab.url = display_url(&tab.url);
         let id = tab.tab_id.to_string();
         let title = view
             .tabs
@@ -204,7 +289,7 @@ fn tabs(view: &mut Workspace, t: Tabs) -> Result<(), Failure> {
     view.tabs = mapped;
     Ok(())
 }
-async fn status(State(s): State<Service>, h: HeaderMap, Path(thread): Path<String>) -> Reply {
+async fn status(State(s): State<Arc<Service>>, h: HeaderMap, Path(thread): Path<String>) -> Reply {
     let scope = scope(&s, &h, thread).await?;
     let Some(j) = s.store.personal_browser_current(scope.clone()).await? else {
         return Ok(status_view(&s, None));
@@ -213,11 +298,12 @@ async fn status(State(s): State<Service>, h: HeaderMap, Path(thread): Path<Strin
     if matches!(v.state.as_str(), "ready" | "user_control" | "completed") {
         match wire::call(&s, &v.id, "tabs", json!({})).await {
             Ok(t) => tabs(&mut v, t)?,
-            Err(Failure::Missing | Failure::Unavailable) => {
+            Err(Failure::Missing) => {
                 v.state = "outcome_unknown".into();
                 v.reason = Some("browser_worker_missing".into());
             }
-            Err(_) => {}
+            Err(Failure::Busy) => {}
+            Err(error) => return Err(error),
         }
         v = s
             .store
@@ -226,7 +312,7 @@ async fn status(State(s): State<Service>, h: HeaderMap, Path(thread): Path<Strin
     }
     Ok(status_view(&s, Some(v)))
 }
-async fn frame(State(s): State<Service>, h: HeaderMap, Path(thread): Path<String>) -> Reply {
+async fn frame(State(s): State<Arc<Service>>, h: HeaderMap, Path(thread): Path<String>) -> Reply {
     let scope = scope(&s, &h, thread).await?;
     let Some(job) = s.store.personal_browser_current(scope.clone()).await? else {
         return Err(StoreError::NotFound.into());
@@ -241,6 +327,15 @@ async fn frame(State(s): State<Service>, h: HeaderMap, Path(thread): Path<String
     }
     let tab = v.active_tab_id.ok_or(Failure::Stale)?;
     let f: WorkspaceFrame = wire::call(&s, &v.id, "frame", json!({"tab_id":tab})).await?;
+    if f.width != 1280
+        || f.height != 900
+        || f.png_base64.len() > 3 * 1024 * 1024
+        || f.frame_token.len() != 64
+        || !f.frame_token.bytes().all(|c| c.is_ascii_hexdigit())
+        || !valid_png(&f.png_base64, f.width, f.height)
+    {
+        return Err(Failure::Unknown);
+    }
     let current = s
         .store
         .personal_browser_current(scope)
@@ -260,7 +355,7 @@ async fn frame(State(s): State<Service>, h: HeaderMap, Path(thread): Path<String
         png_base64: f.png_base64,
         width: f.width,
         height: f.height,
-        url: f.url,
+        url: display_url(&f.url),
     }))
 }
 #[derive(Deserialize)]
@@ -291,7 +386,7 @@ struct Opened {
     observation: WorkspaceObservation,
 }
 async fn start(
-    State(s): State<Service>,
+    State(s): State<Arc<Service>>,
     h: HeaderMap,
     Path(thread): Path<String>,
     Json(input): Json<StartOrGuide>,
@@ -302,35 +397,41 @@ async fn start(
         StartOrGuide::Guide(g) => {
             let job = s
                 .store
-                .personal_browser_guide(scope, g.workspace_id, g.request_id, g.text)
+                .personal_browser_guide(scope, g.workspace_id, g.request_id, scrub_urls(&g.text))
                 .await?;
             Ok(status_view(&s, Some(job.view)))
         }
         StartOrGuide::Start(input) => {
             // Detached only for this accepted HTTP call: a lost response cannot strand or replay an action.
+
+            let url = url::Url::parse(&input.url).map_err(|_| Failure::Invalid)?;
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
+                return Err(Failure::Invalid);
+            }
+            if !wire::available(&s) {
+                s.store.personal_browser_current(scope.clone()).await?;
+                return Err(Failure::Unavailable);
+            }
+            let admission = s
+                .store
+                .personal_browser_open(
+                    scope.clone(),
+                    input.request_id,
+                    display_url(&input.url),
+                    scrub_urls(&input.text),
+                    input.wait_for_user,
+                )
+                .await?;
+            let j = match admission {
+                Admission::Existing(j) => return Ok(status_view(&s, Some(j.view))),
+                Admission::Fresh(j) => j,
+            };
+            let accepted = status_view(&s, Some(j.view.clone()));
             tokio::spawn(async move {
-                let url = url::Url::parse(&input.url).map_err(|_| Failure::Invalid)?;
-                if !matches!(url.scheme(), "http" | "https")
-                    || url.host().is_none()
-                    || !url.username().is_empty()
-                    || url.password().is_some()
-                {
-                    return Err(Failure::Invalid);
-                }
-                let admission = s
-                    .store
-                    .personal_browser_open(
-                        scope.clone(),
-                        input.request_id,
-                        input.url.clone(),
-                        input.text,
-                        input.wait_for_user,
-                    )
-                    .await?;
-                let j = match admission {
-                    Admission::Existing(j) => return Ok(status_view(&s, Some(j.view))),
-                    Admission::Fresh(j) => j,
-                };
                 let result =
                     broker_action::<Opened>(&s, &scope, &j.view, "open", json!({"url":input.url}))
                         .await;
@@ -351,9 +452,8 @@ async fn start(
                     epoch,
                 )
                 .await
-            })
-            .await
-            .map_err(|_| Failure::Unknown)?
+            });
+            Ok((StatusCode::ACCEPTED, accepted).into_response())
         }
     }
 }
@@ -371,6 +471,14 @@ async fn observed(
     let mut p = obs.page;
     let mut previous = Vec::new();
     let generated = loop {
+        p.url = display_url(&p.url);
+        p.title = scrub_urls(&p.title);
+        p.text = scrub_urls(&p.text);
+        // Query-bearing links are not durable action targets; retain only exact safe URLs.
+        p.links.retain(|l| display_url(&l.url) == l.url);
+        for link in &mut p.links {
+            link.text = scrub_urls(&link.text);
+        }
         publish_tab(&mut j, tab, &p);
         j = s
             .store
@@ -438,7 +546,7 @@ async fn observed(
     };
     let (answer, needs_user, applied, reason) = match generated {
         Some(answer) => (
-            format!("{}\n\n{}", answer.answer, p.url),
+            format!("{}\n\n{}", scrub_urls(&answer.answer), p.url),
             answer.needs_user,
             j.guidance.len(),
             "waiting_for_user",
@@ -462,6 +570,20 @@ async fn observed(
             )
         }
     };
+    // Model latency can span account fencing, a crashed worker, or a device takeover.
+    // Revalidate the host namespace and selected tab immediately before local settlement.
+    let active: Tabs = match broker_action(s, &scope, &j.view, "tabs", json!({})).await {
+        Ok(t) => t,
+        Err(e) => return failed(s, scope, j.view, request, e, None).await,
+    };
+    if active.active_tab != Some(tab)
+        || !active
+            .tabs
+            .iter()
+            .any(|t| t.tab_id == tab && display_url(&t.url) == p.url)
+    {
+        return failed(s, scope, j.view, request, Failure::Stale, Some("ready")).await;
+    }
     j.view.state = if needs_user { "ready" } else { "completed" }.into();
     j.view.reason = needs_user.then(|| reason.into());
     let view = s
@@ -543,7 +665,7 @@ async fn failed(
     error: Failure,
     restore: Option<&str>,
 ) -> Reply {
-    if matches!(error, Failure::Stale | Failure::Invalid)
+    if matches!(error, Failure::Stale | Failure::Invalid | Failure::Busy)
         && let Some(state) = restore
     {
         v.state = state.into();
@@ -571,7 +693,7 @@ struct Action {
     url: Option<String>,
 }
 async fn mutate(
-    State(s): State<Service>,
+    State(s): State<Arc<Service>>,
     h: HeaderMap,
     Path((thread, op)): Path<(String, String)>,
     Json(a): Json<Action>,
@@ -582,7 +704,13 @@ async fn mutate(
         .await
         .map_err(|_| Failure::Unknown)?
 }
-async fn dispatch(s: Service, scope: Scope, op: String, a: Action, epoch: Option<i64>) -> Reply {
+async fn dispatch(
+    s: Arc<Service>,
+    scope: Scope,
+    op: String,
+    a: Action,
+    epoch: Option<i64>,
+) -> Reply {
     let op = match op.as_str() {
         "takeover" => "takeover",
         "input" => "input",

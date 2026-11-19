@@ -26,8 +26,23 @@ pub(super) async fn call<T: DeserializeOwned>(
     s: &Service,
     workspace: &str,
     op: &str,
-    mut args: Value,
+    args: Value,
 ) -> Result<T, Failure> {
+    let retry = matches!(op, "tabs" | "frame");
+    let mut answer = once(s, workspace, op, &args).await;
+    if retry && matches!(answer, Err(Failure::Busy)) {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        answer = once(s, workspace, op, &args).await;
+    }
+    answer
+}
+async fn once<T: DeserializeOwned>(
+    s: &Service,
+    workspace: &str,
+    op: &str,
+    args: &Value,
+) -> Result<T, Failure> {
+    let mut args = args.clone();
     if !available(s) {
         return Err(Failure::Unavailable);
     }
@@ -75,9 +90,10 @@ pub(super) async fn call<T: DeserializeOwned>(
         if !reply.ok {
             return Err(match reply.code.as_deref() {
                 Some("stale") => Failure::Stale,
-                Some("invalid" | "forbidden") => Failure::Invalid,
+                Some("invalid") => Failure::Invalid,
+                Some("forbidden") => Failure::Forbidden,
                 Some("missing") => Failure::Missing,
-                Some("capacity") => Failure::Unavailable,
+                Some("capacity") => Failure::Busy,
                 _ => Failure::Unknown,
             });
         }

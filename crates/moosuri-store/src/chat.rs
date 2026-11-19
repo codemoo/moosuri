@@ -883,6 +883,7 @@ pub(super) fn restart(conn: &mut Connection) -> Result<()> {
         "UPDATE agent_steps SET state='unknown' WHERE state='dispatched'",
         [],
     )?;
+    tx.execute("UPDATE personal_browser_workers SET stopping=1 WHERE EXISTS(SELECT 1 FROM personal_browser_jobs b WHERE b.run_id=personal_browser_workers.run_id AND b.tenant_id=personal_browser_workers.tenant_id AND b.pending IS NOT NULL)",[])?;
     tx.execute("UPDATE personal_browser_jobs SET view=json_set(view,'$.state','outcome_unknown','$.reason','browser_interrupted','$.revision',json_extract(view,'$.revision')+1),pending=NULL,controller_digest=NULL,controller_session=NULL,controller_until=NULL WHERE pending IS NOT NULL",[])?;
     tx.execute("UPDATE personal_browser_jobs SET view=json_set(view,'$.state','ready','$.revision',json_extract(view,'$.revision')+1),controller_digest=NULL,controller_session=NULL,controller_until=NULL WHERE json_extract(view,'$.state')='user_control'",[])?;
     let rows = tx

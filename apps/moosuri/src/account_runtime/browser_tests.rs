@@ -95,6 +95,21 @@ async fn request(
     let bytes = to_bytes(resp.into_body(), 1 << 22).await.unwrap();
     (code, serde_json::from_slice(&bytes).unwrap_or_default())
 }
+async fn wait_state(app: &Router, path: &str, m: &Member, state: &str) -> Value {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let result = request(app, "GET", path, m.owner.account, &m.token, Value::Null)
+                .await
+                .1;
+            if result["workspace"]["state"] == state {
+                return result;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
 fn listener(socket: &std::path::Path) -> UnixListener {
     let l = UnixListener::bind(socket).unwrap();
     fs::set_permissions(socket, fs::Permissions::from_mode(0o600)).unwrap();
@@ -108,6 +123,10 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
         let tab = Uuid::new_v4();
         let url = "https://example.org/timetable";
         let mut filtered = false;
+        let detail = Uuid::new_v4();
+        let mut active = tab;
+        let mut busy_tabs = 0;
+        let mut checks = 0;
         loop {
             let (stream, _) = l.accept().await.unwrap();
             let mut stream = BufReader::new(stream);
@@ -115,16 +134,34 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
             stream.read_line(&mut line).await.unwrap();
             let r: Value = serde_json::from_str(&line).unwrap();
             let observation = || json!({"page":{"title":"Timetable","url":url,"text":if filtered{"Morning bus 08:15"}else{"Afternoon bus 14:30"},"warning":"","retrieved_at_unix_ms":1234,"links":[{"text":"Timetable details","url":"https://example.org/detail"}],"truncated":false}});
+            if r["op"] == "tabs" {
+                checks += 1;
+                if checks == 2 && active == tab {
+                    busy_tabs = 2;
+                }
+                if busy_tabs > 0 {
+                    busy_tabs -= 1;
+                    stream
+                        .write_all(b"{\"ok\":false,\"code\":\"capacity\"}\n")
+                        .await
+                        .unwrap();
+                    continue;
+                }
+            }
             let value = match r["op"].as_str().unwrap() {
                 "open" => json!({"tab_id":tab,"observation":observation()}),
                 "follow" => {
                     assert_eq!(r["url"], "https://example.org/detail");
                     assert_eq!(r["tab_id"], tab.to_string());
                     seen.fetch_add(1, Ordering::SeqCst);
-                    json!({"tab_id":Uuid::new_v4(),"observation":{"page":{"url":"https://example.org/detail","title":"Details","text":"Platform 7","links":[],"truncated":false,"warning":"","retrieved_at_unix_ms":1235}}})
+                    active = detail;
+                    json!({"tab_id":detail,"observation":{"page":{"url":"https://example.org/detail","title":"Details","text":"Platform 7","links":[],"truncated":false,"warning":"","retrieved_at_unix_ms":1235}}})
                 }
                 "frame" => {
-                    json!({"url":url,"width":1280,"height":900,"frame_token":"f".repeat(64),"png_base64":"cG5n"})
+                    json!({"url":url,"width":1280,"height":900,"frame_token":"f".repeat(64),"png_base64":"iVBORw0KGgoAAAANSUhEUgAABQAAAAOECAIAAADDAAAA"})
+                }
+                "tabs" if active == detail => {
+                    json!({"active_tab":active,"tabs":[{"tab_id":tab,"url":url},{"tab_id":detail,"url":"https://example.org/detail"}]})
                 }
                 "tabs" => json!({"active_tab":tab,"tabs":[{"tab_id":tab,"url":url}]}),
                 "input" => {
@@ -137,7 +174,10 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
                     seen.fetch_add(1, Ordering::SeqCst);
                     observation()
                 }
-                "stop" => json!({"stopped":true}),
+                "stop" => {
+                    seen.fetch_add(100, Ordering::SeqCst);
+                    json!({"stopped":true})
+                }
                 _ => panic!("unexpected operation"),
             };
             stream
@@ -254,12 +294,14 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
         .1["configured"],
         false
     );
-    let start = json!({"request_id":Uuid::new_v4(),"text":"Read the selected timetable","url":"https://example.org/timetable","wait_for_user":true});
+    let start = json!({"request_id":Uuid::new_v4(),"text":"Read https://example.org/timetable?secret=CANARY#password","url":"https://example.org/timetable?secret=CANARY#password","wait_for_user":true});
     let call = async |token: String, path: String, body: Value| {
         request(&app, "POST", &path, a.owner.account, &token, body).await
     };
-    let (ok, opened) = call(a.token.clone(), base.clone(), start.clone()).await;
-    assert_eq!(ok, StatusCode::OK);
+    let (ok, admitted) = call(a.token.clone(), base.clone(), start.clone()).await;
+    assert_eq!(ok, StatusCode::ACCEPTED);
+    assert_eq!(admitted["workspace"]["state"], "starting");
+    let opened = wait_state(&app, &base, &a, "ready").await;
     let v = &opened["workspace"];
     assert_eq!(v["state"], "ready");
     assert_eq!(
@@ -344,6 +386,8 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
         .unwrap();
     assert_eq!(history.turns.len(), 1);
     let turn = &history.turns[0];
+    assert!(!turn.user_text.contains("CANARY"));
+    assert!(!v["url"].as_str().unwrap().contains("CANARY"));
     assert_eq!(turn.run.id, v["run_id"]);
     assert_eq!(turn.assistant.len(), 1);
     assert!(turn.assistant[0].text.contains("08:15") && !turn.assistant[0].text.contains("14:30"));
@@ -362,6 +406,30 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
         .0,
         StatusCode::UNAUTHORIZED
     );
+    let closed = request(&app, "GET", &base, a.owner.account, &a.token, Value::Null)
+        .await
+        .1;
+    assert_eq!(closed["workspace"]["state"], "closed");
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            &format!("{base}/frame"),
+            a.owner.account,
+            &a.token,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        while reads.load(Ordering::SeqCst) < 101 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -414,8 +482,9 @@ async fn private_browser_frames_while_model_chooses_observed_public_detail() {
         .await
         .unwrap()
     };
-    let ((status, active), ()) = tokio::join!(open, watch);
-    assert_eq!(status, StatusCode::OK);
+    let ((status, _), ()) = tokio::join!(open, watch);
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let active = wait_state(&app, &base, &a, "completed").await;
     assert_eq!(active["workspace"]["state"], "completed");
     assert_eq!(active["workspace"]["tabs"].as_array().unwrap().len(), 2);
     assert_eq!(
@@ -425,8 +494,33 @@ async fn private_browser_frames_while_model_chooses_observed_public_detail() {
         StatusCode::OK
     );
     assert_eq!(follows.load(Ordering::SeqCst), 1);
-    let u = a.store.authenticate(a.token).await.unwrap();
-    let history = a.store.conversation(&u, a.thread, None).await.unwrap();
+    let u = a.store.authenticate(a.token.clone()).await.unwrap();
+    let history = a
+        .store
+        .conversation(&u, a.thread.clone(), None)
+        .await
+        .unwrap();
     assert_eq!(history.turns.len(), 1);
     assert!(history.turns[0].assistant[0].text.contains("platform 7"));
+    a.store.delete_thread(&u, a.thread).await.unwrap();
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            &format!("{base}/frame"),
+            a.owner.account,
+            &a.token,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        while follows.load(Ordering::SeqCst) < 101 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
 }

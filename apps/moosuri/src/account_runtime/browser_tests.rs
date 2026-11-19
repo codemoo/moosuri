@@ -222,11 +222,11 @@ fn model_fixture(
                 let answer = if context.contains("Find platform details") {
                     if r["ordinal"] == 0 {
                         assert_eq!(
-                            serde_json::from_str::<Value>(context).unwrap()["public_links"],
+                            serde_json::from_str::<Value>(context).unwrap()["available_documents"],
                             json!([{"index":0,"title":"Timetable details"}])
                         );
                         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                        json!({"answer":"Check the time and platform on its details page.","needs_user":false,"follow_index":0})
+                        json!({"follow_index":0})
                     } else {
                         assert!(
                             context.contains("Platform 7")
@@ -244,7 +244,7 @@ fn model_fixture(
                             && !context.contains("insert_text")
                     );
                     let data: Value = serde_json::from_str(context).unwrap();
-                    assert_eq!(data["public_links"], json!([]));
+                    assert!(data.get("available_documents").is_none());
                     json!({"answer":"The morning bus leaves at 08:15.","needs_user":false,"follow_index":0})
                 };
                 json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":rev,"model":"fixture","effort":null,"outcome":"completed","output":answer.to_string(),"receipt":{"state":"settled","input_tokens":90,"output_tokens":12,"charged_tokens":102}})

@@ -7,11 +7,11 @@ import { WorkspaceIcon } from "./WorkspaceNavigation";
 import { useWorkspaceViewport } from "./workspace-viewport";
 import "./personal-workspace.css";
 
-export type MemberView = "chat" | "memory" | "mail" | "admin";
+export type MemberView = "chat" | "memory" | "connections" | "admin";
 const destinations = {
   chat: { label: "대화", icon: <WorkspaceIcon name="bubble" /> },
   memory: { label: "기억", icon: <WorkspaceIcon name="notebook" /> },
-  mail: { label: "메일", icon: <WorkspaceIcon name="mail" /> },
+  connections: { label: "연결", icon: <WorkspaceIcon name="link" /> },
   admin: { label: "관리", icon: <Icon icon="wrench" color="inherit" /> },
 };
 

@@ -155,7 +155,7 @@ export function GoogleReadHistory({ reads }: { reads: ThreadGoogleRead[] }) {
     </section>
   );
 }
-export default function PersonalGoogle({
+export function usePersonalGoogle({
   session,
   expired,
   readIntent,
@@ -173,11 +173,10 @@ export default function PersonalGoogle({
   ) => void;
 }) {
   const scope = useScope(session.user.id, "personal-google");
-  const [connection, setConnection] = useState<Grant | null>(null),
-    [inbox, setInbox] = useState<Inbox | null>(null);
-  const [notice, setNotice] = useState(""),
-    [enabled, setEnabled] = useState(false),
-    [busy, setBusy] = useState(true);
+  const [connection, setConnection] = useState<Grant | null>(null);
+  const [notice, setNotice] = useState("");
+  const [status, setStatus] = useState<"checking" | "ready" | "disabled" | "error">("checking");
+  const [busy, setBusy] = useState(true);
   const lock = useRef(false);
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -186,11 +185,13 @@ export default function PersonalGoogle({
       return;
     }
     if (e instanceof ApiFailure && e.status === 404) {
-      setEnabled(false);
-      setNotice("설치 관리자가 Google 연결을 활성화하면 사용할 수 있습니다.");
+      setConnection(null);
+      setStatus("disabled");
       return;
     }
-    setNotice("연결 상태를 확인할 수 없습니다. 자동으로 다시 읽지 않았습니다.");
+    setConnection(null);
+    setStatus("error");
+    if (readIntent) setNotice("메일 확인을 완료하지 못했습니다. 자동으로 다시 읽지 않았습니다.");
   }
   function pending(
     read: GoogleReadIntent | undefined,
@@ -214,37 +215,25 @@ export default function PersonalGoogle({
   }
   async function read(
     g: Grant,
-    destination?: GoogleReadIntent,
+    destination: GoogleReadIntent,
     draftText = readDraft,
   ) {
-    if (destination) save(pending(destination, "reading", "", draftText));
+    save(pending(destination, "reading", "", draftText));
     try {
-      if (destination) {
-        const result = await scope.request<ThreadGoogleRead>(
-          base + "/inbox",
-          "POST",
-          { connection_id: g.connection_id, epoch: g.epoch, read: destination },
-          undefined,
-          { timeoutMs: 75000 },
-        );
-        if (!same(result, destination))
-          throw Error("read destination mismatch");
-        if (!owns(destination)) return;
-        clearPersonalGoogle();
-        returned?.(destination, result.state !== "completed", draftText);
-      } else
-        setInbox(
-          await scope.request<Inbox>(
-            base + "/inbox",
-            "POST",
-            { connection_id: g.connection_id, epoch: g.epoch },
-            undefined,
-            { timeoutMs: 75000 },
-          ),
-        );
+      const result = await scope.request<ThreadGoogleRead>(
+        base + "/inbox",
+        "POST",
+        { connection_id: g.connection_id, epoch: g.epoch, read: destination },
+        undefined,
+        { timeoutMs: 75000 },
+      );
+      if (!same(result, destination)) throw Error("read destination mismatch");
+      if (!owns(destination)) return;
+      clearPersonalGoogle();
+      returned?.(destination, result.state !== "completed", draftText);
     } catch (e) {
       if (isAborted(e)) return;
-      if (destination && owns(destination)) {
+      if (owns(destination)) {
         uncertain(pending(destination, "uncertain", "", draftText));
         returned?.(destination, true, draftText);
       }
@@ -255,7 +244,7 @@ export default function PersonalGoogle({
     try {
       const v = await scope.request<{ connection: Grant | null }>(base);
       setConnection(v.connection);
-      setEnabled(true);
+      setStatus("ready");
       if (destination && v.connection) await read(v.connection, destination);
     } catch (e) {
       fail(e);
@@ -312,7 +301,7 @@ export default function PersonalGoogle({
             if (completed.flow_id !== p.flow) throw Error("flow mismatch");
             if (stored()?.flow !== p.flow) return;
             setConnection(completed);
-            setEnabled(true);
+            setStatus("ready");
             if (intent(p.read)) {
               if (
                 !completed.continuation ||
@@ -350,12 +339,10 @@ export default function PersonalGoogle({
         });
         clearPersonalGoogle();
         setConnection(null);
-        setInbox(null);
-      } else if (name === "read" && connection)
-        await read(connection, readIntent ?? undefined);
-      else {
-        const destination =
-          name === "read" ? (readIntent ?? undefined) : undefined;
+      } else if (name === "read" && readIntent && connection) {
+        await read(connection, readIntent);
+      } else if (name === "connect" || (name === "read" && readIntent)) {
+        const destination = name === "read" ? readIntent ?? undefined : undefined;
         const started = await scope.request<{
           flow_id: string;
           authorization_url: string;
@@ -377,62 +364,12 @@ export default function PersonalGoogle({
       setBusy(false);
     }
   }
-  return (
-    <section aria-label="받은편지함" className="member-page member-library member-library-mail">
-      <div className="member-page-heading">
-        <h1>받은편지함</h1>
-        {enabled && (
-          <button
-            className="member-page-action"
-            disabled={busy}
-            onClick={() => void action(readIntent || connection ? "read" : "connect")}
-          >
-            {connection
-              ? "메일 확인"
-              : readIntent
-                ? "Google로 연결하고 이 대화에서 메일 확인"
-                : "Google 연결"}
-          </button>
-        )}
-      </div>
-      <section className="member-page-list member-library-list" aria-label="Gmail 계정" aria-busy={busy}>
-        <div className="member-library-row member-library-account">
-          <span className="member-library-well"><WorkspaceIcon name="mail" /></span>
-          <div className="member-library-row-copy">
-            <strong>Gmail</strong>
-            <span>{connection?.mailbox ?? (busy ? "연결 상태 확인 중…" : "연결된 계정이 없습니다.")}</span>
-          </div>
-          {connection ? (
-            <button className="member-library-inline-action" disabled={busy} onClick={() => void action("disconnect")}>
-              연결 해제
-            </button>
-          ) : enabled && readIntent ? (
-            <button className="member-library-inline-action" disabled={busy} onClick={() => void action("connect")}>
-              Google 연결만
-            </button>
-          ) : null}
-        </div>
-      </section>
-      {notice && <p className="member-library-status" role="status">{notice}</p>}
-      {busy && enabled && <p className="member-library-status" role="status">확인 중…</p>}
-      {!enabled && !busy && (
-        <button
-          className="member-library-inline-action member-library-retry"
-          onClick={() => {
-            setBusy(true);
-            setNotice("");
-            void update();
-          }}
-        >
-          연결 상태 다시 확인
-        </button>
-      )}
-      {inbox && (
-        <section className="member-library-mail-results" aria-label="메일 확인 결과">
-          <h2>메일 확인 결과</h2>
-          <InboxSummary inbox={inbox} />
-        </section>
-      )}
-    </section>
-  );
+  function retry() {
+    if (busy) return;
+    setBusy(true);
+    setStatus("checking");
+    setNotice("");
+    void update();
+  }
+  return { connection, status, busy, notice, action, retry };
 }

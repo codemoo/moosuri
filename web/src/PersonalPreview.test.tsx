@@ -24,6 +24,8 @@ let current: (ReturnType<typeof session> & { installation_admin?: boolean }) | n
   calls: { path: string; method: string; body: any; account: string | null }[],
   paid: Map<string, any>;
 let mailReads: ThreadGoogleRead[];
+let connectedMailbox: string | null;
+let vaultUnreachable: boolean;
 let mailFailure: boolean,
   mailHang: boolean,
   readHang: boolean,
@@ -70,6 +72,8 @@ beforeEach(() => {
   ];
   turns = [];
   mailReads = [];
+  connectedMailbox = "mailbox@example.test";
+  vaultUnreachable = false;
   mailFailure = false;
   mailHang = false;
   readHang = false;
@@ -119,12 +123,21 @@ beforeEach(() => {
         return Response.json({ items: [], next_after: null, generation: 1 });
       if (path === "/personal/google")
         return Response.json({
-          connection: {
+          connection: connectedMailbox ? {
             connection_id: tid,
             epoch: 1,
-            mailbox: "a@example.test",
-          },
+            mailbox: connectedMailbox,
+          } : null,
         });
+      if (path === "/personal/google/disconnect") {
+        connectedMailbox = null;
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/personal/vault") {
+        return vaultUnreachable
+          ? Response.json({ code: "unavailable" }, { status: 503 })
+          : Response.json({ state: "setup_required" });
+      }
       if (path === "/personal/google/complete")
         return Response.json({
           connection_id: tid,
@@ -632,6 +645,78 @@ it("loading older canonical messages does not fetch the private mail list again"
     calls.filter((c) => c.path === "/personal/google/history"),
   ).toHaveLength(count);
 });
+it("shows actual service connections and disconnects Gmail without reading mail", async () => {
+  const user = userEvent.setup();
+  mount();
+  const nav = await screen.findByRole("button", { name: "연결" });
+  expect(screen.queryByRole("button", { name: "메일" })).not.toBeInTheDocument();
+  await user.click(nav);
+  expect(nav).toHaveAttribute("aria-current", "page");
+  await screen.findByRole("heading", { name: "연결된 서비스" });
+  expect(screen.getByRole("button", { name: "사용 가능" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(screen.getByRole("button", { name: "연결됨" }));
+  expect(screen.queryByRole("button", { name: /볼트/ })).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: /Gmail/ }));
+  const gmail = within(screen.getByRole("region", { name: "Gmail" }));
+  expect(await gmail.findByText("mailbox@example.test")).toBeInTheDocument();
+  expect(gmail.getByRole("status")).toHaveTextContent("연결됨");
+  expect(screen.queryByRole("button", { name: "메일 확인" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "연결 해제" }));
+  expect(await gmail.findByText("연결된 계정이 없습니다.")).toBeInTheDocument();
+  expect(gmail.queryByText("mailbox@example.test")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Google 연결" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  expect(screen.getByRole("button", { name: "연결됨" })).toHaveAttribute("aria-pressed", "true");
+  await screen.findByText("연결된 서비스가 없습니다.");
+  await user.click(screen.getByRole("button", { name: "사용 가능" }));
+  await user.click(screen.getByRole("button", { name: /볼트/ }));
+  const vault = within(screen.getByRole("region", { name: "볼트" }));
+  expect(await vault.findByText("회원 인증 연결 필요")).toBeInTheDocument();
+  expect(vault.queryByText("a@example.test")).not.toBeInTheDocument();
+  expect(vault.queryByRole("link")).not.toBeInTheDocument();
+  expect(vault.queryByRole("button")).not.toBeInTheDocument();
+  expect(calls).toContainEqual({ path: "/personal/google/disconnect", method: "POST",
+    body: { connection_id: tid, epoch: 1 }, account: aid });
+  for (const path of ["/personal/google", "/personal/vault"]) {
+    expect(calls).toContainEqual({ path, method: "GET", body: null, account: aid });
+  }
+  expect(calls.some(({ path }) => path === "/personal/google/inbox")).toBe(false);
+});
+
+it("distinguishes unavailable vault status from confirmed setup requirements", async () => {
+  vaultUnreachable = true;
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "연결" }));
+  await user.click(screen.getByRole("button", { name: /볼트/ }));
+  const vault = within(screen.getByRole("region", { name: "볼트" }));
+  await vault.findByText("연결 상태를 확인할 수 없습니다.");
+  expect(vault.queryByText("회원 인증 연결 필요")).not.toBeInTheDocument();
+  vaultUnreachable = false;
+  await user.click(screen.getByRole("button", { name: "다시 확인" }));
+  await vault.findByText("회원 인증 연결 필요");
+  expect(vault.queryByRole("button")).not.toBeInTheDocument();
+});
+
+it("searches candidate services and returns to the filtered list from details", async () => {
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "연결" }));
+  const search = screen.getByRole("searchbox", { name: "서비스 검색" });
+  await user.type(search, "unknown");
+  await screen.findByText("검색어와 일치하는 서비스가 없습니다.");
+  await user.clear(search);
+  await user.type(search, "slack");
+  expect(screen.queryByRole("button", { name: /Gmail/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Slack/ }));
+  expect(screen.getByRole("heading", { name: "Slack" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Slack" })).toHaveTextContent("도입 후보");
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  expect(screen.getByRole("searchbox", { name: "서비스 검색" })).toHaveValue("slack");
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  expect(await composer()).toBeInTheDocument();
+});
+
 it("clears only the exact original first-message draft after a mail result", async () => {
   threads = [];
   const user = userEvent.setup();
@@ -661,7 +746,7 @@ it("an uncertain old read cannot clear a newer draft when returning to the origi
   const input = await composer();
   await user.clear(input);
   await user.type(input, "A newer unsent draft");
-  await user.click(screen.getByRole("button", { name: "메일" }));
+  await user.click(screen.getByRole("button", { name: "연결" }));
   await waitFor(() =>
     expect(screen.getByRole("textbox", { name: "메시지" })).toHaveValue(
       "A newer unsent draft",

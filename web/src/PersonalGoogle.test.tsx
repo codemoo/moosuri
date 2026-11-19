@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import PersonalGoogle from "./PersonalGoogle";
+import { PersonalConnections } from "./PersonalConnections";
 import type { SessionView } from "../shared/api-types";
 const key = "moosuri.personal.google-read.v1",
   flow = "a".repeat(64),
@@ -39,6 +39,7 @@ function setup({
     "fetch",
     vi.fn(async (input: string, init: RequestInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
+      if (input.endsWith("/vault")) return Response.json({ state: "setup_required" });
       calls.push({ path: input, body });
       if (input.endsWith("/complete")) {
         if (lost === "complete") throw new TypeError("lost reply");
@@ -73,7 +74,8 @@ function mount(returned = vi.fn()) {
     returned,
     ...render(
       <StrictMode>
-        <PersonalGoogle
+        <PersonalConnections
+          onBack={() => {}}
           session={session}
           expired={() => {}}
           returned={returned}

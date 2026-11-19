@@ -17,7 +17,7 @@ import { ScopeRegistry, useScope } from "./account-scope";
 import { accountPasswordValid } from "./account-password";
 import { ChatDraftRecovery, type ChatDraftSession } from "./chat-drafts";
 import "./personal-preview.css";
-import PersonalGoogle, {
+import {
   clearPersonalGoogle,
   googleReturn,
   googleReadDestination,
@@ -25,6 +25,7 @@ import PersonalGoogle, {
   type GoogleReadIntent,
   type ThreadGoogleRead,
 } from "./PersonalGoogle";
+import { PersonalConnections } from "./PersonalConnections";
 import PersonalAdmin from "./PersonalAdmin";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
@@ -377,7 +378,7 @@ function Workspace({
     [reading, setReading] = useState(false),
     [mutating, setMutating] = useState(false);
   const [view, setView] = useState<MemberView>(() =>
-      googleReturn() ? "mail" : "chat",
+      googleReturn() ? "connections" : "chat",
     ),
     [refresh, setRefresh] = useState(0);
   const [admin, setAdmin] = useState(session.installation_admin === true);
@@ -796,7 +797,7 @@ function Workspace({
               thread_id: destination,
               request_id: value.request_id,
             };
-            setView("mail");
+            setView("connections");
           } else if (e.code === "personal_text_model_unavailable") {
             setCap(null);
             setError("답변을 받을 수 없어 메시지를 보내지 못했습니다. 입력을 유지했습니다.");
@@ -855,7 +856,7 @@ function Workspace({
   }
   function navigate(destination: MemberView) {
     if (destination === "chat" && view === "admin") setRefresh((value) => value + 1);
-    if (destination === "mail") setOpenInbox(null);
+    if (destination === "connections") setOpenInbox(null);
     setView(destination);
   }
   function openThread(id: string | null) {
@@ -870,7 +871,7 @@ function Workspace({
   const thread = threads.find((item) => item.id === selected);
   const heading = view === "chat" ? thread?.title ?? "새 대화"
     : view === "memory" ? "기억"
-    : view === "mail" ? "메일"
+    : view === "connections" ? "연결된 서비스"
     : "관리";
   return (
     <PersonalWorkspaceChrome view={view} title={heading} admin={admin} threads={threads}
@@ -891,8 +892,9 @@ function Workspace({
                 <PersonalEngineSettings account={session.user.id} expired={expired} unavailable={leaveManagement} />
               )}
             </div>
-          ) : view === "mail" ? (
-            <PersonalGoogle
+          ) : view === "connections" ? (
+            <PersonalConnections
+              onBack={() => navigate("chat")}
               session={session}
               expired={expired}
               readIntent={

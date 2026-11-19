@@ -62,7 +62,6 @@ import { initialKnowledgeDrafts } from "./KnowledgeState";
 import { DeferredPage } from "./DeferredPage";
 const AdminProviderSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.AdminProviderSettings})));
 const PersonalModelSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.PersonalModelSettings})));
-const MemberModelSettings = lazy(() => import("./ProviderSettings").then(module => ({default: module.MemberModelSettings})));
 
 function Brand() {
   return <span className="brand"><img className="brand-icon" src="/moosuri-icon-192.png" width="32" height="32" alt="" />Moosuri</span>;
@@ -1428,7 +1427,6 @@ function Admin({
   const invitationOpener = useRef<HTMLButtonElement>(null);
   const [users, setUsers] = useState<AccountSummary[]>([]);
   const [management, setManagement] = useState<ManagedAccount[]>([]);
-  const [modelMember, setModelMember] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState("");
@@ -1630,20 +1628,6 @@ function Admin({
                     ? "Password change needed"
                     : "Active"}
                 </span>
-                {user.role === "member" && !management.find((m) => m.user.id === user.id)?.deletion && (
-                  <details className="account-controls" open={modelMember === user.id}
-                    onToggle={(event) => {
-                      const open = event.currentTarget.open;
-                      setModelMember(current => open ? user.id : current === user.id ? null : current);
-                    }}>
-                    <summary>사용할 모델 · 추론 강도</summary>
-                    {modelMember === user.id && (
-                      <DeferredPage back={() => setModelMember(null)}>
-                        <MemberModelSettings accountId={accountId} memberId={user.id} onExpired={onExpired} />
-                      </DeferredPage>
-                    )}
-                  </details>
-                )}
                 {management.filter((m)=>m.user.id===user.id).map((target)=><AccountControls key={target.user.id} accountId={accountId} target={target} onExpired={onExpired} onChanged={()=>setRetry(n=>n+1)} onPassword={(password,receipt)=>{setInvitation({user,temporary_password:password,owner_id:accountId,revision:receipt.revision,request_id:receipt.request_id,reset:true});setCopied(false);setCopyError("");}}/>)}
               </li>
             ))}

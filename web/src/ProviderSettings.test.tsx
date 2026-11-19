@@ -514,32 +514,14 @@ describe("model assignments", () => {
     expect(openWorkspaceMenu().queryByRole("button", {name: "Manage installation"})).not.toBeInTheDocument();
   });
 
-  it("lets an administrator select and reset the member's exact model and effort", async () => {
-    const user = userEvent.setup();
-    const memberPath = `/admin/accounts/${member.user.id}/model`;
-    const { calls } = server(call => {
-      if (call.path === "/admin/users") return response({ users: [admin.user, member.user] });
-      if (call.path !== memberPath) return undefined;
-      return response({
-        selection: call.body?.selection ?? null,
-        effective: call.body?.selection ? low : high,
-        choices: [high, low],
-      });
-    });
+  it("leaves model selection in installation settings when an administrator opens the member list", async () => {
+    const { calls } = server(call => call.path === "/admin/users"
+      ? response({ users: [admin.user, member.user] })
+      : undefined);
     open("/admin");
-    const picker = await screen.findByText("사용할 모델 · 추론 강도");
-    expect(calls.some(call => call.path === memberPath)).toBe(false);
-    await user.click(picker);
-    await user.selectOptions(await screen.findByLabelText("모델"), key({...low, effort: null}));
-    await user.selectOptions(screen.getByLabelText("추론 강도"), key(low));
-    await user.click(screen.getByRole("button", {name: "회원 모델 저장"}));
-    await screen.findByText(`현재 적용 · ${provider.name} · ${low.model} · low`);
-    await user.selectOptions(screen.getByLabelText("모델"), "");
-    await user.click(screen.getByRole("button", {name: "회원 모델 저장"}));
-    await screen.findByText(`현재 적용 · ${provider.name} · ${high.model} · high`);
-    const writes = calls.filter(call => call.path === memberPath && call.method === "PUT");
-    expect(writes.map(call => call.body)).toEqual([{selection: selection(low)}, {selection: null}]);
-    expect(writes.every(call => new Headers(call.init.headers).get("X-Moosuri-Account") === admin.user.id)).toBe(true);
+    await screen.findByText(member.user.email);
+    expect(screen.queryByText("사용할 모델 · 추론 강도")).not.toBeInTheDocument();
+    expect(calls.some(call => call.path.endsWith(`/accounts/${member.user.id}/model`))).toBe(false);
   });
 
   it("saves an exact verified provider/revision/model/effort pair and can return to the installation default", async () => {

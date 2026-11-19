@@ -933,6 +933,7 @@ async fn calendar_personal_compatible_revocation_fences_dispatch_and_late_privat
     let _g = TEST_LOCK.lock().await;
     for state in ["applied", "outcome_unknown"] {
         let (_dir, s, u, connection) = setup().await;
+        s.set_default_model(&u, None).await.unwrap();
         let personal = s
             .create_personal_compatible(
                 &u,

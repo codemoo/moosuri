@@ -20,6 +20,147 @@ async fn seeded(store: &Store, u: &UserContext) -> SubscriptionRef {
         ..b
     }
 }
+
+#[tokio::test]
+async fn owner_subscription_is_private_and_yields_to_the_installation_default() {
+    use crate::{CredentialChange, ProviderChange};
+    use moosuri_core::ProviderConfig;
+
+    let _g = TEST_LOCK.lock().await;
+    let d = tempfile::tempdir().unwrap();
+    let store = Store::open(d.path()).unwrap();
+    let admin = admin(&store).await.user;
+    let member = member(&store, &admin, "model-member@example.test")
+        .await
+        .user;
+    let other = additional_admin(&store, "other-model-admin@example.test")
+        .await
+        .user;
+    let subscription = seeded(&store, &admin).await;
+    store
+        .record_subscription_probe(&admin, subscription.clone())
+        .await
+        .unwrap();
+    let personal = ModelSelection {
+        source: ModelSource::PersonalChatGpt,
+        provider_id: subscription.id.clone(),
+        provider_revision: subscription.revision,
+        model: subscription.model.clone(),
+        effort: subscription.effort.clone(),
+    };
+    store
+        .set_model_preference(&admin, Some(personal.clone()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .set_default_model(&admin, Some(personal.clone()))
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
+        store
+            .set_model_preference(&other, Some(personal.clone()))
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
+        store.resolve_model(&member).await,
+        Err(StoreError::Unavailable)
+    ));
+
+    let private_thread = store
+        .create_thread(&admin, "Private model".into())
+        .await
+        .unwrap();
+    store
+        .submit_turn(
+            &admin,
+            private_thread.id,
+            Uuid::new_v4().to_string(),
+            "Fixture prompt".into(),
+        )
+        .await
+        .unwrap();
+    let run = store.claim_agent_run().await.unwrap().unwrap();
+    let binding = run.binding.subscription.unwrap();
+    assert_eq!(binding.tenant, admin.tenant.0);
+    assert_eq!(binding.account, admin.account.id);
+    assert_eq!(binding.id, subscription.id);
+    assert_eq!(binding.effort, subscription.effort);
+    assert!(run.binding.credential.is_none());
+
+    let shared = store
+        .create_provider(
+            &admin,
+            ProviderChange {
+                name: "Fixture API".into(),
+                config: ProviderConfig {
+                    kind: ProviderKind::OpenAi,
+                    base_url: None,
+                    allowed_ips: vec![],
+                    router_providers: vec![],
+                    zero_data_retention: false,
+                },
+                enabled: true,
+                credential: CredentialChange::Replace(Zeroizing::new("fixture-api-key".into())),
+            },
+        )
+        .await
+        .unwrap();
+    let global = ModelSelection {
+        source: ModelSource::Shared,
+        provider_id: shared.id,
+        provider_revision: shared.revision,
+        model: "api-fixture-model".into(),
+        effort: Some("medium".into()),
+    };
+    store
+        .record_model_probe(
+            &admin,
+            global.provider_id.clone(),
+            global.provider_revision,
+            global.model.clone(),
+            global.effort.clone(),
+        )
+        .await
+        .unwrap();
+    store
+        .set_default_model(&admin, Some(global.clone()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .begin_agent_step(&run.lease, run.context.checkpoint_seq)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    for user in [&admin, &member, &other] {
+        let binding = store.resolve_model(user).await.unwrap();
+        assert_eq!(binding.id, global.provider_id);
+        assert_eq!(binding.model, global.model);
+        assert_eq!(binding.effort, global.effort);
+        assert!(binding.subscription.is_none());
+    }
+
+    let settings = store.model_settings(&admin).await.unwrap();
+    assert_eq!(settings.selection, Some(personal));
+    assert_eq!(settings.installation_default, Some(global));
+    store.set_default_model(&admin, None).await.unwrap();
+    assert!(
+        store
+            .resolve_model(&admin)
+            .await
+            .unwrap()
+            .subscription
+            .is_some()
+    );
+    assert!(matches!(
+        store.resolve_model(&member).await,
+        Err(StoreError::Unavailable)
+    ));
+}
+
 #[tokio::test]
 async fn exact_owner_tool_proof_needs_text_and_current_revision_and_survives_text_reprobe() {
     let _g = TEST_LOCK.lock().await;

@@ -493,6 +493,7 @@ async fn verify_recurring_worker(personal: bool) {
     let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let (_d, s, u, _thread) = knowledge::tool_configured(&base).await;
     if personal {
+        s.set_default_model(&u, None).await.unwrap();
         select_personal_compatible(&s, &u, &base).await;
     }
     let at = std::time::SystemTime::now()
@@ -526,7 +527,6 @@ async fn verify_recurring_worker(personal: bool) {
     .unwrap();
     if personal {
         s.set_model_preference(&u, None).await.unwrap();
-        s.set_default_model(&u, None).await.unwrap();
     }
     let runtime = Runtime::start(s.clone());
     tokio::time::sleep(Duration::from_millis(250)).await;

@@ -201,7 +201,9 @@ async fn persistence_encrypted_secret_revision_probe_and_no_fallback() {
     ));
 }
 #[tokio::test]
-async fn admin_assignment_replaces_stale_member_preference_and_revokes_old_dispatch() {
+async fn installation_default_replaces_legacy_overrides_and_only_changes_future_dispatch() {
+    use crate::{OutputPatch, PrivateCheckpoint};
+    use moosuri_core::RunState;
     let _guard = TEST_LOCK.lock().await;
     let dir = directory();
     let store = Store::open(dir.path()).unwrap();
@@ -239,158 +241,161 @@ async fn admin_assignment_replaces_stale_member_preference_and_revokes_old_dispa
         .create_provider(&admin.user, change("key-two"))
         .await
         .unwrap();
-    let legacy = store
-        .record_model_probe(&admin.user, p.id.clone(), 1, "legacy-model".into(), None)
-        .await
-        .unwrap();
-    let default = store
-        .record_model_probe(&admin.user, p.id.clone(), 1, "shared-default".into(), None)
-        .await
-        .unwrap();
-    store
-        .set_default_model(&admin.user, Some(selection(&p.id, "shared-default")))
-        .await
-        .unwrap();
+    let legacy = selection(&p.id, "legacy-model");
+    let initial = selection(&p.id, "shared-default");
+    let mut current = selection(&q.id, "replacement-default");
+    current.effort = Some("high".into());
+    for chosen in [&legacy, &initial, &current] {
+        store
+            .record_model_probe(
+                &admin.user,
+                chosen.provider_id.clone(),
+                chosen.provider_revision,
+                chosen.model.clone(),
+                chosen.effort.clone(),
+            )
+            .await
+            .unwrap();
+    }
     let member = a.user.clone();
     let stale_provider = p.id.clone();
     store
         .call(move |db| {
-            // Simulate the schema-85 member preference preserved by migration.
-            db.conn.execute(
-                "INSERT INTO personal_model_selections VALUES(?1,?2,?3,1,'legacy-model','')",
-                params![member.tenant.0, member.account.id, stale_provider],
-            )?;
-            assert!(
-                binding_for_owner_choice(
-                    &db.conn,
-                    &db.provider_key,
-                    &member.tenant.0,
-                    &member.account.id,
-                    &legacy
-                )
-                .is_err()
-            );
-            assert!(
-                binding_for_owner_choice(
-                    &db.conn,
-                    &db.provider_key,
-                    &member.tenant.0,
-                    &member.account.id,
-                    &default
-                )
-                .is_ok()
-            );
+            for table in ["personal_model_selections", "admin_model_assignments"] {
+                db.conn.execute(
+                    &format!("INSERT INTO {table} VALUES(?1,?2,?3,1,'legacy-model','')"),
+                    params![member.tenant.0, member.account.id, stale_provider],
+                )?;
+            }
             Ok(())
         })
         .await
         .unwrap();
-    assert_eq!(
-        store.resolve_model(&a.user).await.unwrap().model,
-        "shared-default"
-    );
-    let mut assigned = selection(&q.id, "assigned-model");
-    assigned.effort = Some("high".into());
-    let pinned = store
-        .record_model_probe(
-            &admin.user,
-            q.id.clone(),
-            1,
-            assigned.model.clone(),
-            assigned.effort.clone(),
-        )
-        .await
-        .unwrap();
-    let account = a.user.account.id.clone();
     assert!(matches!(
         store
-            .set_model_preference(&a.user, Some(assigned.clone()))
+            .set_model_preference(&a.user, Some(legacy.clone()))
             .await,
         Err(StoreError::Forbidden)
     ));
-    assert!(matches!(
-        store
-            .set_account_model_assignment(&a.user, account.clone(), Some(assigned.clone()))
-            .await,
-        Err(StoreError::Forbidden)
-    ));
-    let wrong_effort = ModelSelection {
-        effort: Some("medium".into()),
-        ..assigned.clone()
-    };
-    assert!(matches!(
-        store
-            .set_account_model_assignment(&admin.user, account.clone(), Some(wrong_effort))
-            .await,
-        Err(StoreError::Conflict)
-    ));
-    let result = store
-        .set_account_model_assignment(&admin.user, account.clone(), Some(assigned.clone()))
-        .await
-        .unwrap();
-    assert_eq!(result.selection, Some(assigned.clone()));
-    let effective = store.resolve_model(&a.user).await.unwrap();
-    assert_eq!(effective.id, q.id);
-    assert_eq!(effective.model, assigned.model);
-    assert_eq!(effective.effort, assigned.effort);
-    assert_eq!(store.resolve_model(&admin.user).await.unwrap().id, p.id);
-    let status = store.model_settings(&a.user).await.unwrap();
-    assert!(status.selection.is_none() && status.choices.is_empty());
-    assert_eq!(status.effective.unwrap().effort, assigned.effort);
-
-    let member = a.user.clone();
-    let prior_pin = pinned.clone();
     store
-        .call(move |db| {
-            let current = selected_mission_model(&db.conn, &member)?;
-            assert_eq!(current.effort, prior_pin.effort);
-            assert!(
-                binding_for_owner_choice(
-                    &db.conn,
-                    &db.provider_key,
-                    &member.tenant.0,
-                    &member.account.id,
-                    &prior_pin
-                )
-                .is_ok()
-            );
-            Ok(())
-        })
+        .set_model_preference(&admin.user, Some(legacy.clone()))
         .await
         .unwrap();
+    assert!(matches!(
+        store.resolve_model(&a.user).await,
+        Err(StoreError::Unavailable)
+    ));
+
+    store
+        .set_default_model(&admin.user, Some(initial.clone()))
+        .await
+        .unwrap();
+    let mut claims = Vec::new();
+    for user in [&admin.user, &a.user] {
+        let settings = store.model_settings(user).await.unwrap();
+        assert_eq!(settings.effective.unwrap().model, initial.model);
+        if user.account.role == Role::Admin {
+            assert_eq!(settings.installation_default, Some(initial.clone()));
+            assert_eq!(settings.selection, Some(legacy.clone()));
+        } else {
+            assert!(settings.selection.is_none() && settings.choices.is_empty());
+            assert!(settings.installation_default.is_none());
+        }
+        let thread = store
+            .create_thread(user, "Shared model fixture".into())
+            .await
+            .unwrap();
+        store
+            .submit_turn(
+                user,
+                thread.id,
+                Uuid::new_v4().to_string(),
+                "Synthetic prompt".into(),
+            )
+            .await
+            .unwrap();
+        let claim = store.claim_run().await.unwrap().unwrap();
+        assert_eq!(claim.binding.model, initial.model);
+        claims.push(claim);
+    }
+    store
+        .set_default_model(&admin.user, Some(current.clone()))
+        .await
+        .unwrap();
+    for claim in claims {
+        store.check_run(&claim.lease).await.unwrap();
+        store
+            .append_output(
+                &claim.lease,
+                vec![OutputPatch::Append {
+                    item: "admitted-output".into(),
+                    text: "Synthetic response".into(),
+                    phase: None,
+                    refusal: false,
+                }],
+            )
+            .await
+            .unwrap();
+        store
+            .finish_run(&claim.lease, RunState::Completed, None)
+            .await
+            .unwrap();
+    }
+    for user in [&admin.user, &a.user] {
+        let binding = store.resolve_model(user).await.unwrap();
+        assert_eq!(binding.id, current.provider_id);
+        assert_eq!(binding.model, current.model);
+        assert_eq!(binding.effort, current.effort);
+    }
 
     let thread = store
-        .create_thread(&a.user, "Assignment fixture".into())
+        .create_thread(&admin.user, "Agent round".into())
         .await
         .unwrap();
     store
         .submit_turn(
-            &a.user,
+            &admin.user,
             thread.id,
             Uuid::new_v4().to_string(),
-            "Synthetic prompt".into(),
+            "Synthetic round".into(),
         )
         .await
         .unwrap();
-    let claimed = store.claim_run().await.unwrap().unwrap();
-    assert_eq!(claimed.binding.model, assigned.model);
-    assert_eq!(claimed.binding.effort, assigned.effort);
+    let agent = store.claim_agent_run().await.unwrap().unwrap();
+    let step = store
+        .begin_agent_step(&agent.lease, agent.context.checkpoint_seq)
+        .await
+        .unwrap();
     store
-        .set_account_model_assignment(&admin.user, account.clone(), None)
+        .set_default_model(&admin.user, Some(initial))
+        .await
+        .unwrap();
+    store.check_run(&agent.lease).await.unwrap();
+    let context = store
+        .commit_agent_step(
+            &step,
+            PrivateCheckpoint {
+                bytes: br#"{"v":1}"#.to_vec(),
+            },
+            vec![],
+        )
         .await
         .unwrap();
     assert!(matches!(
-        store.check_run(&claimed.lease).await,
+        store
+            .begin_agent_step(&agent.lease, context.checkpoint_seq)
+            .await,
         Err(StoreError::Conflict)
     ));
     store
-        .set_account_model_assignment(&admin.user, account.clone(), Some(assigned.clone()))
+        .set_default_model(&admin.user, Some(current.clone()))
         .await
         .unwrap();
 
     store
         .update_provider(
             &admin.user,
-            q.id.clone(),
+            q.id,
             1,
             ProviderChange {
                 name: "disabled".into(),
@@ -401,45 +406,34 @@ async fn admin_assignment_replaces_stale_member_preference_and_revokes_old_dispa
         )
         .await
         .unwrap();
-    assert!(store.resolve_model(&a.user).await.is_err());
-    assert!(
+    for user in [&admin.user, &a.user] {
+        assert!(store.resolve_model(user).await.is_err());
+        assert!(
+            store
+                .model_settings(user)
+                .await
+                .unwrap()
+                .effective
+                .is_none()
+        );
+    }
+    assert_eq!(
         store
-            .model_settings(&a.user)
+            .model_settings(&admin.user)
             .await
             .unwrap()
-            .effective
-            .is_none()
+            .installation_default,
+        Some(current)
     );
-
-    store
-        .set_account_model_assignment(&admin.user, account, None)
-        .await
-        .unwrap();
+    store.set_default_model(&admin.user, None).await.unwrap();
     assert_eq!(
-        store.resolve_model(&a.user).await.unwrap().model,
-        "shared-default"
+        store.resolve_model(&admin.user).await.unwrap().model,
+        legacy.model
     );
-    let member = a.user.clone();
-    store
-        .call(move |db| {
-            assert!(
-                binding_for_owner_choice(
-                    &db.conn,
-                    &db.provider_key,
-                    &member.tenant.0,
-                    &member.account.id,
-                    &pinned
-                )
-                .is_err()
-            );
-            assert_eq!(
-                selected(&db.conn, Some(&member))?.unwrap().model,
-                "legacy-model"
-            );
-            Ok(())
-        })
-        .await
-        .unwrap();
+    assert!(matches!(
+        store.resolve_model(&a.user).await,
+        Err(StoreError::Unavailable)
+    ));
     let mut edited = config();
     edited.kind = ProviderKind::Anthropic;
     assert!(matches!(

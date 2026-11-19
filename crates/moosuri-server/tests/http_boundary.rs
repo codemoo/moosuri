@@ -122,7 +122,7 @@ async fn claude_settings_require_admin_and_keep_unconfigured_runtime_unavailable
 }
 
 #[tokio::test]
-async fn member_model_management_is_forbidden_but_chat_uses_exact_admin_assignment() {
+async fn member_model_management_is_forbidden_but_chat_uses_the_installation_default() {
     let _g = TEST_LOCK.lock().await;
     let (_tmp, store, app) = fixture(false).await;
     let admin = store
@@ -173,11 +173,11 @@ async fn member_model_management_is_forbidden_but_chat_uses_exact_admin_assignme
         )
         .await
         .unwrap();
-    let assignment = format!("/api/v1/admin/accounts/{}/model", member.user.account().id);
+    let legacy_route = format!("/api/v1/admin/accounts/{}/model", member.user.account().id);
+    let default_route = "/api/v1/admin/providers/default";
     let selection = json!({"provider_id":provider.id,"provider_revision":1,"model":"fixture-model","effort":"high"});
     for (method, path, body) in [
-        ("GET", assignment.as_str(), Value::Null),
-        ("PUT", assignment.as_str(), json!({"selection":selection})),
+        ("POST", default_route, json!({"selection":selection})),
         (
             "PUT",
             "/api/v1/settings/model",
@@ -216,20 +216,30 @@ async fn member_model_management_is_forbidden_but_chat_uses_exact_admin_assignme
             "{method} {path}"
         );
     }
-    let assigned = send(
+    for session in [&a, &b] {
+        assert_eq!(
+            send(
+                &app,
+                "PUT",
+                &legacy_route,
+                Some(session),
+                json!({"selection":selection})
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    let saved = send(
         &app,
-        "PUT",
-        &assignment,
+        "POST",
+        default_route,
         Some(&a),
         json!({"selection":selection}),
     )
     .await;
-    assert_eq!(assigned.status(), StatusCode::OK);
-    assert_eq!(value(assigned).await["selection"], selection);
-
-    let read = send(&app, "GET", &assignment, Some(&a), Value::Null).await;
-    assert_eq!(read.status(), StatusCode::OK);
-    assert_eq!(value(read).await["effective"]["effort"], "high");
+    assert_eq!(saved.status(), StatusCode::OK);
+    assert_eq!(value(saved).await["default_selection"], selection);
 
     let model = send(&app, "GET", "/api/v1/settings/model", Some(&b), Value::Null).await;
     assert_eq!(model.status(), StatusCode::OK);
@@ -238,18 +248,21 @@ async fn member_model_management_is_forbidden_but_chat_uses_exact_admin_assignme
     assert_eq!(model["effective"]["effort"], "high");
     assert_eq!(model["selection"], Value::Null);
     assert_eq!(model["choices"], json!([]));
+    assert!(model.get("installation_default").is_none());
     assert!(!model.to_string().contains("synthetic-api-key"));
 
     let cleared = send(
         &app,
-        "PUT",
-        &assignment,
+        "POST",
+        default_route,
         Some(&a),
         json!({"selection":null}),
     )
     .await;
     assert_eq!(cleared.status(), StatusCode::OK);
-    assert_eq!(value(cleared).await["effective"], Value::Null);
+    assert_eq!(value(cleared).await["default_selection"], Value::Null);
+    let model = send(&app, "GET", "/api/v1/settings/model", Some(&b), Value::Null).await;
+    assert_eq!(value(model).await["effective"], Value::Null);
 }
 
 async fn fixture(temporary: bool) -> (tempfile::TempDir, Store, Router) {

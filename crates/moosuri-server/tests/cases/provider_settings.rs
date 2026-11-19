@@ -104,7 +104,7 @@ fn selection(profile: &Value) -> Value {
 }
 
 #[tokio::test]
-async fn administrator_connects_probes_and_assigns_exact_verified_model_to_member() {
+async fn administrator_connects_probes_and_selects_one_exact_installation_model() {
     let _guard = TEST_LOCK.lock().await;
     let (_tmp, store, app) = fixture(false).await;
     let admin = login(&app, "admin@example.test", PASSWORD).await;
@@ -218,10 +218,6 @@ async fn administrator_connects_probes_and_assigns_exact_verified_model_to_membe
     )
     .await;
     assert_eq!(chosen.status(), StatusCode::FORBIDDEN);
-    let assignment = format!("/api/v1/admin/accounts/{}/model", member.user.account().id);
-    let assigned = send(&app, "PUT", &assignment, Some(&admin), selection(&profile)).await;
-    assert_eq!(assigned.status(), StatusCode::OK);
-    assert_eq!(value(assigned).await["selection"]["model"], "fixture-model");
     let administrator = value(
         send(
             &app,
@@ -234,6 +230,11 @@ async fn administrator_connects_probes_and_assigns_exact_verified_model_to_membe
     )
     .await;
     assert!(administrator["selection"].is_null());
+    assert_eq!(
+        administrator["installation_default"],
+        selection(&profile)["selection"]
+    );
+    assert_eq!(administrator["effective"], inherited["effective"]);
     let mut edited = connection(&upstream.base);
     edited["expected_revision"] = profile["revision"].clone();
     edited["enabled"] = json!(false);
@@ -257,8 +258,21 @@ async fn administrator_connects_probes_and_assigns_exact_verified_model_to_membe
     .await;
     assert!(unavailable["selection"].is_null());
     assert!(unavailable["effective"].is_null());
-    let stale = value(send(&app, "GET", &assignment, Some(&admin), Value::Null).await).await;
-    assert_eq!(stale["selection"]["model"], "fixture-model");
+    let stale = value(
+        send(
+            &app,
+            "GET",
+            "/api/v1/settings/model",
+            Some(&admin),
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        stale["installation_default"],
+        selection(&profile)["selection"]
+    );
     assert!(stale["effective"].is_null());
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
 }

@@ -779,17 +779,15 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
         )
         .await
         .unwrap();
+    let shared_selection = moosuri_core::ModelSelection {
+        source: moosuri_core::ModelSource::Shared,
+        provider_id: shared.id,
+        provider_revision: 1,
+        model: "fixture-model".into(),
+        effort: None,
+    };
     store
-        .set_default_model(
-            &owner.user,
-            Some(moosuri_core::ModelSelection {
-                source: moosuri_core::ModelSource::Shared,
-                provider_id: shared.id,
-                provider_revision: 1,
-                model: "fixture-model".into(),
-                effort: None,
-            }),
-        )
+        .set_default_model(&owner.user, Some(shared_selection.clone()))
         .await
         .unwrap();
     let marker = b"SYNTHETIC_PRIVATE_DOCUMENT_PSR2";
@@ -841,8 +839,9 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
         model: choice.model,
         effort: choice.effort,
     };
+    store.set_default_model(&owner.user, None).await.unwrap();
     store
-        .set_model_preference(&owner.user, Some(selection.clone()))
+        .set_model_preference(&owner.user, Some(selection))
         .await
         .unwrap();
     let requests = f.state.models.load(Ordering::SeqCst);
@@ -915,8 +914,11 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
         settings.effective.unwrap().source,
         moosuri_core::ModelSource::PersonalChatGpt
     );
-    // Explicit shared selection continues to inherit and send supported documents.
-    store.set_model_preference(&owner.user, None).await.unwrap();
+    // The installation selection takes precedence and can send supported documents.
+    store
+        .set_default_model(&owner.user, Some(shared_selection))
+        .await
+        .unwrap();
     let following = store
         .submit_turn(
             &owner.user,
@@ -955,10 +957,7 @@ async fn queued_shared_document_history_blocks_personal_text_without_provider_or
     );
     assert_eq!(f.state.shared_documents.load(Ordering::SeqCst), 2);
     assert_eq!(f.state.models.load(Ordering::SeqCst), requests);
-    store
-        .set_model_preference(&owner.user, Some(selection))
-        .await
-        .unwrap();
+    store.set_default_model(&owner.user, None).await.unwrap();
     store
         .submit_turn_with_media(
             &owner.user,

@@ -234,6 +234,14 @@ async fn submit(
 /// Broker IPC v1: compact JSON+LF then bounded JSON+LF and EOF. The trusted
 /// per-owner socket selects account/tenant; its Unix peer selects the broker.
 pub async fn call(options: &Options, request: &[u8]) -> Result<Vec<u8>, String> {
+    call_on_dispatch(options, request, || {}).await
+}
+/// Release a caller’s local admission guard once the complete request was submitted.
+pub async fn call_on_dispatch(
+    options: &Options,
+    request: &[u8],
+    dispatched: impl FnOnce() + Send,
+) -> Result<Vec<u8>, String> {
     if !options.socket.is_absolute() || request.len() + 1 > 64 * 1024 || request.contains(&b'\n') {
         return Err("preview_request_invalid".into());
     }
@@ -261,6 +269,7 @@ pub async fn call(options: &Options, request: &[u8]) -> Result<Vec<u8>, String> 
             .write_all(b"\n")
             .await
             .map_err(|_| "preview_result_unknown")?;
+        dispatched();
         let mut response = Vec::new();
         let mut bytes = [0u8; 4096];
         loop {

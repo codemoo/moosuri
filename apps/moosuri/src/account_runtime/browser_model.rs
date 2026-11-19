@@ -1,8 +1,8 @@
 //! A bounded answer from the selected model. No capability to dispatch model-proposed input.
-use super::browser::Service;
+use super::browser::{Service, workspace_lock};
 use moosuri_connectors::browser::capsule::RenderedPage;
 use moosuri_server::personal_text;
-use moosuri_store::personal_browser::Job;
+use moosuri_store::personal_browser::{Job, Scope};
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -15,6 +15,7 @@ pub(super) struct Answer {
 }
 pub(super) async fn answer(
     s: &Service,
+    scope: &Scope,
     j: &Job,
     p: &RenderedPage,
     epoch: Option<i64>,
@@ -32,8 +33,25 @@ pub(super) async fn answer(
         {"role":"user","text":json!({"original_request":j.original,"later_user_instructions":j.guidance,"observed_page":source,"earlier_public_pages":previous,"public_link_titles":links}).to_string()}
     ]);
     let bytes=serde_json::to_vec(&json!({"v":1,"call_id":call,"run_id":j.view.run_id,"ordinal":5-j.remaining_reads,"generation":s.owner.generation,"selection_epoch":pin.selection_epoch,"max_output_tokens":pin.max_output_tokens,"connection_revision":pin.connection_revision,"model":pin.model,"effort":pin.effort,"messages":messages})).ok()?;
-    let reply: serde_json::Value =
-        serde_json::from_slice(&personal_text::call(model, &bytes).await.ok()?).ok()?;
+    let lock = workspace_lock(s, &j.view.id).ok()?;
+    let guard = lock.lock().await;
+    let current = s
+        .store
+        .personal_browser_current(scope.clone())
+        .await
+        .ok()??;
+    if current.view.id != j.view.id
+        || current.view.revision != j.view.revision
+        || current.view.state != "reading"
+    {
+        return None;
+    }
+    let reply: serde_json::Value = serde_json::from_slice(
+        &personal_text::call_on_dispatch(model, &bytes, move || drop(guard))
+            .await
+            .ok()?,
+    )
+    .ok()?;
     if reply["v"] != 1
         || reply["state"] != "settled"
         || reply["receipt"]["state"] != "settled"

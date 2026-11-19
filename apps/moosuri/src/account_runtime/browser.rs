@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub(super) struct Service {
-    store: Store,
+    pub(super) store: Store,
     pub(super) owner: VolumeOwner,
     pub(super) socket: Option<PathBuf>,
     pub(super) uid: u32,
@@ -111,7 +111,7 @@ async fn broker_action<T: serde::de::DeserializeOwned>(
     }
     wire::call(s, &v.id, op, args).await
 }
-fn workspace_lock(s: &Service, id: &str) -> Result<Arc<DispatchLock<()>>, Failure> {
+pub(super) fn workspace_lock(s: &Service, id: &str) -> Result<Arc<DispatchLock<()>>, Failure> {
     let lock = {
         let mut locks = s.dispatch.lock().map_err(|_| Failure::Unavailable)?;
         locks.retain(|_, lock| lock.strong_count() > 0);
@@ -507,7 +507,7 @@ async fn observed(
             .iter()
             .map(|link| link.text.clone())
             .collect::<Vec<_>>();
-        let decision = browser_model::answer(s, &j, &p, epoch, &titles, &previous).await;
+        let decision = browser_model::answer(s, &scope, &j, &p, epoch, &titles, &previous).await;
         let Some(index) = decision.as_ref().and_then(|d| d.follow_index) else {
             break decision;
         };

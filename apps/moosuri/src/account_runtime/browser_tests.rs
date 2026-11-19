@@ -121,7 +121,7 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
     let seen = counter.clone();
     tokio::spawn(async move {
         let tab = Uuid::new_v4();
-        let url = "https://example.org/timetable";
+        let url = "https://example.org/timetable?worker_token=CANARY#secret";
         let mut filtered = false;
         let detail = Uuid::new_v4();
         let mut active = tab;
@@ -199,8 +199,12 @@ fn browser_fixture(path: &std::path::Path) -> Arc<AtomicUsize> {
     });
     counter
 }
-fn model_fixture(path: &std::path::Path) -> moosuri_server::personal_text::Options {
+fn model_fixture(
+    path: &std::path::Path,
+) -> (moosuri_server::personal_text::Options, Arc<AtomicUsize>) {
     let l = listener(path);
+    let count = Arc::new(AtomicUsize::new(0));
+    let calls = count.clone();
     tokio::spawn(async move {
         let rev = Uuid::new_v4();
         loop {
@@ -212,7 +216,9 @@ fn model_fixture(path: &std::path::Path) -> moosuri_server::personal_text::Optio
             let value = if r["operation"] == "selection" {
                 json!({"v":1,"state":"selection","connection_revision":rev,"selection_epoch":3,"model":"fixture","effort":null,"kind":"compatible"})
             } else {
+                calls.fetch_add(1, Ordering::SeqCst);
                 let context = r["messages"][1]["text"].as_str().unwrap();
+                assert!(!context.contains("CANARY"));
                 let answer = if context.contains("Find platform details") {
                     if r["ordinal"] == 0 {
                         assert!(context.contains("Timetable details"));
@@ -246,11 +252,14 @@ fn model_fixture(path: &std::path::Path) -> moosuri_server::personal_text::Optio
                 .unwrap();
         }
     });
-    moosuri_server::personal_text::Options {
-        socket: path.into(),
-        broker_uid: unsafe { libc::geteuid() },
-        max_output_tokens: 256,
-    }
+    (
+        moosuri_server::personal_text::Options {
+            socket: path.into(),
+            broker_uid: unsafe { libc::geteuid() },
+            max_output_tokens: 256,
+        },
+        count,
+    )
 }
 #[tokio::test]
 async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original_turn() {
@@ -262,7 +271,7 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
     let b = member(&bpath).await;
     let socket = root.join("browser.sock");
     let reads = browser_fixture(&socket);
-    let model = model_fixture(&root.join("model.sock"));
+    let (model, _) = model_fixture(&root.join("model.sock"));
     let app = moosuri_server::personal_service_router(
         a.store.clone(),
         None,
@@ -402,6 +411,7 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
     )
     .await
     .1;
+    assert_eq!(f["url"], "https://example.org/timetable");
     let mut resume = version(&changed["workspace"]);
     resume["control_token"] = active["control_token"].clone();
     resume["frame_token"] = f["frame_token"].clone();
@@ -480,7 +490,7 @@ async fn private_browser_frames_while_model_chooses_observed_public_detail() {
     let a = member(&root.join("a")).await;
     let socket = root.join("browser.sock");
     let follows = browser_fixture(&socket);
-    let model = model_fixture(&root.join("model.sock"));
+    let (model, model_calls) = model_fixture(&root.join("model.sock"));
     let app = moosuri_server::personal_service_router(
         a.store.clone(),
         None,
@@ -543,6 +553,43 @@ async fn private_browser_frames_while_model_chooses_observed_public_detail() {
         .unwrap();
     assert_eq!(history.turns.len(), 1);
     assert!(history.turns[0].assistant[0].text.contains("platform 7"));
+    // A second task receives human control while a delayed model is proposing its link.
+    // The already dispatched result has no authority over the new controller or its tab.
+    let next = json!({"request_id":Uuid::new_v4(),"url":"https://example.org/timetable","text":"Find platform details"});
+    assert_eq!(
+        request(&app, "POST", &base, a.owner.account, &a.token, next)
+            .await
+            .0,
+        StatusCode::ACCEPTED
+    );
+    let reading = wait_state(&app, &base, &a, "reading").await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while model_calls.load(Ordering::SeqCst) < 3 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let take = json!({"workspace_id":reading["workspace"]["id"],"revision":reading["workspace"]["revision"],"request_id":Uuid::new_v4()});
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &format!("{base}/takeover"),
+            a.owner.account,
+            &a.token,
+            take
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+    let held = request(&app, "GET", &base, a.owner.account, &a.token, Value::Null)
+        .await
+        .1;
+    assert_eq!(held["workspace"]["state"], "user_control");
+    assert_eq!(follows.load(Ordering::SeqCst) % 100, 1);
     a.store.delete_thread(&u, a.thread).await.unwrap();
     assert_eq!(
         request(

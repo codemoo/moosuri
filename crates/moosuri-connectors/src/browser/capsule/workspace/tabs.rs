@@ -38,18 +38,35 @@ pub enum TabCommand {
     Stop {},
 }
 
+fn display_url(raw: &str) -> Result<String, BrowserError> {
+    let mut url = public_url(raw)?;
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
+fn public_observation(value: Value) -> Result<WorkspaceObservation, BrowserError> {
+    let mut obs = observation(value)?;
+    obs.page.url = display_url(&obs.page.url)?;
+    // Removing a signed query would change a link's destination. Exclude it from
+    // the agent's choices instead; the live page still has the original link.
+    obs.page.links.retain(|link| !link.url.contains(['?', '#']));
+    Ok(obs)
+}
+
 fn validated_tabs(value: Value) -> Result<Value, BrowserError> {
-    let tabs: WorkspaceTabs = serde_json::from_value(value).map_err(|_| BrowserError::Protocol)?;
+    let mut tabs: WorkspaceTabs =
+        serde_json::from_value(value).map_err(|_| BrowserError::Protocol)?;
     if tabs.tabs.len() > 4 || tabs.active_tab.is_some() == tabs.tabs.is_empty() {
         return Err(BrowserError::Protocol);
     }
     let mut seen = std::collections::HashSet::new();
-    for t in &tabs.tabs {
+    for t in &mut tabs.tabs {
         if t.tab_id.is_nil() || !seen.insert(t.tab_id) {
             return Err(BrowserError::Protocol);
         }
         if t.url != "about:blank" {
-            public_url(&t.url)?;
+            t.url = display_url(&t.url)?;
         }
     }
     if tabs.active_tab.is_some_and(|id| !seen.contains(&id)) {
@@ -59,20 +76,16 @@ fn validated_tabs(value: Value) -> Result<Value, BrowserError> {
 }
 
 fn validate_opened(value: Value) -> Result<Value, BrowserError> {
-    let tab: OpenedTab = serde_json::from_value(value).map_err(|_| BrowserError::Protocol)?;
+    let mut tab: OpenedTab = serde_json::from_value(value).map_err(|_| BrowserError::Protocol)?;
     if tab.tab_id.is_nil() {
         return Err(BrowserError::Protocol);
     }
-    observation(json!(tab.observation))?;
+    tab.observation = public_observation(json!(tab.observation))?;
     Ok(json!(tab))
 }
 
 fn selected_observation(value: Value) -> Result<Value, BrowserError> {
-    let mut obs = observation(value)?;
-    let mut url = public_url(&obs.page.url)?;
-    url.set_query(None);
-    url.set_fragment(None);
-    obs.page.url = url.to_string();
+    let mut obs = public_observation(value)?;
     obs.page.links.clear();
     Ok(json!(obs))
 }
@@ -106,12 +119,16 @@ impl CapsuleWorkspace {
             TabCommand::Frame { tab_id } => (
                 json!({"op":"workspace_tab_frame","tab_id":tab_id}),
                 MAX_FRAME_RESPONSE,
-                |v| frame(v).map(|f| json!(f)),
+                |v| {
+                    let mut f = frame(v)?;
+                    f.url = display_url(&f.url)?;
+                    Ok(json!(f))
+                },
             ),
             TabCommand::Observe { tab_id } => (
                 json!({"op":"workspace_tab_observe","tab_id":tab_id}),
                 MAX_RESPONSE,
-                |v| observation(v).map(|o| json!(o)),
+                |v| public_observation(v).map(|o| json!(o)),
             ),
             TabCommand::Selected {
                 tab_id,
@@ -174,5 +191,16 @@ mod tests {
             validated_tabs(json!({"active_tab":tab,"tabs":[{"tab_id":tab,"url":"file:///tmp"}]}))
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod disclosure_tests {
+    use super::*;
+    #[test]
+    fn live_tab_metadata_omits_redirect_credentials() {
+        let id = Uuid::new_v4();
+        let tabs = validated_tabs(json!({"active_tab":id,"tabs":[{"tab_id":id,"url":"https://example.org/callback?code=synthetic#token"}]})).unwrap();
+        assert_eq!(tabs["tabs"][0]["url"], "https://example.org/callback");
     }
 }

@@ -34,7 +34,7 @@ fn scalar(c: &Connection, query: &str) -> Check<i64> {
 }
 pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
-        (81..=88).contains(&schema),
+        (81..=89).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
     )?;
     let mut v: Value = serde_json::from_str(&read(
@@ -82,6 +82,7 @@ pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
                 85 => 208,
                 86 | 87 => 209,
                 88 => 211,
+                89 => 212,
                 _ => unreachable!(),
             },
         "inventory manifest table count mismatch",

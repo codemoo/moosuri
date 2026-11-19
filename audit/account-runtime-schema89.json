@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "schema": 89,
+  "base_schema": 88,
+  "migrations": [
+    {
+      "name": "0089_personal_browser_lifecycle.sql",
+      "sha256": "755b710f3bcf9d6ed665dc854edc6da59edb935acfb64dc147deed10e24d576c"
+    }
+  ],
+  "tables": [
+    {
+      "name": "personal_browser_workers",
+      "kind": "table",
+      "sql_sha256": "be29e6152bb46bf07b00257dc52ec473c06cc7e8ff304f3100f6e0304204425c",
+      "scope": "regenerate",
+      "owner_query": "",
+      "key_transition": "Drain the source host workers and invalidate live browser capabilities. Never restore old controller sessions or replay browser operations.",
+      "verification": "Confirm source workers were stopped before enabling the destination; empty the transient worker cleanup queue only after the old host is fenced.",
+      "on_failure": "Keep source fenced until outstanding worker cleanup can be reconciled.",
+      "columns": [
+        "tenant_id",
+        "volume_id",
+        "generation",
+        "workspace_id",
+        "run_id",
+        "session_digest",
+        "expires_at",
+        "stopping"
+      ]
+    }
+  ],
+  "schema_sha256": "fb3821d1f1f88eafe671d413fd05f778d3ed84186e28812f9d5a584257cd5dc3"
+}

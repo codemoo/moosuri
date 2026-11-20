@@ -43,6 +43,11 @@ function memberEntry(session: SessionView) {
     ? entry : undefined;
 }
 
+export function setupOpenedFromAdmin(session: SessionView) {
+  const parent = memberEntry(session)?.memberParent;
+  return parent === "admin" || parent === "admin/engine";
+}
+
 export function currentConnectorOrigin(session: SessionView) {
   return connectorOrigin(memberEntry(session)?.connectorOrigin);
 }

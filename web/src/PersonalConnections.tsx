@@ -1,4 +1,4 @@
-import type { MemberRoute } from "./member-route";
+import { setupOpenedFromAdmin, type MemberRoute } from "./member-route";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
@@ -150,7 +150,7 @@ export function PersonalConnections({
   if (installationAdmin && setupOpen) {
     return <PersonalGoogleSetup account={props.session.user.id} expired={props.expired}
       unavailable={() => { backFromSetup(); onAdminUnavailable?.(); }}
-      onBack={() => backFromSetup()}
+      onBack={() => !selected && setupOpenedFromAdmin(props.session) ? onBack() : backFromSetup()}
       onConnect={() => backFromSetup(true)}
       returnLabel={selected ? selected.name + " 연결로 돌아가기" : "커넥터 열기"} />;
   }

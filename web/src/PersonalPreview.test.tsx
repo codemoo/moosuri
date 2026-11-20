@@ -729,6 +729,22 @@ it("ignores an older capability response after a newer focus check enables chat"
   expect(editor).toBeEnabled();
 });
 
+it("returns the Google setup header to the roster and keeps the explicit catalog shortcut", async () => {
+  current!.installation_admin = true;
+  adminEngine = path => path.endsWith("/google-setup")
+    ? Response.json({ configured: true, redirect_uri: location.origin + "/oauth/google/callback" })
+    : Response.json({ members: [] });
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "관리" }));
+  await user.click(await screen.findByRole("button", { name: "Google Workspace 설정 열기" }));
+  await user.click(await screen.findByRole("button", { name: "뒤로" }));
+  await screen.findByRole("heading", { name: "회원 관리" });
+  await user.click(await screen.findByRole("button", { name: "Google Workspace 설정 열기" }));
+  await user.click(await screen.findByRole("button", { name: "커넥터 열기" }));
+  await screen.findByRole("heading", { name: "커넥터" });
+});
+
 it("opens the Google installer inside the connector list and returns to member connectors", async () => {
   current = { ...session(), installation_admin: true };
   const path = "/personal/admin/google-setup";

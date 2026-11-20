@@ -7,6 +7,10 @@ import "./style.css";
 const empty:Draft={kind:"login",title:"",username:"",url:"",notes:"",favorite:false,expires_at:"",secret:"",totp:""};
 const emptyPreview:Preview={eligible:0,duplicates:0,filtered:0,rows:[]};
 type Field="secret"|"username"|"url"|"notes";
+type Otp = { code: string; valid_from: number; valid_until: number };
+function validCode(value: Otp, now: number) {
+  return value.valid_from * 1000 <= now && now < value.valid_until * 1000;
+}
 type Detail=EntryDetails&{item:string;revision:number;failed:boolean};
 const errorText=(e:unknown)=>e instanceof Error&&e.message==="vault_authentication_failed"?"비밀번호 또는 복구 키를 확인해 주세요.":e instanceof Error&&e.message==="vault_conflict"?"다른 창에서 변경되었습니다. 잠근 뒤 다시 열어 주세요.":e instanceof Error&&e.message==="vault_limit"?"파일 또는 선택한 항목이 저장 가능한 범위를 넘었습니다.":e instanceof Error&&["vault_invalid_input","vault_unsupported","vault_kdf_policy"].includes(e.message)?"입력 또는 파일 형식을 확인해 주세요.":"연결을 확인하지 못했습니다. 잠시 뒤 다시 시도해 주세요.";
 function App(){
@@ -18,7 +22,7 @@ function App(){
   const [revealed,setRevealed]=useState<{value:string;until:number}|null>(null),[uncertain,setUncertain]=useState(false),[oldPending,setOldPending]=useState<Receipt[]>([]),[settings,setSettings]=useState(false),[newPassword,setNewPassword]=useState("");
   const [preview,setPreview]=useState<Preview|null>(null),[rows,setRows]=useState<number[]>([]),[username,setUsername]=useState(""),[filterExact,setFilterExact]=useState(false),[imported,setImported]=useState(0),[importing,setImporting]=useState(false);
   const [importMode,setImportMode]=useState<"csv"|"archive"|"legacy_v1">("csv"),[archiveFile,setArchiveFile]=useState<File|null>(null),[archiveSecret,setArchiveSecret]=useState(""),[archiveRecovery,setArchiveRecovery]=useState(false),[archiveChecked,setArchiveChecked]=useState(false);
-  const [otp,setOtp]=useState<{code:string;valid_from:number;valid_until:number}|null>(null),[clock,setClock]=useState(Date.now());
+  const [otp,setOtp]=useState<Otp|null>(null),[clock,setClock]=useState(Date.now());
   const [searchOpen,setSearchOpen]=useState(false),[confirmDelete,setConfirmDelete]=useState(false);
   const [detail,setDetail]=useState<Detail|null>(null),[detailAttempt,setDetailAttempt]=useState(0);
   const listScroll=useRef(0),revealOwner=useRef(0);
@@ -106,22 +110,54 @@ function App(){
     return()=>{live=false};
   },[showingDetail,selectedItem?.id,selectedItem?.revision,detailAttempt]);
   useEffect(()=>{
-    setOtp(null);if(!showingDetail||!selectedItem?.has_totp||frozen)return;let live=true,last=0,working=false;const epoch=generation.current;
-    const update=async()=>{if(working||document.hidden||Date.now()<last||epoch!==generation.current)return;working=true;try{const value=await run<{code:string;valid_from:number;valid_until:number}>({op:"totp",item:selectedItem.id});if(live&&epoch===generation.current){setOtp(value);last=value.valid_until*1000}}catch{}finally{working=false}};
-    void update();const timer=setInterval(()=>void update(),1000);window.addEventListener("focus",update);
-    return()=>{live=false;clearInterval(timer);window.removeEventListener("focus",update)};
-  },[selected,showingDetail,frozen,selectedItem?.has_totp]);
+    setOtp(null);
+    if (!showingDetail || !selectedItem?.has_totp || frozen) return;
+    const epoch = generation.current;
+    let live = true, working = false;
+    let current: Otp | null = null;
+    const update = async () => {
+      if (!live || document.hidden || epoch !== generation.current) return;
+      const now = Date.now();
+      setClock(now);
+      if (current && validCode(current, now)) return;
+      current = null;
+      setOtp(null);
+      if (working) return;
+      working = true;
+      try {
+        const value = await run<Otp>({op: "totp", item: selectedItem.id});
+        const receivedAt = Date.now();
+        if (live && epoch === generation.current && validCode(value, receivedAt)) {
+          current = value;
+          setClock(receivedAt);
+          setOtp(value);
+        }
+      } catch {
+        // Leave the code hidden until the next refresh succeeds.
+      } finally { working = false; }
+    };
+    void update();
+    const timer = setInterval(update, 1000);
+    window.addEventListener("focus", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  },[selected,showingDetail,frozen,selectedItem?.has_totp,selectedItem?.revision]);
   async function reveal(field:Field){if(!selected)return;await perform(async()=>{const sequence=++revealOwner.current;const value=await run<string>({op:"reveal",item:selected,field});if(sequence===revealOwner.current)setRevealed({value,until:Date.now()+15000})})}
   async function copy(field:Field|"code"){if(!selected)return;await perform(async()=>{
     const epoch=generation.current;
     if(field==="code"){
       for(let attempt=0;attempt<2;attempt++){
-        const value=await run<{code:string;valid_until:number}>({op:"totp",item:selected});
+        const value=await run<Otp>({op:"totp",item:selected});
         if(epoch!==generation.current)return;
-        if(Date.now()>=value.valid_until*1000)continue;
+        if(!validCode(value,Date.now()))continue;
         await navigator.clipboard.writeText(value.code);
         if(epoch!==generation.current)return;
-        if(Date.now()<value.valid_until*1000){setNotice("현재 인증 코드를 복사했습니다.");return}
+        if(validCode(value,Date.now())){setNotice("현재 인증 코드를 복사했습니다.");return}
       }
       setNotice("코드가 갱신되었습니다. 다시 복사해 주세요.");
     }else{
@@ -271,7 +307,7 @@ function App(){
               <small>이 로그인은 보관함에서 직접 열어 확인하거나 복사할 수 있습니다.</small>
             </div>
           </section>}
-          {otp&&<div className="otp">
+          {otp&&validCode(otp,clock)&&<div className="otp">
             <span>인증 코드</span><strong>{otp.code}</strong>
             <progress aria-label="인증 코드 남은 시간" value={Math.max(0,otp.valid_until-clock/1000)} max={otp.valid_until-otp.valid_from}/>
             <small>{Math.max(0,Math.ceil(otp.valid_until-clock/1000))}초 뒤 갱신</small>

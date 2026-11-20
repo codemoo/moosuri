@@ -99,3 +99,33 @@ it("leaves the clipboard untouched when both code requests arrive expired", asyn
   expect(await screen.findByText("코드가 갱신되었습니다. 다시 복사해 주세요.")).toBeTruthy();
   expect(writeText).not.toHaveBeenCalled();
 });
+
+
+it.each([31, -31])("hides the previous code across a %s-second clock change while a new code is pending", async delta => {
+  const initial = Math.floor(Date.now() / 1000) * 1000;
+  const clock = vi.spyOn(Date, "now").mockReturnValue(initial);
+  await openItem();
+  let release!: (value: ReturnType<typeof otp>) => void;
+  const regular = route.getMockImplementation()!;
+  route.mockImplementation(command => command.op === "totp"
+    ? new Promise<ReturnType<typeof otp>>(resolve => { release = resolve; })
+    : regular(command));
+  const changed = initial + delta * 1000;
+  clock.mockReturnValue(changed);
+  fireEvent.focus(window);
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  expect(screen.queryByText("123456")).toBeNull();
+  expect(screen.queryByRole("button", {name: "현재 코드 복사"})).toBeNull();
+  await act(async () => release(otp("678901", changed / 1000 + 30)));
+  expect(await screen.findByText("678901")).toBeTruthy();
+  expect(writeText).not.toHaveBeenCalled();
+});
+
+it("rejects a future code on both clipboard attempts when the clock moves backward", async () => {
+  await openItem();
+  const future = otp("987654", Math.floor(Date.now() / 1000) + 90);
+  route.mockReturnValueOnce(future).mockReturnValueOnce(future);
+  fireEvent.click(screen.getByRole("button", {name: "현재 코드 복사"}));
+  expect(await screen.findByText("코드가 갱신되었습니다. 다시 복사해 주세요.")).toBeTruthy();
+  expect(writeText).not.toHaveBeenCalled();
+});

@@ -132,6 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn registration_while_serving_is_private_to_the_verified_volume() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         use moosuri_store::personal_volume::VolumeOwner;
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().canonicalize().unwrap();

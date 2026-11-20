@@ -1882,6 +1882,7 @@ mod tests {
     }
     #[tokio::test]
     async fn actual_member_sockets_keep_cookie_locator_and_thread_history_private() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let mut options = options(&root);
@@ -2160,6 +2161,7 @@ mod tests {
     }
     #[tokio::test]
     async fn opt_in_preview_crosses_gateway_and_member_socket_once_and_uses_saved_history() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -2388,6 +2390,7 @@ mod tests {
     #[cfg(feature = "test-fixtures")]
     #[tokio::test]
     async fn google_callback_claims_only_the_originating_member_and_resumes_a_pinned_read() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         use crate::runtime_google::tests::Fixture;
         let provider = Fixture::new().await;
         let (stop, broker) = provider.start().await;
@@ -2829,6 +2832,7 @@ mod tests {
     }
     #[tokio::test]
     async fn private_member_session_and_host_role_control_web_admin_even_after_demotion() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         use moosuri_store::runtime_registry::admin as control;
         let temp = tempfile::tempdir().unwrap();
         let options = options(&temp.path().canonicalize().unwrap());

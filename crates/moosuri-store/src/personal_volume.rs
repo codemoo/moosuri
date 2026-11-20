@@ -195,6 +195,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     #[tokio::test]
     async fn session_survives_restart_only_on_its_owner_volume() {
+        let _guard = crate::tests::TEST_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let base = temp.path().canonicalize().unwrap();
         let mut users = Vec::new();
@@ -286,6 +287,7 @@ mod invite_tests {
     use std::os::unix::fs::PermissionsExt;
     #[tokio::test]
     async fn installer_status_recovers_initialization_without_replacing_a_password() {
+        let _guard = crate::tests::TEST_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();

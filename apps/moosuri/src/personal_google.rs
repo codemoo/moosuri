@@ -1339,6 +1339,7 @@ mod tests {
     }
     #[tokio::test]
     async fn unregistered_member_can_open_chat_and_sees_setup_status_only_after_login() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("member");
         let (store, owner, token) = member(&root).await;
@@ -1370,6 +1371,7 @@ mod tests {
     }
     #[tokio::test]
     async fn thread_read_is_encrypted_durable_idempotent_and_outside_model_history() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("member");
         let (store, owner, token) = member(&root).await;
@@ -1511,6 +1513,7 @@ mod tests {
     }
     #[tokio::test]
     async fn restart_retires_a_dispatched_read_without_a_second_provider_read() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("member");
         let (store, owner, token) = member(&root).await;
@@ -1556,6 +1559,7 @@ mod tests {
     }
     #[tokio::test]
     async fn uncertain_thread_read_never_dispatches_twice_and_manual_connect_has_no_continuation() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let (store, owner, token) = member(&temp.path().join("member")).await;
         let user = store.authenticate(token.clone()).await.unwrap();
@@ -1622,6 +1626,7 @@ mod tests {
 
     #[tokio::test]
     async fn complete_immediate_status_refresh_read_and_brokerless_disconnect() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let (store, owner, token) = member(&temp.path().join("member")).await;
         let fake = Arc::new(Fake::default());
@@ -1690,6 +1695,7 @@ mod tests {
 
     #[tokio::test]
     async fn disconnect_fences_late_inbox_and_foreign_session_cannot_read() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let (store, owner, token) = member(&temp.path().join("member")).await;
         let fake = Arc::new(Fake::default());
@@ -1747,6 +1753,7 @@ mod tests {
     #[tokio::test]
     async fn callback_handle_requires_original_session_and_old_disconnect_cannot_remove_reconnect()
     {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let (store, owner, token) = member(&temp.path().join("member")).await;
         let fake = Arc::new(Fake::default());
@@ -1847,6 +1854,7 @@ mod tests {
 
     #[tokio::test]
     async fn workspace_consent_read_and_withdrawal_are_service_specific() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let (store, owner, token) = member(&dir.path().join("member")).await;
         let fake = Arc::new(Fake::default());

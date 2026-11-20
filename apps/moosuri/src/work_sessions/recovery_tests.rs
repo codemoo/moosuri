@@ -82,6 +82,7 @@ fn serve(
 #[tokio::test]
 async fn actual_store_router_restart_reconciles_committed_receipt_without_duplicate_or_unknown_rewrite()
  {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     let home = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let data = home.path().join("store");
@@ -236,6 +237,7 @@ async fn actual_store_router_restart_reconciles_committed_receipt_without_duplic
 #[tokio::test]
 async fn actual_store_router_start_ack_loss_recovers_original_composite_and_only_explicit_unstaged_retry()
  {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     // 0: lost ACK, same live run. 1: lost ACK then startup unknown.
     // 2: ACK persisted, status fails before envelope staging, then startup unknown.
     for mode in 0..3 {

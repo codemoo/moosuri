@@ -3,6 +3,7 @@ use std::{fs, os::unix::fs::PermissionsExt};
 
 #[tokio::test]
 async fn periodic_worker_captures_live_store_and_drains_without_extra_snapshot() {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     let private = || {
         tempfile::Builder::new()
             .permissions(fs::Permissions::from_mode(0o700))

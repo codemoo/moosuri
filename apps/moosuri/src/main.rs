@@ -1315,6 +1315,10 @@ async fn static_asset(uri: Uri) -> Response {
     response
 }
 
+// Account fixtures share the process-wide two-slot password hashing limit.
+#[cfg(test)]
+static ACCOUNT_FIXTURE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(test)]
 mod schedule_route_tests {
     use super::*;

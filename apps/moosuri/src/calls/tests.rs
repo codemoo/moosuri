@@ -58,6 +58,7 @@ fn wav() -> Vec<u8> {
 }
 #[tokio::test]
 async fn calls_actual_ingest_defers_changes_recovers_receipts_and_never_resends_unknown_chunks() {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     let home = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let input = home.path().join("explicit-export");

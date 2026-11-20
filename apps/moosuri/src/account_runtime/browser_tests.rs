@@ -283,6 +283,7 @@ fn model_fixture(
 }
 #[tokio::test]
 async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original_turn() {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let apath = root.join("a");
@@ -525,6 +526,7 @@ async fn private_browser_keeps_selected_page_guidance_and_one_answer_on_original
 
 #[tokio::test]
 async fn private_browser_frames_while_model_chooses_observed_public_detail() {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let a = member(&root.join("a")).await;

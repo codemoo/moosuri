@@ -51,6 +51,7 @@ async fn prepare_call(
 
 #[tokio::test]
 async fn suspension_lost_reply_and_cold_volume_restore_charge_one_model_call() {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let (url, provider, provider_task) = upstream().await;

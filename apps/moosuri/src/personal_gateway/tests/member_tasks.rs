@@ -6,6 +6,7 @@ use moosuri_store::{
 
 #[tokio::test]
 async fn member_task_receipt_round_trips_through_its_own_gateway_and_original_chat() {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let options = options(&root);

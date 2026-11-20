@@ -7,6 +7,7 @@ fn dir() -> tempfile::TempDir {
 }
 #[tokio::test]
 async fn actual_installed_private_login_bootstrap_and_temporary_password_boundaries() {
+    let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
     let registry = dir();
     let ipc_root = dir();
     let root = dir();

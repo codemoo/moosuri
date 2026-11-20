@@ -71,7 +71,22 @@ async fn encrypted_snapshot_manifest_epochs_and_provider_key_independence() {
     let data = directory();
     let kit = directory();
     let exports = directory();
-    installed(data.path()).await;
+    let store = Store::open(data.path()).unwrap();
+    let user = admin(&store).await.user;
+    store
+        .configure_telegram(
+            &user,
+            0,
+            moosuri_connectors::telegram::Identity {
+                id: 12345,
+                is_bot: true,
+                username: Some("SyntheticMoosuriBot".into()),
+            },
+            Zeroizing::new("12345:synthetic_token_for_tests_only".into()),
+        )
+        .await
+        .unwrap();
+    drop(store);
     let (a, apath) = key(kit.path(), "identity-a");
     let (b, bpath) = key(kit.path(), "identity-b");
     let initial = snapshot(data.path());
@@ -113,12 +128,24 @@ async fn encrypted_snapshot_manifest_epochs_and_provider_key_independence() {
     let manifest: ManifestV2 = serde_json::from_slice(&entries["manifest.json"]).unwrap();
     assert_eq!(manifest.installation_id, c1.installation_id);
     assert_eq!(manifest.key_epoch, 1);
+    assert_eq!(manifest.schema, CURRENT_SCHEMA_VERSION);
     assert_eq!(manifest.purpose, "assistant-export");
     assert!(manifest.authoritative_files.is_empty());
     for entry in &manifest.entries {
         assert_eq!(entries[&entry.name].len() as u64, entry.size);
         assert_eq!(hex(&Sha256::digest(&entries[&entry.name])), entry.sha256);
     }
+    let snapshot_path = exports.path().join("snapshot.sqlite");
+    fs::write(&snapshot_path, &entries["assistant.sqlite"]).unwrap();
+    let db = Connection::open(&snapshot_path).unwrap();
+    let telegram_disabled: bool = db
+        .query_row(
+            "SELECT token IS NULL AND status='disabled' FROM telegram_bot WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(telegram_disabled);
     let c2 = setup(data.path(), &b.to_public().to_string(), &bpath).unwrap();
     assert_eq!(c2.installation_id, c1.installation_id);
     assert_eq!(c2.active_epoch, Some(2));

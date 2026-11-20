@@ -746,7 +746,18 @@ impl ExportInput<'_> {
             }
         }
         crate::push::strip_for_export(&destination)?;
-        crate::telegram::quarantine(&destination)?;
+        let schema: i64 = destination.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        // Earlier upgrade sources lack the tables introduced by this migration.
+        const TELEGRAM_SCHEMA: i64 = 75;
+        if schema >= TELEGRAM_SCHEMA {
+            crate::telegram::quarantine(&destination)?;
+        } else if destination.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name GLOB 'telegram_*')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )? {
+            return Err(Error::Integrity);
+        }
         if destination.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))? != "ok"
             || destination
                 .prepare("PRAGMA foreign_key_check")?
@@ -805,9 +816,7 @@ impl ExportInput<'_> {
             purpose: "assistant-export".into(),
             installation_id: config.installation_id,
             export_id: export_id.clone(),
-            schema: self
-                .conn
-                .query_row("PRAGMA user_version", [], |r| r.get(0))?,
+            schema,
             created_at: now()?,
             key_epoch: epoch.epoch,
             recipient: epoch.recipient.clone(),

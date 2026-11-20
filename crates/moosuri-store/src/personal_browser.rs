@@ -71,7 +71,11 @@ fn expire_workers(c: &Connection, owner: VolumeOwner) -> Result<()> {
                              '$.revision', json_extract(view, '$.revision') + 1)
          WHERE tenant_id=?1 AND volume_id=?2 AND generation=?3 AND pending IS NULL
            AND controller_until<=unixepoch() AND json_extract(view,'$.state')='user_control'",
-        params![owner.tenant.to_string(), owner.volume.to_string(), owner.generation as i64],
+        params![
+            owner.tenant.to_string(),
+            owner.volume.to_string(),
+            owner.generation as i64
+        ],
     )?;
     Ok(())
 }

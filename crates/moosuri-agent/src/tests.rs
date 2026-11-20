@@ -89,7 +89,11 @@ async fn fixture() -> Fixture {
     let app=Router::new().route("/v1/chat/completions",post(|State(state):State<Arc<Upstream>>,axum::Json(body):axum::Json<Value>|async move{
         state.calls.fetch_add(1,Ordering::SeqCst);
         assert_eq!(body["model"],"fixture-model");assert_eq!(body["max_tokens"],4096);
-        assert!(body["messages"][0]["content"].as_str().unwrap().contains("Tools, external actions"));
+        assert_eq!(body["messages"][0]["role"], "system");
+        let instruction = body["messages"][0]["content"].as_str().unwrap();
+        assert!(instruction.contains("cannot use Moosuri tools"));
+        assert!(instruction.contains("perform external actions"));
+        assert!(body.get("tools").is_none());
         let mode=state.mode.load(Ordering::SeqCst);
         let stream=futures_util::stream::unfold((0,state),move |(step,state)|async move{
             let value=match step {

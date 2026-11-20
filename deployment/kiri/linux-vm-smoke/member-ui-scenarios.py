@@ -819,9 +819,6 @@ def browser_takeover(page, world):
 
 
 def tasks_to_original(page, world):
-    world.seed_conversation()
-    world.tasks_visible = True
-    page.reload()
     nav(page, "맡긴 일").click()
     expect(heading(page, "맡긴 일")).to_be_visible()
     button(page, "이전 작업 더 보기").click()
@@ -869,6 +866,7 @@ for service in GOOGLE:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dist", type=Path, help="path to the built web/dist directory")
+    parser.add_argument("--browser", choices=("chrome", "webkit"), default="chrome")
     parser.add_argument("--width", type=int, choices=(360, 390, 1440), action="append")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS), action="append")
     parser.add_argument("--headed", action="store_true")
@@ -883,12 +881,18 @@ def main():
     failures = 0
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel="chrome", headless=not args.headed)
-            print(f"Chrome {browser.version}", flush=True)
+            if args.browser == "webkit":
+                browser = playwright.webkit.launch(headless=not args.headed)
+            else:
+                browser = playwright.chromium.launch(channel="chrome", headless=not args.headed)
+            print(f"{args.browser} {browser.version}", flush=True)
             for scenario in args.scenario or SCENARIOS:
                 admin, run = SCENARIOS[scenario]
                 for width in args.width or heights:
                     world = World(base, admin=admin, signed_in=scenario != "B-AUTH-01")
+                    if scenario == "B-TASK-01":
+                        world.seed_conversation()
+                        world.tasks_visible = True
                     if scenario == "B-ENG-01":
                         world.engine["enabled"] = False
                     context = browser.new_context(viewport={"width": width, "height": heights[width]},

@@ -102,7 +102,10 @@ async fn scripted_response(
             "decimal_workflow",
             "artifact_search",
             "artifact_read",
-            "followup_briefing"
+            "followup_briefing",
+            "evidence_calculate",
+            "source_calculate",
+            "gmail_connection_help",
         ])
     );
     state.requests.lock().await.push(body.clone());

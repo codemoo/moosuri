@@ -150,7 +150,8 @@ async fn model_reply(
     axum::extract::State(s): axum::extract::State<ModelScript>,
     axum::Json(input): axum::Json<Value>,
 ) -> axum::response::Response {
-    let planning = input["tools"][0]["function"]["name"] == "artifact_intent";
+    let tools = input["tools"].as_array().unwrap();
+    let planning = tools[0]["function"]["name"] == "artifact_intent";
     let text = input["messages"]
         .as_array()
         .unwrap()
@@ -191,6 +192,7 @@ async fn model_reply(
             json!({"title":"견적 비교","body":"A 15, B 14.25. B가 0.75 낮음.","payload":{"kind":"document"},"anchor":null}),
         )
     };
+    assert!(tools.iter().any(|tool| tool["function"]["name"] == name));
     let event = json!({"id":"http-artifact-model","model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":format!("http-{name}-call"),"type":"function","function":{"name":name,"arguments":args.to_string()}}]},"finish_reason":"tool_calls"}]});
     axum::response::Response::builder()
         .header("content-type", "text/event-stream")
@@ -312,7 +314,7 @@ async fn http_chat_receipt_editor_and_later_chat_share_one_durable_report() {
         .await
         .unwrap()
         .id;
-    let body = json!({"request_id":"b0000000-0000-4000-8000-000000000001","text":"A 견적은15, B 견적은14.25입니다. 비교하고 보고서로 저장해 줘"});
+    let body = json!({"request_id":"b0000000-0000-4000-8000-000000000001","text":"“A 15, B 14.25. B가 0.75 낮음.”을 보고서로 저장해 줘"});
     assert_eq!(
         send(
             &app,
@@ -354,6 +356,7 @@ async fn http_chat_receipt_editor_and_later_chat_share_one_durable_report() {
         .await,
     )
     .await;
+    assert_eq!(read["draft"]["body"], "A 15, B 14.25. B가 0.75 낮음.");
     let mut draft = read["draft"].clone();
     draft["body"] = json!("편집기에서 확인한 내용");
     let edited = json!({"request_id":"b0000000-0000-4000-8000-000000000002","id":id,"expected_revision":1,"draft":draft});

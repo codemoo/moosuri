@@ -90,12 +90,18 @@ async fn model_round(
         [
             "artifact_read",
             "artifact_search",
+            "conversation_read",
+            "conversation_search",
             "decimal_calculate",
+            "decimal_workflow",
+            "evidence_calculate",
             "followup_briefing",
+            "gmail_connection_help",
             "knowledge_read_memory",
             "knowledge_read_source",
             "knowledge_search",
             "skill_read",
+            "source_calculate",
         ]
         .into_iter()
         .collect()

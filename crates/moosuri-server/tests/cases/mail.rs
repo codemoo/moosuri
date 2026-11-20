@@ -138,6 +138,8 @@ async fn oauth_callback_works_without_strict_cookie_but_complete_requires_origin
         .unwrap()
         .1
         .into_owned();
+    let flow = Store::mail_oauth_flow_id(&state);
+    assert_eq!(start["flow_id"], flow);
     let request = Request::builder()
         .uri(format!(
             "/api/v1/mail/oauth/callback?state={state}&code=synthetic-code&hd=example.test"
@@ -146,10 +148,7 @@ async fn oauth_callback_works_without_strict_cookie_but_complete_requires_origin
         .body(Body::empty())
         .unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let location = response.headers()[header::LOCATION].to_str().unwrap();
-    assert!(!location.contains("synthetic-code"));
-    let handle = location.split("oauth=").nth(1).unwrap().to_owned();
+    let handle = mail_oauth_return_handle(&response, "/settings/mail", &flow);
     let other = login(&app, "admin@example.test", PASSWORD).await;
     assert_eq!(
         send(
@@ -172,12 +171,11 @@ async fn oauth_callback_works_without_strict_cookie_but_complete_requires_origin
         client_id: "synthetic-client".into(),
         redirect_uri: format!("{ORIGIN}/api/v1/mail/oauth/callback"),
     };
-    assert!(
-        store
-            .claim_mail_oauth_with_app(&user, handle.clone(), pin.clone())
-            .await
-            .is_ok()
-    );
+    let exchange = store
+        .claim_mail_oauth_with_app(&user, handle.clone(), pin.clone())
+        .await
+        .unwrap();
+    assert_eq!(exchange.flow_id(), flow);
     assert!(
         store
             .claim_mail_oauth_with_app(&user, handle, pin)

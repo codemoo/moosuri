@@ -14,6 +14,30 @@ const PASSWORD: &str = "Synthetic-Account-Password-42";
 const HOST: &str = "assistant.example.test";
 const ORIGIN: &str = "https://assistant.example.test";
 
+fn mail_oauth_return_handle(
+    response: &axum::response::Response,
+    expected_path: &str,
+    expected_flow: &str,
+) -> String {
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = response.headers()[header::LOCATION].to_str().unwrap();
+    assert!(!location.contains("synthetic-code"));
+    let uri: axum::http::Uri = location.parse().unwrap();
+    assert!(uri.scheme().is_none() && uri.authority().is_none());
+    assert_eq!(uri.path(), expected_path);
+    let query: Vec<_> = url::form_urlencoded::parse(uri.query().unwrap().as_bytes()).collect();
+    assert_eq!(query.len(), 2);
+    assert!(
+        query
+            .iter()
+            .any(|(key, value)| key == "oauth_flow" && value == expected_flow)
+    );
+    let handle = query.into_iter().find(|(key, _)| key == "oauth").unwrap().1;
+    assert_ne!(handle, expected_flow);
+    assert_ne!(handle, "synthetic-code");
+    handle.into_owned()
+}
+
 #[tokio::test]
 async fn claude_settings_require_admin_and_keep_unconfigured_runtime_unavailable() {
     let _g = TEST_LOCK.lock().await;

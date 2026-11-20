@@ -266,6 +266,8 @@ async fn setup_oauth_return_is_stored_and_denial_releases_edit_without_secrets()
         .unwrap()
         .1
         .into_owned();
+    let flow = Store::mail_oauth_flow_id(&state);
+    assert_eq!(start["flow_id"], flow);
     let busy = value(
         send(
             &app,
@@ -286,7 +288,7 @@ async fn setup_oauth_return_is_stored_and_denial_releases_edit_without_secrets()
     assert_eq!(denied.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         denied.headers()[header::LOCATION],
-        "/admin/google?oauth_error=denied"
+        format!("/admin/google?oauth_error=denied&oauth_flow={flow}")
     );
     setup(&app, &cookie, 1).await;
     let start = value(
@@ -307,16 +309,14 @@ async fn setup_oauth_return_is_stored_and_denial_releases_edit_without_secrets()
         .unwrap()
         .1
         .into_owned();
+    let flow = Store::mail_oauth_flow_id(&state);
+    assert_eq!(start["flow_id"], flow);
     let captured = callback(
         &app,
         &format!("state={state}&code=synthetic-code&return_to=https://untrusted.example"),
     )
     .await;
-    assert_eq!(captured.status(), StatusCode::SEE_OTHER);
-    let location = captured.headers()[header::LOCATION].to_str().unwrap();
-    assert!(location.starts_with("/admin/google?oauth="));
-    assert!(!location.contains("synthetic-code"));
-    let handle = location.split_once("oauth=").unwrap().1;
+    let handle = mail_oauth_return_handle(&captured, "/admin/google", &flow);
     let second = login(&app, "admin@example.test", PASSWORD).await;
     assert_eq!(
         send(
@@ -341,9 +341,10 @@ async fn setup_oauth_return_is_stored_and_denial_releases_edit_without_secrets()
         .unwrap()
         .pin;
     let exchange = store
-        .claim_mail_oauth_with_app(&user, handle.into(), pin)
+        .claim_mail_oauth_with_app(&user, handle, pin)
         .await
         .unwrap();
+    assert_eq!(exchange.flow_id(), flow);
     store.cancel_mail_oauth_exchange(&exchange).await.unwrap();
     assert_eq!(setup(&app, &cookie, 2).await["revision"], 3);
 }

@@ -464,19 +464,27 @@ async fn owner_upload_original_preview_actual_source_answer_retry_and_withdrawal
         .id;
     let mixed = json!({"request_id":Uuid::new_v4(),"text":"Read both my image and document.","attachments":[{"id":id,"revision":1},{"id":image_id,"revision":1}]});
     let mixed_path = format!("/api/v1/threads/{mixed_thread}/messages");
-    assert_eq!(
-        send(
-            &app,
-            &login,
-            "POST",
-            &mixed_path,
-            mixed.to_string().into_bytes(),
-            false
-        )
-        .await
-        .status(),
-        StatusCode::BAD_REQUEST
-    );
+    let missing_vision = send(
+        &app,
+        &login,
+        "POST",
+        &mixed_path,
+        mixed.to_string().into_bytes(),
+        false,
+    )
+    .await;
+    assert_eq!(missing_vision.status(), StatusCode::CONFLICT);
+    let error: Value = serde_json::from_slice(
+        &missing_vision
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(error["code"], "vision_required");
+    assert_eq!(script.calls.load(Ordering::SeqCst), 2);
     let choice = store
         .model_settings(&login.user)
         .await

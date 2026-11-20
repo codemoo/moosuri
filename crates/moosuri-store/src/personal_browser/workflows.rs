@@ -44,7 +44,7 @@ pub(super) fn schedules(connection: &Connection, owner: VolumeOwner) -> Result<V
         .collect::<rusqlite::Result<_>>()?)
 }
 fn get(connection: &Connection, owner: VolumeOwner, id: &str) -> Result<WorkSchedule> {
-    Ok(connection
+    connection
         .query_row(
             &format!("{SCHEDULES} AND id=?5"),
             params![
@@ -57,7 +57,7 @@ fn get(connection: &Connection, owner: VolumeOwner, id: &str) -> Result<WorkSche
             schedule_row,
         )
         .optional()?
-        .ok_or(StoreError::NotFound)?)
+        .ok_or(StoreError::NotFound)
 }
 #[derive(Serialize, Deserialize)]
 pub(super) struct SourceRef {

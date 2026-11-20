@@ -555,9 +555,8 @@ fn validate_mount(p: &Path, cap: u64) -> Result<(), String> {
         return Err("kiri_provision_statvfs_failed".into());
     }
     let stat = unsafe { stat.assume_init() };
-    let bytes = (stat.f_blocks as u64)
-        .checked_mul(stat.f_frsize as u64)
-        .ok_or("kiri_provision_filesystem_size_overflow")?;
+    let bytes = u64::try_from(u128::from(stat.f_blocks) * u128::from(stat.f_frsize))
+        .map_err(|_| "kiri_provision_filesystem_size_overflow")?;
     if bytes == 0 || bytes > cap {
         return Err("kiri_provision_filesystem_over_capacity".into());
     }

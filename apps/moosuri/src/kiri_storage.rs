@@ -764,9 +764,8 @@ fn verify_mount(p: &Plan) -> Result<(), String> {
         return Err("storage_capacity_probe_failed".into());
     }
     let stat = unsafe { stat.assume_init() };
-    let total = (stat.f_blocks as u64)
-        .checked_mul(stat.f_frsize as u64)
-        .ok_or("storage_capacity_overflow")?;
+    let total = u64::try_from(u128::from(stat.f_blocks) * u128::from(stat.f_frsize))
+        .map_err(|_| "storage_capacity_overflow")?;
     if total == 0 || total > p.cap {
         return Err("storage_capacity_mismatch".into());
     }

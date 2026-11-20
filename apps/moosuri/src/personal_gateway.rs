@@ -3010,7 +3010,11 @@ mod tests {
         assert_eq!(demo.status(), StatusCode::OK);
         assert!(!demo.headers().contains_key(header::SET_COOKIE));
         let body = axum::body::to_bytes(demo.into_body(), 65536).await.unwrap();
-        assert!(std::str::from_utf8(&body).unwrap().contains("예시 대화 · Moosuri"));
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("예시 대화 · Moosuri")
+        );
         let response = request(&gateway, "/", Method::GET, h.clone(), "").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert!(!response.headers().contains_key(header::SET_COOKIE));

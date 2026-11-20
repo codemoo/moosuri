@@ -640,10 +640,14 @@ mod tests {
         runtime.wake();
         let done = terminal(&store, &user, &inbox).await;
         assert_eq!(done.run.state, RunState::Completed);
+        assert_eq!(
+            done.run.mail_connection_recovery,
+            Some(moosuri_core::MailConnectionRecovery::AdminSetup)
+        );
         assert!(
             done.assistant
                 .iter()
-                .any(|answer| answer.text.contains("/settings/mail"))
+                .any(|answer| answer.text.contains("Gmail 설정"))
         );
         assert_eq!(fixture.launches(), 0);
         let work = store

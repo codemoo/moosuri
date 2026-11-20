@@ -172,3 +172,7 @@ retain trusted pins separately or use versioned/append-only target storage. Sour
 and restored copies remain independently runnable; this is not singleton/anti-fork
 execution control. No production target, provider, real device or hardware
 durability acceptance is implied by synthetic verification.
+
+[F51-03 rehearsal](reviews/2026-11-20-vault-offhost-recovery.md) records the
+recoverable sequence and an intentionally uncovered write from a macOS-to-Linux
+SSH publication and network-disabled recovery.

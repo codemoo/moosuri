@@ -103,6 +103,37 @@ fn adopt(c: &Connection, r: &Run, source: &Run) -> Result<()> {
     crate::agent_execution::inherit_dependencies(c, &r.tenant, &r.id, &source.id)?;
     Ok(())
 }
+// This prefilter never grants a discovery pin. Match the exact text seen by
+// whole(): load_run reads user_text verbatim; materialize only changes a tool profile.
+fn candidate_score(
+    statement: &mut rusqlite::Statement<'_>,
+    tenant: &str,
+    id: &str,
+    query: &str,
+    qualifiers: &[&str],
+) -> Result<Option<usize>> {
+    let texts = statement.query_row(params![tenant, id, WHOLE_BYTES as i64], |row| {
+        let assistant: Option<String> = row.get(1)?;
+        assistant
+            .map(|text| Ok((row.get::<_, String>(0)?, text)))
+            .transpose()
+    })?;
+    let Some((user, assistant)) = texts else {
+        return Ok(None);
+    };
+    // SQLite lower() does not implement Rust's Unicode folding.
+    let user = user.to_lowercase();
+    let assistant = assistant.to_lowercase();
+    if !user.contains(query) && !assistant.contains(query) {
+        return Ok(None);
+    }
+    Ok(Some(
+        qualifiers
+            .iter()
+            .filter(|&&word| user.contains(word) || assistant.contains(word))
+            .count(),
+    ))
+}
 pub(crate) fn search(
     c: &Connection,
     r: &Run,
@@ -116,10 +147,6 @@ pub(crate) fn search(
     {
         return Err(StoreError::InvalidInput);
     }
-    let ids=c.prepare("SELECT p.id FROM chat_runs p JOIN threads t ON t.tenant_id=p.tenant_id AND t.id=p.thread_id WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.rowid<(SELECT rowid FROM chat_runs WHERE tenant_id=?1 AND id=?3) AND p.created_at<=?4 AND p.state='completed' AND (?5=1 OR p.thread_id=?6) AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=p.tenant_id AND a.run_id=p.id AND a.invalidated=1) ORDER BY p.rowid DESC LIMIT 4097")?.query_map(params![r.tenant,r.account,r.id,r.created,matches!(scope,ConversationScope::OwnedConversations),r.thread],|v|v.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    let scanned_limit = ids.len() > SCAN;
-    let mut ranked: Vec<(usize, Run, ConversationHit)> = Vec::new();
-    let mut truncated = scanned_limit;
     let query = query.trim().to_lowercase();
     let question = r.text.to_lowercase();
     let mut context = Vec::new();
@@ -131,7 +158,62 @@ pub(crate) fn search(
             }
         }
     }
+    let mut recent = c.prepare(
+        "SELECT p.id FROM chat_runs p
+         JOIN threads t ON t.tenant_id=p.tenant_id AND t.id=p.thread_id
+         WHERE p.tenant_id=?1 AND p.account_id=?2
+           AND p.rowid<(SELECT rowid FROM chat_runs WHERE tenant_id=?1 AND id=?3)
+           AND p.created_at<=?4 AND p.state='completed' AND (?5 OR p.thread_id=?6)
+           AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=p.tenant_id
+                          AND a.run_id=p.id AND a.invalidated=1)
+         ORDER BY p.rowid DESC LIMIT ?7",
+    )?;
+    let ids = recent
+        .query_map(
+            params![
+                r.tenant,
+                r.account,
+                r.id,
+                r.created,
+                matches!(scope, ConversationScope::OwnedConversations),
+                r.thread,
+                SCAN as i64 + 1
+            ],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let scanned_limit = ids.len() > SCAN;
+    let mut scorer = c.prepare(
+        "SELECT user_text,
+             CASE WHEN length(CAST(user_text AS BLOB)) +
+                 (SELECT sum(length(CAST(text AS BLOB))) FROM chat_output WHERE tenant_id=?1 AND run_id=?2) <= ?3
+             THEN (SELECT group_concat(text, char(10)) FROM
+                    (SELECT text FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND text!='' ORDER BY ordinal))
+             END
+         FROM chat_runs WHERE tenant_id=?1 AND id=?2",
+    )?;
+    let mut ranked: Vec<(usize, Run, ConversationHit)> = Vec::new();
+    let mut truncated = scanned_limit;
     for id in ids.into_iter().take(SCAN) {
+        if truncated
+            && ranked
+                .get(MAX_HITS - 1)
+                .is_some_and(|item| item.0 == context.len())
+        {
+            break;
+        }
+        if crate::credential_chat::display_only_preview(c, &r.tenant, &id)? {
+            continue;
+        }
+        let Some(score) = candidate_score(&mut scorer, &r.tenant, &id, &query, &context)? else {
+            continue;
+        };
+        // With recency as the tie-breaker, a later equal score cannot displace
+        // a kept result. Once overflow is established it needs no full read.
+        let index = ranked.partition_point(|(old, _, _)| *old >= score);
+        if truncated && index == MAX_HITS {
+            continue;
+        }
         let Some(source) = eligible(c, r, &id)? else {
             continue;
         };
@@ -140,6 +222,13 @@ pub(crate) fn search(
             Err(StoreError::InvalidInput | StoreError::NotFound) => continue,
             Err(e) => return Err(e),
         };
+        if ranked.len() == MAX_HITS {
+            truncated = true;
+            if index == MAX_HITS {
+                continue;
+            }
+            ranked.pop();
+        }
         let assistant = turn
             .messages
             .iter()
@@ -147,27 +236,6 @@ pub(crate) fn search(
             .map(|m| m.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        let user_text = source.text.to_lowercase();
-        let assistant_text = assistant.to_lowercase();
-        if !user_text.contains(&query) && !assistant_text.contains(&query) {
-            continue;
-        }
-        let score = context
-            .iter()
-            .filter(|&&term| user_text.contains(term) || assistant_text.contains(term))
-            .count();
-        // Candidates arrive newest first. Equal scores retain that order.
-        let index = ranked.partition_point(|(previous, _, _)| *previous >= score);
-        if ranked.len() == MAX_HITS {
-            truncated = true;
-            if ranked[MAX_HITS - 1].0 == context.len() {
-                break;
-            }
-            if index == MAX_HITS {
-                continue;
-            }
-            ranked.pop();
-        }
         let hit = ConversationHit {
             turn_id: source.id.clone(),
             thread_id: source.thread.clone(),
@@ -180,7 +248,7 @@ pub(crate) fn search(
     }
     let mut hits = Vec::with_capacity(ranked.len());
     for (_, source, hit) in ranked {
-        // Only the snippets actually returned grant a discovery pin.
+        // Only eligible, whole turns returned to this run grant discovery pins.
         adopt(c, r, &source)?;
         hits.push(hit);
     }

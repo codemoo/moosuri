@@ -486,3 +486,110 @@ async fn contextual_literal_hits_retain_an_older_owner_fact_and_pin_only_returne
 }
 
 mod memory_reader;
+
+#[tokio::test]
+#[ignore = "synthetic full-window timing; run explicitly with --ignored --nocapture"]
+async fn full_window_namesake_search_timing() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let roster = store
+        .create_thread(&user, "합성 기록".into())
+        .await
+        .unwrap();
+    let old = completed(
+        &store,
+        &user,
+        &roster.id,
+        "천문반 한서진의 보관함 표식은 달오름-73입니다.",
+        "확인했습니다.",
+    )
+    .await;
+    for i in 1..SCAN {
+        completed(
+            &store,
+            &user,
+            &roster.id,
+            &format!("도예반 한서진이 보관함 표식 점검을 마쳤습니다. 기록 {i}."),
+            "담당자가 다음 수업 전에 점검표를 정리하기로 했습니다.",
+        )
+        .await;
+    }
+    let ask = queued(
+        &store,
+        &user,
+        &roster.id,
+        "천문반 한서진의 보관함 표식은 무엇인가요?",
+    )
+    .await;
+    store
+        .call(move |db| {
+            let r = chat::load_run(&db.conn, &user.tenant.0, &ask.run.id)?;
+            for _ in 0..3 {
+                let tx = db
+                    .conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+                let start = std::time::Instant::now();
+                let page = search(
+                    &tx,
+                    &r,
+                    "보관함 표식",
+                    ConversationScope::OwnedConversations,
+                )?;
+                assert_eq!(page.hits.len(), MAX_HITS);
+                assert_eq!(page.hits[0].turn_id, old.run.id);
+                assert!(page.truncated && !page.scanned_limit);
+                tx.rollback()?;
+                println!(
+                    "full_window_search_ms={:.2}",
+                    start.elapsed().as_secs_f64() * 1000.
+                );
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn unreadable_sixth_unicode_match_does_not_signal_overflow_or_get_a_pin() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let thread = store
+        .create_thread(&user, "합성 기록".into())
+        .await
+        .unwrap();
+    // The decoded body fits 10 KiB; escaping these bytes exceeds the 14 KiB envelope.
+    let oversized = completed(&store, &user, &thread.id, "ÉLAN", &"\u{1}".repeat(2500)).await;
+    let mut expected = Vec::new();
+    for i in 0..MAX_HITS {
+        expected.push(
+            completed(&store, &user, &thread.id, "일반 기록", &format!("ÉLAN {i}"))
+                .await
+                .run
+                .id,
+        );
+    }
+    expected.reverse();
+    let question = queued(&store, &user, &thread.id, "élan").await;
+    store
+        .call(move |db| {
+            let r = chat::load_run(&db.conn, &user.tenant.0, &question.run.id)?;
+            let page = search(&db.conn, &r, "élan", ConversationScope::CurrentThread)?;
+            assert!(!page.truncated && !page.scanned_limit);
+            assert_eq!(
+                page.hits.into_iter().map(|h| h.turn_id).collect::<Vec<_>>(),
+                expected
+            );
+            assert!(matches!(
+                read(&db.conn, &r, &oversized.run.id, 2),
+                Err(StoreError::NotFound)
+            ));
+            Ok(())
+        })
+        .await
+        .unwrap();
+}

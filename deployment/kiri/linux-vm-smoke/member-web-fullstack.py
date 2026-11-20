@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import socket
 import sqlite3
@@ -268,6 +269,11 @@ def rows(member, sql):
         return db.execute(sql).fetchall()
 
 
+def context_counts(member):
+    return rows(member, "SELECT p.context_messages FROM personal_text_previews p "
+                        "JOIN chat_runs r ON r.tenant_id=p.tenant_id AND r.id=p.run_id ORDER BY r.sequence")
+
+
 def passed(case):
     print(f"PASS {case}", flush=True)
 
@@ -290,6 +296,12 @@ def exercise(page, members, origin, provider):
            "ON o.run_id=r.id AND o.tenant_id=r.tenant_id ORDER BY r.sequence")
     turns = [(PROMPT, ANSWER, "completed"), (FOLLOWUP, SECOND_ANSWER, "completed")]
     assert rows(first, sql) == turns and provider.calls == 2
+    assert context_counts(first) == [(0,), (2,)]
+    button(page, "업무 기록 보기").last.click()
+    page.get_by_role("button", name=re.compile("대화 문맥 준비")).click()
+    expect(page.get_by_role("region", name="단계 상세")).to_contain_text("이전 메시지 2개")
+    page.get_by_role("button", name=re.compile("원래 대화 열기")).click()
+    expect(editor).to_be_visible()
     passed("MWF-02 browser chat, real broker, prior turns and two committed SQLite replies")
     editor.fill(DRAFT)
     button(page, "새 대화").click()
@@ -358,6 +370,7 @@ def exercise_history_budget(page, member, origin, provider):
     sql = "SELECT user_text,state FROM chat_runs ORDER BY sequence"
     expected = [(prompt, "completed") for prompt in LONG_PROMPTS]
     assert rows(member, sql) == expected
+    assert context_counts(member) == [(0,), (2,), (2,)]
     passed("MB-02 only the oldest exchange is omitted from inference and all three turns stay in history")
     too_long = "Largest fixture: " + "D" * 3800
     editor.fill(too_long)

@@ -111,6 +111,11 @@ it("shows three scheduled previews, opens all five, and renders history by local
   vi.stubGlobal("fetch",vi.fn().mockResolvedValue(Response.json({items:[{...first,created_at:today.getTime()/1000},{...second,created_at:yesterday.getTime()/1000}],next_before:null,schedules})));
   const user=userEvent.setup();render(<PersonalTasks {...props}/>);
   expect(await screen.findByRole("heading",{name:"오늘"})).toBeVisible();expect(screen.getByRole("heading",{name:"어제"})).toBeVisible();
+  const olderDay = screen.getByRole("heading", {name:"어제"});
+  await user.click(olderDay);
+  expect(screen.getByText(second.title)).not.toBeVisible();
+  await user.click(olderDay);
+  expect(screen.getByRole("button", {name:/오전 운행 확인/})).toBeVisible();
   expect(screen.queryByRole("button",{name:/예약 5 /})).toBeNull();
   await user.click(screen.getByRole("button",{name:"예약 작업 모두 보기"}));
   await user.click(screen.getByRole("button",{name:/예약 5/}));
@@ -134,4 +139,30 @@ it("retries a lost manual research response with the same request identity", asy
   await user.click(screen.getByRole("button",{name:"조사 실행"}));
   await waitFor(()=>expect(props.onOpenTask).toHaveBeenCalledWith("result-1"));
   expect(actions).toHaveLength(2);expect(actions[1]).toEqual(actions[0]);
+});
+
+it("identifies scheduled, manual and chat occurrences and keeps the current preview on return", async () => {
+  const research: TaskSummary = { ...first, kind: "research", thread_id: "", preview: "기억 1건 확인 · 초록 수첩" };
+  const scheduled = { ...research, id: "scheduled", scheduled_at: first.created_at - 600 };
+  const chat = { ...research, id: "chat", thread_id: first.thread_id };
+  const withdrawn = { ...scheduled, preview: "기억 1건 확인" };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(
+    url.endsWith("/scheduled") ? { ...detail, task: withdrawn } : { items: [scheduled, research, chat], next_before: null }
+  )));
+  function Workspace() {
+    const [id, setId] = useState<string>();
+    return <PersonalTasks {...props} taskId={id} onOpenTask={setId} onBack={() => setId(undefined)} />;
+  }
+  const user = userEvent.setup();
+  render(<Workspace />);
+  const row = await screen.findByRole("button", { name: /예약 실행/ });
+  expect(row).toHaveTextContent("초록 수첩");
+  expect(screen.getByRole("button", { name: /직접 실행/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /대화에서 실행/ })).toBeVisible();
+  await user.click(row);
+  expect(await screen.findByRole("heading", { name: "예약 회차" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "맡긴 일 목록" }));
+  expect(row).toHaveFocus();
+  expect(row).toHaveTextContent("기억 1건 확인");
+  expect(row).not.toHaveTextContent("초록 수첩");
 });

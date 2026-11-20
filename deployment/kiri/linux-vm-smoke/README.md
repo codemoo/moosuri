@@ -85,6 +85,18 @@ the installation, issues two synthetic web invitations and waits for the
 shipped timer's first activation. It checks both logins, password rotation,
 capacity, retries and installation identity. [November 21 results](../../../docs/reviews/2026-11-20-kiri-scenarios.md#관리자-웹-초대와-호스트-자동-준비)
 
+## Member task history and recurring searches on Linux
+
+Run this check as a regular Linux user with Python Playwright and its Chromium browser installed. From the repository root, build the web assets before the executable so that the gateway serves the updated UI.
+
+```sh
+(cd web && npm ci && npm run build)
+cargo build --locked -p moosuri
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/debug/moosuri --channel chromium --workflows
+```
+
+The runner creates two temporary member volumes, an HTTPS gateway, a model broker with a synthetic reply, and a real installation timer. It drives the browser from chat through a source read, runs a scheduled search during logout, and checks which results remain visible after forgetting the source. Set `MOOSURI_SYNTHETIC_WORK_SCREENS` to an output directory to capture the synthetic list and evidence screens. The `--claude` mode uses the installation's authenticated Claude Sonnet 5.5 at medium effort for the separate conversation checks. [Work log and scenarios](../../../docs/reviews/2026-11-21-member-workflows.md)
+
 ## Observed result, 2026-11-19 KST
 
 | Check | Observed result |

@@ -1,6 +1,6 @@
 # 표준 서버의 브라우저·절차·기여 여정 검증
 
-제품 기능 71개에 기능당 3~4개씩 총 217개 시나리오가 있다. 기능별 대장에는 조작과 기대 결과, 구현 경로, 실행 상태를 기록한다. 회원 전용 Kiri와 표준 서버 중 어느 쪽을 확인했는지는 각 행의 근거를 따른다. [기능별 대장](feature-journeys.tsv) · [기능표](../docs/features.md) · [Kiri 화면 조작](../docs/reviews/2026-11-20-kiri-scenarios.md)
+회원 업무 개편을 반영한 기능 대장은 71개 기능의 226개 시나리오를 다룬다. 각 행에 조작, 기대 결과, 구현 경로, 대상 환경과 실행 상태를 기록한다. 11월 21일 첫 Linux 종합 검증은 당시의 217개 시나리오를 기준으로 했다. 이후 추가한 9개는 회원 화면, 자료 조사와 반복 실행을 다룬다. [기능별 대장](feature-journeys.tsv) · [업무별 검증](../docs/reviews/2026-11-21-member-workflows.md) · [기능표](../docs/features.md) · [Kiri 화면 조작](../docs/reviews/2026-11-20-kiri-scenarios.md)
 
 ## Linux 서버 재검증
 

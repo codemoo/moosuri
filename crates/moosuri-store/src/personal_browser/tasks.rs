@@ -7,7 +7,7 @@ const TASKS:&str="
 SELECT r.id,r.thread_id,substr(r.user_text,1,96) AS title,r.created_at,
  CASE WHEN b.run_id IS NULL THEN r.state WHEN json_extract(b.view,'$.state')='closed' AND r.state='completed' THEN 'completed' ELSE json_extract(b.view,'$.state') END AS state,
  r.admitted_order AS ord,CASE WHEN b.run_id IS NULL THEN 'text' ELSE 'browser' END AS kind,
- substr(coalesce(a.text,obs.text),1,140) AS preview
+ substr(coalesce(a.text,obs.text),1,140) AS preview,NULL AS scheduled_at
  FROM chat_runs r JOIN threads t ON t.tenant_id=r.tenant_id AND t.id=r.thread_id AND t.account_id=r.account_id
  LEFT JOIN personal_browser_jobs b ON b.tenant_id=r.tenant_id AND b.run_id=r.id AND b.thread_id=r.thread_id AND b.volume_id=?3 AND b.generation=?4
  LEFT JOIN personal_text_previews p ON p.tenant_id=r.tenant_id AND p.run_id=r.id AND p.volume_id=?3 AND p.generation=?4
@@ -15,11 +15,10 @@ SELECT r.id,r.thread_id,substr(r.user_text,1,96) AS title,r.created_at,
  LEFT JOIN chat_output obs ON obs.tenant_id=b.tenant_id AND obs.run_id=b.run_id AND obs.item='browser-observation'
  WHERE r.tenant_id=?1 AND r.account_id=?2 AND t.mission_internal=0 AND (b.run_id IS NOT NULL OR p.run_id IS NOT NULL)
  UNION ALL
- SELECT r.id,coalesce(w.thread_id,''),w.title,r.created_at,'completed',r.admitted_order,'research',
- CASE w.scope WHEN 'memory' THEN '기억 ' ELSE '대화 ' END || json_array_length(r.sources) || '건 확인'
+ SELECT r.id,coalesce(w.thread_id,''),w.title,r.created_at,'completed',r.admitted_order,'research',NULL,r.due_at
  FROM member_work_runs r JOIN member_workflows w ON w.id=r.workflow_id WHERE w.tenant_id=?1 AND w.account_id=?2 AND w.volume_id=?3 AND w.generation=?4
  UNION ALL
- SELECT g.work_id,g.thread_id,'Gmail 받은편지함 조회',g.created_at,g.phase,g.work_order,'gmail',NULL FROM member_google_thread_reads g
+ SELECT g.work_id,g.thread_id,'Gmail 받은편지함 조회',g.created_at,g.phase,g.work_order,'gmail',NULL,NULL FROM member_google_thread_reads g
  JOIN threads t ON t.tenant_id=g.tenant_id AND t.id=g.thread_id AND t.account_id=g.account_id
  WHERE g.tenant_id=?1 AND g.account_id=?2 AND g.volume_id=?3 AND g.generation=?4 AND t.mission_internal=0";
 
@@ -41,6 +40,7 @@ fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskSummary> {
         state,
         kind: row.get(6)?,
         preview: row.get(7)?,
+        scheduled_at: row.get(8)?,
     })
 }
 impl Store {
@@ -91,6 +91,11 @@ impl Store {
                 )
             });
             rows.truncate(PAGE_SIZE);
+            for (task, _) in &mut rows {
+                if task.kind == "research" {
+                    task.preview = Some(workflows::preview(&tx, owner, &task.id)?);
+                }
+            }
             let schedules = if before.is_none() {
                 workflows::schedules(&tx, owner)?
             } else {

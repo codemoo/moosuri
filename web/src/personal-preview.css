@@ -232,6 +232,11 @@
 .task-form :is(input,select) { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; min-height: 44px; background: var(--member-field); color: var(--member-text); border: 1px solid var(--member-divider); border-radius: 9px; }
 .personal-tasks .task-row { grid-template-columns: auto minmax(0,1fr) auto; align-items: start; border-radius: 12px; }
 .task-row-copy { min-width: 0; }
+.task-day > summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; cursor: pointer; list-style: none; }
+.task-day > summary::-webkit-details-marker { display: none; }
+.task-day > summary h3 { margin: 0; }
+.task-day > summary::after { content: ""; width: 7px; height: 7px; margin-inline-end: 8px; border-right: 2px solid var(--member-secondary); border-bottom: 2px solid var(--member-secondary); transform: rotate(-45deg); }
+.task-day[open] > summary::after { transform: rotate(45deg); }
 .task-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin-block: 4px; }
 .task-row time { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .task-receipt h3 { font-size: .85rem; color: var(--member-secondary); margin: 12px 0 4px; }

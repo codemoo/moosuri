@@ -8,8 +8,7 @@
       "sha256": "762951dec3f4fa9613acb9b088c349d0fd8b2f4decd5711c2dc43eeb902a69eb"
     }
   ],
-  "tables": [],
-  "updated_tables": [
+  "tables": [
     {
       "name": "member_workflows",
       "kind": "table",
@@ -79,7 +78,9 @@
         "phase",
         "at"
       ]
-    },
+    }
+  ],
+  "updated_tables": [
     {
       "name": "personal_text_previews",
       "kind": "table",

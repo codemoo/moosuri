@@ -382,21 +382,89 @@ fn excerpt(text: &str, query: &str, limit: usize) -> String {
     snippet
 }
 
+struct RunEvidence {
+    query: String,
+    message: Option<String>,
+    scope: WorkScope,
+    sources: Vec<SourceRef>,
+    limited: bool,
+    thread_title: Option<String>,
+    searched_at: i64,
+    finished_at: i64,
+}
+
+fn run_evidence(connection: &Connection, owner: VolumeOwner, id: &str) -> Result<RunEvidence> {
+    let mut stmt = connection.prepare(
+        "SELECT w.query,w.scope,r.sources,r.limited,t.title,r.searched_at,r.finished_at,w.message
+         FROM member_work_runs r JOIN member_workflows w ON w.id=r.workflow_id
+         LEFT JOIN threads t ON t.tenant_id=w.tenant_id AND t.account_id=w.account_id AND t.id=w.thread_id
+         WHERE r.id=?1 AND w.tenant_id=?2 AND w.account_id=?3 AND w.volume_id=?4 AND w.generation=?5",
+    )?;
+    let mut rows = stmt.query(params![
+        id,
+        owner.tenant.to_string(),
+        owner.account.to_string(),
+        owner.volume.to_string(),
+        owner.generation as i64
+    ])?;
+    let row = rows.next()?.ok_or(StoreError::NotFound)?;
+    let scope = match row.get::<_, String>(1)?.as_str() {
+        "memory" => WorkScope::Memory,
+        "conversation" => WorkScope::Conversation,
+        _ => return Err(StoreError::Corrupt),
+    };
+    let raw: String = row.get(2)?;
+    Ok(RunEvidence {
+        query: row.get(0)?,
+        message: row.get(7)?,
+        scope,
+        sources: serde_json::from_str(&raw).map_err(|_| StoreError::Corrupt)?,
+        limited: row.get(3)?,
+        thread_title: row.get(4)?,
+        searched_at: row.get(5)?,
+        finished_at: row.get(6)?,
+    })
+}
+
+fn preview_text(scope: &WorkScope, count: usize, snippet: Option<&str>) -> String {
+    let summary = format!("{} {count}건 확인", label(scope));
+    match snippet {
+        Some(text) => format!("{summary} · {text}"),
+        None => summary,
+    }
+}
+
+pub(super) fn preview(connection: &Connection, owner: VolumeOwner, id: &str) -> Result<String> {
+    let evidence = run_evidence(connection, owner, id)?;
+    let mut snippet = None;
+    for source in &evidence.sources {
+        if let Some((_, body)) = read_source(connection, owner, &evidence.scope, source)? {
+            snippet = Some(excerpt(&body, &evidence.query, 110));
+            break;
+        }
+    }
+    Ok(preview_text(
+        &evidence.scope,
+        evidence.sources.len(),
+        snippet.as_deref(),
+    ))
+}
+
 pub(super) fn detail(
     connection: &Connection,
     owner: VolumeOwner,
-    task: moosuri_core::personal_browser::TaskSummary,
+    mut task: moosuri_core::personal_browser::TaskSummary,
 ) -> Result<moosuri_core::personal_browser::TaskDetail> {
-    let (query,scope,raw,limited,due,thread_title,searched_at,finished_at):(String,String,String,bool,Option<i64>,Option<String>,i64,i64)=connection.query_row("SELECT w.query,w.scope,r.sources,r.limited,r.due_at,t.title,r.searched_at,r.finished_at FROM member_work_runs r
-        JOIN member_workflows w ON w.id=r.workflow_id LEFT JOIN threads t ON t.tenant_id=w.tenant_id AND t.id=w.thread_id
-        WHERE r.id=?1 AND w.tenant_id=?2 AND w.account_id=?3 AND w.volume_id=?4 AND w.generation=?5",
-        params![task.id,owner.tenant.to_string(),owner.account.to_string(),owner.volume.to_string(),owner.generation as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?)))?;
-    let scope = if scope == "memory" {
-        WorkScope::Memory
-    } else {
-        WorkScope::Conversation
-    };
-    let sources: Vec<SourceRef> = serde_json::from_str(&raw).map_err(|_| StoreError::Corrupt)?;
+    let RunEvidence {
+        query,
+        message,
+        scope,
+        sources,
+        limited,
+        thread_title,
+        searched_at,
+        finished_at,
+    } = run_evidence(connection, owner, &task.id)?;
     let event = |state: &str, at: i64, title: String, detail: String| TaskEvent {
         state: state.into(),
         at: Some(at),
@@ -407,7 +475,7 @@ pub(super) fn detail(
         event(
             "starting",
             task.created_at,
-            if due.is_some() {
+            if task.scheduled_at.is_some() {
                 "예약 실행 시작".into()
             } else {
                 "조사 시작".into()
@@ -430,12 +498,17 @@ pub(super) fn detail(
         ),
     ];
     let mut findings = Vec::new();
+    let mut first_snippet = None;
     for (i, source) in sources.iter().enumerate() {
         let current = read_source(connection, owner, &scope, source)?;
         if let Some((title, body)) = &current
             && findings.len() < 3
         {
-            findings.push(format!("• {title} — {}", excerpt(body, &query, 110)));
+            let snippet = excerpt(body, &query, 110);
+            if findings.is_empty() {
+                first_snippet = Some(snippet.clone());
+            }
+            findings.push(format!("• {title} — {snippet}"));
         }
         let (title, text) = current.unwrap_or_else(|| {
             (
@@ -450,6 +523,11 @@ pub(super) fn detail(
             excerpt(&text, &query, 4096),
         ));
     }
+    task.preview = Some(preview_text(
+        &scope,
+        sources.len(),
+        first_snippet.as_deref(),
+    ));
     let mut result = format!(
         "검색어 ‘{query}’에 해당하는 {} {}건을 확인했습니다.{}",
         label(&scope),
@@ -472,7 +550,7 @@ pub(super) fn detail(
     ));
     Ok(moosuri_core::personal_browser::TaskDetail {
         task,
-        request: query,
+        request: message.unwrap_or_else(|| format!("내 {}에서 ‘{query}’ 검색", label(&scope))),
         thread_title: thread_title.unwrap_or_default(),
         reason: None,
         history,

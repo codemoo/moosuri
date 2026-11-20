@@ -61,6 +61,9 @@ pub struct TaskSummary {
     pub kind: String,
     #[serde(default)]
     pub preview: Option<String>,
+    /// Scheduled slot of this occurrence, even when the timer caught up later.
+    #[serde(default)]
+    pub scheduled_at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]

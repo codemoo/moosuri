@@ -95,6 +95,7 @@ it("explicit import reveals inert editable text, explicit insertion appends late
   expect(screen.queryByRole("textbox", { name: "공유 글 편집" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "이 계정의 초안으로 가져오기" }));
   const shared = await screen.findByRole("textbox", { name: "공유 글 편집" });
+  await waitFor(() => expect(shared).toBeEnabled());
   expect((shared as HTMLTextAreaElement).value).toContain("<script>inert()</script>");
   expect(document.querySelectorAll("script")).toHaveLength(0);
   expect(screen.queryByRole("link")).not.toBeInTheDocument();

@@ -6,7 +6,7 @@ import { browserStateLabel, type PersonalBrowserState } from "./personal-browser
 type TaskState = PersonalBrowserState | "queued" | "running" | "failed" | "cancelled" | "incomplete" | "refused" | "awaiting_consent" | "dispatched" | "withdrawn" | "unknown";
 export type TaskSummary = {
   id: string; thread_id: string; title: string; state: TaskState; kind?: "text" | "browser" | "research" | "gmail"; preview?: string | null;
-  next_actor: "assistant" | "member" | "none"; created_at: number;
+  next_actor: "assistant" | "member" | "none"; created_at: number; scheduled_at?: number | null;
 };
 export type TaskPage = { items: TaskSummary[]; next_before: string | null; schedules?: WorkSchedule[] };
 export type TaskDetail = {
@@ -60,7 +60,17 @@ const reasons: Record<string, string> = {
   new_guidance: "추가로 받은 지시가 있습니다.",
   controller_expired: "직접 조작 시간이 끝났습니다.",
 };
-const actorLabel = { assistant: "어시스턴트 진행", member: "내 확인 필요", none: "종료" };
+const actorLabel = { assistant: "어시스턴트 진행", member: "내 확인 필요", none: "" };
+function taskOrigin(task: TaskSummary) {
+  switch (task.kind) {
+    case "research":
+      if (task.scheduled_at != null) return "예약 실행";
+      return task.thread_id ? "대화에서 실행" : "직접 실행";
+    case "text": return "대화 답변";
+    case "gmail": return "Gmail 조회";
+    default: return "브라우저";
+  }
+}
 
 function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: Props & {
   taskId: string; onTask: (task: TaskSummary) => void;
@@ -107,7 +117,7 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: 
     selected.state==="completed" ? detail.result : (isBrowser ? nextStep[selected.state as PersonalBrowserState] : null)) ?? stateLabel(detail.task,selected.state));
   return <section className="personal-tasks task-reader" aria-label="맡긴 일 상세">
     <button className="task-back" type="button" onClick={onBack}>맡긴 일 목록</button>
-    {detail && <div className="task-meta"><span className="task-state">{stateLabel(detail.task)}</span><TaskTime at={detail.task.created_at} /></div>}
+    {detail && <div className="task-meta"><span className="task-state">{stateLabel(detail.task)}</span> · {taskOrigin(detail.task)}<TaskTime at={detail.task.created_at} /></div>}
     <h2>{detail?.task.title || "작업 상세"}</h2>
     {issue && <p role="alert">{issue}</p>}
     {!detail && loading && <p role="status">작업을 불러오는 중…</p>}
@@ -116,6 +126,7 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: 
       {detail.reason && reasons[detail.reason] && <p>{reasons[detail.reason]}</p>}
       <div className="task-receipt">
         <h3>요청 내용</h3><p className="task-result">{detail.request}</p>
+        {detail.task.scheduled_at != null && <><h3>예약 회차</h3><TaskTime at={detail.task.scheduled_at}/></>}
         {detail.result && <><h3>작업 결과</h3><p className="task-result">{detail.result}</p></>}
         {detail.observation && <><h3>확인한 내용</h3><p className="task-result">{detail.observation}</p></>}
       </div>
@@ -209,13 +220,13 @@ function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & 
   return <section ref={listRoot} className="personal-tasks" aria-label="맡긴 일 목록">
     <div className="task-heading"><h2>맡긴 일</h2><button type="button" disabled={loading} onClick={() => { void read(null); }}>목록 새로고침</button></div>
     <PersonalWorkflows schedules={schedules} getScope={()=>current.current} onChanged={()=>read(null)} onOpen={openTask} onExpired={onExpired}/>
-    {Array.from(groups,([day,items])=><div className="task-day" key={day}><h3>{day}</h3><ul className="task-list">{items.map(task=>
+    {Array.from(groups,([day,items])=><details className="task-day" key={day} open><summary><h3>{day}</h3></summary><ul className="task-list">{items.map(task=>
       <li key={task.id}><button className="task-row" data-task-id={task.id} type="button" onClick={() => openTask(task.id)}>
         <span className="task-marker" aria-hidden="true">{task.state==="completed"?"✓":"•"}</span>
         <span className="task-row-copy"><strong>{task.title}</strong>{task.preview && <span className="task-preview">{task.preview}</span>}
-        <span className="task-meta">{stateLabel(task)} · {actorLabel[task.next_actor]}</span></span>
+        <span className="task-meta">{[taskOrigin(task), stateLabel(task), actorLabel[task.next_actor]].filter(Boolean).join(" · ")}</span></span>
         <time dateTime={new Date(task.created_at*1000).toISOString()}>{shortTime.format(task.created_at*1000)}</time>
-      </button></li>)}</ul></div>)}
+      </button></li>)}</ul></details>)}
     {issue && <p role="alert">작업 목록을 불러오지 못했습니다.</p>}
     {!issue && loaded && rows.length === 0 && <p>아직 맡긴 일이 없습니다.</p>}
     {loading && <p role="status">작업 목록을 불러오는 중…</p>}

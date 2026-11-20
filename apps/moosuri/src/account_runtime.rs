@@ -302,6 +302,16 @@ async fn serve_member(
     let listener = UnixListener::bind(socket).map_err(|_| "socket_bind_failed")?;
     std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))
         .map_err(|_| "socket_permissions_failed")?;
+    // Inside Kiri /ipc is the member's bind mount under the image's root.
+    // On a shared host it is the direct member subdirectory of the gateway's IPC root.
+    let gateway_uid = std::fs::metadata(parent.parent().ok_or("invalid_ipc_root")?)
+        .map_err(|_| "invalid_ipc_root")?
+        .uid();
+    let extensions = extensions.merge(moosuri_server::personal_tasks::timer_routes(
+        store.clone(),
+        owner,
+        gateway_uid,
+    ));
     let ready = axum::routing::get(move || async move {
         (
             axum::http::StatusCode::NO_CONTENT,
@@ -321,7 +331,8 @@ async fn serve_member(
             preview.map(|options| (owner, options)),
             extensions,
         )
-        .route("/health/ready", ready),
+        .route("/health/ready", ready)
+        .into_make_service_with_connect_info::<moosuri_server::personal_tasks::MemberPeer>(),
     )
     .await
     .map_err(|_| "personal_service_stopped".into())

@@ -230,12 +230,12 @@ The member workspace SHALL show dated work receipts for text, browser, thread-bo
 #### Scenario: Reopen research from a conversation
 
 - **WHEN** a member asks for an explicit search of their own memories or previous text conversations
-- **THEN** one task and one original chat turn identify the same request after a retry, and selecting a source step opens the evidence that is still available.
+- **THEN** one task and one original chat turn identify the same request after a retry. The dated list distinguishes chat, manual and scheduled research, previews the first source still available, and opens its original request and individual evidence steps.
 
 #### Scenario: Run independently of an open browser
 
 - **WHEN** the installation admits an active member’s due schedule, including after an offline interval
-- **THEN** the member checks the pinned epochs and generation, records one occurrence for the latest due slot, and advances its next due time in the same transaction.
+- **THEN** the member checks the gateway's Unix peer identity and the pinned epochs and generation, records one occurrence for the latest due slot, and advances its next due time in the same transaction. Its detail shows both the due slot and the actual execution time.
 
 #### Scenario: Withdraw a source or a grant
 

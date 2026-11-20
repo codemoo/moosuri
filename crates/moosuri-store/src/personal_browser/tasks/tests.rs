@@ -360,6 +360,7 @@ fn research(id: Uuid, period: i64) -> moosuri_core::personal_browser::WorkReques
 
 #[tokio::test]
 async fn workflow_research_reads_sources_replays_one_chat_turn_and_withdraws_forgotten_text() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
     let Member {
         root: _root,
         store,
@@ -403,6 +404,7 @@ async fn workflow_research_reads_sources_replays_one_chat_turn_and_withdraws_for
         .await
         .unwrap();
     assert_eq!(detail.task.thread_id, scope.thread);
+    assert_eq!(detail.request, "기억에서 수첩 찾아줘");
     assert_eq!(
         detail
             .history
@@ -412,6 +414,11 @@ async fn workflow_research_reads_sources_replays_one_chat_turn_and_withdraws_for
         ["starting", "searched", "source_read", "completed"]
     );
     assert_eq!(detail.history[2].detail.as_deref(), Some("합성 파란 표지"));
+    assert_eq!(
+        detail.task.preview.as_deref(),
+        Some("기억 1건 확인 · 합성 파란 표지")
+    );
+    assert!(detail.task.scheduled_at.is_none());
     assert!(detail.history.windows(2).all(|w| w[0].at <= w[1].at));
     let mut changed = request();
     changed.query = "바뀜".into();
@@ -421,15 +428,12 @@ async fn workflow_research_reads_sources_replays_one_chat_turn_and_withdraws_for
             .await,
         Err(StoreError::Conflict)
     ));
-    assert_eq!(
-        store
-            .personal_task_page(scope.owner, user.clone(), None)
-            .await
-            .unwrap()
-            .items
-            .len(),
-        1
-    );
+    let page = store
+        .personal_task_page(scope.owner, user.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].preview, detail.task.preview);
     store
         .forget_memory(user, memory.id, memory.revision)
         .await
@@ -450,6 +454,75 @@ async fn workflow_research_reads_sources_replays_one_chat_turn_and_withdraws_for
             .unwrap()
             .contains("더 이상 볼 수 없습니다")
     );
+    let page = store
+        .personal_task_page(scope.owner, user.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].preview.as_deref(), Some("기억 1건 확인"));
+    assert_eq!(after.task.preview, page.items[0].preview);
+}
+
+#[tokio::test]
+async fn workflow_preview_uses_the_next_visible_source_after_one_is_forgotten() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let Member {
+        store,
+        scope,
+        root: _root,
+    } = member().await;
+    let user = &scope.user;
+    let mut memories = Vec::new();
+    for color in ["초록", "파랑"] {
+        let memory = store
+            .create_memory(
+                user,
+                Uuid::new_v4().to_string(),
+                moosuri_core::MemoryDraft {
+                    subject: format!("{color} 수첩"),
+                    text: format!("{color} 표지"),
+                    speaker: None,
+                    evidence: vec![],
+                    valid_from: None,
+                    valid_until: None,
+                },
+            )
+            .await
+            .unwrap();
+        memories.push((color, memory));
+    }
+    let run = store
+        .create_member_workflow(scope.owner, user.clone(), 1, research(Uuid::new_v4(), 0))
+        .await
+        .unwrap()
+        .run_id
+        .unwrap()
+        .parse()
+        .unwrap();
+    let before = store
+        .personal_task_detail(scope.owner, user.clone(), run)
+        .await
+        .unwrap();
+    let first = before.task.preview.unwrap();
+    let position = memories
+        .iter()
+        .position(|(color, _)| first.contains(*color))
+        .unwrap();
+    let (_, forgotten) = memories.remove(position);
+    store
+        .forget_memory(user, forgotten.id, forgotten.revision)
+        .await
+        .unwrap();
+    let expected = format!("기억 2건 확인 · {} 표지", memories[0].0);
+    let page = store
+        .personal_task_page(scope.owner, user.clone(), None)
+        .await
+        .unwrap();
+    let detail = store
+        .personal_task_detail(scope.owner, user.clone(), run)
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].preview.as_deref(), Some(expected.as_str()));
+    assert_eq!(page.items[0].preview, detail.task.preview);
 }
 
 async fn due(store: &Store, id: Uuid) {
@@ -466,6 +539,7 @@ async fn due(store: &Store, id: Uuid) {
 }
 #[tokio::test]
 async fn workflow_due_coalesces_once_across_concurrent_ticks_and_reopen() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
     let Member { root, store, scope } = member().await;
     let key = Uuid::new_v4();
     store
@@ -483,6 +557,8 @@ async fn workflow_due_coalesces_once_across_concurrent_ticks_and_reopen() {
         .await
         .unwrap();
     assert_eq!(first.items.len(), 1);
+    assert!(first.items[0].scheduled_at.is_some());
+    assert_eq!(first.items[0].preview.as_deref(), Some("기억 0건 확인"));
     assert!(first.schedules[0].next_due.unwrap() > now().unwrap());
     drop(store);
     let store = scope
@@ -499,12 +575,14 @@ async fn workflow_due_coalesces_once_across_concurrent_ticks_and_reopen() {
         .await
         .unwrap();
     assert_eq!(saved.history[0].title.as_deref(), Some("예약 실행 시작"));
+    assert_eq!(saved.request, "내 기억에서 ‘수첩’ 검색");
     assert!(saved.result.unwrap().contains("0건"));
 }
 
 #[tokio::test]
 async fn workflow_schedule_pause_resume_manual_retry_and_retirement_keep_prior_receipts() {
     use moosuri_core::personal_browser::WorkAction;
+    let _guard = crate::tests::TEST_LOCK.lock().await;
     let Member {
         root: _root,
         store,
@@ -557,6 +635,18 @@ async fn workflow_schedule_pause_resume_manual_retry_and_retirement_keep_prior_r
         .unwrap();
     let page = store.personal_task_page(o, u.clone(), None).await.unwrap();
     assert_eq!(page.items.len(), 2);
+    assert_eq!(
+        page.items
+            .iter()
+            .filter(|r| r.scheduled_at.is_some())
+            .count(),
+        1
+    );
+    assert!(
+        page.items
+            .iter()
+            .any(|r| Some(&r.id) == receipt.run_id.as_ref() && r.scheduled_at.is_none())
+    );
     assert!(page.schedules.is_empty());
     assert!(matches!(
         store
@@ -568,6 +658,7 @@ async fn workflow_schedule_pause_resume_manual_retry_and_retirement_keep_prior_r
 
 #[tokio::test]
 async fn workflow_registry_epoch_generation_and_restored_grants_fence_due_research() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
     let Member {
         root: _root,
         store,

@@ -1401,7 +1401,7 @@ async fn personal_source_envelope_rejects_mission_record_and_corrupted_decided_e
     ] {
         let (_d, s, u) = setup().await;
         let text = "Synthetic task pause resume cancel steer every day at 09:00";
-        let (_, l) = source(&s, &u, text, None).await;
+        s.set_default_model(&u, None).await.unwrap();
         let login = s
             .begin_subscription_login(&u, None, "Synthetic metadata guard".into())
             .await
@@ -1420,28 +1420,33 @@ async fn personal_source_envelope_rejects_mission_record_and_corrupted_decided_e
             ..b
         };
         s.record_subscription_probe(&u, b.clone()).await.unwrap();
-        s.record_subscription_tool_probe(&u, b.clone())
-            .await
-            .unwrap();
+        let choice = s.record_subscription_tool_probe(&u, b).await.unwrap();
+        s.set_model_preference(
+            &u,
+            Some(moosuri_core::ModelSelection {
+                source: choice.source,
+                provider_id: choice.provider_id,
+                provider_revision: choice.provider_revision,
+                model: choice.model,
+                effort: choice.effort,
+            }),
+        )
+        .await
+        .unwrap();
+        let (_, l) = source(&s, &u, text, None).await;
         let lease = l.clone();
         s.call(move |db| {
-            let raw: String = db.conn.query_row(
-                "SELECT model FROM chat_runs WHERE tenant_id=?1 AND id=?2",
-                params![lease.tenant, lease.run],
-                |r| r.get(0),
-            )?;
-            let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
-            v["source"] = serde_json::json!("personal_chat_gpt");
-            v["provider_id"] = serde_json::json!(b.id);
-            v["provider_revision"] = serde_json::json!(b.revision);
+            // A legacy personal run had a Calendar-only envelope and no mission flag.
             db.conn.execute(
-                "UPDATE chat_runs SET model=?3 WHERE tenant_id=?1 AND id=?2",
-                params![lease.tenant, lease.run, encode(&v)?],
+                "UPDATE chat_runs SET model=json_remove(model, '$.mission_commands_enabled') WHERE tenant_id=?1 AND id=?2",
+                params![lease.tenant, lease.run],
             )?;
             Ok(())
         })
         .await
         .unwrap();
+        let planning = s.mission_chat_planning(&l).await.unwrap().unwrap();
+        assert!(planning.calendar_only);
         let mut d = decision(text, false);
         d.action = Some(action.into());
         if action != "create_now" {

@@ -290,6 +290,49 @@ async fn honest_briefing_filters_lifecycle_mute_and_snooze_and_safe_exports_are_
             .iter()
             .any(|r| ["request 0", "request 2", "request 3"].contains(&r.title.as_str()))
     );
+    // Only one part of the subject's reply arrived. The newer open obligation
+    // replaces its old revision in the briefing until the last part is resolved.
+    let waiting = &p.items[0];
+    let mut edit = new("Received the price; still awaiting the delivery date.");
+    edit.id = Some(waiting.id.clone());
+    edit.expected_revision = Some(waiting.revision);
+    edit.draft.title = "Delivery date pending".into();
+    edit.draft.payload = ArtifactPayload::Followup {
+        record_kind: FollowupKind::WaitingForReply,
+        person: "Reported label".into(),
+        lifecycle: FollowupLifecycle::Waiting,
+        progress: FollowupProgress::Partial,
+        muted: false,
+        due: Some(ArtifactDate {
+            utc: now().unwrap() + 3600,
+            timezone: "UTC".into(),
+        }),
+        review: None,
+        snooze: None,
+    };
+    let updated = store.write_artifact(&u, edit.clone()).await.unwrap();
+    let current = store.followup_briefing(&u, None).await.unwrap();
+    let retained: Vec<_> = current
+        .items
+        .iter()
+        .filter(|item| item.id == waiting.id)
+        .collect();
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].revision, updated.revision);
+    let current_body = store
+        .export_artifact(&u, waiting.id.clone(), updated.revision, false)
+        .await
+        .unwrap();
+    assert!(current_body.contains("still awaiting the delivery date"));
+    let ArtifactPayload::Followup { lifecycle, .. } = &mut edit.draft.payload else {
+        unreachable!()
+    };
+    *lifecycle = FollowupLifecycle::Resolved;
+    edit.request_id = Uuid::new_v4().to_string();
+    edit.expected_revision = Some(updated.revision);
+    store.write_artifact(&u, edit).await.unwrap();
+    let closed = store.followup_briefing(&u, None).await.unwrap();
+    assert!(closed.items.iter().all(|item| item.id != waiting.id));
     let x=store.write_artifact(&u,new("<script>alert(1)</script> ![x](https://private.invalid/x) [go](javascript:bad) <img onerror=bad>" )).await.unwrap();
     let html = store.export_artifact(&u, x.id, 1, true).await.unwrap();
     assert!(!html.contains("<script>"));

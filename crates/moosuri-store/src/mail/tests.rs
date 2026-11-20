@@ -1301,8 +1301,21 @@ async fn scheduled_mail_account_grant_connection_source_and_cancel_fences() {
                 _=>(),
             }Ok(())
         }).await.unwrap();
-        let dispatch = store.next_mail_dispatch().await.unwrap();
-        assert!(dispatch.is_none(), "mode {mode}");
+        if mode == "expired" {
+            drop(store);
+            let reopened = Store::open(dir.path()).unwrap();
+            assert!(reopened.next_mail_dispatch().await.unwrap().is_none());
+            let receipt = reopened.mail_actions(&a.user).await.unwrap().remove(0);
+            assert_eq!(receipt.id, s.id);
+            assert_eq!(receipt.state, "expired");
+            assert!(receipt.content.is_none());
+            assert!(reopened.next_mail_dispatch().await.unwrap().is_none());
+        } else {
+            assert!(
+                store.next_mail_dispatch().await.unwrap().is_none(),
+                "mode {mode}"
+            );
+        }
     }
 }
 

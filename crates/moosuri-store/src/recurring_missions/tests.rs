@@ -225,6 +225,10 @@ async fn recurring_uses_current_model_on_its_authorized_connection_and_rebinds_o
 }
 
 async fn exact(s: &Store, call_id: &str) -> String {
+    exact_report(s, call_id, "Exact total: 0.3").await
+}
+
+async fn exact_report(s: &Store, call_id: &str, text: &str) -> String {
     let claim = s.claim_agent_run().await.unwrap().unwrap();
     let ctx = s.agent_context(&claim.lease).await.unwrap();
     let step = s
@@ -272,7 +276,7 @@ async fn exact(s: &Store, call_id: &str) -> String {
         s.mission_verify(
             &final_step,
             MissionCandidate {
-                text: "Exact total: 0.3".into(),
+                text: text.into(),
                 evidence: vec![MissionEvidence {
                     step: step.step(),
                     call_id: call_id.into()
@@ -518,8 +522,17 @@ async fn recurring_exact_comparison_preserves_history_and_never_hides_failure_or
     );
     assert!(s.recurring_missions(&u).await.unwrap()[0].recent[0].exact_unchanged);
     assert_eq!(s.missions(&u).await.unwrap().len(), 2);
-    // Unknown dispatch is a truthful terminal state, never an exact-comparison match.
+    // With the same verified decimal but a changed published report, notify again.
     assert_eq!(due(&s, at + 120).await, 1);
+    exact_report(&s, "changed-report", "Updated exact total: 0.3").await;
+    s.poll_recurring_missions_at(at + 120).await.unwrap();
+    assert_eq!(
+        s.notifications(&u, None, false).await.unwrap().items.len(),
+        2
+    );
+    assert!(!s.recurring_missions(&u).await.unwrap()[0].recent[0].exact_unchanged);
+    // Unknown dispatch is a truthful terminal state, never an exact-comparison match.
+    assert_eq!(due(&s, at + 180).await, 1);
     let claim = s.claim_agent_run().await.unwrap().unwrap();
     let ctx = s.agent_context(&claim.lease).await.unwrap();
     let _step = s
@@ -532,10 +545,10 @@ async fn recurring_exact_comparison_preserves_history_and_never_hides_failure_or
     })
     .await
     .unwrap();
-    s.poll_recurring_missions_at(at + 120).await.unwrap();
+    s.poll_recurring_missions_at(at + 180).await.unwrap();
     assert_eq!(
         s.notifications(&u, None, false).await.unwrap().items.len(),
-        2
+        3
     );
     assert_eq!(
         s.recurring_missions(&u).await.unwrap()[0].recent[0].state,
@@ -544,12 +557,12 @@ async fn recurring_exact_comparison_preserves_history_and_never_hides_failure_or
     // Withdrawn achieved baseline cannot be used as a cache to revive or suppress later evidence.
     let sid = saved.schedule.id;
     s.call(move|db|{db.conn.execute("UPDATE missions SET state='quarantined',candidate=NULL WHERE id IN(SELECT mission_id FROM recurring_mission_occurrences WHERE schedule_id=?1)",[sid])?;Ok(())}).await.unwrap();
-    assert_eq!(due(&s, at + 180).await, 1);
+    assert_eq!(due(&s, at + 240).await, 1);
     exact(&s, "dispatch-C").await;
-    s.poll_recurring_missions_at(at + 180).await.unwrap();
+    s.poll_recurring_missions_at(at + 240).await.unwrap();
     assert_eq!(
         s.notifications(&u, None, false).await.unwrap().items.len(),
-        3
+        4
     );
 }
 #[tokio::test]

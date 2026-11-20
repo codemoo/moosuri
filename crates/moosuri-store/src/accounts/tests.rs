@@ -682,3 +682,63 @@ async fn cleanup_failure_is_pending_while_access_stays_revoked_and_exact_retry_f
             .local_complete
     );
 }
+
+#[tokio::test]
+async fn assistant_password_reset_preserves_the_members_separate_vault_password() {
+    use moosuri_vault_core::{
+        ActiveVault, Binding, Error, OsEntropy, PendingVault, RecoveryKey, SecretText,
+        StorageReceipt,
+    };
+    let _guard = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let operator = admin(&store).await.user;
+    let owner = member(&store, &operator, "vault-owner@example.test")
+        .await
+        .user;
+    let binding = Binding {
+        owner_id: owner.account.id.parse().unwrap(),
+        tenant_id: owner.tenant.0.parse().unwrap(),
+        vault_id: Uuid::new_v4(),
+    };
+    let password = SecretText::new("independent synthetic vault password".into()).unwrap();
+    let mut pending = PendingVault::prepare(binding, &password, &mut OsEntropy).unwrap();
+    let recovery = RecoveryKey::parse(&pending.recovery().expose_encoded()).unwrap();
+    pending.verify_recovery(&recovery).unwrap();
+    let (id, digest) = pending.candidate().unwrap();
+    pending
+        .confirm_commit(StorageReceipt::from_verified_storage(id, digest))
+        .unwrap();
+    let header = pending.activate().unwrap().committed_header();
+
+    let revision = current(&store, &operator, &owner.account.id).await.revision;
+    let reset = apply(
+        &store,
+        &operator,
+        &owner.account.id,
+        input(revision, AccountManagementAction::ResetPassword),
+    )
+    .await
+    .unwrap();
+    let temporary = reset.temporary_password.unwrap();
+    let signed_in = store
+        .login("vault-owner@example.test".into(), temporary.to_string())
+        .await
+        .unwrap();
+    assert!(signed_in.user.password_change_required());
+    let new_login = SecretText::new("replacement synthetic assistant password".into()).unwrap();
+    let changed = store
+        .change_password(&signed_in.user, new_login.expose().into())
+        .await
+        .unwrap();
+    assert_eq!(changed.user.account.id, owner.account.id);
+    assert!(!changed.user.password_change_required());
+    let temporary = SecretText::new(temporary.to_string()).unwrap();
+    for login_password in [&temporary, &new_login] {
+        assert!(matches!(
+            ActiveVault::unlock_password(header.clone(), binding, login_password),
+            Err(Error::Authentication)
+        ));
+    }
+    assert!(ActiveVault::unlock_password(header, binding, &password).is_ok());
+}

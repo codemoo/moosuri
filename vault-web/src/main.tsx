@@ -117,6 +117,8 @@ function App(){
     if(field==="code"){
       for(let attempt=0;attempt<2;attempt++){
         const value=await run<{code:string;valid_until:number}>({op:"totp",item:selected});
+        if(epoch!==generation.current)return;
+        if(Date.now()>=value.valid_until*1000)continue;
         await navigator.clipboard.writeText(value.code);
         if(epoch!==generation.current)return;
         if(Date.now()<value.valid_until*1000){setNotice("현재 인증 코드를 복사했습니다.");return}
@@ -124,6 +126,7 @@ function App(){
       setNotice("코드가 갱신되었습니다. 다시 복사해 주세요.");
     }else{
       const value=await run<string>({op:"reveal",item:selected,field});
+      if(epoch!==generation.current)return;
       await navigator.clipboard.writeText(value);
       if(epoch===generation.current)setNotice("복사했습니다. 클립보드에는 기기 설정에 따라 남을 수 있습니다.");
     }

@@ -1265,7 +1265,7 @@ mod tests {
         );
         assert!(!f.output.exists());
         edit(&f, |c| {
-            c.execute_batch("PRAGMA user_version=88;").unwrap();
+            c.execute_batch("PRAGMA user_version=999;").unwrap();
         });
         assert!(
             extract(&root(), &f.source, &f.output, &owner())

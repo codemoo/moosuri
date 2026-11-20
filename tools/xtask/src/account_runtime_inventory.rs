@@ -961,7 +961,7 @@ mod tests {
         let dir = Scratch::new();
         assert!(snapshot_files(&dir.0, &artifact_manifest(&root()).unwrap()).is_err());
         assert!(
-            load(&root(), 88)
+            load(&root(), 999)
                 .unwrap_err()
                 .contains("unsupported inventory schema")
         );

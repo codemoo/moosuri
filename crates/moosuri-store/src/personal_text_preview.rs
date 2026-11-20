@@ -317,7 +317,8 @@ impl Store {
                     && r.effort == run.model.effort
                     && r.output
                         .as_ref()
-                        .is_some_and(|s| !s.is_empty() && s.len() <= 64 * 1024)
+                        .is_some_and(|text| text.len() <= 64 * 1024
+                            && (!text.is_empty() || r.outcome.as_deref() == Some("incomplete")))
                     && r.receipt.as_ref().is_some_and(|r| r.state == "settled" && r.valid())
                     && matches!(
                         r.outcome.as_deref(),
@@ -716,6 +717,43 @@ mod tests {
         assert!(s.settle_text_preview(work, Some(response)).await.is_err());
         assert!(s.conversation(&u, t, None).await.is_err());
     }
+    #[tokio::test]
+    async fn settled_incomplete_without_visible_text_keeps_the_confirmed_terminal_state() {
+        let _guard = TEST_LOCK.lock().await;
+        let (_dir, store, user, owner, thread, pin) = setup().await;
+        for (outcome, expected) in [
+            ("incomplete", RunState::Incomplete),
+            ("refused", RunState::OutcomeUnknown),
+            ("continuation_required", RunState::OutcomeUnknown),
+            ("completed", RunState::OutcomeUnknown),
+        ] {
+            let Admission::Fresh(work) = store
+                .begin_text_preview(
+                    &user,
+                    owner,
+                    thread.clone(),
+                    Uuid::new_v4().to_string(),
+                    "Synthetic empty reply".into(),
+                    pin.clone(),
+                )
+                .await
+                .unwrap()
+            else {
+                panic!()
+            };
+            let mut response: serde_json::Value =
+                serde_json::from_slice(&reply(&work, outcome)).unwrap();
+            response["output"] = serde_json::json!("");
+            let turn = store
+                .settle_text_preview(work, Some(serde_json::to_vec(&response).unwrap()))
+                .await
+                .unwrap();
+            assert_eq!(turn.run.state, expected);
+            assert!(turn.assistant.is_empty());
+            assert!(!turn.run.can_retry);
+        }
+    }
+
     #[tokio::test]
     async fn restore_before_admission_preserves_broker_call_identity_and_partial_outcomes() {
         let _g = TEST_LOCK.lock().await;

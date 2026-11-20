@@ -1342,7 +1342,8 @@ function stateLabel(turn: ChatTurn) {
     completed: "답변 완료",
     failed: "응답 실패",
     cancelled: "취소됨",
-    incomplete: "일부 응답 · 자동 재시도 없음",
+    incomplete: turn.assistant.some(message => message.text.length > 0)
+      ? "일부 응답 · 자동 재시도 없음" : "답변 미완료 · 표시할 본문 없음",
     refused: "응답 거절",
     outcome_unknown: "응답 확인 불가 · 자동 재시도 없음",
   }[turn.run.state];

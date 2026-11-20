@@ -2,7 +2,10 @@
 
 Search is literal and owner scoped. It scans the newest4096 eligible earlier
 successful runs and returns at most five role-labelled240-character snippet pairs.
-The scope is current_thread or explicitly owned_conversations. Oversized turns are
+The scope is current_thread or explicitly owned_conversations. Among turns containing
+the literal search phrase, overlap with up to 16 other words in the current
+question ranks relevant names and qualifiers first. Recency breaks ties. Only the
+returned turns receive discovery pins. Oversized turns are
 omitted; truncated and scanned_limit prevent completeness claims. Read accepts one
 actual search-discovered ID/revision for this consuming run; inherited revocation
 pins cannot authorize a read. Whole user/assistant content is bounded to10KiB text

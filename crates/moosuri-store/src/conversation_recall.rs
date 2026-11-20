@@ -6,6 +6,7 @@ use moosuri_core::{
     HistoricalRole,
 };
 const SCAN: usize = 4096;
+const MAX_HITS: usize = 5;
 const WHOLE_BYTES: usize = 10 * 1024;
 fn enabled(r: &Run) -> bool {
     r.tool_profile
@@ -117,9 +118,19 @@ pub(crate) fn search(
     }
     let ids=c.prepare("SELECT p.id FROM chat_runs p JOIN threads t ON t.tenant_id=p.tenant_id AND t.id=p.thread_id WHERE p.tenant_id=?1 AND p.account_id=?2 AND p.rowid<(SELECT rowid FROM chat_runs WHERE tenant_id=?1 AND id=?3) AND p.created_at<=?4 AND p.state='completed' AND (?5=1 OR p.thread_id=?6) AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=p.tenant_id AND a.run_id=p.id AND a.invalidated=1) ORDER BY p.rowid DESC LIMIT 4097")?.query_map(params![r.tenant,r.account,r.id,r.created,matches!(scope,ConversationScope::OwnedConversations),r.thread],|v|v.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     let scanned_limit = ids.len() > SCAN;
-    let mut hits = Vec::new();
+    let mut ranked: Vec<(usize, Run, ConversationHit)> = Vec::new();
     let mut truncated = scanned_limit;
     let query = query.trim().to_lowercase();
+    let question = r.text.to_lowercase();
+    let mut context = Vec::new();
+    for word in question.split(|c: char| !c.is_alphanumeric()) {
+        if word.chars().nth(1).is_some() && !query.contains(word) && !context.contains(&word) {
+            context.push(word);
+            if context.len() == 16 {
+                break;
+            }
+        }
+    }
     for id in ids.into_iter().take(SCAN) {
         let Some(source) = eligible(c, r, &id)? else {
             continue;
@@ -136,14 +147,26 @@ pub(crate) fn search(
             .map(|m| m.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        if !source.text.to_lowercase().contains(&query)
-            && !assistant.to_lowercase().contains(&query)
-        {
+        let user_text = source.text.to_lowercase();
+        let assistant_text = assistant.to_lowercase();
+        if !user_text.contains(&query) && !assistant_text.contains(&query) {
             continue;
         }
-        if hits.len() == 5 {
+        let score = context
+            .iter()
+            .filter(|&&term| user_text.contains(term) || assistant_text.contains(term))
+            .count();
+        // Candidates arrive newest first. Equal scores retain that order.
+        let index = ranked.partition_point(|(previous, _, _)| *previous >= score);
+        if ranked.len() == MAX_HITS {
             truncated = true;
-            break;
+            if ranked[MAX_HITS - 1].0 == context.len() {
+                break;
+            }
+            if index == MAX_HITS {
+                continue;
+            }
+            ranked.pop();
         }
         let hit = ConversationHit {
             turn_id: source.id.clone(),
@@ -153,7 +176,11 @@ pub(crate) fn search(
             user_excerpt: excerpt(&source.text, &query),
             assistant_excerpt: excerpt(&assistant, &query),
         };
-        // Search snippets are already disclosed evidence: every candidate is adopted.
+        ranked.insert(index, (score, source, hit));
+    }
+    let mut hits = Vec::with_capacity(ranked.len());
+    for (_, source, hit) in ranked {
+        // Only the snippets actually returned grant a discovery pin.
         adopt(c, r, &source)?;
         hits.push(hit);
     }

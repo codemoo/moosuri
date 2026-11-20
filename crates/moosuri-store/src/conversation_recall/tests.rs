@@ -420,4 +420,69 @@ async fn display_only_preview_stays_in_owner_history_but_not_model_context_or_re
     .unwrap();
 }
 
+#[tokio::test]
+async fn contextual_literal_hits_retain_an_older_owner_fact_and_pin_only_returned_turns() {
+    let _lock = TEST_LOCK.lock().await;
+    let dir = directory();
+    let store = Store::open(dir.path()).unwrap();
+    let user = configured(&store).await;
+    let thread = store.create_thread(&user, "roster".into()).await.unwrap();
+    let old = completed(
+        &store,
+        &user,
+        &thread.id,
+        "north team assigned locker 17 to Mira",
+        "recorded",
+    )
+    .await;
+    let displaced = completed(
+        &store,
+        &user,
+        &thread.id,
+        "south team checked locker doors",
+        "recorded",
+    )
+    .await;
+    for _ in 0..5 {
+        completed(
+            &store,
+            &user,
+            &thread.id,
+            "south team checked locker labels",
+            "recorded",
+        )
+        .await;
+    }
+    let question = queued(
+        &store,
+        &user,
+        &thread.id,
+        "what locker was assigned to Mira on the north team?",
+    )
+    .await;
+    let tenant = user.tenant.0.clone();
+    store
+        .call(move |db| {
+            let r = chat::load_run(&db.conn, &tenant, &question.run.id)?;
+            let page = search(
+                &db.conn,
+                &r,
+                "locker",
+                ConversationScope::OwnedConversations,
+            )?;
+            assert!(page.truncated);
+            assert_eq!(page.hits.len(), MAX_HITS);
+            assert_eq!(page.hits[0].turn_id, old.run.id);
+            let retrieved = read(&db.conn, &r, &old.run.id, page.hits[0].revision)?;
+            assert!(retrieved.messages[0].text.contains("locker 17"));
+            assert!(matches!(
+                read(&db.conn, &r, &displaced.run.id, displaced.run.version),
+                Err(StoreError::NotFound)
+            ));
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
 mod memory_reader;

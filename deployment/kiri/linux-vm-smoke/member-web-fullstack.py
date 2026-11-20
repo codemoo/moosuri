@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""Run with python3 member-web-fullstack.py /path/to/moosuri (with embedded web assets).
+Requires nonroot Unix, Chrome stable, Python Playwright, and openssl on PATH.
+Every invocation creates and removes a private fixture. Only the first member
+has a model binding because both synthetic member processes run as this UID.
+"""
+import argparse
+import base64
+import hashlib
+from contextlib import ExitStack, closing
+import http.client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+from pathlib import Path
+import secrets
+import socket
+import sqlite3
+import ssl
+import subprocess
+import tempfile
+import threading
+import time
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+MODEL = "synthetic-model"
+PROMPT = "Fixture trip list"
+ANSWER = "Pack a blue notebook."
+FOLLOWUP = "Which notebook?"
+SECOND_ANSWER = "The blue notebook."
+DRAFT = "Unsent fixture draft"
+SUBJECT = "Fixture notebook"
+UPDATED = "Updated fixture notebook"
+EMPTY_MEMORIES = "아직 기록한 기억이 없습니다."
+
+
+class QuietHandler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+
+class Provider(QuietHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        messages = [(m["role"], m["content"]) for m in body["messages"]]
+        valid = self.path == "/v1/chat/completions" and body["model"] == MODEL and body["stream"]
+        expected = [("user", PROMPT)]
+        if self.server.calls == 1:
+            expected += [("assistant", ANSWER), ("user", FOLLOWUP)]
+        actual = [item for item in messages if item[0] in ("assistant", "user")]
+        if not valid or self.server.calls >= 2 or actual != expected:
+            self.send_error(400)
+            return
+        answer = ANSWER if self.server.calls == 0 else SECOND_ANSWER
+        self.server.calls += 1
+        frames = [
+            {"choices": [{"index": 0, "delta": {"role": "assistant", "content": answer},
+                          "finish_reason": None}]},
+            {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+            {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 4}},
+        ]
+        data = "".join(f"data: {json.dumps(dict(id='fixture', model=MODEL, **frame))}\n\n"
+                       for frame in frames) + "data: [DONE]\n\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        self.wfile.write(data.encode())
+
+
+class UnixHTTP(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.host)
+
+
+class Proxy(QuietHandler):
+    def relay(self):
+        allowed = ("content-type", "cookie", "origin", "sec-fetch-site", "accept", "x-moosuri-account")
+        headers = {key: self.headers[key] for key in allowed if key in self.headers}
+        headers.update({"Host": self.server.authority, "X-Real-IP": self.client_address[0]})
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        with closing(UnixHTTP(str(self.server.gateway), timeout=20)) as gateway:
+            gateway.request(self.command, self.path, body=body, headers=headers)
+            response = gateway.getresponse()
+            payload = response.read()
+            self.send_response(response.status)
+            for key, value in response.getheaders():
+                if key.lower() not in ("connection", "transfer-encoding", "content-length", "date", "server"):
+                    self.send_header(key, value)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    do_GET = do_POST = do_PUT = do_DELETE = relay
+
+
+def serve(stack, handler, tls=None):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    stack.callback(server.server_close)
+    if tls:
+        server.socket = tls.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    stack.callback(server.shutdown)
+    return server
+
+
+def directory(parent, name):
+    path = parent / name
+    path.mkdir(mode=0o700)
+    return path
+
+
+def start(stack, command, ready, env):
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, env=env)
+
+    def stop():
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+    stack.callback(stop)
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"{command[1]} exited before listening ({process.returncode})")
+        if ready.is_socket():
+            return
+        time.sleep(0.04)
+    raise RuntimeError(f"{command[1]} did not start listening")
+
+
+def provision(stack, binary, root, provider):
+    env = {"PATH": os.defpath, "HOME": str(directory(root, "home")), "TMPDIR": str(root),
+           "NO_PROXY": "127.0.0.1,localhost"}
+    registry, ipc, gateway, model_root, ledger = (directory(root, x) for x in ("r", "i", "g", "m", "l"))
+    registry_cmd = [binary, "account-runtime", "--registry", registry]
+    members = []
+    for index, label in enumerate(("first", "second")):
+        email = f"{label}@example.invalid"
+        result = subprocess.run([*registry_cmd, "reserve", "--request-id", str(uuid4()), "--email", email],
+                                env=env, capture_output=True, check=True)
+        owner = json.loads(result.stdout)
+        volume = directory(root, label)
+        member = [binary, "personal-volume", "--root", volume, "--account", owner["account_id"],
+                  "--tenant", owner["tenant_id"], "--volume", owner["volume_id"],
+                  "--generation", str(owner["generation"])]
+        temporary, password = (secrets.token_urlsafe(24) for _ in range(2))
+        subprocess.run([*member, "initialize", "--name", label, "--email", email, "--password-stdin"],
+                       input=temporary + "\n", text=True, env=env, capture_output=True, check=True)
+        sock = directory(ipc, owner["account_id"]) / "personal.sock"
+        command = [*member, "serve", "--socket", sock]
+        if index == 0:
+            binding = {k: owner[k] for k in ("account_id", "tenant_id", "volume_id", "generation")}
+            binding.update(peer_uid=os.geteuid(),
+                           budget={"max_calls": 5, "max_tokens": 8192, "reservation_tokens": 4096})
+            config = root / "model.json"
+            config.write_text(json.dumps({
+                "version": 1, "connection_revision": str(uuid4()), "model": MODEL,
+                "provider": {"kind": "compatible", "base_url": f"http://127.0.0.1:{provider.server_port}/v1",
+                             "allowed_ips": ["127.0.0.1"], "router_providers": [], "zero_data_retention": False},
+                "bindings": [binding], "key_file": None,
+            }))
+            fingerprint = root / "fingerprint"
+            fingerprint.write_bytes(secrets.token_bytes(32))
+            model_socket = model_root / owner["account_id"] / "model.sock"
+            start(stack, [binary, "runtime-model", "--registry", registry, "--ledger", ledger,
+                          "--config", config, "--fingerprint-key", fingerprint, "--socket-dir", model_root],
+                  model_socket, env)
+            preview = root / "preview.json"
+            preview.write_text(json.dumps({"socket": str(model_socket), "broker_uid": os.geteuid(),
+                                           "max_output_tokens": 64}))
+            command.extend(["--text-preview-config", preview])
+        start(stack, command, sock, env)
+        subprocess.run([*registry_cmd, "activate", "--email", email, "--ipc-root", ipc],
+                       env=env, capture_output=True, check=True)
+        members.append((email, temporary, password, next(volume.glob("*/assistant.sqlite"))))
+    return registry, ipc, gateway, members, env
+
+
+def button(page, name):
+    return page.get_by_role("button", name=name, exact=True)
+
+
+def login(page, member, first):
+    email, temporary, password, _ = member
+    page.get_by_label("이메일", exact=True).fill(email)
+    page.get_by_label("비밀번호", exact=True).fill(temporary if first else password)
+    button(page, "로그인").click()
+    if first:
+        expect(page.get_by_role("heading", name="임시 비밀번호 변경")).to_be_visible()
+        page.get_by_label("새 비밀번호", exact=True).fill(password)
+        button(page, "비밀번호 변경").click()
+    expect(button(page, "대화 목록")).to_be_visible()
+
+
+def logout(page):
+    button(page, "대화 목록").click()
+    button(page, "로그아웃").click()
+    expect(page.get_by_label("이메일", exact=True)).to_be_visible()
+
+
+def rows(member, sql):
+    with closing(sqlite3.connect(member[3].as_uri() + "?mode=ro", uri=True)) as db:
+        return db.execute(sql).fetchall()
+
+
+def passed(case):
+    print(f"PASS {case}", flush=True)
+
+
+def exercise(page, members, origin, provider):
+    first, second = members
+    page.goto(origin)
+    login(page, first, True)
+    assert rows(first, "SELECT must_change_password FROM accounts") == [(0,)]
+    passed("MWF-01 first login and required password rotation")
+    editor = page.get_by_role("textbox", name="메시지", exact=True)
+    expect(editor).to_be_enabled()
+    editor.fill(PROMPT)
+    button(page, "보내기").click()
+    expect(page.get_by_text(ANSWER, exact=True)).to_be_visible(timeout=20000)
+    editor.fill(FOLLOWUP)
+    editor.press("Enter")
+    expect(page.get_by_text(SECOND_ANSWER, exact=True)).to_be_visible(timeout=20000)
+    sql = ("SELECT r.user_text,o.text,r.state FROM chat_runs r JOIN chat_output o "
+           "ON o.run_id=r.id AND o.tenant_id=r.tenant_id ORDER BY r.sequence")
+    turns = [(PROMPT, ANSWER, "completed"), (FOLLOWUP, SECOND_ANSWER, "completed")]
+    assert rows(first, sql) == turns and provider.calls == 2
+    passed("MWF-02 browser chat, real broker, prior turns and two committed SQLite replies")
+    editor.fill(DRAFT)
+    button(page, "새 대화").click()
+    expect(editor).to_have_value("")
+    button(page, "대화 목록").click()
+    page.get_by_role("dialog").get_by_role("searchbox").fill(PROMPT)
+    button(page.get_by_role("dialog"), PROMPT).click()
+    expect(editor).to_have_value(DRAFT)
+    page.reload()
+    expect(editor).to_have_value(DRAFT)
+    expect(page.get_by_text(SECOND_ANSWER, exact=True)).to_be_visible()
+    assert provider.calls == 2 and rows(first, sql) == turns
+    passed("MWF-03 search and reopen a conversation, retain unsent draft and reload history")
+    button(page, "기억").click()
+    button(page, "기억 추가").click()
+    page.get_by_label("기억 주제", exact=True).fill(SUBJECT)
+    page.get_by_label("기억 내용", exact=True).fill("Use a blue cover")
+    button(page, "기억 저장").click()
+    expect(page.get_by_role("heading", name=SUBJECT)).to_be_visible()
+    button(page, "기억 수정").click()
+    page.get_by_label("기억 주제", exact=True).fill(UPDATED)
+    button(page, "기억 저장").click()
+    expect(page.get_by_role("heading", name=UPDATED)).to_be_visible()
+    page.reload()
+    page.get_by_role("button").filter(has_text=UPDATED).click()
+    expect(page.get_by_role("heading", name=UPDATED)).to_be_visible()
+    button(page, "닫기").click()
+    assert rows(first, "SELECT revision,status FROM knowledge_memories") == [(2, "active")]
+    passed("MWF-04 create and edit a memory, reopen its stored revision")
+    logout(page)
+    login(page, second, True)
+    button(page, "대화 목록").click()
+    expect(page.get_by_text("아직 대화가 없습니다.", exact=True)).to_be_visible()
+    button(page, "닫기").click()
+    button(page, "대화").click()
+    expect(editor).to_have_value("")
+    button(page, "기억").click()
+    expect(page.get_by_text(EMPTY_MEMORIES, exact=True)).to_be_visible()
+    assert rows(second, "SELECT id FROM threads") == [] and rows(second, "SELECT id FROM knowledge_memories") == []
+    assert rows(first, sql) == turns
+    passed("MWF-05 second member in the same browser has empty history, drafts and memories")
+    logout(page)
+    login(page, first, False)
+    button(page, "기억").click()
+    page.get_by_role("button").filter(has_text=UPDATED).click()
+    button(page, "기억 잊기").click()
+    button(page, "기억과 이력 지우기").click()
+    expect(page.get_by_text(EMPTY_MEMORIES, exact=True)).to_be_visible()
+    page.reload()
+    expect(page.get_by_text(EMPTY_MEMORIES, exact=True)).to_be_visible()
+    assert rows(first, "SELECT revision FROM knowledge_memory_versions") == []
+    passed("MWF-06 sign back in with the changed password and forget memory including revisions")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary", type=Path)
+    args = parser.parse_args()
+    if os.geteuid() == 0:
+        parser.error("run as an ordinary user")
+    os.umask(0o077)
+    with ExitStack() as stack:
+        # Short socket paths also run on macOS's 104-byte sockaddr_un.
+        root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="mweb-", dir="/tmp"))).resolve()
+        key, cert = root / "tls.key", root / "tls.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                        "-subj", "/CN=127.0.0.1", "-keyout", key, "-out", cert], capture_output=True, check=True)
+        public_der = subprocess.run(["openssl", "pkey", "-in", key, "-pubout", "-outform", "DER"],
+                                    check=True, capture_output=True).stdout
+        spki = base64.b64encode(hashlib.sha256(public_der).digest()).decode("ascii")
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(cert, key)
+        provider = serve(stack, Provider)
+        provider.calls = 0
+        binary = args.binary.resolve(strict=True)
+        registry, ipc, gateway, members, env = provision(stack, binary, root, provider)
+        proxy = serve(stack, Proxy, tls)
+        proxy.authority = f"127.0.0.1:{proxy.server_port}"
+        proxy.gateway = gateway / "gateway.sock"
+        origin = "https://" + proxy.authority
+        start(stack, [binary, "personal-gateway", "--registry", registry, "--ipc-root", ipc,
+                      "--socket-dir", gateway, "--public-origin", origin], proxy.gateway, env)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel="chrome", headless=True, args=[
+                f"--ignore-certificate-errors-spki-list={spki}", "--disable-background-networking", "--disable-quic", "--disable-component-update",
+                "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--proxy-server=127.0.0.1:0",
+            ])
+            try:
+                context = browser.new_context(service_workers="block",
+                                              viewport={"width": 1200, "height": 840})
+                # Browser traffic for the application flows unmodified to the gateway.
+                context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/")
+                              else route.abort())
+                exercise(context.new_page(), members, origin, provider)
+            finally:
+                browser.close()
+
+
+if __name__ == "__main__":
+    main()

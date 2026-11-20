@@ -14,7 +14,7 @@
 
 ## 로컬 회원 UI 개편판
 
-11월 21일 운영 설치에서 회원에게 적용되는 모델이 Claude Sonnet 5.5 · medium이고 새 요청을 받는 상태임을 확인했다. 개편판의 대화·기억 검증도 같은 모델과 추론 강도를 사용한다. 회원 웹 대화 7건의 실제 응답 채점은 검증용 Claude CLI 로그인 대기 중이다. [검증 조건과 문항](reviews/2026-11-20-kiri-scenarios.md#claude-대화-검증)
+11월 21일 운영 설치에서 회원에게 적용되는 모델이 Claude Sonnet 5.5 · medium이고 새 요청을 받는 상태임을 확인했다. Linux 서버의 격리된 개편판에서 같은 설정으로 회원 대화 7건이 통과했다. 1,002턴의 동명이인 대화에서는 원문과 구조화 기억을 제공했을 때 모두 3건에 정확히 답했다. [대화 검증](reviews/2026-11-20-kiri-scenarios.md#claude-대화-검증) · [기억 측정](../audit/memory-reader/results.md#linux-서버-재검증) · [Linux 전체 실행 기록](../audit/standard-journey-checks.md#linux-서버-재검증)
 
 11월 20일 확인한 공개 main과 운영 게이트웨이의 실행 버전은 `4fd6a01`이다. 로컬 개편판에는 날짜별 대화와 분리된 초안 복구, 실행 중 후속 지시, 회원별 **맡긴 일**, 기억 수정 이력, Google 권한 왕복, 활성 회원 검색·초대 접수증, 엔진 재개와 OpenRouter 사용 한도 조회가 들어 있다. 비회원은 `/demo`에서 세 합성 예시를 열 수 있다. 데스크톱은 Muse를 참고한 72px 탐색을 사용하며 모바일은 화면 아래에서 이동한다. [기능별 워크로그](reviews/2026-11-20-member-ui-worklog.md) · [화면별 수락 시나리오](reviews/2026-11-20-kiri-scenarios.md)
 

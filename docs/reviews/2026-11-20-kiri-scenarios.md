@@ -4,7 +4,7 @@ Chrome·WebKit 시나리오는 정적 Kiri 웹 빌드에 로그인, 목록, 저�
 
 ## 실행
 
-Python 3.10 이상, Playwright Python, 설치된 Google Chrome이 필요하다. WebKit은 Playwright 버전에 맞는 WebKit 런타임을 사용한다. 저장소 루트에서 실행한다. `--scenario B-CHAT-02` 또는 `--width 390`을 반복하여 실행 대상을 선택할 수 있다. `--headed`는 눈으로 화면을 보며 재현할 때 쓴다.
+Python 3.10 이상과 Playwright Python이 필요하다. 기본 브라우저는 설치된 Google Chrome이다. Linux에서 Playwright가 설치한 Chrome for Testing을 쓰려면 화면 실행기에 `--browser chromium`, 게이트웨이 실행기에 `--channel chromium`을 지정한다. WebKit은 Playwright 버전에 맞는 런타임을 사용한다. 저장소 루트에서 실행한다. `--scenario B-CHAT-02` 또는 `--width 390`을 반복하여 실행 대상을 선택할 수 있다.
 
 ```sh
 npm ci --ignore-scripts --prefix web
@@ -19,6 +19,8 @@ cargo test --locked -p moosuri-store personal_tasks
 아래 표의 `B-`는 브라우저 시나리오 ID다. `V`는 표시한 웹 테스트 파일의 테스트 이름으로 찾고, `R`은 Rust 테스트 함수 이름으로 찾는다. 결과 집계에서는 같은 `B-`의 360·390·1440px 실행을 한 시나리오로 센다. 원래 대화 열기처럼 여러 단계를 밟는 경우에도 표의 한 행을 한 시나리오로 센다.
 
 ## 실행 결과
+
+11월 21일 Ubuntu 22.04 x86-64에서 Chrome for Testing 145.0.7632.6과 WebKit 26.0으로 38개 조작을 360·390·1440px에서 다시 실행했다. 두 브라우저에서 각각 114건이 통과했다. 실제 회원 게이트웨이·SQLite 경로에서는 두 회원 여정 MWF 6건, 대화 길이 MB 3건, 출력 한도 ML-04가 통과했다. 표준 서버의 로그인·전송·검색·초안·설정 5건도 별도 설치에서 통과했다.
 
 Chrome 158과 WebKit 26에서 서로 다른 브라우저 조작 38개를 각각 360·390·1440px로 확인했다. Chrome 114건, WebKit 114건이 통과했다. WebKit 첫 실행에서는 360px Drive 연결 해제 시나리오가 문서 로딩 단계에서 시간 초과했다. 새 브라우저에서 문서 준비와 실제 조작의 시간 제한을 분리해 남은 폭과 서비스를 다시 실행했다. 이 수치에 iPhone·Android 실기기는 포함되지 않는다.
 
@@ -151,6 +153,8 @@ Chrome 158과 WebKit 26에서 서로 다른 브라우저 조작 38개를 각각 
 
 ## 관리자 웹 초대와 호스트 자동 준비
 
+11월 21일 새 Ubuntu 24.04.5 KVM 게스트에 Kiri 0.2.1과 개편판 실행 파일을 설치해 아래 흐름을 재검증했다. 실제 systemd 타이머로 준비된 회원이 처음 로그인해 비밀번호를 바꿨고, 같은 초대를 재처리한 뒤에도 바꾼 비밀번호로 로그인했다. 두 번째 회원도 증설 뒤 별도 UID와 볼륨으로 로그인했다. 초기 시험의 타이머 재정의가 첫 실행 시각을 지워 대기 시간이 끝났다. 실행기에서 재정의를 제거하고 배포용 서비스·타이머로 8개 확인 항목을 통과했다. [게스트 실행기](../../deployment/kiri/linux-vm-smoke/guest-web-invitations.py)
+
 | 시나리오 | 기대 결과 | 근거 |
 | --- | --- | --- |
 | 실제 관리자로 두 회원을 초대하고 한 회원분의 저장공간만 허용한다 | 타이머가 한 명을 비밀번호 입력 대기로 준비하며 다른 초대는 용량을 기다린다. | Ubuntu 24.04.5·Kiri 0.2.1 [실행 기록](../../deployment/kiri/linux-vm-smoke/onboard-worker-evidence.json) |
@@ -202,11 +206,11 @@ Chrome 158과 WebKit 26에서 서로 다른 브라우저 조작 38개를 각각 
 | ML-07 | 입실 시각 09:07을 알려 주고 HH:MM 형식을 요청한다. | `09:07` |
 | ML-08 | 같은 대화에서 입실 시각을 다시 주지 않고 되묻는다. | `09:07` |
 
-11월 21일 검증용 Mac의 Claude CLI는 로그인이 필요했다. 실행기가 첫 질문 전에 중단되어 이번 Claude 대화 7건은 채점 대기다. ML-04는 같은 날 Chrome과 회원 DB에서 통과했다. 이전 공급자 실험 원본은 이 문서의 Git 리비전 `24846dc`에 보존했다. 기존 Claude 장기 기억 측정에서는 1,002턴의 동명이인 질문 3건 모두에 올바르게 답했다. [장기 기억 측정](../../audit/memory-reader/results.md)
+11월 21일 Ubuntu 서버에서 공식 Claude CLI 2.1.322의 기존 로그인을 사용해 ML-01~03과 ML-05~08 **7건 모두 통과**했다. 임시 설치의 회원 웹에서 질문을 보냈고 매번 `claude-sonnet-5-5` 응답과 해당 턴의 화면·SQLite 본문이 일치했다. ML-04도 합성 출력 한도 응답으로 통과했다. 같은 서버에서 별도로 실행한 1,002턴 장기 기억의 원문·구조화 검색 조건은 각각 3/3이었다. 이전 공급자 실험은 이 문서의 Git 리비전 `24846dc`에 보존했다. [Linux 기억 측정](../../audit/memory-reader/results.md#linux-서버-재검증)
 
 ```sh
-python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/release/moosuri --claude
-python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/release/moosuri --expect-output-limit
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/release/moosuri --channel chromium --claude
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/release/moosuri --channel chromium --expect-output-limit
 ```
 
 ## 긴 대화와 한 번의 모델 요청 한도

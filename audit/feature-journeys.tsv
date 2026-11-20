@@ -1,7 +1,7 @@
 feature_id	scenario_id	action_ko	expected_ko	evidence_kind	source	selector	run_status
 F01	F01-01	빈 데이터 경로에 CLI로 설치하고 재시작한다	내장 웹과 설치 계정의 HTTP 세션을 새 프로세스에서 사용할 수 있다	rust	apps/moosuri/tests/installation.rs	cli_init_embedded_app_http_session_and_restart_work_together	통과
 F01	F01-02	초기화 전 주소를 연다	설치 안내가 나오고 개인 작업 공간은 열리지 않는다	vitest	web/src/App.test.tsx	keeps an uninitialized installation behind a safe operator setup instruction	통과
-F01	F01-03	각 지원 OS에서 언어를 선택해 설치한 뒤 같은 위치에 다시 설치한다	선택한 언어로 설치를 마치고 기존 계정과 자료를 유지한다	external	docs/install.md	macOS·Linux·WSL2 새 기기 설치 및 재실행	부분 확인
+F01	F01-03	각 지원 OS에서 언어를 선택해 설치한 뒤 같은 위치에 다시 설치한다	선택한 언어로 설치를 마치고 기존 계정과 자료를 유지한다	external	audit/standard-journey-checks.md	Linux 공개 미리보기 설치와 출처 대조	부분 확인
 F02	F02-01	로그인 쿠키가 있는 브라우저에서 앱을 다시 연다	기존 세션으로 열리고 모델 요청이나 메시지 전송이 발생하지 않는다	vitest	web/src/App.test.tsx	opens the existing session and makes no model claim or message request	통과
 F02	F02-02	세션 확인 중 네트워크가 끊긴다	연결 실패로 표시하고 로그아웃 처리하지 않는다	vitest	web/src/App.test.tsx	does not mistake an unreachable session endpoint for sign-out	통과
 F02	F02-03	로그아웃 처리 도중 다음 계정으로 로그인한다	이전 쿠키 전환이 끝난 뒤 다음 로그인만 수락한다	vitest	web/src/App.test.tsx	finishes the old cookie transition before accepting a new account login	통과
@@ -160,13 +160,13 @@ F52	F52-02	옛 백업에 이후 철회 저널을 적용한다	철회된 옛 문�
 F52	F52-03	필수 복원 입력이 빠진 상태에서 새 경로로 복원한다	대상을 초기화하지 않고 오류로 끝난다	rust	apps/moosuri/tests/restore.rs	missing_restore_inputs_never_initialize_a_destination	통과
 F53	F53-01	서명된 로컬 묶음으로 설치·업데이트 후 제거한다	설치한 웹을 열 수 있고 제거 시 데이터는 보존된다	rust	apps/moosuri/tests/local_bundle.rs	installation_signed_fresh_init_served_shell_stopped_update_recovery_and_data_preserving_uninstall	통과
 F53	F53-02	실제 schema47 이전 실행 파일을 준비하고 여러 버전을 넘는 업데이트 중단 후 재시도한다	기존 내용을 잃지 않고 데이터베이스를 옛 버전으로 되돌리지 않는다	recorded	audit/standard-journey-checks.md	F53 스키마 47에서 90으로 서명 업데이트	통과
-F53	F53-03	실제 배포 채널에서 릴리스를 내려받아 별도로 확보한 공개키로 검증한다	공식 버전·대상·해시가 일치하는 설치 파일만 검증을 통과한다	external	docs/signed-download.md	공식 서명 키와 게시물의 독립 대조	실환경 대기
+F53	F53-03	실제 배포 채널에서 릴리스를 내려받아 별도로 확보한 공개키로 검증한다	공식 버전·대상·해시가 일치하는 설치 파일만 검증을 통과한다	external	audit/standard-journey-checks.md	Linux 공개 미리보기 설치와 출처 대조	부분 확인
 F54	F54-01	사용량 화면에서 실패·미확정 실행을 포함한 지연 보고서를 연다	관측 표본과 분모를 나눠 표시하고 없는 첫 본문 시간을 만들지 않는다	vitest	web/src/UsageView.test.tsx	shows observed samples and failed/unknown denominators without inventing missing first body time	통과
 F54	F54-02	도구 사용·스트림 중단·취소가 섞인 합성 실행 시간을 수집한다	실제로 관측한 사건을 기준으로 단계별 분모와 지연을 집계한다	rust	crates/moosuri-agent/src/tests/run_timings.rs	run_timings_runtime_stream_tools_truncation_and_cancel_keep_real_denominators	통과
 F54	F54-03	같은 질문과 예산으로 기억 사용 전략을 비교한다	정답률·추출 비용·지연을 같은 조건에서 산출하고 합성 결과와 실제 모델 결과를 구분한다	recorded	audit/memory-reader/results.md	F54 세 가지 기억 조건	통과
 F55	F55-01	버전이 다른 같은 Rust 의존성을 릴리스 고지로 추출한다	버전별 실제 저작권 정보를 유지하고 빌드 머신 경로는 제외한다	rust	tools/xtask/src/notices.rs	rust_notices_preserve_distinct_versions_and_exact_attribution_without_host_paths	통과
 F55	F55-02	웹 패키지 일부 또는 고지가 없는 설치 트리에서 고지를 생성한다	누락과 충돌을 보고하고 확인한 고지만 수집한다	rust	tools/xtask/src/web_notices.rs	web_notices_report_missing_optional_packages_declarations_notices_and_conflicts	통과
-F55	F55-03	공개 릴리스를 새 환경에 설치하고 공급망 자료와 대조한다	배포 아티팩트의 서명·체크섬·SBOM 출처가 일치하고 공개 수락 기록이 남는다	external	docs/public-release.md	공개 태그·서명·SBOM 및 청정 설치 수락	실환경 대기
+F55	F55-03	공개 릴리스를 새 환경에 설치하고 공급망 자료와 대조한다	배포 아티팩트의 서명·체크섬·SBOM 출처가 일치하고 공개 수락 기록이 남는다	external	audit/standard-journey-checks.md	Linux 공개 미리보기 설치와 출처 대조	부분 확인
 F56	F56-01	초대받은 회원이 임시 비밀번호로 로그인한다	비밀번호 변경을 마치기 전 개인·관리 API 호출이 시작되지 않는다	vitest	web/src/App.test.tsx	requires a password change before loading any private or admin API	통과
 F56	F56-02	관리자가 임시 비밀번호를 발급하고 복사 후 화면을 닫는다	명시적으로 선택할 때만 복사하고 화면 종료와 로그아웃 후에는 표시하지 않는다	vitest	web/src/App.test.tsx	shows the one-time password, copies it only on request, and disposes it on close and sign-out	통과
 F56	F56-03	같은 초대의 접수 응답을 잃고 동시에 확인한다	한 회원에게 두 볼륨이 중복 배정되지 않는다	rust	crates/moosuri-store/src/runtime_registry.rs	retries_and_concurrent_invites_cannot_assign_two_volumes	통과

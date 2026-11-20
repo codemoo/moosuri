@@ -73,6 +73,18 @@ The Python helpers use Docker Engine API v1.47 and correctly consume HTTP101
 hijacked raw streams for exec output. A generic HTTP response body reader otherwise
 sees an empty body and may inspect a still-running exec with `ExitCode:null`.
 
+## Product web invitations in a fresh guest
+
+The product onboarding check uses a separate fresh Ubuntu guest with the same
+disposable marker. Install the candidate at `/usr/local/bin/moosuri`, load its
+matching member runtime image into Kiri, and install the repository's
+`moosuri-kiri-onboard.service` and `moosuri-kiri-onboard.timer` units. Run
+`systemctl daemon-reload` and pass the loaded image's full SHA-256 ID to
+`sudo python3 guest-web-invitations.py "$MEMBER_IMAGE_ID"`. The fixture creates
+the installation, issues two synthetic web invitations and waits for the
+shipped timer's first activation. It checks both logins, password rotation,
+capacity, retries and installation identity. [November 21 results](../../../docs/reviews/2026-11-20-kiri-scenarios.md#관리자-웹-초대와-호스트-자동-준비)
+
 ## Observed result, 2026-11-19 KST
 
 | Check | Observed result |

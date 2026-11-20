@@ -35,6 +35,22 @@ That is an observed gap for this fixture. Production SSH account isolation,
 operator deployment, media durability under power loss and a bounded recovery
 point during receiver outages remain separate acceptance work.
 
+## Repeat on the Linux server
+
+On 2026-11-21 KST, an Ubuntu x86-64 publisher sent the synthetic vault journal
+over pinned SSH to a separate Linux container on the same physical server. The
+receiver held the snapshot, encrypted journals and operator recovery keys before
+the outage. It acknowledged a repeat of generation 1 with the original receipt
+and accepted generation 2 at sequence 3. Disconnecting publication left the
+next logout at sequence 4 on the source alone.
+
+With the source stopped and its data directory unavailable, the receiver
+restored the sequence 3 account deletion, a fresh installation UUID and zero
+sessions. SQLite integrity and foreign-key checks passed. A second restore
+with the same receipt succeeded, and a wrong head pin left the destination
+absent. The last recoverable commit was 59 seconds before the simulated outage.
+The two-host Mac-to-Linux run above covers physical host separation.
+
 ## Reproduce the rehearsal
 
 1. On the source, build and embed the vault web client, then build the service.

@@ -2,6 +2,18 @@
 
 This increment adds a usable v2 vault to the native core: a separate Rust ciphertext process and private SQLite/journal, a React client, and an actual wasm32 Rust module Worker. The crypto/service/client review findings and root integration review are closed; targeted Linux and actual Chrome verification passed. This is a development preview, not a deployment or mobile release. The later [bounded encrypted client archive](vault-archive.md) adds independent file export/import. The later [sealed-current service recovery](vault-service-recovery.md) adds bounded offline checkpoint/restore. The experimental [native credential broker](native-credential-github.md), [pinned historical recovery](vault-historical-recovery.md), [legacy v1 import](vault-v1-migration.md) and [separate component package delivery](component-packages.md) have bounded implementations. Actual off-host deployment, official signed artifacts and device acceptance remain open. [Account lifecycle delivery](account-management.md) adds deletion/outbox separately.
 
+## Browser acceptance on Linux
+
+On 2026-11-21 KST, six browser journeys passed on Ubuntu 22.04 with Chrome for
+Testing, the standard assistant, the separate vault service and the Linux-built
+WASM Worker. They covered launching the authenticated vault, confirming the
+recovery key, saving and revealing a login, editing and searching, rejecting
+a wrong password then unlocking with the recovery key, and cancelling then
+confirming deletion across a reload. After building both binaries with their web
+assets and installing Playwright Chromium, run
+`python3 vault-web/tests/browser-fullstack.py target/release/moosuri target/release/moosuri-vault-service`.
+The runner creates a private synthetic account and two loopback origins. [Browser test](../vault-web/tests/browser-fullstack.py)
+
 ## Admission and revocation
 
 The assistant issues a 30-second single-use POST handoff from the current unrestricted session. Its digest is bound to account, tenant, session digest, auth epoch (including valid bootstrap epoch zero), installation and exact configured vault origin. The browser submits a hidden form; no handoff appears in a URL or browser storage. The assistant HTML shell preserves its Origin with `strict-origin` when the vault is configured; the vault requires that exact Origin for exchange. Ordinary assistant pages keep their existing policy when the vault is absent.

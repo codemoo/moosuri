@@ -1097,7 +1097,7 @@ for service in GOOGLE:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dist", type=Path, help="path to the built web/dist directory")
-    parser.add_argument("--browser", choices=("chrome", "webkit"), default="chrome")
+    parser.add_argument("--browser", choices=("chrome", "chromium", "webkit"), default="chrome")
     parser.add_argument("--width", type=int, choices=(360, 390, 1440), action="append")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS), action="append")
     parser.add_argument("--headed", action="store_true")
@@ -1115,7 +1115,7 @@ def main():
             if args.browser == "webkit":
                 browser = playwright.webkit.launch(headless=not args.headed)
             else:
-                browser = playwright.chromium.launch(channel="chrome", headless=not args.headed)
+                browser = playwright.chromium.launch(channel=args.browser, headless=not args.headed)
             print(f"{args.browser} {browser.version}", flush=True)
             for scenario in args.scenario or SCENARIOS:
                 admin, run = SCENARIOS[scenario]

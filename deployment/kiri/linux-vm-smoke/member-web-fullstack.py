@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run with python3 member-web-fullstack.py /path/to/moosuri (with embedded web assets).
-Requires nonroot Unix, Chrome stable, Python Playwright, and openssl on PATH.
+Requires nonroot Unix, Python Playwright, openssl, and Chrome stable or the
+Playwright-managed Chromium channel (--channel chromium).
 Use --claude for seven real answers from Claude Sonnet 5.5 at medium effort.
 The default, --expect-output-limit and --history-budget need no model login.
 Every invocation creates and removes a private fixture. Only the first member
@@ -434,6 +435,8 @@ def exercise_claude(page, member, origin, provider):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
+    parser.add_argument("--channel", choices=("chrome", "chromium"), default="chrome",
+                        help="installed Chrome stable or the Playwright Chromium build")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--claude", action="store_true", help="seven questions using the authenticated Claude CLI")
     mode.add_argument("--expect-output-limit", action="store_true",
@@ -479,7 +482,7 @@ def main():
         start(stack, [binary, "personal-gateway", "--registry", registry, "--ipc-root", ipc,
                       "--socket-dir", gateway, "--public-origin", origin], proxy.gateway, env)
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel="chrome", headless=True, args=[
+            browser = playwright.chromium.launch(channel=args.channel, headless=True, args=[
                 f"--ignore-certificate-errors-spki-list={spki}", "--disable-background-networking", "--disable-quic", "--disable-component-update",
                 "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--proxy-server=127.0.0.1:0",
             ])

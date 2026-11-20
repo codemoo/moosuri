@@ -1,6 +1,42 @@
 # 표준 서버의 브라우저·절차·기여 여정 검증
 
-2026-11-20, macOS arm64와 격리된 Linux x86-64에서 합성 자료를 사용했다. [기능별 대장](feature-journeys.tsv)은 전체 제품 기능표의 71개 기능에 3~4건씩, 총 217개 시나리오를 둔다. 각 행에는 조작과 기대 결과, 실제로 검사한 구현 경로와 실행 상태가 있다. 두 회원 화면 체계 중 어느 쪽을 확인했는지는 해당 행의 소스 경로를 따른다. [기능표](../docs/features.md) · [Kiri 전용 조작 기록](../docs/reviews/2026-11-20-kiri-scenarios.md)
+제품 기능 71개에 기능당 3~4개씩 총 217개 시나리오가 있다. 기능별 대장에는 조작과 기대 결과, 구현 경로, 실행 상태를 기록한다. 회원 전용 Kiri와 표준 서버 중 어느 쪽을 확인했는지는 각 행의 근거를 따른다. [기능별 대장](feature-journeys.tsv) · [기능표](../docs/features.md) · [Kiri 화면 조작](../docs/reviews/2026-11-20-kiri-scenarios.md)
+
+## Linux 서버 재검증
+
+2026-11-21 KST에 Ubuntu 22.04 x86-64 서버에서 로컬 개편판 `7ad1bcc`를 검사했다. 웹과 볼트 WASM을 Linux에서 빌드했다. 브라우저가 접속한 게이트웨이·회원 실행 파일은 같은 제품 소스 `fc4611a`의 Linux 릴리스였다. Rust 전체 검사는 현재 소스를 다시 빌드해 실행했다. 운영 설치와 별개로 만든 회원·자료를 사용했다.
+
+| 검증 대상 | Linux에서 관찰한 결과 |
+| --- | --- |
+| 웹과 볼트 웹 | Vitest 771/771과 18/18 통과. |
+| Kiri 회원 UI | Chrome for Testing 145와 WebKit 26에서 38개 조작을 360·390·1440px로 실행해 228/228 통과. 합성 데모는 390·1200px에서도 개인 API 호출 없이 예시를 전환했다. [화면 시나리오](../docs/reviews/2026-11-20-kiri-scenarios.md) |
+| 게이트웨이·회원 DB 및 표준 서버 | 두 회원의 실제 프로세스·SQLite에서 대화·기억·격리 6건, 문맥 한도 3건, 빈 응답 복원 1건 통과. 별도 표준 서버의 브라우저 여정 5건 통과. 모델 응답은 합성했다. |
+| Linux 회원 초대 | 새 Ubuntu 24.04.5 KVM 게스트에서 실제 Kiri와 배포용 systemd 타이머로 8건 통과. 두 회원의 비밀번호·UID·볼륨, 용량 증설과 재시도까지 확인했다. [게스트 실행기](../deployment/kiri/linux-vm-smoke/guest-web-invitations.py) |
+| 실제 Claude | `claude-sonnet-5-5` · `medium`. 회원 대화 7/7에서 화면과 SQLite의 응답이 일치했다. 1,002턴의 동명이인 기록에 대한 질문 셋은 원문·구조화 기억에서 각각 3/3 정답이었고, 근거가 없을 때 세 번 모두 확인 불가로 답했다. [호출별 측정](memory-reader/observed-linux.json) |
+| 표준 서버 평가 | 합성 세계 15/15 통과. 평가기의 검증 항목 62건을 통과했다. |
+| 볼트 웹 | 실제 표준 서버에서 별도 볼트 창으로 로그인하고 Linux에서 빌드한 WASM으로 복구 키 확인, 항목 저장·표시·수정·검색, 잠금과 잘못된 비밀번호 거절, 복구 키로 열기, 삭제 취소·완료 후 새로고침을 검증했다. 6/6 통과. [실행기](../vault-web/tests/browser-fullstack.py) |
+| 볼트 복원·기기 브라우저 | 원본 중단 후 Linux 수신 컨테이너에서 수신 세대 2·시퀀스 3까지 복원했다. 실제 Gitea 1.24.6의 비공개 이슈 3개를 두 대화에서 각각 서명된 결과로 받았다. [볼트 복구](../docs/reviews/2026-11-20-vault-offhost-recovery.md#repeat-on-the-linux-server) · [Gitea 검증](../docs/native-credential-gitea.md#acceptance) |
+| 업데이트·상호 운용 | 실제 스키마 47 선행 버전에서 90으로 넘어가는 서명 업데이트의 중단·재개 4지점 통과. Go age 백업·복호화 3건, 실제 PDF 자식 프로세스, 4,096턴 검색, 브로커·볼트 서명 패키지 전달도 통과했다. |
+| 공개 자료와 이미지 | 사진의 48MP·32MiB 경계 4건, 공개 GitHub 절차 미리보기·설치, 절차 패키지 6개와 OpenSpec 엄격 검증 통과. 공개 패키지 파일 26개에서 제외 지문 52개의 일치는 0개였다. 공개 소스 2,297개와 제외 코드 지문 11개도 일치 0개였다. |
+
+## Linux 공개 미리보기 설치와 출처 대조
+
+11월 21일 F01-03·F53-03·F55-03의 Linux 부분을 실행했다. Ubuntu 서버의 새 Debian x86-64 컨테이너 안에서 일반 사용자로 저장소의 `install.sh --language ko --plain --no-browser`를 실행했다. 설치기가 공개 GitHub 릴리스 `v0.1.0-dev.30`을 내려받고 검증했다. 새 관리자로 로그인해 표준 API로 대화를 만든 후 서버를 종료하고 같은 설치기를 다시 실행했다. 기존 비밀번호로 로그인할 수 있었고 설치 정보, 계정 ID, 대화 ID와 제목이 보존됐다. [설치 절차](../docs/install.md)
+
+공개 아카이브·실행 파일·매니페스트의 SHA-256을 배포 명세와 대조했다. Linux에서 OpenSSL로 매니페스트의 Ed25519 서명을 확인하고, 매니페스트에 연결된 출처 파일과 CycloneDX SBOM의 바이트 수·해시를 검증했다. SBOM에 포함된 구성요소는 741개였다. 빌드 소스 `9111a00`에서 가져온 Cargo·회원 웹·볼트 웹·OpenSpec 잠금 파일 4개의 해시가 모두 일치했고, 공개 태그 `b2a5689`이 해당 소스의 후속 커밋임을 확인했다. 공개된 미리보기의 DB 스키마는 81이다. [공개 릴리스](https://github.com/codemoo/moosuri/releases/tag/v0.1.0-dev.30)
+
+F01-03에는 다른 지원 플랫폼의 새 기기 설치가 남아 있다. F53-03에서 사용한 기존 저장소의 서명키 핀과 공개 자산은 같은 GitHub 배포 경로에 속한다. 운영자가 별도 채널로 확인한 키를 사용한 수락은 남았다. F55-03에서 실제 설치한 대상은 공개 미리보기다. 개편판 자체의 공식 배포물과 해당 버전의 공개 수락 기록은 출시 단계에서 확인한다. [서명키 신뢰 조건](../docs/signed-download.md) · [출시 조건](../docs/public-release.md)
+
+이 판의 기능 대장 217행은 통과 196, 부분 확인 9, 실환경 대기 9, 후속 범위 3이다. 통과 행은 Vitest 결과 102개, Rust 결과 82개, 직접 수행한 조작·절차 12개와 연결된다. Rust 워크스페이스 출력에서 자식 검사와 문서 예제를 포함해 통과 1,739개, 실패 0개, 기본 생략 11개를 확인했다. 별도 소스 빌드가 같은 Cargo 캐시를 사용하면서 다섯 크레이트의 문서 검사가 의존성을 찾지 못했다. 이전 소스만으로 다시 빌드해 다섯 대상을 모두 통과했다. opt-in 통화 수집과 Tailscale 설치 조작은 별도 Linux 로그에서 대조했다. [이 판의 재검증 자료](runs/linux-2026-11-21.zip)
+
+```sh
+unzip -q audit/runs/linux-2026-11-21.zip -d /tmp/moosuri-journey-evidence
+python3 audit/verify-feature-journeys.py --vitest-json /tmp/moosuri-journey-evidence/web-vitest.json --vitest-json /tmp/moosuri-journey-evidence/vault-vitest.json --rust-log /tmp/moosuri-journey-evidence/rust-tests.log --rust-log /tmp/moosuri-journey-evidence/rust-reruns.log
+```
+
+## 11월 20일 검증 기록
+
+macOS arm64와 격리된 Linux x86-64에서 합성 자료로 확인한 당시 결과다.
 
 | 결과 | 건수 | 확인 범위 |
 | --- | ---: | --- |

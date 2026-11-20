@@ -129,3 +129,9 @@ graceful browser closure. Both signed receipts reported three open issues and
 settled their respective waiting chat runs. The receipt, server SQLite/WAL, and
 device journal checks found neither the fixture password nor the TOTP seed.
 Actual user account, physical-device, and signed distribution acceptance remain open.
+
+On 2026-11-21 KST, F69-01 also passed on Ubuntu 22.04 x86-64 with a fresh
+Gitea 1.24.6 instance and headed Chrome for Testing 145.0.7632.6 on Xvfb.
+A synthetic member signed in with the encrypted vault login item and TOTP.
+The first chat and a second chat using the same browser each received a signed
+count of three private open issues. The browser then closed cleanly.

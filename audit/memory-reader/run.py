@@ -4,6 +4,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -27,12 +28,23 @@ def extract(cwd):
               "최대 12개 선택해 줘. 진행 중인 일상 활동과 단순 확인은 제외해. "
               "선택한 줄 번호만 JSON 정수 배열로 출력해.\n" + "\n".join(transcript))
     result, metrics = model(cwd, prompt, 0.5)
-    chosen = json.loads(result)
+    chosen, json_format = parse_selection(result)
+    return chosen, dict(metrics, json_format=json_format)
+
+
+def parse_selection(result):
+    """Accept one JSON array, optionally wrapped in a single Markdown code block."""
+    result = result.strip()
+    block = re.fullmatch(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n```", result, flags=re.DOTALL)
+    try:
+        chosen = json.loads(block.group(1) if block else result)
+    except json.JSONDecodeError:
+        raise RuntimeError("Extraction did not return one JSON array.") from None
     if (not isinstance(chosen, list) or len(chosen) > 12
             or any(type(n) != int or not 1 <= n <= WORLD["turns"] for n in chosen)
             or len(chosen) != len(set(chosen))):
-        raise ValueError("Extraction schema failed")
-    return chosen, metrics
+        raise RuntimeError("Extraction returned invalid or duplicate turn numbers.")
+    return chosen, "fenced_json" if block else "json"
 
 
 def stored(chosen):

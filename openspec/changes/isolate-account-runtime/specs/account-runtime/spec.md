@@ -20,6 +20,14 @@ The installation SHALL allocate at most one active runtime for each account and 
 ### Requirement: Shared model capacity
 The installation SHALL supply read-only shared modules and model availability, and broker model calls using installation credentials while isolating user history, external actions, and provider sessions.
 
+#### Scenario: Answer a follow-up about a supplied fact
+- **WHEN** the member asks for a value from a prior completed personal text turn
+- **THEN** the personal service supplies the eligible same-thread history and instructs the selected model to preserve the provided value, use the requested format and acknowledge missing information.
+
+#### Scenario: The selected model reaches its output limit before visible text
+- **WHEN** the verified terminal receipt for the original call reports an incomplete outcome with no visible answer
+- **THEN** the member sees the incomplete status on reload and the service does not repeat the call or expose model reasoning.
+
 #### Scenario: Two personal containers call one Moosuri engine
 - **WHEN** members A and B request inference through their respective private model sockets
 - **THEN** the same installation engine selects the configured upstream adapter, attributes each call to its originating member and returns results through that member’s socket

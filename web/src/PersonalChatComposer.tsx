@@ -2,7 +2,7 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 
 export function PersonalChatComposer({
-  draft, disabled, busy, waiting, mode, onDraft, onSend, browserMode, editor,
+  draft, disabled, busy, waiting, mode, onDraft, onSend, browserMode, followUp, editor,
 }: {
   draft: string;
   editor: RefObject<HTMLTextAreaElement | null>;
@@ -13,6 +13,7 @@ export function PersonalChatComposer({
   onDraft: (value: string) => void;
   onSend: () => void;
   browserMode?: ReactNode;
+  followUp?: ReactNode;
 }) {
   const composing = useRef(false);
   const tooLong = new TextEncoder().encode(draft).length > (mode === "guide" ? 2000 : 8192);
@@ -32,6 +33,7 @@ export function PersonalChatComposer({
 
   return (
     <footer className="member-composer">
+      {followUp}
       {browserMode}
       <form className="member-composer-dock" onSubmit={(event) => {
         event.preventDefault();

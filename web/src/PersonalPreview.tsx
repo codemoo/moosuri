@@ -3,6 +3,7 @@ import { Button } from "@astryxdesign/core/Button";
 import type {
   ChatPage,
   ChatTurn,
+  RunInstructionReceipt,
   SessionView as BaseSessionView,
   ThreadSummary,
   ThreadsResponse,
@@ -40,6 +41,8 @@ import { PersonalBrowserCard, PersonalBrowserViewer } from "./PersonalBrowser";
 import { browserEndpoint, browserIntent, browserNeedsGuidance, browserStateLabel, type PersonalBrowserStatus } from "./personal-browser";
 import { usePersonalBrowser } from "./usePersonalBrowser";
 import { InstructionReceipts } from "./RunInstructions";
+import { PersonalTextFollowUp, clearSavedFollowUp, isTextFollowUp } from "./PersonalTextFollowUp";
+import { sameInstruction } from "./run-instructions";
 type SessionView = BaseSessionView & { installation_admin?: boolean };
 export const PREVIEW_DRAFT_KEY = "moosuri.personal-preview-drafts.v1";
 function draftStorage() {
@@ -613,6 +616,9 @@ function Workspace({
     return () => { live = false; window.removeEventListener("focus", check); };
   }, [scope, session, view, checkCapability]);
   function reconcile(thread: string, turns: ChatTurn[]) {
+    const followUp = memoryRef.current.instructions?.[thread]?.pending;
+    if (followUp && turns.some(t => t.run.instructions?.some(r => isTextFollowUp(r) && sameInstruction(r, followUp))))
+      change(m => clearSavedFollowUp(m, followUp));
     const value = memoryRef.current.pending[thread];
     if (!value) return;
     if (value.browser_request?.kind === "guide" && turns.some((turn) =>
@@ -767,10 +773,11 @@ function Workspace({
     return () => resize.disconnect();
   }, [view]);
   useEffect(() => {
-    if (!selected || reading || !page?.turns.some(active)) return;
+    const waitingForText = pending && !pending.browser_request && ["sending", "accepted"].includes(pending.status);
+    if (view !== "chat" || !selected || reading || (!waitingForText && !page?.turns.some(active))) return;
     const timer = window.setInterval(() => void history(selected), 2000);
     return () => window.clearInterval(timer);
-  }, [selected, page?.turns.some(active), reading, scope]);
+  }, [selected, page?.turns.some(active), pending?.status, pending?.browser_request, view, reading, scope]);
   async function createThread(proposedTitle: string) {
     setError("");
     const value: PendingThreadCreation = memoryRef.current.threadCreation ?? {
@@ -824,22 +831,23 @@ function Workspace({
     setOpenInbox(intent);
     open({ view: "connections", service: "gmail" });
   }
-  async function send(event?: FormEvent, replay = false) {
+  async function send(event?: FormEvent, replay = false, followUp?: RunInstructionReceipt) {
     event?.preventDefault();
     if (mutation.current || loading || (inventoryError && !initialized.current)) return;
     let thread = selected;
     const old = thread ? memoryRef.current.pending[thread] : undefined;
-    const text = memoryRef.current.drafts[thread ?? "new"] ?? "";
+    const text = followUp?.text ?? memoryRef.current.drafts[thread ?? "new"] ?? "";
+    if (followUp && (followUp.thread_id !== thread || followUp.reason !== "text_follow_up_saved")) return;
     if (old && !replay) return;
     if (!old && (!text.trim() || new TextEncoder().encode(text).length > 8192))
       return;
-    const intent = old || browserMode === "guide" || preferredMode === "chat"
+    const intent = old || followUp || browserMode === "guide" || preferredMode === "chat"
       ? null : browserIntent(text, browserMode === "start");
     if (intent && !intent.url) {
       setError("브라우저로 열 http 또는 https 주소를 메시지에 넣어 주세요.");
       return;
     }
-    const browserRequest = old ? old.browser_request : (
+    const browserRequest = old ? old.browser_request : followUp ? undefined : (
       browserMode === "guide" && browserWork
         ? { kind: "guide" as const, workspace_id: browserWork.id }
         : intent?.url ? { kind: "start" as const, url: intent.url, wait_for_user: intent.wait } : undefined
@@ -855,9 +863,10 @@ function Workspace({
     if (!browserRequest && !ready) return;
     if (!old && currentPage?.turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id)) return;
     const value: PendingSend = old ?? {
-      request_id: crypto.randomUUID(),
+      request_id: followUp?.request_id ?? crypto.randomUUID(),
       text,
       status: "sending",
+      ...(followUp ? { follow_up_run_id: followUp.run_id } : {}),
       ...(browserRequest ? { browser_request: browserRequest } : {}),
     };
     followTail.current = true;
@@ -877,7 +886,7 @@ function Workspace({
     setError("");
     change((m) => {
       const drafts = { ...m.drafts };
-      if (!old && drafts[destination] === value.text) delete drafts[destination];
+      if (!followUp && !old && drafts[destination] === value.text) delete drafts[destination];
       return { ...m, drafts, pending: { ...m.pending, [destination]: { ...value, status: "sending" } } };
     });
     try {
@@ -908,6 +917,7 @@ function Workspace({
           request_id: value.request_id,
           text: value.text,
           capability: "text_only_preview",
+          ...(value.follow_up_run_id ? { follow_up_run_id: value.follow_up_run_id } : {}),
         },
         undefined,
         { timeoutMs: 90000 },
@@ -933,6 +943,7 @@ function Workspace({
           },
         }));
       else reconcile(thread, [turn]);
+      if (value.follow_up_run_id && selectedRef.current === thread) void history(thread);
       void inventory().catch(fail);
     } catch (e) {
       if (!isAborted(e)) {
@@ -955,7 +966,11 @@ function Workspace({
             openInboxRequest(destination, value.request_id);
             return;
           }
-          clearSend(destination, value, true);
+          clearSend(destination, value, !value.follow_up_run_id);
+          if (value.follow_up_run_id && e.status !== 401 && selectedRef.current === destination) {
+            setError("후속 메시지를 보내지 못했습니다. 저장한 지시에서 다시 보낼 수 있습니다.");
+            return;
+          }
           if (e.code === "personal_text_model_unavailable") {
             ++capabilityVersion.current;
             setCap(null);
@@ -1202,7 +1217,17 @@ function Workspace({
                       <span className="sr-only">나</span>
                       <p>{turn.user_text}</p>
                     </div>
-                    {turn.run.instructions && <InstructionReceipts receipts={turn.run.instructions} />}
+                    {turn.run.instructions && <>
+                      <InstructionReceipts receipts={turn.run.instructions.filter(r => !isTextFollowUp(r))} />
+                      {turn.run.instructions.filter(isTextFollowUp).map(r =>
+                        <div className="member-chat-notice" key={r.request_id}>
+                          <p>{r.text}</p>
+                          <span role="status">{r.reason === "text_follow_up_sent" || turns.some(t => t.run.request_id === r.request_id)
+                            ? "후속 메시지로 보냄" : "후속 지시 저장됨 · 이 답변에는 미반영"}</span>
+                          {r.reason === "text_follow_up_saved" && !turns.some(t => t.run.request_id === r.request_id) &&
+                            <button type="button" disabled={composerBusy || !ready || browserMode !== "chat"} onClick={() => void send(undefined, false, r)}>후속 메시지로 보내기</button>}
+                        </div>)}
+                    </>}
                     {(turn.assistant.length > 0 || turn.run.id !== browserWork?.run_id) && (
                       <div className="member-reply">
                         <span className="sr-only">무수리</span>
@@ -1276,7 +1301,11 @@ function Workspace({
           </div>
           {!loading && (
             <PersonalChatComposer key={selected ?? "new"} editor={chatEditor} draft={draft}
-              disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat")} busy={composerBusy}
+              followUp={selected && browserMode === "chat" && <PersonalTextFollowUp key={selected}
+                thread={selected} scope={scope} draft={draft} run={working?.run.accepts_text_follow_up ? working.run : undefined}
+                pending={memory.instructions?.[selected]?.pending} rejected={memory.instructions?.[selected]?.draft} change={change} expired={expired}
+                refresh={() => { if (selectedRef.current === selected) void history(selected); }} />}
+              disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat" && !working?.run.accepts_text_follow_up)} busy={composerBusy}
               waiting={busy ? "대화 불러오는 중…"
                 : pending?.status === "rejected" || pending?.status === "inbox" ? "다음 메시지를 작성하세요."
                 : pending?.status === "uncertain" ? "전송 결과를 확인해 주세요."

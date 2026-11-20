@@ -55,7 +55,7 @@ pub(crate) fn displayed(c: &Connection, r: &Run) -> Result<Vec<RunInstructionRec
         receipts(c, r)
     }
 }
-fn publish(c: &Connection, r: &Run) -> Result<()> {
+pub(crate) fn publish(c: &Connection, r: &Run) -> Result<()> {
     let mut ids = vec![r.id.clone()];
     let mut origins=c.prepare("SELECT p.run_id FROM mission_chat_commands p JOIN missions m ON m.tenant_id=p.tenant_id AND m.id=json_extract(p.receipt,'$.target.id') WHERE m.tenant_id=?1 AND m.run_id=?2 AND json_extract(p.receipt,'$.target.kind')='one_off' AND json_extract(p.receipt,'$.action')='create_now'")?.query_map(params![r.tenant,r.id],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
     ids.append(&mut origins);

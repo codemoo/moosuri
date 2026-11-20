@@ -42,6 +42,7 @@ let restrictLogin: boolean,
 let pendingCapability: Promise<Response> | undefined;
 let adminEngine: ((path: string, method: string, body: any) => Response) | undefined;
 let previewRefused: boolean;
+let saveFollowUp: ((body: any) => Response | Promise<Response>) | undefined;
 let obsoleteCapabilityFields: boolean;
 let browserRoute: ((path: string, method: string, body: any) => Response | Promise<Response>) | undefined;
 let deleteThreadResponse: Response | undefined;
@@ -96,6 +97,7 @@ beforeEach(() => {
   capEnabled = true;
   pendingCapability = undefined;
   adminEngine = undefined;
+  saveFollowUp = undefined;
   previewRefused = false;
   obsoleteCapabilityFields = false;
   browserRoute = undefined;
@@ -229,6 +231,7 @@ beforeEach(() => {
       if (/^\/threads\/[^/]+\/browser(?:\/|$)/.test(path)) {
         return browserRoute?.(path, method, body) ?? Response.json({ code: "not_found" }, { status: 404 });
       }
+      if (path.endsWith("/text-follow-ups") && method === "POST") return saveFollowUp?.(body);
       if (path.match(/^\/threads\/[^/]+\/text-preview$/) && method === "POST") {
         if (previewRefused)
           return Response.json({ code: "personal_text_model_unavailable" }, { status: 422 });
@@ -863,6 +866,82 @@ it("keeps the next draft even when its text matches the request being acknowledg
   await act(async () => { completeSend!(Response.json(paid.values().next().value, { status: 201 })); });
   await waitFor(() => expect(screen.getByRole("button", { name: "보내기" })).toBeEnabled());
   expect(await composer()).toHaveValue("Same question");
+});
+it.each(["received", "lost reply", "lost before save", "settled before save"])(
+  "stores a distinct text follow-up and reconciles its original instruction (%s)", async outcome => {
+    const original = { ...turn(aid, "Explain a queue", "running") };
+    turns = [{ ...original, run: { ...original.run, attempt: 1, accepts_text_follow_up: true } }];
+    const saved: any[] = [];
+    saveFollowUp = body => {
+      saved.push(body);
+      if (outcome === "settled before save") {
+        turns[0].run.state = "completed";
+        turns[0].run.accepts_text_follow_up = false;
+        return Response.json({ code: "conflict" }, { status: 409 });
+      }
+      if (outcome === "lost before save" && saved.length === 1) throw new TypeError("lost before admission");
+      const receipt = { ...body.instruction, thread_id: tid, run_id: original.run.id, attempt: 1,
+        sequence: 1, state: "closed", reason: "text_follow_up_saved" };
+      turns[0].run.instructions = [receipt];
+      if (outcome === "lost reply") throw new TypeError("lost after admission");
+      return Response.json(receipt);
+    };
+    const user = userEvent.setup();
+    let view = mount();
+    await user.type(await composer(), "Use a bakery example");
+    await user.click(await screen.findByRole("button", {name:"후속 지시 저장"}));
+    if (outcome === "settled before save") {
+      await user.click(await screen.findByRole("button", {name:"작성창으로 가져오기"}));
+      expect(await composer()).toHaveValue("Use a bakery example");
+      expect(chatPosts()).toHaveLength(0);
+      return;
+    }
+    if (outcome === "lost before save") {
+      await screen.findByRole("button", {name:"같은 지시 저장 다시 확인"});
+      view.unmount(); view = mount();
+      await user.click(await screen.findByRole("button", {name:"같은 지시 저장 다시 확인"}));
+      expect(saved[1]).toEqual(saved[0]);
+    }
+    expect(await screen.findByRole("button", {name:"후속 메시지로 보내기"})).toBeDisabled();
+    expect(chatPosts()).toHaveLength(0);
+    await user.type(await composer(), "Another next draft");
+    view.unmount();
+    turns[0].run.state = "completed";
+    mount();
+    expect(await screen.findByText("후속 지시 저장됨 · 이 답변에는 미반영")).toBeVisible();
+    expect(chatPosts()).toHaveLength(0);
+    await user.click(await screen.findByRole("button", {name:"후속 메시지로 보내기"}));
+    await waitFor(() => expect(chatPosts()).toHaveLength(1));
+    expect(chatPosts()[0].body).toEqual({ request_id: saved[0].instruction.request_id,
+      capability: "text_only_preview", text: "Use a bakery example", follow_up_run_id: original.run.id });
+    expect(await composer()).toHaveValue("Another next draft");
+  },
+);
+it("accepts a follow-up while this tab still awaits its first broker reply", async () => {
+  const user = userEvent.setup();
+  deferSend = true;
+  mount();
+  await user.type(await composer(), "Explain queues");
+  await user.click(screen.getByRole("button", {name:"보내기"}));
+  await waitFor(() => expect(completeSend).not.toBeNull());
+  const first = chatPosts()[0].body;
+  const original = turn(first.request_id, first.text, "running");
+  turns = [{...original, run: {...original.run, attempt: 1, accepts_text_follow_up: true}}];
+  saveFollowUp = body => {
+    const receipt = { ...body.instruction, thread_id: tid, run_id: original.run.id, attempt: 1,
+      sequence: 1, state: "closed", reason: "text_follow_up_saved" };
+    turns[0].run.instructions = [receipt];
+    return Response.json(receipt);
+  };
+  await user.type(await composer(), "Add a diagram");
+  await user.click(await screen.findByRole("button", {name:"후속 지시 저장"}, {timeout: 5000}));
+  expect(await screen.findByText("후속 지시 저장됨 · 이 답변에는 미반영")).toBeVisible();
+  expect(chatPosts()).toHaveLength(1);
+  turns[0].run.state = "completed";
+  turns[0].run.accepts_text_follow_up = false;
+  await act(async () => { completeSend!(Response.json(turns[0], {status:201})); });
+  await waitFor(() => expect(screen.getByRole("button", {name:"후속 메시지로 보내기"})).toBeEnabled());
+  expect(chatPosts()).toHaveLength(1);
 });
 function chatPosts() {
   return calls.filter(call => call.method === "POST" && call.path.endsWith("/text-preview"));

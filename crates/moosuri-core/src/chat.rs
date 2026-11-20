@@ -72,6 +72,10 @@ pub struct RunView {
     #[serde(default)]
     #[ts(as = "Option<bool>", optional)]
     pub supports_instructions: bool,
+    /// A single-dispatch personal turn can store a separate, explicitly sent follow-up.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub accepts_text_follow_up: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub instruction_target: Option<RunInstructionTarget>,

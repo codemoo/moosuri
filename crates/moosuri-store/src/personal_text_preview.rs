@@ -5,6 +5,9 @@ use crate::chat::{self, OutputPatch, RunFailure};
 use moosuri_core::{ChatChange, ChatTurn, MessagePhase, ModelChoice, ProviderKind, RunState};
 use serde::{Deserialize, Serialize};
 
+mod follow_ups;
+use follow_ups::saved_follow_up;
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelPin {
@@ -188,7 +191,9 @@ fn existing(
     if active {
         return Err(StoreError::Conflict);
     }
-    Ok(Store::latest_inbox_intent(text).then_some(Admission::InboxRequested))
+    let follow_up = saved_follow_up(conn, user, thread, request_id, text)?;
+    Ok((follow_up.is_none() && Store::latest_inbox_intent(text))
+        .then_some(Admission::InboxRequested))
 }
 
 impl Store {
@@ -239,13 +244,17 @@ impl Store {
             let digest:[u8;32]=Sha256::digest(serde_json::to_vec(&("personal-text-preview-v1",owner.account,owner.tenant,owner.volume,owner.generation,&thread,&text,&pin)).map_err(|_|StoreError::InvalidInput)?).into();
             let stable=|label:&str|->Result<Uuid>{let hash:[u8;32]=Sha256::digest(serde_json::to_vec(&(label,owner.account,owner.tenant,&request_id)).map_err(|_|StoreError::Corrupt)?).into();let mut bytes:[u8;16]=hash[..16].try_into().map_err(|_|StoreError::Corrupt)?;bytes[6]=(bytes[6]&0x0f)|0x50;bytes[8]=(bytes[8]&0x3f)|0x80;Ok(Uuid::from_bytes(bytes))};
             let id=stable("personal-text-preview-run-v1")?;let call_id=stable("personal-text-preview-call-v1")?;let mut nonce=[0u8;32];OsRng.try_fill_bytes(&mut nonce).map_err(|_|StoreError::Unavailable)?;
-            // Only prior successful preview turns may enter this deliberately
-            // narrower model context. Literal Gmail and other private tool output
-            // remains excluded. The request bytes stay ephemeral; duplicates never dispatch again.
+            // Only text-preview content may enter the request; private tool output stays excluded.
             let mut messages=vec![Message {role:"system",text:POLICY.into()}];
-            let previous=tx.prepare("SELECT r.user_text,o.text FROM chat_runs r JOIN personal_text_previews p ON p.tenant_id=r.tenant_id AND p.run_id=r.id JOIN chat_output o ON o.tenant_id=r.tenant_id AND o.run_id=r.id AND o.item='personal-text-preview-answer' WHERE r.tenant_id=?1 AND r.thread_id=?2 AND r.state='completed' ORDER BY r.sequence DESC LIMIT 8")?.query_map(params![user.tenant.0,thread],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
-            let mut used=POLICY.len()+text.len();let mut history=Vec::new();for (u,a) in previous {if used+u.len()+a.len()>48*1024{break;}used+=u.len()+a.len();history.push((u,a));}
-            for (u,a) in history.into_iter().rev(){messages.push(Message {role:"user",text:u});messages.push(Message {role:"assistant",text:a});}
+            if let Some(source) = saved_follow_up(&tx, &user, &thread, &request_id, &text)? {
+                follow_ups::add_context(&tx, &user, &source, &mut messages)?;
+                tx.execute("UPDATE run_instructions SET reason='text_follow_up_sent' WHERE tenant_id=?1 AND run_id=?2 AND request_id=?3 AND reason='text_follow_up_saved'",params![user.tenant.0,source,request_id])?;
+                crate::run_instructions::publish(&tx, &chat::load_run(&tx, &user.tenant.0, &source)?)?;
+            } else {
+                let previous=tx.prepare("SELECT r.user_text,o.text FROM chat_runs r JOIN personal_text_previews p ON p.tenant_id=r.tenant_id AND p.run_id=r.id JOIN chat_output o ON o.tenant_id=r.tenant_id AND o.run_id=r.id AND o.item='personal-text-preview-answer' WHERE r.tenant_id=?1 AND r.thread_id=?2 AND r.state='completed' ORDER BY r.sequence DESC LIMIT 8")?.query_map(params![user.tenant.0,thread],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+                let mut used=POLICY.len()+text.len();let mut history=Vec::new();for (u,a) in previous {if used+u.len()+a.len()>48*1024{break;}used+=u.len()+a.len();history.push((u,a));}
+                for (u,a) in history.into_iter().rev(){messages.push(Message {role:"user",text:u});messages.push(Message {role:"assistant",text:a});}
+            }
             messages.push(Message {role:"user",text:text.clone()});
             let request=serde_json::to_vec(&Request {v:1,call_id,run_id:id,ordinal:0,generation:owner.generation as i64,selection_epoch:pin.selection_epoch,max_output_tokens:pin.max_output_tokens,connection_revision:pin.connection_revision,model:pin.model.clone(),effort:pin.effort.clone(),messages}).map_err(|_|StoreError::Corrupt)?;
             if request.len()+1>64*1024{return Err(StoreError::InvalidInput);}
@@ -473,6 +482,163 @@ mod tests {
             Err(StoreError::Conflict)
         ));
     }
+    #[tokio::test]
+    async fn text_follow_up_survives_unknown_outcome_and_reopen_with_original_context() {
+        use moosuri_core::RunInstructionRequest;
+        let _guard = TEST_LOCK.lock().await;
+        let (dir, store, user, owner, thread, pin) = setup().await;
+        let original = "Explain a queue";
+        let Admission::Fresh(work) = store
+            .begin_text_preview(
+                &user,
+                owner,
+                thread.clone(),
+                Uuid::new_v4().to_string(),
+                original.into(),
+                pin.clone(),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let source = work.run.clone();
+        let input = RunInstructionRequest {
+            request_id: Uuid::new_v4().to_string(),
+            expected_attempt: 1,
+            text: "show me my latest email".into(),
+        };
+        let wrong_thread = Uuid::new_v4().to_string();
+        assert!(matches!(
+            store
+                .save_text_follow_up(&user, owner, wrong_thread, source.clone(), input.clone())
+                .await,
+            Err(StoreError::NotFound)
+        ));
+        let receipt = store
+            .save_text_follow_up(&user, owner, thread.clone(), source.clone(), input.clone())
+            .await
+            .unwrap();
+        assert_eq!(receipt.reason.as_deref(), Some("text_follow_up_saved"));
+        assert!(matches!(
+            store
+                .save_text_follow_up(
+                    &user,
+                    owner,
+                    thread.clone(),
+                    source.clone(),
+                    RunInstructionRequest {
+                        text: "different".into(),
+                        ..input.clone()
+                    }
+                )
+                .await,
+            Err(StoreError::Conflict)
+        ));
+        assert!(matches!(
+            store
+                .begin_text_preview(
+                    &user,
+                    owner,
+                    thread.clone(),
+                    input.request_id.clone(),
+                    input.text.clone(),
+                    pin.clone()
+                )
+                .await,
+            Err(StoreError::Conflict)
+        ));
+        assert!(
+            !std::str::from_utf8(work.request())
+                .unwrap()
+                .contains(&input.text)
+        );
+        let terminal = store.settle_text_preview(work, None).await.unwrap();
+        assert_eq!(terminal.run.state, RunState::OutcomeUnknown);
+        assert!(matches!(
+            store
+                .save_text_follow_up(
+                    &user,
+                    owner,
+                    thread.clone(),
+                    source.clone(),
+                    RunInstructionRequest {
+                        request_id: Uuid::new_v4().to_string(),
+                        ..input.clone()
+                    }
+                )
+                .await,
+            Err(StoreError::Conflict)
+        ));
+        drop(store);
+        let store = owner
+            .open_verified(&dir.path().canonicalize().unwrap())
+            .await
+            .unwrap();
+        let user = store
+            .login(
+                "preview@example.test".into(),
+                "Changed-preview-password-42".into(),
+            )
+            .await
+            .unwrap()
+            .user;
+        let canonical = store
+            .conversation(&user, thread.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(canonical.turns.len(), 1);
+        assert_eq!(
+            canonical.turns[0].run.instructions.as_ref().unwrap()[0].sequence,
+            receipt.sequence
+        );
+        let Admission::Fresh(work) = store
+            .begin_text_preview(
+                &user,
+                owner,
+                thread.clone(),
+                input.request_id.clone(),
+                input.text.clone(),
+                pin.clone(),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let request: serde_json::Value = serde_json::from_slice(work.request()).unwrap();
+        assert_eq!(request["messages"][1]["text"], original);
+        assert_eq!(request["messages"][2]["text"], input.text);
+        let response = reply(&work, "completed");
+        store
+            .settle_text_preview(work, Some(response))
+            .await
+            .unwrap();
+        assert!(matches!(
+            store
+                .begin_text_preview(
+                    &user,
+                    owner,
+                    thread.clone(),
+                    input.request_id.clone(),
+                    input.text.clone(),
+                    pin
+                )
+                .await
+                .unwrap(),
+            Admission::Existing(_)
+        ));
+        let reopened = store.conversation(&user, thread, None).await.unwrap();
+        assert_eq!(reopened.turns.len(), 2);
+        assert_eq!(
+            reopened.turns[0].run.instructions.as_ref().unwrap()[0]
+                .reason
+                .as_deref(),
+            Some("text_follow_up_sent")
+        );
+        assert!(store.mail_actions(&user).await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn stale_echo_unknown_restart_and_deletion_never_enable_a_paid_retry() {
         let _g = TEST_LOCK.lock().await;

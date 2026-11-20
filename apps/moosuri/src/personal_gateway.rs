@@ -421,6 +421,7 @@ enum Endpoint {
     Threads,
     PreviewInfo,
     TextPreview(Uuid),
+    TextFollowUp(Uuid),
     Thread(Uuid),
     History(Uuid, Option<i64>),
 }
@@ -438,7 +439,10 @@ impl Endpoint {
                 let tail = path
                     .strip_prefix("/api/v1/threads/")
                     .ok_or(StatusCode::NOT_FOUND)?;
-                if let Some(raw) = tail.strip_suffix("/text-preview") {
+                if let Some(raw) = tail
+                    .strip_suffix("/text-preview")
+                    .or_else(|| tail.strip_suffix("/text-follow-ups"))
+                {
                     let id = Uuid::parse_str(raw)
                         .ok()
                         .filter(|id| !id.is_nil() && id.to_string() == raw)
@@ -446,7 +450,11 @@ impl Endpoint {
                     if method != Method::POST || uri.query().is_some() {
                         return Err(StatusCode::BAD_REQUEST);
                     }
-                    return Ok(Self::TextPreview(id));
+                    return Ok(if tail.ends_with("/text-follow-ups") {
+                        Self::TextFollowUp(id)
+                    } else {
+                        Self::TextPreview(id)
+                    });
                 }
                 let (id, history) = tail
                     .strip_suffix("/messages")
@@ -502,6 +510,7 @@ impl Endpoint {
             Self::Logout => "/api/v1/auth/logout".into(),
             Self::Threads => "/api/v1/threads".into(),
             Self::PreviewInfo => "/api/v1/text-preview".into(),
+            Self::TextFollowUp(id) => format!("/api/v1/threads/{id}/text-follow-ups"),
             Self::TextPreview(id) => format!("/api/v1/threads/{id}/text-preview"),
             Self::Thread(id) => format!("/api/v1/threads/{id}"),
             Self::History(id, before) => format!(
@@ -516,6 +525,7 @@ impl Endpoint {
             Self::Threads
                 | Self::Thread(_)
                 | Self::History(..)
+                | Self::TextFollowUp(_)
                 | Self::TextPreview(_)
                 | Self::PreviewInfo
         )
@@ -560,6 +570,20 @@ fn thread_response(
             if status != StatusCode::OK
                 || value["capability"] != "text_only_preview"
                 || value["tools"] != false
+            {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        }
+        Endpoint::TextFollowUp(id) => {
+            let receipt: moosuri_core::RunInstructionReceipt =
+                serde_json::from_slice(&body).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            if status != StatusCode::OK
+                || receipt.thread_id != id.to_string()
+                || receipt.state != "closed"
+                || !matches!(
+                    receipt.reason.as_deref(),
+                    Some("text_follow_up_saved" | "text_follow_up_sent")
+                )
             {
                 return Err(StatusCode::SERVICE_UNAVAILABLE);
             }
@@ -956,12 +980,18 @@ async fn handle(
                 request_id: String,
                 text: String,
                 capability: String,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                follow_up_run_id: Option<Uuid>,
             }
             let input: Input =
                 serde_json::from_slice(body).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
             if input.capability != "text_only_preview" {
                 return Err(StatusCode::BAD_REQUEST);
             }
+            Some(serde_json::to_vec(&input).map_err(|_| StatusCode::BAD_REQUEST)?)
+        } else if matches!(endpoint, Endpoint::TextFollowUp(_)) {
+            let input: moosuri_server::personal_text::FollowUp =
+                serde_json::from_slice(body).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
             Some(serde_json::to_vec(&input).map_err(|_| StatusCode::BAD_REQUEST)?)
         } else if matches!(endpoint, Endpoint::Threads) && method == Method::POST {
             let input: CreateThread =
@@ -1127,6 +1157,10 @@ fn router(g: Gateway) -> Router {
         .route("/api/v1/threads", get(handler).post(handler))
         .route("/api/v1/threads/{id}", delete(handler))
         .route("/api/v1/threads/{id}/messages", get(handler))
+        .route(
+            "/api/v1/threads/{id}/text-follow-ups",
+            post(handler).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
         .route("/api/v1/text-preview", get(handler))
         .route(
             "/api/v1/threads/{id}/text-preview",
@@ -2137,7 +2171,11 @@ mod tests {
         fs::set_permissions(&model, fs::Permissions::from_mode(0o600)).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let counted = calls.clone();
+        let (started, dispatched) = tokio::sync::oneshot::channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let unblock = release.clone();
         let broker = tokio::spawn(async move {
+            let mut started = Some(started);
             loop {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut bytes = Vec::new();
@@ -2161,7 +2199,19 @@ mod tests {
                     stream.write_all(&bytes).await.unwrap();
                     continue;
                 }
-                counted.fetch_add(1, Ordering::SeqCst);
+                let call = counted.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    assert_eq!(
+                        r["messages"].as_array().unwrap().last().unwrap()["text"],
+                        "Explain a queue"
+                    );
+                    started.take().unwrap().send(r["run_id"].clone()).unwrap();
+                    unblock.notified().await;
+                } else {
+                    assert_eq!(r["messages"][1]["text"], "Explain a queue");
+                    assert_eq!(r["messages"][2]["text"], "Synthetic bounded text answer");
+                    assert_eq!(r["messages"][3]["text"], "Use a bakery example");
+                }
                 let reply = serde_json::json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":r["connection_revision"],"model":r["model"],"output":"Synthetic bounded text answer","outcome":"completed","receipt":{"state":"settled","input_tokens":7,"output_tokens":3,"charged_tokens":10}});
                 let mut bytes = serde_json::to_vec(&reply).unwrap();
                 bytes.push(b'\n');
@@ -2226,7 +2276,34 @@ mod tests {
         assert_eq!(handoff.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(json(handoff).await["code"], "personal_inbox_requested");
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        let first = request(&g, &endpoint, Method::POST, h.clone(), &body).await;
+        let saved_id = Uuid::new_v4();
+        let path = format!("/api/v1/threads/{id}/text-follow-ups");
+        let observe = async {
+            let run = dispatched.await.unwrap();
+            let save = serde_json::json!({"run_id":run,"instruction":{"request_id":saved_id,"expected_attempt":1,"text":"Use a bakery example"}}).to_string();
+            let mut other = h.clone();
+            other.insert(
+                "X-Moosuri-Account",
+                HeaderValue::from_str(&Uuid::new_v4().to_string()).unwrap(),
+            );
+            assert!(
+                !request(&g, &path, Method::POST, other, &save)
+                    .await
+                    .status()
+                    .is_success()
+            );
+            for _ in 0..2 {
+                let receipt = request(&g, &path, Method::POST, h.clone(), &save).await;
+                assert_eq!(receipt.status(), StatusCode::OK);
+                assert_eq!(json(receipt).await["reason"], "text_follow_up_saved");
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            release.notify_one();
+        };
+        let (first, ()) = tokio::join!(
+            request(&g, &endpoint, Method::POST, h.clone(), &body),
+            observe
+        );
         assert_eq!(first.status(), StatusCode::CREATED);
         let first = json(first).await;
         assert_eq!(first["run"]["state"], "completed");
@@ -2263,6 +2340,35 @@ mod tests {
             .status(),
             StatusCode::METHOD_NOT_ALLOWED
         );
+        let explicit = serde_json::json!({"request_id":saved_id,"text":"Use a bakery example","capability":"text_only_preview","follow_up_run_id":first["run"]["id"]}).to_string();
+        assert_eq!(
+            request(&g, &endpoint, Method::POST, h.clone(), &explicit)
+                .await
+                .status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            request(&g, &endpoint, Method::POST, h.clone(), &explicit)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let reopened = json(
+            request(
+                &g,
+                &format!("/api/v1/threads/{id}/messages"),
+                Method::GET,
+                h.clone(),
+                "",
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            reopened["turns"][0]["run"]["instructions"][0]["reason"],
+            "text_follow_up_sent"
+        );
         runtime_registry::set_routing(&options.registry, &a, false).unwrap();
         assert_eq!(
             request(&g, &endpoint, Method::POST, h, &body)
@@ -2270,7 +2376,7 @@ mod tests {
                 .status(),
             StatusCode::UNAUTHORIZED
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         broker.abort();
         member.abort();
     }

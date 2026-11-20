@@ -265,6 +265,9 @@ pub(super) fn view(conn: &Connection, run: &Run) -> Result<RunView> {
             .as_ref()
             .map(|t| t.supports_instructions)
             .unwrap_or(crate::run_instructions::supports(conn, run)?),
+        accepts_text_follow_up: run.state.active()
+            && instructions.len() < 8
+            && crate::personal_text_preview::has(conn, &run.tenant, &run.id)?,
         instruction_target,
         instructions: (!instructions.is_empty()).then_some(instructions),
         timings: crate::run_timings::view(conn, run)?,

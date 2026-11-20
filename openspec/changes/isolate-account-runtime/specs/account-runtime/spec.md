@@ -188,3 +188,18 @@ The Kiri member workspace SHALL support browser back, forward and reload for the
 
 - **WHEN** a member opens a saved engine settings URL
 - **THEN** an installation administrator can inspect the configured engine, while an ordinary member returns to chat without requesting administrator data.
+
+### Requirement: Save a follow-up during a personal text answer
+A member SHALL be able to attach a follow-up to an active personal text turn and see its receipt after reopening the conversation. Saving SHALL leave the original model request and its answer unchanged. After that turn ends the member MAY send the saved text as a separate text-only turn with the original request and available completed answer in context.
+
+#### Scenario: An acknowledgment is lost or a member returns later
+- **WHEN** saving or sending the same follow-up is retried with its original identifier and text
+- **THEN** the member sees the existing receipt or follow-up turn, and the broker receives at most one model call for that follow-up.
+
+#### Scenario: The original answer ends before a follow-up can be saved
+- **WHEN** the server receives a new follow-up for a turn that has already ended
+- **THEN** the server declines it and the member can recover the text in the composer without dispatching it.
+
+#### Scenario: The original provider outcome is unknown
+- **WHEN** the member explicitly sends a previously saved follow-up after an unknown original outcome
+- **THEN** the new text-only request includes the original question and the follow-up, and does not repeat the original call or initiate a tool action.

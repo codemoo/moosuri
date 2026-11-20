@@ -48,6 +48,13 @@ struct Input {
     request_id: String,
     text: String,
     capability: String,
+    follow_up_run_id: Option<uuid::Uuid>,
+}
+#[derive(serde::Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FollowUp {
+    pub run_id: uuid::Uuid,
+    pub instruction: moosuri_core::RunInstructionRequest,
 }
 pub(super) fn routes<S: Clone + Send + Sync + 'static>(
     auth: AuthState,
@@ -67,6 +74,7 @@ pub(super) fn routes<S: Clone + Send + Sync + 'static>(
             "/api/v1/threads/{id}/text-preview",
             post(submit).layer(DefaultBodyLimit::max(64 * 1024)),
         )
+        .route("/api/v1/threads/{id}/text-follow-ups", post(save_follow_up))
         .with_state(state)
 }
 async fn owner(state: &Preview, headers: &HeaderMap) -> Result<UserContext, HttpError> {
@@ -136,6 +144,27 @@ async fn info(State(state): State<Preview>, headers: HeaderMap) -> HttpResult {
     }))
     .into_response())
 }
+async fn save_follow_up(
+    State(state): State<Preview>,
+    headers: HeaderMap,
+    Path(thread): Path<String>,
+    Json(input): Json<FollowUp>,
+) -> HttpResult {
+    let _delivery = state.auth.delivery.read().await;
+    let user = owner(&state, &headers).await?;
+    let receipt = state
+        .auth
+        .store
+        .save_text_follow_up(
+            &user,
+            state.owner,
+            thread,
+            input.run_id.to_string(),
+            input.instruction,
+        )
+        .await?;
+    Ok(Json(receipt).into_response())
+}
 async fn submit(
     State(state): State<Preview>,
     headers: HeaderMap,
@@ -157,6 +186,22 @@ async fn submit(
     let existing = {
         let _delivery = state.auth.delivery.read().await;
         let user = owner(&state, &headers).await?;
+        if let Some(source) = input.follow_up_run_id {
+            let receipt = state
+                .auth
+                .store
+                .run_instruction(&user, source.to_string(), input.request_id.clone())
+                .await?;
+            if receipt.thread_id != thread
+                || receipt.text != input.text
+                || !matches!(
+                    receipt.reason.as_deref(),
+                    Some("text_follow_up_saved" | "text_follow_up_sent")
+                )
+            {
+                return Err(StoreError::Conflict.into());
+            }
+        }
         state
             .auth
             .store

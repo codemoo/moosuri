@@ -238,7 +238,11 @@ export type RunView = { mail_connection_recovery?: MailConnectionRecovery,
 /**
  * Server eligibility for resuming this original setup request. Readiness is checked on POST.
  */
-gmail_resume_available?: boolean, supports_instructions?: boolean, instruction_target?: RunInstructionTarget, instructions?: Array<RunInstructionReceipt>, connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
+gmail_resume_available?: boolean, supports_instructions?: boolean,
+/**
+ * A single-dispatch personal turn can store a separate, explicitly sent follow-up.
+ */
+accepts_text_follow_up?: boolean, instruction_target?: RunInstructionTarget, instructions?: Array<RunInstructionReceipt>, connection_wait?: MissionWaitView, timings?: RunTimings, id: string, request_id: string, thread_id: string, attempt: number, state: RunState, version: number, model: ModelChoice,
 /**
  * Fixed application error category, never provider text.
  */

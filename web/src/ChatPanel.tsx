@@ -69,6 +69,7 @@ export type PendingSend = {
   artifact_target?:{id:string;revision:number};
   schedule_context?:ScheduleChatContext;
   mission_context?:MissionChatContext;
+  follow_up_run_id?: string;
   browser_request?: import("./personal-browser").PersonalBrowserRequest;
   status: "sending" | "accepted" | "uncertain" | "rejected" | "inbox";
 };

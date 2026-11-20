@@ -50,12 +50,16 @@ function creation(v: unknown): PendingThreadCreation | null {
 }
 /** Rebuild a closed carrier. Persisted bytes never authorize an automatic POST. */
 function pending(v: unknown): PendingSend | null {
-    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "status"]) ||
+    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "follow_up_run_id", "status"]) ||
         !uuid(v.request_id) || !text(v.text) || !v.text.trim() || !["sending", "accepted", "uncertain", "rejected", "inbox"].includes(String(v.status)))
         return null;
     if (v.status === "inbox")
         return exact(v, ["request_id", "text", "status"]) ? { request_id: v.request_id, text: v.text, status: "inbox" } : null;
     const out: PendingSend = { request_id: v.request_id, text: v.text, status: v.status === "rejected" ? "rejected" : "uncertain" };
+    if (v.follow_up_run_id !== undefined) {
+        if (!uuid(v.follow_up_run_id) || !exact(v, ["request_id", "text", "status", "follow_up_run_id"])) return null;
+        out.follow_up_run_id = v.follow_up_run_id;
+    }
     if (v.browser_request !== undefined) {
         const request = v.browser_request;
         if (!object(request)) return null;

@@ -66,7 +66,7 @@ F21	F21-02	이미 답변의 근거로 사용한 원본을 삭제한다	검색 �
 F21	F21-03	연결 해제 시 자료를 유지한 뒤 나중에 삭제한다	해제 상태에서 해당 보관 자료를 삭제할 수 있다	vitest	web/src/SourceConnections.test.tsx	lets a retained disconnected collection be deleted later
 F22	F22-01	채팅의 근거 표시를 선택한다	답변에서 참조한 동일한 근거 버전을 연다	vitest	web/src/Chat.test.tsx	opens only the exact backend evidence revision from a chat reference
 F22	F22-02	원본의 출처에서 수집 영수증을 연다	해당 영수증 정보가 열리고 내부 체크포인트는 노출하지 않는다	vitest	web/src/SourceConnections.test.tsx	drills down from source provenance to the safe receipt without checkpoints
-F22	F22-03	긴 대화 두 개에 동명이인의 서로 다른 사실을 저장한 뒤 과거 사실을 묻는다	검색 상위 5개 결과의 정답 근거 적중률과 최종 답의 사실 정확도를 별도로 측정한다	planned	audit/evaluation-scenarios.tsv	MEM03
+F22	F22-03	긴 대화 두 개에 동명이인의 서로 다른 사실을 저장한 뒤 과거 사실을 묻는다	검색 상위 5개 결과의 정답 근거 적중률과 최종 답의 사실 정확도를 별도로 측정한다	recorded	audit/memory-reader/results.md	F22 동명이인 대화 회상
 F23	F23-01	수집 배치 일부가 실패한 뒤 체크포인트를 확인한다	영수증과 커서는 성공한 커밋에 대해서만 함께 이동한다	rust	crates/moosuri-store/src/knowledge/tests.rs	batch_receipt_cursor_cas_and_failed_batch_are_atomic
 F23	F23-02	배치 접수와 완료 응답을 잃은 뒤 수집기를 다시 실행한다	원래 본문과 커서를 유지하고 같은 접수 결과를 복구한다	rust	crates/moosuri-connectors/src/work_sessions/tests.rs	local_file_to_custom_ingest_recovers_unknown_batch_and_finish_without_cursor_or_body_drift
 F23	F23-03	생산자가 하트비트와 완료 보고를 차례로 보낸다	자료 커밋과 생존 신호와 생산자 자체 완료 보고가 서로 다른 상태로 표시된다	vitest	web/src/SourceConnections.test.tsx	keeps local commit, heartbeat, and producer completion report distinct
@@ -163,7 +163,7 @@ F53	F53-02	실제 schema47 이전 실행 파일을 준비하고 여러 버전을
 F53	F53-03	실제 배포 채널에서 릴리스를 내려받아 별도로 확보한 공개키로 검증한다	공식 버전·대상·해시가 일치하는 설치 파일만 검증을 통과한다	external	docs/signed-download.md	공식 서명 키와 게시물의 독립 대조
 F54	F54-01	사용량 화면에서 실패·미확정 실행을 포함한 지연 보고서를 연다	관측 표본과 분모를 나눠 표시하고 없는 첫 본문 시간을 만들지 않는다	vitest	web/src/UsageView.test.tsx	shows observed samples and failed/unknown denominators without inventing missing first body time
 F54	F54-02	도구 사용·스트림 중단·취소가 섞인 합성 실행 시간을 수집한다	실제로 관측한 사건을 기준으로 단계별 분모와 지연을 집계한다	rust	crates/moosuri-agent/src/tests/run_timings.rs	run_timings_runtime_stream_tools_truncation_and_cancel_keep_real_denominators
-F54	F54-03	같은 질문과 예산으로 기억 사용 전략을 비교한다	정답률·추출 비용·지연을 같은 조건에서 산출하고 합성 결과와 실제 모델 결과를 구분한다	planned	audit/evaluation-scenarios.tsv	MEM08
+F54	F54-03	같은 질문과 예산으로 기억 사용 전략을 비교한다	정답률·추출 비용·지연을 같은 조건에서 산출하고 합성 결과와 실제 모델 결과를 구분한다	recorded	audit/memory-reader/results.md	F54 세 가지 기억 조건
 F55	F55-01	버전이 다른 같은 Rust 의존성을 릴리스 고지로 추출한다	버전별 실제 저작권 정보를 유지하고 빌드 머신 경로는 제외한다	rust	tools/xtask/src/notices.rs	rust_notices_preserve_distinct_versions_and_exact_attribution_without_host_paths
 F55	F55-02	웹 패키지 일부 또는 고지가 없는 설치 트리에서 고지를 생성한다	누락과 충돌을 보고하고 확인한 고지만 수집한다	rust	tools/xtask/src/web_notices.rs	web_notices_report_missing_optional_packages_declarations_notices_and_conflicts
 F55	F55-03	공개 릴리스를 새 환경에 설치하고 공급망 자료와 대조한다	배포 아티팩트의 서명·체크섬·SBOM 출처가 일치하고 공개 수락 기록이 남는다	external	docs/public-release.md	공개 태그·서명·SBOM 및 청정 설치 수락

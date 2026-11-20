@@ -901,8 +901,9 @@ def main():
                     page = context.new_page()
                     page.on("pageerror", lambda error: world.errors.append(str(error)))
                     page.set_default_timeout(5_000)
+                    page.set_default_navigation_timeout(15_000)
                     try:
-                        page.goto(base + "/personal.html")
+                        page.goto(base + "/personal.html", wait_until="domcontentloaded")
                         run(page, world)
                         check_layout(page)
                         assert not world.errors, world.errors

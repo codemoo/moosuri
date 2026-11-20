@@ -640,10 +640,10 @@ mod tests {
         runtime.wake();
         let done = terminal(&store, &user, &inbox).await;
         assert_eq!(done.run.state, RunState::Completed);
-        assert_eq!(
+        assert!(matches!(
             done.run.mail_connection_recovery,
             Some(moosuri_core::MailConnectionRecovery::AdminSetup)
-        );
+        ));
         assert!(
             done.assistant
                 .iter()

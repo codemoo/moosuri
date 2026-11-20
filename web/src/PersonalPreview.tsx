@@ -392,10 +392,9 @@ function Workspace({
     [mutating, setMutating] = useState(false);
   const [memoryDrafts, setMemoryDrafts] = useState(initialKnowledgeDrafts);
   const [refresh, setRefresh] = useState(0);
-  const connectorOrigin = useRef<MemberView>("chat");
   const [admin, setAdmin] = useState(session.installation_admin === true);
   const onAdminUnavailable = useCallback(() => setAdmin(false), []);
-  const { route, open } = useMemberRoute(admin, () => {
+  const { route, open, leaveCatalog } = useMemberRoute(session, admin, () => {
     const workspace = workspaceGoogleReturn(session);
     if (workspace) return { view: "connections", service: workspace.service ?? undefined };
     return googleReturn() ? { view: "connections", service: "gmail" } : null;
@@ -403,11 +402,8 @@ function Workspace({
   const { view } = route;
   const adminTab = route.engine ? "engine" : "members";
   const lastEngineTab = useRef(false);
-  const previousView = useRef(view);
   useEffect(() => {
     if (view === "admin") lastEngineTab.current = !!route.engine;
-    if (view === "chat" && previousView.current === "admin") setRefresh(value => value + 1);
-    previousView.current = view;
   }, [view, route.engine]);
   const [watchThread, setWatchThread] = useState<string | null>(null);
   const [browserChoice, setBrowserChoice] = useState<{
@@ -495,27 +491,35 @@ function Workspace({
       setInventoryError(false);
     }
   }
+  const capabilityVersion = useRef(0);
+  const checkCapability = useCallback(async () => {
+    const version = ++capabilityVersion.current;
+    try {
+      const capability = await scope.request<Capability>("/text-preview");
+      if (version === capabilityVersion.current) {
+        setCap(capability);
+        setCapError("");
+      }
+    } catch (e) {
+      if (version !== capabilityVersion.current || isAborted(e)) return;
+      setCap(null);
+      if (e instanceof ApiFailure && e.status === 401) expired();
+      else setCapError(e instanceof ApiFailure && e.status === 404 ? ""
+        : "대화 가능 상태를 확인하지 못했습니다. 상태를 새로고침해 주세요.");
+    }
+  }, [scope, expired]);
+  useEffect(() => {
+    if (view !== "chat") return;
+    setCap(undefined);
+    setCapError("");
+    void checkCapability();
+    return () => { ++capabilityVersion.current; };
+  }, [view, refresh, checkCapability]);
   useEffect(() => {
     let live = true;
     setLoading(true);
     setInventoryError(false);
     setError("");
-    setCapError("");
-    setCap(undefined);
-    void scope
-      .request<Capability>("/text-preview")
-      .then((capability) => {
-        if (live) setCap(capability);
-      })
-      .catch((e) => {
-        if (!live || isAborted(e)) return;
-        if (e instanceof ApiFailure && e.status === 404) {
-          setCap(null);
-          return;
-        }
-        if (e instanceof ApiFailure && e.status === 401) expired();
-        else setCapError("대화 가능 상태를 확인하지 못했습니다. 상태를 새로고침해 주세요.");
-      });
     const inventoryVersion = ++threadInventoryVersion.current;
     void scope
       .request<ThreadsResponse>("/threads")
@@ -570,11 +574,13 @@ function Workspace({
       );
   }, [memory, selected, threads, recovery]);
   useEffect(() => {
+    let live = true;
     const check = () => {
       setGoogleReads([]);
       void scope
         .request<SessionView>("/auth/session")
         .then((v) => {
+          if (!live) return;
           if (
             v.user.id !== session.user.id ||
             v.chat_draft_scope !== session.chat_draft_scope ||
@@ -582,16 +588,19 @@ function Workspace({
             v.installation_admin !== session.installation_admin
           )
             changedSession(v);
-          else if (view === "chat" && selectedRef.current) {
-            void history(selectedRef.current);
-            void mailHistory(selectedRef.current);
+          else if (view === "chat") {
+            void checkCapability();
+            if (selectedRef.current) {
+              void history(selectedRef.current);
+              void mailHistory(selectedRef.current);
+            }
           }
         })
-        .catch(fail);
+        .catch(e => { if (live) fail(e); });
     };
     window.addEventListener("focus", check);
-    return () => window.removeEventListener("focus", check);
-  }, [scope, session, view]);
+    return () => { live = false; window.removeEventListener("focus", check); };
+  }, [scope, session, view, checkCapability]);
   function reconcile(thread: string, turns: ChatTurn[]) {
     const value = memoryRef.current.pending[thread];
     if (!value) return;
@@ -603,12 +612,15 @@ function Workspace({
     const found = turns.find((t) => t.run.request_id === value.request_id);
     if (found && (!active(found) || value.browser_request?.kind === "start")) clearSend(thread, value);
   }
-  function clearSend(thread: string, value: PendingSend, preserveDraft = false) {
+  function clearSend(thread: string, value: PendingSend, onFailure?: "restore" | "reject") {
     change((m) => {
       if (m.pending[thread]?.request_id !== value.request_id) return m;
+      // Keep the rejected text alongside the next draft if the editor is occupied.
+      if (onFailure === "reject" && m.drafts[thread])
+        return { ...m, pending: { ...m.pending, [thread]: { ...value, status: "rejected" } } };
       const pending = { ...m.pending }, drafts = { ...m.drafts };
       delete pending[thread];
-      if (preserveDraft && drafts[thread] === undefined) drafts[thread] = value.text;
+      if (onFailure && !drafts[thread]) drafts[thread] = value.text;
       return { ...m, pending, drafts };
     });
   }
@@ -838,7 +850,7 @@ function Workspace({
         );
         browser.publish(destination, status);
         if (!status.configured || !status.workspace) {
-          clearSend(destination, value, true);
+          clearSend(destination, value, "restore");
           setError("이 설치에서 브라우저 작업을 사용할 수 없습니다.");
           return;
         }
@@ -885,7 +897,7 @@ function Workspace({
       if (!isAborted(e)) {
         if (value.browser_request && e instanceof ApiFailure &&
             [400, 401, 403, 404, 409, 422, 429].includes(e.status)) {
-          clearSend(destination, value, true);
+          clearSend(destination, value, "restore");
           if (e.status === 401) expired();
           else if ([403, 404].includes(e.status)) setError("이 대화에서 브라우저 작업을 사용할 수 없습니다.");
           else if (e.status === 409) setError("브라우저 상태가 바뀌었습니다. 현재 작업을 확인해 주세요.");
@@ -896,8 +908,9 @@ function Workspace({
           e instanceof ApiFailure &&
           [400, 401, 403, 404, 422, 429].includes(e.status)
         ) {
-          clearSend(destination, value, true);
-          if (e.status === 422 && e.code === "personal_inbox_requested") {
+          const inbox = e.status === 422 && e.code === "personal_inbox_requested";
+          clearSend(destination, value, inbox ? "restore" : "reject");
+          if (inbox) {
             setOpenInbox({
               thread_id: destination,
               request_id: value.request_id,
@@ -907,9 +920,9 @@ function Workspace({
               thread_id: destination,
               request_id: value.request_id,
             };
-            connectorOrigin.current = "chat";
             open({ view: "connections", service: "gmail" });
           } else if (e.code === "personal_text_model_unavailable") {
+            ++capabilityVersion.current;
             setCap(null);
             setError("답변을 받을 수 없어 메시지를 보내지 못했습니다. 입력을 유지했습니다.");
           } else fail(e);
@@ -971,18 +984,9 @@ function Workspace({
   }
   function navigate(destination: MemberView, back = false) {
     if (destination === "connections" && view !== "connections") {
-      connectorOrigin.current = view;
       setOpenInbox(null);
     }
     open({ view: destination, engine: destination === "admin" && lastEngineTab.current }, back);
-  }
-  function leaveCatalog() {
-    const parent = window.history.state?.memberParent;
-    if (parent === "memory" || parent === "chat" || (admin && (parent === "admin" || parent === "admin/engine"))) {
-      window.history.back();
-      return;
-    }
-    navigate(connectorOrigin.current === "admin" && !admin ? "chat" : connectorOrigin.current, true);
   }
   function openThread(id: string | null) {
     setSelected(id);
@@ -1008,6 +1012,7 @@ function Workspace({
   const chatActivity = browserWork && ["starting", "reading", "ready", "user_control", "resuming", "stopping"].includes(browserWork.state)
     ? browserStateLabel[browserWork.state]
     : working ? stateLabel(working)
+    : pending?.status === "rejected" ? "이전 메시지 전송 실패"
     : pending?.status === "uncertain" ? "전송 결과 확인 필요"
     : pending?.browser_request ? "브라우저 요청을 확인하는 중"
     : pending ? "답변을 기다리는 중" : undefined;
@@ -1104,7 +1109,7 @@ function Workspace({
                   {inventoryError && <p role="alert">대화 목록을 불러오지 못했습니다.</p>}
                   {capError && <p role="alert">{capError}</p>}
                   {error && <p role="alert">{error}</p>}
-                  {(capError || inventoryError || !pending) && (
+                  {(capError || inventoryError || !pending || pending.status === "rejected") && (
                     <Button label="상태 새로고침" variant="ghost"
                       isDisabled={loading || mutating} onClick={() => {
                         browser.refresh();
@@ -1188,10 +1193,19 @@ function Workspace({
                       <p className="member-chat-status" data-working={pending.status === "sending" || undefined} role="status">
                         {pending.status === "uncertain"
                           ? "아직 전송 결과를 확인하지 못했습니다. 새 요청은 만들지 않았습니다."
+                          : pending.status === "rejected" ? "이 메시지를 보내지 못했습니다."
                           : pending.browser_request ? "브라우저 요청을 확인하는 중…" : "답변을 기다리는 중…"}
                       </p>
                     )}
-                    {pending.status !== "sending" && (
+                    {pending.status === "rejected" && (
+                      <div className="member-retry-actions">
+                        <Button label="이전 메시지 다시 보내기" variant="ghost" isDisabled={!ready || mutating || busy}
+                          onClick={() => void send(undefined, true)} />
+                        <Button label="이전 메시지 버리기" variant="ghost" isDisabled={mutating}
+                          onClick={() => clearSend(selected, pending)} />
+                      </div>
+                    )}
+                    {(pending.status === "uncertain" || pending.status === "accepted") && (
                       <div className="member-retry-actions">
                         <Button label="결과 확인" variant="ghost" isDisabled={reading || mutating}
                           onClick={() => {
@@ -1219,6 +1233,7 @@ function Workspace({
             <PersonalChatComposer key={selected ?? "new"} editor={chatEditor} draft={draft}
               disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat")} busy={composerBusy}
               waiting={busy ? "대화 불러오는 중…"
+                : pending?.status === "rejected" ? "다음 메시지를 작성하세요."
                 : pending?.status === "uncertain" ? "전송 결과를 확인해 주세요."
                 : pending?.browser_request ? "브라우저 요청을 확인하는 중…" : "답변을 기다리는 중…"}
               mode={browserMode}

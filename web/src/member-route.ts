@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { SessionView } from "../shared/api-types";
 import type { MemberView } from "./PersonalWorkspaceChrome";
 
 export type MemberRoute = {
@@ -25,15 +26,35 @@ function screenName(route: MemberRoute) {
   return route.view;
 }
 
-// Replace the OAuth callback entry after its fragment has been captured.
-export function restoreConnectorAddress(service: string | null) {
+type ConnectorOrigin = "chat" | "memory" | "admin" | "admin/engine";
+function connectorOrigin(value: unknown): ConnectorOrigin | undefined {
+  if (value === "chat" || value === "memory" || value === "admin" || value === "admin/engine") return value;
+}
+
+function memberEntry(session: SessionView) {
+  const entry = window.history.state;
+  return session.chat_draft_scope && entry?.account === session.user.id && entry?.scope === session.chat_draft_scope
+    ? entry : undefined;
+}
+
+export function currentConnectorOrigin(session: SessionView) {
+  return connectorOrigin(memberEntry(session)?.connectorOrigin);
+}
+
+function entryFor(session: SessionView, origin?: ConnectorOrigin, parent?: string) {
+  return { account: session.user.id, scope: session.chat_draft_scope, connectorOrigin: origin, memberParent: parent };
+}
+
+// The callback is a fresh document. Its previous browser entry may belong to
+// Google, so restore a logical parent without asking the browser to go back.
+export function restoreConnectorAddress(service: string | null, session: SessionView, origin?: unknown) {
   const url = new URL(location.href);
   url.search = "";
   url.hash = screenName({ view: "connections", service: service ?? undefined });
-  window.history.replaceState(null, "", url);
+  window.history.replaceState(entryFor(session, connectorOrigin(origin)), "", url);
 }
 
-export function useMemberRoute(admin: boolean, initialConnector: () => MemberRoute | null) {
+export function useMemberRoute(session: SessionView, admin: boolean, initialConnector: () => MemberRoute | null) {
   const [route, setRoute] = useState<MemberRoute>(() => initialConnector() ?? readRoute(admin));
   useEffect(() => {
     const restore = () => setRoute(readRoute(admin));
@@ -47,15 +68,24 @@ export function useMemberRoute(admin: boolean, initialConnector: () => MemberRou
     const previous = screenName(readRoute(admin));
     const hash = target === "chat" ? "" : "#" + target;
     if (url.hash !== hash) {
-      if (back && window.history.state?.memberParent === target) {
+      if (back && memberEntry(session)?.memberParent === target) {
         window.history.back();
         return;
       }
       url.hash = hash;
-      if (back) window.history.replaceState(null, "", url);
-      else window.history.pushState({ memberParent: previous }, "", url);
+      const origin = next.view === "connections"
+        ? connectorOrigin(previous) ?? currentConnectorOrigin(session) : undefined;
+      const state = entryFor(session, origin, back ? undefined : previous);
+      if (back) window.history.replaceState(state, "", url);
+      else window.history.pushState(state, "", url);
     }
     setRoute(next);
   }
-  return { route, open };
+  function leaveCatalog() {
+    const origin = currentConnectorOrigin(session);
+    if (admin && (origin === "admin" || origin === "admin/engine"))
+      open({ view: "admin", engine: origin === "admin/engine" }, true);
+    else open({ view: origin === "memory" ? "memory" : "chat" }, true);
+  }
+  return { route, open, leaveCatalog };
 }

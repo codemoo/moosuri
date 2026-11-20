@@ -51,9 +51,9 @@ function creation(v: unknown): PendingThreadCreation | null {
 /** Rebuild a closed carrier. Persisted bytes never authorize an automatic POST. */
 function pending(v: unknown): PendingSend | null {
     if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "status"]) ||
-        !uuid(v.request_id) || !text(v.text) || !v.text.trim() || !["sending", "accepted", "uncertain"].includes(String(v.status)))
+        !uuid(v.request_id) || !text(v.text) || !v.text.trim() || !["sending", "accepted", "uncertain", "rejected"].includes(String(v.status)))
         return null;
-    const out: PendingSend = { request_id: v.request_id, text: v.text, status: "uncertain" };
+    const out: PendingSend = { request_id: v.request_id, text: v.text, status: v.status === "rejected" ? "rejected" : "uncertain" };
     if (v.browser_request !== undefined) {
         const request = v.browser_request;
         if (!object(request)) return null;

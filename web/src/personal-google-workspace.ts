@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionView } from "../shared/api-types";
-import { restoreConnectorAddress } from "./member-route";
+import { currentConnectorOrigin, restoreConnectorAddress } from "./member-route";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 
@@ -12,6 +12,7 @@ type WorkspaceService = typeof services[number];
 type Grant = { connection_id: string; epoch: number; mailbox: string };
 type Connections = Partial<Record<WorkspaceService, Grant>>;
 type Pending = {
+  origin?: ReturnType<typeof currentConnectorOrigin>;
   account: string;
   session: string;
   service: WorkspaceService;
@@ -94,8 +95,8 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
     const pending = pendingFor(session);
     const notify = (message: string) => setNotice({ service, message });
     const uncertain = "Google 연결 결과를 확인하지 못했습니다. 현재 연결 상태를 다시 확인해 주세요.";
-    restoreConnectorAddress(service);
     if (!fields) {
+      restoreConnectorAddress(service, session, pending?.origin);
       clearWorkspaceGoogle();
       notify(uncertain);
       return;
@@ -105,7 +106,9 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
     const denials = fields.getAll("google_denied");
     const flows = fields.getAll("flow");
     const flow = flows[0] ?? denials[0];
-    if (!service || !pending || pending.service !== service || pending.phase !== "consent" || pending.flow !== flow) {
+    const matches = !!service && pending?.service === service && pending.phase === "consent" && pending.flow === flow;
+    restoreConnectorAddress(service, session, matches ? pending.origin : undefined);
+    if (!matches) {
       notify("연결을 시작한 계정과 탭에서 다시 진행해 주세요.");
       return;
     }
@@ -163,6 +166,7 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
         }, undefined, { timeoutMs: 15000 });
         setConnections((current) => ({ ...current, [service]: undefined }));
       } else if (name === "connect" && !grant) {
+        const origin = currentConnectorOrigin(session);
         const started = await scope.request<{ flow_id: string; authorization_url: string }>(`${base}/${service}/start`, "POST", {}, undefined, { timeoutMs: 15000 });
         const url = new URL(started.authorization_url);
         if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" ||
@@ -170,6 +174,7 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
           throw Error("invalid consent");
         }
         const pending: Pending = {
+          origin,
           account: session.user.id,
           session: session.chat_draft_scope,
           service,

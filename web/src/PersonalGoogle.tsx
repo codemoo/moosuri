@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionView } from "../shared/api-types";
-import { restoreConnectorAddress } from "./member-route";
+import { currentConnectorOrigin, restoreConnectorAddress } from "./member-route";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
 import { workspaceGoogleReturn } from "./personal-google-workspace";
@@ -26,6 +26,7 @@ export type ThreadGoogleRead = {
   result: Inbox | null;
 };
 type Pending = {
+  origin?: ReturnType<typeof currentConnectorOrigin>;
   flow: string;
   account: string;
   session: string;
@@ -286,12 +287,9 @@ export function usePersonalGoogle({
           }
           const flow = fields.get("flow") ?? fields.get("google_denied"),
             handle = fields.get("google_handle");
-          restoreConnectorAddress("gmail");
-          if (
-            !belongs(p, session) ||
-            p.flow !== flow ||
-            p.phase !== "consent"
-          ) {
+          const matches = belongs(p, session) && p.flow === flow && p.phase === "consent";
+          restoreConnectorAddress("gmail", session, matches ? p.origin : undefined);
+          if (!matches) {
             await update();
             setNotice("연결을 시작한 계정과 탭에서 다시 진행해 주세요.");
             return;
@@ -354,6 +352,7 @@ export function usePersonalGoogle({
         await read(connection, readIntent);
       } else if (name === "connect" || (name === "read" && readIntent)) {
         const destination = name === "read" ? readIntent ?? undefined : undefined;
+        const origin = currentConnectorOrigin(session);
         const started = await scope.request<{
           flow_id: string;
           authorization_url: string;
@@ -365,7 +364,7 @@ export function usePersonalGoogle({
           !session.chat_draft_scope
         )
           throw Error("invalid consent");
-        save(pending(destination, "consent", started.flow_id));
+        save({ ...pending(destination, "consent", started.flow_id), origin });
         location.assign(url.href);
       }
     } catch (e) {

@@ -36,6 +36,7 @@ let restrictLogin: boolean,
   unknownFirst: boolean,
   hideHistory: boolean,
   deferSend: boolean,
+  deferRefusal: boolean,
   completeSend: ((value: Response) => void) | null,
   capEnabled: boolean;
 let pendingCapability: Promise<Response> | undefined;
@@ -90,6 +91,7 @@ beforeEach(() => {
   unknownFirst = false;
   hideHistory = false;
   deferSend = false;
+  deferRefusal = false;
   completeSend = null;
   capEnabled = true;
   pendingCapability = undefined;
@@ -148,6 +150,8 @@ beforeEach(() => {
           ? Response.json({ code: "unavailable" }, { status: 503 })
           : Response.json({ state: "setup_required", site_origin: vaultOrigin });
       }
+      if (path === "/personal/google/start" || path === "/personal/google/drive/start")
+        return Response.json({ flow_id: "a".repeat(64), authorization_url: "https://accounts.google.com/o/oauth2/v2/auth" });
       if (path === "/personal/google/complete")
         return Response.json({
           connection_id: tid,
@@ -233,6 +237,7 @@ beforeEach(() => {
             { code: "personal_inbox_requested" },
             { status: 422 },
           );
+        if (deferRefusal) return new Promise<Response>(resolve => { completeSend = resolve; });
         let result = paid.get(body.request_id);
         if (!result) {
           result = turn(body.request_id, body.text);
@@ -580,6 +585,72 @@ it("lets the administrator recover and save one installation model after a revis
     { revision: 5, connection_revision: "connection-five", enabled: true, default_choice: low },
   ]);
 });
+it("enables the retained draft after an administrator resumes the engine and returns via Memory", async () => {
+  current = { ...session(), installation_admin: true };
+  let revision = 1;
+  const choice = { model: "synthetic-model", effort: "low" };
+  adminEngine = (path, method, body) => {
+    if (path !== "/personal/admin/engine") return Response.json({ members: [] });
+    if (method === "POST") {
+      capEnabled = body.enabled;
+      revision++;
+    }
+    return Response.json({ configured: true, enabled: capEnabled, revision, connection_revision: "test",
+      kind: "chatgpt", host_default: choice, choices: [choice], default_choice: choice, default_stale: false });
+  };
+  const user = userEvent.setup();
+  mount();
+  await user.type(await composer(), "Waiting for the engine");
+  capEnabled = false;
+  fireEvent.focus(window);
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "메시지" })).toBeDisabled());
+  await user.click(screen.getByRole("button", { name: "엔진 설정 열기" }));
+  const settings = within(await screen.findByRole("form", { name: "설치 모델 설정" }));
+  await user.click(settings.getByRole("checkbox", { name: "새 모델 요청 허용" }));
+  await user.click(settings.getByRole("button", { name: "설치 설정 저장" }));
+  await screen.findByText(/엔진 설정을 저장했습니다/);
+  await user.click(screen.getByRole("button", { name: "기억" }));
+  await user.click(screen.getByRole("button", { name: "대화" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "보내기" })).toBeEnabled());
+  expect(await composer()).toHaveValue("Waiting for the engine");
+  expect(chatPosts()).toHaveLength(0);
+});
+
+it("rechecks a paused engine when an existing member tab regains focus, including an empty workspace", async () => {
+  threads = [];
+  const user = userEvent.setup();
+  mount();
+  const editor = await composer();
+  await user.type(editor, "Member draft");
+  capEnabled = false;
+  fireEvent.focus(window);
+  await waitFor(() => expect(editor).toBeDisabled());
+  capEnabled = true;
+  fireEvent.focus(window);
+  await waitFor(() => expect(editor).toBeEnabled());
+  expect(editor).toHaveValue("Member draft");
+  expect(calls.some(call => call.path.startsWith("/personal/admin/"))).toBe(false);
+  expect(chatPosts()).toHaveLength(0);
+});
+
+it("ignores an older capability response after a newer focus check enables chat", async () => {
+  capEnabled = false;
+  mount();
+  const editor = await composer();
+  await waitFor(() => expect(editor).toBeDisabled());
+  const before = calls.filter(call => call.path === "/text-preview").length;
+  let finish!: (response: Response) => void;
+  pendingCapability = new Promise(resolve => { finish = resolve; });
+  fireEvent.focus(window);
+  await waitFor(() => expect(calls.filter(call => call.path === "/text-preview").length).toBeGreaterThan(before));
+  pendingCapability = undefined;
+  capEnabled = true;
+  fireEvent.focus(window);
+  await waitFor(() => expect(editor).toBeEnabled());
+  await act(async () => { finish(Response.json({ enabled: false, capability: "text_only_preview", tools: false })); });
+  expect(editor).toBeEnabled();
+});
+
 it("opens the Google installer inside the connector list and returns to member connectors", async () => {
   current = { ...session(), installation_admin: true };
   const path = "/personal/admin/google-setup";
@@ -699,6 +770,98 @@ it("keeps the next draft even when its text matches the request being acknowledg
   await waitFor(() => expect(screen.getByRole("button", { name: "보내기" })).toBeEnabled());
   expect(await composer()).toHaveValue("Same question");
 });
+function chatPosts() {
+  return calls.filter(call => call.method === "POST" && call.path.endsWith("/text-preview"));
+}
+
+async function rejectWhileTyping(user: ReturnType<typeof userEvent.setup>, rejected: string, next: string,
+  refusal = Response.json({ code: "rate_limited" }, { status: 429 })) {
+  deferRefusal = true;
+  await user.type(await composer(), rejected);
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await waitFor(() => expect(completeSend).not.toBeNull());
+  await user.type(await composer(), next);
+  await act(async () => {
+    completeSend!(refusal);
+  });
+  deferRefusal = false;
+  await screen.findByRole("button", { name: "이전 메시지 다시 보내기" });
+}
+
+it("recovers a rejected first message and its separate follow-up after reload, then explicitly retries the first", async () => {
+  threads = [];
+  const user = userEvent.setup();
+  const view = mount();
+  await rejectWhileTyping(user, "First message", "Next draft");
+  expect(await composer()).toHaveValue("Next draft");
+  const original = chatPosts()[0];
+  view.unmount();
+  mount();
+  const retry = await screen.findByRole("button", { name: "이전 메시지 다시 보내기" });
+  expect(within(screen.getByRole("region", { name: "대화" })).getByText("First message")).toBeVisible();
+  expect(await composer()).toHaveValue("Next draft");
+  expect(chatPosts()).toHaveLength(1);
+  expect(paid.size).toBe(0);
+  await user.click(retry);
+  await screen.findByText("Synthetic reply <button>opaque tool text</button>");
+  expect(chatPosts().map(call => call.body)).toEqual([original.body, original.body]);
+  expect(paid.size).toBe(1);
+  expect(await composer()).toHaveValue("Next draft");
+  expect(screen.getByRole("button", { name: "보내기" })).toBeEnabled();
+});
+
+it("keeps both messages during an engine refusal and allows retry only when the engine returns", async () => {
+  const user = userEvent.setup();
+  mount();
+  await rejectWhileTyping(user, "Held request", "Separate draft",
+    Response.json({ code: "personal_text_model_unavailable" }, { status: 422 }));
+  const retry = screen.getByRole("button", { name: "이전 메시지 다시 보내기" });
+  expect(retry).toHaveAttribute("aria-disabled", "true");
+  await user.click(retry);
+  expect(chatPosts()).toHaveLength(1);
+  expect(await composer()).toHaveValue("Separate draft");
+  fireEvent.focus(window);
+  await waitFor(() => expect(retry).not.toHaveAttribute("aria-disabled", "true"));
+  await user.click(retry);
+  await screen.findByText("Synthetic reply <button>opaque tool text</button>");
+  expect(await composer()).toHaveValue("Separate draft");
+  expect(chatPosts().map(call => call.body.text)).toEqual(["Held request", "Held request"]);
+});
+
+it("keeps the rejected request in its thread and dismisses only that copy of an identical next draft", async () => {
+  threads.push({ id: bid, title: "Second thread", updated_at: 1 });
+  const user = userEvent.setup();
+  mount();
+  await rejectWhileTyping(user, "Identical", "Identical");
+  let drawer = await openDrawer(user);
+  await user.click(drawer.getByRole("button", { name: "Second thread" }));
+  expect(await composer()).toHaveValue("");
+  expect(screen.queryByRole("button", { name: "이전 메시지 다시 보내기" })).toBeNull();
+  drawer = await openDrawer(user);
+  await user.click(drawer.getByRole("button", { name: "A private thread" }));
+  await user.click(await screen.findByRole("button", { name: "이전 메시지 버리기" }));
+  expect(await composer()).toHaveValue("Identical");
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+  await screen.findByText("Synthetic reply <button>opaque tool text</button>");
+  const posts = chatPosts();
+  expect(posts).toHaveLength(2);
+  expect(posts[1].body.text).toBe(posts[0].body.text);
+  expect(posts[1].body.request_id).not.toBe(posts[0].body.request_id);
+});
+
+it("drops both rejected and unsent text when the same member returns in a new session", async () => {
+  const user = userEvent.setup();
+  const first = mount();
+  await rejectWhileTyping(user, "Previous session request", "Previous session draft");
+  first.unmount();
+  current = { ...session(), chat_draft_scope: "c".repeat(64) };
+  mount();
+  expect(await composer()).toHaveValue("");
+  expect(screen.queryByRole("button", { name: "이전 메시지 다시 보내기" })).toBeNull();
+  expect(sessionStorage.getItem(PREVIEW_DRAFT_KEY)).not.toContain("Previous session");
+  expect(chatPosts()).toHaveLength(1);
+});
+
 it("logout fences an in-flight response and its saved draft before another account signs in", async () => {
   deferSend = true;
   const user = userEvent.setup();
@@ -1262,6 +1425,55 @@ it("restores connector detail on reload and returns to the originating memory vi
   await screen.findByRole("heading", { name: "커넥터" });
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   await waitFor(() => expect(menu().getByRole("button", { name: "기억" })).toHaveAttribute("aria-current", "page"));
+  expect(calls.some(call => call.path === "/personal/google/inbox")).toBe(false);
+});
+
+it.each([
+  ["Gmail", "success", "memory"],
+  ["Gmail", "success", "admin/engine"],
+  ["Gmail", "cancel", "admin/engine"],
+  ["Gmail", "cancel", "memory"],
+  ["Google Drive", "cancel", "memory"],
+  ["Gmail", "rotated session", "chat"],
+  ["Gmail", "fresh tab", "chat"],
+])("returns through the catalog after %s consent in a new document (%s) to %s", async (service, result, destination) => {
+  const user = userEvent.setup();
+  connectedMailbox = null;
+  const fromAdmin = destination === "admin/engine";
+  if (fromAdmin) {
+    current = { ...session(), installation_admin: true };
+    adminEngine = path => path === "/personal/admin/members" ? Response.json({ members: [] }) : Response.json({ configured: false });
+  }
+  const first = mount();
+  await composer();
+  await user.click(screen.getByRole("button", { name: fromAdmin ? "관리" : "기억" }));
+  if (fromAdmin) await user.click(screen.getByRole("button", { name: "어시스턴트 엔진" }));
+  await user.click(screen.getByRole("button", { name: "연결" }));
+  await user.click(await screen.findByRole("button", { name: new RegExp("^" + service) }));
+  const connect = await screen.findByRole("button", { name: "Google 연결" });
+  await waitFor(() => expect(connect).toBeEnabled());
+  await user.click(connect);
+  const flow = "a".repeat(64);
+  const key = service === "Gmail" ? "moosuri.personal.google-read.v1" : "moosuri.personal.google-workspace.v1";
+  await waitFor(() => expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({ flow, origin: fromAdmin ? "admin/engine" : "memory" }));
+  first.unmount();
+  if (result === "rotated session") current = { ...session(), chat_draft_scope: "c".repeat(64) };
+  if (result === "fresh tab") sessionStorage.clear();
+  const fragment = result === "cancel" ? "google_denied=" + flow : "google_handle=" + "b".repeat(64) + "&flow=" + flow;
+  history.pushState(null, "", "/#" + fragment + (service === "Gmail" ? "" : "&google_service=drive"));
+  mount();
+  await screen.findByRole("heading", { name: service });
+  await waitFor(() => expect(location.hash).toBe(service === "Gmail" ? "#connections/gmail" : "#connections/drive"));
+  if (result === "success") await within(screen.getByRole("region", { name: "Gmail" })).findByText("a@example.test");
+  else if (result === "cancel") await screen.findByText(/연결이 취소됐습니다/);
+  else await screen.findByText(/연결을 시작한 계정과 탭/);
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  await screen.findByRole("heading", { name: "커넥터" });
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: fromAdmin ? "관리" : destination === "memory" ? "기억" : "대화" }))
+    .toHaveAttribute("aria-current", "page"));
+  if (fromAdmin) expect(location.hash).toBe("#admin/engine");
+  expect(calls.filter(call => call.path === "/personal/google/complete")).toHaveLength(result === "success" ? 1 : 0);
   expect(calls.some(call => call.path === "/personal/google/inbox")).toBe(false);
 });
 

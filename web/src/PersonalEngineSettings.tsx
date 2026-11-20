@@ -11,6 +11,7 @@ type Engine = {
   revision: number;
   connection_revision: string | null;
   kind: ProviderKind | null;
+  connection_mode?: "api" | "claude_code" | "chatgpt_plan" | null;
   host_default: Choice | null;
   choices: Choice[];
   default_choice: Choice | null;
@@ -151,7 +152,7 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
             )}
             {!current && <p className="management-note" role="status">마지막으로 확인한 상태입니다. 새로고침하면 설정을 편집할 수 있습니다.</p>}
           </div>
-          {!engine.configured && <p className="management-note"><a href={engineGuide} target="_blank" rel="noreferrer">설치 서버에서 엔진 연결 설정하기</a></p>}
+
         </section>
       )}
       {engine?.configured && (
@@ -160,15 +161,51 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
           <div className="member-page-list">
             <ChoiceForm key={`${engine.connection_revision}:${engine.revision}`} engine={engine} busy={busy} editable={current} save={save} />
           </div>
-          <details className="management-engine-help">
-            <summary>서버 연결과 기본값</summary>
-            <p className="management-note">모델 선택지는 설치 서버에서 제공됩니다. 공급자를 바꾸거나 모델을 추가하려면 설치 서버의 엔진 연결을 설정하세요.</p>
-            <p className="management-note"><a href={engineGuide} target="_blank" rel="noreferrer">설치 서버에서 엔진 연결 설정하기</a></p>
-          </details>
+
         </section>
       )}
+      {engine && <>
+        {engine.configured && <ProviderUsage engine={engine} />}
+        <section className="member-page-list management-engine-overview" aria-labelledby="engine-host-setup">
+          <h2 id="engine-host-setup">공급자 추가와 모델 목록 갱신</h2>
+          <ol>
+            <li>설치 서버에서 API 키 또는 회원별 로그인 워커를 준비하세요. <a href={engineGuide.replace("subscriptions.md", "engine-chatgpt.md")} target="_blank" rel="noreferrer">ChatGPT 등록</a> · <a href={engineGuide.replace("subscriptions.md", "engine-claude.md")} target="_blank" rel="noreferrer">Claude Code 로그인</a></li>
+            <li>공급자에서 모델·추론 강도를 확인하고 브로커와 로그인 워커에 같은 조합을 등록하세요. 연결이나 목록을 교체할 때 새 연결 버전을 발급하세요.</li>
+            <li>호스트에서 워커와 모델 서비스를 시작한 뒤 이 화면을 새로고침하고 적용할 모델을 선택하세요.</li>
+          </ol>
+          <p><a href={engineGuide} target="_blank" rel="noreferrer">설치 서버에서 엔진 연결 설정하기</a></p>
+        </section>
+      </>}
     </section>
   );
+}
+
+function ProviderUsage({ engine }: { engine: Engine }) {
+  const mode = engine.connection_mode;
+  const links: [string, string][] = [];
+  if (mode === "claude_code") links.push(["Claude 구독 사용량", "https://claude.ai/settings/usage"]);
+  else if (mode === "chatgpt_plan") links.push(["ChatGPT 사용량", "https://chatgpt.com/codex/settings/usage"]);
+  else if (engine.kind === "open_ai") {
+    links.push(["OpenAI API 사용량", "https://platform.openai.com/usage"]);
+    if (!mode) links.push(["ChatGPT 사용량", "https://chatgpt.com/codex/settings/usage"]);
+  } else if (engine.kind === "anthropic") {
+    links.push(["Anthropic API 사용량", "https://platform.claude.com/settings/usage"]);
+    if (!mode) links.push(["Claude 구독 사용량", "https://claude.ai/settings/usage"]);
+  } else if (engine.kind === "open_router") links.push(["OpenRouter 사용량", "https://openrouter.ai/activity"]);
+  const source = mode === "claude_code" ? "Claude Code 로그인" : mode === "chatgpt_plan" ? "ChatGPT 공식 로그인"
+    : mode === "api" ? "API 연결" : "연결 방식 확인 필요";
+  return <section className="member-page-list management-engine-overview" aria-labelledby="engine-quota">
+    <h2 id="engine-quota">공급자 잔여 한도</h2>
+    <p>{source} · 잔여량 확인 불가 · 초기화 시각 확인 불가</p>
+    <p className="management-note">이 설치의 모델 브로커는 공급자의 한도 수치를 관리 화면에 전달하지 않습니다.
+      {links.length === 0 ? "호환 API 또는 로컬 모델은 연결을 제공하는 운영자에게 한도를 확인하세요." : "해당 연결로 로그인한 공급자 계정에서 확인하세요."}</p>
+    {links.map(([name, url]) => <a key={url} href={url} target="_blank" rel="noreferrer">{name} 열기</a>)}
+    <details>
+      <summary>무수리 회원별 사용 집계</summary>
+      <p>웹에서 회원별 합계를 조회할 수 없습니다. 설치 서버의 모델 원장에서 호출 수와 예산에 반영된 토큰 합계를 확인할 수 있습니다. 미정산 요청에는 예약 토큰이 포함됩니다.</p>
+      <a href="https://github.com/codemoo/moosuri/blob/main/deployment/kiri/admin.md#회원별-사용-집계" target="_blank" rel="noreferrer">서버에서 회원별 집계 확인하기</a>
+    </details>
+  </section>;
 }
 
 function ChoiceForm({ engine, busy, editable, save }: {

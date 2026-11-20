@@ -487,6 +487,11 @@ impl Broker {
             &self.registry,
             self.config.connection_revision,
             self.config.provider.kind,
+            match self.config.subscription {
+                Some(Route::ChatgptPlan) => engine::ConnectionMode::ChatgptPlan,
+                Some(Route::ClaudeCode) => engine::ConnectionMode::ClaudeCode,
+                None => engine::ConnectionMode::Api,
+            },
             &self.models[0],
             &self.models,
             &members,

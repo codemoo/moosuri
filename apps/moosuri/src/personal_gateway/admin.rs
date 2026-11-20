@@ -65,7 +65,7 @@ enum Operation {
     Invite(Invite),
 }
 fn member(m: control::Member) -> serde_json::Value {
-    json!({"account_id":m.account_id,"email":m.email,"generation":m.generation,"revision":m.role_revision,
+    json!({"account_id":m.account_id,"email":m.email,"display_name":m.display_name,"generation":m.generation,"revision":m.role_revision,
         "admin":m.role=="admin","eligible":m.eligible,"suspended":m.suspended,"ready":m.route_state=="ready","invitation_request_id":m.invitation_request_id,"invitation_name":m.invitation_name})
 }
 pub(super) fn routes() -> Router<Gateway> {

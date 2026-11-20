@@ -358,6 +358,48 @@ async fn two_actual_private_accounts_keep_member_role_and_only_verified_password
 }
 
 #[test]
+fn ready_roster_shows_invitation_then_verified_name_at_the_exact_generation() {
+    let d = root();
+    let r = d.path();
+    let (admin, admin_view) = bootstrap_a(r);
+    let session = checked_session(r, &admin, &admin_view).unwrap();
+    let req = Uuid::new_v4();
+    let invitation = reserve_invitation(
+        r,
+        &session,
+        req,
+        "초대 이름".into(),
+        "member@example.test".into(),
+    )
+    .unwrap();
+    let allocation = lookup(r, invitation.email.clone()).unwrap();
+    activate_invitation(r, req, &allocation).unwrap();
+    let row = || {
+        list_members(r, &session)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.account_id == allocation.account_id)
+            .unwrap()
+    };
+    let ready = row();
+    assert_eq!(ready.display_name.as_deref(), Some("초대 이름"));
+    assert!(ready.invitation_request_id.is_none());
+    let mut login = view(&allocation, &invitation.email, false);
+    login.user.name = "확인한 이름".into();
+    observe_session(r, &allocation, &login).unwrap();
+    assert_eq!(row().display_name.as_deref(), Some("확인한 이름"));
+    {
+        let (_lock, c) = open(r, false).unwrap();
+        c.execute(
+            "UPDATE allocations SET generation=generation+1 WHERE account_id=?1",
+            [&allocation.account_id],
+        )
+        .unwrap();
+    }
+    assert!(row().display_name.is_none());
+}
+
+#[test]
 fn invitations_reserve_only_metadata_and_replay_is_bound_to_payload_actor_revision_and_operation_kind()
  {
     let d = root();
@@ -382,6 +424,7 @@ fn invitations_reserve_only_metadata_and_replay_is_bound_to_payload_actor_revisi
         .unwrap();
     assert_eq!(row.invitation_request_id, Some(request));
     assert_eq!(row.invitation_name.as_deref(), Some("Synthetic Invite"));
+    assert_eq!(row.display_name.as_deref(), Some("Synthetic Invite"));
     assert_eq!(
         operator_invitation(r, request).unwrap().unwrap().name,
         invite.name
@@ -476,9 +519,9 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            4
+            5
         );
-        c.execute_batch("PRAGMA user_version=5").unwrap();
+        c.execute_batch("PRAGMA user_version=6").unwrap();
     }
     assert!(lookup(r, "a@example.test".into()).is_err());
 }
@@ -506,6 +549,7 @@ fn installation_engine_choice_ignores_existing_member_overrides() {
         registry,
         connection_revision,
         moosuri_core::ProviderKind::OpenAi,
+        engine::ConnectionMode::Api,
         &host,
         &[host.clone(), selected.clone()],
         &accounts,
@@ -611,4 +655,62 @@ fn concurrent_first_setup_has_one_identity_and_retries_preserve_it() {
     assert!(
         reserve_first_invitation(other.path(), first.request_id, first.name, first.email).is_err()
     );
+}
+
+#[test]
+fn legacy_registry_keeps_selected_engine_settings_when_broker_first_publishes_its_mode() {
+    use super::super::engine::{self, ConnectionMode, InstallationChange, ModelChoice};
+    let d = root();
+    let r = d.path();
+    let (admin, view) = bootstrap_a(r);
+    let session = checked_session(r, &admin, &view).unwrap();
+    let account = admin.account_id.parse().unwrap();
+    let connection = Uuid::new_v4();
+    let model = ModelChoice {
+        model: "synthetic".into(),
+        effort: None,
+    };
+    let publish = |mode| {
+        engine::publish_models(
+            r,
+            connection,
+            moosuri_core::ProviderKind::OpenAi,
+            mode,
+            &model,
+            std::slice::from_ref(&model),
+            &[account],
+        )
+    };
+    let settings = || serde_json::to_value(engine::read(r, &session).unwrap()).unwrap();
+    publish(ConnectionMode::ChatgptPlan).unwrap();
+    engine::change(
+        r,
+        &session,
+        InstallationChange {
+            revision: settings()["revision"].as_i64().unwrap(),
+            connection_revision: connection,
+            enabled: false,
+            default_choice: Some(model.clone()),
+        },
+    )
+    .unwrap();
+    {
+        let (_lock, c) = open(r, false).unwrap();
+        c.execute_batch(
+            "ALTER TABLE engine_settings DROP COLUMN connection_mode;
+            ALTER TABLE installation_members DROP COLUMN display_name; PRAGMA user_version=4;",
+        )
+        .unwrap();
+    }
+    let legacy = settings();
+    assert!(legacy["connection_mode"].is_null());
+    assert_eq!(legacy["enabled"], false);
+    publish(ConnectionMode::ChatgptPlan).unwrap();
+    let current = settings();
+    assert_eq!(current["connection_mode"], "chatgpt_plan");
+    assert_eq!(current["default_choice"], legacy["default_choice"]);
+    assert_eq!(current["enabled"], false);
+    assert!(publish(ConnectionMode::Api).is_err());
+    publish(ConnectionMode::ChatgptPlan).unwrap();
+    assert_eq!(settings()["revision"], current["revision"]);
 }

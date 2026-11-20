@@ -22,6 +22,22 @@ struct Catalog {
     host_default: ModelChoice,
     choices: Vec<ModelChoice>,
 }
+#[derive(Clone, Copy)]
+pub enum ConnectionMode {
+    Api,
+    ChatgptPlan,
+    ClaudeCode,
+}
+impl ConnectionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Api => "api",
+            Self::ChatgptPlan => "chatgpt_plan",
+            Self::ClaudeCode => "claude_code",
+        }
+    }
+}
+
 #[derive(Default, Serialize)]
 pub struct Settings {
     configured: bool,
@@ -29,6 +45,7 @@ pub struct Settings {
     revision: i64,
     connection_revision: Option<Uuid>,
     kind: Option<ProviderKind>,
+    connection_mode: Option<String>,
     host_default: Option<ModelChoice>,
     choices: Vec<ModelChoice>,
     default_choice: Option<ModelChoice>,
@@ -57,6 +74,7 @@ pub fn publish_models(
     root: &Path,
     connection_revision: Uuid,
     kind: ProviderKind,
+    mode: ConnectionMode,
     default: &ModelChoice,
     choices: &[ModelChoice],
     members: &[Uuid],
@@ -82,20 +100,20 @@ pub fn publish_models(
     let (_lock, mut db) = open(root, false)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let id = connection_revision.to_string();
-    let old: Option<(String, String)> = tx
+    let old: Option<(String, String, Option<String>)> = tx
         .query_row(
-            "SELECT connection_revision,catalog FROM engine_settings WHERE singleton=1",
+            "SELECT connection_revision,catalog,connection_mode FROM engine_settings WHERE singleton=1",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
-    if old
-        .as_ref()
-        .is_some_and(|(prior, rows)| prior == &id && rows != &catalog)
-    {
+    if old.as_ref().is_some_and(|(prior, rows, prior_mode)| {
+        prior == &id
+            && (rows != &catalog || prior_mode.as_deref().is_some_and(|m| m != mode.as_str()))
+    }) {
         return Err(StoreError::Conflict);
     }
-    if old.as_ref().is_none_or(|(prior, _)| prior != &id)
+    if old.as_ref().is_none_or(|(prior, _, _)| prior != &id)
         && tx.execute(
             "INSERT INTO engine_connections(id) VALUES(?1) ON CONFLICT DO NOTHING",
             [&id],
@@ -138,8 +156,8 @@ pub fn publish_models(
             changed = true;
         }
     }
-    tx.execute("INSERT INTO engine_settings(singleton,revision,connection_revision,catalog,enabled) VALUES(1,1,?1,?2,1)
-        ON CONFLICT(singleton) DO UPDATE SET revision=revision+1,connection_revision=excluded.connection_revision,catalog=excluded.catalog WHERE connection_revision!=excluded.connection_revision OR ?3",params![id,catalog,changed])?;
+    tx.execute("INSERT INTO engine_settings(singleton,revision,connection_revision,catalog,enabled,connection_mode) VALUES(1,1,?1,?2,1,?4)
+        ON CONFLICT(singleton) DO UPDATE SET revision=revision+1,connection_revision=excluded.connection_revision,catalog=excluded.catalog,connection_mode=excluded.connection_mode WHERE connection_revision!=excluded.connection_revision OR ?3 OR connection_mode IS NULL",params![id,catalog,changed,mode.as_str()])?;
     tx.commit()?;
     Ok(())
 }
@@ -147,6 +165,7 @@ struct Current {
     revision: i64,
     connection: String,
     catalog: Catalog,
+    mode: Option<String>,
     enabled: bool,
     selected: Option<ModelChoice>,
     stale: bool,
@@ -155,7 +174,7 @@ fn current(c: &Connection) -> Result<Option<Current>> {
     let row = c
         .query_row(
             "SELECT revision,connection_revision,catalog,enabled,default_choice,
-                coalesce(default_connection!=connection_revision,0)
+                coalesce(default_connection!=connection_revision,0),connection_mode
          FROM engine_settings WHERE singleton=1",
             [],
             |r| {
@@ -166,20 +185,24 @@ fn current(c: &Connection) -> Result<Option<Current>> {
                     r.get::<_, bool>(3)?,
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, bool>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             },
         )
         .optional()?;
-    row.map(|(revision, connection, raw, enabled, choice, stale)| {
-        Ok(Current {
-            revision,
-            connection,
-            catalog: parse(&raw)?,
-            enabled,
-            selected: choice.as_deref().map(parse).transpose()?,
-            stale,
-        })
-    })
+    row.map(
+        |(revision, connection, raw, enabled, choice, stale, mode)| {
+            Ok(Current {
+                revision,
+                connection,
+                catalog: parse(&raw)?,
+                mode,
+                enabled,
+                selected: choice.as_deref().map(parse).transpose()?,
+                stale,
+            })
+        },
+    )
     .transpose()
 }
 fn settings(c: &Connection) -> Result<Settings> {
@@ -192,6 +215,7 @@ fn settings(c: &Connection) -> Result<Settings> {
         revision: s.revision,
         connection_revision: Some(s.connection.parse().map_err(|_| StoreError::Corrupt)?),
         kind: Some(s.catalog.kind),
+        connection_mode: s.mode,
         host_default: Some(s.catalog.host_default),
         choices: s.catalog.choices,
         default_choice: s.selected,

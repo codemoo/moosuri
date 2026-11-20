@@ -69,3 +69,26 @@ it("previews the chosen model without claiming it is active and reloads after a 
     { revision: 5, connection_revision: "new-connection", enabled: false, default_choice: null },
   ]);
 });
+
+it.each([
+  ["anthropic", "claude_code", "Claude 구독 사용량 열기", "https://claude.ai/settings/usage"],
+  ["open_ai", "chatgpt_plan", "ChatGPT 사용량 열기", "https://chatgpt.com/codex/settings/usage"],
+  ["open_ai", "api", "OpenAI API 사용량 열기", "https://platform.openai.com/usage"],
+  ["open_router", "api", "OpenRouter 사용량 열기", "https://openrouter.ai/activity"],
+  ["compatible", "api", null, null],
+])("directs %s / %s admins to the matching usage source and labels unreported limits", async (kind, connection_mode, name, url) => {
+  const model = { model: "synthetic", effort: null };
+  const get = vi.fn(async () => Response.json({
+    configured: true, enabled: true, revision: 1, connection_revision: "fixture", kind, connection_mode,
+    choices: [model], host_default: model, default_choice: null, default_stale: false,
+  }));
+  vi.stubGlobal("fetch", get);
+  render(<PersonalEngineSettings account="actor" expired={vi.fn()} unavailable={vi.fn()} />);
+  const section = within(await screen.findByRole("region", { name: "공급자 잔여 한도" }));
+  expect(section.getByText(/잔여량 확인 불가 · 초기화 시각 확인 불가/)).toBeInTheDocument();
+  if (name) expect(section.getByRole("link", { name })).toHaveAttribute("href", url);
+  else expect(section.getByText(/운영자에게 한도를 확인/)).toBeInTheDocument();
+  await userEvent.setup().click(section.getByText("무수리 회원별 사용 집계"));
+  expect(section.getByRole("link", { name: "서버에서 회원별 집계 확인하기" })).toHaveAttribute("href", expect.stringContaining("admin.md#회원별-사용-집계"));
+  expect(get).toHaveBeenCalledOnce();
+});

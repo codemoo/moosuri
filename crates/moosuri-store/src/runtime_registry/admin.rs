@@ -22,6 +22,8 @@ pub struct Member {
     pub invitation_request_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invitation_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 /// A short admission pin, not a bearer/session. Gateway must verify the current
 /// private session on every HTTP request before obtaining one.
@@ -42,7 +44,7 @@ pub enum Change {
     Suspend,
     Resume,
 }
-const COLUMNS: &str = "a.account_id,a.tenant_id,a.volume_id,a.generation,a.email,a.route_state,COALESCE(m.role,'member'),COALESCE(m.role_revision,0),COALESCE(m.eligible,0),COALESCE(m.suspended,0),a.request_id,o.result";
+const COLUMNS: &str = "a.account_id,a.tenant_id,a.volume_id,a.generation,a.email,a.route_state,COALESCE(m.role,'member'),COALESCE(m.role_revision,0),COALESCE(m.eligible,0),COALESCE(m.suspended,0),a.request_id,o.result,m.display_name";
 const JOIN: &str = " FROM allocations a LEFT JOIN installation_members m ON m.account_id=a.account_id AND m.tenant_id=a.tenant_id AND m.volume_id=a.volume_id AND m.generation=a.generation LEFT JOIN installation_admin_operations o ON o.request_id=a.request_id";
 fn decode_member(r: &rusqlite::Row<'_>) -> rusqlite::Result<Member> {
     let mut m = Member {
@@ -58,23 +60,28 @@ fn decode_member(r: &rusqlite::Row<'_>) -> rusqlite::Result<Member> {
         suspended: r.get(9)?,
         invitation_request_id: None,
         invitation_name: None,
+        display_name: r.get(12)?,
     };
-    if m.route_state == "reserved" {
-        if let Some(raw) = r.get::<_, Option<String>>(11)? {
-            let request: String = r.get(10)?;
-            let i: Invitation =
-                serde_json::from_str(&raw).map_err(|_| rusqlite::Error::InvalidQuery)?;
-            if i.request_id.to_string() != request
-                || i.account_id != m.account_id
-                || i.tenant_id != m.tenant_id
-                || i.volume_id != m.volume_id
-                || i.generation != m.generation
-                || i.email != m.email
-            {
-                return Err(rusqlite::Error::InvalidQuery);
+    if let Some(raw) = r.get::<_, Option<String>>(11)? {
+        let request: String = r.get(10)?;
+        let i: Invitation =
+            serde_json::from_str(&raw).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        // A replaced generation can still have the original allocation request ID.
+        // Never inherit its name or expose its provisioning request as current.
+        if i.request_id.to_string() == request
+            && i.account_id == m.account_id
+            && i.tenant_id == m.tenant_id
+            && i.volume_id == m.volume_id
+            && i.generation == m.generation
+            && i.email == m.email
+        {
+            m.display_name.get_or_insert_with(|| i.name.clone());
+            if m.route_state == "reserved" {
+                m.invitation_request_id = Some(i.request_id);
+                m.invitation_name = Some(i.name);
             }
-            m.invitation_request_id = Some(i.request_id);
-            m.invitation_name = Some(i.name);
+        } else if m.route_state == "reserved" {
+            return Err(rusqlite::Error::InvalidQuery);
         }
     }
     Ok(m)
@@ -127,10 +134,15 @@ fn observe(c: &Connection, a: &Allocation, v: &SessionView) -> Result<Member> {
     }
     let eligible = !v.password_change_required && !v.user.must_change_password;
     if m.role_revision == 0 {
-        c.execute("INSERT INTO installation_members VALUES(?1,?2,?3,?4,'member',1,?5,0) ON CONFLICT(account_id) DO UPDATE SET tenant_id=excluded.tenant_id,volume_id=excluded.volume_id,generation=excluded.generation,role='member',role_revision=installation_members.role_revision+1,eligible=excluded.eligible,suspended=0",params![a.account_id,a.tenant_id,a.volume_id,a.generation,eligible])?;
+        c.execute("INSERT INTO installation_members(account_id,tenant_id,volume_id,generation,role,role_revision,eligible,suspended) VALUES(?1,?2,?3,?4,'member',1,?5,0) ON CONFLICT(account_id) DO UPDATE SET tenant_id=excluded.tenant_id,volume_id=excluded.volume_id,generation=excluded.generation,role='member',role_revision=installation_members.role_revision+1,eligible=excluded.eligible,suspended=0,display_name=NULL",params![a.account_id,a.tenant_id,a.volume_id,a.generation,eligible])?;
     } else if m.eligible != eligible {
         c.execute("UPDATE installation_members SET eligible=?2,role_revision=role_revision+1 WHERE account_id=?1",params![a.account_id,eligible])?;
     }
+    let name = crate::name_valid(v.user.name.clone(), 200)?;
+    c.execute(
+        "UPDATE installation_members SET display_name=?2 WHERE account_id=?1 AND display_name IS NOT ?2",
+        params![a.account_id, name],
+    )?;
     member(c, &a.account_id)
 }
 pub fn observe_session(root: &Path, a: &Allocation, view: &SessionView) -> Result<Member> {
@@ -340,7 +352,7 @@ pub fn change_member(
     }
     if m.role_revision == 0 {
         tx.execute(
-            "INSERT INTO installation_members VALUES(?1,?2,?3,?4,?5,1,0,?6)",
+            "INSERT INTO installation_members(account_id,tenant_id,volume_id,generation,role,role_revision,eligible,suspended) VALUES(?1,?2,?3,?4,?5,1,0,?6)",
             params![
                 m.account_id,
                 m.tenant_id,

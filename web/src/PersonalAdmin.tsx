@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiFailure, isAborted } from "./api";
 import { useScope } from "./account-scope";
+import { clearAdminRecovery, readAdminRecovery, saveAdminRecovery, type AdminRecord, type Change, type InvitationReceipt, type PendingChange } from "./PersonalAdminRecovery";
 import "./personal-management.css";
 
 export const adminBase = "/personal/admin";
 export type Member = {
   account_id: string;
   email: string;
+  display_name?: string | null;
   generation: number;
   revision: number;
   admin: boolean;
@@ -16,15 +18,6 @@ export type Member = {
   invitation_request_id?: string | null;
   invitation_name?: string | null;
 };
-type Change = "promote" | "demote" | "suspend" | "resume";
-type ChangeRequest = {
-  request_id: string;
-  account_id: string;
-  generation: number;
-  revision: number;
-  action: Change;
-};
-type InvitationReceipt = { request_id: string; email: string };
 type MemberFilter = "all" | "ready" | "preparing" | "suspended" | "admin";
 const memberFilters: { value: MemberFilter; label: string }[] = [
   { value: "all", label: "전체" },
@@ -61,6 +54,8 @@ const actions: Record<Change, { label: string; question: string; detail: string;
   },
 };
 
+function displayName(m: Member) { return m.display_name || m.invitation_name; }
+
 function memberState(member: Member) {
   if (member.suspended) return "suspended";
   return member.ready ? "ready" : "preparing";
@@ -72,8 +67,10 @@ function matchesFilter(member: Member, filter: MemberFilter) {
   return memberState(member) === filter;
 }
 
-export default function PersonalAdmin({ account, unavailable, expired }: {
+export default function PersonalAdmin({ account, recoveryScope, openGoogleSetup, unavailable, expired }: {
   account: string;
+  recoveryScope?: string | null;
+  openGoogleSetup?: () => void;
   unavailable: () => void;
   expired: () => void;
 }) {
@@ -82,19 +79,23 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
   const [listCurrent, setListCurrent] = useState(false);
   const [busy, setBusy] = useState<"list" | "invite" | "change" | null>("list");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [pending, setPending] = useState<{ request: ChangeRequest; email: string } | null>(null);
+  const [restored] = useState(() => readAdminRecovery(account, recoveryScope));
+  const initialInvite = restored?.kind === "invite" ? restored.invitation : null;
+  const [notice, setNotice] = useState(restored?.kind === "changed"
+    ? `${restored.change.email} · ${actions[restored.change.request.action].result}` : "");
+  const [pending, setPending] = useState<PendingChange | null>(restored?.kind === "change" ? restored.change : null);
+  function remember(record: AdminRecord) { saveAdminRecovery(account, recoveryScope, record); }
   const [confirm, setConfirm] = useState<{ member: Member; action: Change; trigger: HTMLButtonElement } | null>(null);
   const lock = useRef(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<MemberFilter>("all");
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(!!initialInvite);
   const inviteToggle = useRef<HTMLButtonElement>(null);
   const inviteName = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [receipt, setReceipt] = useState<InvitationReceipt | null>(null);
-  const [inviteId, setInviteId] = useState<string | null>(null);
+  const [name, setName] = useState(initialInvite?.name ?? "");
+  const [email, setEmail] = useState(initialInvite?.email ?? "");
+  const [receipt, setReceipt] = useState<InvitationReceipt | null>(restored?.kind === "receipt" ? restored.receipt : null);
+  const [inviteId, setInviteId] = useState<string | null>(initialInvite?.request_id ?? null);
 
   useEffect(() => {
     if (inviteOpen) inviteName.current?.focus();
@@ -102,9 +103,11 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
 
   function fail(e: unknown, message: string) {
     if (isAborted(e)) return;
-    if (e instanceof ApiFailure && e.status === 401) expired();
-    else if (e instanceof ApiFailure && e.status === 403) unavailable();
-    else setError(message);
+    if (e instanceof ApiFailure && (e.status === 401 || e.status === 403)) {
+      clearAdminRecovery();
+      if (e.status === 401) expired();
+      else unavailable();
+    } else setError(message);
   }
   async function load(signal?: AbortSignal) {
     try {
@@ -145,6 +148,8 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
   async function invite() {
     if (lock.current || busy || pending || !name.trim() || !email.trim()) return;
     const id = inviteId ?? crypto.randomUUID();
+    const invitation = { request_id: id, name: name.trim(), email: email.trim() };
+    remember({ kind: "invite", invitation });
     setInviteId(id);
     lock.current = true;
     setBusy("invite");
@@ -154,8 +159,9 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
     try {
       const result = await scope.request<InvitationReceipt>(
         adminBase + "/invitations", "POST",
-        { request_id: id, name: name.trim(), email: email.trim() }, undefined, { timeoutMs: 30_000 },
+        invitation, undefined, { timeoutMs: 30_000 },
       );
+      remember({ kind: "receipt", receipt: result });
       setReceipt(result);
       setInviteId(null);
       setName("");
@@ -169,6 +175,7 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
       }
     } catch (e) {
       if (e instanceof ApiFailure && [400, 409, 422].includes(e.status)) {
+        clearAdminRecovery();
         setInviteId(null);
         setError(e.status === 409
           ? "이 이메일로 이미 등록된 회원이나 초대 요청이 있는지 목록에서 확인해 주세요."
@@ -187,9 +194,12 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
     setBusy("change");
     setError("");
     setNotice("");
+    setReceipt(null);
+    remember({ kind: "change", change: p });
     setPending(p);
     try {
       await scope.request(adminBase + "/members/change", "POST", p.request, undefined, { timeoutMs: 30_000 });
+      remember({ kind: "changed", change: p });
       setPending(null);
       setNotice(`${p.email} · ${actions[p.request.action].result}`);
       try {
@@ -199,6 +209,7 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
       }
     } catch (e) {
       if (e instanceof ApiFailure && [400, 401, 403, 404, 409, 422].includes(e.status)) {
+        clearAdminRecovery();
         setPending(null);
         fail(e, "회원 상태가 달라졌거나 이 변경을 적용할 수 없습니다. 최신 목록을 확인해 주세요.");
         if (e.status !== 401 && e.status !== 403) {
@@ -234,7 +245,7 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
   const receiptMember = receipt && members?.find(m => m.email === receipt.email);
   const search = query.trim().toLocaleLowerCase();
   const visibleMembers = members?.filter(m => matchesFilter(m, filter) && (
-    !search || m.email.toLocaleLowerCase().includes(search) || m.invitation_name?.toLocaleLowerCase().includes(search)
+    !search || m.email.toLocaleLowerCase().includes(search) || displayName(m)?.toLocaleLowerCase().includes(search)
   ));
 
   return (
@@ -292,13 +303,13 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
         <section className="member-page-list management-invitation-receipt" aria-label="최근 초대">
           <div className="management-section-heading">
             <p role="status"><strong>{receipt.email}</strong> 초대 요청을 등록했습니다.</p>
-            <button type="button" className="member-page-action" onClick={() => setReceipt(null)}>접수 내역 닫기</button>
+            <button type="button" className="member-page-action" onClick={() => { clearAdminRecovery(); setReceipt(null); }}>접수 내역 닫기</button>
           </div>
           {receiptMember?.ready ? (
             <p className="management-note">{receiptMember.suspended ? "계정이 정지되어 있습니다." : "계정이 준비되었습니다."}</p>
           ) : (
             <>
-              <p className="management-note">설치 서버에서 계정을 준비한 뒤 임시 비밀번호를 회원에게 직접 전달하세요. <a href={memberGuide} target="_blank" rel="noreferrer">서버에서 계정 준비하기</a></p>
+              <p className="management-note">계정 준비 후 임시 비밀번호를 회원에게 직접 전달하세요. 회원이 처음 로그인하면 비밀번호를 변경합니다.</p>
               <RequestNumber key={receipt.request_id} id={receipt.request_id} />
             </>
           )}
@@ -340,8 +351,8 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
                 <li className="management-person" key={m.account_id}>
                   <div className="management-person-header">
                     <div className="management-person-details">
-                      <strong>{m.invitation_name || m.email}</strong>
-                      {m.invitation_name && <span className="management-note">{m.email}</span>}
+                      <strong>{displayName(m) || m.email}</strong>
+                      {displayName(m) && <span className="management-note">{m.email}</span>}
                       <span className="management-note">
                         {m.admin ? "관리자" : "일반 회원"}{m.account_id === account ? " · 내 계정" : ""}
                       </span>
@@ -360,7 +371,6 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
                       {m.invitation_request_id && !m.ready && (
                         <>
                           <RequestNumber key={m.invitation_request_id} id={m.invitation_request_id} />
-                          <p className="management-note"><a href={memberGuide} target="_blank" rel="noreferrer">서버에서 계정 준비하기</a></p>
                         </>
                       )}
                       {m.ready && !m.suspended && !m.eligible && !m.admin && (
@@ -398,6 +408,11 @@ export default function PersonalAdmin({ account, unavailable, expired }: {
           </div>
         )}
       </section>
+      {openGoogleSetup && <section className="management-group" aria-label="회원 Google 연결 준비">
+        <h2>회원 Google 연결 준비</h2>
+        <p className="management-note">설치용 웹 클라이언트를 한 번 등록하면 회원이 각자의 계정으로 Google 연결에 동의할 수 있습니다.</p>
+        <button type="button" className="member-page-action" onClick={openGoogleSetup}>Google Workspace 설정 열기</button>
+      </section>}
       {confirm && <MemberChangeDialog {...confirm} onCancel={() => setConfirm(null)} onConfirm={() => change(confirm.member, confirm.action)} />}
     </section>
   );
@@ -427,7 +442,7 @@ function MemberChangeDialog({ member, action, trigger, onCancel, onConfirm }: {
     <dialog ref={ref} className="member-page-list management-dialog" aria-labelledby="member-change-title"
       aria-describedby="member-change-details" onCancel={event => { event.preventDefault(); onCancel(); }}>
       <h2 id="member-change-title">{policy.question}</h2>
-      <p id="member-change-details"><strong>{member.invitation_name || member.email}</strong>{member.invitation_name && <small>{member.email}</small>}<span>{policy.detail}</span></p>
+      <p id="member-change-details"><strong>{displayName(member) || member.email}</strong>{displayName(member) && <small>{member.email}</small>}<span>{policy.detail}</span></p>
       <div className="management-footer">
         <button ref={cancel} type="button" className="member-page-action" onClick={onCancel}>취소</button>
         <button type="button" className="member-page-action management-primary" onClick={onConfirm}>{policy.label}</button>
@@ -438,19 +453,27 @@ function MemberChangeDialog({ member, action, trigger, onCancel, onConfirm }: {
 
 function RequestNumber({ id }: { id: string }) {
   const [message, setMessage] = useState("");
-  async function copy() {
+  const command = `sudo /usr/local/bin/moosuri kiri-onboard --experimental --config /etc/moosuri/kiri-members.json --request-id ${id} --uid "\${MEMBER_UID:?}" --operations-root /var/lib/moosuri-control/invitations`;
+  async function copy(value: string, label: string) {
     try {
-      await navigator.clipboard.writeText(id);
-      setMessage("요청 번호를 복사했습니다.");
+      await navigator.clipboard.writeText(value);
+      setMessage(`${label} 복사했습니다.`);
     } catch {
-      setMessage("요청 번호를 선택해 직접 복사해 주세요.");
+      setMessage(`${label} 선택해 직접 복사해 주세요.`);
     }
   }
   return (
     <div className="management-request">
       <span className="management-note">서버에서 사용할 요청 번호</span>
       <code>{id}</code>
-      <button className="member-page-action" type="button" onClick={() => void copy()}>요청 번호 복사</button>
+      <button className="member-page-action" type="button" onClick={() => void copy(id, "요청 번호를")}>요청 번호 복사</button>
+      {/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) && <details>
+        <summary>설치 서버에서 계정 준비하기</summary>
+        <p>서버의 사용하지 않는 UID를 <code>MEMBER_UID</code>에 지정하고 설치 경로를 확인하세요. 모델 바인딩을 준비했다면 <code>--enable-text-preview</code>, Google 릴레이를 준비했다면 <code>--enable-local-gws</code>를 추가하세요. 재시도할 때는 첫 실행의 UID와 옵션을 그대로 쓰세요.</p>
+        <p><code>{command}</code></p>
+        <button type="button" className="member-page-action" onClick={() => void copy(command, "계정 준비 명령을")}>계정 준비 명령 복사</button>
+        <a href={memberGuide} target="_blank" rel="noreferrer">서버 경로와 바인딩 옵션 확인</a>
+      </details>}
       {message && <p role="status" className="management-note">{message}</p>}
     </div>
   );

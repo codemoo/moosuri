@@ -113,7 +113,7 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
     }
     let id: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if id != APP_ID || !(1..=4).contains(&version) {
+    if id != APP_ID || !(1..=5).contains(&version) {
         return Err(StoreError::InvalidInput);
     }
     if version == 1 {
@@ -134,6 +134,13 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!(
             "../../../migrations/installation_registry/0004_engine_policy.sql"
+        ))?;
+        tx.commit()?;
+    }
+    if version <= 4 {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!(
+            "../../../migrations/installation_registry/0005_member_name_engine_mode.sql"
         ))?;
         tx.commit()?;
     }

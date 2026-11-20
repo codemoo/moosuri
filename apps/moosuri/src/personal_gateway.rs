@@ -2429,6 +2429,7 @@ mod tests {
                 registry,
                 connection,
                 moosuri_core::ProviderKind::OpenAi,
+                engine::ConnectionMode::Api,
                 &default,
                 &[default.clone(), selected.clone()],
                 &[aid, bid],
@@ -2438,6 +2439,7 @@ mod tests {
         publish(engine_id);
         let state = json(request(g, engine_url, Method::GET, admin.clone(), "").await).await;
         assert_eq!(state["configured"], true);
+        assert_eq!(state["connection_mode"], "api");
         assert!(state.get("members").is_none());
         let selection = serde_json::json!({
             "revision": state["revision"],
@@ -2517,6 +2519,7 @@ mod tests {
                 registry,
                 engine_id,
                 moosuri_core::ProviderKind::OpenAi,
+                engine::ConnectionMode::Api,
                 &default,
                 &[default.clone(), selected.clone()],
                 &[aid, bid]
@@ -2713,6 +2716,9 @@ mod tests {
                 .find(|m| m["account_id"] == id)
                 .unwrap()
         };
+        assert_eq!(row(&a.account_id)["display_name"], auth[0].1.user.name);
+        assert_eq!(row(&b.account_id)["display_name"], auth[1].1.user.name);
+        assert_eq!(row(&b.account_id)["ready"], true);
         let mutation = |m: &serde_json::Value, action: &str| {
             serde_json::json!({"request_id":Uuid::new_v4(),"account_id":m["account_id"],"generation":m["generation"],"revision":m["revision"],"action":action}).to_string()
         };

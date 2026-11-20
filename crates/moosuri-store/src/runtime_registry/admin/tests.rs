@@ -714,3 +714,58 @@ fn legacy_registry_keeps_selected_engine_settings_when_broker_first_publishes_it
     publish(ConnectionMode::ChatgptPlan).unwrap();
     assert_eq!(settings()["revision"], current["revision"]);
 }
+
+#[test]
+fn web_worker_selects_only_current_reserved_web_requests_and_pages_past_waiting_members() {
+    let first_root = root();
+    reserve_first_invitation(
+        first_root.path(),
+        Uuid::new_v4(),
+        "First".into(),
+        "first@example.test".into(),
+    )
+    .unwrap();
+    assert!(
+        pending_web_invitations(first_root.path(), 0)
+            .unwrap()
+            .is_empty()
+    );
+
+    let d = root();
+    let r = d.path();
+    let (a, v) = bootstrap_a(r);
+    let session = checked_session(r, &a, &v).unwrap();
+    reserve(r, Uuid::new_v4(), "raw@example.test".into()).unwrap();
+    let mut expected = Vec::new();
+    for n in 0..22 {
+        let id = Uuid::new_v4();
+        let email = format!("synthetic-{n}@example.test");
+        reserve_invitation(r, &session, id, format!("Synthetic {n}"), email.clone()).unwrap();
+        let alloc = lookup(r, email).unwrap();
+        match n {
+            0 => activate_invitation(r, id, &alloc).unwrap(),
+            1 => set_routing(r, &alloc, false).unwrap(),
+            2 => {
+                let (_lock, c) = open(r, false).unwrap();
+                c.execute(
+                    "UPDATE allocations SET generation=generation+1 WHERE request_id=?1",
+                    [id.to_string()],
+                )
+                .unwrap();
+            }
+            _ => expected.push(id),
+        }
+    }
+    let p1 = pending_web_invitations(r, 0).unwrap();
+    assert_eq!(p1.len(), 16);
+    let p2 = pending_web_invitations(r, p1.last().unwrap().0).unwrap();
+    assert_eq!(
+        p1.iter().chain(&p2).map(|r| r.1).collect::<Vec<_>>(),
+        expected
+    );
+    assert!(
+        pending_web_invitations(r, p2.last().unwrap().0)
+            .unwrap()
+            .is_empty()
+    );
+}

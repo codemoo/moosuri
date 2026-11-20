@@ -25,7 +25,8 @@ const BODY_LIMIT: usize = 1 << 20;
 const LABEL: &str = "org.moosuri.runtime";
 const PROFILE: &str = "kiri-0.2.1-none-v1";
 
-#[derive(Args, Clone, Debug, PartialEq, Eq)]
+#[derive(Args, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Options {
     /// Explicitly opt in to the experimental profile; adoption is not established.
     #[arg(long)]

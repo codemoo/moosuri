@@ -2,6 +2,7 @@
 //! This worker never reserves identity, initializes data/passwords, activates a
 //! route, replaces a conflicting image or changes administrator-managed mounts.
 pub(crate) mod onboard;
+pub(crate) mod worker;
 use crate::kiri_provision;
 use clap::Args;
 use fs2::FileExt;

@@ -83,3 +83,39 @@ sudo /usr/local/bin/moosuri kiri-onboard --experimental \
 명령은 웹 초대에서 이름·이메일을 읽고, 해당 회원의 볼륨과 IPC를 마운트한 뒤 재부팅 복구 목록에 등록한다. 터미널에서 요청할 때 임시 비밀번호를 입력한다. `ready`는 지정한 회원 프로세스의 소켓으로 준비 상태를 확인하고 라우팅을 활성화했다는 뜻이다. 중단되면 같은 요청 번호·UID·설정으로 재실행한다. 처음 설정한 비밀번호가 이미 저장됐으면 다시 입력할 필요가 없다.
 
 설치에서 회원의 모델 브로커와 [회원별 GWS 릴레이](google.md) 바인딩까지 준비했다면 최초 실행에 각각 `--enable-text-preview`, `--enable-local-gws`를 지정하고 재시도에도 같은 값을 쓴다. 직접 준비한 마운트를 계속 사용하는 설치에는 [개별 초대 명령](../../docs/kiri-invite.md)이 있다.
+
+## 웹 초대 자동 준비
+
+Linux 설치 운영자는 [서비스](lifecycle/moosuri-kiri-onboard.service)와 [타이머](lifecycle/moosuri-kiri-onboard.timer)를 선택적으로 켤 수 있다. 켜면 설치 관리자가 웹에서 접수한 **기존 대기 초대를 포함해** 최대 16건씩 순서대로 검사한다. 작업자는 설치 설정에 지정한 회원 이미지·저장공간·릴레이를 사용한다. 관리자가 최초 비밀번호를 입력할 때까지 새 회원은 로그인할 수 없다.
+
+1. 테스트용 Linux 설치에서 먼저 위의 수동 온보딩 경로와 Kiri 엔진을 준비한다. 이 설치만 사용할 전용 UID/GID를 배정한다. 시스템 계정, 다른 설치, 수동 온보딩용 UID와 겹치지 않게 한다.
+2. 아래 예처럼 root 소유 0600 파일 `/etc/moosuri/kiri-onboard-policy.json`을 만든다. `uid_pool`의 크기가 자동 등록 슬롯의 상한이고 `max_total_volume_bytes`는 작업자가 예약하는 모든 볼륨의 합계 상한이다. 예시는 회원당 10 GiB, 최대 2명이다. 기존 회원의 디스크 사용량을 제외하고 이 용량을 확보한다. `enable_text_preview`를 켜려면 모델 브로커 경로도 설정한다.
+3. 아래 명령으로 한 번 실행한다. 셸에서 실행해도 일반 검사에는 비밀번호를 입력하지 않는다. 합성 회원의 요청 번호·단계를 확인한 뒤 타이머를 설치할 수 있다.
+
+```json
+{"uid_pool":[41001,41002],"max_total_volume_bytes":21474836480,"enable_text_preview":false}
+```
+
+```sh
+sudo /usr/local/bin/moosuri kiri-onboard-worker --experimental \
+  --config /etc/moosuri/kiri-members.json --policy /etc/moosuri/kiri-onboard-policy.json \
+  --operations-root /var/lib/moosuri-control/invitations
+sudo install -m 0644 deployment/kiri/lifecycle/moosuri-kiri-onboard.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now moosuri-kiri-onboard.timer
+sudo journalctl -u moosuri-kiri-onboard.service -n 30
+```
+
+`password_required`이면 운영자가 요청 번호를 대조하고 아래 명령을 실행한다. 숨은 터미널 프롬프트에 임시 비밀번호를 입력한다. 이미 준비한 운영자 전용 비밀번호 파일을 사용하는 경우에만 마지막에 `--password-stdin < /root/private/member-password`를 붙여 root 셸에서 실행한다. 한 줄 끝에 개행이 필요하다. 자격 증명 전달은 운영자가 담당한다. 작업자는 생성·발송하지 않는다.
+
+```sh
+sudo /usr/local/bin/moosuri kiri-onboard-worker --experimental \
+  --config /etc/moosuri/kiri-members.json --policy /etc/moosuri/kiri-onboard-policy.json \
+  --operations-root /var/lib/moosuri-control/invitations --finish-request "$INVITATION_REQUEST_ID"
+```
+
+`ready`가 출력되면 해당 회원 소켓의 준비와 라우팅 활성화가 끝났다. 중단되면 같은 명령을 재실행한다. 작업 기록 디렉터리의 `web-onboarding.json`에는 작업자가 배정한 요청 번호·UID·볼륨·프로필이 저장된다. 작업 기록·등록 목록·설치 레지스트리·저장공간 기록은 한 설치의 세트로 보존한다. 예약 후 이미지나 경로가 달라지면 해당 요청은 멈춘다. 완료 전에는 원래 설정을 복원해 재시도한다. 수동으로 준비를 시작한 회원은 앞 절의 기존 요청 번호·UID·명령을 계속 사용한다.
+
+`capacity_waiting`은 UID 또는 디스크 예산이 소진됐다는 뜻이다. 슬롯은 회원 정지나 타이머 중지 후에도 예약 상태로 남는다. 새 용량과 UID를 준비한 뒤 예산을 늘릴 수 있다. `onboard_operation_in_progress`는 같은 작업 디렉터리를 쓰는 다른 온보딩이 실행 중이라는 뜻이다. 자동 준비를 중단하려면 `sudo systemctl disable --now moosuri-kiri-onboard.timer`를 실행한다. 진행 중인 서비스는 현재 검사를 마친다.
+
+Ubuntu 24.04.5·Kiri 0.2.1 일회용 게스트에서 웹 초대 2건을 등록해 타이머 실행, 한도 도달 시 대기, 비밀번호 입력 후 첫 로그인, 재실행 시 기존 비밀번호 보존과 증설 후 두 번째 회원 준비를 확인했다. [합성 설치 검증 기록](linux-vm-smoke/onboard-worker-evidence.json)

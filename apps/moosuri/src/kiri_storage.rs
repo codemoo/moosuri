@@ -380,6 +380,30 @@ fn read_record(p: &Path) -> Result<Record, String> {
     }
     serde_json::from_slice(&raw).map_err(|_| "storage_record_invalid".into())
 }
+/// Read the durable UID claims, including interrupted operations that predate enrollment.
+pub(crate) fn reserved_uids(root: &Path) -> Result<Vec<(Uuid, u32)>, String> {
+    trusted(root, 0, 0o022)?;
+    let directory = File::open(root).map_err(|_| "storage_root_unavailable")?;
+    FileExt::lock_shared(&directory).map_err(|_| "storage_root_busy")?;
+    let records = root.join("records");
+    if !records
+        .try_exists()
+        .map_err(|_| "storage_records_unavailable")?
+    {
+        return Ok(Vec::new());
+    }
+    trusted(&records, 0, 0o077)?;
+    let mut result = Vec::new();
+    for entry in fs::read_dir(records).map_err(|_| "storage_records_unavailable")? {
+        let path = entry.map_err(|_| "storage_records_unavailable")?.path();
+        let plan = read_record(&path)?.plan;
+        if plan.v != 1 || plan.root != root || plan.record() != path {
+            return Err("storage_untrusted_reservation".into());
+        }
+        result.push((plan.request, plan.uid));
+    }
+    Ok(result)
+}
 fn load_or_plan(p: &Plan, ready: bool) -> Result<Record, String> {
     for entry in fs::read_dir(p.root.join("records")).map_err(|_| "storage_records_unavailable")? {
         let path = entry.map_err(|_| "storage_records_unavailable")?.path();
@@ -838,7 +862,7 @@ fn check_traversal(uid: u32, p: &Path) -> Result<(), String> {
 fn check_traversal(_: u32, _: &Path) -> Result<(), String> {
     Err("storage_linux_only".into())
 }
-fn unused_uid(uid: u32) -> Result<(), String> {
+pub(crate) fn unused_uid(uid: u32) -> Result<(), String> {
     let mut buf = vec![0u8; 65536];
     let mut user = std::mem::MaybeUninit::<libc::passwd>::uninit();
     let mut ptr = std::ptr::null_mut();

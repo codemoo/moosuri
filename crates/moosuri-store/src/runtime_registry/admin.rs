@@ -377,7 +377,7 @@ pub fn change_member(
     tx.commit()?;
     Ok(result)
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Invitation {
     pub request_id: Uuid,
     pub account_id: String,
@@ -521,6 +521,31 @@ pub fn reserve_first_invitation(
         .map_err(|_| StoreError::Unavailable)?;
     Ok(invitation)
 }
+/// Host-only bounded scan of current admin-web reservations, in allocation order.
+/// A fresh-install bootstrap reservation and a raw CLI reservation have no web issuer.
+pub fn pending_web_invitations(root: &Path, after: i64) -> Result<Vec<(i64, Uuid)>> {
+    let (_lock, c) = open(root, false)?;
+    let mut query = c.prepare(&format!(
+        "SELECT a.rowid,a.request_id{JOIN} WHERE a.rowid>?1 AND a.route_state='reserved'
+         AND COALESCE(m.suspended,0)=0 AND json_extract(o.fingerprint,'$[0]')='invitation'
+         AND json_extract(o.result,'$.generation')=a.generation
+         AND json_extract(o.result,'$.account_id')=a.account_id
+         AND json_extract(o.result,'$.tenant_id')=a.tenant_id
+         AND json_extract(o.result,'$.volume_id')=a.volume_id
+         AND json_extract(o.result,'$.email')=a.email ORDER BY a.rowid LIMIT 16"
+    ))?;
+    let mut out = Vec::new();
+    let mut rows = query.query([after])?;
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(1)?;
+        out.push((
+            row.get(0)?,
+            Uuid::parse_str(&id).map_err(|_| StoreError::Corrupt)?,
+        ));
+    }
+    Ok(out)
+}
+
 /// Operator-only planned invitation metadata. Manual reservations have no plan.
 pub fn operator_invitation(root: &Path, request: Uuid) -> Result<Option<Invitation>> {
     let (_lock, c) = open(root, false)?;

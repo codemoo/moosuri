@@ -299,7 +299,10 @@ fn child(
         .and_then(Value::as_bool)
         .ok_or_else(|| "invite_invalid_child_status".into())
 }
-fn password(options: &Options) -> Result<Option<Zeroizing<String>>, String> {
+fn password(options: &Options, allow_terminal: bool) -> Result<Option<Zeroizing<String>>, String> {
+    if !allow_terminal {
+        return Ok(None);
+    }
     if options.password_stdin {
         let mut value = Zeroizing::new(String::new());
         std::io::stdin()
@@ -362,6 +365,13 @@ fn planned_invitation(options: &Options) -> Result<(), String> {
 }
 
 pub async fn run(options: &Options) -> Result<(), String> {
+    run_with_terminal(options, true).await
+}
+
+pub(crate) async fn run_with_terminal(
+    options: &Options,
+    allow_terminal: bool,
+) -> Result<(), String> {
     if !cfg!(target_os = "linux")
         || !options.profile.experimental
         || unsafe { libc::geteuid() } != 0
@@ -440,7 +450,7 @@ pub async fn run(options: &Options) -> Result<(), String> {
             }
         };
         if !initialized {
-            let Some(secret) = password(options)? else {
+            let Some(secret) = password(options, allow_terminal)? else {
                 return emit(options, &a, "password_required", None);
             };
             not_fenced(options, &a)?;

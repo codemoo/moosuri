@@ -1,0 +1,22 @@
+{
+  "date": "2026-11-20",
+  "environment": "Fresh Ubuntu 24.04.5 x86_64 KVM guest, Kiri 0.2.1, systemd, 2 vCPUs, 1536 MiB RAM. Local offline runtime image, synthetic installation registry and credentials.",
+  "initial_host_binary_sha256": "8e7f2bbed659d78635740d2d4d898a2a0c8e19d6ec3ed70cbe29ad48e3f33d04",
+  "final_host_binary_sha256": "f971ee9384acf07155e69dfacde618bb8bf0e6ce09b9f5670e636b1ef67018d2",
+  "member_image": "sha256:2087f9fd1d42e6fffa8be7c825dc813208f23be5233714e48534be32aada1ea0",
+  "uid_pool_size": 2,
+  "volume_bytes": 67108864,
+  "initial_worker_budget_bytes": 67108864,
+  "final_worker_budget_bytes": 134217728,
+  "observations": [
+    "The first account used manual onboarding, changed its temporary password, and bootstrapped the installation administrator role. Its authenticated gateway session submitted two web invitations.",
+    "The systemd timer invoked the shipped oneshot service. A guest-only timer override shortened the first check. One invitation reached password_required. The second was held at capacity_waiting. Neither could log in.",
+    "A repeat scan preserved the original request, registry identity, UID, profile and backing-image inode.",
+    "Finishing the first request via operator stdin activated the exact member route. First login required a password change. Replaying with empty stdin left the original credential usable. The waiting account could not log in with that credential.",
+    "The worker service journal and durable queue omitted all generated temporary passwords used in the fixture.",
+    "The final host binary resumed the previous ready claim with empty input. Raising the worker budget by one volume allowed the second member to prepare on the other UID and finish.",
+    "Changing the enrollment-directory binding for a claimed request failed before effects and preserved both claims."
+  ],
+  "other_checks": "Temporary SQLite registry test covered raw CLI, first-install, ready, fenced, stale-generation and paginated web reservations. Worker tests covered competing directory locks, durable replay, changed identity/image/installation, invalid policy, occupied UIDs and both disk and UID exhaustion.",
+  "boundary": "Local guest execution and host-side tests only. This does not activate the timer on any existing installation or send credentials."
+}

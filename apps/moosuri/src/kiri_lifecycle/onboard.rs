@@ -144,15 +144,16 @@ fn register(
     dir.sync_all()
         .map_err(|_| "enrollments_write_failed".into())
 }
-pub async fn run(o: &Options) -> Result<(), String> {
-    if !o.experimental || !cfg!(target_os = "linux") || unsafe { libc::geteuid() } != 0 {
-        return Err("onboard_root_linux_only".into());
-    }
-    let mut config = load(&o.config, &o.operations_root)?;
+pub(super) fn context(
+    config_path: &Path,
+    operations_root: &Path,
+) -> Result<(Config, PathBuf), String> {
+    let config = load(config_path, operations_root)?;
     let root = config
         .mounts_root
         .parent()
-        .ok_or("onboard_storage_layout_invalid")?;
+        .ok_or("onboard_storage_layout_invalid")?
+        .to_owned();
     if config.mounts_root != root.join("mounts")
         || config.ipc_root != root.join("ipc")
         || config.allocations_root != root.join("assignments")
@@ -163,8 +164,28 @@ pub async fn run(o: &Options) -> Result<(), String> {
         .enrollment_directory
         .as_ref()
         .ok_or("onboard_enrollment_directory_required")?;
-    separate(enrollment, root)?;
-    trusted_path(&o.operations_root, true)?;
+    separate(enrollment, &root)?;
+    separate(operations_root, &root)?;
+    separate(operations_root, &config.registry_directory)?;
+    trusted_path(operations_root, true)?;
+    Ok((config, root))
+}
+
+pub async fn run(o: &Options) -> Result<(), String> {
+    if !o.experimental || !cfg!(target_os = "linux") || unsafe { libc::geteuid() } != 0 {
+        return Err("onboard_root_linux_only".into());
+    }
+    let (config, root) = context(&o.config, &o.operations_root)?;
+    let _lock = worker::lock(&o.operations_root)?;
+    run_locked(o, config, root, true).await
+}
+
+pub(super) async fn run_locked(
+    o: &Options,
+    mut config: Config,
+    root: PathBuf,
+    allow_terminal: bool,
+) -> Result<(), String> {
     if let (Some(name), Some(email)) = (&o.first_name, &o.first_email) {
         admin::reserve_first_invitation(
             &config.registry_directory,
@@ -188,6 +209,7 @@ pub async fn run(o: &Options) -> Result<(), String> {
         enable_local_gws: o.enable_local_gws,
         browser_enabled: None,
     };
+    worker::check_claim(&o.operations_root, &config, &invite, &m)?;
     if !matching(&config, &m)? {
         config.members.push(m.clone());
         config.validate()?;
@@ -240,13 +262,16 @@ pub async fn run(o: &Options) -> Result<(), String> {
         .await
         .map_err(|_| reason)??;
     }
-    kiri_invite::run(&kiri_invite::Options {
-        request_id: o.request_id,
-        name: invite.name,
-        operations_root: o.operations_root.clone(),
-        password_stdin: o.password_stdin,
-        profile,
-    })
+    kiri_invite::run_with_terminal(
+        &kiri_invite::Options {
+            request_id: o.request_id,
+            name: invite.name,
+            operations_root: o.operations_root.clone(),
+            password_stdin: o.password_stdin,
+            profile,
+        },
+        allow_terminal,
+    )
     .await
 }
 

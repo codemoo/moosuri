@@ -78,6 +78,8 @@ enum Command {
     KiriStorage(kiri_storage::Options),
     /// Fulfill a web invitation with managed storage and restart recovery.
     KiriOnboard(kiri_lifecycle::onboard::Options),
+    /// Prepare authorized web invitations within the installation's UID and disk budget.
+    KiriOnboardWorker(kiri_lifecycle::worker::Options),
     /// Restore configured active member runtimes after host or engine restart.
     KiriLifecycle(kiri_lifecycle::Options),
     /// Serve an installation-owned, pinned model to allocated members over Unix sockets.
@@ -472,6 +474,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::KiriStorage(o) = &cli.command {
         return kiri_storage::run(o).await;
     }
+    if let Command::KiriOnboardWorker(o) = &cli.command {
+        return kiri_lifecycle::worker::run(o).await;
+    }
     if let Command::KiriOnboard(o) = &cli.command {
         return kiri_lifecycle::onboard::run(o).await;
     }
@@ -641,6 +646,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::KiriLifecycle(_)
         | Command::KiriInvite(_)
         | Command::KiriStorage(_)
+        | Command::KiriOnboardWorker(_)
         | Command::KiriOnboard(_)
         | Command::KiriProvision(_)
         | Command::PersonalVolume(_)

@@ -131,6 +131,30 @@ The personal runtime SHALL bind browser work to the authenticated member, runtim
 - **WHEN** another member requests the frame, a superseded controller submits input, or Chromium exits after a possible submission
 - **THEN** foreign access and stale input are rejected, ambiguous effects remain unresolved, and reconnecting does not replay the action
 
+### Requirement: Historical browser tasks in the member workspace
+
+The Kiri member workspace SHALL list the current member's browser tasks newest first, with a stable detail link for each original chat run. The detail SHALL show the request, next actor, current state, recorded transitions, saved observations or answer, and a link to the originating conversation. State history SHALL store only the state and available timestamp with its owning run.
+
+#### Scenario: Review a task after the browser closes
+
+- **WHEN** the member opens an older task after starting another task in the same conversation or restarting the personal service
+- **THEN** the member can read the saved answer, distinguish it from a preliminary observation and return to the original conversation.
+
+#### Scenario: Pick up a task waiting for the member
+
+- **WHEN** the browser waits for input or hands control to the member
+- **THEN** the task detail identifies the member's next step and follows later state changes while open.
+
+#### Scenario: Review a task recorded before transition history existed
+
+- **WHEN** a member opens an older task after the history migration
+- **THEN** the detail retains its request and available output, shows the recorded start time and labels an undated historical state without inventing a timestamp.
+
+#### Scenario: An old link outlives access to the task
+
+- **WHEN** a member opens a link belonging to another account or a deleted conversation
+- **THEN** the personal service returns no task, timeline or answer.
+
 ### Requirement: Installation-managed Google Workspace setup
 The installation SHALL expose web OAuth client registration only to the current installation administrator and SHALL distribute validated app configuration to eligible member runtimes. Google login, account choices and personal grants SHALL remain separate from assistant inference.
 
@@ -153,7 +177,7 @@ The installation SHALL expose web OAuth client registration only to the current 
 
 ### Requirement: Member workspace navigation
 
-The Kiri member workspace SHALL support browser back, forward and reload for the main views, connector detail, installation setup and engine settings. Navigation SHALL use only public screen and service names. Session authority SHALL govern every administration screen.
+The Kiri member workspace SHALL support browser back, forward and reload for the main views, connector detail, installation setup and engine settings. Navigation SHALL use screen and service names and opaque member task identifiers. Session authority SHALL govern every administration screen.
 
 #### Scenario: Returning from installation setup
 

@@ -47,3 +47,38 @@ pub struct Frame {
     pub height: u32,
     pub url: String,
 }
+
+/// Member task projections contain no browser controls, page handles or session data.
+#[derive(Serialize, Deserialize)]
+pub struct TaskSummary {
+    pub id: String,
+    pub thread_id: String,
+    pub title: String,
+    pub state: String,
+    pub next_actor: String,
+    pub created_at: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TaskPage {
+    pub items: Vec<TaskSummary>,
+    pub next_before: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TaskEvent {
+    pub state: String,
+    /// Older jobs recorded the start time but no timestamp for their last state.
+    pub at: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TaskDetail {
+    pub task: TaskSummary,
+    pub request: String,
+    pub thread_title: String,
+    pub reason: Option<String>,
+    pub history: Vec<TaskEvent>,
+    pub result: Option<String>,
+    pub observation: Option<String>,
+}

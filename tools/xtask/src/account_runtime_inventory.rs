@@ -34,7 +34,7 @@ fn scalar(c: &Connection, query: &str) -> Check<i64> {
 }
 pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
-        (81..=89).contains(&schema),
+        (81..=90).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
     )?;
     let mut v: Value = serde_json::from_str(&read(
@@ -83,6 +83,7 @@ pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
                 86 | 87 => 209,
                 88 => 211,
                 89 => 212,
+                90 => 213,
                 _ => unreachable!(),
             },
         "inventory manifest table count mismatch",
@@ -584,9 +585,9 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             "--schema" if selected.is_none() => {
                 selected = Some(
                     iter.next()
-                        .ok_or("--schema requires 81 through 87")?
+                        .ok_or("--schema requires 81 through 90")?
                         .parse::<i64>()
-                        .map_err(|_| "--schema requires 81 through 87")?,
+                        .map_err(|_| "--schema requires 81 through 90")?,
                 );
             }
             "--snapshot" if snapshot.is_none() => {
@@ -597,7 +598,7 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             }
             _ => {
                 return Err(
-                    "usage: account-runtime-inventory [--schema 81|82|83|84|85|86|87] [--snapshot DIRECTORY]"
+                    "usage: account-runtime-inventory [--schema 81..90] [--snapshot DIRECTORY]"
                         .into(),
                 );
             }

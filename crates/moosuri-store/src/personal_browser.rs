@@ -6,6 +6,8 @@ use moosuri_core::{
 };
 use personal_volume::VolumeOwner;
 
+mod tasks;
+
 #[derive(Clone)]
 pub struct Scope {
     pub owner: VolumeOwner,
@@ -14,16 +16,20 @@ pub struct Scope {
 }
 impl Scope {
     fn authorize(&self, c: &Connection) -> Result<()> {
-        self.owner.check_identity(c, None)?;
-        let u = validate(c, &self.user, true, false)?;
-        if u.tenant.0 != self.owner.tenant.to_string()
-            || u.account.id != self.owner.account.to_string()
-            || u.helper
-        {
-            return Err(StoreError::Forbidden);
-        }
-        chat::thread_exists(c, &u, &self.thread)
+        authorize_member(c, self.owner, &self.user)?;
+        chat::thread_exists(c, &self.user, &self.thread)
     }
+}
+fn authorize_member(c: &Connection, owner: VolumeOwner, user: &UserContext) -> Result<()> {
+    owner.check_identity(c, None)?;
+    let u = validate(c, user, true, false)?;
+    if u.tenant.0 != owner.tenant.to_string()
+        || u.account.id != owner.account.to_string()
+        || u.helper
+    {
+        return Err(StoreError::Forbidden);
+    }
+    Ok(())
 }
 pub struct Job {
     pub view: Workspace,

@@ -35,6 +35,7 @@ mod browser;
 mod google;
 mod google_setup;
 mod memory;
+mod tasks;
 
 const ROUTER: &str = "__Host-moosuri_route";
 const SESSION: &str = "moosuri_session";
@@ -349,6 +350,8 @@ impl Gateway {
             || path.starts_with("/api/v1/knowledge/memories")
         {
             MAX_THREAD_BODY
+        } else if path.starts_with("/api/v1/personal/tasks") {
+            2 * 1024 * 1024
         } else if path == "/api/v1/personal/google/history" {
             1024 * 1024
         } else if path.starts_with("/api/v1/personal/google") {
@@ -1131,6 +1134,7 @@ fn router(g: Gateway) -> Router {
         .layer(DefaultBodyLimit::max(4096))
         .merge(memory::routes())
         .merge(browser::routes())
+        .merge(tasks::routes())
         .merge(google::routes())
         .merge(google_setup::routes())
         .merge(admin::routes())
@@ -1206,6 +1210,7 @@ pub async fn run(options: &Options) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    mod member_tasks;
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tower::ServiceExt;
@@ -1696,6 +1701,8 @@ mod tests {
         let extensions = google
             .map(|t| crate::personal_google::routes_with_test_transport(store.clone(), owner, t))
             .unwrap_or_default();
+        let extensions =
+            extensions.merge(moosuri_server::personal_tasks::routes(store.clone(), owner));
         let router = moosuri_server::personal_service_router(store.clone(), None, extensions);
         let task = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();

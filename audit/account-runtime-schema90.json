@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "schema": 90,
+  "base_schema": 89,
+  "migrations": [
+    {
+      "name": "0090_personal_task_history.sql",
+      "sha256": "708b37eac48516022ecfebc3b9848a8cdad184a2d5fcfd4c68533bbc43f69940"
+    }
+  ],
+  "tables": [
+    {
+      "name": "personal_task_history",
+      "kind": "table",
+      "sql_sha256": "2dfc7c9276c89b402e79db73823961f4ddbbd15881a2b0fdb73e21fd02d5de46",
+      "scope": "personal",
+      "owner_query": "SELECT h.id AS rid,r.account_id,h.tenant_id FROM personal_task_history h JOIN personal_browser_jobs b ON b.tenant_id=h.tenant_id AND b.run_id=h.run_id JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id AND r.thread_id=b.thread_id",
+      "key_transition": "Retain recorded state changes with the owning browser job.",
+      "verification": "Verify each event belongs to one retained browser job and original conversation.",
+      "on_failure": "Stop extraction and quarantine unresolved task history.",
+      "columns": [
+        "id",
+        "tenant_id",
+        "run_id",
+        "state",
+        "at"
+      ]
+    }
+  ],
+  "schema_sha256": "e0d408ddbc58a2d0f17862569abe43f1d0a1ae096b3101cad3dc38f5d946b01c"
+}

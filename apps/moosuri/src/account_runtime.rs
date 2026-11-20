@@ -220,6 +220,8 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
             } else {
                 axum::Router::new()
             };
+            let extensions =
+                extensions.merge(moosuri_server::personal_tasks::routes(store.clone(), owner));
             let extensions = extensions.merge(browser::routes(
                 store.clone(),
                 owner,

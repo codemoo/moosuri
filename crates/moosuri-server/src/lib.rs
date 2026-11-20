@@ -16,6 +16,7 @@ mod knowledge;
 mod mail;
 mod media;
 mod missions;
+pub mod personal_tasks;
 pub mod personal_text;
 mod personal_threads;
 mod private_files;

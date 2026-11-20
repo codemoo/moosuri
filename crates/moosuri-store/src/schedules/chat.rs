@@ -96,7 +96,7 @@ pub(crate) fn finish_media(
     conn: &Connection,
     run: &Run,
     context: Option<&ScheduleChatContext>,
-) -> Result<()> {
+) -> Result<bool> {
     let zone = context.map(|context| context.timezone.as_str());
     let selected = context.is_some_and(|context| context.target.is_some());
     if matches!(
@@ -104,8 +104,9 @@ pub(crate) fn finish_media(
         parser::Decision::Command(_)
     ) {
         confirmation(conn, run, MEDIA_BLOCKED.into(), None)?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 pub(crate) fn finish(

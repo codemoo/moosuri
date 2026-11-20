@@ -1150,12 +1150,19 @@ pub(super) fn submit_turn_context_in(
     // Inherit even queued/running ancestors: their output may arrive before dispatch.
     tx.execute("INSERT OR IGNORE INTO media_run_dependencies SELECT d.tenant_id,?2,d.media_id,d.revision FROM media_run_dependencies d JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.run_id JOIN media_objects m ON m.tenant_id=d.tenant_id AND m.id=d.media_id WHERE r.tenant_id=?1 AND r.thread_id=?3 AND r.id!=?2 AND m.state='ready' AND NOT EXISTS(SELECT 1 FROM agent_execution a WHERE a.tenant_id=r.tenant_id AND a.run_id=r.id AND a.invalidated=1)",params![user.tenant.0,id,thread_id])?;
     let run = load_run(tx, &user.tenant.0, &id)?;
-    crate::media::authorize_subscription_context(tx, &run)?;
     // Media turns, including inherited document history, are evidence-only. Do
     // not create local schedule, Calendar, artifact or other action grants.
     if crate::media::has_context(tx, &run.tenant, &run.id)? {
+        // A new selection can authorize later turns, so validate it before
+        // recording even a local response.
+        if !attachments.is_empty() {
+            crate::media::authorize_subscription_context(tx, &run)?;
+        }
         tx.execute("UPDATE chat_runs SET model=json_remove(json_set(model,'$.mission_commands_enabled',json('false'),'$.function_tools',json('false')), '$.agent_profile') WHERE tenant_id=?1 AND id=?2",params![run.tenant,run.id])?;
-        crate::schedules::chat::finish_media(tx, &run, context.as_ref())?;
+        let finished_locally = crate::schedules::chat::finish_media(tx, &run, context.as_ref())?;
+        if !finished_locally && attachments.is_empty() {
+            crate::media::authorize_subscription_context(tx, &run)?;
+        }
         let admitted = load_run(tx, &run.tenant, &run.id)?;
         let result = turn(tx, &admitted)?;
         emit(

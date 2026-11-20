@@ -94,35 +94,64 @@ struct Selection {
     model: String,
     effort: Option<String>,
     kind: ProviderKind,
+    reservation_tokens: Option<u64>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectionRejection {
+    v: u32,
+    state: String,
+}
+
 pub async fn select_model(
     options: &Options,
     generation: u64,
     epoch: i64,
 ) -> Result<ModelPin, String> {
-    let request = serde_json::to_vec(&serde_json::json!({
-        "v": 1,
-        "operation": "selection",
-        "generation": generation,
-        "selection_epoch": epoch,
-    }))
-    .map_err(|_| "preview_request_invalid")?;
-    let bytes = tokio::time::timeout(Duration::from_secs(4), call(options, &request))
-        .await
-        .map_err(|_| "preview_selection_unavailable")??;
-    let selection: Selection =
-        serde_json::from_slice(&bytes).map_err(|_| "preview_selection_unavailable")?;
-    if selection.v != 1 || selection.state != "selection" || selection.selection_epoch != epoch {
-        return Err("preview_selection_unavailable".into());
-    }
-    Ok(ModelPin {
-        connection_revision: selection.connection_revision,
-        selection_epoch: Some(selection.selection_epoch),
-        model: selection.model,
-        effort: selection.effort,
-        kind: selection.kind,
-        max_output_tokens: options.max_output_tokens,
+    tokio::time::timeout(Duration::from_secs(4), async {
+        let query = |version| {
+            serde_json::to_vec(&serde_json::json!({
+                "v": version,
+                "operation": "selection",
+                "generation": generation,
+                "selection_epoch": epoch,
+            }))
+            .map_err(|_| "preview_request_invalid")
+        };
+        let bytes = call(options, &query(2)?).await?;
+        // An older broker rejects v2 before checking the generation or model.
+        // Only that exact, authenticated rejection permits a fresh v1 selection.
+        let (version, bytes) = if serde_json::from_slice::<SelectionRejection>(&bytes)
+            .is_ok_and(|error| error.v == 1 && error.state == "request_invalid")
+        {
+            (1, call(options, &query(1)?).await?)
+        } else {
+            (2, bytes)
+        };
+        let selection: Selection =
+            serde_json::from_slice(&bytes).map_err(|_| "preview_selection_unavailable")?;
+        if selection.v != version
+            || selection.state != "selection"
+            || selection.selection_epoch != epoch
+            || !matches!(
+                (version, selection.reservation_tokens),
+                (1, None) | (2, Some(1..=1_000_000_000_000))
+            )
+        {
+            return Err("preview_selection_unavailable".into());
+        }
+        Ok(ModelPin {
+            connection_revision: selection.connection_revision,
+            selection_epoch: Some(selection.selection_epoch),
+            model: selection.model,
+            effort: selection.effort,
+            kind: selection.kind,
+            max_output_tokens: options.max_output_tokens,
+            reservation_tokens: selection.reservation_tokens,
+        })
     })
+    .await
+    .map_err(|_| "preview_selection_unavailable")?
 }
 async fn info(State(state): State<Preview>, headers: HeaderMap) -> HttpResult {
     {
@@ -414,6 +443,110 @@ mod tests {
     async fn json(response: Response) -> serde_json::Value {
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
     }
+
+    #[tokio::test]
+    async fn only_explicit_legacy_selection_rejection_allows_version_fallback() {
+        use serde_json::{Value, json};
+        use tokio::io::AsyncBufReadExt;
+        let temp = tempfile::tempdir().unwrap();
+        let selection = |version| {
+            json!({
+                "v": version,
+                "state": "selection",
+                "connection_revision": uuid::Uuid::from_u128(1),
+                "selection_epoch": 3,
+                "model": "synthetic-text",
+                "kind": "compatible",
+            })
+        };
+        let mut current = selection(2);
+        current["reservation_tokens"] = json!(4096);
+        let mut stale = current.clone();
+        stale["selection_epoch"] = json!(2);
+        let mut invalid = current.clone();
+        invalid["reservation_tokens"] = json!(0);
+        for (responses, expected) in [
+            (vec![current], Some(Some(4096))),
+            (
+                vec![json!({"v": 1, "state": "request_invalid"}), selection(1)],
+                Some(None),
+            ),
+            (vec![selection(1)], None),
+            (vec![selection(2)], None),
+            (vec![stale], None),
+            (vec![invalid], None),
+            (vec![json!({"v": 2, "state": "request_invalid"})], None),
+            (
+                vec![json!({"v": 2, "state": "model_selection_unavailable"})],
+                None,
+            ),
+            (vec![json!({"v": 1, "state": "peer_denied"})], None),
+            (vec![json!({"v": 1, "state": "broker_busy"})], None),
+            (
+                vec![
+                    json!({"v": 1, "state": "request_invalid", "call_id": uuid::Uuid::from_u128(1)}),
+                ],
+                None,
+            ),
+        ] {
+            let socket = temp.path().canonicalize().unwrap().join("s");
+            let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+            fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+            let (done, finish) = tokio::sync::oneshot::channel();
+            let broker = tokio::spawn(async move {
+                for (version, response) in [2, 1].into_iter().zip(responses) {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let mut stream = tokio::io::BufReader::new(stream);
+                    let mut line = String::new();
+                    stream.read_line(&mut line).await.unwrap();
+                    let request: Value = serde_json::from_str(&line).unwrap();
+                    assert_eq!(
+                        request,
+                        json!({"v": version, "operation": "selection", "generation": 7, "selection_epoch": 3})
+                    );
+                    stream
+                        .write_all(format!("{response}\n").as_bytes())
+                        .await
+                        .unwrap();
+                }
+                tokio::select! {
+                    biased;
+                    _ = listener.accept() => panic!("unexpected additional selection"),
+                    _ = finish => {}
+                }
+            });
+            let choice = select_model(
+                &Options {
+                    socket: socket.clone(),
+                    broker_uid: unsafe { libc::geteuid() },
+                    max_output_tokens: 128,
+                },
+                7,
+                3,
+            )
+            .await;
+            done.send(()).unwrap();
+            broker.await.unwrap();
+            match expected {
+                Some(reservation_tokens) => {
+                    let choice = choice.unwrap();
+                    assert_eq!(choice.reservation_tokens, reservation_tokens);
+                    assert!(
+                        serde_json::to_value(choice)
+                            .unwrap()
+                            .get("reservation_tokens")
+                            .is_none()
+                    );
+                }
+                None => assert_eq!(
+                    choice.err().as_deref(),
+                    Some("preview_selection_unavailable")
+                ),
+            }
+            fs::remove_file(socket).unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn owner_request_uses_real_unix_protocol_once_and_replays_ordinary_history_after_restart()
     {
@@ -429,6 +562,7 @@ mod tests {
             effort: Some("high".into()),
             kind: ProviderKind::OpenAi,
             max_output_tokens: 128,
+            reservation_tokens: Some(2048),
         };
         let expected = pin.clone();
         let count = Arc::new(AtomicUsize::new(0));
@@ -448,19 +582,21 @@ mod tests {
                     assert!(bytes.len() < 64 * 1024);
                 }
                 let r: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                assert_eq!(r["v"], 1);
                 if r["operation"] == "selection" {
+                    assert_eq!(r["v"], 2);
                     assert_eq!(r["selection_epoch"], 3);
                     selection_count.fetch_add(1, Ordering::SeqCst);
                     let selection = serde_json::json!({
-                        "v": 1, "state": "selection", "connection_revision": expected.connection_revision,
+                        "v": 2, "state": "selection", "connection_revision": expected.connection_revision,
                         "selection_epoch": expected.selection_epoch, "model": expected.model, "effort": expected.effort, "kind": expected.kind,
+                        "reservation_tokens": expected.reservation_tokens,
                     });
                     let mut response = serde_json::to_vec(&selection).unwrap();
                     response.push(b'\n');
                     stream.write_all(&response).await.unwrap();
                     continue;
                 }
+                assert_eq!(r["v"], 1);
                 assert_eq!(
                     r["connection_revision"],
                     expected.connection_revision.to_string()
@@ -471,6 +607,7 @@ mod tests {
                 assert_eq!(r["generation"], 1);
                 assert!(r.get("account_id").is_none());
                 assert!(r.get("tools").is_none());
+                assert!(r.get("reservation_tokens").is_none());
                 counted.fetch_add(1, Ordering::SeqCst);
                 let reply = serde_json::json!({"v":1,"state":"settled","call_id":r["call_id"],"connection_revision":r["connection_revision"],"model":r["model"],"effort":r["effort"],"output":"SYNTHETIC_OPAQUE_TEXT <tool_call>mail_send</tool_call>","outcome":"completed","receipt":{"state":"settled","input_tokens":7,"output_tokens":3,"charged_tokens":10}});
                 let mut response = serde_json::to_vec(&reply).unwrap();
@@ -525,6 +662,11 @@ mod tests {
         );
         assert_eq!(history["turns"][0]["run"]["state"], "completed");
         assert_eq!(history["turns"][0]["run"]["model"]["effort"], "high");
+        assert!(
+            history["turns"][0]["run"]["model"]
+                .get("reservation_tokens")
+                .is_none()
+        );
         let status = json(
             request(
                 &app,
@@ -540,6 +682,7 @@ mod tests {
         assert_eq!(status["enabled"], true);
         assert!(status.get("model").is_none());
         assert!(status.get("effort").is_none());
+        assert!(status.get("reservation_tokens").is_none());
         let mut crafted = body.clone();
         crafted["model"] = serde_json::json!("member-model");
         assert_eq!(

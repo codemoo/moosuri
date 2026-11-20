@@ -2188,9 +2188,11 @@ mod tests {
                 let r: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                 assert_eq!(r["selection_epoch"], 0);
                 if r["operation"] == "selection" {
+                    assert_eq!(r["v"], 2);
                     let selection = serde_json::json!({
-                        "v": 1, "state": "selection", "connection_revision": Uuid::from_u128(1),
+                        "v": 2, "state": "selection", "connection_revision": Uuid::from_u128(1),
                         "selection_epoch": 0, "model": "synthetic-text", "kind": "compatible",
+                        "reservation_tokens": 4096,
                     });
                     let mut bytes = serde_json::to_vec(&selection).unwrap();
                     bytes.push(b'\n');

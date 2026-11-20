@@ -226,7 +226,8 @@ fn model_fixture(
                     (final_revision, "claude-fixture-selected", "medium")
                 };
             let value = if r["operation"] == "selection" {
-                json!({"v":1,"state":"selection","connection_revision":revision,"selection_epoch":3,"model":model,"effort":effort,"kind":"anthropic"})
+                assert_eq!(r["v"], 2);
+                json!({"v":2,"state":"selection","connection_revision":revision,"selection_epoch":3,"model":model,"effort":effort,"kind":"anthropic","reservation_tokens":4096})
             } else {
                 calls.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(r["connection_revision"], revision.to_string());

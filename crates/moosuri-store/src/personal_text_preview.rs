@@ -19,6 +19,9 @@ pub struct ModelPin {
     pub effort: Option<String>,
     pub kind: ProviderKind,
     pub max_output_tokens: u32,
+    // The broker supplies this hint at selection time. It does not identify a call.
+    #[serde(skip)]
+    pub reservation_tokens: Option<u64>,
 }
 pub enum Admission {
     InboxRequested,
@@ -478,6 +481,7 @@ mod tests {
         let pin = ModelPin {
             connection_revision: Uuid::new_v4(),
             selection_epoch: None,
+            reservation_tokens: None,
             model: "synthetic-text".into(),
             effort: None,
             kind: ProviderKind::Compatible,

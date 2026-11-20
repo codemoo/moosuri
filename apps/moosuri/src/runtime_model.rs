@@ -183,6 +183,8 @@ struct Reply {
     kind: Option<ProviderKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     selection_epoch: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reservation_tokens: Option<u64>,
 }
 impl Reply {
     fn error(code: &str) -> Self {
@@ -198,6 +200,7 @@ impl Reply {
             effort: None,
             kind: None,
             selection_epoch: None,
+            reservation_tokens: None,
         }
     }
     fn receipt(id: Uuid, r: Receipt) -> Self {
@@ -220,6 +223,7 @@ impl Reply {
             effort: None,
             kind: None,
             selection_epoch: None,
+            reservation_tokens: None,
         }
     }
     fn admission_error(error: StoreError, unavailable: &str) -> Self {
@@ -613,12 +617,19 @@ impl Broker {
         )
     }
     fn selection(&self, b: &Binding, query: SelectionRequest) -> Reply {
-        if query.v != 1 || query.generation != b.generation {
+        if !matches!(query.v, 1 | 2) {
             return Reply::error("request_invalid");
+        }
+        let error = |code| Reply {
+            v: query.v,
+            ..Reply::error(code)
+        };
+        if query.generation != b.generation {
+            return error("request_invalid");
         }
         let SelectionOperation::Selection = query.operation;
         let Ok(policy) = self.selected(b, query.selection_epoch) else {
-            return Reply::error("model_selection_unavailable");
+            return error("model_selection_unavailable");
         };
         Reply {
             connection_revision: Some(policy.connection_revision),
@@ -626,7 +637,8 @@ impl Broker {
             effort: policy.effort,
             kind: Some(self.config.provider.kind),
             selection_epoch: Some(query.selection_epoch),
-            ..Reply::error("selection")
+            reservation_tokens: (query.v == 2).then_some(b.budget.reservation_tokens),
+            ..error("selection")
         }
     }
     fn ledger_admission(
@@ -880,6 +892,7 @@ impl Broker {
             effort: request.effort,
             kind: None,
             selection_epoch: None,
+            reservation_tokens: None,
         }
     }
 }
@@ -1394,6 +1407,7 @@ mod tests {
         let (url, provider, upstream) = upstream().await;
         let (options, mut bindings) = fixture(&root, url);
         bindings[1].peer_uid = bindings[0].peer_uid + 1;
+        bindings[1].budget.reservation_tokens = 4096;
         let (member, other) = (&bindings[0], &bindings[1]);
         let mut config: Config =
             serde_json::from_slice(&fs::read(&options.config).unwrap()).unwrap();
@@ -1447,6 +1461,27 @@ mod tests {
             let selected = selection(binding);
             assert_eq!(selected.model.as_deref(), Some(choice.model.as_str()));
             assert_eq!(selected.effort, choice.effort);
+            let wire = serde_json::to_value(selected).unwrap();
+            assert_eq!(wire["v"], 1);
+            assert!(wire.get("reservation_tokens").is_none());
+            let query = |generation, selection_epoch| SelectionRequest {
+                v: 2,
+                operation: SelectionOperation::Selection,
+                generation,
+                selection_epoch,
+            };
+            let epoch = epoch(&options.registry, binding).unwrap();
+            let selected = broker.selection(binding, query(binding.generation, epoch));
+            assert_eq!(selected.v, 2);
+            assert_eq!(selected.state, "selection");
+            assert_eq!(
+                selected.reservation_tokens,
+                Some(binding.budget.reservation_tokens)
+            );
+            let fenced = broker.selection(binding, query(binding.generation + 1, epoch));
+            assert_eq!(fenced.v, 2);
+            assert_eq!(fenced.state, "request_invalid");
+            assert!(fenced.reservation_tokens.is_none());
         }
         let mut previously_settled: Request = serde_json::from_slice(&prior).unwrap();
         let old_epoch = selection(member).selection_epoch.unwrap();
@@ -1493,20 +1528,20 @@ mod tests {
             .unwrap();
         }
         assert_ne!(selection(other).selection_epoch, Some(stale));
-        assert_eq!(
-            broker
-                .selection(
-                    other,
-                    SelectionRequest {
-                        v: 1,
-                        operation: SelectionOperation::Selection,
-                        generation: other.generation,
-                        selection_epoch: stale,
-                    }
-                )
-                .state,
-            "model_selection_unavailable"
-        );
+        for v in [1, 2] {
+            let fenced = broker.selection(
+                other,
+                SelectionRequest {
+                    v,
+                    operation: SelectionOperation::Selection,
+                    generation: other.generation,
+                    selection_epoch: stale,
+                },
+            );
+            assert_eq!(fenced.v, v);
+            assert_eq!(fenced.state, "model_selection_unavailable");
+            assert!(fenced.reservation_tokens.is_none());
+        }
         let mut stale_call = request(other);
         stale_call.selection_epoch = Some(stale);
         assert_eq!(broker.call(other, stale_call).await.state, "account_fenced");

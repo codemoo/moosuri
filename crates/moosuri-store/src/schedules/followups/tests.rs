@@ -469,8 +469,15 @@ async fn upgrade_never_backfills_existing_dates_until_explicit_resave() {
     let at = now().unwrap() + 3600;
     let v = input(Some(at), None, None);
     let r = s.write_artifact(&u, v.clone()).await.unwrap();
-    // Reconstruct the pre-followup snapshot: the record exists without its scheduler.
-    s.call(|db| {
+    let artifact = r.id.clone();
+    s.call(move |db| {
+        // The current writer creates a schedule in a table that already existed
+        // at schema 45. Remove that schedule before rebuilding the old snapshot.
+        let removed = db.conn.execute(
+            "DELETE FROM reminder_schedules WHERE (tenant_id,id) IN (SELECT tenant_id,schedule_id FROM followup_reminders WHERE artifact_id=?1)",
+            [artifact],
+        )?;
+        assert_eq!(removed, 1);
         crate::schema::tests::replace_with_predecessor(&mut db.conn, 45);
         Ok(())
     })

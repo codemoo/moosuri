@@ -113,7 +113,8 @@ async fn attached_and_inherited_images_cannot_create_or_revoke_reminders() {
         .unwrap();
     assert_eq!(first.run.state, RunState::Completed);
     assert!(first.run.schedule_receipts.is_none());
-    assert!(first.assistant.iter().any(|m| m.text.contains("새 대화")));
+    assert_eq!(first.assistant.len(), 1);
+    assert!(first.assistant[0].text.contains("새 대화"));
     assert_eq!(store.schedules(&user).await.unwrap().len(), 1);
     let replay = store
         .submit_turn_with_context(
@@ -128,6 +129,8 @@ async fn attached_and_inherited_images_cannot_create_or_revoke_reminders() {
         .await
         .unwrap();
     assert_eq!(replay.run.id, first.run.id);
+    assert_eq!(replay.assistant.len(), 1);
+    assert_eq!(replay.assistant[0].text, first.assistant[0].text);
     assert!(matches!(
         store
             .submit_turn_with_context(
@@ -150,7 +153,7 @@ async fn attached_and_inherited_images_cannot_create_or_revoke_reminders() {
                 request,
                 text,
                 None,
-                attachments,
+                attachments.clone(),
                 Some(ScheduleChatContext {
                     timezone: "UTC".into(),
                     target: None
@@ -172,6 +175,11 @@ async fn attached_and_inherited_images_cannot_create_or_revoke_reminders() {
         .await
         .unwrap();
     assert!(partial.run.schedule_receipts.is_none());
+    assert_eq!(partial.run.state, RunState::Queued);
+    store
+        .cancel_run(&user, partial.run.id, partial.run.attempt)
+        .await
+        .unwrap();
     let followed = store
         .submit_turn_with_schedule_context(
             &user,
@@ -184,12 +192,11 @@ async fn attached_and_inherited_images_cannot_create_or_revoke_reminders() {
         .await
         .unwrap();
     assert!(followed.run.schedule_receipts.is_none());
-    if matches!(followed.run.state, RunState::Queued | RunState::Running) {
-        store
-            .cancel_run(&user, followed.run.id, followed.run.attempt)
-            .await
-            .unwrap();
-    }
+    assert_eq!(followed.run.state, RunState::Queued);
+    store
+        .cancel_run(&user, followed.run.id, followed.run.attempt)
+        .await
+        .unwrap();
     let private_thread = thread.id.clone();
     store.call(move|db|{let count:i64=db.conn.query_row("SELECT count(*) FROM schedule_chat_drafts d JOIN chat_runs r ON r.tenant_id=d.tenant_id AND r.id=d.run_id WHERE r.thread_id=?1",[private_thread],|r|r.get(0))?;assert_eq!(count,0);Ok(())}).await.unwrap();
     let inherited = store
@@ -211,11 +218,38 @@ async fn attached_and_inherited_images_cannot_create_or_revoke_reminders() {
         .unwrap();
     assert_eq!(inherited.run.state, RunState::Completed);
     assert!(inherited.run.schedule_receipts.is_none());
+    assert_eq!(inherited.assistant.len(), 1);
+    assert_eq!(inherited.assistant[0].text, first.assistant[0].text);
     let still_owned = store.schedules(&user).await.unwrap();
     assert_eq!(still_owned.len(), 1);
     assert_eq!(still_owned[0].id, receipt.id);
     assert_eq!(still_owned[0].revision, receipt.revision);
     assert_eq!(still_owned[0].state, "active");
+    assert_eq!(
+        store.usage_summary(&user).await.unwrap().dispatched_calls,
+        0
+    );
     assert!(store.claim_run().await.unwrap().is_none());
     assert!(store.claim_agent_run().await.unwrap().is_none());
+
+    let thread = store
+        .create_thread(&user, "Synthetic ordinary image question".into())
+        .await
+        .unwrap();
+    let question = store
+        .submit_turn_with_context(
+            &user,
+            thread.id,
+            Uuid::new_v4().to_string(),
+            "What color is the attached image?".into(),
+            None,
+            attachments,
+            context,
+        )
+        .await
+        .unwrap();
+    assert_eq!(question.run.state, RunState::Queued);
+    assert!(question.assistant.is_empty());
+    let claimed = store.claim_run().await.unwrap().unwrap();
+    assert_eq!(claimed.lease.run_id(), question.run.id);
 }

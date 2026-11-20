@@ -13,6 +13,7 @@ pub(crate) fn validate_timezone(value: &str) -> Result<()> {
 }
 #[allow(dead_code)]
 const MISSION: &str = "현재 예약은 정해진 문구를 개인 소식함에 남기는 알림만 지원합니다. 조사·검색·메일 발송 같은 예약 작업은 아직 실행하지 않습니다. 알림 문구를 지정해 주세요.";
+const MEDIA_BLOCKED: &str = "첨부 자료가 연결된 대화에서는 알림을 변경하지 않습니다. 새 대화에서 알림을 요청하거나 예약 화면을 이용해 주세요.";
 fn target(
     conn: &Connection,
     user: &UserContext,
@@ -88,6 +89,25 @@ pub(crate) fn receipts(
         .transpose()
         .map(|r| r.into_iter().collect())
 }
+
+/// Respond to an explicit reminder command in a media turn without loading
+/// reminder targets or changing schedules or pending reminder drafts.
+pub(crate) fn finish_media(
+    conn: &Connection,
+    run: &Run,
+    context: Option<&ScheduleChatContext>,
+) -> Result<()> {
+    let zone = context.map(|context| context.timezone.as_str());
+    let selected = context.is_some_and(|context| context.target.is_some());
+    if matches!(
+        parser::parse(&run.text, zone, clock()?, selected),
+        parser::Decision::Command(_)
+    ) {
+        confirmation(conn, run, MEDIA_BLOCKED.into(), None)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn finish(
     conn: &Connection,
     user: &UserContext,
@@ -106,7 +126,7 @@ pub(crate) fn finish(
         parser::Decision::Mission => (MISSION.into(), None),
         parser::Decision::Command(command) => {
             if crate::media::has_context(conn, &run.tenant, &run.id)? {
-                confirmation(conn, run, "첨부 자료가 연결된 대화에서는 알림을 변경하지 않습니다. 새 대화에서 알림을 요청하거나 예약 화면을 이용해 주세요.".into(), None)?;
+                confirmation(conn, run, MEDIA_BLOCKED.into(), None)?;
                 return Ok(true);
             }
             use parser::Action;

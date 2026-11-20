@@ -1155,6 +1155,7 @@ pub(super) fn submit_turn_context_in(
     // not create local schedule, Calendar, artifact or other action grants.
     if crate::media::has_context(tx, &run.tenant, &run.id)? {
         tx.execute("UPDATE chat_runs SET model=json_remove(json_set(model,'$.mission_commands_enabled',json('false'),'$.function_tools',json('false')), '$.agent_profile') WHERE tenant_id=?1 AND id=?2",params![run.tenant,run.id])?;
+        crate::schedules::chat::finish_media(tx, &run, context.as_ref())?;
         let admitted = load_run(tx, &run.tenant, &run.id)?;
         let result = turn(tx, &admitted)?;
         emit(

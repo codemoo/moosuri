@@ -349,6 +349,8 @@ def exercise_local_model(page, member, origin, limit_case, context_controls):
         cases = [
             ("ML-05", "프랑스의 수도는 어디야? 한글 지명만 적어 줘.", "파리"),
             ("ML-06", "내가 이 대화에서 예약한 좌석 번호를 알려 줘. 알려 준 적이 없으면 ‘확인 불가’라고만 답해 줘.", "확인 불가"),
+            ("ML-07", "입실은 09:07이야. 입실 시각을 콜론이 들어간 HH:MM 형식으로만 써 줘.", "09:07"),
+            ("ML-08", "방금 말한 입실 시각을 같은 HH:MM 형식으로만 다시 적어 줘.", "09:07"),
         ]
     failures = []
     for case, prompt, expected in cases:

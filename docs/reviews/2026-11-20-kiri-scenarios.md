@@ -1,21 +1,28 @@
 # Kiri 회원 기능 시나리오
 
-Chrome 시나리오는 정적 Kiri 웹 빌드에 로그인, 목록, 저장 및 재시도 응답을 합성해서 검증한다. 화면에서 버튼·링크·대화 입력을 조작하고 브라우저 방문 기록과 새로고침을 사용한다. Google 동의와 볼트 새 탭은 브라우저 수준에서 가로채며 루프백 외 네트워크 요청을 차단한다. Vitest는 화면 상태와 요청 계약을, Rust는 게이트웨이·회원 소켓·영속 저장 등의 계약을 확인한다. 실제 모델 답변 품질, 실제 Google 동의와 조회, 모바일 실기기, 운영 서버 재시작은 별도 수락이 필요하다.
+Chrome·WebKit 시나리오는 정적 Kiri 웹 빌드에 로그인, 목록, 저장 및 재시도 응답을 합성해서 검증한다. 실제 버튼·링크·입력창과 브라우저 방문 기록을 사용한다. Google 동의와 볼트 새 탭은 브라우저 수준에서 가로채며 루프백 외 네트워크 요청을 차단한다. 아래에는 실제 게이트웨이와 회원 DB를 거친 여정, 실제 로컬 모델의 문항별 답도 기록했다. 실제 Google 동의·조회, 모바일 실기기와 운영 서버 전환은 남아 있다. [장기 대화 측정](../../audit/memory-reader/results.md)
 
 ## 실행
 
-Python 3.10 이상, Playwright Python, 설치된 Google Chrome이 필요하다. 저장소 루트에서 실행한다. `--scenario B-CHAT-02` 또는 `--width 390`을 반복하여 실행 대상을 선택할 수 있다. `--headed`는 눈으로 화면을 보며 재현할 때 쓴다.
+Python 3.10 이상, Playwright Python, 설치된 Google Chrome이 필요하다. WebKit은 Playwright 버전에 맞는 WebKit 런타임을 사용한다. 저장소 루트에서 실행한다. `--scenario B-CHAT-02` 또는 `--width 390`을 반복하여 실행 대상을 선택할 수 있다. `--headed`는 눈으로 화면을 보며 재현할 때 쓴다.
 
 ```sh
 npm ci --ignore-scripts --prefix web
 npm run build --prefix web
 python3 deployment/kiri/linux-vm-smoke/member-ui-scenarios.py web/dist
+python3 deployment/kiri/linux-vm-smoke/member-ui-scenarios.py web/dist --browser webkit
 npm test --prefix web
 cargo test --locked -p moosuri personal_gateway
 cargo test --locked -p moosuri-store personal_tasks
 ```
 
-아래 표의 `B-`는 Chrome 시나리오 ID다. `V`는 표시한 웹 테스트 파일의 테스트 이름으로 찾고, `R`은 Rust 테스트 함수 이름으로 찾는다. 결과 집계에서는 같은 `B-`의 360·390·1440px 실행을 한 시나리오로 센다. 원래 대화 열기처럼 여러 단계를 밟는 경우에도 표의 한 행을 한 시나리오로 센다.
+아래 표의 `B-`는 브라우저 시나리오 ID다. `V`는 표시한 웹 테스트 파일의 테스트 이름으로 찾고, `R`은 Rust 테스트 함수 이름으로 찾는다. 결과 집계에서는 같은 `B-`의 360·390·1440px 실행을 한 시나리오로 센다. 원래 대화 열기처럼 여러 단계를 밟는 경우에도 표의 한 행을 한 시나리오로 센다.
+
+## 실행 결과
+
+Chrome 158과 WebKit 26에서 서로 다른 브라우저 조작 38개를 각각 360·390·1440px로 확인했다. Chrome 114건, WebKit 114건이 통과했다. WebKit 첫 실행에서는 360px Drive 연결 해제 시나리오가 문서 로딩 단계에서 시간 초과했다. 새 브라우저에서 문서 준비와 실제 조작의 시간 제한을 분리해 남은 폭과 서비스를 다시 실행했다. 이 수치에 iPhone·Android 실기기는 포함되지 않는다.
+
+별도 로컬 TLS 게이트웨이와 두 회원 DB의 여정 6건 및 표준 서버 HTTP·런타임·SQLite의 `moosuri-eval` 15건이 통과했다. 여기서 모델은 시험 응답을 반환했다. 실제 Claude Sonnet 5.5 medium은 별도로 산술, 시간표 판독, 주어진 정보로 답할 수 없는 질문 세 개에서 기대 결과를 반환했다. [모델별 검증 범위](../../audit/memory-reader/results.md)
 
 ## 로그인과 세션
 
@@ -132,3 +139,95 @@ cargo test --locked -p moosuri-store personal_tasks
 | 다른 회원에게 속한 상세를 열거나 계정 변경 후 오래된 응답이 도착한다 | 해당 상세가 표시되지 않으며 비어 있는 자기 목록과 구분한다. | V `PersonalTasks.test.tsx` · `drops the old account's in-flight detail` |
 | 실제 SQLite를 닫고 다시 열어 완료 업무와 실행 중이던 업무를 확인한다 | 완료 결과를 재조회하며 중단된 업무는 결과 불명과 이력을 표시한다. | R `personal_tasks_reopen_completed_result_and_recover_interrupted_job_with_real_history` |
 | 스키마 89에서 생성된 작업을 이전한다 | 기존 결과를 유지하고 기록되지 않은 사건 시각은 미기록으로 남긴다. | R `personal_tasks_schema_89_preserves_existing_result_and_marks_unknown_event_time` |
+
+## 실행 중인 일반 대화의 후속 지시
+
+| 시나리오 | 기대 결과 | 근거 |
+| --- | --- | --- |
+| 응답 전 같은 탭에서 후속 지시를 저장한다 | 최초 모델 요청의 내용을 유지하며 저장한 지시는 원래 실행에 연결된다. | V `PersonalPreview.test.tsx` · `accepts a follow-up while this tab still awaits its first broker reply` |
+| 후속 지시 접수 응답을 잃은 뒤 새로고침한다 | 기존 요청 번호로 접수를 확인하며 지시를 원래 답변에 반영했다고 표시하지 않는다. | `B-FTU-01` · V `PersonalPreview.test.tsx` · `stores a distinct text follow-up and reconciles its original instruction` |
+| 원래 응답 완료 후 후속 메시지로 보내기를 누른다 | 진행 중에는 전송이 잠기고, 완료 후 명시적으로 누르면 새 대화 턴으로 한 번만 전달된다. | 같은 V 테스트의 원대화 이력·POST 확인 및 [회원 저장소](../../crates/moosuri-store/src/personal_text_preview.rs) |
+| 원래 실행이 먼저 끝나 후속 저장이 충돌한 뒤 새로고침한다 | 작성 중인 다른 초안을 보존하고 회원이 원할 때에만 원문을 입력창으로 복구한다. | `B-FTU-02` |
+
+## 관리자 웹 초대와 호스트 자동 준비
+
+| 시나리오 | 기대 결과 | 근거 |
+| --- | --- | --- |
+| 실제 관리자로 두 회원을 초대하고 한 회원분의 저장공간만 허용한다 | 타이머가 한 명을 비밀번호 입력 대기로 준비하며 다른 초대는 용량을 기다린다. | Ubuntu 24.04.5·Kiri 0.2.1 [실행 기록](../../deployment/kiri/linux-vm-smoke/onboard-worker-evidence.json) |
+| 같은 예약을 재처리하고 운영자가 최초 비밀번호를 입력한다 | 회원·UID·볼륨을 보존한다. 최초 로그인은 비밀번호 변경을 요구하고 기존 자격으로 다른 회원에게 로그인할 수 없다. | 같은 Linux 실행 기록 |
+| 저장공간을 두 회원분으로 늘린다 | 남은 회원을 다른 UID에 준비한다. 이미 준비된 회원은 재처리 후 본래 자격으로 로그인한다. | 같은 Linux 실행 기록 |
+| 처리 중 이미 연결한 설치 경로를 바꿔 재시도한다 | 준비된 두 회원의 연결 정보를 유지하고 경로 변경으로 인한 재준비를 거절한다. | 같은 Linux 실행 기록 |
+
+## 관리자 OpenRouter 사용 한도
+
+| 시나리오 | 기대 결과 | 근거 |
+| --- | --- | --- |
+| 관리자가 공식 키 한도 조회를 누르고 0, 미제공 값, 초기화 시각이 있는 응답을 받는다 | 서버 수치와 조회 시각을 표시한다. 값이 없는 항목은 확인 불가로 보인다. | `B-ENG-02` · V `PersonalEngineSettings.test.tsx` · `requests current OpenRouter capacity explicitly` |
+| 관리자가 두 탭에서 차례로 조회하고 첫 탭의 결과를 나중에 확인한다 | 진행 중인 요청은 함께 쓰고, 완료한 두 결과는 각각 자기 조회 ID로 유효 기간 안에 읽는다. | R `openrouter_quota_reads_only_on_admin_request_and_fences_key_and_connection_changes` |
+| 응답 전 키나 연결을 교체하거나 관리자 권한을 철회한다 | 새 연결과 일반 회원에게 이전 키 사용량을 전달하지 않는다. 만료된 요청은 새 조회가 필요하다. | `B-ENG-03` · R `quota_requests_expire_and_demoted_admin_cannot_trigger_or_receive_shared_key_capacity` 및 위 브로커 테스트 |
+
+## 비회원 예시 대화
+
+| 시나리오 | 기대 결과 | 근거 |
+| --- | --- | --- |
+| 로그인 전 시간표 예시를 연다 | 합성 시간표와 근거를 표시하고 모델·회원 API는 호출하지 않는다. | `B-DEMO-01` · V `PublicDemo.test.tsx` · `opens the public timetable example` |
+| 기억 정정, 맡긴 일을 번갈아 열고 연습 문장을 입력한 뒤 떠난다 | 선택한 예시만 보이며 입력은 브라우저에 저장되지 않고 다시 열면 비어 있다. | `B-DEMO-02` · V `PublicDemo.test.tsx` · `shows only the selected synthetic conversation`, `keeps a practice question out of persistent storage` |
+| 회원 공간 열기를 눌러 실제 회원 진입점으로 이동한다 | 회원 로그인 화면에서 세션 조회가 시작된다. 데모의 내용은 회원 계정에 들어가지 않는다. | [Chrome 390·1200px 실측](../../audit/standard-journey-checks.md#f18-합성-미리보기) |
+
+## 실제 게이트웨이를 거치는 회원 여정
+
+[실행기](../../deployment/kiri/linux-vm-smoke/member-web-fullstack.py)는 빌드된 `moosuri` 실행 파일 하나를 인자로 받는다. 브라우저 → TLS 게이트웨이 → 회원별 Unix 소켓과 SQLite → 모델 브로커를 실제 프로세스로 구동한다. 모델 HTTP 응답만 로컬 합성 SSE로 제공한다.
+
+| ID | 회원 조작과 확인한 결과 |
+| --- | --- |
+| MWF-01 | 첫 로그인과 필수 비밀번호 변경 후 같은 브라우저에서 채팅을 연다. |
+| MWF-02 | 두 차례 대화해 실제 브로커가 앞선 질문·답을 전달하는지, 두 응답이 DB에 저장되는지 확인한다. |
+| MWF-03 | 검색으로 원래 대화를 다시 열고 입력 중인 초안과 저장 이력을 새로고침 뒤 확인한다. |
+| MWF-04 | 기억을 작성·수정한 다음 다시 열어 두 번째 리비전을 읽는다. |
+| MWF-05 | 같은 브라우저에서 두 번째 회원으로 로그인해 첫 회원의 대화·초안·기억이 보이지 않는 것을 확인한다. |
+| MWF-06 | 첫 회원의 변경한 비밀번호로 복귀하고 저장한 기억과 이력을 삭제한다. |
+
+## 실제 로컬 모델 대화
+
+Chrome에서 합성 회원으로 로그인해 입력창에 아래 질문을 순서대로 보냈다. 격리된 게이트웨이·회원 서비스·브로커가 관리자가 지정한 루프백 Ollama에 요청한다. 각 질문의 답변과 종료 상태를 해당 회원의 SQLite에서 찾아 화면에 표시된 값과 대조한다. 모델이 답만 줬는지는 엄격하게 채점했다. 표에서 시각 정답 형식은 `HH:MM`다.
+
+| ID | 회원이 한 일 | 기대 결과 |
+| --- | --- | --- |
+| ML-01 | 23과 19를 더해 숫자만 답하라고 요청한다. | 화면과 저장된 답은 `42`다. |
+| ML-02 | 출발 시각을 14:37로 알려 준 뒤 그 시각만 묻는다. | 화면과 저장된 답은 `14:37`이다. |
+| ML-03 | 같은 대화에서 시각을 다시 주지 않고 방금 열차의 출발 시각을 묻는다. | 앞선 턴을 사용해 `14:37`로 답한다. |
+| ML-04 | 별도 세션에서 출력 한도 1토큰으로 계산을 요청한 뒤 새로고침한다. | 모델이 본문 전에 한도로 종료하면 ‘답변 미완료 · 표시할 본문 없음’이 유지되고 DB에 실행 한 건만 남는다. |
+| ML-05 | 이전 턴에 단서가 없는 일반 지식을 물으며 프랑스의 수도 지명만 요청한다. | `파리`로 답한다. |
+| ML-06 | 알려 준 적 없는 개인 좌석 번호를 같은 대화에서 묻는다. | 번호를 만들어 내지 않고 `확인 불가`로 답한다. |
+| ML-07 | 새로운 입실 시각을 알려 주고 콜론을 포함한 HH:MM 형식을 명시한다. | `09:07`로 답한다. |
+| ML-08 | 입실 시각을 다시 주지 않고 같은 HH:MM 형식으로 되묻는다. | `09:07`로 답한다. |
+
+Ollama 0.34.2의 `qwen3:0.6b`에서 개선 전 세 독립 브라우저 세션의 값·형식 일치는 4/9였다. 개선 후에도 같은 방식으로 4/9였다. 개선 전에는 52 또는 853 같은 오답이 관측됐다. 개선 후에는 1437처럼 구분 기호를 생략하거나 숫자와 설명을 함께 반환한 답이 엄격한 채점에서 탈락했다. ML-04와 두 회원 전체 여정 MWF-01~06은 수정본에서 통과했다.
+
+제품 지시에 최신 질문·답변 언어·요청 형식, 입력에 주어진 값 보존과 정보 부족 시 응답 원칙을 추가했다. 별도 공급자 비교에서 시드 19·47·83과 출력 한도 1,536을 고정하고 ML-01~03과 새 도서실 표지 값 `B-76`을 이어서 물었다. 같은 12개 응답의 값·형식 일치는 변경 전 7/12, 변경 후 10/12였다. 브라우저에서는 제품의 실제 기본 샘플링을 사용했다. 이 두 측정은 서로 다른 실행이다.
+
+별도 시험 설치에 공식 `qwen3:4b`를 지정하고 같은 ML-01~03을 새 브라우저 세션 세 개에서 반복해 9/9가 통과했다. 요청 한도 수정 후 최종 후보로 같은 세 문항을 한 번 더 물었을 때 산술은 통과했고 두 시각 답은 `1437`이었다. 네 번의 세션을 합치면 엄격한 표기 일치는 10/12다. 원래 질문은 ‘출발 시각만’이라고 요청했다. ML-05·06에서는 일반 지식과 대화에서 확인할 수 없는 개인 정보를 각각 맞게 처리했다. 설치된 Q4_K_M 모델은 2,497,293,931바이트로 공식 매니페스트의 SHA-256 `359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7`과 일치했다. [공식 모델](https://ollama.com/library/qwen3:4b)
+
+최종 후보의 ML-05~08 첫 실행에서는 격리 Ollama가 응답 도중 종료되고 이후 연결이 거절돼 네 질문을 채점할 수 없었다. 시험 엔진을 재시작하고 같은 모델을 확인한 뒤 같은 네 질문이 모두 통과했다. HH:MM을 명시한 ML-07·08에서는 두 응답 모두 `09:07`이 화면과 DB에 남았다. 엔진의 예기치 않은 종료 원인은 확인되지 않았다.
+
+```sh
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/release/moosuri --local-model qwen3:0.6b --model-port 11434
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/release/moosuri --local-model qwen3:0.6b --model-port 11434 --expect-output-limit
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/release/moosuri --local-model qwen3:4b --model-port 11434 --context-controls
+```
+
+## 긴 대화와 한 번의 모델 요청 한도
+
+4,096토큰을 예약한 합성 회원과 실제 모델 브로커로 아래 세 경우를 실행했다. 변경 전에는 세 번째 질문에서 오래된 대화까지 보내려다 답을 받을 수 없었다. 변경 후 세 경우가 통과했다. 원래 대화는 SQLite에서 확인하고, 공급자가 받은 내용은 전용 시험 HTTP 서버에서 대조했다.
+
+| ID | 회원 조작과 결과 |
+| --- | --- |
+| MB-01 | 긴 첫 질문 뒤 두 번째 질문을 보낸다. 직전 질문·답과 새 질문이 함께 모델에 전달된다. |
+| MB-02 | 셋째 질문을 보내면 가장 오래된 한 쌍만 모델 입력에서 빠진다. 최근 질문·답으로 새 답을 받고 화면과 저장 이력에는 세 턴이 모두 남는다. |
+| MB-03 | 현재 입력만으로 이미 한도를 넘기는 질문을 보낸다. 길이 안내와 초안이 보이며 새로고침 뒤에도 초안이 남는다. 추가 모델 호출과 저장된 실행은 각각 0건이다. |
+
+정확히 저장한 후속 지시의 경우 원래 질문과 새 지시를 보존하고, 들어갈 수 있는 이전 답변 접두부를 유효한 UTF-8로 전달한다. 필수 두 입력이 너무 길면 원래 접수증으로 다시 열 수 있다. [저장소 검사](../../crates/moosuri-store/src/personal_text_preview.rs)
+
+```sh
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/release/moosuri --history-budget
+```

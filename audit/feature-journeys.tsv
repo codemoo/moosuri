@@ -52,9 +52,9 @@ F17	F17-01	설정에서 직접 알림 사용을 선택한다	사용자 조작 �
 F17	F17-02	알림 등록 응답 유실 후 재확인한다	권한이나 구독을 다시 만들지 않고 같은 등록 번호와 내용으로 확인한다	vitest	web/src/PushSettings.test.tsx	lost enrollment ACK repeats exactly its UUID and payload without another permission/subscription
 F17	F17-03	초안이 있는 창에서 알림을 누른다	기존 앱 창에 초점을 맞추고 초안을 새로고침하지 않는다	vitest	web/src/push-worker.test.ts	click focuses an existing app through a fixed message and never reloads its draft
 F17	F17-04	실물 iOS와 Android에서 앱을 닫은 상태로 기기 알림을 누른다	해당 회원의 앱에서 허용된 대상이 열리고 잠금 화면에 개인 본문이 나타나지 않는다	external	docs/testing.md	실기기 푸시 전달 및 알림 열기
-F18	F18-01	로그인하지 않고 공개 데모를 연다	합성 대화만 보이고 개인 API 요청은 발생하지 않는다	planned	docs/features.md	F18 비인증 데모 열기
-F18	F18-02	데모에서 예제 글을 작성한 뒤 실제 회원 계정으로 들어간다	예제 글과 미리보기 초안은 회원의 대화 목록에 남지 않는다	planned	docs/features.md	F18 데모에서 회원 공간으로 전환
-F18	F18-03	공개 스크린샷의 대화·이름·파일 표시를 확인한다	합성 fixture로 출처를 확인할 수 있는 표본만 이미지에 포함된다	planned	docs/features.md	F18 배포용 이미지 검수
+F18	F18-01	로그인하지 않고 공개 데모를 연다	합성 대화만 보이고 개인 API 요청은 발생하지 않는다	vitest	web/src/PublicDemo.test.tsx	opens the public timetable example without requesting a member session or private data
+F18	F18-02	데모에서 예제 글을 작성한 뒤 실제 회원 계정으로 들어간다	예제 글과 미리보기 초안은 회원의 대화 목록에 남지 않는다	vitest	web/src/PublicDemo.test.tsx	keeps a practice question out of persistent storage and clears it on leaving the public demo
+F18	F18-03	공개 스크린샷의 대화·이름·파일 표시를 확인한다	합성 fixture로 출처를 확인할 수 있는 표본만 이미지에 포함된다	recorded	audit/standard-journey-checks.md	F18 합성 미리보기
 F19	F19-01	화자 이름으로 기억을 찾아 편집 후 해당 행으로 돌아간다	수정 결과와 원래 목록 행의 초점을 확인할 수 있다	vitest	web/src/PersonalMemories.test.tsx	searches by speaker, reads, edits, and restores focus to a reopened memory row
 F19	F19-02	저장한 기억의 변경 이력을 펼친다	실제 저장 메타데이터와 각 버전의 시각을 표시한다	vitest	web/src/PersonalMemories.test.tsx	shows saved memory metadata and timestamps on expandable revision history
 F19	F19-03	미래부터 적용할 사실을 미리 저장하고 현재와 과거를 조회한다	질문 시점에 유효한 사실만 결과에 포함된다	rust	crates/moosuri-store/src/knowledge/tests.rs	current_and_historical_validity_filters_do_not_expose_future_facts

@@ -558,6 +558,7 @@ function Login({
             <span aria-hidden="true">↗</span>
           </button>
         </form>
+        <a href="/demo">예시 대화 둘러보기</a>
         <p className="fine">계정이 필요하면 관리자에게 초대를 요청하세요.</p>
       </div>
     </Gate>

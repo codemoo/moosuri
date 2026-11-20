@@ -1095,6 +1095,8 @@ async fn public_shell(
         "/" | "/preview" | "/app" | "/login" | "/personal.html"
     ) {
         "/personal.html"
+    } else if matches!(path, "/demo" | "/demo.html") {
+        "/demo.html"
     } else if matches!(
         path,
         "/moosuri-icon-192.png" | "/moosuri-icon-512.png" | "/personal.webmanifest"
@@ -2859,6 +2861,11 @@ mod tests {
         let mut h = headers();
         h.remove("origin");
         h.remove("x-real-ip");
+        let demo = request(&gateway, "/demo", Method::GET, h.clone(), "").await;
+        assert_eq!(demo.status(), StatusCode::OK);
+        assert!(!demo.headers().contains_key(header::SET_COOKIE));
+        let body = axum::body::to_bytes(demo.into_body(), 65536).await.unwrap();
+        assert!(std::str::from_utf8(&body).unwrap().contains("예시 대화 · Moosuri"));
         let response = request(&gateway, "/", Method::GET, h.clone(), "").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert!(!response.headers().contains_key(header::SET_COOKIE));

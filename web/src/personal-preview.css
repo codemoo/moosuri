@@ -210,3 +210,5 @@
 @media (max-width: 767px) {
   .personal-tasks { padding: 4px 16px 28px; }
 }
+
+.member-demo-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--member-accent); }

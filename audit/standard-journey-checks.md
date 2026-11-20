@@ -60,3 +60,7 @@ OPENSPEC_TELEMETRY=0 tools/openspec/node_modules/.bin/openspec instructions appl
 | --- | --- |
 | `[local reference](missing-synthetic-plan-link.md)` | `missing link missing-synthetic-plan-link.md` |
 | `Rust/WASM 웹` | `stale assumption` |
+
+## F18 합성 미리보기
+
+회원과 표준 서버의 `/demo`는 정적 시간표·기억·작업 응답 세 개를 제공한다. Chrome의 390px와 1200px에서 예제를 바꾸고 연습 초안을 작성한 뒤 **회원 공간 열기**를 눌렀다. 데모는 개인 API를 요청하지 않았고 브라우저 저장소는 비어 있었다. 회원 로그인 화면에서 세션 조회가 시작됐으며 예시를 다시 열었을 때 초안은 비어 있었다. 아래 이미지는 데모의 합성 시간표 화면에서 캡처해 예제 문장·승강장·브랜드만 담긴 것을 확인했다. [공개용 합성 화면](../docs/reviews/2026-11-20-public-demo.png) · [예시 데이터](../web/src/PublicDemo.tsx)

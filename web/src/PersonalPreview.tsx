@@ -346,6 +346,7 @@ function Credentials({
           {busy ? "확인 중…" : session ? "비밀번호 변경" : "로그인"}
         </button>
       </form>
+      {!session && <a className="member-demo-link" href="/demo">예시 대화 둘러보기</a>}
       {onSignOut && <Button variant="ghost" label="로그아웃" onClick={onSignOut} />}
     </section>
   );

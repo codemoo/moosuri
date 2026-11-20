@@ -1283,6 +1283,7 @@ async fn static_asset(uri: Uri) -> Response {
         {
             "/index.html"
         }
+        "/demo" => "/demo.html",
         other => other,
     };
     let Some((_, bytes)) = ASSETS.iter().find(|(name, _)| *name == path) else {

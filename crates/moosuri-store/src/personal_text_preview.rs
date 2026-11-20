@@ -64,21 +64,34 @@ struct Request {
 }
 
 impl Request {
-    fn encode(mut self, saved_follow_up: bool) -> Result<Vec<u8>> {
+    fn encode(mut self, saved_follow_up: bool, reservation: Option<u64>) -> Result<Vec<u8>> {
         const MAX_FRAME: usize = 64 * 1024;
         let serialize =
             |request: &Self| serde_json::to_vec(request).map_err(|_| StoreError::Corrupt);
+        let excess_reservation = |request: &Self| {
+            let text_bytes = request.messages.iter().map(|m| m.text.len()).sum();
+            let estimate = crate::runtime_model_ledger::Budget::text_reservation(
+                text_bytes,
+                request.messages.len(),
+                request.max_output_tokens,
+            );
+            estimate.saturating_sub(reservation.unwrap_or(u64::MAX))
+        };
         let mut frame = serialize(&self)?;
+        let excess = excess_reservation(&self);
         // The broker's newline also occupies one byte. Keep the newest whole
         // pairs and always preserve the current question.
-        if saved_follow_up && self.messages.len() == 4 && frame.len() >= MAX_FRAME {
+        if saved_follow_up && self.messages.len() == 4 && (frame.len() >= MAX_FRAME || excess > 0) {
             // A saved follow-up pins its original question. Only the copy of
             // the prior answer can be shortened; its stored text is untouched.
             let answer = &mut self.messages[2].text;
-            let size = serde_json::to_vec(&answer)
+            let size = serde_json::to_vec(answer)
                 .map_err(|_| StoreError::Corrupt)?
                 .len();
-            let budget = size.saturating_sub(frame.len() + 1 - MAX_FRAME);
+            let json_budget = size.saturating_sub((frame.len() + 1).saturating_sub(MAX_FRAME));
+            let text_budget = answer
+                .len()
+                .saturating_sub(usize::try_from(excess).unwrap_or(usize::MAX));
             let ends: Vec<_> = answer
                 .char_indices()
                 .map(|(i, _)| i)
@@ -88,10 +101,11 @@ impl Request {
             while low < high {
                 let middle = low + (high - low) / 2;
                 let prefix = &answer[..ends[middle]];
-                if serde_json::to_vec(prefix)
-                    .map_err(|_| StoreError::Corrupt)?
-                    .len()
-                    <= budget
+                if prefix.len() <= text_budget
+                    && serde_json::to_vec(prefix)
+                        .map_err(|_| StoreError::Corrupt)?
+                        .len()
+                        <= json_budget
                 {
                     low = middle + 1;
                 } else {
@@ -104,12 +118,18 @@ impl Request {
             }
             frame = serialize(&self)?;
         }
-        while !saved_follow_up && frame.len() >= MAX_FRAME && self.messages.len() > 2 {
+        while !saved_follow_up
+            && self.messages.len() > 2
+            && (frame.len() >= MAX_FRAME || excess_reservation(&self) > 0)
+        {
             self.messages.drain(1..3);
             frame = serialize(&self)?;
         }
         if frame.len() >= MAX_FRAME {
             return Err(StoreError::InvalidInput);
+        }
+        if excess_reservation(&self) > 0 {
+            return Err(StoreError::BudgetExhausted);
         }
         Ok(frame)
     }
@@ -320,7 +340,7 @@ impl Store {
                 for (u,a) in history.into_iter().rev(){messages.push(Message {role:"user",text:u});messages.push(Message {role:"assistant",text:a});}
             }
             messages.push(Message {role:"user",text:text.clone()});
-            let request=Request {v:1,call_id,run_id:id,ordinal:0,generation:owner.generation as i64,selection_epoch:pin.selection_epoch,max_output_tokens:pin.max_output_tokens,connection_revision:pin.connection_revision,model:pin.model.clone(),effort:pin.effort.clone(),messages}.encode(follow_up.is_some())?;
+            let request=Request {v:1,call_id,run_id:id,ordinal:0,generation:owner.generation as i64,selection_epoch:pin.selection_epoch,max_output_tokens:pin.max_output_tokens,connection_revision:pin.connection_revision,model:pin.model.clone(),effort:pin.effort.clone(),messages}.encode(follow_up.is_some(),pin.reservation_tokens)?;
             let model=ModelChoice {source:Default::default(),provider_id:pin.connection_revision.to_string(),provider_revision:1,provider_name:"Deployment text-only preview".into(),kind:pin.kind,model:pin.model.clone(),effort:pin.effort.clone(),verified_at:0,function_tools:false};
             tx.execute("UPDATE threads SET chat_turn_seq=chat_turn_seq+1,updated_at=unixepoch() WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,thread])?;
             let sequence:i64=tx.query_row("SELECT chat_turn_seq FROM threads WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,thread],|r|r.get(0))?;
@@ -576,6 +596,90 @@ mod tests {
             Admission::Existing(_)
         ));
     }
+    #[tokio::test]
+    async fn saved_follow_up_remains_available_when_its_mandatory_context_exceeds_the_reservation()
+    {
+        use moosuri_core::RunInstructionRequest;
+        let _guard = TEST_LOCK.lock().await;
+        let (_dir, store, user, owner, thread, mut pin) = setup().await;
+        let question = "Which value was supplied?";
+        let Admission::Fresh(work) = store
+            .begin_text_preview(
+                &user,
+                owner,
+                thread.clone(),
+                Uuid::new_v4().to_string(),
+                question.into(),
+                pin.clone(),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let source = work.run.clone();
+        let follow = RunInstructionRequest {
+            request_id: Uuid::new_v4().to_string(),
+            expected_attempt: 1,
+            text: "Repeat the value".into(),
+        };
+        store
+            .save_text_follow_up(&user, owner, thread.clone(), source.clone(), follow.clone())
+            .await
+            .unwrap();
+        let mut reply: serde_json::Value =
+            serde_json::from_slice(&reply(&work, "completed")).unwrap();
+        reply["output"] = serde_json::json!("가".repeat(100));
+        store
+            .settle_text_preview(work, Some(serde_json::to_vec(&reply).unwrap()))
+            .await
+            .unwrap();
+
+        pin.reservation_tokens = Some(1024);
+        let send = |pin| {
+            store.begin_text_preview(
+                &user,
+                owner,
+                thread.clone(),
+                follow.request_id.clone(),
+                follow.text.clone(),
+                pin,
+            )
+        };
+        assert!(matches!(
+            send(pin.clone()).await,
+            Err(StoreError::BudgetExhausted)
+        ));
+        let receipt = store
+            .run_instruction(&user, source, follow.request_id.clone())
+            .await
+            .unwrap();
+        assert_eq!(receipt.reason.as_deref(), Some("text_follow_up_saved"));
+        assert_eq!(
+            store
+                .conversation(&user, thread.clone(), None)
+                .await
+                .unwrap()
+                .turns
+                .len(),
+            1
+        );
+
+        let required = crate::runtime_model_ledger::Budget::text_reservation(
+            POLICY.len() + question.len() + follow.text.len(),
+            4,
+            pin.max_output_tokens,
+        );
+        pin.reservation_tokens = Some(required + 8);
+        let Admission::Fresh(work) = send(pin).await.unwrap() else {
+            panic!()
+        };
+        let frame: serde_json::Value = serde_json::from_slice(work.request()).unwrap();
+        assert_eq!(frame["messages"][1]["text"], question);
+        assert_eq!(frame["messages"][2]["text"], "가가");
+        assert_eq!(frame["messages"][3]["text"], follow.text);
+    }
+
     #[tokio::test]
     async fn preview_uses_ordinary_history_without_local_provider_or_action_grants() {
         let _g = TEST_LOCK.lock().await;

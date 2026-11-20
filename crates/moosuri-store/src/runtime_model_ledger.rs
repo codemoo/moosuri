@@ -17,6 +17,12 @@ pub struct Budget {
     pub reservation_tokens: u64,
 }
 impl Budget {
+    /// Conservative byte-based estimate shared by personal history selection
+    /// and the installation broker that enforces the actual reservation.
+    pub fn text_reservation(text_bytes: usize, messages: usize, max_output_tokens: u32) -> u64 {
+        text_bytes as u64 + u64::from(max_output_tokens) + 1024 + 64 * messages as u64
+    }
+
     pub fn validate(self) -> Result<()> {
         if self.max_calls == 0
             || self.max_calls > 1_000_000

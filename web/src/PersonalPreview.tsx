@@ -967,6 +967,14 @@ function Workspace({
             return;
           }
           clearSend(destination, value, !value.follow_up_run_id);
+          if (e.status === 422 && e.code === "personal_text_input_budget_exceeded") {
+            if (selectedRef.current === destination) {
+              setError(value.follow_up_run_id
+                ? "원래 질문과 후속 지시가 한 번에 보낼 수 있는 길이를 넘었습니다. 저장한 지시를 확인해 주세요."
+                : "한 번에 보낼 수 있는 길이를 넘었습니다. 입력을 줄여 다시 보내세요.");
+            }
+            return;
+          }
           if (value.follow_up_run_id && e.status !== 401 && selectedRef.current === destination) {
             setError("후속 메시지를 보내지 못했습니다. 저장한 지시에서 다시 보낼 수 있습니다.");
             return;

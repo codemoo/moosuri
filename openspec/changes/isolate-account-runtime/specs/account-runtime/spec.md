@@ -28,6 +28,11 @@ The installation SHALL supply read-only shared modules and model availability, a
 - **WHEN** the verified terminal receipt for the original call reports an incomplete outcome with no visible answer
 - **THEN** the member sees the incomplete status on reload and the service does not repeat the call or expose model reasoning.
 
+#### Scenario: Prior turns exceed a member's request allowance
+- **WHEN** eligible conversation history exceeds the private socket frame or the per-call reservation reported by the installation broker
+- **THEN** the personal service preserves the current question and newest complete exchanges that fit, while the member's stored conversation retains all its turns.
+- **AND** an explicitly saved follow-up keeps its original question and fits an available prefix of the original answer. If its required input alone exceeds the allowance, it remains available without another model call.
+
 #### Scenario: Two personal containers call one Moosuri engine
 - **WHEN** members A and B request inference through their respective private model sockets
 - **THEN** the same installation engine selects the configured upstream adapter, attributes each call to its originating member and returns results through that member’s socket

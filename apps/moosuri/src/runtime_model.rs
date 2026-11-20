@@ -578,8 +578,7 @@ impl Broker {
         // Reserve a conservative byte-token envelope plus protocol overhead.
         // Actual provider accounting is still authoritative; any measured
         // overrun is charged in full before a further call can be admitted.
-        let envelope =
-            total as u64 + r.max_output_tokens as u64 + 1024 + 64 * r.messages.len() as u64;
+        let envelope = Budget::text_reservation(total, r.messages.len(), r.max_output_tokens);
         if envelope > b.budget.reservation_tokens {
             return Err("request_exceeds_reservation".into());
         }

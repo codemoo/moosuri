@@ -257,7 +257,7 @@ async fn submit(
         };
         let _delivery = state.auth.delivery.read().await;
         let user = owner(&state, &headers).await?;
-        state
+        let result = state
             .auth
             .store
             .begin_text_preview(
@@ -268,7 +268,17 @@ async fn submit(
                 input.text,
                 pin,
             )
-            .await?
+            .await;
+        if matches!(result, Err(StoreError::BudgetExhausted)) {
+            return Ok((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(moosuri_core::ApiError {
+                    code: "personal_text_input_budget_exceeded".into(),
+                }),
+            )
+                .into_response());
+        }
+        result?
     };
     drop(admission_guard);
     match admission {

@@ -2,6 +2,7 @@
 """Run with python3 member-web-fullstack.py /path/to/moosuri (with embedded web assets).
 Requires nonroot Unix, Chrome stable, Python Playwright, and openssl on PATH.
 Use --local-model NAME --model-port PORT for three real loopback inference cases.
+Use --context-controls for general and missing-information questions in Korean.
 Every invocation creates and removes a private fixture. Only the first member
 has a model binding because both synthetic member processes run as this UID.
 """
@@ -37,6 +38,21 @@ DRAFT = "Unsent fixture draft"
 SUBJECT = "Fixture notebook"
 UPDATED = "Updated fixture notebook"
 EMPTY_MEMORIES = "아직 기록한 기억이 없습니다."
+LONG_PROMPTS = ["Original fixture: " + "A" * 1050, "Recent fixture: " + "B" * 750,
+                "Current fixture: " + "C" * 650]
+LONG_ANSWERS = ["First fixture recorded.", "Second fixture recorded.", "Recent fixture retained."]
+
+
+def provider_turns(history_budget):
+    if not history_budget:
+        return [([("user", PROMPT)], ANSWER),
+                ([("user", PROMPT), ("assistant", ANSWER), ("user", FOLLOWUP)], SECOND_ANSWER)]
+    turns = []
+    for index, prompt in enumerate(LONG_PROMPTS):
+        previous = [] if index == 0 else [("user", LONG_PROMPTS[index - 1]),
+                                          ("assistant", LONG_ANSWERS[index - 1])]
+        turns.append((previous + [("user", prompt)], LONG_ANSWERS[index]))
+    return turns
 
 
 class QuietHandler(BaseHTTPRequestHandler):
@@ -49,14 +65,14 @@ class Provider(QuietHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         messages = [(m["role"], m["content"]) for m in body["messages"]]
         valid = self.path == "/v1/chat/completions" and body["model"] == MODEL and body["stream"]
-        expected = [("user", PROMPT)]
-        if self.server.calls == 1:
-            expected += [("assistant", ANSWER), ("user", FOLLOWUP)]
         actual = [item for item in messages if item[0] in ("assistant", "user")]
-        if not valid or self.server.calls >= 2 or actual != expected:
+        if not valid or self.server.calls >= len(self.server.turns):
             self.send_error(400)
             return
-        answer = ANSWER if self.server.calls == 0 else SECOND_ANSWER
+        expected, answer = self.server.turns[self.server.calls]
+        if actual != expected:
+            self.send_error(400)
+            return
         self.server.calls += 1
         frames = [
             {"choices": [{"index": 0, "delta": {"role": "assistant", "content": answer},
@@ -292,7 +308,33 @@ def exercise(page, members, origin, provider):
     passed("MWF-06 sign back in with the changed password and forget memory including revisions")
 
 
-def exercise_local_model(page, member, origin, limit_case):
+def exercise_history_budget(page, member, origin, provider):
+    page.goto(origin)
+    login(page, member, True)
+    editor = page.get_by_role("textbox", name="메시지", exact=True)
+    for index, prompt in enumerate(LONG_PROMPTS):
+        editor.fill(prompt)
+        editor.press("Enter")
+        expect(page.get_by_text(LONG_ANSWERS[index], exact=True)).to_be_visible(timeout=20000)
+        if index == 1:
+            passed("MB-01 both the preceding exchange and the current question fit the member reservation")
+    assert provider.calls == 3
+    sql = "SELECT user_text,state FROM chat_runs ORDER BY sequence"
+    expected = [(prompt, "completed") for prompt in LONG_PROMPTS]
+    assert rows(member, sql) == expected
+    passed("MB-02 only the oldest exchange is omitted from inference and all three turns stay in history")
+    too_long = "Largest fixture: " + "D" * 3800
+    editor.fill(too_long)
+    editor.press("Enter")
+    expect(page.get_by_text("한 번에 보낼 수 있는 길이를 넘었습니다. 입력을 줄여 다시 보내세요.", exact=True)).to_be_visible()
+    expect(editor).to_have_value(too_long)
+    page.reload()
+    expect(editor).to_have_value(too_long)
+    assert provider.calls == 3 and rows(member, sql) == expected
+    passed("MB-03 an oversized current question stays a draft with zero additional provider calls or saved turns")
+
+
+def exercise_local_model(page, member, origin, limit_case, context_controls):
     page.goto(origin)
     login(page, member, True)
     editor = page.get_by_role("textbox", name="메시지", exact=True)
@@ -303,6 +345,11 @@ def exercise_local_model(page, member, origin, limit_case):
     ]
     if limit_case:
         cases = [("ML-04", "123 곱하기 421을 계산해 줘. 답만 적어 줘.", None)]
+    if context_controls:
+        cases = [
+            ("ML-05", "프랑스의 수도는 어디야? 한글 지명만 적어 줘.", "파리"),
+            ("ML-06", "내가 이 대화에서 예약한 좌석 번호를 알려 줘. 알려 준 적이 없으면 ‘확인 불가’라고만 답해 줘.", "확인 불가"),
+        ]
     failures = []
     for case, prompt, expected in cases:
         editor.fill(prompt)
@@ -349,11 +396,20 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("--local-model", help="installed model of an opt-in loopback OpenAI-compatible provider")
     parser.add_argument("--model-port", type=int, help="loopback TCP port for the selected provider")
-    parser.add_argument("--expect-output-limit", action="store_true",
-                        help="use one output token to check a reasoning model ending before visible text")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--expect-output-limit", action="store_true",
+                      help="use one output token to check a reasoning model ending before visible text")
+    mode.add_argument("--context-controls", action="store_true",
+                      help="check a general fact and a missing personal fact in a fresh conversation")
+    mode.add_argument("--history-budget", action="store_true",
+                      help="exercise the real broker reservation with a synthetic deterministic provider")
     args = parser.parse_args()
     if args.expect_output_limit and not args.local_model:
         parser.error("--expect-output-limit requires --local-model")
+    if args.context_controls and not args.local_model:
+        parser.error("--context-controls requires --local-model")
+    if args.history_budget and args.local_model:
+        parser.error("--history-budget uses its own synthetic provider")
     if bool(args.local_model) != (args.model_port is not None):
         parser.error("--local-model and --model-port must be specified together")
     if args.model_port is not None and not 1 <= args.model_port <= 65535:
@@ -378,6 +434,7 @@ def main():
         else:
             provider = serve(stack, Provider)
             provider.calls = 0
+            provider.turns = provider_turns(args.history_budget)
             model, port, output_tokens = MODEL, provider.server_port, 64
         binary = args.binary.resolve(strict=True)
         registry, ipc, gateway, members, env = provision(stack, binary, root, model, port, output_tokens)
@@ -399,8 +456,10 @@ def main():
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/")
                               else route.abort())
                 page = context.new_page()
-                if args.local_model:
-                    exercise_local_model(page, members[0], origin, args.expect_output_limit)
+                if args.history_budget:
+                    exercise_history_budget(page, members[0], origin, provider)
+                elif args.local_model:
+                    exercise_local_model(page, members[0], origin, args.expect_output_limit, args.context_controls)
                 else:
                     exercise(page, members, origin, provider)
             finally:

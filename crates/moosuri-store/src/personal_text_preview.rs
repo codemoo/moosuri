@@ -59,6 +59,58 @@ struct Request {
     effort: Option<String>,
     messages: Vec<Message>,
 }
+
+impl Request {
+    fn encode(mut self, saved_follow_up: bool) -> Result<Vec<u8>> {
+        const MAX_FRAME: usize = 64 * 1024;
+        let serialize =
+            |request: &Self| serde_json::to_vec(request).map_err(|_| StoreError::Corrupt);
+        let mut frame = serialize(&self)?;
+        // The broker's newline also occupies one byte. Keep the newest whole
+        // pairs and always preserve the current question.
+        if saved_follow_up && self.messages.len() == 4 && frame.len() >= MAX_FRAME {
+            // A saved follow-up pins its original question. Only the copy of
+            // the prior answer can be shortened; its stored text is untouched.
+            let answer = &mut self.messages[2].text;
+            let size = serde_json::to_vec(&answer)
+                .map_err(|_| StoreError::Corrupt)?
+                .len();
+            let budget = size.saturating_sub(frame.len() + 1 - MAX_FRAME);
+            let ends: Vec<_> = answer
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(answer.len()))
+                .collect();
+            let (mut low, mut high) = (0, ends.len());
+            while low < high {
+                let middle = low + (high - low) / 2;
+                let prefix = &answer[..ends[middle]];
+                if serde_json::to_vec(prefix)
+                    .map_err(|_| StoreError::Corrupt)?
+                    .len()
+                    <= budget
+                {
+                    low = middle + 1;
+                } else {
+                    high = middle;
+                }
+            }
+            answer.truncate(ends[low.saturating_sub(1)]);
+            if answer.is_empty() {
+                self.messages.remove(2);
+            }
+            frame = serialize(&self)?;
+        }
+        while !saved_follow_up && frame.len() >= MAX_FRAME && self.messages.len() > 2 {
+            self.messages.drain(1..3);
+            frame = serialize(&self)?;
+        }
+        if frame.len() >= MAX_FRAME {
+            return Err(StoreError::InvalidInput);
+        }
+        Ok(frame)
+    }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Reply {
@@ -254,18 +306,18 @@ impl Store {
             let id=stable("personal-text-preview-run-v1")?;let call_id=stable("personal-text-preview-call-v1")?;let mut nonce=[0u8;32];OsRng.try_fill_bytes(&mut nonce).map_err(|_|StoreError::Unavailable)?;
             // Only text-preview content may enter the request; private tool output stays excluded.
             let mut messages=vec![Message {role:"system",text:POLICY.into()}];
-            if let Some(source) = saved_follow_up(&tx, &user, &thread, &request_id, &text)? {
-                follow_ups::add_context(&tx, &user, &source, &mut messages)?;
+            let follow_up = saved_follow_up(&tx, &user, &thread, &request_id, &text)?;
+            if let Some(ref source) = follow_up {
+                follow_ups::add_context(&tx, &user, source, &mut messages)?;
                 tx.execute("UPDATE run_instructions SET reason='text_follow_up_sent' WHERE tenant_id=?1 AND run_id=?2 AND request_id=?3 AND reason='text_follow_up_saved'",params![user.tenant.0,source,request_id])?;
-                crate::run_instructions::publish(&tx, &chat::load_run(&tx, &user.tenant.0, &source)?)?;
+                crate::run_instructions::publish(&tx, &chat::load_run(&tx, &user.tenant.0, source)?)?;
             } else {
                 let previous=tx.prepare("SELECT r.user_text,o.text FROM chat_runs r JOIN personal_text_previews p ON p.tenant_id=r.tenant_id AND p.run_id=r.id JOIN chat_output o ON o.tenant_id=r.tenant_id AND o.run_id=r.id AND o.item='personal-text-preview-answer' WHERE r.tenant_id=?1 AND r.thread_id=?2 AND r.state='completed' ORDER BY r.sequence DESC LIMIT 8")?.query_map(params![user.tenant.0,thread],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
                 let mut used=POLICY.len()+text.len();let mut history=Vec::new();for (u,a) in previous {if used+u.len()+a.len()>48*1024{break;}used+=u.len()+a.len();history.push((u,a));}
                 for (u,a) in history.into_iter().rev(){messages.push(Message {role:"user",text:u});messages.push(Message {role:"assistant",text:a});}
             }
             messages.push(Message {role:"user",text:text.clone()});
-            let request=serde_json::to_vec(&Request {v:1,call_id,run_id:id,ordinal:0,generation:owner.generation as i64,selection_epoch:pin.selection_epoch,max_output_tokens:pin.max_output_tokens,connection_revision:pin.connection_revision,model:pin.model.clone(),effort:pin.effort.clone(),messages}).map_err(|_|StoreError::Corrupt)?;
-            if request.len()+1>64*1024{return Err(StoreError::InvalidInput);}
+            let request=Request {v:1,call_id,run_id:id,ordinal:0,generation:owner.generation as i64,selection_epoch:pin.selection_epoch,max_output_tokens:pin.max_output_tokens,connection_revision:pin.connection_revision,model:pin.model.clone(),effort:pin.effort.clone(),messages}.encode(follow_up.is_some())?;
             let model=ModelChoice {source:Default::default(),provider_id:pin.connection_revision.to_string(),provider_revision:1,provider_name:"Deployment text-only preview".into(),kind:pin.kind,model:pin.model.clone(),effort:pin.effort.clone(),verified_at:0,function_tools:false};
             tx.execute("UPDATE threads SET chat_turn_seq=chat_turn_seq+1,updated_at=unixepoch() WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,thread])?;
             let sequence:i64=tx.query_row("SELECT chat_turn_seq FROM threads WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,thread],|r|r.get(0))?;
@@ -436,6 +488,89 @@ mod tests {
     fn reply(work: &Work, outcome: &str) -> Vec<u8> {
         let request: serde_json::Value = serde_json::from_slice(work.request()).unwrap();
         serde_json::to_vec(&serde_json::json!({"v":1,"state":"settled","call_id":request["call_id"],"connection_revision":request["connection_revision"],"model":request["model"],"output":"SYNTHETIC_PREVIEW_ANSWER","outcome":outcome,"receipt":{"state":"settled","input_tokens":7,"output_tokens":3,"charged_tokens":10}})).unwrap()
+    }
+
+    #[tokio::test]
+    async fn escaped_history_keeps_the_new_question_and_the_pinned_follow_up_source() {
+        use moosuri_core::RunInstructionRequest;
+        let _guard = TEST_LOCK.lock().await;
+        let (_dir, store, user, owner, thread, pin) = setup().await;
+        let original = "\"".repeat(8192);
+        let answer = ("\"".repeat(7) + "한").repeat(3000);
+        let send = |request, text| {
+            store.begin_text_preview(&user, owner, thread.clone(), request, text, pin.clone())
+        };
+        let Admission::Fresh(work) = send(Uuid::new_v4().to_string(), original.clone())
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let saved = RunInstructionRequest {
+            request_id: Uuid::new_v4().to_string(),
+            expected_attempt: 1,
+            text: "Describe the original reply".into(),
+        };
+        store
+            .save_text_follow_up(
+                &user,
+                owner,
+                thread.clone(),
+                work.run.clone(),
+                saved.clone(),
+            )
+            .await
+            .unwrap();
+        let mut result: serde_json::Value =
+            serde_json::from_slice(&reply(&work, "completed")).unwrap();
+        result["output"] = serde_json::json!(answer);
+        let original_turn = store
+            .settle_text_preview(work, Some(serde_json::to_vec(&result).unwrap()))
+            .await
+            .unwrap();
+        assert_eq!(original_turn.assistant[0].text, answer);
+
+        for question in ["Recent turn", "Current question"] {
+            let Admission::Fresh(work) = send(Uuid::new_v4().to_string(), question.into())
+                .await
+                .unwrap()
+            else {
+                panic!()
+            };
+            assert!(work.request().len() < 64 * 1024);
+            let frame: serde_json::Value = serde_json::from_slice(work.request()).unwrap();
+            let messages = frame["messages"].as_array().unwrap();
+            assert_eq!(messages.last().unwrap()["text"], question);
+            if question == "Current question" {
+                assert_eq!(messages.len(), 4);
+                assert_eq!(messages[1]["text"], "Recent turn");
+                assert_eq!(messages[2]["text"], "SYNTHETIC_PREVIEW_ANSWER");
+            }
+            let response = reply(&work, "completed");
+            store
+                .settle_text_preview(work, Some(response))
+                .await
+                .unwrap();
+        }
+
+        let Admission::Fresh(work) = send(saved.request_id.clone(), saved.text.clone())
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(work.request().len() < 64 * 1024);
+        let frame: serde_json::Value = serde_json::from_slice(work.request()).unwrap();
+        let messages = frame["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[1]["text"], original);
+        let prefix = messages[2]["text"].as_str().unwrap();
+        assert!(!prefix.is_empty() && prefix.len() < answer.len() && answer.starts_with(prefix));
+        assert_eq!(messages[3]["text"], saved.text);
+        assert!(matches!(
+            send(saved.request_id, saved.text).await.unwrap(),
+            Admission::Existing(_)
+        ));
     }
     #[tokio::test]
     async fn preview_uses_ordinary_history_without_local_provider_or_action_grants() {

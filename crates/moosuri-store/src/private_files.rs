@@ -926,6 +926,9 @@ mod migration_tests {
         drop(store);
         let mut conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();
         crate::schema::tests::replace_with_predecessor(&mut conn, 26);
+        // Fail the final ALTER after the two earlier columns have been added.
+        conn.execute_batch("ALTER TABLE media_objects ADD COLUMN extracted_text TEXT;")
+            .unwrap();
         drop(conn);
         assert!(Store::open(dir.path()).is_err());
         let conn = Connection::open(dir.path().join("assistant.sqlite")).unwrap();

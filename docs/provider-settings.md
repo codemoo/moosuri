@@ -169,3 +169,23 @@ For a model on your own workstation and Moosuri on a Linux server you administer
 3. Open the helper's temporary `connection.json` under **워크스테이션 연결 파일** in your Moosuri account. Confirm the model and save. The helper forwards requests for the selected text model over SSH while its terminal is open. Ctrl+C closes it and removes the file. Disconnect the saved connection when you finish.
 
 The helper command is also available in an installed CLI as `moosuri models workstation --ssh-host MY_SERVER`. Use `--list` for discovery alone. The local discovery and bridge currently support the default, unauthenticated loopback catalogs of Ollama and LM Studio. Other servers can use a directly reachable base URL and optional API key.
+
+#### Local provider acceptance
+
+On 2026-11-20, Ollama 0.34.2 on macOS arm64 served `qwen3:0.6b` from a
+disposable model directory on a dedicated loopback port with cloud features
+disabled. The installed manifest matched the public registry digest
+`7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435`.
+The Q4_K_M model was 522,653,767 bytes. [Ollama model](https://ollama.com/library/qwen3:0.6b)
+
+The standard Moosuri administrator catalog and text probes both returned HTTP
+200 for the exact model with provider-default effort. A direct SSE check also
+observed a text delta, usage, `stop`, and `[DONE]` with the exact model ID.
+The warm Moosuri text probe took 0.326 seconds. The tool probe took 0.602
+seconds and returned `model_tool_probe_incomplete`. A repeat of its first
+request produced a complete stream with zero function calls, even though
+Ollama advertised tool capability. Moosuri stored text readiness and left
+`function_tools` false. The disposable installation default remained unset.
+
+Actual LM Studio and vLLM capability checks remain open. Hosted provider
+account authorization, response, and billing acceptance are separate checks.

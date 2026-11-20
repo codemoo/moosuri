@@ -164,7 +164,7 @@ async fn latest_deletion_replay_fences_snapshot_before_keyed_creation() {
                 assert_eq!(
                     db.conn
                         .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
-                    71
+                    crate::CURRENT_SCHEMA_VERSION
                 );
                 Ok(())
             })

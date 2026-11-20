@@ -288,7 +288,7 @@ export function usePersonalGoogle({
           const flow = fields.get("flow") ?? fields.get("google_denied"),
             handle = fields.get("google_handle");
           const matches = belongs(p, session) && p.flow === flow && p.phase === "consent";
-          restoreConnectorAddress("gmail", session, matches ? p.origin : undefined);
+          restoreConnectorAddress("gmail", session, matches ? p.origin ?? "chat" : undefined);
           if (!matches) {
             await update();
             setNotice("연결을 시작한 계정과 탭에서 다시 진행해 주세요.");

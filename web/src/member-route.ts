@@ -51,13 +51,30 @@ function entryFor(session: SessionView, origin?: ConnectorOrigin, parent?: strin
   return { account: session.user.id, scope: session.chat_draft_scope, connectorOrigin: origin, memberParent: parent };
 }
 
-// The callback is a fresh document. Its previous browser entry may belong to
-// Google, so restore a logical parent without asking the browser to go back.
-export function restoreConnectorAddress(service: string | null, session: SessionView, origin?: unknown) {
+// A verified callback is a new document, usually preceded by an external
+// consent page. Give both native history and the in-app Back button the same
+// two internal parents. The fragment is consumed before the first push.
+export function restoreConnectorAddress(service: string | null, session: SessionView & { installation_admin?: boolean }, origin?: unknown) {
   const url = new URL(location.href);
+  const fields = new URLSearchParams(url.hash.slice(1));
+  const callback = fields.has("google_handle") || fields.has("google_denied");
+  const detail = screenName({ view: "connections", service: service ?? undefined });
   url.search = "";
-  url.hash = screenName({ view: "connections", service: service ?? undefined });
-  window.history.replaceState(entryFor(session, connectorOrigin(origin)), "", url);
+  let parent = connectorOrigin(origin);
+  if ((parent === "admin" || parent === "admin/engine") && !session.installation_admin) parent = "chat";
+  if (parent && callback) {
+    url.hash = parent === "chat" ? "" : parent;
+    window.history.replaceState(entryFor(session), "", url);
+    url.hash = "connections";
+    window.history.pushState(entryFor(session, parent, parent), "", url);
+    if (service) {
+      url.hash = detail;
+      window.history.pushState(entryFor(session, parent, "connections"), "", url);
+    }
+  } else {
+    url.hash = detail;
+    window.history.replaceState((!callback && memberEntry(session)) || entryFor(session), "", url);
+  }
 }
 
 export function useMemberRoute(session: SessionView, admin: boolean, initialConnector: () => MemberRoute | null) {

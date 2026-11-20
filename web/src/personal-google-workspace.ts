@@ -107,7 +107,7 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
     const flows = fields.getAll("flow");
     const flow = flows[0] ?? denials[0];
     const matches = !!service && pending?.service === service && pending.phase === "consent" && pending.flow === flow;
-    restoreConnectorAddress(service, session, matches ? pending.origin : undefined);
+    restoreConnectorAddress(service, session, matches ? pending.origin ?? "chat" : undefined);
     if (!matches) {
       notify("연결을 시작한 계정과 탭에서 다시 진행해 주세요.");
       return;

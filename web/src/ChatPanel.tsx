@@ -70,7 +70,7 @@ export type PendingSend = {
   schedule_context?:ScheduleChatContext;
   mission_context?:MissionChatContext;
   browser_request?: import("./personal-browser").PersonalBrowserRequest;
-  status: "sending" | "accepted" | "uncertain" | "rejected";
+  status: "sending" | "accepted" | "uncertain" | "rejected" | "inbox";
 };
 export type PendingThreadCreation = {
   request_id: string;

@@ -413,9 +413,7 @@ function Workspace({
     thread: string | null; mode: "chat" | "start" | "guide";
   } | null>(null);
   const browserOpenButton = useRef<HTMLElement | null>(null);
-  const [openInbox, setOpenInbox] = useState<
-    (GoogleReadIntent & { draft: string }) | null
-  >(null);
+  const [openInbox, setOpenInbox] = useState<GoogleReadIntent | null>(null);
   useEffect(() => {
     if (view !== "connections" || route.service !== "gmail") setOpenInbox(null);
   }, [view, route.service]);
@@ -428,7 +426,7 @@ function Workspace({
   const googleIntent = useRef(googleReadDestination(session));
   const completedGoogle = useRef<{
     intent: GoogleReadIntent;
-    text: string;
+    legacyDraft?: string;
     verified: boolean;
   } | null>(null);
   const selectedRef = useRef(selected);
@@ -479,10 +477,18 @@ function Workspace({
       !done ||
       !done.verified ||
       googleIntent.current?.thread_id !== done.intent.thread_id ||
-      googleIntent.current?.request_id !== done.intent.request_id ||
-      m.drafts[done.intent.thread_id] !== done.text
+      googleIntent.current?.request_id !== done.intent.request_id
     )
       return m;
+    const request = m.pending[done.intent.thread_id];
+    if (request?.status === "inbox" && request.request_id === done.intent.request_id) {
+      const pending = { ...m.pending };
+      delete pending[done.intent.thread_id];
+      return { ...m, pending };
+    }
+    // Older OAuth flows kept their original text in the editor. New handoffs
+    // carry their own request slot, even when the next draft is identical.
+    if (done.legacyDraft === undefined || m.drafts[done.intent.thread_id] !== done.legacyDraft) return m;
     const drafts = { ...m.drafts };
     delete drafts[done.intent.thread_id];
     return { ...m, drafts };
@@ -616,15 +622,15 @@ function Workspace({
     const found = turns.find((t) => t.run.request_id === value.request_id);
     if (found && (!active(found) || value.browser_request?.kind === "start")) clearSend(thread, value);
   }
-  function clearSend(thread: string, value: PendingSend, onFailure?: "restore" | "reject") {
+  function clearSend(thread: string, value: PendingSend, rejected = false) {
     change((m) => {
       if (m.pending[thread]?.request_id !== value.request_id) return m;
       // Keep the rejected text alongside the next draft if the editor is occupied.
-      if (onFailure === "reject" && m.drafts[thread])
+      if (rejected && m.drafts[thread])
         return { ...m, pending: { ...m.pending, [thread]: { ...value, status: "rejected" } } };
       const pending = { ...m.pending }, drafts = { ...m.drafts };
       delete pending[thread];
-      if (onFailure && !drafts[thread]) drafts[thread] = value.text;
+      if (rejected && !drafts[thread]) drafts[thread] = value.text;
       return { ...m, pending, drafts };
     });
   }
@@ -676,7 +682,11 @@ function Workspace({
       );
       if (version !== mailVersion.current || selectedRef.current !== thread)
         return;
-      setGoogleReads(result.reads.filter((r) => r.thread_id === thread));
+      const reads = result.reads.filter((r) => r.thread_id === thread);
+      setGoogleReads(reads);
+      const handoff = memoryRef.current.pending[thread];
+      if (handoff?.status === "inbox" && reads.some(r => r.request_id === handoff.request_id && r.state === "completed"))
+        clearSend(thread, handoff);
       const candidate = completedGoogle.current;
       if (
         candidate &&
@@ -807,6 +817,12 @@ function Workspace({
       setMutating(false);
     }
   }
+  function openInboxRequest(thread: string, requestId: string) {
+    const intent = { thread_id: thread, request_id: requestId };
+    googleIntent.current = intent;
+    setOpenInbox(intent);
+    open({ view: "connections", service: "gmail" });
+  }
   async function send(event?: FormEvent, replay = false) {
     event?.preventDefault();
     if (mutation.current || loading || (inventoryError && !initialized.current)) return;
@@ -874,7 +890,7 @@ function Workspace({
         );
         browser.publish(destination, status);
         if (!status.configured || !status.workspace) {
-          clearSend(destination, value, "restore");
+          clearSend(destination, value, true);
           setError("이 설치에서 브라우저 작업을 사용할 수 없습니다.");
           return;
         }
@@ -921,7 +937,7 @@ function Workspace({
       if (!isAborted(e)) {
         if (value.browser_request && e instanceof ApiFailure &&
             [400, 401, 403, 404, 409, 422, 429].includes(e.status)) {
-          clearSend(destination, value, "restore");
+          clearSend(destination, value, true);
           if (e.status === 401) expired();
           else if ([403, 404].includes(e.status)) setError("이 대화에서 브라우저 작업을 사용할 수 없습니다.");
           else if (e.status === 409) setError("브라우저 상태가 바뀌었습니다. 현재 작업을 확인해 주세요.");
@@ -933,19 +949,13 @@ function Workspace({
           [400, 401, 403, 404, 422, 429].includes(e.status)
         ) {
           const inbox = e.status === 422 && e.code === "personal_inbox_requested";
-          clearSend(destination, value, inbox ? "restore" : "reject");
           if (inbox) {
-            setOpenInbox({
-              thread_id: destination,
-              request_id: value.request_id,
-              draft: value.text,
-            });
-            googleIntent.current = {
-              thread_id: destination,
-              request_id: value.request_id,
-            };
-            open({ view: "connections", service: "gmail" });
-          } else if (e.code === "personal_text_model_unavailable") {
+            change(m => ({ ...m, pending: { ...m.pending, [destination]: { ...value, status: "inbox" } } }));
+            openInboxRequest(destination, value.request_id);
+            return;
+          }
+          clearSend(destination, value, true);
+          if (e.code === "personal_text_model_unavailable") {
             ++capabilityVersion.current;
             setCap(null);
             setError("답변을 받을 수 없어 메시지를 보내지 못했습니다. 입력을 유지했습니다.");
@@ -1037,6 +1047,7 @@ function Workspace({
   const chatActivity = browserWork && ["starting", "reading", "ready", "user_control", "resuming", "stopping"].includes(browserWork.state)
     ? browserStateLabel[browserWork.state]
     : working ? stateLabel(working)
+    : pending?.status === "inbox" ? "메일 확인 대기"
     : pending?.status === "rejected" ? "이전 메시지 전송 실패"
     : pending?.status === "uncertain" ? "전송 결과 확인 필요"
     : pending?.browser_request ? "브라우저 요청을 확인하는 중"
@@ -1083,24 +1094,15 @@ function Workspace({
               onBack={leaveCatalog}
               session={session}
               expired={expired}
-              readIntent={
-                openInbox
-                  ? {
-                      thread_id: openInbox.thread_id,
-                      request_id: openInbox.request_id,
-                    }
-                  : null
-              }
-              readDraft={openInbox?.draft}
+              readIntent={openInbox}
               returned={(intent, uncertain, draftText) => {
                 if (
                   googleIntent.current?.thread_id === intent.thread_id &&
-                  googleIntent.current?.request_id === intent.request_id &&
-                  typeof draftText === "string"
+                  googleIntent.current?.request_id === intent.request_id
                 ) {
                   completedGoogle.current = {
                     intent,
-                    text: draftText,
+                    legacyDraft: draftText,
                     verified: !uncertain,
                   };
                   if (!uncertain) change(clearCompletedGoogleDraft);
@@ -1228,14 +1230,21 @@ function Workspace({
                       <p className="member-chat-status" data-working={pending.status === "sending" || undefined} role="status">
                         {pending.status === "uncertain"
                           ? "아직 전송 결과를 확인하지 못했습니다. 새 요청은 만들지 않았습니다."
+                          : pending.status === "inbox" ? "Gmail에서 메일 확인을 이어갈 수 있습니다."
                           : pending.status === "rejected" ? "이 메시지를 보내지 못했습니다."
                           : pending.browser_request ? "브라우저 요청을 확인하는 중…" : "답변을 기다리는 중…"}
                       </p>
                     )}
-                    {pending.status === "rejected" && (
+                    {(pending.status === "rejected" || pending.status === "inbox") && (
                       <div className="member-retry-actions">
-                        <Button label="이전 메시지 다시 보내기" variant="ghost" isDisabled={!ready || mutating || busy}
-                          onClick={() => void send(undefined, true)} />
+                        {pending.status === "inbox" ? (
+                          <Button label="메일 확인 계속하기" variant="ghost" isDisabled={mutating || busy}
+                            onClick={() => openInboxRequest(selected, pending.request_id)} />
+                        ) : (
+                          <Button label="이전 메시지 다시 보내기" variant="ghost"
+                            isDisabled={(!pending.browser_request && !ready) || mutating || busy}
+                            onClick={() => void send(undefined, true)} />
+                        )}
                         <Button label="이전 메시지 버리기" variant="ghost" isDisabled={mutating}
                           onClick={() => clearSend(selected, pending)} />
                       </div>
@@ -1268,7 +1277,7 @@ function Workspace({
             <PersonalChatComposer key={selected ?? "new"} editor={chatEditor} draft={draft}
               disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat")} busy={composerBusy}
               waiting={busy ? "대화 불러오는 중…"
-                : pending?.status === "rejected" ? "다음 메시지를 작성하세요."
+                : pending?.status === "rejected" || pending?.status === "inbox" ? "다음 메시지를 작성하세요."
                 : pending?.status === "uncertain" ? "전송 결과를 확인해 주세요."
                 : pending?.browser_request ? "브라우저 요청을 확인하는 중…" : "답변을 기다리는 중…"}
               mode={browserMode}

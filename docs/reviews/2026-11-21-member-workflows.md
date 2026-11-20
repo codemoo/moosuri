@@ -36,6 +36,16 @@
 
 [실제 브라우저 실행기](../../deployment/kiri/linux-vm-smoke/member_workflow_scenarios.py) · [저장·복구 회귀](../../crates/moosuri-store/src/personal_browser/tasks/tests.rs) · [화면 회귀](../../web/src/PersonalTasks.test.tsx)
 
+## 예약 하나의 워크로그
+
+| 시나리오 | 확인하는 동작 |
+| --- | --- |
+| THIST-01 같은 이름으로 새 예약 만들기 | 예전 예약에 두 회차가 있어도 새 예약은 빈 목록으로 열린다. 새 예약을 수동으로 실행하면 해당 회차 한 건만 보인다. |
+| THIST-02 이전 회차 더 보기 | 같은 이름의 두 예약에 회차를 쌓고 하나를 해제한 뒤 그 예약의 21개 회차를 두 페이지에 걸쳐 읽는다. 페이지 조회 실패 뒤 재시도해도 같은 예약과 페이지 위치를 유지한다. |
+| THIST-03 해제한 예약 다시 열기 | 과거 회차의 직접 주소에서 원래 예약의 수동·자동 실행을 열고 선택한 회차로 돌아온다. 다른 회원의 세션에서는 해당 예약 식별자로 읽어도 결과가 비어 있다. |
+
+해제한 **수첩 점검**의 두 회차는 새 **수첩 점검**의 이력과 구분된다. 잊은 기억의 본문을 다시 노출하지 않으면서 실행별 확인 건수는 남긴다. [모바일 예약별 실행 기록](2026-11-21-member-work-schedule.png)
+
 ## Linux에서 확인한 화면
 
 Ubuntu의 Chromium에서 합성 회원이 수첩을 조사했다. 목록에 같은 이름의 **예약 실행**과 **직접 실행**이 각각 보인다. 업무를 열면 원래 요청, 조사 결과, 검색 단계와 읽은 기억이 이어진다. 모바일은 한 단계에 집중하고 데스크톱은 왼쪽에서 단계를 선택해 오른쪽에서 근거를 읽는다. [모바일 목록](2026-11-21-member-work-list.png) · [모바일 진행 기록](2026-11-21-member-work-timeline.png) · [모바일 근거](2026-11-21-member-work-step.png) · [데스크톱 근거](2026-11-21-member-work-desktop.png)
@@ -56,4 +66,4 @@ Ubuntu의 Chromium에서 합성 회원이 수첩을 조사했다. 목록에 같�
 
 독립 검토에는 Claude Sonnet 5.5 · medium에 합성 설계를 제시했다. 검토에서 제시한 피어·권한·세대 확인, 근거 철회와 남은 첫 발췌, 당시 건수, 중단 중 도래한 회차를 위 시나리오와 대조했다. 검토 대상은 설계였고 제품 소스 검증은 Linux 시험으로 수행했다.
 
-전체 기능 대장에서 71개 기능 각각에 3~6개의 시나리오를 배정했다. 226개 중 통과 205, 부분 확인 9, 실환경 대기 9, 후속 범위 3이다. 외부 시험 계정·기기와 운영 절체가 필요한 항목은 해당 행에서 확인할 수 있다. [기능별 대장](../../audit/feature-journeys.tsv) · [앞선 217개 시나리오의 측정](../../audit/standard-journey-checks.md#linux-서버-재검증) · [Linux 재현 명령](../../deployment/kiri/linux-vm-smoke/README.md#member-task-history-and-recurring-searches-on-linux)
+전체 기능 대장에서 71개 기능 각각에 3~9개의 시나리오를 배정했다. 229개 중 통과 208, 부분 확인 9, 실환경 대기 9, 후속 범위 3이다. 외부 시험 계정·기기와 운영 절체가 필요한 항목은 해당 행에서 확인할 수 있다. [기능별 대장](../../audit/feature-journeys.tsv) · [앞선 217개 시나리오의 측정](../../audit/standard-journey-checks.md#linux-서버-재검증) · [Linux 재현 명령](../../deployment/kiri/linux-vm-smoke/README.md#member-task-history-and-recurring-searches-on-linux)

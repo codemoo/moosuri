@@ -580,6 +580,80 @@ async fn workflow_due_coalesces_once_across_concurrent_ticks_and_reopen() {
 }
 
 #[tokio::test]
+async fn schedule_history_pages_only_its_own_runs_after_retirement() {
+    use moosuri_core::personal_browser::WorkAction;
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let Member {
+        root: _root,
+        store,
+        scope,
+    } = member().await;
+    let owner = scope.owner;
+    let user = &scope.user;
+    let schedule = Uuid::new_v4();
+    let other = Uuid::new_v4();
+    for id in [schedule, other] {
+        store
+            .create_member_workflow(owner, user.clone(), 1, research(id, 1800))
+            .await
+            .unwrap();
+    }
+    let mut expected = Vec::new();
+    for index in 0..=PAGE_SIZE + 1 {
+        let assignment = if index == PAGE_SIZE { other } else { schedule };
+        let receipt = store
+            .change_member_workflow(
+                owner,
+                user.clone(),
+                1,
+                assignment,
+                WorkAction::Run {
+                    request_id: Uuid::new_v4().to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        if assignment == schedule {
+            expected.push(receipt.run_id.unwrap());
+        }
+    }
+    store
+        .change_member_workflow(
+            owner,
+            user.clone(),
+            1,
+            schedule,
+            WorkAction::Remove { revision: 1 },
+        )
+        .await
+        .unwrap();
+    let first = store
+        .member_task_history_page(owner, user.clone(), Some(schedule), None)
+        .await
+        .unwrap();
+    assert_eq!(first.items.len(), PAGE_SIZE);
+    assert!(first.schedules.is_empty());
+    let cursor = first.next_before.expect("an older run");
+    let last = store
+        .member_task_history_page(owner, user.clone(), Some(schedule), Some(cursor))
+        .await
+        .unwrap();
+    assert!(last.next_before.is_none());
+    expected.reverse();
+    let id = schedule.to_string();
+    let actual: Vec<_> = first
+        .items
+        .into_iter()
+        .chain(last.items)
+        .map(|row| {
+            assert_eq!(row.schedule_id.as_deref(), Some(id.as_str()));
+            row.id
+        })
+        .collect();
+    assert_eq!(actual, expected);
+}
+
+#[tokio::test]
 async fn workflow_schedule_pause_resume_manual_retry_and_retirement_keep_prior_receipts() {
     use moosuri_core::personal_browser::WorkAction;
     let _guard = crate::tests::TEST_LOCK.lock().await;

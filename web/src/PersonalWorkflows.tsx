@@ -23,8 +23,9 @@ export function personalResearchIntent(text: string): { scope: WorkScope; query:
 type Props = {
   schedules: WorkSchedule[]; getScope: () => RequestScope | null;
   onChanged: () => Promise<void>; onOpen: (id: string) => void; onExpired: () => void;
+  onHistory: (schedule: WorkSchedule) => void;
 };
-export function PersonalWorkflows({schedules,getScope,onChanged,onOpen,onExpired}:Props) {
+export function PersonalWorkflows({schedules,getScope,onChanged,onOpen,onExpired,onHistory}:Props) {
   const [form,setForm] = useState(false);
   const [scope,setScope] = useState<WorkScope>("memory");
   const [query,setQuery] = useState("");
@@ -98,6 +99,7 @@ export function PersonalWorkflows({schedules,getScope,onChanged,onOpen,onExpired
           <p>{scopeLabel[s.scope]} · {s.query}</p>
           {s.enabled && s.next_due && <p>다음 실행 <time dateTime={new Date(s.next_due*1000).toISOString()}>{format.format(s.next_due*1000)}</time></p>}
           <div className="task-actions">
+            <button type="button" onClick={()=>onHistory(s)}>실행 기록 보기</button>
             <button disabled={busy} onClick={()=>act(s,"run")}>지금 실행</button>
             <button disabled={busy} onClick={()=>act(s,s.enabled?"pause":"resume")}>{s.enabled?"일시정지":"예약 재개"}</button>
             <button disabled={busy} onClick={()=>setRemove(!remove)}>예약 해제</button>

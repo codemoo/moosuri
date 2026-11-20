@@ -3,24 +3,28 @@ use moosuri_core::personal_browser::{TaskDetail, TaskEvent, TaskPage, TaskSummar
 
 const PAGE_SIZE: usize = 20;
 // Source rows already bind their own authority and ownership before pagination.
-const TASKS:&str="
+const CHAT_TASKS:&str="
 SELECT r.id,r.thread_id,substr(r.user_text,1,96) AS title,r.created_at,
  CASE WHEN b.run_id IS NULL THEN r.state WHEN json_extract(b.view,'$.state')='closed' AND r.state='completed' THEN 'completed' ELSE json_extract(b.view,'$.state') END AS state,
  r.admitted_order AS ord,CASE WHEN b.run_id IS NULL THEN 'text' ELSE 'browser' END AS kind,
- substr(coalesce(a.text,obs.text),1,140) AS preview,NULL AS scheduled_at
+ substr(coalesce(a.text,obs.text),1,140) AS preview,NULL AS scheduled_at,NULL AS schedule_id
  FROM chat_runs r JOIN threads t ON t.tenant_id=r.tenant_id AND t.id=r.thread_id AND t.account_id=r.account_id
  LEFT JOIN personal_browser_jobs b ON b.tenant_id=r.tenant_id AND b.run_id=r.id AND b.thread_id=r.thread_id AND b.volume_id=?3 AND b.generation=?4
  LEFT JOIN personal_text_previews p ON p.tenant_id=r.tenant_id AND p.run_id=r.id AND p.volume_id=?3 AND p.generation=?4
  LEFT JOIN chat_output a ON a.tenant_id=r.tenant_id AND a.run_id=r.id AND a.item=CASE WHEN b.run_id IS NULL THEN 'personal-text-preview-answer' ELSE 'browser-answer' END
  LEFT JOIN chat_output obs ON obs.tenant_id=b.tenant_id AND obs.run_id=b.run_id AND obs.item='browser-observation'
- WHERE r.tenant_id=?1 AND r.account_id=?2 AND t.mission_internal=0 AND (b.run_id IS NOT NULL OR p.run_id IS NOT NULL)
- UNION ALL
- SELECT r.id,coalesce(w.thread_id,''),w.title,r.created_at,'completed',r.admitted_order,'research',NULL,r.due_at
- FROM member_work_runs r JOIN member_workflows w ON w.id=r.workflow_id WHERE w.tenant_id=?1 AND w.account_id=?2 AND w.volume_id=?3 AND w.generation=?4
- UNION ALL
- SELECT g.work_id,g.thread_id,'Gmail 받은편지함 조회',g.created_at,g.phase,g.work_order,'gmail',NULL,NULL FROM member_google_thread_reads g
+ WHERE r.tenant_id=?1 AND r.account_id=?2 AND t.mission_internal=0 AND (b.run_id IS NOT NULL OR p.run_id IS NOT NULL)";
+const WORK_TASKS: &str = "SELECT r.id,coalesce(w.thread_id,''),w.title,r.created_at,'completed',
+ r.admitted_order AS ord,'research',NULL,r.due_at,CASE WHEN w.period>0 THEN w.id END
+ FROM member_work_runs r JOIN member_workflows w ON w.id=r.workflow_id
+ WHERE w.tenant_id=?1 AND w.account_id=?2 AND w.volume_id=?3 AND w.generation=?4";
+const INBOX_TASKS:&str="SELECT g.work_id,g.thread_id,'Gmail 받은편지함 조회',g.created_at,g.phase,g.work_order,'gmail',NULL,NULL,NULL FROM member_google_thread_reads g
  JOIN threads t ON t.tenant_id=g.tenant_id AND t.id=g.thread_id AND t.account_id=g.account_id
  WHERE g.tenant_id=?1 AND g.account_id=?2 AND g.volume_id=?3 AND g.generation=?4 AND t.mission_internal=0";
+
+fn all_tasks() -> String {
+    format!("{CHAT_TASKS} UNION ALL {WORK_TASKS} UNION ALL {INBOX_TASKS}")
+}
 
 fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskSummary> {
     let state: String = row.get(4)?;
@@ -41,6 +45,7 @@ fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskSummary> {
         kind: row.get(6)?,
         preview: row.get(7)?,
         scheduled_at: row.get(8)?,
+        schedule_id: row.get(9)?,
     })
 }
 impl Store {
@@ -48,6 +53,17 @@ impl Store {
         &self,
         owner: VolumeOwner,
         user: UserContext,
+        before: Option<String>,
+    ) -> Result<TaskPage> {
+        self.member_task_history_page(owner, user, None, before)
+            .await
+    }
+
+    pub async fn member_task_history_page(
+        &self,
+        owner: VolumeOwner,
+        user: UserContext,
+        schedule_id: Option<Uuid>,
         before: Option<String>,
     ) -> Result<TaskPage> {
         let (time, order) = match before.as_deref() {
@@ -65,23 +81,29 @@ impl Store {
             } else {
                 "(created_at,ord)<(?5,?6)"
             };
+            let mut parameters: Vec<rusqlite::types::Value> = vec![
+                user.tenant.0.into(),
+                user.account.id.into(),
+                owner.volume.to_string().into(),
+                (owner.generation as i64).into(),
+                time.into(),
+                order.into(),
+                ((PAGE_SIZE + 1) as i64).into(),
+            ];
+            let source = if let Some(id) = schedule_id {
+                parameters.push(id.to_string().into());
+                format!("{WORK_TASKS} AND w.period>0 AND w.id=?8")
+            } else {
+                all_tasks()
+            };
             let sql = format!(
-                "SELECT * FROM ({TASKS}) WHERE {filter} ORDER BY created_at DESC,ord DESC LIMIT ?7"
+                "SELECT * FROM ({source}) WHERE {filter} ORDER BY created_at DESC,ord DESC LIMIT ?7"
             );
             let mut rows = tx
                 .prepare(&sql)?
-                .query_map(
-                    params![
-                        user.tenant.0,
-                        user.account.id,
-                        owner.volume.to_string(),
-                        owner.generation as i64,
-                        time,
-                        order,
-                        (PAGE_SIZE + 1) as i64
-                    ],
-                    |r| Ok((summary(r)?, r.get::<_, i64>(5)?)),
-                )?
+                .query_map(rusqlite::params_from_iter(parameters), |r| {
+                    Ok((summary(r)?, r.get::<_, i64>(5)?))
+                })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             let next_before = (rows.len() > PAGE_SIZE).then(|| {
                 format!(
@@ -96,7 +118,7 @@ impl Store {
                     task.preview = Some(workflows::preview(&tx, owner, &task.id)?);
                 }
             }
-            let schedules = if before.is_none() {
+            let schedules = if before.is_none() && schedule_id.is_none() {
                 workflows::schedules(&tx, owner)?
             } else {
                 vec![]
@@ -125,7 +147,7 @@ impl Store {
             let id = id.to_string();
             let task = tx
                 .query_row(
-                    &format!("SELECT * FROM ({TASKS}) WHERE id=?5"),
+                    &format!("SELECT * FROM ({}) WHERE id=?5", all_tasks()),
                     params![
                         user.tenant.0,
                         user.account.id,

@@ -237,6 +237,11 @@ The member workspace SHALL show dated work receipts for text, browser, thread-bo
 - **WHEN** the installation admits an active member’s due schedule, including after an offline interval
 - **THEN** the member checks the gateway's Unix peer identity and the pinned epochs and generation, records one occurrence for the latest due slot, and advances its next due time in the same transaction. Its detail shows both the due slot and the actual execution time.
 
+#### Scenario: Reopen the history of one recurring assignment
+
+- **WHEN** a member opens execution history from a schedule or from one of its retained occurrences
+- **THEN** the dated, paginated history uses the original schedule identity and current member volume. It includes its manual and scheduled occurrences after retirement. A new schedule with the same title starts with an empty history.
+
 #### Scenario: Withdraw a source or a grant
 
 - **WHEN** a source is forgotten, a schedule is retired, a grant epoch changes, or a restore completes

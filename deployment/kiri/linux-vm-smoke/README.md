@@ -87,12 +87,13 @@ capacity, retries and installation identity. [November 21 results](../../../docs
 
 ## Member task history and recurring searches on Linux
 
-Run this check as a regular Linux user with Python Playwright and its Chromium browser installed. From the repository root, build the web assets before the executable so that the gateway serves the updated UI.
+Run this check as a regular Linux user with Python Playwright and its Chromium and WebKit browsers installed. From the repository root, build the web assets before the executable so that the gateway serves the updated UI.
 
 ```sh
 (cd web && npm ci && npm run build)
 cargo build --locked -p moosuri
 python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/debug/moosuri --channel chromium --workflows
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/debug/moosuri --channel webkit --workflows
 ```
 
 The runner creates two temporary member volumes, an HTTPS gateway, a model broker with a synthetic reply, and a real installation timer. It drives the browser from chat through a source read, runs a scheduled search during logout, and checks which results remain visible after forgetting the source. Set `MOOSURI_SYNTHETIC_WORK_SCREENS` to an output directory to capture the mobile list, timeline and source, and the desktop split view. The `--claude` mode uses the installation's authenticated Claude Sonnet 5.5 at medium effort for the separate conversation checks. [Work log and scenarios](../../../docs/reviews/2026-11-21-member-workflows.md)

@@ -24,7 +24,7 @@ pub fn routes(store: Store, owner: VolumeOwner) -> Router {
         )
         .route(
             "/api/v1/personal/tasks/workflows/{id}",
-            axum::routing::post(change),
+            get(schedule_history).post(change),
         )
         .with_state(MemberTasks { store, owner })
 }
@@ -66,6 +66,21 @@ async fn detail(
 ) -> HttpResult {
     let user = personal_request_user(&s.store, &h).await?;
     Ok(Json(s.store.personal_task_detail(s.owner, user, id).await?).into_response())
+}
+
+async fn schedule_history(
+    State(s): State<MemberTasks>,
+    h: HeaderMap,
+    Path(id): Path<uuid::Uuid>,
+    Query(q): Query<PageQuery>,
+) -> HttpResult {
+    let user = personal_request_user(&s.store, &h).await?;
+    Ok(Json(
+        s.store
+            .member_task_history_page(s.owner, user, Some(id), q.before)
+            .await?,
+    )
+    .into_response())
 }
 
 async fn create(

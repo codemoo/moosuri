@@ -7,6 +7,7 @@ type TaskState = PersonalBrowserState | "queued" | "running" | "failed" | "cance
 export type TaskSummary = {
   id: string; thread_id: string; title: string; state: TaskState; kind?: "text" | "browser" | "research" | "gmail"; preview?: string | null;
   next_actor: "assistant" | "member" | "none"; created_at: number; scheduled_at?: number | null;
+  schedule_id?: string | null;
 };
 export type TaskPage = { items: TaskSummary[]; next_before: string | null; schedules?: WorkSchedule[] };
 export type TaskDetail = {
@@ -18,6 +19,7 @@ type Props = {
   accountId: string; taskId?: string; onExpired: () => void; onOpenTask: (id: string) => void;
   onBack: () => void; onThread: (threadId: string, runId: string) => void;
 };
+type ScheduleLink = Pick<WorkSchedule, "id" | "title">;
 const dateFormat = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 function TaskTime({ at }: { at: number }) {
   const date = new Date(at * 1000);
@@ -39,6 +41,12 @@ const states:Record<string,string> = { starting:"시작됨", queued:"접수됨",
 function stateLabel(task:TaskSummary,state:string=task.state) {
   if ((!task.kind || task.kind==="browser") && state in browserStateLabel) return browserStateLabel[state as PersonalBrowserState];
   return states[state] ?? state;
+}
+function taskMarker(state: string, recorded = false) {
+  if (["failed", "incomplete", "refused", "outcome_unknown", "unknown"].includes(state)) return "!";
+  if (["withdrawn", "cancelled", "closed"].includes(state)) return "−";
+  if (state === "completed" || (recorded && state !== "starting" && state !== "queued")) return "✓";
+  return "•";
 }
 const shortTime = new Intl.DateTimeFormat("ko-KR",{hour:"numeric",minute:"2-digit"});
 const calendarDay = new Intl.DateTimeFormat("ko-KR",{year:"numeric",month:"long",day:"numeric"});
@@ -72,8 +80,8 @@ function taskOrigin(task: TaskSummary) {
   }
 }
 
-function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: Props & {
-  taskId: string; onTask: (task: TaskSummary) => void;
+function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask, onSchedule }: Props & {
+  taskId: string; onTask: (task: TaskSummary) => void; onSchedule: (schedule: ScheduleLink) => void;
 }) {
   const [step,setStep] = useState<number | null>(null);
   const stepPanel=useRef<HTMLDivElement>(null);
@@ -133,7 +141,7 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: 
       <h3>진행 기록</h3><div className="task-trace" data-selected={!!selected}>
         <ol className="task-history">{detail.history.map((event,index)=>
           <li key={index}><button type="button" aria-pressed={index===step} onClick={e=>{stepTrigger.current=e.currentTarget;setStep(index);}}>
-            <span className="task-marker" aria-hidden="true">{index===0 ? "•" : "✓"}</span>
+            <span className="task-marker" aria-hidden="true">{taskMarker(event.state, event.state !== detail.task.state || index < detail.history.length - 1)}</span>
             <span>{event.title || (event.state==="closed" ? "브라우저 종료" : stateLabel(detail.task,event.state))}</span>
             <small>{event.at!==null?shortTime.format(event.at*1000):"시각 미기록"}</small>
           </button></li>)}</ol>
@@ -146,6 +154,9 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: 
       {detail.task.thread_id && <button type="button" onClick={() => onThread(detail.task.thread_id, detail.task.kind==="gmail"?"":detail.task.id)}>
         원래 대화 열기 · {detail.thread_title}
       </button>}
+      {detail.task.schedule_id && <button type="button" onClick={() => {
+        if (detail.task.schedule_id) onSchedule({id: detail.task.schedule_id, title: detail.task.title});
+      }}>같은 예약의 실행 기록</button>}
     </>}
     <button type="button" disabled={loading} onClick={() => setReload(value => value + 1)}>
       {issue ? "다시 시도" : "상태 새로고침"}
@@ -153,7 +164,9 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: 
   </section>;
 }
 
-function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & { latest: TaskSummary | null }) {
+function TaskList({ accountId, onExpired, onOpenTask, latest, taskId, schedule, onSchedule }: Props & {
+  latest: TaskSummary | null; schedule: ScheduleLink | null; onSchedule: (schedule: ScheduleLink | null) => void;
+}) {
   const [schedules,setSchedules] = useState<WorkSchedule[]>([]);
   const lastOpened=useRef<string|null>(null);
   const listRoot=useRef<HTMLElement>(null);
@@ -163,6 +176,7 @@ function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & 
     if (latest) setRows(previous => previous.map(row => row.id === latest.id ? latest : row));
   }, [latest]);
   const [before, setBefore] = useState<string | null>(null);
+  const [olderPagesOpen, setOlderPagesOpen] = useState(false);
   const [issue, setIssue] = useState(false);
   const failedCursor = useRef<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -171,6 +185,7 @@ function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & 
   const pending = useRef(false);
   const expired = useRef(onExpired);
   expired.current = onExpired;
+  const path = schedule ? "/personal/tasks/workflows/" + encodeURIComponent(schedule.id) : "/personal/tasks";
   const read = useCallback(async (cursor: string | null) => {
     const scope = current.current;
     if (!scope || pending.current) return;
@@ -178,10 +193,11 @@ function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & 
     setLoading(true);
     setIssue(false);
     try {
-      const page = await scope.request<TaskPage>("/personal/tasks" + (cursor ? "?before=" + encodeURIComponent(cursor) : ""));
+      const page = await scope.request<TaskPage>(path + (cursor ? "?before=" + encodeURIComponent(cursor) : ""));
       setRows(previous => cursor ? [...previous, ...page.items] : page.items);
       if (!cursor) setSchedules(page.schedules ?? []);
       setBefore(page.next_before);
+      setOlderPagesOpen(cursor !== null);
       setLoaded(true);
     } catch (error) {
       if (isAborted(error)) return;
@@ -197,7 +213,7 @@ function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & 
     } finally {
       if (current.current === scope) { setLoading(false); pending.current = false; }
     }
-  }, []);
+  }, [path]);
   useEffect(() => {
     const scope = new RequestScope(accountId);
     current.current = scope;
@@ -208,27 +224,29 @@ function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & 
   const nextDue=schedules.filter(s=>s.enabled && s.next_due!=null).map(s=>s.next_due!);
   const due=nextDue.length?Math.min(...nextDue):null;
   useEffect(()=>{
-    if(!due || taskId || before || issue) return;
+    if(!due || taskId || olderPagesOpen || issue) return;
     const timer=setTimeout(()=>void read(null),Math.max(7000,Math.min(2147483000,(due-Date.now()/1000+6)*1000)));
     return ()=>clearTimeout(timer);
-  },[due,schedules,taskId,before,issue,read]);
+  },[due,schedules,taskId,olderPagesOpen,issue,read]);
   const today=new Date(), yesterday=new Date(today);
   yesterday.setDate(today.getDate()-1);
   const groups=new Map<string,TaskSummary[]>();
   for(const task of rows){const day=dayLabel(task.created_at,today,yesterday);const group=groups.get(day);if(group)group.push(task);else groups.set(day,[task]);}
   function openTask(id:string){lastOpened.current=id;onOpenTask(id);}
   return <section ref={listRoot} className="personal-tasks" aria-label="맡긴 일 목록">
-    <div className="task-heading"><h2>맡긴 일</h2><button type="button" disabled={loading} onClick={() => { void read(null); }}>목록 새로고침</button></div>
-    <PersonalWorkflows schedules={schedules} getScope={()=>current.current} onChanged={()=>read(null)} onOpen={openTask} onExpired={onExpired}/>
+    {schedule && <button type="button" className="task-back" onClick={() => onSchedule(null)}>전체 맡긴 일</button>}
+    <div className="task-heading"><h2>{schedule ? schedule.title + " 실행 기록" : "맡긴 일"}</h2><button type="button" disabled={loading} onClick={() => { void read(null); }}>목록 새로고침</button></div>
+    {!schedule && <PersonalWorkflows schedules={schedules} getScope={()=>current.current} onChanged={()=>read(null)}
+      onHistory={onSchedule} onOpen={openTask} onExpired={onExpired}/>}
     {Array.from(groups,([day,items])=><details className="task-day" key={day} open><summary><h3>{day}</h3></summary><ul className="task-list">{items.map(task=>
       <li key={task.id}><button className="task-row" data-task-id={task.id} type="button" onClick={() => openTask(task.id)}>
-        <span className="task-marker" aria-hidden="true">{task.state==="completed"?"✓":"•"}</span>
+        <span className="task-marker" aria-hidden="true">{taskMarker(task.state)}</span>
         <span className="task-row-copy"><strong>{task.title}</strong>{task.preview && <span className="task-preview">{task.preview}</span>}
         <span className="task-meta">{[taskOrigin(task), stateLabel(task), actorLabel[task.next_actor]].filter(Boolean).join(" · ")}</span></span>
         <time dateTime={new Date(task.created_at*1000).toISOString()}>{shortTime.format(task.created_at*1000)}</time>
       </button></li>)}</ul></details>)}
     {issue && <p role="alert">작업 목록을 불러오지 못했습니다.</p>}
-    {!issue && loaded && rows.length === 0 && <p>아직 맡긴 일이 없습니다.</p>}
+    {!issue && loaded && rows.length === 0 && <p>{schedule ? "이 예약의 실행 기록이 아직 없습니다." : "아직 맡긴 일이 없습니다."}</p>}
     {loading && <p role="status">작업 목록을 불러오는 중…</p>}
     {(before || issue) && <button type="button" disabled={loading} onClick={() => { void read(issue ? failedCursor.current : before); }}>
       {issue ? "다시 시도" : "이전 작업 더 보기"}
@@ -238,11 +256,14 @@ function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & 
 function MemberTasks(props: Props) {
   // Keep fetched pages when returning from a detail. A direct detail link needs no list request.
   const [latest, setLatest] = useState<TaskSummary | null>(null);
+  const [schedule, setSchedule] = useState<ScheduleLink | null>(null);
   const [visitedList, setVisitedList] = useState(!props.taskId);
   useEffect(() => { if (!props.taskId) setVisitedList(true); }, [props.taskId]);
   return <>
-    {(visitedList || !props.taskId) && <div hidden={!!props.taskId}><TaskList {...props} latest={latest} /></div>}
-    {props.taskId && <TaskReader key={props.taskId} {...props} taskId={props.taskId} onTask={setLatest} />}
+    {(visitedList || !props.taskId) && <div hidden={!!props.taskId}><TaskList key={schedule?.id ?? "all"} {...props}
+      latest={latest} schedule={schedule} onSchedule={setSchedule} /></div>}
+    {props.taskId && <TaskReader key={props.taskId} {...props} taskId={props.taskId} onTask={setLatest}
+      onSchedule={value => { setSchedule(value); props.onBack(); }} />}
   </>;
 }
 export function PersonalTasks(props: Props) {

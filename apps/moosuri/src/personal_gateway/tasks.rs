@@ -4,16 +4,14 @@ use moosuri_core::personal_browser::{
 };
 
 const BASE: &str = "/api/v1/personal/tasks";
+const WORKFLOWS: &str = "/api/v1/personal/tasks/workflows";
 pub(super) fn routes() -> Router<Gateway> {
     Router::new()
         .route(BASE, get(handler))
-        .route(
-            "/api/v1/personal/tasks/workflows",
-            axum::routing::post(handler),
-        )
+        .route(WORKFLOWS, axum::routing::post(handler))
         .route(
             "/api/v1/personal/tasks/workflows/{id}",
-            axum::routing::post(handler),
+            get(handler).post(handler),
         )
         .route("/api/v1/personal/tasks/{id}", get(handler))
 }
@@ -42,32 +40,28 @@ async fn handle(
     if method != Method::GET || !body.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let mut path = BASE.to_owned();
-    let id = if uri.path() == BASE {
-        if let Some(query) = uri.query() {
-            let before = query
-                .strip_prefix("before=")
-                .filter(|v| task_cursor(v).is_some())
-                .ok_or(StatusCode::BAD_REQUEST)?;
-            path = format!("{BASE}?before={before}");
-        }
-        None
+    let mut path = uri.path().to_owned();
+    let (id, schedule) = if path == BASE {
+        (None, None)
+    } else if let Some(raw) = path.strip_prefix("/api/v1/personal/tasks/workflows/") {
+        (None, Some(task_uuid(raw)?))
     } else {
-        let raw = uri
-            .path()
-            .strip_prefix(BASE)
-            .and_then(|v| v.strip_prefix('/'))
+        let raw = path
+            .strip_prefix("/api/v1/personal/tasks/")
             .ok_or(StatusCode::NOT_FOUND)?;
-        let id = Uuid::parse_str(raw)
-            .ok()
-            .filter(|id| !id.is_nil() && id.to_string() == raw)
-            .ok_or(StatusCode::BAD_REQUEST)?;
         if uri.query().is_some() {
             return Err(StatusCode::BAD_REQUEST);
         }
-        path = format!("{BASE}/{id}");
-        Some(id)
+        (Some(task_uuid(raw)?), None)
     };
+    if let Some(query) = uri.query() {
+        query
+            .strip_prefix("before=")
+            .filter(|v| task_cursor(v).is_some())
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        path.push('?');
+        path.push_str(query);
+    }
     let _permit = g
         .inflight
         .try_acquire()
@@ -89,10 +83,29 @@ async fn handle(
         }
         serde_json::to_vec(&detail)
     } else {
-        serde_json::to_vec(&serde_json::from_slice::<TaskPage>(&bytes).map_err(invalid)?)
+        let page: TaskPage = serde_json::from_slice(&bytes).map_err(invalid)?;
+        if let Some(schedule) = schedule {
+            let expected = schedule.to_string();
+            if !page.schedules.is_empty()
+                || page
+                    .items
+                    .iter()
+                    .any(|row| row.schedule_id.as_deref() != Some(expected.as_str()))
+            {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        }
+        serde_json::to_vec(&page)
     }
     .map_err(invalid)?;
     Ok(response(status, value))
+}
+
+fn task_uuid(raw: &str) -> Result<Uuid, StatusCode> {
+    Uuid::parse_str(raw)
+        .ok()
+        .filter(|v| !v.is_nil() && v.to_string() == raw)
+        .ok_or(StatusCode::BAD_REQUEST)
 }
 
 async fn mutate(
@@ -109,8 +122,7 @@ async fn mutate(
     {
         return Err(bad);
     }
-    let base = "/api/v1/personal/tasks/workflows";
-    let id = if uri.path() == base {
+    let id = if uri.path() == WORKFLOWS {
         let q: WorkRequest = serde_json::from_slice(body).map_err(|_| bad)?;
         q.request_id
     } else {
@@ -118,10 +130,7 @@ async fn mutate(
             .path()
             .strip_prefix("/api/v1/personal/tasks/workflows/")
             .ok_or(bad)?;
-        Uuid::parse_str(id)
-            .ok()
-            .filter(|v| !v.is_nil() && v.to_string() == id)
-            .ok_or(bad)?;
+        task_uuid(id)?;
         serde_json::from_slice::<WorkAction>(body).map_err(|_| bad)?;
         id.to_owned()
     };

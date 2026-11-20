@@ -64,6 +64,9 @@ pub struct TaskSummary {
     /// Scheduled slot of this occurrence, even when the timer caught up later.
     #[serde(default)]
     pub scheduled_at: Option<i64>,
+    /// The recurring assignment that owns this run, including manual runs after a pause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

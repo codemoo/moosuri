@@ -73,6 +73,18 @@ it("keeps older rows during pagination failure and retries the same cursor", asy
   expect(fetcher.mock.calls.slice(1).map(([path]) => path)).toEqual(Array(2).fill("/api/v1/personal/tasks?before=22"));
 });
 
+it("marks a failed step and shows the reason in its own worklog", async () => {
+  const failed = { ...detail, task: { ...second, kind: "text", state: "failed" }, result: null,
+    history: [{state: "starting", at: first.created_at}, {state: "failed", at: first.created_at, detail: "응답을 받지 못했습니다."}] };
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(failed)));
+  const user = userEvent.setup();
+  render(<PersonalTasks {...props} taskId="run-two"/>);
+  const step = await screen.findByRole("button", {name: /실패/});
+  expect(step.querySelector(".task-marker")).toHaveTextContent("!");
+  await user.click(step);
+  expect(screen.getByRole("region", {name: "단계 상세"})).toHaveTextContent("응답을 받지 못했습니다.");
+});
+
 it("drops the old account's in-flight detail on a member change and distinguishes missing from empty", async () => {
   let finish!: (value: Response) => void;
   const fetcher = vi.fn()
@@ -139,6 +151,33 @@ it("retries a lost manual research response with the same request identity", asy
   await user.click(screen.getByRole("button",{name:"조사 실행"}));
   await waitFor(()=>expect(props.onOpenTask).toHaveBeenCalledWith("result-1"));
   expect(actions).toHaveLength(2);expect(actions[1]).toEqual(actions[0]);
+});
+
+it("keeps a schedule's history and cursor through retry without mixing in another assignment", async () => {
+  const plan = { id: "plan-one", title: "수첩 점검", scope: "memory", query: "수첩", period: 1800,
+    next_due: null, enabled: false, revision: 2 };
+  const run = { ...first, kind: "research", thread_id: "", schedule_id: plan.id, title: "수첩 점검" };
+  const attempts: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/personal/tasks")) return Response.json({ items: [second], schedules: [plan], next_before: null });
+    if (url.endsWith("/workflows/plan-one")) return Response.json({ items: [run], schedules: [], next_before: "42" });
+    attempts.push(url);
+    if (attempts.length === 1) return Response.json({}, {status: 503});
+    return Response.json({ items: [{...run, id: "older", scheduled_at: first.created_at}], schedules: [], next_before: null });
+  }));
+  const user = userEvent.setup();
+  render(<PersonalTasks {...props}/>);
+  await user.click(await screen.findByRole("button", {name: /수첩 점검/}));
+  await user.click(screen.getByRole("button", {name: "실행 기록 보기"}));
+  expect(await screen.findByRole("heading", {name: "수첩 점검 실행 기록"})).toBeVisible();
+  expect(screen.queryByText(second.title)).toBeNull();
+  await user.click(await screen.findByRole("button", {name: "이전 작업 더 보기"}));
+  await user.click(await screen.findByRole("button", {name: "다시 시도"}));
+  expect(await screen.findByRole("button", {name: /예약 실행/})).toBeVisible();
+  expect(screen.getByRole("button", {name: /직접 실행/})).toBeVisible();
+  expect(attempts).toEqual(Array(2).fill("/api/v1/personal/tasks/workflows/plan-one?before=42"));
+  await user.click(screen.getByRole("button", {name: "전체 맡긴 일"}));
+  expect(await screen.findByText(second.title)).toBeVisible();
 });
 
 it("identifies scheduled, manual and chat occurrences and keeps the current preview on return", async () => {

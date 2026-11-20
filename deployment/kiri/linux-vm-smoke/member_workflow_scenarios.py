@@ -115,6 +115,14 @@ def exercise(page, members, origin, provider, *, login, logout, rows, passed, pr
     login(page,second,True)
     button("맡긴 일").click()
     expect(region("맡긴 일 목록")).to_contain_text("아직 맡긴 일이 없습니다")
+    first_schedule = rows(first, "SELECT id FROM member_workflows WHERE period=1800")[0][0]
+    second_account = rows(second, "SELECT id FROM accounts WHERE status='active'")[0][0]
+    status, foreign = page.evaluate("""async ([schedule, account]) => {
+        const response = await fetch("/api/v1/personal/tasks/workflows/" + schedule,
+                                     {headers: {"X-Moosuri-Account": account}});
+        return [response.status, await response.json()];
+    }""", [first_schedule, second_account])
+    assert status == 200 and foreign == {"items": [], "next_before": None, "schedules": []}
     page.goto(link)
     expect(page.get_by_role("alert")).to_contain_text("이 작업을 찾을 수 없습니다")
     assert rows(second,"SELECT count(*) FROM member_work_runs")==[(0,)]
@@ -152,6 +160,8 @@ def exercise(page, members, origin, provider, *, login, logout, rows, passed, pr
     button(re.compile("합성 준비물")).click()
     button("기억 잊기").click()
     button("기억과 이력 지우기").click()
+    expect(page.get_by_text("아직 기록한 기억이 없습니다.", exact=True)).to_be_visible()
+    assert rows(first, "SELECT revision FROM knowledge_memory_versions") == []
     page.goto(link)
     button(re.compile("확인한 기억 1")).click()
     expect(region("단계 상세")).to_contain_text("더 이상 볼 수 없습니다")
@@ -161,3 +171,37 @@ def exercise(page, members, origin, provider, *, login, logout, rows, passed, pr
     expect(manual_run).to_contain_text("기억 1건 확인")
     expect(region("맡긴 일 목록")).not_to_contain_text("초록 수첩")
     passed("TWORK-03 forgotten source withdrawn from the historical step, result and list previews")
+
+    # Reuse the old schedule's display name with a different, explicitly chosen query.
+    button("자료 조사 맡기기").click()
+    page.get_by_label("검색어", exact=True).fill("다른조건")
+    page.get_by_label("업무 이름", exact=False).fill("수첩 점검")
+    page.get_by_label("실행 주기").select_option("3600")
+    button("예약 추가").click()
+    scheduled.get_by_role("button", name=re.compile("수첩 점검")).click()
+    scheduled.get_by_role("button", name="실행 기록 보기", exact=True).click()
+    expect(region("맡긴 일 목록")).to_contain_text("이 예약의 실행 기록이 아직 없습니다")
+    button("전체 맡긴 일").click()
+    scheduled.get_by_role("button", name=re.compile("수첩 점검")).click()
+    scheduled.get_by_role("button", name="지금 실행", exact=True).click()
+    expect(region("맡긴 일 상세")).to_contain_text("다른조건")
+    button("같은 예약의 실행 기록").click()
+    expect(task_rows).to_have_count(1)
+    expect(task_rows).to_contain_text("직접 실행")
+    passed("THIST-01 same-name replacement starts empty and shows only its own manual run")
+
+    button("전체 맡긴 일").click()
+    scheduled_run.click()
+    page.reload()
+    button("같은 예약의 실행 기록").click()
+    expect(task_rows).to_have_count(2)
+    expect(scheduled_run).to_be_visible()
+    expect(manual_run).to_be_visible()
+    capture("member-work-archived-schedule")
+    manual_run.click()
+    expect(region("맡긴 일 상세")).to_contain_text("내 기억에서 ‘수첩’ 검색")
+    expect(region("맡긴 일 상세")).not_to_contain_text("다른조건")
+    button("맡긴 일 목록").click()
+    expect(task_rows).to_have_count(2)
+    expect(manual_run).to_be_focused()
+    passed("THIST-03 reopen a retired schedule from its original run and return to that worklog")

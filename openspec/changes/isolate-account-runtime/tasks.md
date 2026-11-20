@@ -1,5 +1,7 @@
 구현 PR의 범위와 코드 진입점은 [구현 계약](implementation.md)을 따른다.
 
+회원 화면 개편의 기능별 완료 조건과 배포 대기는 [작업 대장·워크로그](../../../docs/reviews/2026-11-20-member-ui-worklog.md)에서 확인한다.
+
 ## 1. Linux 실험과 장애 판정
 - [x] 1.1 고정한 Kiri 릴리스에서 비루트 사용자 런타임 두 개, 독립 볼륨·소켓, 제한된 공용 모듈을 구성한다.
   - [재현 절차와 Linux 관측 결과](../../../deployment/kiri/linux-vm-smoke/README.md)

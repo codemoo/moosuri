@@ -41,10 +41,9 @@ impl Transport {
         if !address.ip().is_loopback() || address.port() == 0 {
             return Err(GmailError::DestinationDenied);
         }
-        Ok(Self {
-            token_proxy: Some(address),
-            ..Self::google()
-        })
+        let mut transport = Self::google();
+        transport.token_proxy = Some(address);
+        Ok(transport)
     }
     #[cfg(any(test, feature = "test-fixtures"))]
     pub(crate) fn fixture(base: String, limit: usize) -> Self {
